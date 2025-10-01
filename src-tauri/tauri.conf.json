@@ -20,7 +20,9 @@
       "capabilities": [
         {
           "identifier": "main-capability",
-          "windows": ["main"],
+          "windows": [
+            "main"
+          ],
           "permissions": [
             "core:default",
             "dialog:allow-open"
@@ -42,6 +44,21 @@
     "macOS": {
       "entitlements": "./Entitlements.plist"
     },
-    "targets": ["app", "appimage", "deb", "dmg", "nsis", "rpm"]
+    "targets": [
+      "app",
+      "appimage",
+      "deb",
+      "dmg",
+      "nsis",
+      "rpm"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJENkYyRTIzRkIwM0MyMkIKUldRcndnUDdJeTV2TGZTNk9seHlxd2h2ZUJvYjVobjhxdEQ1MkMreEtpN05HdU85TGpHUEFRaEoK",
+      "endpoints": [
+        "https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json"
+      ]
+    }
   }
 }
