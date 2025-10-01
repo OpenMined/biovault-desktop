@@ -1,14 +1,14 @@
-use walkdir::WalkDir;
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use regex::Regex;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use rusqlite::{Connection, params};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Emitter;
+use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Settings {
@@ -225,7 +225,8 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
     }
 
     let mut suggestions = Vec::new();
-    let filenames: Vec<String> = files.iter()
+    let filenames: Vec<String> = files
+        .iter()
         .filter_map(|f| Path::new(f).file_name())
         .filter_map(|n| n.to_str())
         .map(|s| s.to_string())
@@ -486,19 +487,31 @@ fn download_file(url: &str) -> Result<Vec<u8>, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client.get(url)
+    let response = client
+        .get(url)
         .send()
         .map_err(|e| format!("Failed to download {}: {}", url, e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Failed to download {}: HTTP {}", url, response.status()));
+        return Err(format!(
+            "Failed to download {}: HTTP {}",
+            url,
+            response.status()
+        ));
     }
 
-    response.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
+    response
+        .bytes()
+        .map(|b| b.to_vec())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn import_project(state: tauri::State<AppState>, url: String, overwrite: bool) -> Result<Project, String> {
+fn import_project(
+    state: tauri::State<AppState>,
+    url: String,
+    overwrite: bool,
+) -> Result<Project, String> {
     println!("Importing project from: {}", url);
     let raw_url = github_url_to_raw(&url);
     println!("Raw URL: {}", raw_url);
@@ -508,7 +521,8 @@ fn import_project(state: tauri::State<AppState>, url: String, overwrite: bool) -
     let yaml_str = String::from_utf8(yaml_content).map_err(|e| e.to_string())?;
 
     println!("Parsing YAML...");
-    let project_yaml: ProjectYaml = serde_yaml::from_str(&yaml_str).map_err(|e| format!("Failed to parse YAML: {}", e))?;
+    let project_yaml: ProjectYaml =
+        serde_yaml::from_str(&yaml_str).map_err(|e| format!("Failed to parse YAML: {}", e))?;
     println!("Project name: {}", project_yaml.name);
 
     let conn = state.db.lock().unwrap();
@@ -539,7 +553,10 @@ fn import_project(state: tauri::State<AppState>, url: String, overwrite: bool) -
     fs::write(&yaml_file_path, yaml_str).map_err(|e| e.to_string())?;
 
     println!("Downloading assets...");
-    let base_url = raw_url.rsplit_once('/').map(|(base, _)| base).ok_or("Invalid URL")?;
+    let base_url = raw_url
+        .rsplit_once('/')
+        .map(|(base, _)| base)
+        .ok_or("Invalid URL")?;
     let assets_url = format!("{}/assets", base_url);
 
     let assets_dir = project_dir.join("assets");
@@ -553,11 +570,14 @@ fn import_project(state: tauri::State<AppState>, url: String, overwrite: bool) -
 
         // Create parent directories if asset has a path like "bioscript/classifier.py"
         if let Some(parent) = asset_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create asset directory: {}", e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create asset directory: {}", e))?;
         }
 
-        let mut file = File::create(&asset_path).map_err(|e| format!("Failed to create asset file {}: {}", asset, e))?;
-        file.write_all(&asset_content).map_err(|e| format!("Failed to write asset {}: {}", asset, e))?;
+        let mut file = File::create(&asset_path)
+            .map_err(|e| format!("Failed to create asset file {}: {}", asset, e))?;
+        file.write_all(&asset_content)
+            .map_err(|e| format!("Failed to write asset {}: {}", asset, e))?;
         println!("Asset downloaded: {}", asset);
     }
 
@@ -566,7 +586,8 @@ fn import_project(state: tauri::State<AppState>, url: String, overwrite: bool) -
     let workflow_content = download_file(&workflow_url)?;
     let workflow_path = project_dir.join(&project_yaml.workflow);
     let mut file = File::create(&workflow_path).map_err(|e| e.to_string())?;
-    file.write_all(&workflow_content).map_err(|e| e.to_string())?;
+    file.write_all(&workflow_content)
+        .map_err(|e| e.to_string())?;
     println!("Workflow downloaded");
 
     println!("Saving to database...");
@@ -654,11 +675,13 @@ fn get_projects(state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
 fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
 
-    let project_path: String = conn.query_row(
-        "SELECT project_path FROM projects WHERE id = ?1",
-        params![project_id],
-        |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    let project_path: String = conn
+        .query_row(
+            "SELECT project_path FROM projects WHERE id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
 
     if Path::new(&project_path).exists() {
         let _ = fs::remove_dir_all(&project_path);
@@ -686,11 +709,13 @@ fn start_analysis(
 
     let conn = state.db.lock().unwrap();
 
-    let project: (String, String) = conn.query_row(
-        "SELECT name, project_path FROM projects WHERE id = ?1",
-        params![project_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| e.to_string())?;
+    let project: (String, String) = conn
+        .query_row(
+            "SELECT name, project_path FROM projects WHERE id = ?1",
+            params![project_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
 
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
     let biovault_dir = desktop_dir.join("BioVault");
@@ -710,15 +735,17 @@ fn start_analysis(
     let mut csv_content = String::from("participant_id,genotype_file_path\n");
 
     for participant_id in &participant_ids {
-        let (pid, file_path): (String, String) = conn.query_row(
-            "SELECT p.participant_id, f.file_path
+        let (pid, file_path): (String, String) = conn
+            .query_row(
+                "SELECT p.participant_id, f.file_path
              FROM participants p
              JOIN files f ON f.participant_id = p.id
              WHERE p.id = ?1
              LIMIT 1",
-            params![participant_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|e| e.to_string())?;
+                params![participant_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
 
         csv_content.push_str(&format!("{},{}\n", pid, file_path));
     }
@@ -753,7 +780,8 @@ fn start_analysis(
         conn.execute(
             "INSERT INTO run_participants (run_id, participant_id) VALUES (?1, ?2)",
             params![run_id, participant_id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(RunStartResult {
@@ -768,8 +796,8 @@ fn execute_analysis(
     run_id: i64,
     window: tauri::Window,
 ) -> Result<String, String> {
-    use std::process::{Command, Stdio};
     use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Load settings to get bv path
@@ -782,14 +810,16 @@ fn execute_analysis(
 
     let conn = state.db.lock().unwrap();
 
-    let (project_path, work_dir): (String, String) = conn.query_row(
-        "SELECT p.project_path, r.work_dir
+    let (project_path, work_dir): (String, String) = conn
+        .query_row(
+            "SELECT p.project_path, r.work_dir
          FROM runs r
          JOIN projects p ON r.project_id = p.id
          WHERE r.id = ?1",
-        params![run_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| e.to_string())?;
+            params![run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
 
     drop(conn);
 
@@ -811,16 +841,40 @@ fn execute_analysis(
         .unwrap()
         .as_secs();
 
-    writeln!(log_file, "\n=== Run {} started at {} ===", run_id, timestamp).map_err(|e| e.to_string())?;
-    writeln!(log_file, "Command: {} run --work-dir {} --results-dir {} {} {}",
-        bv_path, work_subdir.display(), results_subdir.display(), project_path, samplesheet_path.display()
-    ).map_err(|e| e.to_string())?;
-    writeln!(log_file, "").map_err(|e| e.to_string())?;
+    writeln!(
+        log_file,
+        "\n=== Run {} started at {} ===",
+        run_id, timestamp
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        log_file,
+        "Command: {} run --work-dir {} --results-dir {} {} {}",
+        bv_path,
+        work_subdir.display(),
+        results_subdir.display(),
+        project_path,
+        samplesheet_path.display()
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(log_file).map_err(|e| e.to_string())?;
 
     // Emit initial log lines to UI
-    let _ = window.emit("log-line", format!("=== Run {} started at {} ===", run_id, timestamp));
-    let _ = window.emit("log-line", format!("Command: {} run --work-dir {} --results-dir {} {} {}",
-        bv_path, work_subdir.display(), results_subdir.display(), project_path, samplesheet_path.display()));
+    let _ = window.emit(
+        "log-line",
+        format!("=== Run {} started at {} ===", run_id, timestamp),
+    );
+    let _ = window.emit(
+        "log-line",
+        format!(
+            "Command: {} run --work-dir {} --results-dir {} {} {}",
+            bv_path,
+            work_subdir.display(),
+            results_subdir.display(),
+            project_path,
+            samplesheet_path.display()
+        ),
+    );
     let _ = window.emit("log-line", "");
 
     let mut child = Command::new(&bv_path)
@@ -848,12 +902,10 @@ fn execute_analysis(
             .open(&log_path_clone)
             .ok();
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let _ = window_clone.emit("log-line", line.clone());
-                if let Some(ref mut file) = log_file {
-                    let _ = writeln!(file, "{}", line);
-                }
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = window_clone.emit("log-line", line.clone());
+            if let Some(ref mut file) = log_file {
+                let _ = writeln!(file, "{}", line);
             }
         }
     });
@@ -867,13 +919,11 @@ fn execute_analysis(
             .open(&log_path_clone2)
             .ok();
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let stderr_line = format!("STDERR: {}", line);
-                let _ = window_clone2.emit("log-line", stderr_line.clone());
-                if let Some(ref mut file) = log_file {
-                    let _ = writeln!(file, "{}", stderr_line);
-                }
+        for line in reader.lines().map_while(Result::ok) {
+            let stderr_line = format!("STDERR: {}", line);
+            let _ = window_clone2.emit("log-line", stderr_line.clone());
+            if let Some(ref mut file) = log_file {
+                let _ = writeln!(file, "{}", stderr_line);
             }
         }
     });
@@ -890,13 +940,11 @@ fn execute_analysis(
     conn.execute(
         "UPDATE runs SET status = ?1 WHERE id = ?2",
         params![status_str, run_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     // Write final status to log
-    let mut log_file = fs::OpenOptions::new()
-        .append(true)
-        .open(&log_path)
-        .ok();
+    let mut log_file = fs::OpenOptions::new().append(true).open(&log_path).ok();
     if let Some(ref mut file) = log_file {
         let _ = writeln!(file, "\n=== Analysis {} ===", status_str);
         let _ = writeln!(file, "Exit code: {}", status.code().unwrap_or(-1));
@@ -905,7 +953,10 @@ fn execute_analysis(
     let _ = window.emit("analysis-complete", status_str);
 
     if status.success() {
-        Ok(format!("Analysis completed successfully. Output in: {}", work_dir))
+        Ok(format!(
+            "Analysis completed successfully. Output in: {}",
+            work_dir
+        ))
     } else {
         Err("Analysis failed".to_string())
     }
@@ -946,21 +997,22 @@ fn get_runs(state: tauri::State<AppState>) -> Result<Vec<Run>, String> {
 fn delete_run(state: tauri::State<AppState>, run_id: i64) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
 
-    let work_dir: String = conn.query_row(
-        "SELECT work_dir FROM runs WHERE id = ?1",
-        params![run_id],
-        |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    let work_dir: String = conn
+        .query_row(
+            "SELECT work_dir FROM runs WHERE id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
 
     conn.execute(
         "DELETE FROM run_participants WHERE run_id = ?1",
         params![run_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
-    conn.execute(
-        "DELETE FROM runs WHERE id = ?1",
-        params![run_id],
-    ).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM runs WHERE id = ?1", params![run_id])
+        .map_err(|e| e.to_string())?;
 
     if Path::new(&work_dir).exists() {
         let _ = fs::remove_dir_all(&work_dir);
@@ -976,17 +1028,20 @@ fn delete_participant(state: tauri::State<AppState>, participant_id: i64) -> Res
     conn.execute(
         "DELETE FROM run_participants WHERE participant_id = ?1",
         params![participant_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "DELETE FROM files WHERE participant_id = ?1",
         params![participant_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "DELETE FROM participants WHERE id = ?1",
         params![participant_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -995,10 +1050,8 @@ fn delete_participant(state: tauri::State<AppState>, participant_id: i64) -> Res
 fn delete_file(state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
 
-    conn.execute(
-        "DELETE FROM files WHERE id = ?1",
-        params![file_id],
-    ).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM files WHERE id = ?1", params![file_id])
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -1007,20 +1060,25 @@ fn delete_file(state: tauri::State<AppState>, file_id: i64) -> Result<(), String
 fn get_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
     let conn = state.db.lock().unwrap();
 
-    let work_dir: String = conn.query_row(
-        "SELECT work_dir FROM runs WHERE id = ?1",
-        params![run_id],
-        |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    let work_dir: String = conn
+        .query_row(
+            "SELECT work_dir FROM runs WHERE id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
 
     let log_path = PathBuf::from(&work_dir).join("run.log");
 
     if !log_path.exists() {
-        return Ok("No logs available for this run yet. Logs will appear once the analysis starts.".to_string());
+        return Ok(
+            "No logs available for this run yet. Logs will appear once the analysis starts."
+                .to_string(),
+        );
     }
 
-    let log_content = fs::read_to_string(&log_path)
-        .map_err(|e| format!("Failed to read log file: {}", e))?;
+    let log_content =
+        fs::read_to_string(&log_path).map_err(|e| format!("Failed to read log file: {}", e))?;
 
     Ok(log_content)
 }
@@ -1028,7 +1086,10 @@ fn get_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, St
 #[tauri::command]
 fn get_settings() -> Result<Settings, String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
-    let settings_path = desktop_dir.join("BioVault").join("database").join("settings.json");
+    let settings_path = desktop_dir
+        .join("BioVault")
+        .join("database")
+        .join("settings.json");
 
     if !settings_path.exists() {
         return Ok(Settings::default());
@@ -1037,8 +1098,8 @@ fn get_settings() -> Result<Settings, String> {
     let content = fs::read_to_string(&settings_path)
         .map_err(|e| format!("Failed to read settings: {}", e))?;
 
-    let settings: Settings = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings: {}", e))?;
+    let settings: Settings =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?;
 
     Ok(settings)
 }
@@ -1046,13 +1107,15 @@ fn get_settings() -> Result<Settings, String> {
 #[tauri::command]
 fn save_settings(settings: Settings) -> Result<(), String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
-    let settings_path = desktop_dir.join("BioVault").join("database").join("settings.json");
+    let settings_path = desktop_dir
+        .join("BioVault")
+        .join("database")
+        .join("settings.json");
 
     let json = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-    fs::write(&settings_path, json)
-        .map_err(|e| format!("Failed to write settings: {}", e))?;
+    fs::write(&settings_path, json).map_err(|e| format!("Failed to write settings: {}", e))?;
 
     Ok(())
 }
