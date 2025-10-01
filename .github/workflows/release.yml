@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g., v0.1.0)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build app bundle
+    strategy:
+      matrix:
+        include:
+          - runs-on: macos-latest
+            args: "aarch64-apple-darwin"
+          - runs-on: macos-latest
+            args: "x86_64-apple-darwin"
+          - runs-on: windows-latest
+            args: "x86_64-pc-windows-msvc"
+          - runs-on: ubuntu-22.04
+            args: "x86_64-unknown-linux-gnu"
+    runs-on: ${{ matrix.runs-on }}
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Import signing certificate into keychain
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.SIGNING_CERTIFICATE_P12_DATA }}
+          p12-password: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.args }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@latest
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+            src-tauri/target
+          key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ matrix.args }}-cargo-
+
+      - name: Build app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          mkdir -p artifacts
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}.dmg || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz.sig || true
+
+      - name: Build app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          New-Item -Path artifacts -ItemType Directory -Force
+
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe -ErrorAction SilentlyContinue
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
+
+      - name: Build app (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          mkdir -p artifacts
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          draft: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          artifacts: |
+            ./artifacts/*.app.tar.gz
+            ./artifacts/*.app.tar.gz.sig
+
+            ./artifacts/*.AppImage
+            ./artifacts/*.AppImage.sig
+
+            ./artifacts/*.deb
+            ./artifacts/*.deb.sig
+
+            ./artifacts/*.dmg
+            ./artifacts/*.dmg.sig
+
+            ./artifacts/*.exe
+            ./artifacts/*.exe.sig
+
+            ./artifacts/*.rpm
+            ./artifacts/*.rpm.sig
+
+      - name: Clean up all user keychains
+        if: always() && runner.os == 'macOS'
+        run: |
+          keychains=$(security list-keychains | tr -d '" "')
+
+          echo "$keychains" | while IFS= read -r keychain; do
+            if [[ "$keychain" != "/Library/Keychains/System.keychain" && "$keychain" != "/Library/Keychains/SystemRootCertificates.keychain" ]]; then
+              echo "Deleting keychain: $keychain"
+              security delete-keychain "$keychain"
+            else
+              echo "Skipping system keychain: $keychain"
+            fi
+          done
