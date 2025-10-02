@@ -1085,8 +1085,7 @@ fn get_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, St
 
 #[tauri::command]
 fn get_config_path() -> Result<String, String> {
-    std::env::var("BIOVAULT_HOME")
-        .map_err(|_| "BIOVAULT_HOME not set".to_string())
+    std::env::var("BIOVAULT_HOME").map_err(|_| "BIOVAULT_HOME not set".to_string())
 }
 
 #[tauri::command]
@@ -1181,7 +1180,8 @@ fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
 
-    let biovault_home = args.iter()
+    let biovault_home = args
+        .iter()
         .position(|arg| arg == "--biovault-config")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
