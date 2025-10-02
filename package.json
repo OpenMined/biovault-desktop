@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG}/.biovault tauri dev"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
