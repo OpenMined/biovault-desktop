@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1084,6 +1084,12 @@ fn get_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, St
 }
 
 #[tauri::command]
+fn get_config_path() -> Result<String, String> {
+    std::env::var("BIOVAULT_HOME")
+        .map_err(|_| "BIOVAULT_HOME not set".to_string())
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Settings, String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
     let settings_path = desktop_dir
@@ -1149,10 +1155,53 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
+    let config_path = if let Some(home) = biovault_home {
+        home.join("config.yaml")
+    } else {
+        dirs::home_dir()
+            .map(|h| h.join(".biovault").join("config.yaml"))
+            .unwrap_or_default()
+    };
+
+    if config_path.exists() {
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(email) = yaml.get("email").and_then(|e| e.as_str()) {
+                    return email.to_string();
+                }
+            }
+        }
+    }
+
+    "No Config".to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let desktop_dir = dirs::desktop_dir().expect("Could not find desktop directory");
-    let biovault_dir = desktop_dir.join("BioVault");
+    let args: Vec<String> = std::env::args().collect();
+
+    let biovault_home = args.iter()
+        .position(|arg| arg == "--biovault-config")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("BIOVAULT_HOME").ok().map(PathBuf::from));
+
+    if let Some(home) = &biovault_home {
+        std::env::set_var("BIOVAULT_HOME", home);
+    }
+
+    let email = load_biovault_email(&biovault_home);
+    let window_title = format!("BioVault Desktop - {}", email);
+
+    let biovault_dir = if let Some(home) = &biovault_home {
+        home.clone()
+    } else {
+        dirs::desktop_dir()
+            .expect("Could not find desktop directory")
+            .join("BioVault")
+    };
+
     let database_dir = biovault_dir.join("database");
     let db_path = database_dir.join("app.db");
 
@@ -1170,6 +1219,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
+        .setup(move |app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&window_title);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             search_txt_files,
             suggest_patterns,
@@ -1189,7 +1244,8 @@ pub fn run() {
             delete_file,
             get_settings,
             save_settings,
-            open_folder
+            open_folder,
+            get_config_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

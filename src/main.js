@@ -788,6 +788,9 @@ async function runAnalysis() {
 
 async function loadSettings() {
   try {
+    const configPath = await invoke('get_config_path').catch(() => 'Not set');
+    document.getElementById('config-path-display').textContent = configPath;
+
     const settings = await invoke('get_settings');
     document.getElementById('setting-docker').value = settings.docker_path || '';
     document.getElementById('setting-java').value = settings.java_path || '';
