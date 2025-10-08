@@ -1,12 +1,13 @@
-use regex::Regex;
+use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
 
@@ -31,13 +32,13 @@ impl Default for Settings {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct PatternSuggestion {
     pattern: String,
     description: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct ExtensionCount {
     extension: String,
     count: usize,
@@ -58,25 +59,48 @@ struct FileConflict {
     new_hash: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Participant {
     id: i64,
     participant_id: String,
     created_at: String,
+    file_count: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct FileRecord {
     id: i64,
-    participant_id: i64,
-    participant_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    participant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    participant_name: Option<String>,
     file_path: String,
     file_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grch_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    row_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chromosome_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inferred_sex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    processing_error: Option<String>,
     created_at: String,
     updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Project {
     id: i64,
     name: String,
@@ -99,6 +123,7 @@ struct Run {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ProjectYaml {
     name: String,
     author: String,
@@ -109,30 +134,79 @@ struct ProjectYaml {
 
 struct AppState {
     db: Mutex<Connection>,
+    queue_processor_paused: Arc<AtomicBool>,
+}
+
+/// Helper to run bv CLI commands and parse JSON output
+fn run_bv_command(args: &[&str]) -> Result<serde_json::Value, String> {
+    // Priority: BIOVAULT_PATH env var > settings > default "bv"
+    let bv_path = if let Ok(env_path) = env::var("BIOVAULT_PATH") {
+        env_path
+    } else {
+        let settings = get_settings()?;
+        if settings.biovault_path.is_empty() {
+            "bv".to_string()
+        } else {
+            settings.biovault_path
+        }
+    };
+
+    let full_command = format!("{} {}", bv_path, args.join(" "));
+    eprintln!("🔧 Running bv command: {}", full_command);
+
+    let output = std::process::Command::new(&bv_path)
+        .args(args)
+        .env(
+            "BIOVAULT_HOME",
+            env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap()
+                    .join(".biovault")
+                    .to_string_lossy()
+                    .to_string()
+            }),
+        )
+        .output()
+        .map_err(|e| format!("Failed to execute bv command: {}", e))?;
+
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("❌ bv command failed: {}", stderr);
+
+        // Log the failed command
+        let log_entry = LogEntry {
+            timestamp: timestamp.clone(),
+            command: full_command.clone(),
+            output: None,
+            error: Some(stderr.to_string()),
+        };
+        let _ = append_log(&log_entry);
+
+        return Err(format!("bv command failed: {}", stderr));
+    }
+
+    let json_str = String::from_utf8(output.stdout)
+        .map_err(|e| format!("Invalid UTF-8 in bv output: {}", e))?;
+
+    eprintln!("📦 bv response: {}", &json_str[..json_str.len().min(200)]);
+
+    // Log the successful command
+    let log_entry = LogEntry {
+        timestamp,
+        command: full_command,
+        output: Some(json_str.clone()),
+        error: None,
+    };
+    let _ = append_log(&log_entry);
+
+    serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse bv JSON output: {}", e))
 }
 
 fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            participant_id TEXT UNIQUE NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            participant_id INTEGER NOT NULL,
-            file_path TEXT UNIQUE NOT NULL,
-            file_hash TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (participant_id) REFERENCES participants(id)
-        )",
-        [],
-    )?;
+    // NOTE: Files and Participants tables are managed by CLI via biovault.db
+    // Desktop only manages its own tables: projects, runs, run_participants
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects (
@@ -165,9 +239,19 @@ fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
             run_id INTEGER NOT NULL,
             participant_id INTEGER NOT NULL,
             FOREIGN KEY (run_id) REFERENCES runs(id),
-            FOREIGN KEY (participant_id) REFERENCES participants(id),
+            -- Note: participant_id references participants(id) managed by CLI
             PRIMARY KEY (run_id, participant_id)
         )",
+        [],
+    )?;
+
+    // Create indexes for desktop-only tables
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_project_id ON runs(project_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)",
         [],
     )?;
 
@@ -176,39 +260,57 @@ fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 #[tauri::command]
 fn get_extensions(path: String) -> Result<Vec<ExtensionCount>, String> {
-    let mut ext_counts: HashMap<String, usize> = HashMap::new();
+    eprintln!("🔍 get_extensions called for path: {}", path);
 
-    for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if let Some(ext_str) = ext.to_str() {
-                    *ext_counts.entry(format!(".{}", ext_str)).or_insert(0) += 1;
-                }
-            }
-        }
-    }
+    // Use CLI to scan directory
+    let result = run_bv_command(&["files", "scan", &path, "--format", "json"])?;
 
-    let mut extensions: Vec<ExtensionCount> = ext_counts
-        .into_iter()
-        .map(|(extension, count)| ExtensionCount { extension, count })
-        .collect();
+    let data = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
 
-    extensions.sort_by(|a, b| b.count.cmp(&a.count));
+    let extensions_array = data.get("extensions").ok_or_else(|| {
+        let err = format!("Missing 'extensions' field in data: {:?}", data);
+        eprintln!("❌ {}", err);
+        err
+    })?;
 
+    // Parse CLI output: { extension, count, total_size }
+    // We only need extension and count
+    let extensions: Vec<ExtensionCount> = serde_json::from_value(extensions_array.clone())
+        .map_err(|e| {
+            let err = format!(
+                "Failed to parse extensions from {:?}: {}",
+                extensions_array, e
+            );
+            eprintln!("❌ {}", err);
+            err
+        })?;
+
+    eprintln!("✅ Found {} extensions", extensions.len());
     Ok(extensions)
 }
 
 #[tauri::command]
-fn search_txt_files(path: String, extension: String) -> Result<Vec<String>, String> {
+fn search_txt_files(path: String, extensions: Vec<String>) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
-    let ext = extension.trim_start_matches('.');
+
+    // Normalize extensions (remove leading dots)
+    let normalized_exts: Vec<String> = extensions
+        .iter()
+        .map(|ext| ext.trim_start_matches('.').to_string())
+        .collect();
 
     for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             if let Some(file_ext) = entry.path().extension() {
-                if file_ext == ext {
-                    if let Some(path_str) = entry.path().to_str() {
-                        files.push(path_str.to_string());
+                if let Some(ext_str) = file_ext.to_str() {
+                    if normalized_exts.contains(&ext_str.to_string()) {
+                        if let Some(path_str) = entry.path().to_str() {
+                            files.push(path_str.to_string());
+                        }
                     }
                 }
             }
@@ -220,476 +322,564 @@ fn search_txt_files(path: String, extension: String) -> Result<Vec<String>, Stri
 
 #[tauri::command]
 fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String> {
+    eprintln!("🔍 suggest_patterns called with {} files", files.len());
+
     if files.is_empty() {
         return Ok(vec![]);
     }
 
-    let mut suggestions = Vec::new();
-    let filenames: Vec<String> = files
-        .iter()
-        .filter_map(|f| Path::new(f).file_name())
-        .filter_map(|n| n.to_str())
-        .map(|s| s.to_string())
-        .collect();
+    // Extract directory and extension from first file
+    let first_file = Path::new(&files[0]);
+    let dir = first_file
+        .parent()
+        .and_then(|p| p.to_str())
+        .ok_or("Invalid file path")?;
 
-    if filenames.is_empty() {
-        return Ok(vec![]);
-    }
+    let extension = first_file
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or("Files must have an extension")?;
+    let ext_with_dot = format!(".{}", extension);
 
-    let first = &filenames[0];
+    eprintln!(
+        "📂 Analyzing directory: {} with extension: {}",
+        dir, ext_with_dot
+    );
 
-    // Pattern 1: case_XXXX_ pattern
-    if first.contains("case_") {
-        let re = Regex::new(r"case_(\d+)_").unwrap();
-        if re.is_match(first) {
-            suggestions.push(PatternSuggestion {
-                pattern: "case_{id}_*".to_string(),
-                description: "Case ID pattern".to_string(),
-            });
-        }
-    }
+    // Use CLI to suggest patterns
+    let result = run_bv_command(&[
+        "files",
+        "suggest-patterns",
+        dir,
+        "--ext",
+        &ext_with_dot,
+        "--format",
+        "json",
+    ])?;
 
-    // Pattern 2: XXXX_X_X_ pattern (numbers at start)
-    let re_start = Regex::new(r"^(\d+)_").unwrap();
-    if re_start.is_match(first) {
-        suggestions.push(PatternSuggestion {
-            pattern: "{id}_X_X_*".to_string(),
-            description: "Leading ID pattern".to_string(),
-        });
-    }
+    let data = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
 
-    // Pattern 3: Generic number sequences
-    let re_numbers = Regex::new(r"\d{3,}").unwrap();
-    if let Some(mat) = re_numbers.find(first) {
-        let start = mat.start();
-        let end = mat.end();
-        let before = &first[..start];
-        let after = &first[end..];
-        suggestions.push(PatternSuggestion {
-            pattern: format!("{}{{id}}{}", before, after),
-            description: "Numeric ID pattern".to_string(),
-        });
-    }
+    let suggestions_array = data.get("suggestions").ok_or_else(|| {
+        let err = format!("Missing 'suggestions' field in data: {:?}", data);
+        eprintln!("❌ {}", err);
+        err
+    })?;
 
+    // Parse CLI output: { pattern, description, example, sample_extractions }
+    // We only need pattern and description
+    let suggestions: Vec<PatternSuggestion> = serde_json::from_value(suggestions_array.clone())
+        .map_err(|e| {
+            let err = format!(
+                "Failed to parse suggestions from {:?}: {}",
+                suggestions_array, e
+            );
+            eprintln!("❌ {}", err);
+            err
+        })?;
+
+    eprintln!("✅ Found {} pattern suggestions", suggestions.len());
     Ok(suggestions)
 }
 
-fn calculate_file_hash(path: &str) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 8192];
-
-    loop {
-        let bytes_read = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
+/// Find the common root directory of multiple paths
+fn find_common_root(paths: &[PathBuf]) -> Option<PathBuf> {
+    if paths.is_empty() {
+        return None;
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    // Start with the parent directory of the first file
+    let mut common = paths[0].parent()?.to_path_buf();
+
+    // For each other path, find the common ancestor
+    for path in &paths[1..] {
+        let path_parent = path.parent()?;
+
+        // Keep going up until we find a common ancestor
+        while !path_parent.starts_with(&common) {
+            common = common.parent()?.to_path_buf();
+        }
+    }
+
+    Some(common)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct FileMetadata {
+    participant_id: Option<String>,
+    data_type: Option<String>,
+    source: Option<String>,
+    grch_version: Option<String>,
+    row_count: Option<i64>,
+    chromosome_count: Option<i64>,
+    inferred_sex: Option<String>,
 }
 
 #[tauri::command]
-fn import_files(
-    state: tauri::State<AppState>,
-    files: Vec<String>,
-    pattern: String,
-    file_id_map: std::collections::HashMap<String, String>,
+async fn import_files_with_metadata(
+    _state: tauri::State<'_, AppState>,
+    file_metadata: std::collections::HashMap<String, FileMetadata>,
 ) -> Result<ImportResult, String> {
-    let conn = state.db.lock().unwrap();
-    let mut conflicts = Vec::new();
-    let mut imported_count = 0;
-    let mut skipped_count = 0;
-    let mut imported_file_ids = Vec::new();
+    eprintln!(
+        "🔍 import_files_with_metadata called with {} files",
+        file_metadata.len()
+    );
 
-    for file_path in files {
-        // Try to get participant ID from map first, then fall back to pattern extraction
-        let participant_id = if let Some(id) = file_id_map.get(&file_path) {
-            id.clone()
-        } else {
-            let filename = Path::new(&file_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .ok_or("Invalid filename")?;
-
-            extract_id_from_filename(filename, &pattern)
-                .ok_or("Could not extract participant ID")?
-        };
-
-        let file_hash = calculate_file_hash(&file_path)?;
-
-        let db_participant_id: i64 = match conn.query_row(
-            "SELECT id FROM participants WHERE participant_id = ?1",
-            params![&participant_id],
-            |row| row.get(0),
-        ) {
-            Ok(id) => id,
-            Err(_) => {
-                conn.execute(
-                    "INSERT INTO participants (participant_id) VALUES (?1)",
-                    params![&participant_id],
-                )
-                .map_err(|e| e.to_string())?;
-                conn.last_insert_rowid()
-            }
-        };
-
-        match conn.query_row(
-            "SELECT file_hash FROM files WHERE file_path = ?1",
-            params![&file_path],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(existing_hash) => {
-                if existing_hash == file_hash {
-                    skipped_count += 1;
-                } else {
-                    conflicts.push(FileConflict {
-                        path: file_path.clone(),
-                        existing_hash,
-                        new_hash: file_hash,
-                    });
-                }
-            }
-            Err(_) => {
-                conn.execute(
-                    "INSERT INTO files (participant_id, file_path, file_hash) VALUES (?1, ?2, ?3)",
-                    params![db_participant_id, &file_path, &file_hash],
-                )
-                .map_err(|e| e.to_string())?;
-                imported_file_ids.push(conn.last_insert_rowid());
-                imported_count += 1;
-            }
-        }
+    if file_metadata.is_empty() {
+        return Err("No files selected".to_string());
     }
 
-    if !conflicts.is_empty() {
-        return Ok(ImportResult {
-            success: false,
-            message: format!("Found {} conflicts", conflicts.len()),
-            conflicts,
-            imported_files: vec![],
-        });
+    // Create temporary CSV file
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let mut temp_file =
+        NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    // Write CSV header
+    writeln!(
+        temp_file,
+        "file_path,participant_id,data_type,source,grch_version,row_count,chromosome_count,inferred_sex"
+    )
+    .map_err(|e| format!("Failed to write CSV header: {}", e))?;
+
+    // Write CSV rows
+    for (file_path, metadata) in &file_metadata {
+        writeln!(
+            temp_file,
+            "{},{},{},{},{},{},{},{}",
+            file_path,
+            metadata.participant_id.as_deref().unwrap_or(""),
+            metadata.data_type.as_deref().unwrap_or(""),
+            metadata.source.as_deref().unwrap_or(""),
+            metadata.grch_version.as_deref().unwrap_or(""),
+            metadata
+                .row_count
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            metadata
+                .chromosome_count
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            metadata.inferred_sex.as_deref().unwrap_or("")
+        )
+        .map_err(|e| format!("Failed to write CSV row: {}", e))?;
     }
 
-    let mut imported_files = Vec::new();
-    for file_id in imported_file_ids {
-        let file = conn.query_row(
-            "SELECT f.id, f.participant_id, p.participant_id, f.file_path, f.file_hash, f.created_at, f.updated_at
-             FROM files f
-             JOIN participants p ON f.participant_id = p.id
-             WHERE f.id = ?1",
-            params![file_id],
-            |row| {
-                Ok(FileRecord {
-                    id: row.get(0)?,
-                    participant_id: row.get(1)?,
-                    participant_name: row.get(2)?,
-                    file_path: row.get(3)?,
-                    file_hash: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
-                })
-            },
-        ).map_err(|e| e.to_string())?;
-        imported_files.push(file);
-    }
+    temp_file
+        .flush()
+        .map_err(|e| format!("Failed to flush CSV: {}", e))?;
+
+    // Get the temp file path
+    let csv_path = temp_file.path().to_str().ok_or("Invalid temp file path")?;
+    eprintln!("📝 Created temp CSV: {}", csv_path);
+
+    // Call import-csv command
+    let result = run_bv_command(&["files", "import-csv", csv_path, "--format", "json"])?;
+
+    eprintln!("✅ Import CSV result: {:?}", result);
+
+    // Parse the result
+    let imported_count = result
+        .get("data")
+        .and_then(|d| d.get("imported"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let _skipped_count = result
+        .get("data")
+        .and_then(|d| d.get("skipped"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    eprintln!("✅ Imported {} files successfully", imported_count);
+
+    // Fetch imported file records
+    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
+    let files_data = files_result
+        .get("data")
+        .and_then(|d| d.get("files"))
+        .ok_or("Missing files data")?;
+    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
+        .map_err(|e| format!("Failed to parse files: {}", e))?;
+
+    // Filter to just the files we imported
+    let imported_file_paths: Vec<String> = file_metadata.keys().cloned().collect();
+    let imported_files: Vec<FileRecord> = all_files
+        .into_iter()
+        .filter(|f| imported_file_paths.contains(&f.file_path))
+        .collect();
 
     Ok(ImportResult {
         success: true,
-        message: format!(
-            "Imported {} files, skipped {} duplicates",
-            imported_count, skipped_count
-        ),
-        conflicts: vec![],
+        message: format!("Successfully imported {} files", imported_count),
+        conflicts: Vec::new(),
         imported_files,
     })
 }
 
-fn extract_id_from_filename(filename: &str, pattern: &str) -> Option<String> {
-    if !pattern.contains("{id}") {
-        return None;
+#[tauri::command]
+async fn import_files_pending(
+    _state: tauri::State<'_, AppState>,
+    file_metadata: std::collections::HashMap<String, FileMetadata>,
+) -> Result<ImportResult, String> {
+    eprintln!(
+        "🚀 import_files_pending called with {} files (fast import)",
+        file_metadata.len()
+    );
+
+    if file_metadata.is_empty() {
+        return Err("No files selected".to_string());
     }
 
-    let regex_pattern = pattern
-        .replace(".", "\\.")
-        .replace("*", ".*")
-        .replace("{id}", "(\\d+)");
+    // Create temporary CSV file
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
-    let re = Regex::new(&regex_pattern).ok()?;
-    let captures = re.captures(filename)?;
-    captures.get(1).map(|m| m.as_str().to_string())
+    let mut temp_file =
+        NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    // Write CSV header (minimal - just what's needed for pending import)
+    writeln!(
+        temp_file,
+        "file_path,participant_id,data_type,source,grch_version"
+    )
+    .map_err(|e| format!("Failed to write CSV header: {}", e))?;
+
+    eprintln!("📊 Total files to write to CSV: {}", file_metadata.len());
+
+    // Write CSV rows
+    for (file_path, metadata) in &file_metadata {
+        eprintln!(
+            "📝 CSV row - file: {}, participant_id: {:?}, data_type: {:?}, source: {:?}, grch: {:?}",
+            file_path,
+            metadata.participant_id,
+            metadata.data_type,
+            metadata.source,
+            metadata.grch_version
+        );
+        writeln!(
+            temp_file,
+            "{},{},{},{},{}",
+            file_path,
+            metadata.participant_id.as_deref().unwrap_or(""),
+            metadata.data_type.as_deref().unwrap_or("Unknown"),
+            metadata.source.as_deref().unwrap_or(""),
+            metadata.grch_version.as_deref().unwrap_or("")
+        )
+        .map_err(|e| format!("Failed to write CSV row: {}", e))?;
+    }
+
+    temp_file
+        .flush()
+        .map_err(|e| format!("Failed to flush CSV: {}", e))?;
+
+    // Get the temp file path
+    let csv_path = temp_file.path().to_str().ok_or("Invalid temp file path")?;
+    eprintln!("📝 Created temp CSV: {}", csv_path);
+
+    // Read and display CSV contents for debugging
+    if let Ok(contents) = std::fs::read_to_string(csv_path) {
+        eprintln!("📄 CSV Contents:\n{}", contents);
+    }
+
+    // Call import-pending command (fast import - no hashing)
+    let result = run_bv_command(&["files", "import-pending", csv_path, "--format", "json"])?;
+
+    eprintln!("✅ Import pending result: {:?}", result);
+
+    // Parse the result
+    let imported_count = result
+        .get("data")
+        .and_then(|d| d.get("imported"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    eprintln!("✅ Added {} files to queue", imported_count);
+
+    Ok(ImportResult {
+        success: true,
+        message: format!("Added {} files to queue for processing", imported_count),
+        conflicts: Vec::new(),
+        imported_files: Vec::new(), // Will be populated when queue is processed
+    })
 }
 
 #[tauri::command]
-fn get_participants(state: tauri::State<AppState>) -> Result<Vec<Participant>, String> {
-    let conn = state.db.lock().unwrap();
-    let mut stmt = conn
-        .prepare("SELECT id, participant_id, created_at FROM participants ORDER BY created_at DESC")
-        .map_err(|e| e.to_string())?;
+async fn process_queue(
+    _state: tauri::State<'_, AppState>,
+    limit: usize,
+) -> Result<serde_json::Value, String> {
+    eprintln!("⚙️ process_queue called with limit: {}", limit);
 
-    let participants = stmt
-        .query_map([], |row| {
-            Ok(Participant {
-                id: row.get(0)?,
-                participant_id: row.get(1)?,
-                created_at: row.get(2)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    // Call process-queue command
+    let result = run_bv_command(&[
+        "files",
+        "process-queue",
+        "--limit",
+        &limit.to_string(),
+        "--format",
+        "json",
+    ])?;
 
+    eprintln!("✅ Process queue result: {:?}", result);
+
+    Ok(result)
+}
+
+#[tauri::command]
+fn pause_queue_processor(state: tauri::State<AppState>) -> Result<bool, String> {
+    state.queue_processor_paused.store(true, Ordering::SeqCst);
+    Ok(true)
+}
+
+#[tauri::command]
+fn resume_queue_processor(state: tauri::State<AppState>) -> Result<bool, String> {
+    state.queue_processor_paused.store(false, Ordering::SeqCst);
+    Ok(true)
+}
+
+#[tauri::command]
+fn get_queue_processor_status(state: tauri::State<AppState>) -> Result<bool, String> {
+    Ok(!state.queue_processor_paused.load(Ordering::SeqCst))
+}
+
+#[tauri::command]
+async fn import_files(
+    _state: tauri::State<'_, AppState>,
+    files: Vec<String>,
+    pattern: String,
+    file_id_map: std::collections::HashMap<String, String>,
+) -> Result<ImportResult, String> {
+    eprintln!(
+        "🔍 import_files called with {} files, pattern: {}",
+        files.len(),
+        pattern
+    );
+
+    if files.is_empty() {
+        return Err("No files selected".to_string());
+    }
+
+    // Find common root directory of all files
+    let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+    let common_root = find_common_root(&paths).ok_or("Could not find common root directory")?;
+
+    // Get all unique extensions from selected files
+    let mut extensions: HashSet<String> = HashSet::new();
+    for file_path in &files {
+        if let Some(ext) = Path::new(file_path).extension().and_then(|e| e.to_str()) {
+            extensions.insert(format!(".{}", ext));
+        }
+    }
+
+    if extensions.is_empty() {
+        return Err("No file extensions found".to_string());
+    }
+
+    eprintln!(
+        "📥 Importing from common root: {} with {} extension(s), {} total files",
+        common_root.display(),
+        extensions.len(),
+        files.len()
+    );
+
+    // Import recursively from common root for each extension
+    for ext in &extensions {
+        eprintln!("📂 Importing files with extension: {}", ext);
+
+        // Build import command
+        let mut args = vec![
+            "files",
+            "import",
+            common_root.to_str().unwrap(),
+            "--ext",
+            ext.as_str(),
+            "--recursive",
+            "--non-interactive",
+            "--format",
+            "json",
+        ];
+
+        // Add pattern if provided
+        let pattern_arg;
+        if !pattern.is_empty() {
+            pattern_arg = pattern.clone();
+            args.push("--pattern");
+            args.push(&pattern_arg);
+        }
+
+        // Run import
+        let result = run_bv_command(&args)?;
+        eprintln!("✅ Import result: {:?}", result);
+    }
+
+    // Link files to participants in bulk if needed
+    if !file_id_map.is_empty() {
+        eprintln!(
+            "🔗 Bulk linking {} files to participants",
+            file_id_map.len()
+        );
+
+        // Serialize the file_id_map to JSON
+        let json_map = serde_json::to_string(&file_id_map)
+            .map_err(|e| format!("Failed to serialize file map: {}", e))?;
+
+        // Call bulk link command with JSON
+        let _link_result = run_bv_command(&["files", "link-bulk", &json_map, "--format", "json"])?;
+
+        eprintln!("✅ Bulk link complete");
+    }
+
+    // Fetch files to get updated participant links
+    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
+    let files_data = files_result
+        .get("data")
+        .and_then(|d| d.get("files"))
+        .ok_or("Missing files data")?;
+    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
+        .map_err(|e| format!("Failed to parse files: {}", e))?;
+
+    // Filter to just the files we imported
+    let imported_files: Vec<FileRecord> = all_files
+        .into_iter()
+        .filter(|f| files.contains(&f.file_path))
+        .collect();
+
+    eprintln!("✅ Imported {} files successfully", imported_files.len());
+
+    Ok(ImportResult {
+        success: true,
+        message: format!("Successfully imported {} files", imported_files.len()),
+        conflicts: Vec::new(),
+        imported_files,
+    })
+}
+
+#[tauri::command]
+fn get_participants(_state: tauri::State<AppState>) -> Result<Vec<Participant>, String> {
+    eprintln!("🔍 get_participants called");
+
+    let result = run_bv_command(&["participants", "list", "--format", "json"])?;
+
+    let data = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    let participants: Vec<Participant> = serde_json::from_value(data.clone()).map_err(|e| {
+        let err = format!("Failed to parse participants from {:?}: {}", data, e);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    eprintln!("✅ Returning {} participants", participants.len());
     Ok(participants)
 }
 
 #[tauri::command]
-fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
-    let conn = state.db.lock().unwrap();
-    let mut stmt = conn
-        .prepare(
-            "SELECT f.id, f.participant_id, p.participant_id, f.file_path, f.file_hash, f.created_at, f.updated_at
-             FROM files f
-             JOIN participants p ON f.participant_id = p.id
-             ORDER BY f.created_at DESC"
-        )
-        .map_err(|e| e.to_string())?;
+fn get_files(_state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
+    eprintln!("🔍 get_files called");
 
-    let files = stmt
-        .query_map([], |row| {
-            Ok(FileRecord {
-                id: row.get(0)?,
-                participant_id: row.get(1)?,
-                participant_name: row.get(2)?,
-                file_path: row.get(3)?,
-                file_hash: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    let result = run_bv_command(&["files", "list", "--format", "json"])?;
 
+    let data_obj = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    let files_array = data_obj.get("files").ok_or_else(|| {
+        let err = format!("Missing 'files' field in data: {:?}", data_obj);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    let files: Vec<FileRecord> = serde_json::from_value(files_array.clone()).map_err(|e| {
+        let err = format!("Failed to parse files from {:?}: {}", files_array, e);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    eprintln!("✅ Returning {} files", files.len());
     Ok(files)
-}
-
-fn github_url_to_raw(url: &str) -> String {
-    url.replace("github.com", "raw.githubusercontent.com")
-        .replace("/blob/", "/")
-}
-
-fn download_file(url: &str) -> Result<Vec<u8>, String> {
-    use std::time::Duration;
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| format!("Failed to download {}: {}", url, e))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Failed to download {}: HTTP {}",
-            url,
-            response.status()
-        ));
-    }
-
-    response
-        .bytes()
-        .map(|b| b.to_vec())
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn import_project(
-    state: tauri::State<AppState>,
+    _state: tauri::State<AppState>,
     url: String,
     overwrite: bool,
 ) -> Result<Project, String> {
-    println!("Importing project from: {}", url);
-    let raw_url = github_url_to_raw(&url);
-    println!("Raw URL: {}", raw_url);
+    eprintln!("🔍 import_project called with URL: {}", url);
 
-    println!("Downloading project.yaml...");
-    let yaml_content = download_file(&raw_url)?;
-    let yaml_str = String::from_utf8(yaml_content).map_err(|e| e.to_string())?;
+    // Build arguments
+    let mut args = vec!["project", "import", &url, "--format", "json"];
 
-    println!("Parsing YAML...");
-    let project_yaml: ProjectYaml =
-        serde_yaml::from_str(&yaml_str).map_err(|e| format!("Failed to parse YAML: {}", e))?;
-    println!("Project name: {}", project_yaml.name);
-
-    let conn = state.db.lock().unwrap();
-
-    println!("Checking for existing project...");
-    let existing_project: Result<i64, _> = conn.query_row(
-        "SELECT id FROM projects WHERE name = ?1",
-        params![&project_yaml.name],
-        |row| row.get(0),
-    );
-
-    if existing_project.is_ok() && !overwrite {
-        return Err(format!("Project '{}' already exists", project_yaml.name));
-    }
-
-    println!("Creating project directory...");
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
-    let biovault_dir = desktop_dir.join("BioVault").join("projects");
-    let project_dir = biovault_dir.join(&project_yaml.name);
-
-    if project_dir.exists() {
-        fs::remove_dir_all(&project_dir).map_err(|e| e.to_string())?;
-    }
-
-    fs::create_dir_all(&project_dir).map_err(|e| e.to_string())?;
-
-    let yaml_file_path = project_dir.join("project.yaml");
-    fs::write(&yaml_file_path, yaml_str).map_err(|e| e.to_string())?;
-
-    println!("Downloading assets...");
-    let base_url = raw_url
-        .rsplit_once('/')
-        .map(|(base, _)| base)
-        .ok_or("Invalid URL")?;
-    let assets_url = format!("{}/assets", base_url);
-
-    let assets_dir = project_dir.join("assets");
-    fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
-
-    for asset in &project_yaml.assets {
-        println!("Downloading asset: {}", asset);
-        let asset_url = format!("{}/{}", assets_url, asset);
-        let asset_content = download_file(&asset_url)?;
-        let asset_path = assets_dir.join(asset);
-
-        // Create parent directories if asset has a path like "bioscript/classifier.py"
-        if let Some(parent) = asset_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create asset directory: {}", e))?;
-        }
-
-        let mut file = File::create(&asset_path)
-            .map_err(|e| format!("Failed to create asset file {}: {}", asset, e))?;
-        file.write_all(&asset_content)
-            .map_err(|e| format!("Failed to write asset {}: {}", asset, e))?;
-        println!("Asset downloaded: {}", asset);
-    }
-
-    println!("Downloading workflow...");
-    let workflow_url = format!("{}/{}", base_url, project_yaml.workflow);
-    let workflow_content = download_file(&workflow_url)?;
-    let workflow_path = project_dir.join(&project_yaml.workflow);
-    let mut file = File::create(&workflow_path).map_err(|e| e.to_string())?;
-    file.write_all(&workflow_content)
-        .map_err(|e| e.to_string())?;
-    println!("Workflow downloaded");
-
-    println!("Saving to database...");
-    if let Ok(existing_id) = existing_project {
-        println!("Updating existing project with id: {}", existing_id);
-        conn.execute(
-            "UPDATE projects SET author = ?1, workflow = ?2, template = ?3, project_path = ?4 WHERE id = ?5",
-            params![
-                &project_yaml.author,
-                &project_yaml.workflow,
-                &project_yaml.template,
-                project_dir.to_str().unwrap(),
-                existing_id
-            ],
-        ).map_err(|e| e.to_string())?;
+    let overwrite_flag = if overwrite {
+        args.push("--overwrite");
+        "--overwrite"
     } else {
-        println!("Inserting new project");
-        conn.execute(
-            "INSERT INTO projects (name, author, workflow, template, project_path) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                &project_yaml.name,
-                &project_yaml.author,
-                &project_yaml.workflow,
-                &project_yaml.template,
-                project_dir.to_str().unwrap()
-            ],
-        ).map_err(|e| format!("Failed to insert project: {}", e))?;
-    }
-
-    let project_id = if let Ok(id) = existing_project {
-        id
-    } else {
-        conn.last_insert_rowid()
+        ""
     };
 
-    println!("Project ID: {}", project_id);
-    println!("Fetching project from database...");
-    let project = conn.query_row(
-        "SELECT id, name, author, workflow, template, project_path, created_at FROM projects WHERE id = ?1",
-        params![project_id],
-        |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                author: row.get(2)?,
-                workflow: row.get(3)?,
-                template: row.get(4)?,
-                project_path: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        },
-    ).map_err(|e| format!("Failed to fetch project: {}", e))?;
+    if overwrite {
+        args.push(overwrite_flag);
+    }
 
-    println!("Import complete! Returning project: {}", project.name);
+    let result = run_bv_command(&args)?;
+
+    let data = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    let project: Project = serde_json::from_value(data.clone()).map_err(|e| {
+        let err = format!("Failed to parse project from {:?}: {}", data, e);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    eprintln!("✅ Project imported: {}", project.name);
     Ok(project)
 }
 
 #[tauri::command]
-fn get_projects(state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
-    let conn = state.db.lock().unwrap();
-    let mut stmt = conn
-        .prepare("SELECT id, name, author, workflow, template, project_path, created_at FROM projects ORDER BY created_at DESC")
-        .map_err(|e| e.to_string())?;
+fn get_projects(_state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
+    eprintln!("🔍 get_projects called");
 
-    let projects = stmt
-        .query_map([], |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                author: row.get(2)?,
-                workflow: row.get(3)?,
-                template: row.get(4)?,
-                project_path: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    let result = run_bv_command(&["project", "list", "--format", "json"])?;
 
+    let data = result.get("data").ok_or_else(|| {
+        let err = format!("Missing 'data' field in response: {:?}", result);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    let projects: Vec<Project> = serde_json::from_value(data.clone()).map_err(|e| {
+        let err = format!("Failed to parse projects from {:?}: {}", data, e);
+        eprintln!("❌ {}", err);
+        err
+    })?;
+
+    eprintln!("✅ Returning {} projects", projects.len());
     Ok(projects)
 }
 
 #[tauri::command]
-fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
-    let conn = state.db.lock().unwrap();
+fn delete_project(_state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
+    eprintln!("🔍 delete_project called with ID: {}", project_id);
 
-    let project_path: String = conn
-        .query_row(
-            "SELECT project_path FROM projects WHERE id = ?1",
-            params![project_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
+    // Use project ID as identifier
+    let id_str = project_id.to_string();
+    let result = run_bv_command(&["project", "delete", &id_str, "--format", "json"])?;
 
-    if Path::new(&project_path).exists() {
-        let _ = fs::remove_dir_all(&project_path);
-    }
-
-    conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])
-        .map_err(|e| e.to_string())?;
-
+    eprintln!("✅ Project deleted: {:?}", result);
     Ok(())
 }
 
@@ -717,8 +907,23 @@ fn start_analysis(
         )
         .map_err(|e| e.to_string())?;
 
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
-    let biovault_dir = desktop_dir.join("BioVault");
+    // Use BIOVAULT_HOME environment variable or default (consistent with CLI)
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        // Check for existing ~/.biovault (backward compatibility)
+        let home_dir = dirs::home_dir().expect("Could not determine home directory");
+        let legacy_biovault = home_dir.join(".biovault");
+        if legacy_biovault.join("config.yaml").exists() {
+            legacy_biovault.to_string_lossy().to_string()
+        } else {
+            // Default to Desktop/BioVault (new default)
+            dirs::desktop_dir()
+                .unwrap_or_else(|| home_dir.join("Desktop"))
+                .join("BioVault")
+                .to_string_lossy()
+                .to_string()
+        }
+    });
+    let biovault_dir = PathBuf::from(biovault_home);
     let runs_dir = biovault_dir.join("runs");
 
     let timestamp = SystemTime::now()
@@ -734,20 +939,50 @@ fn start_analysis(
 
     let mut csv_content = String::from("participant_id,genotype_file_path\n");
 
-    for participant_id in &participant_ids {
-        let (pid, file_path): (String, String) = conn
-            .query_row(
-                "SELECT p.participant_id, f.file_path
-             FROM participants p
-             JOIN files f ON f.participant_id = p.id
-             WHERE p.id = ?1
-             LIMIT 1",
-                params![participant_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|e| e.to_string())?;
+    // Get all files via CLI
+    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
+    let files_data = files_result
+        .get("data")
+        .and_then(|d| d.get("files"))
+        .ok_or("Missing files data")?;
+    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
+        .map_err(|e| format!("Failed to parse files: {}", e))?;
 
-        csv_content.push_str(&format!("{},{}\n", pid, file_path));
+    // Get all participants via CLI
+    let participants_result = run_bv_command(&["participants", "list", "--format", "json"])?;
+    let participants_data = participants_result
+        .get("data")
+        .ok_or("Missing participants data")?;
+    let all_participants: Vec<Participant> = serde_json::from_value(participants_data.clone())
+        .map_err(|e| format!("Failed to parse participants: {}", e))?;
+
+    for participant_id in &participant_ids {
+        // Find participant by database ID
+        let participant = all_participants
+            .iter()
+            .find(|p| p.id == *participant_id)
+            .ok_or_else(|| format!("Participant with id {} not found", participant_id))?;
+
+        // Find first file for this participant
+        let file = all_files
+            .iter()
+            .find(|f| {
+                f.participant_id
+                    .as_ref()
+                    .map(|pid| pid == participant.participant_id.as_str())
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                format!(
+                    "No files found for participant {}",
+                    participant.participant_id
+                )
+            })?;
+
+        csv_content.push_str(&format!(
+            "{},{}\n",
+            participant.participant_id, file.file_path
+        ));
     }
 
     let samplesheet_path = work_dir.join("samplesheet.csv");
@@ -800,12 +1035,16 @@ fn execute_analysis(
     use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Load settings to get bv path
-    let settings = get_settings()?;
-    let bv_path = if settings.biovault_path.is_empty() {
-        "bv".to_string()
+    // Priority: BIOVAULT_PATH env var > settings > default "bv"
+    let bv_path = if let Ok(env_path) = env::var("BIOVAULT_PATH") {
+        env_path
     } else {
-        settings.biovault_path
+        let settings = get_settings()?;
+        if settings.biovault_path.is_empty() {
+            "bv".to_string()
+        } else {
+            settings.biovault_path
+        }
     };
 
     let conn = state.db.lock().unwrap();
@@ -824,6 +1063,16 @@ fn execute_analysis(
     drop(conn);
 
     let run_dir_path = PathBuf::from(&work_dir);
+
+    // Derive biovault_home from work_dir path
+    // work_dir is like: /path/to/biovault/runs/project_timestamp
+    // So biovault_home is two levels up
+    let biovault_home = run_dir_path
+        .parent() // /path/to/biovault/runs
+        .and_then(|p| p.parent()) // /path/to/biovault
+        .ok_or("Invalid work_dir path")?
+        .to_path_buf();
+
     let work_subdir = run_dir_path.join("work");
     let results_subdir = run_dir_path.join("results");
     let samplesheet_path = work_subdir.join("samplesheet.csv");
@@ -885,10 +1134,17 @@ fn execute_analysis(
         .arg(results_subdir.to_str().unwrap())
         .arg(&project_path)
         .arg(samplesheet_path.to_str().unwrap())
+        .current_dir(&biovault_home) // Set working directory to biovault_home
+        .envs(env::vars()) // Inherit all environment variables (PATH, etc.)
+        .env(
+            "BIOVAULT_HOME",
+            env::var("BIOVAULT_HOME")
+                .unwrap_or_else(|_| biovault_home.to_string_lossy().to_string()),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to spawn process: {} (bv_path: {})", e, bv_path))?;
 
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
@@ -1022,38 +1278,342 @@ fn delete_run(state: tauri::State<AppState>, run_id: i64) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn delete_participant(state: tauri::State<AppState>, participant_id: i64) -> Result<(), String> {
-    let conn = state.db.lock().unwrap();
-
-    conn.execute(
-        "DELETE FROM run_participants WHERE participant_id = ?1",
-        params![participant_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "DELETE FROM files WHERE participant_id = ?1",
-        params![participant_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "DELETE FROM participants WHERE id = ?1",
-        params![participant_id],
-    )
-    .map_err(|e| e.to_string())?;
+fn delete_participant(_state: tauri::State<AppState>, participant_id: i64) -> Result<(), String> {
+    // Use CLI command - note: CLI unlinks files instead of deleting them
+    let _result = run_bv_command(&[
+        "participants",
+        "delete",
+        &participant_id.to_string(),
+        "--format",
+        "json",
+    ])?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn delete_file(state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
-    let conn = state.db.lock().unwrap();
+fn delete_participants_bulk(
+    _state: tauri::State<AppState>,
+    participant_ids: Vec<i64>,
+) -> Result<usize, String> {
+    if participant_ids.is_empty() {
+        return Ok(0);
+    }
 
-    conn.execute("DELETE FROM files WHERE id = ?1", params![file_id])
-        .map_err(|e| e.to_string())?;
+    let mut args: Vec<String> = Vec::with_capacity(participant_ids.len() + 4);
+    args.push("participants".to_string());
+    args.push("delete-bulk".to_string());
+    for id in &participant_ids {
+        args.push(id.to_string());
+    }
+    args.push("--format".to_string());
+    args.push("json".to_string());
+
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let result = run_bv_command(&arg_refs)?;
+
+    if let Some(not_found) = result
+        .get("data")
+        .and_then(|d| d.get("not_found"))
+        .and_then(|v| v.as_array())
+    {
+        if !not_found.is_empty() {
+            eprintln!("⚠️  Some participants were not found: {:?}", not_found);
+        }
+    }
+
+    let deleted = result
+        .get("data")
+        .and_then(|d| d.get("deleted"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    Ok(deleted as usize)
+}
+
+#[tauri::command]
+fn delete_file(_state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
+    // Use CLI command
+    let _result = run_bv_command(&["files", "delete", &file_id.to_string(), "--format", "json"])?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn delete_files_bulk(_state: tauri::State<AppState>, file_ids: Vec<i64>) -> Result<usize, String> {
+    if file_ids.is_empty() {
+        return Ok(0);
+    }
+
+    eprintln!("🗑️ Deleting {} files in bulk", file_ids.len());
+
+    // Convert IDs to comma-separated string for bulk delete
+    let ids_str = file_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    // Call bulk delete command
+    let result = run_bv_command(&["files", "delete-bulk", &ids_str, "--format", "json"])?;
+
+    // Parse the result
+    let deleted = result
+        .get("data")
+        .and_then(|d| d.get("deleted"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    eprintln!("✅ Deleted {} files", deleted);
+
+    Ok(deleted)
+}
+
+#[derive(Serialize, Deserialize)]
+struct GenotypeMetadata {
+    data_type: String,
+    source: Option<String>,
+    grch_version: Option<String>,
+    row_count: Option<i64>,
+    chromosome_count: Option<i64>,
+    inferred_sex: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct LogEntry {
+    timestamp: String,
+    command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn get_log_file_path() -> PathBuf {
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+    Path::new(&biovault_home).join("desktop_commands.log")
+}
+
+fn append_log(entry: &LogEntry) -> Result<(), String> {
+    let log_path = get_log_file_path();
+
+    // Ensure directory exists
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create log directory: {}", e))?;
+    }
+
+    let json_line = serde_json::to_string(entry)
+        .map_err(|e| format!("Failed to serialize log entry: {}", e))?;
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("Failed to open log file: {}", e))?;
+
+    writeln!(file, "{}", json_line).map_err(|e| format!("Failed to write to log file: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_command_logs() -> Result<Vec<LogEntry>, String> {
+    let log_path = get_log_file_path();
+
+    if !log_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file =
+        std::fs::File::open(&log_path).map_err(|e| format!("Failed to open log file: {}", e))?;
+
+    let reader = BufReader::new(file);
+    let mut logs = Vec::new();
+
+    for line_str in reader.lines().map_while(Result::ok) {
+        if let Ok(entry) = serde_json::from_str::<LogEntry>(&line_str) {
+            logs.push(entry);
+        }
+    }
+
+    Ok(logs)
+}
+
+#[tauri::command]
+fn clear_command_logs() -> Result<(), String> {
+    let log_path = get_log_file_path();
+
+    if log_path.exists() {
+        fs::remove_file(&log_path).map_err(|e| format!("Failed to delete log file: {}", e))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn detect_file_types(
+    _state: tauri::State<'_, AppState>,
+    files: Vec<String>,
+) -> Result<HashMap<String, GenotypeMetadata>, String> {
+    if files.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    eprintln!("🔍 Detecting file types for {} files", files.len());
+
+    // Build CLI args: files detect file1 file2 file3 ... --format json
+    let mut args = vec!["files", "detect"];
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    args.push("--format");
+    args.push("json");
+
+    match run_bv_command(&args) {
+        Ok(response) => {
+            // Parse the detection results
+            if let Some(detections) = response.get("detections") {
+                let mut results = HashMap::new();
+
+                for file_path in &files {
+                    if let Some(metadata) = detections.get(file_path) {
+                        let genotype_meta: GenotypeMetadata =
+                            serde_json::from_value(metadata.clone()).unwrap_or(GenotypeMetadata {
+                                data_type: "Unknown".to_string(),
+                                source: None,
+                                grch_version: None,
+                                row_count: None,
+                                chromosome_count: None,
+                                inferred_sex: None,
+                            });
+                        results.insert(file_path.clone(), genotype_meta);
+                    } else {
+                        // File not in results, insert Unknown
+                        results.insert(
+                            file_path.clone(),
+                            GenotypeMetadata {
+                                data_type: "Unknown".to_string(),
+                                source: None,
+                                grch_version: None,
+                                row_count: None,
+                                chromosome_count: None,
+                                inferred_sex: None,
+                            },
+                        );
+                    }
+                }
+
+                eprintln!("✅ Detected {} file types", results.len());
+                Ok(results)
+            } else {
+                Err("Missing detections in response".to_string())
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to detect file types: {}", e);
+            // Return Unknown for all files on error
+            let mut results = HashMap::new();
+            for file_path in files {
+                results.insert(
+                    file_path,
+                    GenotypeMetadata {
+                        data_type: "Unknown".to_string(),
+                        source: None,
+                        grch_version: None,
+                        row_count: None,
+                        chromosome_count: None,
+                        inferred_sex: None,
+                    },
+                );
+            }
+            Ok(results)
+        }
+    }
+}
+
+#[tauri::command]
+async fn analyze_file_types(
+    _state: tauri::State<'_, AppState>,
+    files: Vec<String>,
+) -> Result<HashMap<String, GenotypeMetadata>, String> {
+    if files.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    eprintln!(
+        "🔬 Analyzing files for row count, chromosomes, and sex: {} files",
+        files.len()
+    );
+
+    // Build CLI args: files analyze file1 file2 file3 ... --format json
+    let mut args = vec!["files", "analyze"];
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    args.push("--format");
+    args.push("json");
+
+    match run_bv_command(&args) {
+        Ok(response) => {
+            if let Some(analysis) = response.get("analysis") {
+                let mut results = HashMap::new();
+
+                for file_path in &files {
+                    if let Some(metadata) = analysis.get(file_path) {
+                        let genotype_meta: GenotypeMetadata =
+                            serde_json::from_value(metadata.clone()).unwrap_or(GenotypeMetadata {
+                                data_type: "Unknown".to_string(),
+                                source: None,
+                                grch_version: None,
+                                row_count: None,
+                                chromosome_count: None,
+                                inferred_sex: None,
+                            });
+                        results.insert(file_path.clone(), genotype_meta);
+                    } else {
+                        results.insert(
+                            file_path.clone(),
+                            GenotypeMetadata {
+                                data_type: "Unknown".to_string(),
+                                source: None,
+                                grch_version: None,
+                                row_count: None,
+                                chromosome_count: None,
+                                inferred_sex: None,
+                            },
+                        );
+                    }
+                }
+
+                eprintln!("✅ Analyzed {} files", results.len());
+                Ok(results)
+            } else {
+                Err("Missing analysis in response".to_string())
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to analyze files: {}", e);
+            let mut results = HashMap::new();
+            for file_path in files {
+                results.insert(
+                    file_path,
+                    GenotypeMetadata {
+                        data_type: "Unknown".to_string(),
+                        source: None,
+                        grch_version: None,
+                        row_count: None,
+                        chromosome_count: None,
+                        inferred_sex: None,
+                    },
+                );
+            }
+            Ok(results)
+        }
+    }
 }
 
 #[tauri::command]
@@ -1096,15 +1656,18 @@ fn get_settings() -> Result<Settings, String> {
         .join("database")
         .join("settings.json");
 
-    if !settings_path.exists() {
-        return Ok(Settings::default());
+    let mut settings = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read settings: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?
+    } else {
+        Settings::default()
+    };
+
+    // Apply environment variable override for display
+    if let Ok(env_path) = env::var("BIOVAULT_PATH") {
+        settings.biovault_path = format!("{} (env override)", env_path);
     }
-
-    let content = fs::read_to_string(&settings_path)
-        .map_err(|e| format!("Failed to read settings: {}", e))?;
-
-    let settings: Settings =
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?;
 
     Ok(settings)
 }
@@ -1154,6 +1717,53 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn show_in_folder(file_path: String) -> Result<(), String> {
+    eprintln!("📁 show_in_folder called with: {}", file_path);
+
+    #[cfg(target_os = "macos")]
+    {
+        eprintln!("🍎 Opening in Finder (macOS)...");
+        let result = std::process::Command::new("open")
+            .arg("-R")
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| e.to_string());
+
+        if let Err(ref e) = result {
+            eprintln!("❌ Failed to open Finder: {}", e);
+        } else {
+            eprintln!("✅ Finder command executed");
+        }
+
+        result?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, open the parent directory (revealing file is more complex)
+        if let Some(parent) = std::path::Path::new(&file_path).parent() {
+            std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            return Err("Could not determine parent directory".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
     let config_path = if let Some(home) = biovault_home {
         home.join("config.yaml")
@@ -1194,25 +1804,83 @@ pub fn run() {
     let email = load_biovault_email(&biovault_home);
     let window_title = format!("BioVault Desktop - {}", email);
 
-    let biovault_dir = if let Some(home) = &biovault_home {
+    // Use unified database location (same as CLI)
+    let biovault_home_dir = if let Some(home) = &biovault_home {
         home.clone()
     } else {
-        dirs::desktop_dir()
-            .expect("Could not find desktop directory")
-            .join("BioVault")
+        dirs::home_dir()
+            .expect("Could not find home directory")
+            .join(".biovault")
     };
 
-    let database_dir = biovault_dir.join("database");
-    let db_path = database_dir.join("app.db");
+    std::fs::create_dir_all(&biovault_home_dir).expect("Could not create biovault directory");
 
-    std::fs::create_dir_all(&database_dir).expect("Could not create database directory");
-
+    let db_path = biovault_home_dir.join("biovault.db");
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
 
+    let queue_processor_paused = Arc::new(AtomicBool::new(false)); // Start running
+
     let app_state = AppState {
         db: Mutex::new(conn),
+        queue_processor_paused: queue_processor_paused.clone(),
     };
+
+    // Spawn background queue processor
+    let paused_flag = queue_processor_paused.clone();
+    let biovault_home_for_processor = env::var("BIOVAULT_HOME")
+        .unwrap_or_else(|_| biovault_home_dir.to_string_lossy().to_string());
+
+    std::thread::spawn(move || {
+        loop {
+            // Check if paused
+            if !paused_flag.load(Ordering::SeqCst) {
+                // Process a batch of 10 files
+                let bv_path = env::var("BIOVAULT_PATH").unwrap_or_else(|_| "bv".to_string());
+
+                match std::process::Command::new(&bv_path)
+                    .args([
+                        "files",
+                        "process-queue",
+                        "--limit",
+                        "10",
+                        "--format",
+                        "json",
+                    ])
+                    .env("BIOVAULT_HOME", &biovault_home_for_processor)
+                    .output()
+                {
+                    Ok(output) => {
+                        if output.status.success() {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            // Parse JSON to check if any files were processed
+                            if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                                let processed = result
+                                    .get("data")
+                                    .and_then(|d| d.get("processed"))
+                                    .and_then(|p| p.as_u64())
+                                    .unwrap_or(0);
+
+                                // Only log if files were actually processed
+                                if processed > 0 {
+                                    eprintln!("✅ Queue processor: processed {} files", processed);
+                                }
+                            }
+                        } else {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            eprintln!("❌ Queue processor error: {}", stderr);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Queue processor command failed: {}", e);
+                    }
+                }
+            }
+
+            // Wait 2 seconds before next check
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1230,6 +1898,12 @@ pub fn run() {
             suggest_patterns,
             get_extensions,
             import_files,
+            import_files_with_metadata,
+            import_files_pending,
+            process_queue,
+            pause_queue_processor,
+            resume_queue_processor,
+            get_queue_processor_status,
             get_participants,
             get_files,
             import_project,
@@ -1241,11 +1915,18 @@ pub fn run() {
             get_run_logs,
             delete_run,
             delete_participant,
+            delete_participants_bulk,
             delete_file,
+            delete_files_bulk,
+            detect_file_types,
+            analyze_file_types,
             get_settings,
             save_settings,
             open_folder,
-            get_config_path
+            show_in_folder,
+            get_config_path,
+            get_command_logs,
+            clear_command_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

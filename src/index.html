@@ -60,15 +60,17 @@
       .right-panel {
         flex: 1;
         padding: 20px;
-        overflow-y: auto;
+        overflow: hidden;
         display: flex;
         flex-direction: column;
+        min-height: 0;
       }
       .pattern-section {
         margin-bottom: 20px;
         padding: 15px;
         background: #f5f5f5;
         border-radius: 4px;
+        flex-shrink: 0;
       }
       .pattern-suggestions {
         display: flex;
@@ -92,6 +94,10 @@
       .file-list-container {
         flex: 1;
         overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        width: 100%;
       }
       .highlight {
         background: yellow;
@@ -127,6 +133,13 @@
         flex: 1;
         overflow: auto;
         padding: 20px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        justify-content: flex-start;
+      }
+      .table-container > table {
+        flex: 0 0 auto;
       }
       table {
         width: 100%;
@@ -143,6 +156,13 @@
         font-weight: 600;
         font-size: 13px;
         color: #333;
+      }
+      .sortable-files-header {
+        cursor: pointer;
+        user-select: none;
+      }
+      .sortable-files-header .sort-indicator {
+        font-size: 10px;
       }
       td {
         padding: 10px 12px;
@@ -410,18 +430,103 @@
       }
       .file-list {
         list-style: none;
+        width: 100%;
       }
+      .file-list-header {
+        display: flex;
+        padding: 8px 0;
+        background: #f0f0f0;
+        font-weight: 600;
+        font-size: 12px;
+        border-bottom: 2px solid #ddd;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        width: 100%;
+      }
+      .file-list-header > div {
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+        position: relative;
+        overflow: hidden;
+      }
+      .file-list-header > div:hover {
+        color: #0066cc;
+      }
+      .file-list-header .sort-indicator {
+        font-size: 10px;
+      }
+      .col-checkbox { width: 40px; flex-shrink: 0; }
+      .col-path { width: 200px; min-width: 100px; }
+      .col-filename { width: 180px; min-width: 100px; }
+      .col-extension { width: 60px; min-width: 50px; flex-shrink: 0; }
+      .col-participant { width: 150px; min-width: 100px; }
+      .col-actions { width: 40px; flex-shrink: 0; }
+
+      .column-resizer {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 4px;
+        cursor: col-resize;
+        background: transparent;
+        z-index: 2;
+      }
+      .column-resizer:hover {
+        background: #0066cc;
+      }
+      .column-resizer.resizing {
+        background: #0066cc;
+      }
+
       .file-list li {
-        display: grid;
-        grid-template-columns: auto 2fr 1fr;
-        gap: 10px;
-        padding: 8px;
+        display: flex;
+        padding: 8px 0;
         border-bottom: 1px solid #eee;
         font-size: 13px;
         align-items: center;
+        width: 100%;
+      }
+      .file-list li.already-imported {
+        opacity: 0.5;
+      }
+      .file-list li.already-imported:hover {
+        background: inherit;
+      }
+      .file-list li > * {
+        padding: 0 8px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .file-list li .file-path {
+        direction: rtl;
+        text-align: left;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .file-path span {
+        direction: ltr;
+        unicode-bidi: embed;
       }
       .file-checkbox {
         cursor: pointer;
+        margin: 0;
+      }
+      .col-checkbox {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .col-actions {
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .file-list li:hover {
         background: #f5f5f5;
@@ -431,12 +536,16 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .col-participant {
+        padding: 0 !important;
+      }
       .participant-id-input {
         padding: 4px 8px;
         border: 1px solid #ddd;
         border-radius: 4px;
         font-size: 13px;
         font-family: monospace;
+        margin: 0 8px;
       }
       .participant-id-input.extracted {
         background: #e8f5e9;
@@ -446,8 +555,73 @@
         background: #fff3e0;
         border-color: #ff9800;
       }
+      .imported-badge {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 6px;
+        background: #ccc;
+        color: #333;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .review-row-complete {
+        background: #e6f4ea;
+      }
+      tr.review-row-complete:hover {
+        background: #d5f0de;
+      }
+      .show-in-folder-btn {
+        padding: 4px 8px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background 0.2s;
+      }
+      .show-in-folder-btn:hover {
+        background: #e0e0e0;
+      }
+      .show-in-folder-btn:active {
+        background: #d0d0d0;
+      }
       h3 {
         margin-bottom: 15px;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top: 2px solid white;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+      button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+      }
+      .queue-spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,0.35);
+        border-top: 2px solid white;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      .table-search-input {
+        padding: 6px 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 13px;
+        min-width: 200px;
       }
     </style>
   </head>
@@ -460,6 +634,7 @@
       <button class="tab" data-tab="import">Import Data</button>
       <button class="tab" data-tab="participants">Participants</button>
       <button class="tab" data-tab="files">Files</button>
+      <button class="tab" data-tab="logs">Logs</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
 
@@ -511,12 +686,15 @@
       <div class="container">
         <div class="left-panel">
           <h3>Select Folder</h3>
-          <button id="pick-folder">Pick Folder</button>
+          <div style="display: flex; gap: 10px;">
+            <button id="pick-folder">Pick Folder</button>
+            <button id="reset-import-btn" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Reset</button>
+          </div>
           <div class="path-display" id="selected-path">No folder selected</div>
 
           <h3 style="margin-top: 20px;">File Type</h3>
-          <select id="file-type-select">
-            <option value="">Select file type...</option>
+          <select id="file-type-select" multiple size="5" style="width: 100%;">
+            <option value="">Select file type(s)...</option>
           </select>
 
           <div id="custom-extension" style="display: none; margin-top: 10px;">
@@ -549,21 +727,45 @@
             <h3>
               <label style="display: inline-flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="select-all-files" />
-                Files Found (<span id="file-count">0</span>)
+                Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count">0</span>)
               </label>
             </h3>
+            <div class="file-list-header">
+              <div class="col-checkbox"></div>
+              <div class="col-path" data-sort="path">
+                Path <span class="sort-indicator"></span>
+                <div class="column-resizer" data-col="path"></div>
+              </div>
+              <div class="col-filename" data-sort="filename">
+                Filename <span class="sort-indicator"></span>
+                <div class="column-resizer" data-col="filename"></div>
+              </div>
+              <div class="col-extension" data-sort="extension">
+                Ext <span class="sort-indicator"></span>
+              </div>
+              <div class="col-participant" data-sort="participant">
+                Participant <span class="sort-indicator"></span>
+                <div class="column-resizer" data-col="participant"></div>
+              </div>
+              <div class="col-actions"></div>
+            </div>
             <ul class="file-list" id="file-list"></ul>
           </div>
         </div>
       </div>
-      <button class="import-button" id="import-btn" disabled>Import Files</button>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+        <button class="import-button" id="import-btn" disabled>Next →</button>
+      </div>
     </div>
 
     <div id="participants-view" class="tab-content">
       <div class="table-container">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
           <h2 style="margin: 0;">Participants (<span id="participant-count">0</span>)</h2>
-          <button id="delete-selected-participants-btn" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">Delete Selected</button>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="participants-search" class="table-search-input" placeholder="Search participants..." />
+            <button id="delete-selected-participants-btn" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">Delete Selected</button>
+          </div>
         </div>
         <table>
           <thead>
@@ -581,20 +783,43 @@
 
     <div id="files-view" class="tab-content">
       <div class="table-container">
+        <!-- File Type Sub-tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd;">
+          <button class="file-type-tab active" data-type="Genotype" style="padding: 10px 20px; background: none; border: none; border-bottom: 3px solid #007bff; cursor: pointer; font-size: 14px; font-weight: 500; color: #007bff;">Genotype</button>
+          <button class="file-type-tab" data-type="Unknown" style="padding: 10px 20px; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 14px; font-weight: 500; color: #666;">Unknown</button>
+        </div>
+
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
           <h2 style="margin: 0;">Files (<span id="files-count">0</span>)</h2>
-          <button id="delete-selected-files-btn" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">Delete Selected</button>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="files-search" class="table-search-input" placeholder="Search files..." />
+            <button id="process-queue-btn" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+              <span id="queue-btn-icon">⏸</span>
+              <span id="queue-btn-text">Pause Queue</span>
+              <span id="queue-spinner" class="queue-spinner" style="display: none;"></span>
+              (<span id="pending-count">0</span>)
+            </button>
+            <button id="delete-selected-files-btn" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">Delete Selected</button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
               <th style="width: 40px;"><input type="checkbox" id="select-all-files-table" /></th>
-              <th>ID</th>
-              <th>Participant ID</th>
-              <th>File Path</th>
-              <th>Hash</th>
-              <th>Created At</th>
-              <th>Updated At</th>
+              <th class="sortable-files-header" data-sort-field="id">ID <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="status">Status <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="participant">Participant ID <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="file_path">File Path <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="data_type">Data Type <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="source">Source <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="grch_version">GRCh <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="row_count">Rows <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="chromosome_count">Chromosomes <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="inferred_sex">Sex <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="file_hash">Hash <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="created_at">Created At <span class="sort-indicator"></span></th>
+              <th class="sortable-files-header" data-sort-field="updated_at">Updated At <span class="sort-indicator"></span></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="files-table"></tbody>
@@ -619,6 +844,99 @@
       </div>
     </div>
 
+    <div id="import-review-view" class="tab-content">
+      <div style="padding: 20px; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+        <h2 style="margin-bottom: 20px;">Review File Types (<span id="review-file-count">0</span> files)</h2>
+
+        <div style="display: flex; gap: 20px; margin-bottom: 20px; align-items: center; flex-shrink: 0;">
+          <div style="display: flex; gap: 10px;">
+            <button id="detect-types-btn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">🔍 Detect File Types</button>
+          </div>
+
+          <div style="flex: 1; display: flex; align-items: center;">
+            <div id="detection-progress" style="display: none; flex: 1; max-width: 400px;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                <span id="progress-text">Processing...</span>
+              </div>
+              <div style="width: 100%; background: #e0e0e0; border-radius: 4px; height: 8px; overflow: hidden;">
+                <div id="progress-bar" style="width: 0%; background: #28a745; height: 100%; transition: width 0.3s;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 15px;">
+            <div>
+              <label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">Set Selected Data Type:</label>
+              <select id="set-all-datatype" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+                <option value="">-</option>
+                <option value="Unknown">Unknown</option>
+                <option value="Genotype">Genotype</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">Set Selected Source:</label>
+              <select id="set-all-source" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+                <option value="">-</option>
+                <option value="Unknown">Unknown</option>
+                <option value="23andMe">23andMe</option>
+                <option value="AncestryDNA">AncestryDNA</option>
+                <option value="Genes for Good">Genes for Good</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">Set Selected GRCh Version:</label>
+              <select id="set-all-grch" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
+                <option value="">-</option>
+                <option value="Unknown">Unknown</option>
+                <option value="36">36</option>
+                <option value="37">37</option>
+                <option value="38">38</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex: 1; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead style="position: sticky; top: 0; background: #f5f5f5; z-index: 1;">
+              <tr>
+                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-size: 13px; width: 40px;">
+                  <input type="checkbox" id="select-all-review" />
+                </th>
+                <th class="sortable-header" data-sort-field="path" style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; cursor: pointer; user-select: none;">
+                  File Path <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="data_type" style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 150px; cursor: pointer; user-select: none;">
+                  Data Type <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="source" style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 150px; cursor: pointer; user-select: none;">
+                  Source <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="grch_version" style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 120px; cursor: pointer; user-select: none;">
+                  GRCh Version <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="row_count" style="display: none; padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 100px; cursor: pointer; user-select: none;">
+                  Rows <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="chromosome_count" style="display: none; padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 100px; cursor: pointer; user-select: none;">
+                  Chromosomes <span class="sort-indicator"></span>
+                </th>
+                <th class="sortable-header" data-sort-field="inferred_sex" style="display: none; padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 13px; width: 100px; cursor: pointer; user-select: none;">
+                  Sex <span class="sort-indicator"></span>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="review-files-table"></tbody>
+          </table>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-shrink: 0;">
+          <button id="review-back-btn" style="padding: 12px 24px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">← Back</button>
+          <button id="review-import-btn" style="padding: 12px 24px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">Import Files →</button>
+        </div>
+      </div>
+    </div>
+
     <div id="import-results-view" class="tab-content">
       <div class="table-container">
         <h2 style="margin-bottom: 20px;">Import Results (<span id="import-results-count">0</span>)</h2>
@@ -639,8 +957,23 @@
       <button class="done-button" id="done-btn">Done</button>
     </div>
 
+    <div id="logs-view" class="tab-content">
+      <div style="padding: 20px; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h2 style="margin: 0;">Command Logs</h2>
+          <div style="display: flex; gap: 10px;">
+            <button id="copy-logs-btn" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">📋 Copy All</button>
+            <button id="clear-logs-btn" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑️ Clear Logs</button>
+          </div>
+        </div>
+        <div style="flex: 1; overflow-y: auto; background: #1e1e1e; border-radius: 4px; padding: 15px;">
+          <pre id="logs-content" style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 12px; margin: 0; white-space: pre-wrap; word-wrap: break-word;"></pre>
+        </div>
+      </div>
+    </div>
+
     <div id="settings-view" class="tab-content">
-      <div style="padding: 40px; max-width: 800px; margin: 0 auto;">
+      <div style="padding: 40px; max-width: 800px; margin: 0 auto; overflow-y: auto; height: 100%;">
         <h2 style="margin-bottom: 30px;">Settings</h2>
 
         <div style="display: flex; flex-direction: column; gap: 25px;">
