@@ -6,32 +6,98 @@ let currentFiles = [];
 let currentPattern = '';
 let fileParticipantIds = {}; // Maps file path to participant ID
 let selectedFiles = new Set(); // Set of selected file paths
+let sortField = 'path'; // Current sort field: path, filename, extension, participant
+let sortDirection = 'asc'; // asc or desc
+let columnWidths = {
+  path: 1200, // Wide for fullscreen, will collapse naturally
+  filename: 180,
+  participant: 150
+};
+let commandLogs = []; // Array of log entries
+let isImportInProgress = false; // Track if import is currently running
 
-function getFileExtension() {
+function getFileExtensions() {
   const select = document.getElementById('file-type-select');
-  if (select.value === 'custom') {
+  const selected = Array.from(select.selectedOptions).map(opt => opt.value);
+
+  // If custom is selected, get the custom extension
+  if (selected.includes('custom')) {
     const customInput = document.getElementById('custom-ext-input');
     let ext = customInput.value.trim();
     if (ext.startsWith('*.')) {
       ext = ext.substring(1);
     }
-    return ext;
+    // Remove 'custom' and add the actual extension
+    return selected.filter(v => v !== 'custom').concat(ext ? [ext] : []);
   }
-  return select.value;
+
+  return selected.filter(v => v !== ''); // Filter out empty option
 }
 
 function patternToRegex(pattern) {
-  if (!pattern || !pattern.includes('{id}')) return null;
+  if (!pattern) return null;
+
+  // Handle special tokens that don't use regex
+  if (pattern === '{parent}' || pattern === '{dirname}' || pattern === '{dir}' ||
+      pattern === '{filename}' || pattern === '{basename}' || pattern === '{id}/*') {
+    return null; // These are handled separately
+  }
+
+  if (!pattern.includes('{id}')) return null;
 
   let regex = pattern
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\\\{id\\\}/g, '(\\d+)')
+    .replace(/\\\{id\\\}/g, '([a-zA-Z0-9_-]+)') // Allow alphanumeric IDs
     .replace(/\\\*/g, '.*');
 
   return new RegExp(regex);
 }
 
 function extractIdFromPath(path, pattern) {
+  if (!pattern) return null;
+
+  // Handle special token patterns
+  if (pattern === '{parent}' || pattern === '{dirname}' || pattern === '{dir}' || pattern === '{id}/*') {
+    // Extract parent directory name
+    const parts = path.split('/');
+    const parentDir = parts[parts.length - 2];
+    if (parentDir) {
+      // Find position in full path for highlighting
+      const pathBeforeParent = parts.slice(0, -2).join('/') + '/';
+      return {
+        id: parentDir,
+        start: pathBeforeParent.length,
+        length: parentDir.length,
+        isDirectory: true
+      };
+    }
+    return null;
+  }
+
+  if (pattern === '{filename}') {
+    // Extract filename without extension
+    const filename = path.split('/').pop();
+    const nameWithoutExt = filename.includes('.') ? filename.substring(0, filename.lastIndexOf('.')) : filename;
+    const dir = path.substring(0, path.lastIndexOf('/') + 1);
+    return {
+      id: nameWithoutExt,
+      start: dir.length,
+      length: nameWithoutExt.length
+    };
+  }
+
+  if (pattern === '{basename}') {
+    // Extract full filename with extension
+    const filename = path.split('/').pop();
+    const dir = path.substring(0, path.lastIndexOf('/') + 1);
+    return {
+      id: filename,
+      start: dir.length,
+      length: filename.length
+    };
+  }
+
+  // Handle {id} patterns with regex
   const filename = path.split('/').pop();
   const regex = patternToRegex(pattern);
 
@@ -39,48 +105,196 @@ function extractIdFromPath(path, pattern) {
 
   const match = filename.match(regex);
   if (match && match[1]) {
+    const dir = path.substring(0, path.lastIndexOf('/') + 1);
     const idStart = match.index + match[0].indexOf(match[1]);
-    return { id: match[1], start: idStart, length: match[1].length };
+    return { id: match[1], start: dir.length + idStart, length: match[1].length };
   }
   return null;
 }
 
 function highlightPattern(path, pattern) {
-  const filename = path.split('/').pop();
-  const dir = path.substring(0, path.lastIndexOf('/') + 1);
-
   const result = extractIdFromPath(path, pattern);
 
   if (result) {
-    const before = filename.substring(0, result.start);
-    const highlighted = filename.substring(result.start, result.start + result.length);
-    const after = filename.substring(result.start + result.length);
+    const before = path.substring(0, result.start);
+    const highlighted = path.substring(result.start, result.start + result.length);
+    const after = path.substring(result.start + result.length);
 
-    return `<span style="color: #666;">${dir}</span>${before}<span class="highlight">${highlighted}</span>${after}`;
+    return `<span style="color: #666;">${before}</span><span class="highlight">${highlighted}</span><span style="color: #666;">${after}</span>`;
   }
 
+  const filename = path.split('/').pop();
+  const dir = path.substring(0, path.lastIndexOf('/') + 1);
   return `<span style="color: #666;">${dir}</span>${filename}`;
+}
+
+function getFileMetadata(filePath) {
+  const parts = filePath.split('/');
+  const fullFilename = parts[parts.length - 1];
+  const dir = parts.slice(0, -1).join('/') + '/';
+  const lastDotIndex = fullFilename.lastIndexOf('.');
+  const filename = lastDotIndex > 0 ? fullFilename.substring(0, lastDotIndex) : fullFilename;
+  const extension = lastDotIndex > 0 ? fullFilename.substring(lastDotIndex) : '';
+
+  return { dir, filename, extension, fullFilename };
+}
+
+function sortFiles(files) {
+  const sorted = [...files];
+  sorted.sort((a, b) => {
+    let aVal, bVal;
+
+    switch(sortField) {
+      case 'path':
+        aVal = a;
+        bVal = b;
+        break;
+      case 'filename':
+        aVal = getFileMetadata(a).filename;
+        bVal = getFileMetadata(b).filename;
+        break;
+      case 'extension':
+        aVal = getFileMetadata(a).extension;
+        bVal = getFileMetadata(b).extension;
+        break;
+      case 'participant':
+        aVal = fileParticipantIds[a] || '';
+        bVal = fileParticipantIds[b] || '';
+        break;
+      default:
+        return 0;
+    }
+
+    const comparison = aVal.localeCompare(bVal);
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  return sorted;
+}
+
+function updateSortIndicators() {
+  const headers = document.querySelectorAll('.file-list-header div[data-sort]');
+  headers.forEach(header => {
+    const indicator = header.querySelector('.sort-indicator');
+    if (header.dataset.sort === sortField) {
+      indicator.textContent = sortDirection === 'asc' ? '▲' : '▼';
+    } else {
+      indicator.textContent = '';
+    }
+  });
+}
+
+function setSortField(field) {
+  if (sortField === field) {
+    // Toggle direction
+    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    // New field, default to ascending
+    sortField = field;
+    sortDirection = 'asc';
+  }
+  renderFiles();
+}
+
+function updateColumnWidths() {
+  // Update header columns
+  const headerPath = document.querySelector('.file-list-header .col-path');
+  const headerFilename = document.querySelector('.file-list-header .col-filename');
+  const headerParticipant = document.querySelector('.file-list-header .col-participant');
+
+  if (headerPath) headerPath.style.width = `${columnWidths.path}px`;
+  if (headerFilename) headerFilename.style.width = `${columnWidths.filename}px`;
+  if (headerParticipant) headerParticipant.style.width = `${columnWidths.participant}px`;
+
+  // Update all rows
+  document.querySelectorAll('.file-list li .col-path').forEach(el => {
+    el.style.width = `${columnWidths.path}px`;
+  });
+  document.querySelectorAll('.file-list li .col-filename').forEach(el => {
+    el.style.width = `${columnWidths.filename}px`;
+  });
+  document.querySelectorAll('.file-list li .col-participant').forEach(el => {
+    el.style.width = `${columnWidths.participant}px`;
+  });
+}
+
+function initColumnResizers() {
+  const resizers = document.querySelectorAll('.column-resizer');
+
+  resizers.forEach(resizer => {
+    let startX, startWidth, column;
+
+    resizer.addEventListener('mousedown', (e) => {
+      e.stopPropagation(); // Prevent sort
+      column = resizer.dataset.col;
+      startX = e.pageX;
+      startWidth = columnWidths[column];
+
+      resizer.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMouseMove = (e) => {
+        const diff = e.pageX - startX;
+        const newWidth = Math.max(50, startWidth + diff);
+        columnWidths[column] = newWidth;
+        updateColumnWidths();
+      };
+
+      const onMouseUp = () => {
+        resizer.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
 }
 
 function renderFiles() {
   const fileList = document.getElementById('file-list');
   fileList.innerHTML = '';
 
+  for (const file of Array.from(selectedFiles)) {
+    if (!currentFiles.includes(file) || existingFilePaths.has(file)) {
+      selectedFiles.delete(file);
+    }
+  }
+
   if (currentFiles.length === 0) {
     const li = document.createElement('li');
     li.textContent = 'No files found';
+    li.style.gridColumn = '1 / -1';
     fileList.appendChild(li);
     return;
   }
 
-  currentFiles.forEach(file => {
+  // Sort files
+  const sortedFiles = sortFiles(currentFiles);
+
+  sortedFiles.forEach(file => {
     const li = document.createElement('li');
+    const alreadyImported = existingFilePaths.has(file);
+    const metadata = getFileMetadata(file);
 
     // Checkbox column
+    const checkboxDiv = document.createElement('div');
+    checkboxDiv.className = 'col-checkbox';
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.className = 'file-checkbox';
     checkbox.checked = selectedFiles.has(file);
+    if (alreadyImported) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      checkbox.title = 'File already imported';
+      selectedFiles.delete(file);
+      li.classList.add('already-imported');
+    }
     checkbox.addEventListener('change', (e) => {
       if (e.target.checked) {
         selectedFiles.add(file);
@@ -89,14 +303,39 @@ function renderFiles() {
       }
       updateSelectAllCheckbox();
       updateImportButton();
+      updateSelectedFileCount();
     });
+    checkboxDiv.appendChild(checkbox);
 
-    // File path column with highlighting
+    // Path column (directory only) with highlighting
     const pathDiv = document.createElement('div');
-    pathDiv.className = 'file-path';
+    pathDiv.className = 'file-path col-path';
     pathDiv.innerHTML = highlightPattern(file, currentPattern);
+    pathDiv.title = file; // Full path on hover
+    pathDiv.style.width = `${columnWidths.path}px`;
+    if (alreadyImported) {
+      const badge = document.createElement('span');
+      badge.className = 'imported-badge';
+      badge.textContent = 'Imported';
+      pathDiv.appendChild(badge);
+    }
+
+    // Filename column
+    const filenameDiv = document.createElement('div');
+    filenameDiv.className = 'col-filename';
+    filenameDiv.textContent = metadata.filename;
+    filenameDiv.title = metadata.fullFilename;
+    filenameDiv.style.width = `${columnWidths.filename}px`;
+
+    // Extension column
+    const extensionDiv = document.createElement('div');
+    extensionDiv.className = 'col-extension';
+    extensionDiv.textContent = metadata.extension;
 
     // Participant ID input column
+    const participantDiv = document.createElement('div');
+    participantDiv.className = 'col-participant';
+    participantDiv.style.width = `${columnWidths.participant}px`;
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'participant-id-input';
@@ -105,10 +344,13 @@ function renderFiles() {
     // Extract ID if pattern exists
     const extracted = extractIdFromPath(file, currentPattern);
     if (extracted && extracted.id) {
+      console.log(`✅ Extracted participant ID for ${file}: ${extracted.id}`);
       input.value = extracted.id;
       input.classList.add('extracted');
       fileParticipantIds[file] = extracted.id;
+      console.log(`📝 Stored in fileParticipantIds[${file}] = ${fileParticipantIds[file]}`);
     } else {
+      console.log(`❌ No extraction for ${file}, pattern: ${currentPattern}`);
       input.value = fileParticipantIds[file] || '';
       if (fileParticipantIds[file]) {
         input.classList.add('manual');
@@ -129,15 +371,39 @@ function renderFiles() {
       }
       updateImportButton();
     });
+    participantDiv.appendChild(input);
 
-    li.appendChild(checkbox);
+    // Show in folder button
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'col-actions';
+    const showBtn = document.createElement('button');
+    showBtn.className = 'show-in-folder-btn';
+    showBtn.textContent = '📁';
+    showBtn.title = 'Show in Finder';
+    showBtn.addEventListener('click', async () => {
+      try {
+        await invoke('show_in_folder', { filePath: file });
+      } catch (error) {
+        console.error('Failed to show file in folder:', error);
+      }
+    });
+    actionsDiv.appendChild(showBtn);
+
+    li.appendChild(checkboxDiv);
     li.appendChild(pathDiv);
-    li.appendChild(input);
+    li.appendChild(filenameDiv);
+    li.appendChild(extensionDiv);
+    li.appendChild(participantDiv);
+    li.appendChild(actionsDiv);
     fileList.appendChild(li);
   });
 
+  // Update sort indicators
+  updateSortIndicators();
+
   document.getElementById('file-count').textContent = currentFiles.length;
   updateSelectAllCheckbox();
+  updateSelectedFileCount();
   updateImportButton();
 }
 
@@ -168,8 +434,14 @@ async function updatePatternSuggestions() {
 async function searchFiles() {
   if (!selectedFolder) return;
 
-  const extension = getFileExtension();
-  currentFiles = await invoke('search_txt_files', { path: selectedFolder, extension });
+  const extensions = getFileExtensions();
+  if (extensions.length === 0) {
+    currentFiles = [];
+    renderFiles();
+    return;
+  }
+
+  currentFiles = await invoke('search_txt_files', { path: selectedFolder, extensions });
   currentPattern = '';
 
   renderFiles();
@@ -196,8 +468,9 @@ async function updateFileTypeDropdown() {
   customOption.textContent = 'Custom...';
   select.appendChild(customOption);
 
+  // Auto-select the first extension by default
   if (extensions.length > 0) {
-    select.value = extensions[0].extension;
+    select.options[0].selected = true;
   }
 }
 
@@ -208,6 +481,9 @@ async function pickFolder() {
   });
 
   if (selected) {
+    selectedFiles.clear();
+    updateSelectedFileCount();
+    await refreshExistingFilePaths();
     selectedFolder = selected;
     document.getElementById('selected-path').textContent = selected;
     await updateFileTypeDropdown();
@@ -217,11 +493,19 @@ async function pickFolder() {
 
 function updateSelectAllCheckbox() {
   const selectAllCheckbox = document.getElementById('select-all-files');
-  if (currentFiles.length === 0) {
+  const selectableFiles = currentFiles.filter(file => !existingFilePaths.has(file));
+  if (selectableFiles.length === 0) {
     selectAllCheckbox.checked = false;
     return;
   }
-  selectAllCheckbox.checked = currentFiles.every(file => selectedFiles.has(file));
+  selectAllCheckbox.checked = selectableFiles.every(file => selectedFiles.has(file));
+}
+
+function updateSelectedFileCount() {
+  const el = document.getElementById('selected-count');
+  if (el) {
+    el.textContent = selectedFiles.size;
+  }
 }
 
 function updateImportButton() {
@@ -240,37 +524,9 @@ let selectedParticipantsForDelete = [];
 async function loadParticipants() {
   try {
     const participants = await invoke('get_participants');
-    const tbody = document.getElementById('participants-table');
-    tbody.innerHTML = '';
+    allParticipants = participants;
     selectedParticipantsForDelete = [];
-
-    participants.forEach(p => {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" /></td>
-        <td>${p.id}</td>
-        <td>${p.participant_id}</td>
-        <td>${p.created_at}</td>
-      `;
-      tbody.appendChild(row);
-    });
-
-    document.querySelectorAll('.participant-checkbox').forEach(checkbox => {
-      checkbox.addEventListener('change', (e) => {
-        const id = parseInt(e.target.dataset.id);
-        if (e.target.checked) {
-          if (!selectedParticipantsForDelete.includes(id)) {
-            selectedParticipantsForDelete.push(id);
-          }
-        } else {
-          selectedParticipantsForDelete = selectedParticipantsForDelete.filter(x => x !== id);
-        }
-        updateDeleteParticipantsButton();
-      });
-    });
-
-    document.getElementById('participant-count').textContent = participants.length;
-    updateDeleteParticipantsButton();
+    renderParticipantsTable();
   } catch (error) {
     console.error('Error loading participants:', error);
   }
@@ -286,48 +542,324 @@ function updateDeleteParticipantsButton() {
   }
 }
 
+function participantMatchesSearch(participant) {
+  if (!participantsSearchTerm) return true;
+  const term = participantsSearchTerm;
+  const values = [participant.id, participant.participant_id, participant.created_at];
+  return values.some(value => {
+    if (value === null || value === undefined) return false;
+    return value.toString().toLowerCase().includes(term);
+  });
+}
+
+function renderParticipantsTable() {
+  const tbody = document.getElementById('participants-table');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+
+  selectedParticipantsForDelete = selectedParticipantsForDelete.filter(id =>
+    allParticipants.some(p => p.id === id)
+  );
+
+  const filtered = allParticipants.filter(participantMatchesSearch);
+
+  filtered.forEach(p => {
+    const row = document.createElement('tr');
+    const isSelected = selectedParticipantsForDelete.includes(p.id);
+    row.innerHTML = `
+      <td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" ${isSelected ? 'checked' : ''} /></td>
+      <td>${p.id}</td>
+      <td>${p.participant_id}</td>
+      <td>${p.created_at}</td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  document.querySelectorAll('#participants-table .participant-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const id = parseInt(e.target.dataset.id);
+      if (e.target.checked) {
+        if (!selectedParticipantsForDelete.includes(id)) {
+          selectedParticipantsForDelete.push(id);
+        }
+      } else {
+        selectedParticipantsForDelete = selectedParticipantsForDelete.filter(x => x !== id);
+      }
+      updateDeleteParticipantsButton();
+    });
+  });
+
+  document.getElementById('participant-count').textContent = allParticipants.length;
+  const selectAllHeader = document.getElementById('select-all-participants-table');
+  if (selectAllHeader) {
+    const filteredCount = filtered.length;
+    const selectedCount = filtered.filter(p => selectedParticipantsForDelete.includes(p.id)).length;
+    selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount;
+    selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount;
+  }
+  updateDeleteParticipantsButton();
+}
+
+const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 };
+
 let selectedFilesForDelete = [];
+let currentFileTypeFilter = 'Genotype'; // Default to Genotype tab
+let filesSortField = 'status';
+let filesSortDirection = 'asc';
+let existingFilePaths = new Set();
+let allFilesData = [];
+let filesSearchTerm = '';
+let allParticipants = [];
+let participantsSearchTerm = '';
+let queueProcessorRunning = false;
+
+async function refreshExistingFilePaths() {
+  try {
+    const files = await invoke('get_files');
+    existingFilePaths = new Set(files.map(f => f.file_path));
+  } catch (error) {
+    console.error('Error loading existing file paths:', error);
+    existingFilePaths = new Set();
+  }
+}
+
+function getFileSortValue(file, field) {
+  switch (field) {
+    case 'id':
+      return file.id ?? null;
+    case 'status':
+      return FILE_STATUS_PRIORITY[file.status] ?? Number.MAX_SAFE_INTEGER;
+    case 'participant':
+      return (file.participant_name || '').toLowerCase();
+    case 'file_path':
+      return (file.file_path || '').toLowerCase();
+    case 'data_type':
+      return (file.data_type || '').toLowerCase();
+    case 'source':
+      return (file.source || '').toLowerCase();
+    case 'grch_version':
+      return (file.grch_version || '').toLowerCase();
+    case 'row_count':
+      return file.row_count ?? null;
+    case 'chromosome_count':
+      return file.chromosome_count ?? null;
+    case 'inferred_sex':
+      return (file.inferred_sex || '').toLowerCase();
+    case 'file_hash':
+      return (file.file_hash || '').toLowerCase();
+    case 'created_at':
+      return file.created_at ? Date.parse(file.created_at) : null;
+    case 'updated_at':
+      return file.updated_at ? Date.parse(file.updated_at) : null;
+    default:
+      return (file[field] || '').toString().toLowerCase();
+  }
+}
+
+function compareNullableNumbers(a, b) {
+  const aNull = a === null || a === undefined || Number.isNaN(a);
+  const bNull = b === null || b === undefined || Number.isNaN(b);
+  if (aNull && bNull) return 0;
+  if (aNull) return 1;
+  if (bNull) return -1;
+  return a - b;
+}
+
+function compareNullableStrings(a, b) {
+  const aNull = a === null || a === undefined || a === '';
+  const bNull = b === null || b === undefined || b === '';
+  if (aNull && bNull) return 0;
+  if (aNull) return 1;
+  if (bNull) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: 'base' });
+}
+
+function sortFilesForTable(files) {
+  files.sort((a, b) => {
+    const valA = getFileSortValue(a, filesSortField);
+    const valB = getFileSortValue(b, filesSortField);
+
+    let comparison;
+    if (typeof valA === 'number' || typeof valB === 'number') {
+      comparison = compareNullableNumbers(valA, valB);
+    } else {
+      comparison = compareNullableStrings(valA, valB);
+    }
+
+    if (comparison === 0) {
+      comparison = compareNullableNumbers(a.id ?? null, b.id ?? null);
+    }
+
+    return filesSortDirection === 'asc' ? comparison : -comparison;
+  });
+}
+
+function getDefaultFilesSortDirection(field) {
+  if (field === 'created_at' || field === 'updated_at') {
+    return 'desc';
+  }
+  if (field === 'row_count' || field === 'chromosome_count' || field === 'id') {
+    return 'desc';
+  }
+  if (field === 'status') {
+    return 'asc';
+  }
+  return 'asc';
+}
 
 async function loadFiles() {
   try {
     const files = await invoke('get_files');
-    const tbody = document.getElementById('files-table');
-    tbody.innerHTML = '';
+    existingFilePaths = new Set(files.map(f => f.file_path));
+    allFilesData = files;
     selectedFilesForDelete = [];
-
-    files.forEach(f => {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td><input type="checkbox" class="file-checkbox" data-id="${f.id}" /></td>
-        <td>${f.id}</td>
-        <td>${f.participant_name}</td>
-        <td class="truncate" title="${f.file_path}">${f.file_path}</td>
-        <td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${f.file_hash.substring(0, 16)}...</td>
-        <td>${f.created_at}</td>
-        <td>${f.updated_at}</td>
-      `;
-      tbody.appendChild(row);
-    });
-
-    document.querySelectorAll('.file-checkbox').forEach(checkbox => {
-      checkbox.addEventListener('change', (e) => {
-        const id = parseInt(e.target.dataset.id);
-        if (e.target.checked) {
-          if (!selectedFilesForDelete.includes(id)) {
-            selectedFilesForDelete.push(id);
-          }
-        } else {
-          selectedFilesForDelete = selectedFilesForDelete.filter(x => x !== id);
-        }
-        updateDeleteFilesButton();
-      });
-    });
-
-    document.getElementById('files-count').textContent = files.length;
-    updateDeleteFilesButton();
+    renderFilesTable();
   } catch (error) {
     console.error('Error loading files:', error);
   }
+}
+
+function fileMatchesSearch(file) {
+  if (!filesSearchTerm) return true;
+  const term = filesSearchTerm;
+  const values = [
+    file.id,
+    file.status,
+    file.participant_name,
+    file.participant_id,
+    file.file_path,
+    file.data_type,
+    file.source,
+    file.grch_version,
+    file.row_count,
+    file.chromosome_count,
+    file.inferred_sex,
+    file.file_hash,
+    file.created_at,
+    file.updated_at,
+  ];
+  return values.some(value => {
+    if (value === null || value === undefined) return false;
+    return value.toString().toLowerCase().includes(term);
+  });
+}
+
+function renderFilesTable() {
+  const tbody = document.getElementById('files-table');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+
+  selectedFilesForDelete = selectedFilesForDelete.filter(id =>
+    allFilesData.some(f => f.id === id)
+  );
+
+  const files = allFilesData.slice();
+  const filteredFiles = files
+    .filter(f => f.data_type === currentFileTypeFilter)
+    .filter(fileMatchesSearch);
+
+  sortFilesForTable(filteredFiles);
+
+  filteredFiles.forEach(f => {
+    const row = document.createElement('tr');
+
+    let statusBadge = '';
+    if (f.status === 'pending') {
+      statusBadge = '<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⏳ PENDING</span>';
+    } else if (f.status === 'processing') {
+      statusBadge = '<span style="background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⚙️ PROCESSING</span>';
+    } else if (f.status === 'error') {
+      statusBadge = '<span style="background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' + (f.processing_error || '') + '">❌ ERROR</span>';
+    } else {
+      statusBadge = '<span style="background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">✓ COMPLETE</span>';
+    }
+
+    const isMarkedForDelete = selectedFilesForDelete.includes(f.id);
+
+    row.innerHTML = `
+      <td><input type="checkbox" class="file-checkbox" data-id="${f.id}" ${isMarkedForDelete ? 'checked' : ''} /></td>
+      <td>${f.id}</td>
+      <td>${statusBadge}</td>
+      <td>${f.participant_name || '-'}</td>
+      <td class="truncate" title="${f.file_path}">${f.file_path}</td>
+      <td>${f.data_type || '-'}</td>
+      <td>${f.source || '-'}</td>
+      <td>${f.grch_version || '-'}</td>
+      <td>${f.row_count ? f.row_count.toLocaleString() : '-'}</td>
+      <td>${f.chromosome_count || '-'}</td>
+      <td style="font-weight: ${f.inferred_sex ? '600' : 'normal'}; color: ${f.inferred_sex === 'Male' ? '#007bff' : f.inferred_sex === 'Female' ? '#e83e8c' : '#666'}">${f.inferred_sex || '-'}</td>
+      <td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${(f.file_hash || '').substring(0, 16)}${f.file_hash && f.file_hash.length > 16 ? '...' : ''}</td>
+      <td>${f.created_at}</td>
+      <td>${f.updated_at}</td>
+      <td><button class="open-finder-btn" data-path="${f.file_path}" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">📁 Open</button></td>
+    `;
+    tbody.appendChild(row);
+
+    row.querySelector('.open-finder-btn').addEventListener('click', async () => {
+      try {
+        await invoke('show_in_folder', { filePath: f.file_path });
+      } catch (error) {
+        alert(`Error opening folder: ${error}`);
+      }
+    });
+  });
+
+  document.querySelectorAll('#files-table .file-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const id = parseInt(e.target.dataset.id);
+      if (e.target.checked) {
+        if (!selectedFilesForDelete.includes(id)) {
+          selectedFilesForDelete.push(id);
+        }
+      } else {
+        selectedFilesForDelete = selectedFilesForDelete.filter(x => x !== id);
+      }
+      updateDeleteFilesButton();
+    });
+  });
+
+  document.getElementById('files-count').textContent = filteredFiles.length;
+  updateFilesSortIndicators();
+
+  const pendingCount = allFilesData.filter(f => f.status === 'pending').length;
+  document.getElementById('pending-count').textContent = pendingCount;
+
+  const processQueueBtn = document.getElementById('process-queue-btn');
+  if (pendingCount > 0) {
+    processQueueBtn.style.display = 'flex';
+  } else {
+    processQueueBtn.style.display = 'none';
+  }
+
+  const spinner = document.getElementById('queue-spinner');
+  if (spinner) {
+    spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none';
+  }
+
+  const selectAllHeader = document.getElementById('select-all-files-table');
+  if (selectAllHeader) {
+    const filteredCount = filteredFiles.length;
+    const selectedCount = filteredFiles.filter(f => selectedFilesForDelete.includes(f.id)).length;
+    selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount;
+    selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount;
+  }
+
+  updateDeleteFilesButton();
+}
+
+function updateFilesSortIndicators() {
+  document.querySelectorAll('#files-view .sortable-files-header').forEach(header => {
+    const indicator = header.querySelector('.sort-indicator');
+    if (!indicator) return;
+
+    if (header.dataset.sortField === filesSortField) {
+      indicator.textContent = filesSortDirection === 'asc' ? ' ▲' : ' ▼';
+    } else {
+      indicator.textContent = '';
+    }
+  });
 }
 
 function updateDeleteFilesButton() {
@@ -363,48 +895,768 @@ function showImportResults(result) {
   document.getElementById('import-results-view').classList.add('active');
 }
 
-async function importFiles() {
+function resetImportState() {
+  console.log('🔄 Resetting import workflow state');
+
+  // Clear tracking structures
+  isImportInProgress = false;
+  selectedFiles.clear();
+  selectedReviewFiles = new Set();
+  reviewFileMetadata = {};
+  fileParticipantIds = {};
+  currentFiles = [];
+  selectedFolder = null;
+  currentPattern = '';
+  reviewSortField = 'path';
+  reviewSortDirection = 'asc';
+
+  // Reset step 1 UI elements
+  const selectedPathEl = document.getElementById('selected-path');
+  if (selectedPathEl) {
+    selectedPathEl.textContent = 'No folder selected';
+  }
+
+  const selectAllFiles = document.getElementById('select-all-files');
+  if (selectAllFiles) {
+    selectAllFiles.checked = false;
+  }
+
+  const fileCountEl = document.getElementById('file-count');
+  if (fileCountEl) {
+    fileCountEl.textContent = '0';
+  }
+
+  updateSelectedFileCount();
+
+  const fileListEl = document.getElementById('file-list');
+  if (fileListEl) {
+    fileListEl.innerHTML = '';
+  }
+
+  const patternContainer = document.getElementById('pattern-suggestions');
+  if (patternContainer) {
+    patternContainer.innerHTML = '';
+  }
+
+  const customPatternInput = document.getElementById('custom-pattern');
+  if (customPatternInput) {
+    customPatternInput.value = '';
+  }
+
+  document.querySelectorAll('.pattern-btn').forEach(btn => btn.classList.remove('active'));
+
+  const fileTypeSelect = document.getElementById('file-type-select');
+  if (fileTypeSelect) {
+    fileTypeSelect.innerHTML = '<option value="">Select file type(s)...</option>';
+    Array.from(fileTypeSelect.options).forEach(option => (option.selected = false));
+  }
+
+  const customExtension = document.getElementById('custom-extension');
+  if (customExtension) {
+    customExtension.style.display = 'none';
+  }
+
+  const customExtInput = document.getElementById('custom-ext-input');
+  if (customExtInput) {
+    customExtInput.value = '';
+  }
+
+  // Reset review step UI elements
+  const reviewTable = document.getElementById('review-files-table');
+  if (reviewTable) {
+    reviewTable.innerHTML = '';
+  }
+
+  const reviewCountEl = document.getElementById('review-file-count');
+  if (reviewCountEl) {
+    reviewCountEl.textContent = '0';
+  }
+
+  const reviewSelectAll = document.getElementById('select-all-review');
+  if (reviewSelectAll) {
+    reviewSelectAll.checked = false;
+    reviewSelectAll.indeterminate = false;
+  }
+
+  const reviewImportBtn = document.getElementById('review-import-btn');
+  if (reviewImportBtn) {
+    reviewImportBtn.disabled = false;
+    reviewImportBtn.innerHTML = 'Import Files →';
+  }
+
+  const detectBtn = document.getElementById('detect-types-btn');
+  if (detectBtn) {
+    detectBtn.disabled = false;
+    detectBtn.innerHTML = '🔍 Detect File Types';
+  }
+
+  const analyzeBtn = document.getElementById('analyze-types-btn');
+  if (analyzeBtn) {
+    analyzeBtn.disabled = false;
+    analyzeBtn.innerHTML = '🧬 Analyze Files';
+  }
+
+  const progressDiv = document.getElementById('detection-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+  if (progressDiv && progressBar && progressText) {
+    progressDiv.style.display = 'none';
+    progressBar.style.width = '0%';
+    progressText.textContent = '';
+  }
+
+  updateSelectAllCheckbox();
+  updateImportButton();
+  updateReviewSelectAllCheckbox();
+
+  // Ensure the import step is the visible state if we were on the review view
+  const importView = document.getElementById('import-view');
+  const importReviewView = document.getElementById('import-review-view');
+  if (importReviewView && importReviewView.classList.contains('active')) {
+    importReviewView.classList.remove('active');
+    if (importView) {
+      importView.classList.add('active');
+    }
+
+    const importTab = document.querySelector('.tab[data-tab="import"]');
+    if (importTab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      importTab.classList.add('active');
+    }
+  }
+
+  console.log('✅ Import workflow reset complete');
+}
+
+// Step 2: Review file types before import
+let reviewFileMetadata = {};
+let selectedReviewFiles = new Set();
+let reviewSortField = 'path';
+let reviewSortDirection = 'asc';
+
+function goToReviewStep() {
   if (selectedFiles.size === 0) return;
 
-  const btn = document.getElementById('import-btn');
-  btn.disabled = true;
-  btn.textContent = 'Importing...';
+  // Build file-to-ID mapping
+  const filesToImport = Array.from(selectedFiles);
 
-  try {
-    // Build file-to-ID mapping for selected files only
-    const filesToImport = Array.from(selectedFiles);
-    const fileIdMap = {};
-    filesToImport.forEach(file => {
-      const participantId = fileParticipantIds[file];
-      if (participantId) {
-        fileIdMap[file] = participantId;
+  // Initialize metadata for each file
+  reviewFileMetadata = {};
+  selectedReviewFiles = new Set();
+
+  console.log('🔍 fileParticipantIds at review time:', JSON.stringify(fileParticipantIds, null, 2));
+  console.log(`🔍 Number of files to import: ${filesToImport.length}`);
+  console.log(`🔍 Number of participant IDs in map: ${Object.keys(fileParticipantIds).length}`);
+
+  filesToImport.forEach(file => {
+    const participantId = fileParticipantIds[file] || null;
+    console.log(`🔍 File: ${file}`);
+    console.log(`   participantId from map: ${participantId}`);
+
+    reviewFileMetadata[file] = {
+      participant_id: participantId,
+      data_type: 'Unknown',
+      source: null,
+      grch_version: null,
+      row_count: null,
+      chromosome_count: null,
+      inferred_sex: null
+    };
+    selectedReviewFiles.add(file); // Select all by default
+  });
+
+  console.log('🔍 reviewFileMetadata initialized:', reviewFileMetadata);
+
+  // Show review view
+  showReviewView();
+}
+
+function sortReviewFiles(filePaths) {
+  return filePaths.sort((a, b) => {
+    const metaA = reviewFileMetadata[a];
+    const metaB = reviewFileMetadata[b];
+
+    let valA, valB;
+
+    switch (reviewSortField) {
+      case 'path':
+        valA = a.toLowerCase();
+        valB = b.toLowerCase();
+        break;
+      case 'data_type':
+        valA = (metaA.data_type || '').toLowerCase();
+        valB = (metaB.data_type || '').toLowerCase();
+        break;
+      case 'source':
+        valA = (metaA.source || '').toLowerCase();
+        valB = (metaB.source || '').toLowerCase();
+        break;
+      case 'grch_version':
+        valA = (metaA.grch_version || '').toLowerCase();
+        valB = (metaB.grch_version || '').toLowerCase();
+        break;
+      case 'row_count':
+        valA = metaA.row_count || 0;
+        valB = metaB.row_count || 0;
+        break;
+      case 'chromosome_count':
+        valA = metaA.chromosome_count || 0;
+        valB = metaB.chromosome_count || 0;
+        break;
+      case 'inferred_sex':
+        valA = (metaA.inferred_sex || '').toLowerCase();
+        valB = (metaB.inferred_sex || '').toLowerCase();
+        break;
+      default:
+        valA = a.toLowerCase();
+        valB = b.toLowerCase();
+    }
+
+    if (valA < valB) return reviewSortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return reviewSortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+}
+
+function setReviewSortField(field) {
+  if (reviewSortField === field) {
+    reviewSortDirection = reviewSortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    reviewSortField = field;
+    reviewSortDirection = 'asc';
+  }
+
+  updateReviewSortIndicators();
+  showReviewView();
+}
+
+function updateReviewSortIndicators() {
+  document.querySelectorAll('#import-review-view .sortable-header').forEach(header => {
+    const indicator = header.querySelector('.sort-indicator');
+    const field = header.dataset.sortField;
+
+    if (field === reviewSortField) {
+      indicator.textContent = reviewSortDirection === 'asc' ? ' ▲' : ' ▼';
+    } else {
+      indicator.textContent = '';
+    }
+  });
+}
+
+function showReviewView() {
+  document.getElementById('review-file-count').textContent = Object.keys(reviewFileMetadata).length;
+
+  const tbody = document.getElementById('review-files-table');
+  tbody.innerHTML = '';
+
+  const sortedFiles = sortReviewFiles(Object.keys(reviewFileMetadata));
+
+  sortedFiles.forEach(filePath => {
+    const metadata = reviewFileMetadata[filePath];
+    const row = document.createElement('tr');
+    row.style.borderBottom = '1px solid #eee';
+    row.dataset.filePath = filePath;
+
+    // Checkbox cell
+    const checkboxCell = document.createElement('td');
+    checkboxCell.style.padding = '10px';
+    checkboxCell.style.textAlign = 'center';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedReviewFiles.has(filePath);
+    checkbox.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        selectedReviewFiles.add(filePath);
+      } else {
+        selectedReviewFiles.delete(filePath);
+      }
+      updateReviewSelectAllCheckbox();
+    });
+    checkboxCell.appendChild(checkbox);
+    row.appendChild(checkboxCell);
+
+    // File path cell with folder icon
+    const pathCell = document.createElement('td');
+    pathCell.style.padding = '10px';
+    pathCell.style.fontSize = '13px';
+    pathCell.style.display = 'flex';
+    pathCell.style.alignItems = 'center';
+    pathCell.style.gap = '8px';
+
+    const pathText = document.createElement('span');
+    pathText.textContent = filePath;
+    pathText.title = filePath;
+    pathText.style.flex = '1';
+    pathText.style.overflow = 'hidden';
+    pathText.style.textOverflow = 'ellipsis';
+    pathText.style.whiteSpace = 'nowrap';
+
+    const folderBtn = document.createElement('button');
+    folderBtn.textContent = '📁';
+    folderBtn.style.padding = '4px 8px';
+    folderBtn.style.background = '#f0f0f0';
+    folderBtn.style.border = '1px solid #ddd';
+    folderBtn.style.borderRadius = '4px';
+    folderBtn.style.cursor = 'pointer';
+    folderBtn.style.flexShrink = '0';
+    folderBtn.style.zIndex = '10';
+    folderBtn.style.position = 'relative';
+    folderBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('🔍 REVIEW Folder button clicked for:', filePath);
+      try {
+        console.log('🔍 Calling show_in_folder with filePath:', filePath);
+        await invoke('show_in_folder', { filePath: filePath });
+        console.log('✅ show_in_folder succeeded');
+      } catch (error) {
+        console.error('❌ show_in_folder error:', error);
+        alert(`Error opening folder: ${error}`);
       }
     });
 
-    const result = await invoke('import_files', {
-      files: filesToImport,
-      pattern: currentPattern,
-      fileIdMap: fileIdMap
+    pathCell.appendChild(pathText);
+    pathCell.appendChild(folderBtn);
+    row.appendChild(pathCell);
+
+    // Data type dropdown
+    const dataTypeCell = document.createElement('td');
+    dataTypeCell.style.padding = '10px';
+    const dataTypeSelect = document.createElement('select');
+    dataTypeSelect.style.width = '100%';
+    dataTypeSelect.style.padding = '6px';
+    dataTypeSelect.innerHTML = `
+      <option value="Unknown" ${metadata.data_type === 'Unknown' ? 'selected' : ''}>Unknown</option>
+      <option value="Genotype" ${metadata.data_type === 'Genotype' ? 'selected' : ''}>Genotype</option>
+    `;
+    dataTypeSelect.addEventListener('change', (e) => {
+      reviewFileMetadata[filePath].data_type = e.target.value;
+      updateRowVisibility(row, e.target.value);
+      applyReviewRowState(row, reviewFileMetadata[filePath]);
+    });
+    dataTypeCell.appendChild(dataTypeSelect);
+    row.appendChild(dataTypeCell);
+
+    // Source dropdown
+    const sourceCell = document.createElement('td');
+    sourceCell.style.padding = '10px';
+    sourceCell.className = 'genotype-field';
+    const sourceSelect = document.createElement('select');
+    sourceSelect.style.width = '100%';
+    sourceSelect.style.padding = '6px';
+    sourceSelect.innerHTML = `
+      <option value="">-</option>
+      <option value="Unknown" ${metadata.source === 'Unknown' ? 'selected' : ''}>Unknown</option>
+      <option value="23andMe" ${metadata.source === '23andMe' ? 'selected' : ''}>23andMe</option>
+      <option value="AncestryDNA" ${metadata.source === 'AncestryDNA' ? 'selected' : ''}>AncestryDNA</option>
+      <option value="Genes for Good" ${metadata.source === 'Genes for Good' ? 'selected' : ''}>Genes for Good</option>
+    `;
+    sourceSelect.addEventListener('change', (e) => {
+      reviewFileMetadata[filePath].source = e.target.value || null;
+      applyReviewRowState(row, reviewFileMetadata[filePath]);
+    });
+    sourceCell.appendChild(sourceSelect);
+    row.appendChild(sourceCell);
+
+    // GRCh version dropdown
+    const grchCell = document.createElement('td');
+    grchCell.style.padding = '10px';
+    grchCell.className = 'genotype-field';
+    const grchSelect = document.createElement('select');
+    grchSelect.style.width = '100%';
+    grchSelect.style.padding = '6px';
+    grchSelect.innerHTML = `
+      <option value="">-</option>
+      <option value="Unknown" ${metadata.grch_version === 'Unknown' ? 'selected' : ''}>Unknown</option>
+      <option value="36" ${metadata.grch_version === '36' ? 'selected' : ''}>36</option>
+      <option value="37" ${metadata.grch_version === '37' ? 'selected' : ''}>37</option>
+      <option value="38" ${metadata.grch_version === '38' ? 'selected' : ''}>38</option>
+    `;
+    grchSelect.addEventListener('change', (e) => {
+      reviewFileMetadata[filePath].grch_version = e.target.value || null;
+      applyReviewRowState(row, reviewFileMetadata[filePath]);
+    });
+    grchCell.appendChild(grchSelect);
+    row.appendChild(grchCell);
+
+    // Row count cell (hidden - not used during import)
+    const rowCountCell = document.createElement('td');
+    rowCountCell.style.display = 'none';
+    rowCountCell.style.padding = '10px';
+    rowCountCell.style.fontSize = '13px';
+    rowCountCell.style.color = '#666';
+    rowCountCell.textContent = metadata.row_count ? metadata.row_count.toLocaleString() : '-';
+    row.appendChild(rowCountCell);
+
+    // Chromosome count cell (hidden - not used during import)
+    const chromCountCell = document.createElement('td');
+    chromCountCell.style.display = 'none';
+    chromCountCell.style.padding = '10px';
+    chromCountCell.style.fontSize = '13px';
+    chromCountCell.style.color = '#666';
+    chromCountCell.textContent = metadata.chromosome_count || '-';
+    row.appendChild(chromCountCell);
+
+    // Inferred sex cell (hidden - not used during import)
+    const sexCell = document.createElement('td');
+    sexCell.style.display = 'none';
+    sexCell.style.padding = '10px';
+    sexCell.style.fontSize = '13px';
+    sexCell.style.color = '#666';
+    sexCell.style.fontWeight = metadata.inferred_sex ? '600' : 'normal';
+    sexCell.textContent = metadata.inferred_sex || '-';
+    row.appendChild(sexCell);
+
+    applyReviewRowState(row, metadata);
+    updateRowVisibility(row, metadata.data_type);
+    tbody.appendChild(row);
+  });
+
+  navigateTo('import-review');
+  updateReviewSelectAllCheckbox();
+  updateReviewSortIndicators();
+}
+
+function updateReviewSelectAllCheckbox() {
+  const selectAllCheckbox = document.getElementById('select-all-review');
+  const totalFiles = Object.keys(reviewFileMetadata).length;
+  const selectedCount = selectedReviewFiles.size;
+
+  selectAllCheckbox.checked = selectedCount === totalFiles && totalFiles > 0;
+  selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < totalFiles;
+}
+
+function isReviewMetadataComplete(metadata) {
+  if (!metadata) return false;
+  const filledDataType = metadata.data_type && metadata.data_type !== 'Unknown';
+  const filledSource = metadata.source && metadata.source !== 'Unknown';
+  const filledGrch = metadata.grch_version && metadata.grch_version !== 'Unknown';
+  return filledDataType && filledSource && filledGrch;
+}
+
+function applyReviewRowState(row, metadata) {
+  if (!row) return;
+  if (isReviewMetadataComplete(metadata)) {
+    row.classList.add('review-row-complete');
+  } else {
+    row.classList.remove('review-row-complete');
+  }
+}
+
+function updateRowVisibility(row, dataType) {
+  const genotypeFields = row.querySelectorAll('.genotype-field');
+  genotypeFields.forEach(field => {
+    field.style.display = dataType === 'Genotype' ? '' : 'none';
+  });
+}
+
+async function detectFileTypes() {
+  if (selectedReviewFiles.size === 0) {
+    alert('Please select files to detect');
+    return;
+  }
+
+  const btn = document.getElementById('detect-types-btn');
+  const progressDiv = document.getElementById('detection-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+
+  // Show progress UI IMMEDIATELY before any work
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Detecting...';
+  progressDiv.style.display = 'flex';
+  progressBar.style.width = '0%';
+  progressText.textContent = 'Starting detection...';
+
+  // Force UI update before CLI calls
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  try {
+    const selectedFilesArray = Array.from(selectedReviewFiles);
+    const batchSize = 1000; // Large batches since detection is fast
+    const totalFiles = selectedFilesArray.length;
+    let processed = 0;
+
+    // Process in batches to show progress
+    for (let i = 0; i < selectedFilesArray.length; i += batchSize) {
+      const batch = selectedFilesArray.slice(i, i + batchSize);
+
+      progressText.textContent = `Detecting file types... ${processed}/${totalFiles}`;
+      progressBar.style.width = `${(processed / totalFiles) * 100}%`;
+
+      const detections = await invoke('detect_file_types', { files: batch });
+
+      // Update all metadata and UI for this batch
+      Object.keys(detections).forEach(filePath => {
+        const detection = detections[filePath];
+        console.log(`🔍 Detection result for ${filePath}:`, detection);
+        if (reviewFileMetadata[filePath] && detection) {
+          console.log(`📝 BEFORE update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`);
+          reviewFileMetadata[filePath].data_type = detection.data_type;
+          reviewFileMetadata[filePath].source = detection.source;
+          reviewFileMetadata[filePath].grch_version = detection.grch_version;
+          console.log(`📝 AFTER update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`);
+          updateRowInPlace(filePath);
+        }
+      });
+
+      processed += batch.length;
+    }
+
+    progressText.textContent = `Complete! Detected ${totalFiles} file types`;
+    progressBar.style.width = '100%';
+
+    console.log(`✅ Detected ${totalFiles} file types`);
+  } catch (error) {
+    alert(`Error detecting file types: ${error}`);
+    console.error('Detection error:', error);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🔍 Detect File Types';
+
+    // Hide progress bar after a short delay
+    setTimeout(() => {
+      progressDiv.style.display = 'none';
+      progressBar.style.width = '0%';
+    }, 2000);
+  }
+}
+
+async function analyzeFileTypes() {
+  if (selectedReviewFiles.size === 0) {
+    alert('Please select files to analyze');
+    return;
+  }
+
+  const btn = document.getElementById('analyze-types-btn');
+  const progressDiv = document.getElementById('detection-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+
+  // Show progress UI IMMEDIATELY before any work
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Analyzing...';
+  progressDiv.style.display = 'flex';
+  progressBar.style.width = '0%';
+  progressText.textContent = 'Starting analysis...';
+
+  // Force UI update before CLI calls
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  try {
+    const selectedFilesArray = Array.from(selectedReviewFiles);
+    const batchSize = 10; // Smaller batches for slower analysis
+    const totalFiles = selectedFilesArray.length;
+    let processed = 0;
+
+    // Process in batches to show progress
+    for (let i = 0; i < selectedFilesArray.length; i += batchSize) {
+      const batch = selectedFilesArray.slice(i, i + batchSize);
+
+      progressText.textContent = `Analyzing files... ${processed}/${totalFiles}`;
+      progressBar.style.width = `${(processed / totalFiles) * 100}%`;
+
+      const analysis = await invoke('analyze_file_types', { files: batch });
+
+      // Update all metadata and UI for this batch
+      Object.keys(analysis).forEach(filePath => {
+        const data = analysis[filePath];
+        if (reviewFileMetadata[filePath] && data) {
+          reviewFileMetadata[filePath].row_count = data.row_count;
+          reviewFileMetadata[filePath].chromosome_count = data.chromosome_count;
+          reviewFileMetadata[filePath].inferred_sex = data.inferred_sex;
+          updateRowInPlace(filePath);
+        }
+      });
+
+      processed += batch.length;
+    }
+
+    progressText.textContent = `Complete! Analyzed ${totalFiles} files`;
+    progressBar.style.width = '100%';
+
+    console.log(`✅ Analyzed ${totalFiles} files`);
+  } catch (error) {
+    alert(`Error analyzing files: ${error}`);
+    console.error('Analysis error:', error);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🧬 Infer Sex & Count';
+
+    // Hide progress bar after a short delay
+    setTimeout(() => {
+      progressDiv.style.display = 'none';
+      progressBar.style.width = '0%';
+    }, 2000);
+  }
+}
+
+function updateRowInPlace(filePath) {
+  // Find row by iterating and comparing dataset
+  const rows = document.querySelectorAll('#review-files-table tr');
+  let targetRow = null;
+  for (const row of rows) {
+    if (row.dataset.filePath === filePath) {
+      targetRow = row;
+      break;
+    }
+  }
+
+  if (!targetRow) return;
+
+  const metadata = reviewFileMetadata[filePath];
+
+  // Update data type dropdown
+  const dataTypeSelect = targetRow.querySelector('td:nth-child(3) select');
+  if (dataTypeSelect) {
+    dataTypeSelect.value = metadata.data_type;
+    updateRowVisibility(targetRow, metadata.data_type);
+  }
+
+  // Update source dropdown
+  const sourceSelect = targetRow.querySelector('td:nth-child(4) select');
+  if (sourceSelect && metadata.source) {
+    sourceSelect.value = metadata.source;
+  }
+
+  // Update grch version dropdown
+  const grchSelect = targetRow.querySelector('td:nth-child(5) select');
+  if (grchSelect && metadata.grch_version) {
+    grchSelect.value = metadata.grch_version;
+  }
+
+  // Update row count (column 6)
+  const rowCountCell = targetRow.querySelector('td:nth-child(6)');
+  if (rowCountCell) {
+    rowCountCell.textContent = metadata.row_count ? metadata.row_count.toLocaleString() : '-';
+  }
+
+  // Update chromosome count (column 7)
+  const chromCountCell = targetRow.querySelector('td:nth-child(7)');
+  if (chromCountCell) {
+    chromCountCell.textContent = metadata.chromosome_count || '-';
+  }
+
+  // Update inferred sex (column 8)
+  const sexCell = targetRow.querySelector('td:nth-child(8)');
+  if (sexCell) {
+    sexCell.textContent = metadata.inferred_sex || '-';
+    sexCell.style.fontWeight = metadata.inferred_sex ? '600' : 'normal';
+  }
+
+  applyReviewRowState(targetRow, metadata);
+}
+
+async function finalizeImport() {
+  const btn = document.getElementById('review-import-btn');
+  const progressDiv = document.getElementById('detection-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+
+  // Mark import as in progress
+  isImportInProgress = true;
+
+  // Show progress UI IMMEDIATELY before any work
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Importing...';
+  progressDiv.style.display = 'flex';
+  progressBar.style.width = '0%';
+  progressText.textContent = 'Preparing import...';
+
+  // Force UI update before CLI calls
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  try {
+    const filesToImport = Object.keys(reviewFileMetadata);
+    const totalFiles = filesToImport.length;
+    const batchSize = 50; // Import in batches of 50
+    let importedCount = 0;
+    let allResults = {
+      success: true,
+      imported: 0,
+      updated: 0,
+      conflicts: [],
+      errors: []
+    };
+
+    // Build fileMetadata object for ALL files (single call - instant import)
+    const fileMetadata = {};
+    filesToImport.forEach(file => {
+      const meta = reviewFileMetadata[file];
+      fileMetadata[file] = {
+        participant_id: meta.participant_id,
+        data_type: meta.data_type,
+        source: meta.source,
+        grch_version: meta.grch_version
+      };
+      console.log(`🔍 Preparing import - file: ${file}, participant_id: ${meta.participant_id}, data_type: ${meta.data_type}`);
     });
 
+    console.log('📦 Full fileMetadata being sent to Tauri:', fileMetadata);
+
+    progressText.textContent = `Adding files to queue...`;
+    progressBar.style.width = '50%';
+
+    // Fast import - add all files to queue instantly (no hashing)
+    const result = await invoke('import_files_pending', {
+      fileMetadata: fileMetadata
+    });
+
+    progressText.textContent = `Complete! Added ${totalFiles} files to queue`;
+    progressBar.style.width = '100%';
+
+    // Update results
     if (result.success) {
+      allResults.imported = totalFiles;
+    } else {
+      allResults.success = false;
+      if (result.conflicts) allResults.conflicts.push(...result.conflicts);
+      if (result.errors) allResults.errors.push(...result.errors);
+    }
+
+    if (allResults.success) {
+      // Metadata was saved during import via CSV
       await loadParticipants();
       await loadFiles();
-      showImportResults(result);
+
+      // Navigate to files tab after successful import
+      setTimeout(() => {
+        resetImportState();
+        isImportInProgress = false;
+        progressDiv.style.display = 'none';
+        progressBar.style.width = '0%';
+        navigateTo('files');
+      }, 1000);
     } else {
       const updateConflicts = confirm(
-        `${result.message}\nDo you want to update the files with conflicts?`
+        `Some files had conflicts.\nDo you want to update the files with conflicts?`
       );
 
       if (updateConflicts) {
         alert('Update functionality coming soon');
       }
+
+      // Re-enable button on failure
+      isImportInProgress = false;
+      btn.disabled = false;
+      btn.innerHTML = 'Import Files →';
+      setTimeout(() => {
+        progressDiv.style.display = 'none';
+        progressBar.style.width = '0%';
+      }, 2000);
     }
   } catch (error) {
     alert(`Error: ${error}`);
-  } finally {
+    console.error('Import error:', error);
+
+    // Re-enable button on error
+    isImportInProgress = false;
     btn.disabled = false;
-    btn.textContent = 'Import Files';
+    btn.innerHTML = 'Import Files →';
+    setTimeout(() => {
+      progressDiv.style.display = 'none';
+      progressBar.style.width = '0%';
+    }, 2000);
   }
 }
 
@@ -829,12 +2081,101 @@ async function resetSettings() {
   }
 }
 
+// Log management functions
+async function loadCommandLogs() {
+  try {
+    const logs = await invoke('get_command_logs');
+    commandLogs = logs;
+    displayLogs();
+  } catch (error) {
+    console.error('Error loading logs:', error);
+  }
+}
+
+function displayLogs() {
+  const logsContent = document.getElementById('logs-content');
+  if (commandLogs.length === 0) {
+    logsContent.textContent = 'No command logs yet.';
+    return;
+  }
+
+  const MAX_OUTPUT_CHARS = 5000;
+  let logText = '';
+
+  commandLogs.forEach(log => {
+    logText += `\n${'='.repeat(80)}\n`;
+    logText += `[${log.timestamp}]\n`;
+    logText += `Command: ${log.command}\n`;
+    logText += `${'-'.repeat(80)}\n`;
+
+    if (log.output) {
+      let output = log.output;
+      if (output.length > MAX_OUTPUT_CHARS) {
+        output = output.substring(0, MAX_OUTPUT_CHARS) + `\n\n... (output truncated, ${output.length - MAX_OUTPUT_CHARS} chars hidden)`;
+      }
+      logText += output;
+    }
+
+    if (log.error) {
+      logText += `\nERROR: ${log.error}`;
+    }
+
+    logText += '\n';
+  });
+
+  logsContent.textContent = logText;
+}
+
+async function clearLogs() {
+  if (!confirm('Are you sure you want to clear all logs?')) {
+    return;
+  }
+
+  try {
+    await invoke('clear_command_logs');
+    commandLogs = [];
+    displayLogs();
+  } catch (error) {
+    alert(`Error clearing logs: ${error}`);
+  }
+}
+
+function copyLogs() {
+  const logsContent = document.getElementById('logs-content');
+  const text = logsContent.textContent;
+
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copy-logs-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '✅ Copied!';
+    setTimeout(() => {
+      btn.innerHTML = originalText;
+    }, 2000);
+  }).catch(err => {
+    alert(`Failed to copy logs: ${err}`);
+  });
+}
+
 function navigateTo(viewName) {
+  // Check if import is in progress
+  if (isImportInProgress && viewName !== 'import-review') {
+    const confirmed = confirm('Import is currently in progress. Are you sure you want to cancel and leave this page?');
+    if (!confirmed) {
+      return; // Don't navigate
+    }
+    // User confirmed - cancel the import
+    isImportInProgress = false;
+  }
+
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`${viewName}-view`).classList.add('active');
 
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.tab[data-tab="${viewName}"]`)?.classList.add('active');
+  // Only update tab highlighting if this view has a corresponding tab
+  const tab = document.querySelector(`.tab[data-tab="${viewName}"]`);
+  if (tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+  }
 
   if (viewName === 'participants') {
     loadParticipants();
@@ -851,15 +2192,31 @@ function navigateTo(viewName) {
     updateRunButton();
   } else if (viewName === 'runs') {
     loadRuns();
+  } else if (viewName === 'logs') {
+    displayLogs();
   } else if (viewName === 'settings') {
     loadSettings();
   }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  console.log('🔥 DOMContentLoaded fired');
+  refreshExistingFilePaths();
   loadParticipants();
   loadFiles();
   loadProjects();
+  loadCommandLogs();
+  updateSelectedFileCount();
+
+  // Initialize column resizers
+  initColumnResizers();
+
+  // Add sort header click listeners
+  document.querySelectorAll('.file-list-header div[data-sort]').forEach(header => {
+    header.addEventListener('click', () => {
+      setSortField(header.dataset.sort);
+    });
+  });
 
   document.querySelectorAll('.home-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -871,12 +2228,47 @@ window.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
       const targetTab = tab.dataset.tab;
+
+      // Check if user is leaving import workflow
+      const currentView = document.querySelector('.tab-content.active')?.id;
+      const inImportWorkflow = currentView === 'import-view' || currentView === 'import-review-view';
+      const leavingImport = inImportWorkflow && targetTab !== 'import';
+
+      if (leavingImport) {
+        if (!confirm('You are in the middle of importing files. Are you sure you want to leave? Your progress will be lost.')) {
+          return;
+        }
+      }
+
       navigateTo(targetTab);
     });
   });
 
   document.getElementById('done-btn').addEventListener('click', () => {
     navigateTo('home');
+  });
+
+  // File type tab switching
+  document.querySelectorAll('.file-type-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const fileType = tab.dataset.type;
+
+      // Update active state
+      document.querySelectorAll('.file-type-tab').forEach(t => {
+        t.classList.remove('active');
+        t.style.borderBottom = '3px solid transparent';
+        t.style.color = '#666';
+      });
+
+      tab.classList.add('active');
+      tab.style.borderBottom = '3px solid #007bff';
+      tab.style.color = '#007bff';
+
+      // Update filter and reload files
+      currentFileTypeFilter = fileType;
+      selectedFilesForDelete = [];
+      renderFilesTable();
+    });
   });
 
   document.getElementById('close-logs-btn').addEventListener('click', () => {
@@ -897,6 +2289,9 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
   document.getElementById('reset-settings-btn').addEventListener('click', resetSettings);
 
+  document.getElementById('copy-logs-btn').addEventListener('click', copyLogs);
+  document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
+
   document.getElementById('select-all-participants-table').addEventListener('change', (e) => {
     const checkboxes = document.querySelectorAll('.participant-checkbox');
     checkboxes.forEach(checkbox => {
@@ -916,11 +2311,10 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById('delete-selected-participants-btn').addEventListener('click', async () => {
     if (selectedParticipantsForDelete.length === 0) return;
 
-    if (confirm(`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files and run records.`)) {
+    if (confirm(`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files.`)) {
       try {
-        for (const id of selectedParticipantsForDelete) {
-          await invoke('delete_participant', { participantId: id });
-        }
+        const deleted = await invoke('delete_participants_bulk', { participantIds: selectedParticipantsForDelete });
+        console.log(`Deleted ${deleted} participant(s)`);
         await loadParticipants();
         await loadFiles();
       } catch (error) {
@@ -945,14 +2339,69 @@ window.addEventListener("DOMContentLoaded", () => {
     updateDeleteFilesButton();
   });
 
+  // Update queue processor button based on status
+  async function updateQueueButton() {
+    try {
+      const isRunning = await invoke('get_queue_processor_status');
+      const btn = document.getElementById('process-queue-btn');
+      const icon = document.getElementById('queue-btn-icon');
+      const text = document.getElementById('queue-btn-text');
+      const spinner = document.getElementById('queue-spinner');
+      queueProcessorRunning = isRunning;
+      const pendingCount = parseInt(document.getElementById('pending-count').textContent, 10) || 0;
+
+      if (isRunning) {
+        icon.textContent = '⏸';
+        text.textContent = 'Pause Queue';
+        btn.style.background = '#28a745'; // Green
+      } else {
+        icon.textContent = '▶';
+        text.textContent = 'Resume Queue';
+        btn.style.background = '#ffc107'; // Yellow
+      }
+
+      if (spinner) {
+        spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none';
+      }
+    } catch (error) {
+      console.error('Error getting queue status:', error);
+    }
+  }
+
+  document.getElementById('process-queue-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('process-queue-btn');
+
+    try {
+      const isRunning = await invoke('get_queue_processor_status');
+
+      if (isRunning) {
+        await invoke('pause_queue_processor');
+      } else {
+        await invoke('resume_queue_processor');
+      }
+
+      await updateQueueButton();
+      await loadFiles(); // Refresh files list
+    } catch (error) {
+      alert(`Error toggling queue processor: ${error}`);
+    }
+  });
+
+  // Poll queue status and pending count every 3 seconds
+  setInterval(async () => {
+    await updateQueueButton();
+  }, 3000);
+
+  // Initial button update
+  updateQueueButton();
+
   document.getElementById('delete-selected-files-btn').addEventListener('click', async () => {
     if (selectedFilesForDelete.length === 0) return;
 
     if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
       try {
-        for (const id of selectedFilesForDelete) {
-          await invoke('delete_file', { fileId: id });
-        }
+        const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete });
+        console.log(`Deleted ${deleted} file(s)`);
         await loadFiles();
       } catch (error) {
         alert(`Error deleting files: ${error}`);
@@ -960,12 +2409,149 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  const filesSearchInput = document.getElementById('files-search');
+  if (filesSearchInput) {
+    filesSearchInput.addEventListener('input', (e) => {
+      filesSearchTerm = e.target.value.trim().toLowerCase();
+      renderFilesTable();
+    });
+  }
+
+  const participantsSearchInput = document.getElementById('participants-search');
+  if (participantsSearchInput) {
+    participantsSearchInput.addEventListener('input', (e) => {
+      participantsSearchTerm = e.target.value.trim().toLowerCase();
+      renderParticipantsTable();
+    });
+  }
+
+  document.querySelectorAll('#files-view .sortable-files-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const field = header.dataset.sortField;
+      if (!field) return;
+
+      if (filesSortField === field) {
+        filesSortDirection = filesSortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        filesSortField = field;
+        filesSortDirection = getDefaultFilesSortDirection(field);
+      }
+
+      renderFilesTable();
+    });
+  });
+
+  updateFilesSortIndicators();
+
   document.getElementById('pick-folder').addEventListener('click', pickFolder);
-  document.getElementById('import-btn').addEventListener('click', importFiles);
+  document.getElementById('import-btn').addEventListener('click', goToReviewStep);
+
+  // Reset button on Step 1
+  const resetBtn = document.getElementById('reset-import-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      console.log('Reset button clicked');
+      resetImportState();
+    });
+  } else {
+    console.error('reset-import-btn not found');
+  }
+
+  // Step 2 Review view listeners
+  const detectBtn = document.getElementById('detect-types-btn');
+  const backBtn = document.getElementById('review-back-btn');
+  const reviewImportBtn = document.getElementById('review-import-btn');
+
+  if (detectBtn) {
+    detectBtn.addEventListener('click', detectFileTypes);
+  } else {
+    console.error('detect-types-btn not found');
+  }
+
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      console.log('Back button clicked');
+      navigateTo('import');
+    });
+  } else {
+    console.error('review-back-btn not found');
+  }
+
+  if (reviewImportBtn) {
+    reviewImportBtn.addEventListener('click', finalizeImport);
+  } else {
+    console.error('review-import-btn not found');
+  }
+
+  // Set All dropdowns - only apply to selected files
+  document.getElementById('set-all-datatype').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    if (selectedReviewFiles.size === 0) {
+      alert('Please select files to update');
+      e.target.value = '';
+      return;
+    }
+    selectedReviewFiles.forEach(file => {
+      reviewFileMetadata[file].data_type = e.target.value;
+    });
+    showReviewView();
+    e.target.value = '';
+  });
+
+  document.getElementById('set-all-source').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    if (selectedReviewFiles.size === 0) {
+      alert('Please select files to update');
+      e.target.value = '';
+      return;
+    }
+    selectedReviewFiles.forEach(file => {
+      reviewFileMetadata[file].source = e.target.value;
+    });
+    showReviewView();
+    e.target.value = '';
+  });
+
+  document.getElementById('set-all-grch').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    if (selectedReviewFiles.size === 0) {
+      alert('Please select files to update');
+      e.target.value = '';
+      return;
+    }
+    selectedReviewFiles.forEach(file => {
+      reviewFileMetadata[file].grch_version = e.target.value;
+    });
+    showReviewView();
+    e.target.value = '';
+  });
+
+  // Select all checkbox in review view
+  document.getElementById('select-all-review').addEventListener('change', (e) => {
+    const allFiles = Object.keys(reviewFileMetadata);
+    if (e.target.checked) {
+      allFiles.forEach(file => selectedReviewFiles.add(file));
+    } else {
+      selectedReviewFiles.clear();
+    }
+    showReviewView();
+  });
+
+  // Sortable headers in review view
+  document.querySelectorAll('#import-review-view .sortable-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const field = header.dataset.sortField;
+      setReviewSortField(field);
+    });
+  });
 
   document.getElementById('select-all-files').addEventListener('change', (e) => {
     if (e.target.checked) {
-      currentFiles.forEach(file => selectedFiles.add(file));
+      currentFiles.forEach(file => {
+        if (!existingFilePaths.has(file)) {
+          selectedFiles.add(file);
+        }
+      });
     } else {
       selectedFiles.clear();
     }
