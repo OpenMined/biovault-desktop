@@ -4,12 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "tauri": "tauri",
+    "tauri": "dotenv -- tauri",
     "dev": "tauri dev",
-    "dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG}/.biovault tauri dev"
+    "dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG}/.biovault tauri dev",
+    "build": "dotenv -- tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "dotenv-cli": "^10.0.0"
   },
   "dependencies": {
     "@tauri-apps/api": "~2",

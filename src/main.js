@@ -2639,4 +2639,60 @@ window.addEventListener("DOMContentLoaded", () => {
     renderFiles();
     updateImportButton();
   });
+
+  // Onboarding flow
+  document.getElementById('onboarding-submit').addEventListener('click', async () => {
+    const email = document.getElementById('onboarding-email').value.trim();
+    if (!email || !email.includes('@')) {
+      alert('Please enter a valid email address');
+      return;
+    }
+
+    try {
+      await invoke('complete_onboarding', { email });
+      // Hide onboarding, show main app
+      document.getElementById('onboarding-view').style.display = 'none';
+      document.querySelector('.tabs').style.display = 'flex';
+      navigateTo('home');
+      location.reload(); // Reload to refresh title with email
+    } catch (error) {
+      alert(`Error completing onboarding: ${error}`);
+    }
+  });
+
+  // Reset all data button
+  document.getElementById('reset-all-btn').addEventListener('click', async () => {
+    const confirmation = prompt('This will DELETE ALL DATA. Type "DELETE" to confirm:');
+    if (confirmation !== 'DELETE') {
+      return;
+    }
+
+    try {
+      await invoke('reset_all_data');
+      alert('All data has been reset. The app will now reload.');
+      location.reload();
+    } catch (error) {
+      alert(`Error resetting data: ${error}`);
+    }
+  });
+
+  // Check if onboarded on app start
+  async function checkOnboarding() {
+    try {
+      const isOnboarded = await invoke('check_is_onboarded');
+      if (!isOnboarded) {
+        // Show onboarding view
+        document.getElementById('onboarding-view').style.display = 'flex';
+        document.querySelector('.tabs').style.display = 'none';
+        document.querySelectorAll('.tab-content:not(#onboarding-view)').forEach(view => {
+          view.classList.remove('active');
+        });
+      }
+    } catch (error) {
+      console.error('Error checking onboarding status:', error);
+    }
+  }
+
+  // Run onboarding check on app start
+  checkOnboarding();
 });

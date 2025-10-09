@@ -1752,6 +1752,61 @@ fn get_config_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn check_is_onboarded() -> Result<bool, String> {
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    Ok(config_path.exists())
+}
+
+#[tauri::command]
+fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
+    eprintln!("🗑️ RESET: Deleting all BioVault data");
+
+    // Library reset deletes entire BIOVAULT_HOME directory, which includes:
+    // - config.yaml
+    // - biovault.db (shared database with files/participants)
+    // - biovault.db (desktop database with projects/runs)
+    // - runs/ directory
+    let db = state.biovault_db.lock().unwrap();
+    biovault::data::reset_biovault_data(&db, true)
+        .map_err(|e| format!("Failed to reset BioVault data: {}", e))?;
+
+    eprintln!("✅ RESET: All data deleted successfully");
+    Ok(())
+}
+
+#[tauri::command]
+fn complete_onboarding(email: String) -> Result<(), String> {
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let biovault_path = PathBuf::from(&biovault_home);
+    fs::create_dir_all(&biovault_path)
+        .map_err(|e| format!("Failed to create BIOVAULT_HOME: {}", e))?;
+
+    let config_path = biovault_path.join("config.yaml");
+    let config_content = format!("email: {}\n", email);
+
+    fs::write(&config_path, config_content)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    eprintln!("✅ Onboarding complete for: {}", email);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Settings, String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
     let settings_path = desktop_dir
@@ -2107,7 +2162,10 @@ pub fn run() {
             show_in_folder,
             get_config_path,
             get_command_logs,
-            clear_command_logs
+            clear_command_logs,
+            check_is_onboarded,
+            complete_onboarding,
+            reset_all_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

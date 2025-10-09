@@ -623,9 +623,88 @@
         font-size: 13px;
         min-width: 200px;
       }
+    .onboarding-view {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+      .onboarding-card {
+        background: white;
+        border-radius: 12px;
+        padding: 50px;
+        max-width: 500px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      }
+      .onboarding-card h1 {
+        color: #667eea;
+        margin: 0 0 10px 0;
+        font-size: 36px;
+      }
+      .onboarding-card p {
+        color: #666;
+        margin: 0 0 30px 0;
+        font-size: 16px;
+      }
+      .onboarding-card input {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        font-size: 16px;
+        margin-bottom: 20px;
+      }
+      .onboarding-card button {
+        width: 100%;
+        padding: 15px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .onboarding-card button:hover {
+        background: #5568d3;
+      }
+      .danger-zone {
+        margin-top: 40px;
+        padding: 20px;
+        background: #fff5f5;
+        border: 2px solid #feb2b2;
+        border-radius: 8px;
+      }
+      .danger-zone h3 {
+        color: #c53030;
+        margin: 0 0 10px 0;
+      }
+      .danger-zone p {
+        color: #742a2a;
+        font-size: 13px;
+        margin-bottom: 15px;
+      }
+      .danger-btn {
+        background: #dc3545 !important;
+      }
+      .danger-btn:hover {
+        background: #c82333 !important;
+      }
     </style>
   </head>
   <body>
+    <div id="onboarding-view" class="tab-content" style="display: none;">
+      <div class="onboarding-view">
+        <div class="onboarding-card">
+          <h1>Welcome to BioVault</h1>
+          <p>Let's get you set up. Please enter your email to continue.</p>
+          <input type="email" id="onboarding-email" placeholder="your.email@example.com" />
+          <button id="onboarding-submit">Get Started</button>
+        </div>
+      </div>
+    </div>
+
     <div class="tabs">
       <button class="tab active" data-tab="home">Home</button>
       <button class="tab" data-tab="projects">Projects</button>
@@ -1017,6 +1096,12 @@
           <div style="display: flex; gap: 10px; margin-top: 10px;">
             <button id="save-settings-btn" style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Save Settings</button>
             <button id="reset-settings-btn" style="padding: 12px 24px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Reset to Defaults</button>
+          </div>
+
+          <div class="danger-zone">
+            <h3>⚠️ Danger Zone</h3>
+            <p>This will delete ALL BioVault data including participants, files, projects, and runs. This cannot be undone!</p>
+            <button id="reset-all-btn" class="danger-btn" style="padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; color: white;">Reset All Data</button>
           </div>
         </div>
       </div>
