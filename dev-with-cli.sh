@@ -10,13 +10,13 @@ NC='\033[0m' # No Color
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# echo -e "${BLUE}🔨 Building CLI binary...${NC}"
-# cd "$SCRIPT_DIR/biovault/cli"
-# cargo build
-# cd "$SCRIPT_DIR"
+echo -e "${BLUE}🔨 Force rebuilding biovault submodule...${NC}"
+cd "$SCRIPT_DIR/src-tauri"
+cargo clean -p biovault
+cd "$SCRIPT_DIR"
+echo -e "${GREEN}✓ Cleaned biovault package cache${NC}"
 
 BV_PATH="$SCRIPT_DIR/biovault/bv"
-# echo -e "${GREEN}✓ CLI binary built at: ${BV_PATH}${NC}"
 
 # Use custom config if provided, otherwise use default
 if [ -n "$BIOVAULT_CONFIG" ]; then

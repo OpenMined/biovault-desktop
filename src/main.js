@@ -46,9 +46,28 @@ function patternToRegex(pattern) {
 
   if (!pattern.includes('{id}')) return null;
 
+  // Find what character comes after {id} to make matching non-greedy
+  const idIndex = pattern.indexOf('{id}');
+  const afterId = pattern.charAt(idIndex + 4); // Character after '{id}'
+
+  let characterClass;
+  if (afterId === '_') {
+    // Exclude underscore from character class (non-greedy)
+    characterClass = '([a-zA-Z0-9\\-]+?)';
+  } else if (afterId === '-') {
+    // Exclude hyphen from character class (non-greedy)
+    characterClass = '([a-zA-Z0-9_]+?)';
+  } else if (afterId === '.') {
+    // Exclude period from character class (non-greedy)
+    characterClass = '([a-zA-Z0-9_\\-]+?)';
+  } else {
+    // Default: include everything, but non-greedy
+    characterClass = '([a-zA-Z0-9_\\-]+?)';
+  }
+
   let regex = pattern
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\\\{id\\\}/g, '([a-zA-Z0-9_-]+)') // Allow alphanumeric IDs
+    .replace(/\\\{id\\\}/g, characterClass)
     .replace(/\\\*/g, '.*');
 
   return new RegExp(regex);
@@ -1251,6 +1270,7 @@ function showReviewView() {
       <option value="23andMe" ${metadata.source === '23andMe' ? 'selected' : ''}>23andMe</option>
       <option value="AncestryDNA" ${metadata.source === 'AncestryDNA' ? 'selected' : ''}>AncestryDNA</option>
       <option value="Genes for Good" ${metadata.source === 'Genes for Good' ? 'selected' : ''}>Genes for Good</option>
+      <option value="Dynamic DNA" ${metadata.source === 'Dynamic DNA' ? 'selected' : ''}>Dynamic DNA</option>
     `;
     sourceSelect.addEventListener('change', (e) => {
       reviewFileMetadata[filePath].source = e.target.value || null;

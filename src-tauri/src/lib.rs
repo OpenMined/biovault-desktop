@@ -366,6 +366,19 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
     let result = biovault::data::suggest_patterns(dir, Some(&ext_with_dot), false)
         .map_err(|e| format!("Failed to suggest patterns: {}", e))?;
 
+    eprintln!("\n=== PATTERN SUGGESTIONS ===");
+    for (idx, suggestion) in result.suggestions.iter().enumerate() {
+        eprintln!("\n📋 Suggestion #{}", idx + 1);
+        eprintln!("   Pattern: {}", suggestion.pattern);
+        eprintln!("   Description: {}", suggestion.description);
+        eprintln!("   Example: {}", suggestion.example);
+        eprintln!("   Sample extractions:");
+        for (filename, extracted_id) in &suggestion.sample_extractions {
+            eprintln!("      {} → {}", filename, extracted_id);
+        }
+    }
+    eprintln!("\n=== END SUGGESTIONS ===\n");
+
     let suggestions: Vec<PatternSuggestion> = result
         .suggestions
         .into_iter()
@@ -746,11 +759,14 @@ async fn import_files(
         files.len()
     );
 
+    eprintln!("🎯 Using pattern: '{}'", pattern);
+    eprintln!("\n=== PARTICIPANT ID EXTRACTION ===");
+
     // First scan for files
     let mut all_csv_imports = Vec::new();
 
     for ext in &extensions {
-        eprintln!("📂 Scanning files with extension: {}", ext);
+        eprintln!("\n📂 Scanning files with extension: {}", ext);
 
         // Scan directory
         let scan_result = biovault::data::scan(
@@ -766,7 +782,21 @@ async fn import_files(
         for file_info in scan_result.files {
             // Extract participant ID if pattern is provided
             let participant_id = if !pattern.is_empty() {
-                biovault::data::extract_id_from_pattern(&file_info.path, &pattern)
+                let extracted = biovault::data::extract_id_from_pattern(&file_info.path, &pattern);
+
+                // Log extraction
+                let filename = std::path::Path::new(&file_info.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+
+                if let Some(ref id) = extracted {
+                    eprintln!("   ✓ {} → participant: {}", filename, id);
+                } else {
+                    eprintln!("   ✗ {} → no match", filename);
+                }
+
+                extracted
             } else {
                 None
             };
@@ -785,6 +815,8 @@ async fn import_files(
 
         eprintln!("✅ Found {} files with extension {}", file_count, ext);
     }
+
+    eprintln!("\n=== END EXTRACTION ===\n");
 
     // Fast import to pending queue (no hashing/analysis)
     let db = state.biovault_db.lock().unwrap();
