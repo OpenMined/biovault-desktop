@@ -1,5 +1,6 @@
 const { invoke } = window.__TAURI__.core;
 const { open } = window.__TAURI__.dialog;
+const { listen } = window.__TAURI__.event;
 
 let selectedFolder = null;
 let currentFiles = [];
@@ -2006,12 +2007,12 @@ async function runAnalysis() {
     currentRunLogListeners = [];
 
     // Set up event listeners for logs
-    const unlisten = await window.__TAURI__.event.listen('log-line', (event) => {
+    const unlisten = await listen('log-line', (event) => {
       logContent.textContent += event.payload + '\n';
       logContent.scrollTop = logContent.scrollHeight;
     });
 
-    const unlistenComplete = await window.__TAURI__.event.listen('analysis-complete', async (event) => {
+    const unlistenComplete = await listen('analysis-complete', async (event) => {
       logContent.textContent += `\n=== Analysis ${event.payload} ===\n`;
       await loadRuns();
       unlisten();
@@ -2390,6 +2391,14 @@ window.addEventListener("DOMContentLoaded", () => {
   // Poll queue status and pending count every 3 seconds
   setInterval(async () => {
     await updateQueueButton();
+
+    // Auto-refresh files panel when queue is active
+    const isFilesTabActive = document.getElementById('files-view')?.classList.contains('active');
+    const pendingCount = parseInt(document.getElementById('pending-count')?.textContent || '0', 10);
+
+    if (queueProcessorRunning && isFilesTabActive && pendingCount > 0) {
+      await loadFiles();
+    }
   }, 3000);
 
   // Initial button update

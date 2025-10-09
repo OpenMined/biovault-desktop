@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
-use walkdir::WalkDir;
+
+// BioVault CLI library imports
+use biovault::data::BioVaultDb;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Settings {
@@ -134,6 +136,7 @@ struct ProjectYaml {
 
 struct AppState {
     db: Mutex<Connection>,
+    biovault_db: Arc<Mutex<BioVaultDb>>,
     queue_processor_paused: Arc<AtomicBool>,
 }
 
@@ -260,34 +263,22 @@ fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 #[tauri::command]
 fn get_extensions(path: String) -> Result<Vec<ExtensionCount>, String> {
-    eprintln!("🔍 get_extensions called for path: {}", path);
+    eprintln!(
+        "🔍 get_extensions called for path: {} (using library)",
+        path
+    );
 
-    // Use CLI to scan directory
-    let result = run_bv_command(&["files", "scan", &path, "--format", "json"])?;
+    let scan_result = biovault::data::scan(&path, None, true)
+        .map_err(|e| format!("Failed to scan directory: {}", e))?;
 
-    let data = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let extensions_array = data.get("extensions").ok_or_else(|| {
-        let err = format!("Missing 'extensions' field in data: {:?}", data);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    // Parse CLI output: { extension, count, total_size }
-    // We only need extension and count
-    let extensions: Vec<ExtensionCount> = serde_json::from_value(extensions_array.clone())
-        .map_err(|e| {
-            let err = format!(
-                "Failed to parse extensions from {:?}: {}",
-                extensions_array, e
-            );
-            eprintln!("❌ {}", err);
-            err
-        })?;
+    let extensions: Vec<ExtensionCount> = scan_result
+        .extensions
+        .into_iter()
+        .map(|ext| ExtensionCount {
+            extension: ext.extension,
+            count: ext.count,
+        })
+        .collect();
 
     eprintln!("✅ Found {} extensions", extensions.len());
     Ok(extensions)
@@ -295,34 +286,60 @@ fn get_extensions(path: String) -> Result<Vec<ExtensionCount>, String> {
 
 #[tauri::command]
 fn search_txt_files(path: String, extensions: Vec<String>) -> Result<Vec<String>, String> {
-    let mut files = Vec::new();
+    eprintln!(
+        "🔍 search_txt_files called for path: {} with {} extensions (using library)",
+        path,
+        extensions.len()
+    );
 
-    // Normalize extensions (remove leading dots)
-    let normalized_exts: Vec<String> = extensions
-        .iter()
-        .map(|ext| ext.trim_start_matches('.').to_string())
-        .collect();
-
-    for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Some(file_ext) = entry.path().extension() {
-                if let Some(ext_str) = file_ext.to_str() {
-                    if normalized_exts.contains(&ext_str.to_string()) {
-                        if let Some(path_str) = entry.path().to_str() {
-                            files.push(path_str.to_string());
-                        }
-                    }
-                }
-            }
-        }
+    if extensions.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(files)
+    // Scan recursively for all files
+    let scan_result = biovault::data::scan(&path, None, true)
+        .map_err(|e| format!("Failed to scan directory: {}", e))?;
+
+    // Normalize extensions (add leading dot if missing)
+    let normalized_exts: Vec<String> = extensions
+        .iter()
+        .map(|ext| {
+            if ext.starts_with('.') {
+                ext.clone()
+            } else {
+                format!(".{}", ext)
+            }
+        })
+        .collect();
+
+    // Filter files by extension
+    let filtered_files: Vec<String> = scan_result
+        .files
+        .into_iter()
+        .filter(|file| {
+            if let Some(ext) = std::path::Path::new(&file.path).extension() {
+                let ext_with_dot = format!(".{}", ext.to_string_lossy());
+                normalized_exts.contains(&ext_with_dot)
+            } else {
+                false
+            }
+        })
+        .map(|file| file.path)
+        .collect();
+
+    eprintln!(
+        "✅ Found {} files matching extensions",
+        filtered_files.len()
+    );
+    Ok(filtered_files)
 }
 
 #[tauri::command]
 fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String> {
-    eprintln!("🔍 suggest_patterns called with {} files", files.len());
+    eprintln!(
+        "🔍 suggest_patterns called with {} files (using library)",
+        files.len()
+    );
 
     if files.is_empty() {
         return Ok(vec![]);
@@ -346,40 +363,17 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
         dir, ext_with_dot
     );
 
-    // Use CLI to suggest patterns
-    let result = run_bv_command(&[
-        "files",
-        "suggest-patterns",
-        dir,
-        "--ext",
-        &ext_with_dot,
-        "--format",
-        "json",
-    ])?;
+    let result = biovault::data::suggest_patterns(dir, Some(&ext_with_dot), false)
+        .map_err(|e| format!("Failed to suggest patterns: {}", e))?;
 
-    let data = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let suggestions_array = data.get("suggestions").ok_or_else(|| {
-        let err = format!("Missing 'suggestions' field in data: {:?}", data);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    // Parse CLI output: { pattern, description, example, sample_extractions }
-    // We only need pattern and description
-    let suggestions: Vec<PatternSuggestion> = serde_json::from_value(suggestions_array.clone())
-        .map_err(|e| {
-            let err = format!(
-                "Failed to parse suggestions from {:?}: {}",
-                suggestions_array, e
-            );
-            eprintln!("❌ {}", err);
-            err
-        })?;
+    let suggestions: Vec<PatternSuggestion> = result
+        .suggestions
+        .into_iter()
+        .map(|s| PatternSuggestion {
+            pattern: s.pattern,
+            description: s.description,
+        })
+        .collect();
 
     eprintln!("✅ Found {} pattern suggestions", suggestions.len());
     Ok(suggestions)
@@ -420,11 +414,11 @@ struct FileMetadata {
 
 #[tauri::command]
 async fn import_files_with_metadata(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     file_metadata: std::collections::HashMap<String, FileMetadata>,
 ) -> Result<ImportResult, String> {
     eprintln!(
-        "🔍 import_files_with_metadata called with {} files",
+        "🔍 import_files_with_metadata called with {} files (using library)",
         file_metadata.len()
     );
 
@@ -432,90 +426,67 @@ async fn import_files_with_metadata(
         return Err("No files selected".to_string());
     }
 
-    // Create temporary CSV file
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    let mut temp_file =
-        NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {}", e))?;
-
-    // Write CSV header
-    writeln!(
-        temp_file,
-        "file_path,participant_id,data_type,source,grch_version,row_count,chromosome_count,inferred_sex"
-    )
-    .map_err(|e| format!("Failed to write CSV header: {}", e))?;
-
-    // Write CSV rows
-    for (file_path, metadata) in &file_metadata {
-        writeln!(
-            temp_file,
-            "{},{},{},{},{},{},{},{}",
+    // Convert desktop FileMetadata to library CsvFileImport
+    let csv_imports: Vec<biovault::data::CsvFileImport> = file_metadata
+        .into_iter()
+        .map(|(file_path, metadata)| biovault::data::CsvFileImport {
             file_path,
-            metadata.participant_id.as_deref().unwrap_or(""),
-            metadata.data_type.as_deref().unwrap_or(""),
-            metadata.source.as_deref().unwrap_or(""),
-            metadata.grch_version.as_deref().unwrap_or(""),
-            metadata
-                .row_count
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
-            metadata
-                .chromosome_count
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
-            metadata.inferred_sex.as_deref().unwrap_or("")
-        )
-        .map_err(|e| format!("Failed to write CSV row: {}", e))?;
+            participant_id: metadata.participant_id,
+            data_type: metadata.data_type,
+            source: metadata.source,
+            grch_version: metadata.grch_version,
+            row_count: metadata.row_count,
+            chromosome_count: metadata.chromosome_count,
+            inferred_sex: metadata.inferred_sex,
+        })
+        .collect();
+
+    // Import using library (with analysis)
+    let db = state.biovault_db.lock().unwrap();
+    let lib_result = biovault::data::import_from_csv(&db, csv_imports, true)
+        .map_err(|e| format!("Failed to import files: {}", e))?;
+
+    eprintln!(
+        "✅ Imported {} files, skipped {} (using library)",
+        lib_result.imported, lib_result.skipped
+    );
+
+    // Log any errors
+    for error in &lib_result.errors {
+        eprintln!("⚠️  Import error: {}", error);
     }
 
-    temp_file
-        .flush()
-        .map_err(|e| format!("Failed to flush CSV: {}", e))?;
-
-    // Get the temp file path
-    let csv_path = temp_file.path().to_str().ok_or("Invalid temp file path")?;
-    eprintln!("📝 Created temp CSV: {}", csv_path);
-
-    // Call import-csv command
-    let result = run_bv_command(&["files", "import-csv", csv_path, "--format", "json"])?;
-
-    eprintln!("✅ Import CSV result: {:?}", result);
-
-    // Parse the result
-    let imported_count = result
-        .get("data")
-        .and_then(|d| d.get("imported"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let _skipped_count = result
-        .get("data")
-        .and_then(|d| d.get("skipped"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    eprintln!("✅ Imported {} files successfully", imported_count);
-
-    // Fetch imported file records
-    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
-    let files_data = files_result
-        .get("data")
-        .and_then(|d| d.get("files"))
-        .ok_or("Missing files data")?;
-    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
-        .map_err(|e| format!("Failed to parse files: {}", e))?;
-
-    // Filter to just the files we imported
-    let imported_file_paths: Vec<String> = file_metadata.keys().cloned().collect();
-    let imported_files: Vec<FileRecord> = all_files
+    // Convert library FileRecords to desktop FileRecords
+    let imported_files: Vec<FileRecord> = lib_result
+        .files
         .into_iter()
-        .filter(|f| imported_file_paths.contains(&f.file_path))
+        .map(|f| FileRecord {
+            id: f.id,
+            participant_id: f.participant_id,
+            participant_name: f.participant_name,
+            file_path: f.file_path,
+            file_hash: f.file_hash,
+            file_type: f.file_type,
+            file_size: f.file_size,
+            data_type: f.data_type,
+            source: f.source,
+            grch_version: f.grch_version,
+            row_count: f.row_count,
+            chromosome_count: f.chromosome_count,
+            inferred_sex: f.inferred_sex,
+            status: f.status,
+            processing_error: f.processing_error,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+        })
         .collect();
 
     Ok(ImportResult {
-        success: true,
-        message: format!("Successfully imported {} files", imported_count),
+        success: lib_result.imported > 0,
+        message: format!(
+            "Successfully imported {} files, skipped {}",
+            lib_result.imported, lib_result.skipped
+        ),
         conflicts: Vec::new(),
         imported_files,
     })
@@ -523,11 +494,11 @@ async fn import_files_with_metadata(
 
 #[tauri::command]
 async fn import_files_pending(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     file_metadata: std::collections::HashMap<String, FileMetadata>,
 ) -> Result<ImportResult, String> {
     eprintln!(
-        "🚀 import_files_pending called with {} files (fast import)",
+        "🚀 import_files_pending called with {} files (fast import using library)",
         file_metadata.len()
     );
 
@@ -535,74 +506,42 @@ async fn import_files_pending(
         return Err("No files selected".to_string());
     }
 
-    // Create temporary CSV file
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    let mut temp_file =
-        NamedTempFile::new().map_err(|e| format!("Failed to create temp file: {}", e))?;
-
-    // Write CSV header (minimal - just what's needed for pending import)
-    writeln!(
-        temp_file,
-        "file_path,participant_id,data_type,source,grch_version"
-    )
-    .map_err(|e| format!("Failed to write CSV header: {}", e))?;
-
-    eprintln!("📊 Total files to write to CSV: {}", file_metadata.len());
-
-    // Write CSV rows
-    for (file_path, metadata) in &file_metadata {
-        eprintln!(
-            "📝 CSV row - file: {}, participant_id: {:?}, data_type: {:?}, source: {:?}, grch: {:?}",
+    // Convert desktop FileMetadata to library CsvFileImport
+    let csv_imports: Vec<biovault::data::CsvFileImport> = file_metadata
+        .into_iter()
+        .map(|(file_path, metadata)| biovault::data::CsvFileImport {
             file_path,
-            metadata.participant_id,
-            metadata.data_type,
-            metadata.source,
-            metadata.grch_version
-        );
-        writeln!(
-            temp_file,
-            "{},{},{},{},{}",
-            file_path,
-            metadata.participant_id.as_deref().unwrap_or(""),
-            metadata.data_type.as_deref().unwrap_or("Unknown"),
-            metadata.source.as_deref().unwrap_or(""),
-            metadata.grch_version.as_deref().unwrap_or("")
-        )
-        .map_err(|e| format!("Failed to write CSV row: {}", e))?;
+            participant_id: metadata.participant_id,
+            data_type: metadata.data_type,
+            source: metadata.source,
+            grch_version: metadata.grch_version,
+            row_count: metadata.row_count,
+            chromosome_count: metadata.chromosome_count,
+            inferred_sex: metadata.inferred_sex,
+        })
+        .collect();
+
+    // Import as pending (no hashing/analysis, just add to queue)
+    let db = state.biovault_db.lock().unwrap();
+    let lib_result = biovault::data::import_files_as_pending(&db, csv_imports)
+        .map_err(|e| format!("Failed to import files as pending: {}", e))?;
+
+    eprintln!(
+        "✅ Added {} files to queue, skipped {} (using library)",
+        lib_result.imported, lib_result.skipped
+    );
+
+    // Log any errors
+    for error in &lib_result.errors {
+        eprintln!("⚠️  Import error: {}", error);
     }
-
-    temp_file
-        .flush()
-        .map_err(|e| format!("Failed to flush CSV: {}", e))?;
-
-    // Get the temp file path
-    let csv_path = temp_file.path().to_str().ok_or("Invalid temp file path")?;
-    eprintln!("📝 Created temp CSV: {}", csv_path);
-
-    // Read and display CSV contents for debugging
-    if let Ok(contents) = std::fs::read_to_string(csv_path) {
-        eprintln!("📄 CSV Contents:\n{}", contents);
-    }
-
-    // Call import-pending command (fast import - no hashing)
-    let result = run_bv_command(&["files", "import-pending", csv_path, "--format", "json"])?;
-
-    eprintln!("✅ Import pending result: {:?}", result);
-
-    // Parse the result
-    let imported_count = result
-        .get("data")
-        .and_then(|d| d.get("imported"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    eprintln!("✅ Added {} files to queue", imported_count);
 
     Ok(ImportResult {
-        success: true,
-        message: format!("Added {} files to queue for processing", imported_count),
+        success: lib_result.imported > 0,
+        message: format!(
+            "Added {} files to queue for processing, skipped {}",
+            lib_result.imported, lib_result.skipped
+        ),
         conflicts: Vec::new(),
         imported_files: Vec::new(), // Will be populated when queue is processed
     })
@@ -610,24 +549,144 @@ async fn import_files_pending(
 
 #[tauri::command]
 async fn process_queue(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<serde_json::Value, String> {
-    eprintln!("⚙️ process_queue called with limit: {}", limit);
+    eprintln!(
+        "⚙️ process_queue called with limit: {} (using library)",
+        limit
+    );
 
-    // Call process-queue command
-    let result = run_bv_command(&[
-        "files",
-        "process-queue",
-        "--limit",
-        &limit.to_string(),
-        "--format",
-        "json",
-    ])?;
+    let db = state.biovault_db.lock().unwrap();
 
-    eprintln!("✅ Process queue result: {:?}", result);
+    // Get pending files from database
+    let pending_files = biovault::data::get_pending_files(&db, limit)
+        .map_err(|e| format!("Failed to get pending files: {}", e))?;
 
-    Ok(result)
+    if pending_files.is_empty() {
+        eprintln!("No pending files in queue");
+        return Ok(serde_json::json!({
+            "success": true,
+            "data": {
+                "processed": 0,
+                "errors": 0,
+                "total": 0
+            }
+        }));
+    }
+
+    eprintln!("📦 Processing {} pending files...", pending_files.len());
+
+    let mut processed = 0;
+    let mut errors = 0;
+
+    for file in pending_files.iter() {
+        eprintln!("  Processing: {}", file.file_path);
+
+        // Mark as processing
+        if let Err(e) = biovault::data::update_file_status(&db, file.id, "processing", None) {
+            eprintln!("⚠️  Failed to update status for {}: {}", file.file_path, e);
+            continue;
+        }
+
+        // Process the file: hash + detect metadata + analyze
+        match process_single_file_sync(&db, file) {
+            Ok(_) => {
+                if let Err(e) = biovault::data::update_file_status(&db, file.id, "complete", None) {
+                    eprintln!("⚠️  Failed to mark complete for {}: {}", file.file_path, e);
+                }
+                processed += 1;
+                eprintln!("    ✓ Complete");
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                if let Err(e) =
+                    biovault::data::update_file_status(&db, file.id, "error", Some(&error_msg))
+                {
+                    eprintln!(
+                        "⚠️  Failed to update error status for {}: {}",
+                        file.file_path, e
+                    );
+                }
+                errors += 1;
+                eprintln!("    ✗ Error: {}", error_msg);
+            }
+        }
+    }
+
+    eprintln!("✅ Processed {} files, {} errors", processed, errors);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "data": {
+            "processed": processed,
+            "errors": errors,
+            "total": pending_files.len()
+        }
+    }))
+}
+
+/// Process a single file from the queue (synchronous version for desktop)
+fn process_single_file_sync(
+    db: &biovault::data::BioVaultDb,
+    file: &biovault::data::PendingFile,
+) -> Result<(), String> {
+    // 1. Hash the file
+    let hash = biovault::data::hash_file(&file.file_path)
+        .map_err(|e| format!("Failed to hash file: {}", e))?;
+
+    // 2. Detect genotype metadata if not already set
+    let mut metadata = if file.data_type.as_deref() == Some("Unknown") || file.data_type.is_none() {
+        biovault::data::detect_genotype_metadata(&file.file_path).ok()
+    } else if file.data_type.as_deref() == Some("Genotype") {
+        // Already detected as Genotype, load existing metadata if available
+        match biovault::data::get_genotype_metadata(db, file.id) {
+            Ok(Some(existing)) => Some(existing),
+            _ => {
+                // No existing metadata, create placeholder
+                Some(biovault::data::GenotypeMetadata {
+                    data_type: "Genotype".to_string(),
+                    source: None,
+                    grch_version: None,
+                    row_count: None,
+                    chromosome_count: None,
+                    inferred_sex: None,
+                })
+            }
+        }
+    } else {
+        None
+    };
+
+    // 3. If this is a Genotype file, analyze it for row counts, chromosomes, sex
+    if let Some(ref mut meta) = metadata {
+        if meta.data_type == "Genotype" {
+            match biovault::data::analyze_genotype_file(&file.file_path) {
+                Ok(analysis) => {
+                    // Merge analysis data into metadata
+                    if meta.row_count.is_none() {
+                        meta.row_count = analysis.row_count;
+                    }
+                    if meta.chromosome_count.is_none() {
+                        meta.chromosome_count = analysis.chromosome_count;
+                    }
+                    if meta.inferred_sex.is_none() {
+                        meta.inferred_sex = analysis.inferred_sex.clone();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠️  Warning: Failed to analyze {}: {}", file.file_path, e);
+                    // Continue with basic metadata
+                }
+            }
+        }
+    }
+
+    // 4. Update the file in database
+    biovault::data::update_file_from_queue(db, file.id, &hash, metadata.as_ref())
+        .map_err(|e| format!("Failed to update file: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -649,13 +708,13 @@ fn get_queue_processor_status(state: tauri::State<AppState>) -> Result<bool, Str
 
 #[tauri::command]
 async fn import_files(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     files: Vec<String>,
     pattern: String,
     file_id_map: std::collections::HashMap<String, String>,
 ) -> Result<ImportResult, String> {
     eprintln!(
-        "🔍 import_files called with {} files, pattern: {}",
+        "🔍 import_files called with {} files, pattern: {} (using library)",
         files.len(),
         pattern
     );
@@ -687,35 +746,55 @@ async fn import_files(
         files.len()
     );
 
-    // Import recursively from common root for each extension
+    // First scan for files
+    let mut all_csv_imports = Vec::new();
+
     for ext in &extensions {
-        eprintln!("📂 Importing files with extension: {}", ext);
+        eprintln!("📂 Scanning files with extension: {}", ext);
 
-        // Build import command
-        let mut args = vec![
-            "files",
-            "import",
+        // Scan directory
+        let scan_result = biovault::data::scan(
             common_root.to_str().unwrap(),
-            "--ext",
-            ext.as_str(),
-            "--recursive",
-            "--non-interactive",
-            "--format",
-            "json",
-        ];
+            Some(ext.as_str()),
+            true, // recursive
+        )
+        .map_err(|e| format!("Failed to scan directory: {}", e))?;
 
-        // Add pattern if provided
-        let pattern_arg;
-        if !pattern.is_empty() {
-            pattern_arg = pattern.clone();
-            args.push("--pattern");
-            args.push(&pattern_arg);
+        let file_count = scan_result.files.len();
+
+        // Convert scanned files to CsvFileImport format
+        for file_info in scan_result.files {
+            // Extract participant ID if pattern is provided
+            let participant_id = if !pattern.is_empty() {
+                biovault::data::extract_id_from_pattern(&file_info.path, &pattern)
+            } else {
+                None
+            };
+
+            all_csv_imports.push(biovault::data::CsvFileImport {
+                file_path: file_info.path,
+                participant_id,
+                data_type: None,
+                source: None,
+                grch_version: None,
+                row_count: None,
+                chromosome_count: None,
+                inferred_sex: None,
+            });
         }
 
-        // Run import
-        let result = run_bv_command(&args)?;
-        eprintln!("✅ Import result: {:?}", result);
+        eprintln!("✅ Found {} files with extension {}", file_count, ext);
     }
+
+    // Fast import to pending queue (no hashing/analysis)
+    let db = state.biovault_db.lock().unwrap();
+    let lib_result = biovault::data::import_files_as_pending(&db, all_csv_imports)
+        .map_err(|e| format!("Failed to import files: {}", e))?;
+
+    eprintln!(
+        "✅ Added {} files to queue, skipped {} (background processing will complete)",
+        lib_result.imported, lib_result.skipped
+    );
 
     // Link files to participants in bulk if needed
     if !file_id_map.is_empty() {
@@ -724,24 +803,40 @@ async fn import_files(
             file_id_map.len()
         );
 
-        // Serialize the file_id_map to JSON
-        let json_map = serde_json::to_string(&file_id_map)
-            .map_err(|e| format!("Failed to serialize file map: {}", e))?;
+        // Call library function for bulk linking
+        let linked_count = biovault::data::link_files_bulk(&db, &file_id_map)
+            .map_err(|e| format!("Failed to link files: {}", e))?;
 
-        // Call bulk link command with JSON
-        let _link_result = run_bv_command(&["files", "link-bulk", &json_map, "--format", "json"])?;
-
-        eprintln!("✅ Bulk link complete");
+        eprintln!("✅ Bulk linked {} file(s)", linked_count);
     }
 
-    // Fetch files to get updated participant links
-    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
-    let files_data = files_result
-        .get("data")
-        .and_then(|d| d.get("files"))
-        .ok_or("Missing files data")?;
-    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
-        .map_err(|e| format!("Failed to parse files: {}", e))?;
+    // Fetch files to get updated participant links using library
+    let cli_files = biovault::data::list_files(&db, None, None, false, None)
+        .map_err(|e| format!("Failed to list files: {}", e))?;
+
+    // Convert library FileRecords to desktop FileRecords
+    let all_files: Vec<FileRecord> = cli_files
+        .into_iter()
+        .map(|f| FileRecord {
+            id: f.id,
+            participant_id: f.participant_id,
+            participant_name: f.participant_name,
+            file_path: f.file_path,
+            file_hash: f.file_hash,
+            file_type: f.file_type,
+            file_size: f.file_size,
+            data_type: f.data_type,
+            source: f.source,
+            grch_version: f.grch_version,
+            row_count: f.row_count,
+            chromosome_count: f.chromosome_count,
+            inferred_sex: f.inferred_sex,
+            status: f.status,
+            processing_error: f.processing_error,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+        })
+        .collect();
 
     // Filter to just the files we imported
     let imported_files: Vec<FileRecord> = all_files
@@ -760,50 +855,59 @@ async fn import_files(
 }
 
 #[tauri::command]
-fn get_participants(_state: tauri::State<AppState>) -> Result<Vec<Participant>, String> {
-    eprintln!("🔍 get_participants called");
+fn get_participants(state: tauri::State<AppState>) -> Result<Vec<Participant>, String> {
+    eprintln!("🔍 get_participants called (using library)");
 
-    let result = run_bv_command(&["participants", "list", "--format", "json"])?;
+    let db = state.biovault_db.lock().unwrap();
+    let cli_participants = biovault::data::list_participants(&db)
+        .map_err(|e| format!("Failed to list participants: {}", e))?;
 
-    let data = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let participants: Vec<Participant> = serde_json::from_value(data.clone()).map_err(|e| {
-        let err = format!("Failed to parse participants from {:?}: {}", data, e);
-        eprintln!("❌ {}", err);
-        err
-    })?;
+    // Convert CLI ParticipantRecords to desktop Participants
+    let participants: Vec<Participant> = cli_participants
+        .into_iter()
+        .map(|p| Participant {
+            id: p.id,
+            participant_id: p.participant_id,
+            created_at: p.created_at,
+            file_count: p.file_count,
+        })
+        .collect();
 
     eprintln!("✅ Returning {} participants", participants.len());
     Ok(participants)
 }
 
 #[tauri::command]
-fn get_files(_state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
-    eprintln!("🔍 get_files called");
+fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
+    eprintln!("🔍 get_files called (using library)");
 
-    let result = run_bv_command(&["files", "list", "--format", "json"])?;
+    let db = state.biovault_db.lock().unwrap();
+    let cli_files = biovault::data::list_files(&db, None, None, false, None)
+        .map_err(|e| format!("Failed to list files: {}", e))?;
 
-    let data_obj = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let files_array = data_obj.get("files").ok_or_else(|| {
-        let err = format!("Missing 'files' field in data: {:?}", data_obj);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let files: Vec<FileRecord> = serde_json::from_value(files_array.clone()).map_err(|e| {
-        let err = format!("Failed to parse files from {:?}: {}", files_array, e);
-        eprintln!("❌ {}", err);
-        err
-    })?;
+    // Convert CLI FileRecords to desktop FileRecords
+    let files: Vec<FileRecord> = cli_files
+        .into_iter()
+        .map(|f| FileRecord {
+            id: f.id,
+            participant_id: f.participant_id,
+            participant_name: f.participant_name,
+            file_path: f.file_path,
+            file_hash: f.file_hash,
+            file_type: f.file_type,
+            file_size: f.file_size,
+            data_type: f.data_type,
+            source: f.source,
+            grch_version: f.grch_version,
+            row_count: f.row_count,
+            chromosome_count: f.chromosome_count,
+            inferred_sex: f.inferred_sex,
+            status: f.status,
+            processing_error: f.processing_error,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+        })
+        .collect();
 
     eprintln!("✅ Returning {} files", files.len());
     Ok(files)
@@ -850,36 +954,45 @@ fn import_project(
 }
 
 #[tauri::command]
-fn get_projects(_state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
-    eprintln!("🔍 get_projects called");
+fn get_projects(state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
+    eprintln!("🔍 get_projects called (using library)");
 
-    let result = run_bv_command(&["project", "list", "--format", "json"])?;
+    let db = state.biovault_db.lock().unwrap();
+    let cli_projects = db
+        .list_projects()
+        .map_err(|e| format!("Failed to list projects: {}", e))?;
 
-    let data = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let projects: Vec<Project> = serde_json::from_value(data.clone()).map_err(|e| {
-        let err = format!("Failed to parse projects from {:?}: {}", data, e);
-        eprintln!("❌ {}", err);
-        err
-    })?;
+    // Convert CLI projects to desktop projects
+    let projects: Vec<Project> = cli_projects
+        .into_iter()
+        .map(|p| Project {
+            id: p.id,
+            name: p.name,
+            author: p.author,
+            workflow: p.workflow,
+            template: p.template,
+            project_path: p.project_path,
+            created_at: p.created_at,
+        })
+        .collect();
 
     eprintln!("✅ Returning {} projects", projects.len());
     Ok(projects)
 }
 
 #[tauri::command]
-fn delete_project(_state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
-    eprintln!("🔍 delete_project called with ID: {}", project_id);
+fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
+    eprintln!(
+        "🔍 delete_project called with ID: {} (using library)",
+        project_id
+    );
 
-    // Use project ID as identifier
+    let db = state.biovault_db.lock().unwrap();
     let id_str = project_id.to_string();
-    let result = run_bv_command(&["project", "delete", &id_str, "--format", "json"])?;
+    db.delete_project(&id_str)
+        .map_err(|e| format!("Failed to delete project: {}", e))?;
 
-    eprintln!("✅ Project deleted: {:?}", result);
+    eprintln!("✅ Project deleted");
     Ok(())
 }
 
@@ -939,22 +1052,46 @@ fn start_analysis(
 
     let mut csv_content = String::from("participant_id,genotype_file_path\n");
 
-    // Get all files via CLI
-    let files_result = run_bv_command(&["files", "list", "--format", "json"])?;
-    let files_data = files_result
-        .get("data")
-        .and_then(|d| d.get("files"))
-        .ok_or("Missing files data")?;
-    let all_files: Vec<FileRecord> = serde_json::from_value(files_data.clone())
-        .map_err(|e| format!("Failed to parse files: {}", e))?;
+    // Get all files via library
+    let bv_db = state.biovault_db.lock().unwrap();
+    let cli_files = biovault::data::list_files(&bv_db, None, None, false, None)
+        .map_err(|e| format!("Failed to list files: {}", e))?;
+    let all_files: Vec<FileRecord> = cli_files
+        .into_iter()
+        .map(|f| FileRecord {
+            id: f.id,
+            participant_id: f.participant_id,
+            participant_name: f.participant_name,
+            file_path: f.file_path,
+            file_hash: f.file_hash,
+            file_type: f.file_type,
+            file_size: f.file_size,
+            data_type: f.data_type,
+            source: f.source,
+            grch_version: f.grch_version,
+            row_count: f.row_count,
+            chromosome_count: f.chromosome_count,
+            inferred_sex: f.inferred_sex,
+            status: f.status,
+            processing_error: f.processing_error,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+        })
+        .collect();
 
-    // Get all participants via CLI
-    let participants_result = run_bv_command(&["participants", "list", "--format", "json"])?;
-    let participants_data = participants_result
-        .get("data")
-        .ok_or("Missing participants data")?;
-    let all_participants: Vec<Participant> = serde_json::from_value(participants_data.clone())
-        .map_err(|e| format!("Failed to parse participants: {}", e))?;
+    // Get all participants via library
+    let cli_participants = biovault::data::list_participants(&bv_db)
+        .map_err(|e| format!("Failed to list participants: {}", e))?;
+    let all_participants: Vec<Participant> = cli_participants
+        .into_iter()
+        .map(|p| Participant {
+            id: p.id,
+            participant_id: p.participant_id,
+            created_at: p.created_at,
+            file_count: p.file_count,
+        })
+        .collect();
+    drop(bv_db);
 
     for participant_id in &participant_ids {
         // Find participant by database ID
@@ -1278,94 +1415,65 @@ fn delete_run(state: tauri::State<AppState>, run_id: i64) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn delete_participant(_state: tauri::State<AppState>, participant_id: i64) -> Result<(), String> {
-    // Use CLI command - note: CLI unlinks files instead of deleting them
-    let _result = run_bv_command(&[
-        "participants",
-        "delete",
-        &participant_id.to_string(),
-        "--format",
-        "json",
-    ])?;
+fn delete_participant(state: tauri::State<AppState>, participant_id: i64) -> Result<(), String> {
+    eprintln!("🗑️ delete_participant called (using library)");
+
+    let db = state.biovault_db.lock().unwrap();
+    biovault::data::delete_participant(&db, participant_id)
+        .map_err(|e| format!("Failed to delete participant: {}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
 fn delete_participants_bulk(
-    _state: tauri::State<AppState>,
+    state: tauri::State<AppState>,
     participant_ids: Vec<i64>,
 ) -> Result<usize, String> {
     if participant_ids.is_empty() {
         return Ok(0);
     }
 
-    let mut args: Vec<String> = Vec::with_capacity(participant_ids.len() + 4);
-    args.push("participants".to_string());
-    args.push("delete-bulk".to_string());
-    for id in &participant_ids {
-        args.push(id.to_string());
-    }
-    args.push("--format".to_string());
-    args.push("json".to_string());
+    eprintln!(
+        "🗑️ Deleting {} participants in bulk (using library)",
+        participant_ids.len()
+    );
 
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let result = run_bv_command(&arg_refs)?;
+    let db = state.biovault_db.lock().unwrap();
+    let deleted = biovault::data::delete_participants_bulk(&db, &participant_ids)
+        .map_err(|e| format!("Failed to delete participants: {}", e))?;
 
-    if let Some(not_found) = result
-        .get("data")
-        .and_then(|d| d.get("not_found"))
-        .and_then(|v| v.as_array())
-    {
-        if !not_found.is_empty() {
-            eprintln!("⚠️  Some participants were not found: {:?}", not_found);
-        }
-    }
-
-    let deleted = result
-        .get("data")
-        .and_then(|d| d.get("deleted"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    Ok(deleted as usize)
+    eprintln!("✅ Deleted {} participants", deleted);
+    Ok(deleted)
 }
 
 #[tauri::command]
-fn delete_file(_state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
-    // Use CLI command
-    let _result = run_bv_command(&["files", "delete", &file_id.to_string(), "--format", "json"])?;
+fn delete_file(state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
+    eprintln!("🗑️ delete_file called (using library)");
+
+    let db = state.biovault_db.lock().unwrap();
+    biovault::data::delete_file(&db, file_id)
+        .map_err(|e| format!("Failed to delete file: {}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn delete_files_bulk(_state: tauri::State<AppState>, file_ids: Vec<i64>) -> Result<usize, String> {
+fn delete_files_bulk(state: tauri::State<AppState>, file_ids: Vec<i64>) -> Result<usize, String> {
     if file_ids.is_empty() {
         return Ok(0);
     }
 
-    eprintln!("🗑️ Deleting {} files in bulk", file_ids.len());
+    eprintln!(
+        "🗑️ Deleting {} files in bulk (using library)",
+        file_ids.len()
+    );
 
-    // Convert IDs to comma-separated string for bulk delete
-    let ids_str = file_ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-
-    // Call bulk delete command
-    let result = run_bv_command(&["files", "delete-bulk", &ids_str, "--format", "json"])?;
-
-    // Parse the result
-    let deleted = result
-        .get("data")
-        .and_then(|d| d.get("deleted"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let db = state.biovault_db.lock().unwrap();
+    let deleted = biovault::data::delete_files_bulk(&db, &file_ids)
+        .map_err(|e| format!("Failed to delete files: {}", e))?;
 
     eprintln!("✅ Deleted {} files", deleted);
-
     Ok(deleted)
 }
 
@@ -1465,75 +1573,34 @@ async fn detect_file_types(
         return Ok(HashMap::new());
     }
 
-    eprintln!("🔍 Detecting file types for {} files", files.len());
+    eprintln!(
+        "🔍 Detecting file types for {} files (using library)",
+        files.len()
+    );
 
-    // Build CLI args: files detect file1 file2 file3 ... --format json
-    let mut args = vec!["files", "detect"];
-    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
-    args.extend(file_refs);
-    args.push("--format");
-    args.push("json");
+    let mut results = HashMap::new();
 
-    match run_bv_command(&args) {
-        Ok(response) => {
-            // Parse the detection results
-            if let Some(detections) = response.get("detections") {
-                let mut results = HashMap::new();
+    for file_path in files {
+        let metadata = biovault::data::detect_genotype_metadata(&file_path).unwrap_or_else(|e| {
+            eprintln!("⚠️  Failed to detect {}: {}", file_path, e);
+            biovault::data::GenotypeMetadata::default()
+        });
 
-                for file_path in &files {
-                    if let Some(metadata) = detections.get(file_path) {
-                        let genotype_meta: GenotypeMetadata =
-                            serde_json::from_value(metadata.clone()).unwrap_or(GenotypeMetadata {
-                                data_type: "Unknown".to_string(),
-                                source: None,
-                                grch_version: None,
-                                row_count: None,
-                                chromosome_count: None,
-                                inferred_sex: None,
-                            });
-                        results.insert(file_path.clone(), genotype_meta);
-                    } else {
-                        // File not in results, insert Unknown
-                        results.insert(
-                            file_path.clone(),
-                            GenotypeMetadata {
-                                data_type: "Unknown".to_string(),
-                                source: None,
-                                grch_version: None,
-                                row_count: None,
-                                chromosome_count: None,
-                                inferred_sex: None,
-                            },
-                        );
-                    }
-                }
-
-                eprintln!("✅ Detected {} file types", results.len());
-                Ok(results)
-            } else {
-                Err("Missing detections in response".to_string())
-            }
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to detect file types: {}", e);
-            // Return Unknown for all files on error
-            let mut results = HashMap::new();
-            for file_path in files {
-                results.insert(
-                    file_path,
-                    GenotypeMetadata {
-                        data_type: "Unknown".to_string(),
-                        source: None,
-                        grch_version: None,
-                        row_count: None,
-                        chromosome_count: None,
-                        inferred_sex: None,
-                    },
-                );
-            }
-            Ok(results)
-        }
+        results.insert(
+            file_path.clone(),
+            GenotypeMetadata {
+                data_type: metadata.data_type,
+                source: metadata.source,
+                grch_version: metadata.grch_version,
+                row_count: metadata.row_count,
+                chromosome_count: metadata.chromosome_count,
+                inferred_sex: metadata.inferred_sex,
+            },
+        );
     }
+
+    eprintln!("✅ Detected {} file types", results.len());
+    Ok(results)
 }
 
 #[tauri::command]
@@ -1546,78 +1613,82 @@ async fn analyze_file_types(
     }
 
     eprintln!(
-        "🔬 Analyzing files for row count, chromosomes, and sex: {} files",
+        "🔬 Analyzing files for row count, chromosomes, and sex: {} files (using library)",
         files.len()
     );
 
-    // Build CLI args: files analyze file1 file2 file3 ... --format json
-    let mut args = vec!["files", "analyze"];
-    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
-    args.extend(file_refs);
-    args.push("--format");
-    args.push("json");
+    let mut results = HashMap::new();
 
-    match run_bv_command(&args) {
-        Ok(response) => {
-            if let Some(analysis) = response.get("analysis") {
-                let mut results = HashMap::new();
+    for file_path in files {
+        let metadata = biovault::data::analyze_genotype_file(&file_path).unwrap_or_else(|e| {
+            eprintln!("⚠️  Failed to analyze {}: {}", file_path, e);
+            biovault::data::GenotypeMetadata::default()
+        });
 
-                for file_path in &files {
-                    if let Some(metadata) = analysis.get(file_path) {
-                        let genotype_meta: GenotypeMetadata =
-                            serde_json::from_value(metadata.clone()).unwrap_or(GenotypeMetadata {
-                                data_type: "Unknown".to_string(),
-                                source: None,
-                                grch_version: None,
-                                row_count: None,
-                                chromosome_count: None,
-                                inferred_sex: None,
-                            });
-                        results.insert(file_path.clone(), genotype_meta);
-                    } else {
-                        results.insert(
-                            file_path.clone(),
-                            GenotypeMetadata {
-                                data_type: "Unknown".to_string(),
-                                source: None,
-                                grch_version: None,
-                                row_count: None,
-                                chromosome_count: None,
-                                inferred_sex: None,
-                            },
-                        );
-                    }
-                }
-
-                eprintln!("✅ Analyzed {} files", results.len());
-                Ok(results)
-            } else {
-                Err("Missing analysis in response".to_string())
-            }
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to analyze files: {}", e);
-            let mut results = HashMap::new();
-            for file_path in files {
-                results.insert(
-                    file_path,
-                    GenotypeMetadata {
-                        data_type: "Unknown".to_string(),
-                        source: None,
-                        grch_version: None,
-                        row_count: None,
-                        chromosome_count: None,
-                        inferred_sex: None,
-                    },
-                );
-            }
-            Ok(results)
-        }
+        results.insert(
+            file_path.clone(),
+            GenotypeMetadata {
+                data_type: metadata.data_type,
+                source: metadata.source,
+                grch_version: metadata.grch_version,
+                row_count: metadata.row_count,
+                chromosome_count: metadata.chromosome_count,
+                inferred_sex: metadata.inferred_sex,
+            },
+        );
     }
+
+    eprintln!("✅ Analyzed {} files", results.len());
+    Ok(results)
 }
 
 #[tauri::command]
 fn get_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
+    // Default: return last 500 lines for fast initial load
+    get_run_logs_tail(state, run_id, 500)
+}
+
+#[tauri::command]
+fn get_run_logs_tail(
+    state: tauri::State<AppState>,
+    run_id: i64,
+    lines: usize,
+) -> Result<String, String> {
+    let conn = state.db.lock().unwrap();
+
+    let work_dir: String = conn
+        .query_row(
+            "SELECT work_dir FROM runs WHERE id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let log_path = PathBuf::from(&work_dir).join("run.log");
+
+    if !log_path.exists() {
+        return Ok(
+            "No logs available for this run yet. Logs will appear once the analysis starts."
+                .to_string(),
+        );
+    }
+
+    // Read last N lines efficiently
+    let file = fs::File::open(&log_path).map_err(|e| format!("Failed to open log file: {}", e))?;
+    let reader = BufReader::new(file);
+
+    let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+
+    let total_lines = all_lines.len();
+    let start_index = total_lines.saturating_sub(lines);
+
+    let tail_lines: Vec<String> = all_lines.into_iter().skip(start_index).collect();
+
+    Ok(tail_lines.join("\n"))
+}
+
+#[tauri::command]
+fn get_run_logs_full(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
     let conn = state.db.lock().unwrap();
 
     let work_dir: String = conn
@@ -1815,6 +1886,10 @@ pub fn run() {
 
     std::fs::create_dir_all(&biovault_home_dir).expect("Could not create biovault directory");
 
+    // Initialize shared BioVaultDb (handles files/participants)
+    let biovault_db = BioVaultDb::new().expect("Failed to initialize BioVault database");
+
+    // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
@@ -1823,56 +1898,128 @@ pub fn run() {
 
     let app_state = AppState {
         db: Mutex::new(conn),
+        biovault_db: Arc::new(Mutex::new(biovault_db)),
         queue_processor_paused: queue_processor_paused.clone(),
     };
 
-    // Spawn background queue processor
+    // Spawn background queue processor (using library)
     let paused_flag = queue_processor_paused.clone();
-    let biovault_home_for_processor = env::var("BIOVAULT_HOME")
-        .unwrap_or_else(|_| biovault_home_dir.to_string_lossy().to_string());
+    let biovault_db_for_processor = app_state.biovault_db.clone();
 
     std::thread::spawn(move || {
         loop {
             // Check if paused
             if !paused_flag.load(Ordering::SeqCst) {
-                // Process a batch of 10 files
-                let bv_path = env::var("BIOVAULT_PATH").unwrap_or_else(|_| "bv".to_string());
+                // Get pending files - lock only briefly
+                let pending_files = {
+                    match biovault_db_for_processor.lock() {
+                        Ok(db) => biovault::data::get_pending_files(&db, 10).ok(),
+                        Err(_) => None,
+                    }
+                    // Lock is released here automatically
+                };
 
-                match std::process::Command::new(&bv_path)
-                    .args([
-                        "files",
-                        "process-queue",
-                        "--limit",
-                        "10",
-                        "--format",
-                        "json",
-                    ])
-                    .env("BIOVAULT_HOME", &biovault_home_for_processor)
-                    .output()
-                {
-                    Ok(output) => {
-                        if output.status.success() {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            // Parse JSON to check if any files were processed
-                            if let Ok(result) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                                let processed = result
-                                    .get("data")
-                                    .and_then(|d| d.get("processed"))
-                                    .and_then(|p| p.as_u64())
-                                    .unwrap_or(0);
+                if let Some(files) = pending_files {
+                    if !files.is_empty() {
+                        let mut processed = 0;
+                        let mut errors = 0;
 
-                                // Only log if files were actually processed
-                                if processed > 0 {
-                                    eprintln!("✅ Queue processor: processed {} files", processed);
+                        for file in &files {
+                            // Lock briefly to mark as processing
+                            let marked = {
+                                match biovault_db_for_processor.lock() {
+                                    Ok(db) => biovault::data::update_file_status(
+                                        &db,
+                                        file.id,
+                                        "processing",
+                                        None,
+                                    )
+                                    .is_ok(),
+                                    Err(_) => false,
+                                }
+                            };
+
+                            if !marked {
+                                continue;
+                            }
+
+                            // Process file WITHOUT holding lock (expensive I/O operations)
+                            let hash_result = biovault::data::hash_file(&file.file_path);
+
+                            match hash_result {
+                                Ok(hash) => {
+                                    // Detect and analyze file WITHOUT holding lock
+                                    let metadata = if file.data_type.as_deref() == Some("Unknown")
+                                        || file.data_type.is_none()
+                                    {
+                                        // Detect file type first
+                                        if let Ok(detected) =
+                                            biovault::data::detect_genotype_metadata(
+                                                &file.file_path,
+                                            )
+                                        {
+                                            if detected.data_type == "Genotype" {
+                                                // It's a genotype - analyze it fully
+                                                biovault::data::analyze_genotype_file(
+                                                    &file.file_path,
+                                                )
+                                                .ok()
+                                            } else {
+                                                Some(detected)
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else if file.data_type.as_deref() == Some("Genotype") {
+                                        // Already known to be genotype - analyze it
+                                        biovault::data::analyze_genotype_file(&file.file_path).ok()
+                                    } else {
+                                        None
+                                    };
+
+                                    // Lock briefly to update DB with results
+                                    match biovault_db_for_processor.lock() {
+                                        Ok(db) => {
+                                            if biovault::data::update_file_from_queue(
+                                                &db,
+                                                file.id,
+                                                &hash,
+                                                metadata.as_ref(),
+                                            )
+                                            .is_ok()
+                                            {
+                                                let _ = biovault::data::update_file_status(
+                                                    &db, file.id, "complete", None,
+                                                );
+                                                processed += 1;
+                                            }
+                                        }
+                                        Err(_) => continue,
+                                    }
+                                }
+                                Err(e) => {
+                                    // Lock briefly to mark error
+                                    let error_msg = format!("{}", e);
+                                    if let Ok(db) = biovault_db_for_processor.lock() {
+                                        let _ = biovault::data::update_file_status(
+                                            &db,
+                                            file.id,
+                                            "error",
+                                            Some(&error_msg),
+                                        );
+                                    }
+                                    errors += 1;
                                 }
                             }
-                        } else {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            eprintln!("❌ Queue processor error: {}", stderr);
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Queue processor command failed: {}", e);
+
+                        // Only log if files were actually processed
+                        if processed > 0 {
+                            eprintln!(
+                                "✅ Queue processor: processed {} files ({} errors)",
+                                processed, errors
+                            );
+                        }
                     }
                 }
             }
@@ -1913,6 +2060,8 @@ pub fn run() {
             execute_analysis,
             get_runs,
             get_run_logs,
+            get_run_logs_tail,
+            get_run_logs_full,
             delete_run,
             delete_participant,
             delete_participants_bulk,
