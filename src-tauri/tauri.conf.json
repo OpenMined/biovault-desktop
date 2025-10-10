@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BioVault Desktop",
+  "productName": "BioVault",
   "version": "0.1.0",
   "identifier": "org.openmined.biovault-desktop",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "BioVault Desktop",
+        "title": "BioVault",
         "width": 800,
         "height": 600
       }
@@ -25,7 +25,10 @@
           ],
           "permissions": [
             "core:default",
-            "dialog:allow-open"
+            "dialog:allow-open",
+            "dialog:allow-confirm",
+            "dialog:allow-ask",
+            "dialog:allow-message"
           ]
         }
       ]

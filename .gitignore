@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .claude/*
+
+# Environment variables (signing keys)
+.env

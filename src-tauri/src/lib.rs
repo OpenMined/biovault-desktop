@@ -1,4 +1,3 @@
-use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -11,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 // BioVault CLI library imports
+use biovault::cli::commands::check::DependencyCheckResult;
 use biovault::data::BioVaultDb;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -138,73 +138,6 @@ struct AppState {
     db: Mutex<Connection>,
     biovault_db: Arc<Mutex<BioVaultDb>>,
     queue_processor_paused: Arc<AtomicBool>,
-}
-
-/// Helper to run bv CLI commands and parse JSON output
-fn run_bv_command(args: &[&str]) -> Result<serde_json::Value, String> {
-    // Priority: BIOVAULT_PATH env var > settings > default "bv"
-    let bv_path = if let Ok(env_path) = env::var("BIOVAULT_PATH") {
-        env_path
-    } else {
-        let settings = get_settings()?;
-        if settings.biovault_path.is_empty() {
-            "bv".to_string()
-        } else {
-            settings.biovault_path
-        }
-    };
-
-    let full_command = format!("{} {}", bv_path, args.join(" "));
-    eprintln!("🔧 Running bv command: {}", full_command);
-
-    let output = std::process::Command::new(&bv_path)
-        .args(args)
-        .env(
-            "BIOVAULT_HOME",
-            env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-                dirs::home_dir()
-                    .unwrap()
-                    .join(".biovault")
-                    .to_string_lossy()
-                    .to_string()
-            }),
-        )
-        .output()
-        .map_err(|e| format!("Failed to execute bv command: {}", e))?;
-
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("❌ bv command failed: {}", stderr);
-
-        // Log the failed command
-        let log_entry = LogEntry {
-            timestamp: timestamp.clone(),
-            command: full_command.clone(),
-            output: None,
-            error: Some(stderr.to_string()),
-        };
-        let _ = append_log(&log_entry);
-
-        return Err(format!("bv command failed: {}", stderr));
-    }
-
-    let json_str = String::from_utf8(output.stdout)
-        .map_err(|e| format!("Invalid UTF-8 in bv output: {}", e))?;
-
-    eprintln!("📦 bv response: {}", &json_str[..json_str.len().min(200)]);
-
-    // Log the successful command
-    let log_entry = LogEntry {
-        timestamp,
-        command: full_command,
-        output: Some(json_str.clone()),
-        error: None,
-    };
-    let _ = append_log(&log_entry);
-
-    serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse bv JSON output: {}", e))
 }
 
 fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -953,36 +886,26 @@ fn import_project(
 ) -> Result<Project, String> {
     eprintln!("🔍 import_project called with URL: {}", url);
 
-    // Build arguments
-    let mut args = vec!["project", "import", &url, "--format", "json"];
+    let imported = tauri::async_runtime::block_on(
+        biovault::cli::commands::project_management::import_project_record(
+            url.clone(),
+            None,
+            overwrite,
+        ),
+    )
+    .map_err(|e| format!("Failed to import project: {}", e))?;
 
-    let overwrite_flag = if overwrite {
-        args.push("--overwrite");
-        "--overwrite"
-    } else {
-        ""
-    };
+    eprintln!("✅ Project imported via library: {}", imported.name);
 
-    if overwrite {
-        args.push(overwrite_flag);
-    }
-
-    let result = run_bv_command(&args)?;
-
-    let data = result.get("data").ok_or_else(|| {
-        let err = format!("Missing 'data' field in response: {:?}", result);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    let project: Project = serde_json::from_value(data.clone()).map_err(|e| {
-        let err = format!("Failed to parse project from {:?}: {}", data, e);
-        eprintln!("❌ {}", err);
-        err
-    })?;
-
-    eprintln!("✅ Project imported: {}", project.name);
-    Ok(project)
+    Ok(Project {
+        id: imported.id,
+        name: imported.name,
+        author: imported.author,
+        workflow: imported.workflow,
+        template: imported.template,
+        project_path: imported.project_path,
+        created_at: imported.created_at,
+    })
 }
 
 #[tauri::command]
@@ -1540,6 +1463,7 @@ fn get_log_file_path() -> PathBuf {
     Path::new(&biovault_home).join("desktop_commands.log")
 }
 
+#[allow(dead_code)]
 fn append_log(entry: &LogEntry) -> Result<(), String> {
     let log_path = get_log_file_path();
 
@@ -1752,6 +1676,114 @@ fn get_config_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn check_is_onboarded() -> Result<bool, String> {
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    Ok(config_path.exists())
+}
+
+#[tauri::command]
+fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
+    eprintln!("🗑️ RESET: Deleting all BioVault data");
+
+    // Same logic as CLI hard_reset: just delete BIOVAULT_HOME directory
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let biovault_path = PathBuf::from(&biovault_home);
+
+    if biovault_path.exists() {
+        fs::remove_dir_all(&biovault_path)
+            .map_err(|e| format!("Failed to delete BIOVAULT_HOME: {}", e))?;
+        eprintln!("   Deleted: {}", biovault_path.display());
+    }
+
+    eprintln!("✅ RESET: All data deleted successfully");
+    Ok(())
+}
+
+#[tauri::command]
+fn complete_onboarding(email: String) -> Result<(), String> {
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let biovault_path = PathBuf::from(&biovault_home);
+    fs::create_dir_all(&biovault_path)
+        .map_err(|e| format!("Failed to create BIOVAULT_HOME: {}", e))?;
+
+    // Create config with email and save any custom binary paths that were configured
+    let config_path = biovault_path.join("config.yaml");
+
+    // Load existing config if it exists (to preserve binary paths set during dependency checks)
+    let config = if config_path.exists() {
+        if let Ok(mut existing) = biovault::config::Config::load() {
+            existing.email = email.clone();
+            existing
+        } else {
+            biovault::config::Config {
+                email: email.clone(),
+                syftbox_config: None,
+                version: None,
+                binary_paths: None,
+            }
+        }
+    } else {
+        biovault::config::Config {
+            email: email.clone(),
+            syftbox_config: None,
+            version: None,
+            binary_paths: None,
+        }
+    };
+
+    // Save the config
+    config
+        .save(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Also save the current dependency states for later retrieval
+    save_dependency_states(&biovault_path)?;
+
+    eprintln!("✅ Onboarding complete for: {}", email);
+    Ok(())
+}
+
+// Helper function to save dependency states
+fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
+    // Check current dependency states
+    let check_result = biovault::cli::commands::check::check_dependencies_result()
+        .map_err(|e| format!("Failed to check dependencies: {}", e))?;
+
+    // Save as JSON for easy retrieval
+    let states_path = biovault_path.join("dependency_states.json");
+    let json = serde_json::to_string_pretty(&check_result)
+        .map_err(|e| format!("Failed to serialize dependency states: {}", e))?;
+
+    fs::write(&states_path, json)
+        .map_err(|e| format!("Failed to write dependency states: {}", e))?;
+
+    eprintln!("💾 Saved dependency states to: {}", states_path.display());
+    Ok(())
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Settings, String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
     let settings_path = desktop_dir
@@ -1766,6 +1798,24 @@ fn get_settings() -> Result<Settings, String> {
     } else {
         Settings::default()
     };
+
+    // Load email from BioVault config if not set in settings
+    if settings.email.is_empty() {
+        let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap()
+                .join(".biovault")
+                .to_string_lossy()
+                .to_string()
+        });
+        let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+
+        if config_path.exists() {
+            if let Ok(config) = biovault::config::Config::load() {
+                settings.email = config.email;
+            }
+        }
+    }
 
     // Apply environment variable override for display
     if let Ok(env_path) = env::var("BIOVAULT_PATH") {
@@ -1787,6 +1837,42 @@ fn save_settings(settings: Settings) -> Result<(), String> {
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
     fs::write(&settings_path, json).map_err(|e| format!("Failed to write settings: {}", e))?;
+
+    // Also save email to BioVault config if it's set
+    if !settings.email.is_empty() {
+        let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap()
+                .join(".biovault")
+                .to_string_lossy()
+                .to_string()
+        });
+        let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+
+        // Load or create config
+        let mut config = if config_path.exists() {
+            biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?
+        } else {
+            // Create minimal config
+            fs::create_dir_all(&biovault_home)
+                .map_err(|e| format!("Failed to create BioVault directory: {}", e))?;
+
+            biovault::config::Config {
+                email: String::new(),
+                syftbox_config: None,
+                version: None,
+                binary_paths: None,
+            }
+        };
+
+        // Update email
+        config.email = settings.email.clone();
+
+        // Save config
+        config
+            .save(&config_path)
+            .map_err(|e| format!("Failed to save config: {}", e))?;
+    }
 
     Ok(())
 }
@@ -1886,7 +1972,221 @@ fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
         }
     }
 
-    "No Config".to_string()
+    "Setup".to_string()
+}
+
+#[tauri::command]
+async fn check_dependencies() -> Result<DependencyCheckResult, String> {
+    eprintln!("🔍 check_dependencies called");
+
+    // Call the library function directly
+    biovault::cli::commands::check::check_dependencies_result()
+        .map_err(|e| format!("Failed to check dependencies: {}", e))
+}
+
+#[tauri::command]
+async fn check_single_dependency(
+    name: String,
+    path: Option<String>,
+) -> Result<biovault::cli::commands::check::DependencyResult, String> {
+    eprintln!(
+        "🔍 check_single_dependency called: {} (path: {:?})",
+        name, path
+    );
+
+    // Call the library function to check just this one dependency
+    biovault::cli::commands::check::check_single_dependency(&name, path)
+        .map_err(|e| format!("Failed to check dependency: {}", e))
+}
+
+#[tauri::command]
+fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
+    eprintln!("📋 Getting saved dependency states from file");
+
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+    let biovault_path = PathBuf::from(&biovault_home);
+    let states_path = biovault_path.join("dependency_states.json");
+
+    // Try to load saved states first
+    if states_path.exists() {
+        eprintln!("  Loading from: {}", states_path.display());
+        let json_str = fs::read_to_string(&states_path)
+            .map_err(|e| format!("Failed to read dependency states: {}", e))?;
+
+        let mut saved_result: DependencyCheckResult = serde_json::from_str(&json_str)
+            .map_err(|e| format!("Failed to parse dependency states: {}", e))?;
+
+        if let Ok(config) = biovault::config::Config::load() {
+            for dep in &mut saved_result.dependencies {
+                if dep.path.is_none() {
+                    dep.path = config.get_binary_path(&dep.name);
+                }
+            }
+        }
+
+        eprintln!(
+            "  Loaded {} saved dependencies",
+            saved_result.dependencies.len()
+        );
+        return Ok(saved_result);
+    }
+
+    // If no saved states, check with current config paths
+    eprintln!("  No saved states found, checking with current config");
+    let config_path = biovault_path.join("config.yaml");
+
+    if !config_path.exists() {
+        eprintln!("  Config doesn't exist, returning empty dependencies");
+        return Ok(DependencyCheckResult {
+            dependencies: vec![],
+            all_satisfied: false,
+        });
+    }
+
+    // Load config to get saved custom paths
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+
+    // Check each dependency with the saved custom path (if any)
+    let mut dependencies = vec![];
+    for dep_name in ["java", "docker", "nextflow", "syftbox", "uv"] {
+        let custom_path = config.get_binary_path(dep_name);
+        if let Ok(dep_result) =
+            biovault::cli::commands::check::check_single_dependency(dep_name, custom_path)
+        {
+            dependencies.push(dep_result);
+        }
+    }
+
+    // Check if all are satisfied
+    let all_satisfied = dependencies
+        .iter()
+        .all(|dep| dep.found && (dep.running.is_none() || dep.running == Some(true)));
+
+    let result = DependencyCheckResult {
+        dependencies,
+        all_satisfied,
+    };
+
+    // Save these states for next time
+    if let Ok(json) = serde_json::to_string_pretty(&result) {
+        let _ = fs::write(&states_path, json);
+        eprintln!("  Saved current states to: {}", states_path.display());
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn save_custom_path(name: String, path: String) -> Result<(), String> {
+    eprintln!("💾 save_custom_path called: {} -> {}", name, path);
+
+    let sanitized = if path.trim().is_empty() {
+        None
+    } else {
+        Some(path.trim().to_string())
+    };
+
+    biovault::config::Config::save_binary_path(&name, sanitized.clone())
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Also update saved dependency states
+    update_saved_dependency_states()?;
+
+    eprintln!(
+        "✅ Saved custom path for {}: {}",
+        name,
+        sanitized
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("(reset)")
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn update_saved_dependency_states() -> Result<(), String> {
+    eprintln!("🔄 Updating saved dependency states");
+
+    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .unwrap()
+            .join(".biovault")
+            .to_string_lossy()
+            .to_string()
+    });
+    let biovault_path = PathBuf::from(&biovault_home);
+
+    save_dependency_states(&biovault_path)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_dependency(name: String) -> Result<String, String> {
+    eprintln!("📦 install_dependency called: {}", name);
+
+    // Call the library function to install just this one dependency
+    let installed_path = biovault::cli::commands::setup::install_single_dependency(&name)
+        .await
+        .map_err(|e| format!("Failed to install {}: {}", name, e))?;
+
+    if let Some(path) = installed_path {
+        eprintln!("✅ Installed {} at: {}", name, path);
+        Ok(path)
+    } else {
+        eprintln!(
+            "✅ Installed {} (path not detected - may not be in PATH)",
+            name
+        );
+        Ok(String::new())
+    }
+}
+
+#[tauri::command]
+async fn install_dependencies(names: Vec<String>) -> Result<(), String> {
+    eprintln!("📦 install_dependencies called: {:?}", names);
+
+    // For now, return an error since setup needs to be modified to return paths
+    // TODO: Call setup::install_dependencies once it's implemented
+    Err("Bulk installation is not yet implemented. Please install dependencies manually and use the 'Check Again' button.".to_string())
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    eprintln!("🌐 Opening URL: {}", url);
+
+    // Use webbrowser crate or OS-specific command to open URL
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1905,7 +2205,7 @@ pub fn run() {
     }
 
     let email = load_biovault_email(&biovault_home);
-    let window_title = format!("BioVault Desktop - {}", email);
+    let window_title = format!("BioVault - {}", email);
 
     // Use unified database location (same as CLI)
     let biovault_home_dir = if let Some(home) = &biovault_home {
@@ -2107,7 +2407,17 @@ pub fn run() {
             show_in_folder,
             get_config_path,
             get_command_logs,
-            clear_command_logs
+            clear_command_logs,
+            check_is_onboarded,
+            complete_onboarding,
+            reset_all_data,
+            check_dependencies,
+            check_single_dependency,
+            get_saved_dependency_states,
+            save_custom_path,
+            install_dependency,
+            install_dependencies,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
