@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Install the app from DMG to Applications folder
-DMG_PATH="src-tauri/target/release/bundle/dmg/BioVault Desktop_0.1.0_aarch64.dmg"
-APP_NAME="BioVault Desktop.app"
-MOUNT_POINT="/Volumes/BioVault Desktop"
+DMG_PATH="src-tauri/target/release/bundle/dmg/BioVault_0.1.0_aarch64.dmg"
+APP_NAME="BioVault.app"
+MOUNT_POINT="/Volumes/BioVault"
 
 if [ ! -f "$DMG_PATH" ]; then
     echo "❌ Error: DMG not found at $DMG_PATH"
@@ -31,5 +31,5 @@ cp -R "$MOUNT_POINT/$APP_NAME" /Applications/
 echo "💿 Unmounting DMG..."
 hdiutil detach "$MOUNT_POINT" -quiet
 
-echo "✅ Done! BioVault Desktop installed to /Applications/"
-echo "🚀 Launch with: open -a 'BioVault Desktop'"
+echo "✅ Done! BioVault installed to /Applications/"
+echo "🚀 Launch with: open -a 'BioVault'"

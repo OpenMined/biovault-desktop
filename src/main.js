@@ -2065,11 +2065,10 @@ async function loadSettings() {
     document.getElementById('config-path-display').textContent = configPath;
 
     const settings = await invoke('get_settings');
-    document.getElementById('setting-docker').value = settings.docker_path || '';
-    document.getElementById('setting-java').value = settings.java_path || '';
-    document.getElementById('setting-syftbox').value = settings.syftbox_path || '';
-    document.getElementById('setting-biovault').value = settings.biovault_path || '';
     document.getElementById('setting-email').value = settings.email || '';
+
+    // Load saved dependency states for settings page (don't re-check)
+    loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel');
   } catch (error) {
     console.error('Error loading settings:', error);
   }
@@ -2077,11 +2076,8 @@ async function loadSettings() {
 
 async function saveSettings() {
   const settings = {
-    docker_path: document.getElementById('setting-docker').value,
-    java_path: document.getElementById('setting-java').value,
-    syftbox_path: document.getElementById('setting-syftbox').value,
-    biovault_path: document.getElementById('setting-biovault').value,
     email: document.getElementById('setting-email').value,
+    // Custom paths are saved directly from the dependency panels
   };
 
   try {
@@ -2094,11 +2090,9 @@ async function saveSettings() {
 
 async function resetSettings() {
   if (confirm('Are you sure you want to reset all settings to defaults?')) {
-    document.getElementById('setting-docker').value = '/usr/local/bin/docker';
-    document.getElementById('setting-java').value = '/usr/bin/java';
-    document.getElementById('setting-syftbox').value = '/usr/local/bin/syftbox';
-    document.getElementById('setting-biovault').value = 'bv';
     document.getElementById('setting-email').value = '';
+    // Re-check dependencies after reset
+    checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel');
   }
 }
 
@@ -2309,6 +2303,72 @@ window.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
   document.getElementById('reset-settings-btn').addEventListener('click', resetSettings);
+
+  // Settings dependency buttons
+  const settingsCheckBtn = document.getElementById('settings-check-again-btn');
+  if (settingsCheckBtn) {
+    settingsCheckBtn.addEventListener('click', () => {
+      checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true);
+    });
+  }
+
+  const settingsInstallBtn = document.getElementById('settings-install-missing-deps-btn');
+  if (settingsInstallBtn) {
+    settingsInstallBtn.addEventListener('click', async () => {
+      if (!dependencyResults) return;
+
+      const missingDeps = dependencyResults.dependencies.filter(dep =>
+        !dep.found || (dep.running !== null && dep.running === false)
+      );
+
+      if (missingDeps.length === 0) {
+        alert('All dependencies are already installed!');
+        return;
+      }
+
+      // Show install modal
+      const modal = document.getElementById('install-modal');
+      const progressBar = document.getElementById('install-progress-bar');
+      const statusText = document.getElementById('install-status-text');
+      const installLog = document.getElementById('install-log');
+      const closeBtn = document.getElementById('install-close-btn');
+
+      modal.style.display = 'flex';
+      closeBtn.disabled = true;
+      installLog.innerHTML = '';
+      progressBar.style.width = '0%';
+
+      try {
+        for (let i = 0; i < missingDeps.length; i++) {
+          const dep = missingDeps[i];
+          const progress = ((i / missingDeps.length) * 100).toFixed(0);
+          progressBar.style.width = `${progress}%`;
+          statusText.textContent = `Installing ${dep.name}...`;
+          installLog.innerHTML += `\n[${new Date().toLocaleTimeString()}] Installing ${dep.name}...\n`;
+
+          try {
+            const result = await invoke('install_dependency', { name: dep.name });
+            if (result) {
+              installLog.innerHTML += `✓ ${dep.name} installed successfully at: ${result}\n`;
+            } else {
+              installLog.innerHTML += `✓ ${dep.name} installed successfully\n`;
+            }
+          } catch (error) {
+            installLog.innerHTML += `✗ Failed to install ${dep.name}: ${error}\n`;
+          }
+        }
+
+        progressBar.style.width = '100%';
+        statusText.textContent = 'Installation complete! Checking dependencies...';
+        installLog.innerHTML += `\n[${new Date().toLocaleTimeString()}] Installation complete!\n`;
+
+        // Re-check dependencies
+        await checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true);
+      } finally {
+        closeBtn.disabled = false;
+      }
+    });
+  }
 
   document.getElementById('copy-logs-btn').addEventListener('click', copyLogs);
   document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
@@ -2640,41 +2700,801 @@ window.addEventListener("DOMContentLoaded", () => {
     updateImportButton();
   });
 
-  // Onboarding flow
-  document.getElementById('onboarding-submit').addEventListener('click', async () => {
-    const email = document.getElementById('onboarding-email').value.trim();
-    if (!email || !email.includes('@')) {
-      alert('Please enter a valid email address');
-      return;
-    }
+  // Multi-step onboarding wizard
+  let onboardingStep = 1;
+
+  // Store dependency check results globally
+  let dependencyResults = null;
+
+  // Function to load saved dependency states without re-checking
+  async function loadSavedDependencies(listPanelId, detailsPanelId) {
+    const depsList = document.getElementById(listPanelId);
+    if (!depsList) return;
 
     try {
-      await invoke('complete_onboarding', { email });
-      // Hide onboarding, show main app
-      document.getElementById('onboarding-view').style.display = 'none';
-      document.querySelector('.tabs').style.display = 'flex';
-      navigateTo('home');
-      location.reload(); // Reload to refresh title with email
+      // Get saved states from config without re-checking
+      const result = await invoke('get_saved_dependency_states');
+      dependencyResults = result;
+      displayDependencies(result, listPanelId, detailsPanelId, true);
     } catch (error) {
-      alert(`Error completing onboarding: ${error}`);
+      console.error('Failed to load saved dependencies:', error);
+      depsList.innerHTML = `
+        <div style="text-align: center; color: #999; padding: 20px;">
+          <p>No saved dependency states</p>
+          <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
+        </div>
+      `;
     }
-  });
+  }
+
+  // Function to check dependencies and display results
+  // Generic function for checking dependencies in any panel
+  async function checkDependenciesForPanel(listPanelId, detailsPanelId, isSettings = false) {
+    const depsList = document.getElementById(listPanelId);
+    if (!depsList) return;
+
+    // Show loading state
+    depsList.innerHTML = `
+      <div style="text-align: center; color: #999; padding: 20px;">
+        <div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px;"></div>
+        <p>Checking dependencies...</p>
+      </div>
+    `;
+
+    try {
+      const result = await invoke('check_dependencies');
+      dependencyResults = result;
+      displayDependencies(result, listPanelId, detailsPanelId, isSettings);
+    } catch (error) {
+      console.error('Failed to check dependencies:', error);
+      depsList.innerHTML = `
+        <div style="color: #dc3545; padding: 20px; text-align: center;">
+          <p>❌ Failed to check dependencies</p>
+          <p style="font-size: 12px; margin-top: 10px;">${error}</p>
+        </div>
+      `;
+    }
+  }
+
+  // Wrapper for onboarding
+  async function checkDependencies() {
+    await checkDependenciesForPanel('deps-list', 'dep-details-panel', false);
+  }
+
+  // Function to copy text to clipboard
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      return false;
+    }
+  }
+
+  // Function to show dependency details in right panel
+  function showDependencyDetails(dep, depIndex, detailsPanelId = 'dep-details-panel') {
+    const detailsPanel = document.getElementById(detailsPanelId);
+    const isInstalled = dep.found && (dep.running === null || dep.running === true);
+
+    if (isInstalled) {
+      // Show installed dependency details
+      const description = dep.description || 'This dependency is installed and ready to use.';
+
+      detailsPanel.innerHTML = `
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
+            <h3 style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
+            ${dep.website ? `
+            <button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+            ` : ''}
+          </div>
+          <p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
+        </div>
+
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+          ${dep.version ? `
+          <div style="margin-bottom: 12px;">
+            <strong style="font-size: 13px; color: #333;">Version:</strong>
+            <div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
+          </div>
+          ` : ''}
+
+          <div style="margin-bottom: 12px;">
+            <strong style="font-size: 13px; color: #333;">Path:</strong>
+            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+              <input
+                type="text"
+                id="path-input-${depIndex}"
+                value="${dep.path || ''}"
+                placeholder="Enter path to ${dep.name} executable"
+                autocapitalize="off"
+                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
+              />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
+            <button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+          </div>
+          <p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
+        </div>
+
+      `;
+
+      // Add open website handler
+      const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`);
+      if (openWebsiteBtn) {
+        openWebsiteBtn.addEventListener('click', async () => {
+          if (dep.website) {
+            try {
+              // Use custom Tauri command to open URL in default browser
+              await invoke('open_url', { url: dep.website });
+            } catch (error) {
+              console.error('Failed to open URL:', error);
+            }
+          }
+        });
+      }
+
+      // Add reset path handler - auto-detect
+      const resetPathBtn = document.getElementById(`reset-path-btn-${depIndex}`);
+      if (resetPathBtn) {
+        resetPathBtn.addEventListener('click', async () => {
+          try {
+            // Clear custom path by saving empty string, which triggers auto-detect
+            await invoke('save_custom_path', { name: dep.name, path: '' });
+
+            // Check the dependency without custom path (auto-detect)
+            const result = await invoke('check_single_dependency', { name: dep.name, path: null });
+
+            // Update the dependency data
+            dep.found = result.found;
+            dep.path = result.path;
+            dep.version = result.version;
+            dep.running = result.running;
+
+            // Update the dependency list item
+            const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`);
+            if (depItem) {
+              const isInstalled = dep.found && (dep.running === null || dep.running === true);
+              depItem.innerHTML = `
+                <span style="font-size: 18px; color: ${isInstalled ? '#28a745' : '#dc3545'};">${isInstalled ? '✓' : '✗'}</span>
+                <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+              `;
+            }
+
+            // Re-render this specific dependency details
+            showDependencyDetails(dep, depIndex);
+
+            // Update the UI with the result
+            if (result.found) {
+              await window.__TAURI__.dialog.message(`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${result.version || 'Unknown'}`, { title: 'Success', type: 'info' });
+            } else {
+              await window.__TAURI__.dialog.message(`✗ ${dep.name} not found automatically.\n\nPlease install it or enter a custom path.`, { title: 'Not Found', type: 'warning' });
+            }
+          } catch (error) {
+            await window.__TAURI__.dialog.message(`Error resetting path: ${error}`, { title: 'Error', type: 'error' });
+          }
+        });
+      }
+
+      // Add check path handler - verify custom path
+      const checkPathBtn = document.getElementById(`check-path-btn-${depIndex}`);
+      if (checkPathBtn) {
+        checkPathBtn.addEventListener('click', async () => {
+          const pathInput = document.getElementById(`path-input-${depIndex}`);
+          const customPath = pathInput.value.trim();
+
+          if (!customPath) {
+            await window.__TAURI__.dialog.message('Please enter a path to check', { title: 'Empty Path', type: 'warning' });
+            return;
+          }
+
+          try {
+            // Check this single dependency with the custom path (WITHOUT saving first)
+            const result = await invoke('check_single_dependency', { name: dep.name, path: customPath });
+
+            // Update the UI with the result
+            if (result.found) {
+              // Path is valid - save it and update just this dependency
+              await invoke('save_custom_path', { name: dep.name, path: customPath });
+
+              // Update the dependency data
+              dep.found = result.found;
+              dep.path = result.path || customPath;
+              dep.version = result.version;
+              dep.running = result.running;
+
+              // Update the dependency list item to show as installed
+              const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`);
+              if (depItem) {
+                depItem.innerHTML = `
+                  <span style="font-size: 18px; color: #28a745;">✓</span>
+                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+                `;
+              }
+
+              // Re-render this specific dependency details
+              showDependencyDetails(dep, depIndex);
+
+              await window.__TAURI__.dialog.message(`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${result.version || 'Unknown'}`, { title: 'Success', type: 'info' });
+            } else {
+              // Path is invalid - mark as missing but keep the invalid path in the input
+              dep.found = false;
+              dep.path = null;
+              dep.version = null;
+              dep.running = null;
+
+              // Update the dependency list item to show as missing
+              const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`);
+              if (depItem) {
+                depItem.innerHTML = `
+                  <span style="font-size: 18px; color: #dc3545;">✗</span>
+                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+                `;
+              }
+
+              // Re-render as missing dependency (but keep the path in the input)
+              showDependencyDetails(dep, depIndex);
+
+              // Keep the invalid path in the input box
+              setTimeout(() => {
+                const pathInput = document.getElementById(`path-input-${depIndex}`);
+                if (pathInput) {
+                  pathInput.value = customPath;
+                }
+              }, 100);
+
+              await window.__TAURI__.dialog.message(`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`, { title: 'Not Found', type: 'warning' });
+            }
+          } catch (error) {
+            await window.__TAURI__.dialog.message(`Error: ${error}`, { title: 'Error', type: 'error' });
+          }
+        });
+      }
+    } else {
+      // Show missing dependency details with install button
+      const description = dep.description || 'This dependency is not installed.';
+      const installInstructions = dep.install_instructions || 'No installation instructions available';
+      const commands = extractCommands(installInstructions);
+
+      detailsPanel.innerHTML = `
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
+            <h3 style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
+            ${dep.website ? `
+            <button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+            ` : ''}
+          </div>
+          <p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
+        </div>
+
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+          <div style="margin-bottom: 12px;">
+            <strong style="font-size: 13px; color: #333;">Path:</strong>
+            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+              <input
+                type="text"
+                id="path-input-${depIndex}"
+                value="${dep.path || ''}"
+                placeholder="Enter path to ${dep.name} executable (or install)"
+                autocapitalize="off"
+                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
+              />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
+            <button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+          </div>
+          <p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
+        </div>
+
+        <div style="background: #fff8e1; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px; position: relative;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h4 style="margin: 0; color: #856404; font-size: 14px;">📖 Manual Installation</h4>
+            ${commands.length > 0 ? `
+              <button class="copy-cmd-btn" data-command="${encodeURIComponent(commands[0])}" style="padding: 2px; min-width: 0; width: auto; background: transparent; border: none; cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" title="Copy command" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📋</button>
+            ` : ''}
+          </div>
+          <p style="font-size: 12px; color: #856404; margin-bottom: 10px;">You can also install this dependency manually:</p>
+
+          ${commands.length > 0 ? commands.map((cmd, idx) => `
+            <div style="background: #1e1e1e; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+              <pre style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${cmd}</pre>
+            </div>
+          `).join('') : `
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 11px; color: #333; white-space: pre-wrap; font-family: monospace;">${installInstructions}</div>
+          `}
+        </div>
+      `;
+
+      // Add open website handler
+      const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`);
+      if (openWebsiteBtn) {
+        openWebsiteBtn.addEventListener('click', async () => {
+          if (dep.website) {
+            try {
+              // Use custom Tauri command to open URL in default browser
+              await invoke('open_url', { url: dep.website });
+            } catch (error) {
+              console.error('Failed to open URL:', error);
+            }
+          }
+        });
+      }
+
+      // Add install single button handler
+      const installSingleBtn = document.getElementById(`install-single-btn-${depIndex}`);
+      if (installSingleBtn) {
+        installSingleBtn.addEventListener('click', async () => {
+          const confirmed = await window.__TAURI__.dialog.confirm(`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`, { title: 'Confirm Installation', type: 'warning' });
+          if (confirmed) {
+            try {
+              // Show progress
+              installSingleBtn.disabled = true;
+              installSingleBtn.textContent = 'Installing...';
+
+              // Install the dependency
+              const installedPath = await invoke('install_dependency', { name: dep.name });
+
+              if (installedPath) {
+                // Update the path input with the installed path
+                const pathInput = document.getElementById(`path-input-${depIndex}`);
+                if (pathInput) {
+                  pathInput.value = installedPath;
+                }
+
+                await window.__TAURI__.dialog.message(`✓ ${dep.name} installed successfully!\n\nPath: ${installedPath}`, { title: 'Success', type: 'info' });
+              } else {
+                await window.__TAURI__.dialog.message(`✓ ${dep.name} installed successfully!\n\nPlease check the path detection using 'Check Again'.`, { title: 'Success', type: 'info' });
+              }
+
+              // Re-check this dependency
+              await checkDependencies();
+            } catch (error) {
+              await window.__TAURI__.dialog.message(`${error}`, { title: 'Installation Failed', type: 'error' });
+
+              // Restore button state
+              installSingleBtn.disabled = false;
+              installSingleBtn.textContent = 'Install';
+            }
+          }
+        });
+      }
+
+      // Add check path handler - verify manual path for missing dependency
+      const checkPathBtn = document.getElementById(`check-path-btn-${depIndex}`);
+      if (checkPathBtn) {
+        checkPathBtn.addEventListener('click', async () => {
+          const pathInput = document.getElementById(`path-input-${depIndex}`);
+          const customPath = pathInput.value.trim();
+
+          if (!customPath) {
+            await window.__TAURI__.dialog.message('Please enter a path to check, or use the Install button', { title: 'Empty Path', type: 'warning' });
+            return;
+          }
+
+          try {
+            // Check this single dependency with the custom path (WITHOUT saving first)
+            const result = await invoke('check_single_dependency', { name: dep.name, path: customPath });
+
+            // Update the UI with the result
+            if (result.found) {
+              // Path is valid - save it and update just this dependency
+              await invoke('save_custom_path', { name: dep.name, path: customPath });
+
+              // Update the dependency data
+              dep.found = result.found;
+              dep.path = result.path || customPath;
+              dep.version = result.version;
+              dep.running = result.running;
+
+              // Update the dependency list item
+              const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`);
+              if (depItem) {
+                depItem.innerHTML = `
+                  <span style="font-size: 18px; color: #28a745;">✓</span>
+                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+                `;
+              }
+
+              // Re-render this specific dependency details
+              showDependencyDetails(dep, depIndex);
+
+              await window.__TAURI__.dialog.message(`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${result.version || 'Unknown'}`, { title: 'Success', type: 'info' });
+            } else {
+              // Path is invalid - don't save it
+              await window.__TAURI__.dialog.message(`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`, { title: 'Not Found', type: 'warning' });
+            }
+          } catch (error) {
+            await window.__TAURI__.dialog.message(`Error: ${error}`, { title: 'Error', type: 'error' });
+          }
+        });
+      }
+
+      // Add copy button handlers
+      document.querySelectorAll('.copy-cmd-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const command = decodeURIComponent(btn.dataset.command);
+          await copyToClipboard(command);
+          // Just copy silently, no visual change
+        });
+      });
+    }
+  }
+
+  // Helper function to extract CLI commands from install instructions
+  function extractCommands(instructions) {
+    const commands = [];
+    const lines = instructions.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Skip empty lines
+      if (!trimmed) continue;
+
+      // Match lines that contain shell commands
+      // Pattern: optional text followed by command
+      const commandPattern = /(?:.*?:\s*)?((?:brew|apt-get|apt|yum|dnf|pacman|pip|npm|cargo|curl|wget|sudo)\s+.+)/i;
+      const match = trimmed.match(commandPattern);
+
+      if (match) {
+        // Extract just the command part (group 1)
+        commands.push(match[1].trim());
+      } else if (trimmed.match(/^(brew|apt-get|apt|yum|dnf|pacman|pip|npm|cargo|curl|wget|sudo)/i)) {
+        // Fallback: if line starts with a command, use the whole line
+        commands.push(trimmed);
+      }
+    }
+    return commands;
+  }
+
+  // Function to display dependencies
+  function displayDependencies(result, listPanelId = 'deps-list', detailsPanelId = 'dep-details-panel', isSettings = false) {
+    const depsList = document.getElementById(listPanelId);
+    const nextBtn = isSettings ? null : document.getElementById('onboarding-next-2');
+    const installBtn = isSettings ?
+      document.getElementById('settings-install-missing-deps-btn') :
+      document.getElementById('install-missing-deps-btn');
+
+    let html = '';
+    let hasMissing = false;
+
+    result.dependencies.forEach((dep, index) => {
+      const isInstalled = dep.found && (dep.running === null || dep.running === true);
+      if (!isInstalled) hasMissing = true;
+
+      const statusIcon = isInstalled ? '✓' : '✗';
+      const statusColor = isInstalled ? '#28a745' : '#dc3545';
+
+      html += `
+        <div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
+          <span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
+          <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+        </div>
+      `;
+    });
+
+    depsList.innerHTML = html;
+
+    // Add click handlers for ALL dependencies
+    document.querySelectorAll(`#${listPanelId} .dep-item`).forEach((item) => {
+      item.addEventListener('click', () => {
+        const depIndex = parseInt(item.dataset.depIndex);
+        const dep = result.dependencies[depIndex];
+
+        // Show details in right panel
+        showDependencyDetails(dep, depIndex, detailsPanelId);
+
+        // Highlight selected item
+        document.querySelectorAll(`#${listPanelId} .dep-item`).forEach(i => {
+          i.style.borderColor = 'transparent';
+          i.style.background = 'white';
+        });
+        item.style.borderColor = '#0066cc';
+        item.style.background = '#f0f8ff';
+      });
+
+      // Add hover effect
+      item.addEventListener('mouseenter', () => {
+        if (item.style.borderColor !== 'rgb(0, 102, 204)') {
+          item.style.background = '#f8f9fa';
+        }
+      });
+      item.addEventListener('mouseleave', () => {
+        if (item.style.borderColor !== 'rgb(0, 102, 204)') {
+          item.style.background = 'white';
+        }
+      });
+    });
+
+    // Enable/disable buttons based on dependencies
+    if (result.all_satisfied) {
+      if (nextBtn) nextBtn.disabled = false;
+      if (installBtn) installBtn.disabled = true;
+    } else {
+      if (nextBtn) nextBtn.disabled = true;
+      if (installBtn) installBtn.disabled = false;
+    }
+
+    // Auto-select first missing dependency, or first one if all installed
+    const items = document.querySelectorAll(`#${listPanelId} .dep-item`);
+    if (items.length > 0) {
+      // Find first missing dependency
+      let firstMissing = null;
+      result.dependencies.forEach((dep, index) => {
+        const isInstalled = dep.found && (dep.running === null || dep.running === true);
+        if (!isInstalled && !firstMissing) {
+          firstMissing = index;
+        }
+      });
+
+      // Select first missing, or first overall if all installed
+      const indexToSelect = firstMissing !== null ? firstMissing : 0;
+      const itemToSelect = items[indexToSelect];
+
+      if (itemToSelect) {
+        // Trigger click on the item
+        itemToSelect.click();
+      }
+    }
+  }
+
+  // Step 1: Welcome -> Step 2
+  const nextBtn1 = document.getElementById('onboarding-next-1');
+  if (nextBtn1) {
+    nextBtn1.addEventListener('click', () => {
+      document.getElementById('onboarding-step-1').style.display = 'none';
+      document.getElementById('onboarding-step-2').style.display = 'block';
+      onboardingStep = 2;
+
+      // Check dependencies when entering step 2
+      checkDependencies();
+    });
+  }
+
+  // Check Again button
+  const checkAgainBtn = document.getElementById('check-again-btn');
+  if (checkAgainBtn) {
+    checkAgainBtn.addEventListener('click', () => {
+      checkDependencies();
+    });
+  }
+
+  // Install Missing button - installs all missing dependencies
+  const installMissingBtn = document.getElementById('install-missing-deps-btn');
+  if (installMissingBtn) {
+    installMissingBtn.addEventListener('click', async () => {
+      if (!dependencyResults) return;
+
+      // Find all missing dependencies
+      const missingDeps = dependencyResults.dependencies.filter(dep => {
+        const isInstalled = dep.found && (dep.running === null || dep.running === true);
+        return !isInstalled;
+      });
+
+      if (missingDeps.length === 0) return;
+
+      const depNames = missingDeps.map(d => d.name).join(', ');
+      const confirmed = await window.__TAURI__.dialog.confirm(
+        `Install the following missing dependencies?\n\n${depNames}\n\nBioVault will attempt to install these automatically. This may take several minutes.`,
+        { title: 'Confirm Installation', type: 'warning' }
+      );
+
+      if (confirmed) {
+        try {
+          await invoke('install_dependencies', { names: missingDeps.map(d => d.name) });
+          await checkDependencies();
+        } catch (error) {
+          await window.__TAURI__.dialog.message(`${error}`, { title: 'Installation Not Available', type: 'info' });
+        }
+      }
+    });
+  }
+
+  // Skip dependencies button on onboarding step 1
+  const skipDepsBtn = document.getElementById('skip-dependencies-btn');
+  if (skipDepsBtn) {
+    skipDepsBtn.addEventListener('click', async () => {
+      skipDepsBtn.disabled = true;
+      try {
+        const confirmed = await window.__TAURI__.dialog.confirm(
+          'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
+          'Some features may not work without the required dependencies installed.\n\n' +
+          'Are you sure you want to skip?',
+          { title: 'Skip Dependency Checks?', type: 'warning' }
+        );
+
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await invoke('update_saved_dependency_states');
+        } catch (error) {
+          console.error('Failed to save skipped state:', error);
+        }
+
+        document.getElementById('onboarding-step-2').style.display = 'none';
+        document.getElementById('onboarding-step-3').style.display = 'block';
+        onboardingStep = 3;
+      } finally {
+        skipDepsBtn.disabled = false;
+      }
+      // If not confirmed, stay on the current page
+    });
+  }
+
+  // Step 2: Dependencies -> Step 3
+  const nextBtn2 = document.getElementById('onboarding-next-2');
+  if (nextBtn2) {
+    nextBtn2.addEventListener('click', () => {
+      document.getElementById('onboarding-step-2').style.display = 'none';
+      document.getElementById('onboarding-step-3').style.display = 'block';
+      onboardingStep = 3;
+    });
+  }
+
+  // Step 3: Back to Step 2
+  const backBtn3 = document.getElementById('onboarding-back-3');
+  if (backBtn3) {
+    backBtn3.addEventListener('click', () => {
+      document.getElementById('onboarding-step-3').style.display = 'none';
+      document.getElementById('onboarding-step-2').style.display = 'block';
+      onboardingStep = 2;
+    });
+  }
+
+  // Email validation function
+  function isValidEmail(email) {
+    // More thorough email validation
+    if (!email || email.length < 3) return false;
+
+    // Split on @ to check parts
+    const parts = email.split('@');
+    if (parts.length !== 2) return false;
+
+    const [localPart, domain] = parts;
+
+    // Check local part (before @)
+    if (!localPart || localPart.length === 0 || localPart.length > 64) return false;
+    if (localPart.startsWith('.') || localPart.endsWith('.')) return false;
+    if (localPart.includes('..')) return false;
+
+    // Check domain part (after @)
+    if (!domain || domain.length < 3) return false;
+
+    // Domain must have at least one dot and a TLD
+    const domainParts = domain.split('.');
+    if (domainParts.length < 2) return false;
+
+    // Check each domain part
+    for (const part of domainParts) {
+      if (!part || part.length === 0) return false;
+      if (part.length > 63) return false;
+      if (part.startsWith('-') || part.endsWith('-')) return false;
+      // Only allow alphanumeric and hyphens
+      if (!/^[a-zA-Z0-9-]+$/.test(part)) return false;
+    }
+
+    // TLD should be at least 2 characters
+    const tld = domainParts[domainParts.length - 1];
+    if (tld.length < 2) return false;
+
+    // TLD should not be all numbers
+    if (/^\d+$/.test(tld)) return false;
+
+    return true;
+  }
+
+  // Email input validation
+  const emailInput = document.getElementById('onboarding-email');
+  const emailValidationMsg = document.getElementById('email-validation-message');
+
+  if (emailInput) {
+    // Disable Next button initially
+    const nextBtn3 = document.getElementById('onboarding-next-3');
+    if (nextBtn3) {
+      nextBtn3.disabled = true;
+      nextBtn3.style.opacity = '0.5';
+      nextBtn3.style.cursor = 'not-allowed';
+    }
+
+    // Real-time email validation
+    emailInput.addEventListener('input', () => {
+      const email = emailInput.value.trim();
+      const isValid = isValidEmail(email);
+
+      if (nextBtn3 && emailValidationMsg) {
+        if (isValid) {
+          nextBtn3.disabled = false;
+          nextBtn3.style.opacity = '1';
+          nextBtn3.style.cursor = 'pointer';
+          emailInput.style.borderColor = '#28a745';
+          emailValidationMsg.textContent = '✓ Valid email address';
+          emailValidationMsg.style.color = '#28a745';
+        } else {
+          nextBtn3.disabled = true;
+          nextBtn3.style.opacity = '0.5';
+          nextBtn3.style.cursor = 'not-allowed';
+          if (email.length > 0) {
+            emailInput.style.borderColor = '#dc3545';
+            // Provide specific error messages
+            if (!email.includes('@')) {
+              emailValidationMsg.textContent = '✗ Email must contain @';
+            } else if (email.endsWith('@')) {
+              emailValidationMsg.textContent = '✗ Please enter domain after @';
+            } else if (!email.includes('.', email.indexOf('@'))) {
+              emailValidationMsg.textContent = '✗ Domain must contain a dot';
+            } else {
+              emailValidationMsg.textContent = '✗ Please enter a valid email';
+            }
+            emailValidationMsg.style.color = '#dc3545';
+          } else {
+            emailInput.style.borderColor = '#ddd';
+            emailValidationMsg.textContent = '';
+          }
+        }
+      }
+    });
+  }
+
+  // Step 3: Email -> Step 4 (Initialize)
+  const nextBtn3 = document.getElementById('onboarding-next-3');
+  if (nextBtn3) {
+    nextBtn3.addEventListener('click', async () => {
+      const email = document.getElementById('onboarding-email').value.trim();
+      if (!isValidEmail(email)) {
+        await window.__TAURI__.dialog.message('Please enter a valid email address', { title: 'Invalid Email', type: 'error' });
+        return;
+      }
+
+      // Move to step 4 (initializing)
+      document.getElementById('onboarding-step-3').style.display = 'none';
+      document.getElementById('onboarding-step-4').style.display = 'block';
+      onboardingStep = 4;
+
+      // Initialize BioVault
+      try {
+        await invoke('complete_onboarding', { email });
+        // Reload to show main app with updated config
+        location.reload();
+      } catch (error) {
+        await window.__TAURI__.dialog.message(`Error initializing BioVault: ${error}`, { title: 'Error', type: 'error' });
+      }
+    });
+  }
+
 
   // Reset all data button
-  document.getElementById('reset-all-btn').addEventListener('click', async () => {
-    const confirmation = prompt('This will DELETE ALL DATA. Type "DELETE" to confirm:');
-    if (confirmation !== 'DELETE') {
-      return;
-    }
+  const resetAllBtn = document.getElementById('reset-all-btn');
+  if (resetAllBtn) {
+    resetAllBtn.addEventListener('click', async () => {
+      const confirmed = await window.__TAURI__.dialog.confirm(
+        'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
+        { title: 'Reset All Data', type: 'warning' }
+      );
 
-    try {
-      await invoke('reset_all_data');
-      alert('All data has been reset. The app will now reload.');
-      location.reload();
-    } catch (error) {
-      alert(`Error resetting data: ${error}`);
-    }
-  });
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        await invoke('reset_all_data');
+        await window.__TAURI__.dialog.message('All data has been reset. The app will now reload.', { title: 'Reset Complete' });
+
+        // Reload the window to restart fresh
+        window.location.reload();
+      } catch (error) {
+        await window.__TAURI__.dialog.message(`Error resetting data: ${error}`, { title: 'Error', type: 'error' });
+      }
+    });
+  }
 
   // Check if onboarded on app start
   async function checkOnboarding() {
@@ -2683,10 +3503,15 @@ window.addEventListener("DOMContentLoaded", () => {
       if (!isOnboarded) {
         // Show onboarding view
         document.getElementById('onboarding-view').style.display = 'flex';
+        // Hide tabs
         document.querySelector('.tabs').style.display = 'none';
+        // Hide all other tab-content views
         document.querySelectorAll('.tab-content:not(#onboarding-view)').forEach(view => {
           view.classList.remove('active');
+          view.style.display = 'none';
         });
+        // Update title
+        document.title = 'BioVault - Setup';
       }
     } catch (error) {
       console.error('Error checking onboarding status:', error);
