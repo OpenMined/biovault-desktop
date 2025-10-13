@@ -16,6 +16,7 @@ let columnWidths = {
 };
 let commandLogs = []; // Array of log entries
 let isImportInProgress = false; // Track if import is currently running
+let dependencyResults = null; // Store dependency check results globally
 
 function getFileExtensions() {
   const select = document.getElementById('file-type-select');
@@ -2068,27 +2069,103 @@ async function loadSettings() {
     document.getElementById('setting-email').value = settings.email || '';
 
     // Load saved dependency states for settings page (don't re-check)
-    // Note: This function is defined inside DOMContentLoaded, so we need to check dependencies directly
-    try {
-      const result = await invoke('get_saved_dependency_states');
-      if (window.displayDependencies) {
-        window.displayDependencies(result, 'settings-deps-list', 'settings-dep-details-panel', true);
-      }
-    } catch (error) {
-      console.error('Failed to load saved dependencies:', error);
-      const depsList = document.getElementById('settings-deps-list');
-      if (depsList) {
-        depsList.innerHTML = `
-          <div style="text-align: center; color: #999; padding: 20px;">
-            <p>No saved dependency states</p>
-            <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
-          </div>
-        `;
-      }
-    }
+    loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel');
+
+    // Check SyftBox auth status
+    checkSyftBoxStatus();
   } catch (error) {
     console.error('Error loading settings:', error);
   }
+}
+
+async function checkSyftBoxStatus() {
+  const statusBadge = document.getElementById('syftbox-status-badge');
+  const authBtn = document.getElementById('syftbox-auth-btn');
+
+  try {
+    const configInfo = await invoke('get_syftbox_config_info');
+
+    if (configInfo.is_authenticated) {
+      statusBadge.innerHTML = `✓ Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`;
+      statusBadge.style.background = '#d4edda';
+      statusBadge.style.color = '#155724';
+      statusBadge.style.border = '1px solid #c3e6cb';
+      statusBadge.style.lineHeight = '1.4';
+      authBtn.textContent = 'Reauthenticate';
+    } else {
+      statusBadge.innerHTML = `✗ Not Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`;
+      statusBadge.style.background = '#f8d7da';
+      statusBadge.style.color = '#721c24';
+      statusBadge.style.border = '1px solid #f5c6cb';
+      statusBadge.style.lineHeight = '1.4';
+      authBtn.textContent = 'Authenticate';
+    }
+
+    authBtn.disabled = false;
+  } catch (error) {
+    statusBadge.innerHTML = '? Status Unknown';
+    statusBadge.style.background = '#fff3cd';
+    statusBadge.style.color = '#856404';
+    statusBadge.style.border = '1px solid #ffeaa7';
+    authBtn.disabled = false;
+    authBtn.textContent = 'Authenticate';
+    console.error('Error checking SyftBox status:', error);
+  }
+}
+
+async function handleSyftBoxAuthentication() {
+  const email = document.getElementById('setting-email').value.trim();
+
+  if (!email) {
+    await window.__TAURI__.dialog.message('Please enter your email address first.', { title: 'Email Required', type: 'warning' });
+    return;
+  }
+
+  // Set the onboarding email field
+  document.getElementById('onboarding-email').value = email;
+
+  // Show onboarding view with step 4 (SyftBox auth)
+  // Hide tabs navigation bar
+  const tabsBar = document.querySelector('.tabs');
+  if (tabsBar) {
+    tabsBar.style.display = 'none';
+  }
+
+  // Hide all tab contents and show onboarding view
+  document.querySelectorAll('.tab-content').forEach(content => {
+    content.classList.remove('active');
+    content.style.display = 'none';
+  });
+  document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+
+  const onboardingView = document.getElementById('onboarding-view');
+  onboardingView.classList.add('active');
+  onboardingView.style.display = 'flex';
+
+  // Hide all onboarding steps except step 4
+  document.querySelectorAll('.onboarding-step').forEach(step => {
+    step.style.display = 'none';
+  });
+
+  const step4 = document.getElementById('onboarding-step-4');
+  step4.style.display = 'block';
+
+  // Mark that we're coming from settings (for skip button behavior)
+  step4.dataset.fromSettings = 'true';
+
+  // Change skip button text to "Cancel"
+  const skipBtn = document.getElementById('skip-syftbox-btn');
+  skipBtn.textContent = 'Cancel';
+
+  // Reset the OTP state to show the "Send Login Code" button
+  document.getElementById('syftbox-send-state').style.display = 'block';
+  document.getElementById('syftbox-otp-state').style.display = 'none';
+
+  // Clear any previous OTP inputs
+  document.querySelectorAll('.syftbox-code-input').forEach(input => {
+    input.value = '';
+    input.classList.remove('error', 'success');
+  });
 }
 
 async function saveSettings() {
@@ -2231,6 +2308,27 @@ function navigateTo(viewName) {
   }
 }
 
+// Function to load saved dependency states without re-checking
+async function loadSavedDependencies(listPanelId, detailsPanelId) {
+  const depsList = document.getElementById(listPanelId);
+  if (!depsList) return;
+
+  try {
+    // Get saved states from config without re-checking
+    const result = await invoke('get_saved_dependency_states');
+    dependencyResults = result;
+    window.displayDependencies(result, listPanelId, detailsPanelId, true);
+  } catch (error) {
+    console.error('Failed to load saved dependencies:', error);
+    depsList.innerHTML = `
+      <div style="text-align: center; color: #999; padding: 20px;">
+        <p>No saved dependency states</p>
+        <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
+      </div>
+    `;
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   console.log('🔥 DOMContentLoaded fired');
   refreshExistingFilePaths();
@@ -2318,8 +2416,15 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
-  document.getElementById('reset-settings-btn').addEventListener('click', resetSettings);
+  // Settings save/reset buttons removed from UI
+
+  // SyftBox authentication button
+  const syftboxAuthBtn = document.getElementById('syftbox-auth-btn');
+  if (syftboxAuthBtn) {
+    syftboxAuthBtn.addEventListener('click', async () => {
+      await handleSyftBoxAuthentication();
+    });
+  }
 
   // Settings dependency buttons
   const settingsCheckBtn = document.getElementById('settings-check-again-btn');
@@ -2719,30 +2824,6 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Multi-step onboarding wizard
   let onboardingStep = 1;
-
-  // Store dependency check results globally
-  let dependencyResults = null;
-
-  // Function to load saved dependency states without re-checking
-  async function loadSavedDependencies(listPanelId, detailsPanelId) {
-    const depsList = document.getElementById(listPanelId);
-    if (!depsList) return;
-
-    try {
-      // Get saved states from config without re-checking
-      const result = await invoke('get_saved_dependency_states');
-      dependencyResults = result;
-      displayDependencies(result, listPanelId, detailsPanelId, true);
-    } catch (error) {
-      console.error('Failed to load saved dependencies:', error);
-      depsList.innerHTML = `
-        <div style="text-align: center; color: #999; padding: 20px;">
-          <p>No saved dependency states</p>
-          <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
-        </div>
-      `;
-    }
-  }
 
   // Function to check dependencies and display results
   // Generic function for checking dependencies in any panel
@@ -3611,7 +3692,7 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Step 3: Email -> Step 4 (Initialize)
+  // Step 3: Email -> Step 4 (SyftBox OTP)
   const nextBtn3 = document.getElementById('onboarding-next-3');
   if (nextBtn3) {
     nextBtn3.addEventListener('click', async () => {
@@ -3621,20 +3702,306 @@ window.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // Move to step 4 (initializing)
+      // Move to step 4 (SyftBox OTP)
       document.getElementById('onboarding-step-3').style.display = 'none';
       document.getElementById('onboarding-step-4').style.display = 'block';
       onboardingStep = 4;
+    });
+  }
 
-      // Initialize BioVault
+  // Step 4: SyftBox OTP - Send Login Code button
+  const sendLoginCodeBtn = document.getElementById('send-login-code-btn');
+  if (sendLoginCodeBtn) {
+    sendLoginCodeBtn.addEventListener('click', async () => {
+      const email = document.getElementById('onboarding-email').value.trim();
+
+      sendLoginCodeBtn.disabled = true;
+      sendLoginCodeBtn.innerHTML = '<span class="spinner"></span> Sending...';
+
       try {
-        await invoke('complete_onboarding', { email });
-        // Reload to show main app with updated config
-        location.reload();
+        await invoke('syftbox_request_otp', { email });
+
+        // Switch to OTP input state
+        document.getElementById('syftbox-send-state').style.display = 'none';
+        document.getElementById('syftbox-otp-state').style.display = 'block';
+        document.getElementById('syftbox-user-email').textContent = email;
+
+        // Focus first input
+        const firstInput = document.querySelector('.syftbox-code-input[data-index="0"]');
+        if (firstInput) firstInput.focus();
       } catch (error) {
-        await window.__TAURI__.dialog.message(`Error initializing BioVault: ${error}`, { title: 'Error', type: 'error' });
+        await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, { title: 'Error', type: 'error' });
+        sendLoginCodeBtn.disabled = false;
+        sendLoginCodeBtn.textContent = 'Send Login Code';
       }
     });
+  }
+
+  // Step 4: SyftBox OTP - Digit input handling
+  const codeInputs = document.querySelectorAll('.syftbox-code-input');
+  codeInputs.forEach((input, index) => {
+    input.addEventListener('input', (e) => {
+      const value = e.target.value;
+
+      // Only allow numbers
+      if (value && !/^\d$/.test(value)) {
+        e.target.value = '';
+        return;
+      }
+
+      // Clear error state
+      codeInputs.forEach(inp => {
+        inp.classList.remove('error');
+      });
+      document.getElementById('syftbox-error-message').style.display = 'none';
+
+      // Move to next input if value entered
+      if (value && index < codeInputs.length - 1) {
+        codeInputs[index + 1].focus();
+      }
+
+      // Check if all inputs filled
+      const allFilled = Array.from(codeInputs).every(inp => inp.value);
+      document.getElementById('verify-code-btn').disabled = !allFilled;
+    });
+
+    // Handle backspace and Enter
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !e.target.value && index > 0) {
+        codeInputs[index - 1].focus();
+      } else if (e.key === 'Enter') {
+        // Trigger verify button if all fields are filled
+        const allFilled = Array.from(codeInputs).every(inp => inp.value);
+        if (allFilled) {
+          document.getElementById('verify-code-btn').click();
+        }
+      }
+    });
+
+    // Handle paste
+    input.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const pastedData = e.clipboardData.getData('text').replace(/\D/g, '');
+
+      for (let i = 0; i < Math.min(pastedData.length, codeInputs.length); i++) {
+        codeInputs[i].value = pastedData[i];
+      }
+
+      // Focus last filled or first empty
+      const lastIndex = Math.min(pastedData.length, codeInputs.length - 1);
+      codeInputs[lastIndex].focus();
+
+      // Enable verify button if all filled
+      const allFilled = Array.from(codeInputs).every(inp => inp.value);
+      document.getElementById('verify-code-btn').disabled = !allFilled;
+    });
+  });
+
+  // Step 4: SyftBox OTP - Verify Code button
+  const verifyCodeBtn = document.getElementById('verify-code-btn');
+  if (verifyCodeBtn) {
+    verifyCodeBtn.addEventListener('click', async () => {
+      const code = Array.from(codeInputs).map(inp => inp.value).join('');
+      const email = document.getElementById('onboarding-email').value.trim();
+      const step4 = document.getElementById('onboarding-step-4');
+      const fromSettings = step4.dataset.fromSettings === 'true';
+
+      verifyCodeBtn.disabled = true;
+      verifyCodeBtn.innerHTML = '<span class="spinner"></span> Verifying...';
+
+      try {
+        await invoke('syftbox_submit_otp', { code, email });
+
+        // Success - mark inputs as success
+        codeInputs.forEach(inp => inp.classList.add('success'));
+
+        // Wait a moment then proceed
+        setTimeout(async () => {
+          if (fromSettings) {
+            // Coming from settings - reset state, show success, and return to settings
+            step4.dataset.fromSettings = 'false';
+            document.getElementById('skip-syftbox-btn').textContent = 'Skip'; // Reset button text
+
+            // Reset the OTP state to initial state
+            document.getElementById('syftbox-send-state').style.display = 'block';
+            document.getElementById('syftbox-otp-state').style.display = 'none';
+            document.getElementById('syftbox-error-message').style.display = 'none';
+
+            // Clear OTP inputs
+            document.querySelectorAll('.syftbox-code-input').forEach(input => {
+              input.value = '';
+              input.classList.remove('error', 'success');
+            });
+
+            // Reset verify button
+            const verifyBtn = document.getElementById('verify-code-btn');
+            verifyBtn.disabled = true;
+            verifyBtn.textContent = 'Verify Code';
+
+            // Reset send login code button
+            const sendLoginCodeBtn = document.getElementById('send-login-code-btn');
+            if (sendLoginCodeBtn) {
+              sendLoginCodeBtn.disabled = false;
+              sendLoginCodeBtn.textContent = 'Send Login Code';
+            }
+
+            await window.__TAURI__.dialog.message('Successfully authenticated with SyftBox!', { title: 'Success', type: 'info' });
+
+            // Show tabs navigation bar
+            const tabsBar = document.querySelector('.tabs');
+            if (tabsBar) {
+              tabsBar.style.display = 'flex';
+            }
+
+            // Hide onboarding and show settings
+            document.getElementById('onboarding-view').classList.remove('active');
+            document.getElementById('onboarding-view').style.display = 'none';
+
+            const settingsView = document.getElementById('settings-view');
+            settingsView.classList.add('active');
+            settingsView.style.display = 'flex';
+
+            // Activate settings tab
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelector('.tab[data-tab="settings"]').classList.add('active');
+
+            // Refresh status
+            checkSyftBoxStatus();
+          } else {
+            // Normal onboarding flow - proceed to step 5 (initializing)
+            document.getElementById('onboarding-step-4').style.display = 'none';
+            document.getElementById('onboarding-step-5').style.display = 'block';
+            onboardingStep = 5;
+
+            // Initialize BioVault
+            initializeBioVault(email);
+          }
+        }, 500);
+      } catch (error) {
+        // Error - show error state
+        codeInputs.forEach(inp => inp.classList.add('error'));
+        document.getElementById('syftbox-error-message').style.display = 'block';
+        document.getElementById('syftbox-error-message').textContent = error.toString().includes('Invalid')
+          ? 'Invalid verification code. Please try again.'
+          : `Error: ${error}`;
+
+        verifyCodeBtn.disabled = false;
+        verifyCodeBtn.textContent = 'Verify Code';
+      }
+    });
+  }
+
+  // Step 4: SyftBox OTP - Resend Code button
+  const resendCodeBtn = document.getElementById('resend-code-btn');
+  if (resendCodeBtn) {
+    resendCodeBtn.addEventListener('click', async () => {
+      const email = document.getElementById('onboarding-email').value.trim();
+
+      resendCodeBtn.disabled = true;
+      resendCodeBtn.textContent = 'Sending...';
+
+      try {
+        await invoke('syftbox_request_otp', { email });
+
+        // Clear inputs
+        codeInputs.forEach(inp => {
+          inp.value = '';
+          inp.classList.remove('error', 'success');
+        });
+        document.getElementById('syftbox-error-message').style.display = 'none';
+        document.getElementById('verify-code-btn').disabled = true;
+
+        // Focus first input
+        codeInputs[0].focus();
+
+        await window.__TAURI__.dialog.message('A new code has been sent to your email.', { title: 'Code Sent' });
+      } catch (error) {
+        await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, { title: 'Error', type: 'error' });
+      } finally {
+        resendCodeBtn.disabled = false;
+        resendCodeBtn.textContent = 'Send Again';
+      }
+    });
+  }
+
+  // Step 4: SyftBox OTP - Skip/Cancel button
+  const skipSyftboxBtn = document.getElementById('skip-syftbox-btn');
+  if (skipSyftboxBtn) {
+    skipSyftboxBtn.addEventListener('click', () => {
+      const step4 = document.getElementById('onboarding-step-4');
+      const fromSettings = step4.dataset.fromSettings === 'true';
+
+      if (fromSettings) {
+        // Coming from settings - reset state and return to settings page
+        step4.dataset.fromSettings = 'false';
+        skipSyftboxBtn.textContent = 'Skip'; // Reset button text
+
+        // Reset the OTP state to initial state
+        document.getElementById('syftbox-send-state').style.display = 'block';
+        document.getElementById('syftbox-otp-state').style.display = 'none';
+        document.getElementById('syftbox-error-message').style.display = 'none';
+
+        // Clear OTP inputs
+        document.querySelectorAll('.syftbox-code-input').forEach(input => {
+          input.value = '';
+          input.classList.remove('error', 'success');
+        });
+
+        // Reset verify button
+        const verifyBtn = document.getElementById('verify-code-btn');
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = 'Verify Code';
+
+        // Reset send login code button
+        const sendLoginCodeBtn = document.getElementById('send-login-code-btn');
+        if (sendLoginCodeBtn) {
+          sendLoginCodeBtn.disabled = false;
+          sendLoginCodeBtn.textContent = 'Send Login Code';
+        }
+
+        // Show tabs navigation bar
+        const tabsBar = document.querySelector('.tabs');
+        if (tabsBar) {
+          tabsBar.style.display = 'flex';
+        }
+
+        // Hide onboarding and show settings
+        document.getElementById('onboarding-view').classList.remove('active');
+        document.getElementById('onboarding-view').style.display = 'none';
+
+        const settingsView = document.getElementById('settings-view');
+        settingsView.classList.add('active');
+        settingsView.style.display = 'flex';
+
+        // Activate settings tab
+        document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+        document.querySelector('.tab[data-tab="settings"]').classList.add('active');
+
+        // Refresh status
+        checkSyftBoxStatus();
+      } else {
+        // Normal onboarding flow - skip to step 5
+        const email = document.getElementById('onboarding-email').value.trim();
+
+        document.getElementById('onboarding-step-4').style.display = 'none';
+        document.getElementById('onboarding-step-5').style.display = 'block';
+        onboardingStep = 5;
+
+        // Initialize BioVault
+        initializeBioVault(email);
+      }
+    });
+  }
+
+  // Helper function to initialize BioVault
+  async function initializeBioVault(email) {
+    try {
+      await invoke('complete_onboarding', { email });
+      // Reload to show main app with updated config
+      location.reload();
+    } catch (error) {
+      await window.__TAURI__.dialog.message(`Error initializing BioVault: ${error}`, { title: 'Error', type: 'error' });
+    }
   }
 
 
