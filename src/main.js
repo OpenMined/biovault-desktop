@@ -2068,7 +2068,24 @@ async function loadSettings() {
     document.getElementById('setting-email').value = settings.email || '';
 
     // Load saved dependency states for settings page (don't re-check)
-    loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel');
+    // Note: This function is defined inside DOMContentLoaded, so we need to check dependencies directly
+    try {
+      const result = await invoke('get_saved_dependency_states');
+      if (window.displayDependencies) {
+        window.displayDependencies(result, 'settings-deps-list', 'settings-dep-details-panel', true);
+      }
+    } catch (error) {
+      console.error('Failed to load saved dependencies:', error);
+      const depsList = document.getElementById('settings-deps-list');
+      if (depsList) {
+        depsList.innerHTML = `
+          <div style="text-align: center; color: #999; padding: 20px;">
+            <p>No saved dependency states</p>
+            <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
+          </div>
+        `;
+      }
+    }
   } catch (error) {
     console.error('Error loading settings:', error);
   }
@@ -2772,14 +2789,20 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Function to show dependency details in right panel
-  function showDependencyDetails(dep, depIndex, detailsPanelId = 'dep-details-panel') {
+  // Function to show dependency details in right panel (expose globally)
+  window.showDependencyDetails = function showDependencyDetails(dep, depIndex, detailsPanelId = 'dep-details-panel') {
     const detailsPanel = document.getElementById(detailsPanelId);
-    const isInstalled = dep.found && (dep.running === null || dep.running === true);
+    // Docker Desktop can be installed but not running, so treat found=true as installed
+    const isInstalled = dep.found;
 
     if (isInstalled) {
       // Show installed dependency details
-      const description = dep.description || 'This dependency is installed and ready to use.';
+      let description = dep.description || 'This dependency is installed and ready to use.';
+
+      // Add warning if Docker is installed but not running
+      if (dep.name === 'Docker' && dep.running === false) {
+        description = 'Docker Desktop is installed but not currently running. Please start Docker Desktop to use it.';
+      }
 
       detailsPanel.innerHTML = `
         <div style="margin-bottom: 20px;">
@@ -2797,6 +2820,15 @@ window.addEventListener("DOMContentLoaded", () => {
           <div style="margin-bottom: 12px;">
             <strong style="font-size: 13px; color: #333;">Version:</strong>
             <div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
+          </div>
+          ` : ''}
+
+          ${dep.running !== null ? `
+          <div style="margin-bottom: 12px;">
+            <strong style="font-size: 13px; color: #333;">Status:</strong>
+            <div style="font-size: 12px; color: ${dep.running ? '#28a745' : '#dc3545'}; margin-top: 5px;">
+              ${dep.running ? '🟢 Running' : '🔴 Not Running'}
+            </div>
           </div>
           ` : ''}
 
@@ -2858,9 +2890,19 @@ window.addEventListener("DOMContentLoaded", () => {
             // Update the dependency list item
             const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`);
             if (depItem) {
-              const isInstalled = dep.found && (dep.running === null || dep.running === true);
+              // Docker Desktop can be installed but not running, so treat found=true as installed
+              const isInstalled = dep.found;
+              let statusIcon = isInstalled ? '✓' : '✗';
+              let statusColor = isInstalled ? '#28a745' : '#dc3545';
+
+              // Show warning color if Docker is installed but not running
+              if (dep.name === 'Docker' && dep.found && dep.running === false) {
+                statusColor = '#ffc107'; // Warning yellow
+                statusIcon = '⚠️'; // Warning icon
+              }
+
               depItem.innerHTML = `
-                <span style="font-size: 18px; color: ${isInstalled ? '#28a745' : '#dc3545'};">${isInstalled ? '✓' : '✗'}</span>
+                <span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
                 <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
               `;
             }
@@ -3154,8 +3196,8 @@ window.addEventListener("DOMContentLoaded", () => {
     return commands;
   }
 
-  // Function to display dependencies
-  function displayDependencies(result, listPanelId = 'deps-list', detailsPanelId = 'dep-details-panel', isSettings = false) {
+  // Function to display dependencies (expose globally for settings page)
+  window.displayDependencies = function displayDependencies(result, listPanelId = 'deps-list', detailsPanelId = 'dep-details-panel', isSettings = false) {
     const depsList = document.getElementById(listPanelId);
     const nextBtn = isSettings ? null : document.getElementById('onboarding-next-2');
     const installBtn = isSettings ?
@@ -3166,11 +3208,18 @@ window.addEventListener("DOMContentLoaded", () => {
     let hasMissing = false;
 
     result.dependencies.forEach((dep, index) => {
-      const isInstalled = dep.found && (dep.running === null || dep.running === true);
+      // Docker Desktop can be installed but not running, so treat found=true as installed
+      const isInstalled = dep.found;
       if (!isInstalled) hasMissing = true;
 
-      const statusIcon = isInstalled ? '✓' : '✗';
-      const statusColor = isInstalled ? '#28a745' : '#dc3545';
+      let statusIcon = isInstalled ? '✓' : '✗';
+      let statusColor = isInstalled ? '#28a745' : '#dc3545';
+
+      // Show warning color if Docker is installed but not running
+      if (dep.name === 'Docker' && dep.found && dep.running === false) {
+        statusColor = '#ffc107'; // Warning yellow
+        statusIcon = '⚠️'; // Warning icon
+      }
 
       html += `
         <div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
@@ -3214,12 +3263,21 @@ window.addEventListener("DOMContentLoaded", () => {
     });
 
     // Enable/disable buttons based on dependencies
-    if (result.all_satisfied) {
+    // Check if there are actually missing dependencies (not just not running)
+    const actuallyMissing = result.dependencies.some(dep => !dep.found);
+
+    // For onboarding, we allow proceeding if all deps are FOUND (installed)
+    // even if some services like Docker aren't running
+    const allDepsFound = result.dependencies.every(dep => dep.found);
+
+    if (allDepsFound) {
       if (nextBtn) nextBtn.disabled = false;
-      if (installBtn) installBtn.disabled = true;
+      // Disable Install Missing if nothing is actually missing
+      if (installBtn) installBtn.disabled = !actuallyMissing;
     } else {
       if (nextBtn) nextBtn.disabled = true;
-      if (installBtn) installBtn.disabled = false;
+      // Only enable Install Missing if there are dependencies that need installation
+      if (installBtn) installBtn.disabled = !actuallyMissing;
     }
 
     // Auto-select first missing dependency, or first one if all installed
@@ -3228,8 +3286,9 @@ window.addEventListener("DOMContentLoaded", () => {
       // Find first missing dependency
       let firstMissing = null;
       result.dependencies.forEach((dep, index) => {
-        const isInstalled = dep.found && (dep.running === null || dep.running === true);
-        if (!isInstalled && !firstMissing) {
+        // Docker Desktop can be installed but not running, so treat found=true as installed
+        const isInstalled = dep.found;
+        if (!isInstalled && firstMissing === null) {
           firstMissing = index;
         }
       });

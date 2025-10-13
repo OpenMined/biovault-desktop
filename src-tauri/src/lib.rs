@@ -1742,6 +1742,7 @@ fn complete_onboarding(email: String) -> Result<(), String> {
                 syftbox_config: None,
                 version: None,
                 binary_paths: None,
+                syftbox_credentials: None,
             }
         }
     } else {
@@ -1750,6 +1751,7 @@ fn complete_onboarding(email: String) -> Result<(), String> {
             syftbox_config: None,
             version: None,
             binary_paths: None,
+            syftbox_credentials: None,
         }
     };
 
@@ -1862,6 +1864,7 @@ fn save_settings(settings: Settings) -> Result<(), String> {
                 syftbox_config: None,
                 version: None,
                 binary_paths: None,
+                syftbox_credentials: None,
             }
         };
 
