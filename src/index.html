@@ -838,6 +838,22 @@
     .danger-btn:hover {
       background: #c82333 !important;
     }
+
+    .syftbox-code-input:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .syftbox-code-input.error {
+      border-color: #dc3545;
+      background-color: #fff5f5;
+    }
+
+    .syftbox-code-input.success {
+      border-color: #28a745;
+      background-color: #f0fff4;
+    }
   </style>
 </head>
 
@@ -915,12 +931,86 @@
           <div id="email-validation-message" style="margin-top: 8px; font-size: 12px; min-height: 16px;"></div>
           <div style="display: flex; gap: 10px; margin-top: 20px;">
             <button id="onboarding-back-3" style="background: #6c757d;">← Back</button>
-            <button id="onboarding-next-3" style="flex: 1; white-space: nowrap;">Initialize →</button>
+            <button id="onboarding-next-3" style="flex: 1; white-space: nowrap;">Next →</button>
           </div>
         </div>
 
-        <!-- Step 4: Initializing -->
+        <!-- Step 4: SyftBox OTP Authentication (Optional) -->
         <div id="onboarding-step-4" class="onboarding-step" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="font-size: 28px; margin: 0;">SyftBox Authentication</h1>
+            <button id="skip-syftbox-btn" style="
+              background: none;
+              border: 1px solid #888;
+              color: #888;
+              padding: 8px 20px;
+              border-radius: 6px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+              transition: all 0.2s;
+            " onmouseover="this.style.borderColor='#666'; this.style.color='#666';"
+               onmouseout="this.style.borderColor='#888'; this.style.color='#888';">
+              Skip
+            </button>
+          </div>
+          <p style="margin-bottom: 25px; color: #666;">Connect your BioVault instance with SyftBox for secure data sharing (optional).</p>
+
+          <!-- Initial state: Send Login Code button -->
+          <div id="syftbox-send-state" style="display: block;">
+            <p style="margin-bottom: 20px; color: #666;">Click the button below to receive an authentication code via email.</p>
+            <button id="send-login-code-btn" style="width: 100%; padding: 15px; background: #667eea; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer;">
+              Send Login Code
+            </button>
+          </div>
+
+          <!-- OTP Input state -->
+          <div id="syftbox-otp-state" style="display: none;">
+            <div style="text-align: center; margin-bottom: 20px;">
+              <div style="display: flex; align-items: center; justify-content: center; color: #666; margin-bottom: 10px;">
+                <svg style="width: 20px; height: 20px; margin-right: 8px; fill: #28a745;" viewBox="0 0 20 20">
+                  <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                  <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+                </svg>
+                <span id="syftbox-user-email"></span>
+              </div>
+              <p style="color: #666; font-size: 14px;">Enter the 8-digit code we emailed to you</p>
+            </div>
+
+            <!-- 8-digit code input -->
+            <div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 20px;">
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="0" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="1" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="2" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="3" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="4" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="5" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="6" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+              <input type="text" class="syftbox-code-input" maxlength="1" data-index="7" style="width: 44px; height: 50px; text-align: center; border: 2px solid #ddd; border-radius: 8px; font-size: 20px; font-weight: 600; transition: all 0.2s;" />
+            </div>
+
+            <!-- Error Message -->
+            <div id="syftbox-error-message" style="display: none; color: #dc3545; text-align: center; margin-bottom: 15px; font-size: 14px; font-weight: 500;">
+              Invalid verification code. Please try again.
+            </div>
+
+            <!-- Verify Button -->
+            <button id="verify-code-btn" style="width: 100%; padding: 15px; background: #667eea; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer; margin-bottom: 15px;" disabled>
+              Verify Code
+            </button>
+
+            <!-- Resend Code -->
+            <div style="text-align: center;">
+              <p style="font-size: 13px; color: #666; margin-bottom: 8px;">Didn't receive the code?</p>
+              <button id="resend-code-btn" style="background: none; border: none; color: #667eea; font-size: 14px; font-weight: 500; cursor: pointer; text-decoration: underline;">
+                Send Again
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5: Initializing -->
+        <div id="onboarding-step-5" class="onboarding-step" style="display: none;">
           <h1 style="font-size: 28px;">Initializing BioVault...</h1>
           <div id="init-status" style="margin: 30px 0; text-align: center;">
             <div class="spinner" style="width: 40px; height: 40px; margin: 0 auto 20px;"></div>
@@ -1388,13 +1478,23 @@
           <p style="color: #666; font-size: 12px; margin-top: 5px;">Your email address</p>
         </div>
 
-        <div style="display: flex; gap: 10px; margin-top: 10px;">
-          <button id="save-settings-btn"
-            style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Save
-            Settings</button>
-          <button id="reset-settings-btn"
-            style="padding: 12px 24px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Reset
-            to Defaults</button>
+        <div class="setting-item">
+          <label style="display: block; font-weight: 600; margin-bottom: 15px;">SyftBox Integration</label>
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px; background: #f8f9fa; border-radius: 4px; border: 1px solid #ddd;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                <span style="font-weight: 500; font-size: 14px;">Status:</span>
+                <span id="syftbox-status-badge" style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 500;">
+                  <span class="spinner" style="width: 12px; height: 12px; margin: 0;"></span>
+                  Checking...
+                </span>
+              </div>
+              <p style="color: #666; font-size: 12px; margin: 0;">Connect to SyftBox for secure data sharing</p>
+            </div>
+            <button id="syftbox-auth-btn" disabled style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">
+              Authenticate
+            </button>
+          </div>
         </div>
 
         <div class="danger-zone">
