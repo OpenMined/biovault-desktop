@@ -975,21 +975,14 @@ fn start_analysis(
         )
         .map_err(|e| e.to_string())?;
 
-    // Use BIOVAULT_HOME environment variable or default (consistent with CLI)
+    // Use BIOVAULT_HOME environment variable or default to Desktop/BioVault
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        // Check for existing ~/.biovault (backward compatibility)
         let home_dir = dirs::home_dir().expect("Could not determine home directory");
-        let legacy_biovault = home_dir.join(".biovault");
-        if legacy_biovault.join("config.yaml").exists() {
-            legacy_biovault.to_string_lossy().to_string()
-        } else {
-            // Default to Desktop/BioVault (new default)
-            dirs::desktop_dir()
-                .unwrap_or_else(|| home_dir.join("Desktop"))
-                .join("BioVault")
-                .to_string_lossy()
-                .to_string()
-        }
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
+            .to_string_lossy()
+            .to_string()
     });
     let biovault_dir = PathBuf::from(biovault_home);
     let runs_dir = biovault_dir.join("runs");
@@ -1454,9 +1447,10 @@ struct LogEntry {
 
 fn get_log_file_path() -> PathBuf {
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -1672,15 +1666,21 @@ fn get_run_logs_full(state: tauri::State<AppState>, run_id: i64) -> Result<Strin
 
 #[tauri::command]
 fn get_config_path() -> Result<String, String> {
-    std::env::var("BIOVAULT_HOME").map_err(|_| "BIOVAULT_HOME not set".to_string())
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    Ok(biovault_home
+        .join("config.yaml")
+        .to_string_lossy()
+        .to_string())
 }
 
 #[tauri::command]
 fn check_is_onboarded() -> Result<bool, String> {
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -1693,11 +1693,12 @@ fn check_is_onboarded() -> Result<bool, String> {
 fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
     eprintln!("🗑️ RESET: Deleting all BioVault data");
 
-    // Same logic as CLI hard_reset: just delete BIOVAULT_HOME directory
+    // Delete BIOVAULT_HOME directory (defaults to Desktop/BioVault)
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -1717,9 +1718,10 @@ fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
 #[tauri::command]
 fn complete_onboarding(email: String) -> Result<(), String> {
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -1804,9 +1806,10 @@ fn get_settings() -> Result<Settings, String> {
     // Load email from BioVault config if not set in settings
     if settings.email.is_empty() {
         let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap()
-                .join(".biovault")
+            let home_dir = dirs::home_dir().unwrap();
+            dirs::desktop_dir()
+                .unwrap_or_else(|| home_dir.join("Desktop"))
+                .join("BioVault")
                 .to_string_lossy()
                 .to_string()
         });
@@ -1843,9 +1846,10 @@ fn save_settings(settings: Settings) -> Result<(), String> {
     // Also save email to BioVault config if it's set
     if !settings.email.is_empty() {
         let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap()
-                .join(".biovault")
+            let home_dir = dirs::home_dir().unwrap();
+            dirs::desktop_dir()
+                .unwrap_or_else(|| home_dir.join("Desktop"))
+                .join("BioVault")
                 .to_string_lossy()
                 .to_string()
         });
@@ -1960,9 +1964,11 @@ fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
     let config_path = if let Some(home) = biovault_home {
         home.join("config.yaml")
     } else {
-        dirs::home_dir()
-            .map(|h| h.join(".biovault").join("config.yaml"))
-            .unwrap_or_default()
+        let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
+            .join("config.yaml")
     };
 
     if config_path.exists() {
@@ -2007,9 +2013,10 @@ fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     eprintln!("📋 Getting saved dependency states from file");
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -2118,9 +2125,10 @@ fn update_saved_dependency_states() -> Result<(), String> {
     eprintln!("🔄 Updating saved dependency states");
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap()
-            .join(".biovault")
+        let home_dir = dirs::home_dir().unwrap();
+        dirs::desktop_dir()
+            .unwrap_or_else(|| home_dir.join("Desktop"))
+            .join("BioVault")
             .to_string_lossy()
             .to_string()
     });
@@ -2128,6 +2136,24 @@ fn update_saved_dependency_states() -> Result<(), String> {
 
     save_dependency_states(&biovault_path)?;
     Ok(())
+}
+
+#[tauri::command]
+fn check_brew_installed() -> Result<bool, String> {
+    eprintln!("🍺 Checking if Homebrew is installed (using library)");
+
+    // Call the library function
+    biovault::cli::commands::check::check_brew_installed()
+        .map_err(|e| format!("Failed to check brew: {}", e))
+}
+
+#[tauri::command]
+async fn install_brew() -> Result<String, String> {
+    eprintln!("🍺 Installing Homebrew (using library)");
+
+    // Call the library function
+    biovault::cli::commands::check::install_brew()
+        .map_err(|e| format!("Failed to install brew: {}", e))
 }
 
 #[tauri::command]
@@ -2196,33 +2222,39 @@ fn open_url(url: String) -> Result<(), String> {
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
 
+    // Desktop app defaults to Desktop/BioVault if not specified via env or args
+    // Priority: 1) command-line args, 2) BIOVAULT_HOME env var, 3) Desktop/BioVault
     let biovault_home = args
         .iter()
         .position(|arg| arg == "--biovault-config")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
-        .or_else(|| std::env::var("BIOVAULT_HOME").ok().map(PathBuf::from));
+        .or_else(|| std::env::var("BIOVAULT_HOME").ok().map(PathBuf::from))
+        .or_else(|| {
+            // Desktop app defaults to Desktop/BioVault only if nothing else specified
+            let home_dir = dirs::home_dir()?;
+            let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
+            Some(desktop_dir.join("BioVault"))
+        });
 
-    if let Some(home) = &biovault_home {
-        std::env::set_var("BIOVAULT_HOME", home);
+    // Only set BIOVAULT_HOME if it's not already set by the environment
+    // This allows virtualenvs or external tools to specify the location
+    if std::env::var("BIOVAULT_HOME").is_err() {
+        if let Some(home) = &biovault_home {
+            std::env::set_var("BIOVAULT_HOME", home);
+        }
     }
 
-    let email = load_biovault_email(&biovault_home);
-    let window_title = format!("BioVault - {}", email);
-
-    // Use unified database location (same as CLI)
-    let biovault_home_dir = if let Some(home) = &biovault_home {
-        home.clone()
-    } else {
-        dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".biovault")
-    };
-
-    std::fs::create_dir_all(&biovault_home_dir).expect("Could not create biovault directory");
-
     // Initialize shared BioVaultDb (handles files/participants)
+    // This automatically creates the directory via get_biovault_home() if needed
     let biovault_db = BioVaultDb::new().expect("Failed to initialize BioVault database");
+
+    // Get the actual biovault_home_dir that was used (for window title)
+    let biovault_home_dir =
+        biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
+
+    let email = load_biovault_email(&Some(biovault_home_dir.clone()));
+    let window_title = format!("BioVault - {}", email);
 
     // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");
@@ -2418,6 +2450,8 @@ pub fn run() {
             check_single_dependency,
             get_saved_dependency_states,
             save_custom_path,
+            check_brew_installed,
+            install_brew,
             install_dependency,
             install_dependencies,
             open_url

@@ -2999,8 +2999,9 @@ window.addEventListener("DOMContentLoaded", () => {
     } else {
       // Show missing dependency details with install button
       const description = dep.description || 'This dependency is not installed.';
-      const installInstructions = dep.install_instructions || 'No installation instructions available';
-      const commands = extractCommands(installInstructions);
+      const rawInstructions = dep.install_instructions || 'No installation instructions available';
+      const installInstructions = filterInstructionsByOS(rawInstructions);
+      const commands = extractCommands(rawInstructions);
 
       detailsPanel.innerHTML = `
         <div style="margin-bottom: 20px;">
@@ -3073,6 +3074,58 @@ window.addEventListener("DOMContentLoaded", () => {
       const installSingleBtn = document.getElementById(`install-single-btn-${depIndex}`);
       if (installSingleBtn) {
         installSingleBtn.addEventListener('click', async () => {
+          // Check for brew on macOS before installing dependencies
+          const currentPlatform = detectPlatform();
+          if (currentPlatform === 'macos') {
+            try {
+              const brewInstalled = await invoke('check_brew_installed');
+              if (!brewInstalled) {
+                // Prompt user to install brew first
+                const installBrew = await window.__TAURI__.dialog.confirm(
+                  'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
+                  { title: 'Homebrew Required', type: 'warning' }
+                );
+
+                if (installBrew) {
+                  try {
+                    // Show progress
+                    installSingleBtn.disabled = true;
+                    installSingleBtn.textContent = 'Installing Homebrew...';
+
+                    await invoke('install_brew');
+
+                    await window.__TAURI__.dialog.message(
+                      '✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
+                      { title: 'Success', type: 'info' }
+                    );
+
+                    // Restore button state
+                    installSingleBtn.disabled = false;
+                    installSingleBtn.textContent = 'Install';
+
+                    // Don't proceed with dependency installation yet, let user click again
+                    return;
+                  } catch (error) {
+                    await window.__TAURI__.dialog.message(
+                      `Failed to install Homebrew: ${error}\n\nPlease install Homebrew manually from brew.sh`,
+                      { title: 'Installation Failed', type: 'error' }
+                    );
+
+                    // Restore button state
+                    installSingleBtn.disabled = false;
+                    installSingleBtn.textContent = 'Install';
+                    return;
+                  }
+                } else {
+                  // User declined to install brew
+                  return;
+                }
+              }
+            } catch (error) {
+              console.error('Failed to check brew installation:', error);
+            }
+          }
+
           const confirmed = await window.__TAURI__.dialog.confirm(`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`, { title: 'Confirm Installation', type: 'warning' });
           if (confirmed) {
             try {
@@ -3170,10 +3223,65 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Helper function to detect current platform
+  function detectPlatform() {
+    const userAgent = navigator.userAgent.toLowerCase();
+    const platform = navigator.platform.toLowerCase();
+
+    if (platform.indexOf('mac') !== -1 || userAgent.indexOf('macintosh') !== -1) {
+      return 'macos';
+    } else if (platform.indexOf('win') !== -1 || userAgent.indexOf('windows') !== -1) {
+      return 'windows';
+    } else if (platform.indexOf('linux') !== -1 || userAgent.indexOf('linux') !== -1) {
+      return 'linux';
+    }
+    return 'unknown';
+  }
+
+  // Helper function to filter install instructions by current OS
+  function filterInstructionsByOS(instructions) {
+    const currentPlatform = detectPlatform();
+    const lines = instructions.split('\n');
+    const filteredLines = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Skip empty lines
+      if (!trimmed) continue;
+
+      // Check if line starts with an OS prefix (case-insensitive)
+      const osMatch = trimmed.match(/^(macOS|Ubuntu|Debian|RHEL|CentOS|Windows|Linux|Arch):/i);
+
+      if (osMatch) {
+        const osPrefix = osMatch[1].toLowerCase();
+
+        // Map OS prefixes to platform names
+        if (currentPlatform === 'macos' && osPrefix === 'macos') {
+          // Remove the prefix and add the command
+          filteredLines.push(trimmed.replace(/^macOS:\s*/i, ''));
+        } else if (currentPlatform === 'linux' && ['ubuntu', 'debian', 'rhel', 'centos', 'linux', 'arch'].includes(osPrefix)) {
+          filteredLines.push(trimmed.replace(/^[^:]+:\s*/, ''));
+        } else if (currentPlatform === 'windows' && osPrefix === 'windows') {
+          filteredLines.push(trimmed.replace(/^Windows:\s*/i, ''));
+        }
+      } else {
+        // Lines without OS prefix are included for all platforms
+        filteredLines.push(trimmed);
+      }
+    }
+
+    // If no instructions remain after filtering, return original
+    return filteredLines.length > 0 ? filteredLines.join('\n') : instructions;
+  }
+
   // Helper function to extract CLI commands from install instructions
   function extractCommands(instructions) {
+    // First filter by OS
+    const filteredInstructions = filterInstructionsByOS(instructions);
+
     const commands = [];
-    const lines = instructions.split('\n');
+    const lines = filteredInstructions.split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
 
