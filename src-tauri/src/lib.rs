@@ -1166,18 +1166,56 @@ fn execute_analysis(
 
     let conn = state.db.lock().unwrap();
 
-    let (project_path, work_dir): (String, String) = conn
+    let (project_path, work_dir, template): (String, String, String) = conn
         .query_row(
-            "SELECT p.project_path, r.work_dir
+            "SELECT p.project_path, r.work_dir, p.template
          FROM runs r
          JOIN projects p ON r.project_id = p.id
          WHERE r.id = ?1",
             params![run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|e| e.to_string())?;
-
+    
+    // Get participant IDs for this run
+    let mut stmt = conn
+        .prepare("SELECT participant_id FROM run_participants WHERE run_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let participant_db_ids: Vec<i64> = stmt
+        .query_map(params![run_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
     drop(conn);
+
+    // Get actual participant IDs and file paths from biovault db
+    let bv_db = state.biovault_db.lock().unwrap();
+    let cli_participants = biovault::data::list_participants(&bv_db)
+        .map_err(|e| format!("Failed to list participants: {}", e))?;
+    let cli_files = biovault::data::list_files(&bv_db, None, None, false, None)
+        .map_err(|e| format!("Failed to list files: {}", e))?;
+    drop(bv_db);
+    
+    let participant_info: Vec<(String, String)> = participant_db_ids
+        .iter()
+        .filter_map(|db_id| {
+            cli_participants
+                .iter()
+                .find(|p| p.id == *db_id)
+                .and_then(|participant| {
+                    // Find the first file for this participant
+                    cli_files.iter()
+                        .find(|f| {
+                            f.participant_id
+                                .as_ref()
+                                .map(|pid| pid == participant.participant_id.as_str())
+                                .unwrap_or(false)
+                        })
+                        .map(|file| (participant.participant_id.clone(), file.file_path.clone()))
+                })
+        })
+        .collect();
 
     let run_dir_path = PathBuf::from(&work_dir);
 
@@ -1213,44 +1251,106 @@ fn execute_analysis(
         run_id, timestamp
     )
     .map_err(|e| e.to_string())?;
-    writeln!(
-        log_file,
-        "Command: {} run --work-dir {} --results-dir {} {} {}",
-        bv_path,
-        work_subdir.display(),
-        results_subdir.display(),
-        project_path,
-        samplesheet_path.display()
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(log_file).map_err(|e| e.to_string())?;
 
-    // Emit initial log lines to UI
-    let _ = window.emit(
-        "log-line",
-        format!("=== Run {} started at {} ===", run_id, timestamp),
-    );
-    let _ = window.emit(
-        "log-line",
-        format!(
+    // Determine command format based on template
+    let is_sheet_template = template == "sheet";
+    
+    let mut cmd = Command::new(&bv_path);
+    cmd.arg("run");
+    
+    if is_sheet_template {
+        // Sheet template: bv run --work-dir <work> --results-dir <results> <project> <samplesheet>
+        writeln!(
+            log_file,
             "Command: {} run --work-dir {} --results-dir {} {} {}",
             bv_path,
             work_subdir.display(),
             results_subdir.display(),
             project_path,
             samplesheet_path.display()
-        ),
-    );
+        )
+        .map_err(|e| e.to_string())?;
+        
+        let _ = window.emit(
+            "log-line",
+            format!("=== Run {} started at {} ===", run_id, timestamp),
+        );
+        let _ = window.emit(
+            "log-line",
+            format!(
+                "Command: {} run --work-dir {} --results-dir {} {} {}",
+                bv_path,
+                work_subdir.display(),
+                results_subdir.display(),
+                project_path,
+                samplesheet_path.display()
+            ),
+        );
+        
+        cmd.arg("--work-dir")
+            .arg(work_subdir.to_str().unwrap())
+            .arg("--results-dir")
+            .arg(results_subdir.to_str().unwrap())
+            .arg(&project_path)
+            .arg(samplesheet_path.to_str().unwrap());
+    } else {
+        // SNP/Default template: bv run <project_folder> <participant_yaml> --results-dir <results>
+        // Create a temporary participants.yaml file in the work directory
+        if participant_info.is_empty() {
+            return Err("No participants or files found for this run".to_string());
+        }
+        
+        let (participant_id, file_path) = &participant_info[0]; // Use first participant's file
+        
+        // Create participants.yaml in work directory
+        let participants_yaml = work_subdir.join("participants.yaml");
+        let yaml_content = format!(
+            "participants:\n  {}:\n    snp: {}\n",
+            participant_id,
+            file_path
+        );
+        fs::write(&participants_yaml, yaml_content)
+            .map_err(|e| format!("Failed to create participants.yaml: {}", e))?;
+        
+        writeln!(
+            log_file,
+            "Command: {} run {} {}#participants.{} --results-dir {}",
+            bv_path,
+            project_path,
+            participants_yaml.display(),
+            participant_id,
+            results_subdir.display()
+        )
+        .map_err(|e| e.to_string())?;
+        
+        let _ = window.emit(
+            "log-line",
+            format!("=== Run {} started at {} ===", run_id, timestamp),
+        );
+        let _ = window.emit(
+            "log-line",
+            format!(
+                "Command: {} run {} {}#participants.{} --results-dir {}",
+                bv_path,
+                project_path,
+                participants_yaml.display(),
+                participant_id,
+                results_subdir.display()
+            ),
+        );
+        
+        // Pass participants.yaml with fragment (participants.yaml#participants.participant_id)
+        let participant_source = format!("{}#participants.{}", participants_yaml.display(), participant_id);
+        cmd.arg(&project_path)
+            .arg(&participant_source)
+            .arg("--results-dir")
+            .arg(results_subdir.to_str().unwrap());
+    }
+    
+    writeln!(log_file).map_err(|e| e.to_string())?;
     let _ = window.emit("log-line", "");
 
-    let mut child = Command::new(&bv_path)
-        .arg("run")
-        .arg("--work-dir")
-        .arg(work_subdir.to_str().unwrap())
-        .arg("--results-dir")
-        .arg(results_subdir.to_str().unwrap())
-        .arg(&project_path)
-        .arg(samplesheet_path.to_str().unwrap())
+    let mut child = cmd
         .current_dir(&biovault_home) // Set working directory to biovault_home
         .envs(env::vars()) // Inherit all environment variables (PATH, etc.)
         .env(
