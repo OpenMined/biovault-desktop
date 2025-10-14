@@ -11,6 +11,8 @@ use tauri::{Emitter, Manager};
 
 // BioVault CLI library imports
 use biovault::cli::commands::check::DependencyCheckResult;
+use biovault::cli::commands::init;
+use biovault::cli::commands::run::{execute as run_execute, RunParams};
 use biovault::data::BioVaultDb;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1111,31 +1113,16 @@ fn start_analysis(
 }
 
 #[tauri::command]
-fn execute_analysis(
-    state: tauri::State<AppState>,
+async fn execute_analysis(
+    state: tauri::State<'_, AppState>,
     run_id: i64,
     window: tauri::Window,
 ) -> Result<String, String> {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Priority: BIOVAULT_PATH env var > settings > default "bv"
-    let bv_path = if let Ok(env_path) = env::var("BIOVAULT_PATH") {
-        env_path
-    } else {
-        let settings = get_settings()?;
-        if settings.biovault_path.is_empty() {
-            "bv".to_string()
-        } else {
-            settings.biovault_path
-        }
-    };
-
-    let conn = state.db.lock().unwrap();
-
-    let (project_path, work_dir): (String, String) = conn
-        .query_row(
+    let (project_path, work_dir): (String, String) = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
             "SELECT p.project_path, r.work_dir
          FROM runs r
          JOIN projects p ON r.project_id = p.id
@@ -1143,9 +1130,8 @@ fn execute_analysis(
             params![run_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(|e| e.to_string())?;
-
-    drop(conn);
+        .map_err(|e| e.to_string())?
+    };
 
     let run_dir_path = PathBuf::from(&work_dir);
 
@@ -1183,10 +1169,7 @@ fn execute_analysis(
     .map_err(|e| e.to_string())?;
     writeln!(
         log_file,
-        "Command: {} run --work-dir {} --results-dir {} {} {}",
-        bv_path,
-        work_subdir.display(),
-        results_subdir.display(),
+        "Calling biovault::run directly with project: {} and samplesheet: {}",
         project_path,
         samplesheet_path.display()
     )
@@ -1201,105 +1184,68 @@ fn execute_analysis(
     let _ = window.emit(
         "log-line",
         format!(
-            "Command: {} run --work-dir {} --results-dir {} {} {}",
-            bv_path,
-            work_subdir.display(),
-            results_subdir.display(),
+            "Running analysis for project: {} with samplesheet: {}",
             project_path,
             samplesheet_path.display()
         ),
     );
     let _ = window.emit("log-line", "");
 
-    let mut child = Command::new(&bv_path)
-        .arg("run")
-        .arg("--work-dir")
-        .arg(work_subdir.to_str().unwrap())
-        .arg("--results-dir")
-        .arg(results_subdir.to_str().unwrap())
-        .arg(&project_path)
-        .arg(samplesheet_path.to_str().unwrap())
-        .current_dir(&biovault_home) // Set working directory to biovault_home
-        .envs(env::vars()) // Inherit all environment variables (PATH, etc.)
-        .env(
-            "BIOVAULT_HOME",
-            env::var("BIOVAULT_HOME")
-                .unwrap_or_else(|_| biovault_home.to_string_lossy().to_string()),
-        )
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn process: {} (bv_path: {})", e, bv_path))?;
+    // Set BIOVAULT_HOME environment variable
+    env::set_var("BIOVAULT_HOME", biovault_home.to_string_lossy().to_string());
 
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    // Create RunParams struct to call the execute function directly
+    let params = RunParams {
+        project_folder: project_path.clone(),
+        participant_source: samplesheet_path.to_string_lossy().to_string(),
+        test: false,
+        download: false,
+        dry_run: false,
+        with_docker: false,
+        work_dir: Some(work_subdir.to_string_lossy().to_string()),
+        resume: false,
+        template: None,
+        results_dir: Some(results_subdir.to_string_lossy().to_string()),
+    };
 
-    let log_path_clone = log_path.clone();
-    let window_clone = window.clone();
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        let mut log_file = fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path_clone)
-            .ok();
+    // Call the execute function directly
+    let result = run_execute(params).await;
 
-        for line in reader.lines().map_while(Result::ok) {
-            let _ = window_clone.emit("log-line", line.clone());
-            if let Some(ref mut file) = log_file {
-                let _ = writeln!(file, "{}", line);
-            }
-        }
-    });
-
-    let log_path_clone2 = log_path.clone();
-    let window_clone2 = window.clone();
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut log_file = fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path_clone2)
-            .ok();
-
-        for line in reader.lines().map_while(Result::ok) {
-            let stderr_line = format!("STDERR: {}", line);
-            let _ = window_clone2.emit("log-line", stderr_line.clone());
-            if let Some(ref mut file) = log_file {
-                let _ = writeln!(file, "{}", stderr_line);
-            }
-        }
-    });
-
-    let status = child.wait().map_err(|e| e.to_string())?;
-
-    let conn = state.db.lock().unwrap();
-    let status_str = if status.success() {
+    let status_str = if result.is_ok() {
         "success"
     } else {
         "failed"
     };
 
-    conn.execute(
-        "UPDATE runs SET status = ?1 WHERE id = ?2",
-        params![status_str, run_id],
-    )
-    .map_err(|e| e.to_string())?;
+    {
+        let conn = state.db.lock().unwrap();
+        conn.execute(
+            "UPDATE runs SET status = ?1 WHERE id = ?2",
+            params![status_str, run_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     // Write final status to log
     let mut log_file = fs::OpenOptions::new().append(true).open(&log_path).ok();
     if let Some(ref mut file) = log_file {
         let _ = writeln!(file, "\n=== Analysis {} ===", status_str);
-        let _ = writeln!(file, "Exit code: {}", status.code().unwrap_or(-1));
+        if let Err(ref e) = result {
+            let _ = writeln!(file, "Error: {}", e);
+        }
     }
 
     let _ = window.emit("analysis-complete", status_str);
 
-    if status.success() {
-        Ok(format!(
+    match result {
+        Ok(_) => Ok(format!(
             "Analysis completed successfully. Output in: {}",
             work_dir
-        ))
-    } else {
-        Err("Analysis failed".to_string())
+        )),
+        Err(e) => {
+            let _ = window.emit("log-line", format!("Error: {}", e));
+            Err(format!("Analysis failed: {}", e))
+        }
     }
 }
 
@@ -1716,7 +1662,7 @@ fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn complete_onboarding(email: String) -> Result<(), String> {
+async fn complete_onboarding(email: String) -> Result<(), String> {
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
         dirs::desktop_dir()
@@ -1727,40 +1673,12 @@ fn complete_onboarding(email: String) -> Result<(), String> {
     });
 
     let biovault_path = PathBuf::from(&biovault_home);
-    fs::create_dir_all(&biovault_path)
-        .map_err(|e| format!("Failed to create BIOVAULT_HOME: {}", e))?;
 
-    // Create config with email and save any custom binary paths that were configured
-    let config_path = biovault_path.join("config.yaml");
-
-    // Load existing config if it exists (to preserve binary paths set during dependency checks)
-    let config = if config_path.exists() {
-        if let Ok(mut existing) = biovault::config::Config::load() {
-            existing.email = email.clone();
-            existing
-        } else {
-            biovault::config::Config {
-                email: email.clone(),
-                syftbox_config: None,
-                version: None,
-                binary_paths: None,
-                syftbox_credentials: None,
-            }
-        }
-    } else {
-        biovault::config::Config {
-            email: email.clone(),
-            syftbox_config: None,
-            version: None,
-            binary_paths: None,
-            syftbox_credentials: None,
-        }
-    };
-
-    // Save the config
-    config
-        .save(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
+    // Call bv init to set up templates and directory structure
+    eprintln!("🚀 Initializing BioVault with email: {}", email);
+    init::execute(Some(&email), true)
+        .await
+        .map_err(|e| format!("Failed to initialize BioVault: {}", e))?;
 
     // Also save the current dependency states for later retrieval
     save_dependency_states(&biovault_path)?;
