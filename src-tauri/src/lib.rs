@@ -957,17 +957,20 @@ fn create_project(
     name: String,
     example: Option<String>,
 ) -> Result<Project, String> {
-    eprintln!("🔍 create_project called with name: {} example: {:?}", name, example);
+    eprintln!(
+        "🔍 create_project called with name: {} example: {:?}",
+        name, example
+    );
 
     let created = tauri::async_runtime::block_on(
-        biovault::cli::commands::project_management::create_project_record(
-            name.clone(),
-            example,
-        ),
+        biovault::cli::commands::project_management::create_project_record(name.clone(), example),
     )
     .map_err(|e| format!("Failed to create project: {}", e))?;
 
-    eprintln!("✅ Project '{}' created successfully via library", created.name);
+    eprintln!(
+        "✅ Project '{}' created successfully via library",
+        created.name
+    );
 
     Ok(Project {
         id: created.id,
