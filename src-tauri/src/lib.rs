@@ -1211,11 +1211,7 @@ async fn execute_analysis(
     // Call the execute function directly
     let result = run_execute(params).await;
 
-    let status_str = if result.is_ok() {
-        "success"
-    } else {
-        "failed"
-    };
+    let status_str = if result.is_ok() { "success" } else { "failed" };
 
     {
         let conn = state.db.lock().unwrap();
