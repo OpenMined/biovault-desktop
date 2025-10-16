@@ -2276,8 +2276,20 @@ function navigateTo(viewName) {
     isImportInProgress = false;
   }
 
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.getElementById(`${viewName}-view`).classList.add('active');
+  const tabContents = document.querySelectorAll('.tab-content');
+  tabContents.forEach(content => {
+    content.classList.remove('active');
+    content.style.display = 'none';
+  });
+
+  const targetView = document.getElementById(`${viewName}-view`);
+  if (!targetView) {
+    console.warn(`navigateTo: Unknown view "${viewName}"`);
+    return;
+  }
+
+  targetView.classList.add('active');
+  targetView.style.display = '';
 
   // Only update tab highlighting if this view has a corresponding tab
   const tab = document.querySelector(`.tab[data-tab="${viewName}"]`);
