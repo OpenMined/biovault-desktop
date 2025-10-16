@@ -19,13 +19,570 @@ let columnWidths = {
 let commandLogs = [] // Array of log entries
 let isImportInProgress = false // Track if import is currently running
 let dependencyResults = null // Store dependency check results globally
+let cltWaitState = {
+	overlay: null,
+	intervalId: null,
+	active: false,
+	onComplete: null,
+	onCancel: null,
+	windowState: null,
+}
+
+function getAppWindow() {
+	const api = window.__TAURI__?.window
+	if (!api) return null
+	if (typeof api.getCurrent === 'function') {
+		return api.getCurrent()
+	}
+	return api.appWindow || null
+}
+
+async function adjustWindowForCltPrompt() {
+	const appWindow = getAppWindow()
+	if (!appWindow) return
+	if (cltWaitState.windowState) return
+
+	try {
+		const [size, position] = await Promise.all([appWindow.innerSize(), appWindow.outerPosition()])
+
+		cltWaitState.windowState = { size, position }
+
+		const winApi = window.__TAURI__?.window || {}
+		const logicalSizeCtor = winApi.LogicalSize
+		const logicalPositionCtor = winApi.LogicalPosition
+
+		const targetSize = logicalSizeCtor ? new logicalSizeCtor(780, 560) : { width: 780, height: 560 }
+		const targetPosition = logicalPositionCtor ? new logicalPositionCtor(40, 60) : { x: 40, y: 60 }
+
+		await appWindow.setSize(targetSize)
+		await appWindow.setPosition(targetPosition)
+		await appWindow.unminimize()
+		await appWindow.show()
+	} catch (error) {
+		console.warn('Unable to reposition BioVault window for CLT prompt:', error)
+	}
+}
+
+async function restoreWindowAfterCltPrompt() {
+	const appWindow = getAppWindow()
+	if (!appWindow) return
+	const state = cltWaitState.windowState
+	cltWaitState.windowState = null
+	if (!state) return
+
+	try {
+		const winApi = window.__TAURI__?.window || {}
+		const logicalSizeCtor = winApi.LogicalSize
+		const logicalPositionCtor = winApi.LogicalPosition
+
+		if (state.size) {
+			const originalSize = logicalSizeCtor
+				? new logicalSizeCtor(state.size.width, state.size.height)
+				: { width: state.size.width, height: state.size.height }
+			await appWindow.setSize(originalSize)
+		}
+		if (state.position) {
+			const originalPosition = logicalPositionCtor
+				? new logicalPositionCtor(state.position.x, state.position.y)
+				: { x: state.position.x, y: state.position.y }
+			await appWindow.setPosition(originalPosition)
+		}
+		await appWindow.show()
+		await appWindow.setFocus()
+	} catch (error) {
+		console.warn('Unable to restore BioVault window after CLT prompt:', error)
+	}
+}
+
+function ensureCltOverlay() {
+	if (cltWaitState.overlay) return cltWaitState.overlay
+
+	const existingStyles = document.getElementById('clt-wait-styles')
+	if (!existingStyles) {
+		const styleEl = document.createElement('style')
+		styleEl.id = 'clt-wait-styles'
+		styleEl.textContent = `
+		@keyframes clt-spin {
+			0% { transform: rotate(0deg); }
+			100% { transform: rotate(360deg); }
+		}
+		#clt-wait-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(255, 255, 255, 0.92);
+			z-index: 9999;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 24px;
+		}
+		#clt-wait-overlay[data-visible="true"] {
+			display: flex;
+		}
+		#clt-wait-overlay .clt-card {
+			width: 420px;
+			max-width: 95vw;
+			background: #ffffff;
+			border-radius: 16px;
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+			padding: 28px;
+			font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+			color: #222;
+		}
+		#clt-wait-overlay .clt-header {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			margin-bottom: 16px;
+		}
+		#clt-wait-overlay .clt-header h2 {
+			margin: 0;
+			font-size: 20px;
+			font-weight: 600;
+		}
+		#clt-wait-overlay .clt-body {
+			font-size: 14px;
+			line-height: 1.5;
+			color: #444;
+			margin-bottom: 18px;
+		}
+		#clt-wait-overlay .clt-status {
+			display: flex;
+			gap: 14px;
+			align-items: center;
+			background: #f6f7fb;
+			border-radius: 10px;
+			padding: 14px;
+			margin-bottom: 18px;
+		}
+		#clt-wait-overlay .clt-spinner {
+			width: 36px;
+			height: 36px;
+			border-radius: 50%;
+			border: 3px solid rgba(70, 95, 255, 0.2);
+			border-top-color: #465fff;
+			animation: clt-spin 1s linear infinite;
+		}
+		#clt-wait-overlay .clt-status-text {
+			font-size: 14px;
+			font-weight: 600;
+			color: #1f2933;
+			margin: 0 0 4px 0;
+		}
+		#clt-wait-overlay .clt-feedback {
+			margin: 0;
+			font-size: 12px;
+			color: #6b7280;
+		}
+		#clt-wait-overlay .clt-actions {
+			display: flex;
+			justify-content: flex-end;
+			gap: 10px;
+		}
+		#clt-wait-overlay button {
+			border-radius: 6px;
+			padding: 8px 16px;
+			font-weight: 600;
+			font-size: 13px;
+			cursor: pointer;
+			border: none;
+		}
+		#clt-wait-overlay .clt-cancel-btn {
+			background: #f3f4f6;
+			color: #4b5563;
+		}
+		#clt-wait-overlay .clt-cancel-btn:hover {
+			background: #e5e7eb;
+		}
+		#clt-wait-overlay .clt-check-btn {
+			background: #465fff;
+			color: #ffffff;
+		}
+		#clt-wait-overlay .clt-check-btn[disabled] {
+			opacity: 0.6;
+			cursor: not-allowed;
+		}
+		`
+		document.head.appendChild(styleEl)
+	}
+
+	const overlay = document.createElement('div')
+	overlay.id = 'clt-wait-overlay'
+	overlay.innerHTML = `
+		<div class="clt-card">
+			<div class="clt-header">
+				<span style="font-size: 26px;">🛠️</span>
+				<h2>Install Command Line Tools</h2>
+			</div>
+			<p class="clt-body">
+				BioVault needs the macOS Command Line Tools before it can install Homebrew. We just opened Apple's installer. Follow the prompts in the Apple dialog shown below.
+			</p>
+			<div style="display: flex; justify-content: center; margin-bottom: 16px;">
+				<img src="assets/xcode-cli-tools.png" alt="Command Line Tools Installer" style="max-width: 100%; border-radius: 8px; box-shadow: 0 12px 28px rgba(31, 41, 55, 0.18);">
+			</div>
+			<div class="clt-status">
+				<div class="clt-spinner"></div>
+				<div>
+					<p class="clt-status-text">Waiting for installation to finish…</p>
+					<p class="clt-feedback">This can take a few minutes. Keep the installer window visible.</p>
+				</div>
+			</div>
+			<div style="font-size: 12px; color: #4b5563; margin-bottom: 18px;">
+				<ul style="padding-left: 18px; margin: 0; list-style: disc;">
+					<li>Look for the “Install Command Line Developer Tools” window (screenshot above).</li>
+					<li>A download progress bar may appear after you click “Install”.</li>
+					<li>When it finishes, choose “Done” in the Apple dialog.</li>
+				</ul>
+			</div>
+			<div class="clt-actions">
+				<button type="button" class="clt-cancel-btn">Cancel</button>
+				<button type="button" class="clt-check-btn">I've Finished</button>
+			</div>
+		</div>
+	`
+
+	document.body.appendChild(overlay)
+
+	const cancelBtn = overlay.querySelector('.clt-cancel-btn')
+	const checkBtn = overlay.querySelector('.clt-check-btn')
+	const statusText = overlay.querySelector('.clt-status-text')
+	const feedbackText = overlay.querySelector('.clt-feedback')
+
+	cancelBtn.addEventListener('click', () => {
+		cancelCltMonitor('User cancelled Command Line Tools install prompt')
+	})
+
+	checkBtn.addEventListener('click', async () => {
+		checkBtn.disabled = true
+		await checkCltReady(true)
+		checkBtn.disabled = false
+	})
+
+	cltWaitState.overlay = overlay
+	cltWaitState.statusText = statusText
+	cltWaitState.feedbackText = feedbackText
+	cltWaitState.checkBtn = checkBtn
+
+	return overlay
+}
+
+const progressTasks = new Map()
+
+function ensureProgressContainer() {
+	let container = document.getElementById('operation-progress')
+	if (!container) {
+		container = document.createElement('div')
+		container.id = 'operation-progress'
+		container.className = 'operation-progress'
+		document.body.appendChild(container)
+	}
+	return container
+}
+
+function showProgressTask(id, label, options = {}) {
+	const { state = 'active' } = options
+	const container = ensureProgressContainer()
+	let task = progressTasks.get(id)
+
+	if (!task) {
+		const entry = document.createElement('div')
+		entry.className = 'operation-progress-entry'
+		entry.dataset.taskId = id
+
+		const labelEl = document.createElement('div')
+		labelEl.className = 'operation-progress-label'
+		entry.appendChild(labelEl)
+
+		const track = document.createElement('div')
+		track.className = 'operation-progress-track'
+		const bar = document.createElement('div')
+		bar.className = 'operation-progress-bar'
+		track.appendChild(bar)
+		entry.appendChild(track)
+
+		container.appendChild(entry)
+		progressTasks.set(id, { entry, labelEl, bar })
+		task = progressTasks.get(id)
+	}
+
+	task.entry.classList.remove('success', 'error', 'waiting')
+	if (state === 'waiting') {
+		task.entry.classList.add('waiting')
+	}
+
+	task.labelEl.textContent = label
+	task.bar.style.animation = 'progress-indeterminate 1.2s ease-in-out infinite'
+	task.bar.style.width = state === 'waiting' ? '30%' : '40%'
+	task.bar.style.background = ''
+
+	container.setAttribute('data-visible', 'true')
+}
+
+function finishProgressTask(id, { status = 'success', message } = {}) {
+	const task = progressTasks.get(id)
+	if (!task) return
+
+	const { entry, labelEl, bar } = task
+	entry.classList.remove('waiting')
+
+	if (status === 'success') {
+		entry.classList.add('success')
+		labelEl.textContent = message || `${labelEl.textContent} complete`
+		bar.style.background = ''
+	} else if (status === 'error') {
+		entry.classList.add('error')
+		labelEl.textContent = message || `${labelEl.textContent} failed`
+		bar.style.background = ''
+	}
+
+	bar.style.animation = 'none'
+	bar.style.width = '100%'
+
+	const container = ensureProgressContainer()
+	setTimeout(
+		() => {
+			if (entry.parentElement === container) {
+				container.removeChild(entry)
+			}
+			progressTasks.delete(id)
+			if (!container.children.length) {
+				container.removeAttribute('data-visible')
+			}
+		},
+		status === 'error' ? 4500 : 2000,
+	)
+}
+
+function setButtonLoading(button, label) {
+	if (button.classList.contains('btn-loading')) {
+		updateButtonLoadingLabel(button, label)
+		return
+	}
+
+	if (!button.dataset.originalContent) {
+		button.dataset.originalContent = button.innerHTML
+	}
+
+	button.disabled = true
+	button.classList.add('btn-loading')
+	button.innerHTML = ''
+
+	const spinner = document.createElement('span')
+	spinner.className = 'button-spinner'
+	const text = document.createElement('span')
+	text.className = 'button-spinner-label'
+	text.textContent = label
+
+	button.append(spinner, text)
+}
+
+function updateButtonLoadingLabel(button, label) {
+	const labelEl = button.querySelector('.button-spinner-label')
+	if (labelEl) {
+		labelEl.textContent = label
+	} else if (button.disabled) {
+		button.textContent = label
+	}
+}
+
+function clearButtonLoading(button) {
+	if (button.dataset.originalContent) {
+		button.innerHTML = button.dataset.originalContent
+		delete button.dataset.originalContent
+	} else {
+		button.textContent = button.textContent || 'Install'
+	}
+	button.disabled = false
+	button.classList.remove('btn-loading')
+}
+
+async function checkCltReady(fromManual = false) {
+	try {
+		const ready = await invoke('check_command_line_tools_installed')
+		if (ready) {
+			handleCltReady()
+			return
+		}
+		if (fromManual && cltWaitState.feedbackText) {
+			cltWaitState.feedbackText.textContent =
+				"Still waiting for Command Line Tools. Keep the Apple installer running, then click 'I've Finished' once it completes."
+		}
+	} catch (error) {
+		console.error('Failed to check Command Line Tools status:', error)
+		if (fromManual && cltWaitState.feedbackText) {
+			cltWaitState.feedbackText.textContent = 'Could not verify yet. Please try again in a moment.'
+		}
+	}
+}
+
+async function startCltMonitor(onComplete, options = {}) {
+	const overlay = ensureCltOverlay()
+	if (cltWaitState.active) {
+		cltWaitState.onComplete = onComplete
+		cltWaitState.onCancel = options.onCancel || null
+		return
+	}
+
+	cltWaitState.onComplete = onComplete
+	cltWaitState.onCancel = options.onCancel || null
+	cltWaitState.active = true
+	await adjustWindowForCltPrompt()
+	if (cltWaitState.statusText) {
+		cltWaitState.statusText.textContent = 'Waiting for installation to finish…'
+	}
+	if (cltWaitState.feedbackText) {
+		cltWaitState.feedbackText.textContent =
+			'This can take a few minutes. Keep the installer window visible.'
+	}
+	overlay.setAttribute('data-visible', 'true')
+
+	if (cltWaitState.intervalId) {
+		clearInterval(cltWaitState.intervalId)
+	}
+	cltWaitState.intervalId = setInterval(() => {
+		checkCltReady(false)
+	}, 5000)
+
+	checkCltReady(false)
+}
+
+function cancelCltMonitor(reason) {
+	if (cltWaitState.intervalId) {
+		clearInterval(cltWaitState.intervalId)
+		cltWaitState.intervalId = null
+	}
+	cltWaitState.active = false
+	cltWaitState.onComplete = null
+	const cancelCallback = cltWaitState.onCancel
+	cltWaitState.onCancel = null
+	if (cltWaitState.overlay) {
+		cltWaitState.overlay.removeAttribute('data-visible')
+	}
+	if (reason) {
+		console.log(reason)
+	}
+	if (typeof cancelCallback === 'function') {
+		try {
+			cancelCallback()
+		} catch (error) {
+			console.error('CLT cancel callback error:', error)
+		}
+	}
+	restoreWindowAfterCltPrompt()
+}
+
+async function handleCltReady() {
+	if (!cltWaitState.active) return
+	if (cltWaitState.intervalId) {
+		clearInterval(cltWaitState.intervalId)
+		cltWaitState.intervalId = null
+	}
+	if (cltWaitState.statusText) {
+		cltWaitState.statusText.textContent = 'Command Line Tools detected!'
+	}
+	if (cltWaitState.feedbackText) {
+		cltWaitState.feedbackText.textContent = 'Continuing with Homebrew installation…'
+	}
+
+	const callback = cltWaitState.onComplete
+	cltWaitState.onComplete = null
+	cltWaitState.onCancel = null
+	cltWaitState.active = false
+	await restoreWindowAfterCltPrompt()
+
+	setTimeout(async () => {
+		if (cltWaitState.overlay) {
+			cltWaitState.overlay.removeAttribute('data-visible')
+		}
+		if (typeof callback === 'function') {
+			try {
+				await callback()
+			} catch (error) {
+				console.error('Error running post-CLT callback:', error)
+			}
+		}
+	}, 600)
+}
+
+async function runHomebrewInstall({ button, onSuccess } = {}) {
+	const taskId = 'install-brew'
+	showProgressTask(taskId, 'Installing Homebrew...')
+	if (button) {
+		setButtonLoading(button, 'Installing Homebrew...')
+	}
+
+	try {
+		await invoke('install_brew')
+		finishProgressTask(taskId, { status: 'success', message: 'Homebrew installed' })
+
+		if (typeof onSuccess === 'function') {
+			try {
+				await onSuccess()
+			} catch (onSuccessError) {
+				if (button) {
+					clearButtonLoading(button)
+				}
+				throw onSuccessError
+			}
+		} else {
+			if (button) {
+				clearButtonLoading(button)
+			}
+			await window.__TAURI__.dialog.message(
+				'✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
+				{ title: 'Success', type: 'info' },
+			)
+		}
+	} catch (error) {
+		const errorMessage = typeof error === 'string' ? error : error?.message || `${error}`
+
+		if (errorMessage.includes('Command Line Tools must be installed')) {
+			showProgressTask(taskId, 'Waiting for Command Line Tools…', { state: 'waiting' })
+			if (button) {
+				updateButtonLoadingLabel(button, 'Waiting for Command Line Tools...')
+			}
+			await startCltMonitor(
+				async () => {
+					await runHomebrewInstall({ button, onSuccess })
+				},
+				{
+					onCancel: () => {
+						finishProgressTask(taskId, {
+							status: 'error',
+							message: 'Command Line Tools installation cancelled',
+						})
+						if (button) {
+							clearButtonLoading(button)
+						}
+					},
+				},
+			)
+			return
+		}
+
+		finishProgressTask(taskId, {
+			status: 'error',
+			message: 'Homebrew installation failed',
+		})
+		if (button) {
+			clearButtonLoading(button)
+		}
+		await window.__TAURI__.dialog.message(
+			`Failed to install Homebrew: ${errorMessage}\n\nPlease install Homebrew manually from brew.sh`,
+			{ title: 'Installation Failed', type: 'error' },
+		)
+	}
+}
+
 let lastImportView = 'import' // Track last import sub-view visited
 let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 let patternInputDebounce = null
 let messageThreads = []
 let messageFilter = 'inbox'
 let activeThreadId = null
-let activeThreadMessages = []
 let messageReplyTargetId = null
 let isComposingNewMessage = false
 let messagesAuthorized = false
@@ -3164,9 +3721,23 @@ async function handleSyftBoxAuthentication() {
 	const skipBtn = document.getElementById('skip-syftbox-btn')
 	skipBtn.textContent = 'Cancel'
 
-	// Reset the OTP state to show the "Send Login Code" button
+	// Reset the OTP state to show the "Send Code" button
 	document.getElementById('syftbox-send-state').style.display = 'block'
+	document.getElementById('syftbox-email-info').style.display = 'none'
 	document.getElementById('syftbox-otp-state').style.display = 'none'
+	document.getElementById('syftbox-error-message').style.display = 'none'
+
+	const sendSyftboxBtn = document.getElementById('send-login-code-btn')
+	if (sendSyftboxBtn) {
+		sendSyftboxBtn.disabled = false
+		sendSyftboxBtn.textContent = 'Send Code'
+	}
+
+	const verifySyftboxBtn = document.getElementById('verify-code-btn')
+	if (verifySyftboxBtn) {
+		verifySyftboxBtn.disabled = true
+		verifySyftboxBtn.textContent = 'Verify Code'
+	}
 
 	// Clear any previous OTP inputs
 	document.querySelectorAll('.syftbox-code-input').forEach((input) => {
@@ -3460,7 +4031,6 @@ async function loadMessageThreads(refresh = false) {
 				await openThread(activeThreadId, { silent: true })
 			} else {
 				activeThreadId = null
-				activeThreadMessages = []
 				messageReplyTargetId = null
 			}
 		}
@@ -3633,7 +4203,7 @@ function renderProjectPanel(messages) {
 	panel.style.display = 'flex'
 }
 
-async function openThread(threadId, options = {}) {
+async function openThread(threadId, _options = {}) {
 	if (!messagesAuthorized) return
 
 	activeThreadId = threadId
@@ -3643,7 +4213,6 @@ async function openThread(threadId, options = {}) {
 
 	try {
 		const messages = await invoke('get_thread_messages', { threadId })
-		activeThreadMessages = messages
 		messageReplyTargetId = messages.length ? messages[messages.length - 1].id : null
 
 		renderConversation(messages)
@@ -3692,7 +4261,6 @@ async function openThread(threadId, options = {}) {
 function startNewMessage() {
 	isComposingNewMessage = true
 	activeThreadId = null
-	activeThreadMessages = []
 	messageReplyTargetId = null
 	updateComposeVisibility(true)
 
@@ -4010,7 +4578,6 @@ window.addEventListener('DOMContentLoaded', () => {
 			if (btn.classList.contains('active')) return
 			setActiveMessageFilterButton(btn.dataset.filter)
 			activeThreadId = null
-			activeThreadMessages = []
 			messageReplyTargetId = null
 			loadMessageThreads(false)
 		})
@@ -4099,7 +4666,6 @@ window.addEventListener('DOMContentLoaded', () => {
 			try {
 				await invoke('delete_thread', { threadId: activeThreadId })
 				activeThreadId = null
-				activeThreadMessages = []
 				messageReplyTargetId = null
 				isComposingNewMessage = true
 				updateComposeVisibility(true)
@@ -5019,73 +5585,28 @@ window.addEventListener('DOMContentLoaded', () => {
 			const installSingleBtn = document.getElementById(`install-single-btn-${depIndex}`)
 			if (installSingleBtn) {
 				installSingleBtn.addEventListener('click', async () => {
-					// Check for brew on macOS before installing dependencies
-					const currentPlatform = detectPlatform()
-					if (currentPlatform === 'macos') {
-						try {
-							const brewInstalled = await invoke('check_brew_installed')
-							if (!brewInstalled) {
-								// Prompt user to install brew first
-								const installBrew = await window.__TAURI__.dialog.confirm(
-									'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
-									{ title: 'Homebrew Required', type: 'warning' },
-								)
+					const proceedWithInstall = async () => {
+						const normalizedName =
+							dep.name
+								.toLowerCase()
+								.replace(/[^a-z0-9]+/g, '-')
+								.replace(/^-+|-+$/g, '') || 'dependency'
+						const taskId = `install-${normalizedName}`
 
-								if (installBrew) {
-									try {
-										// Show progress
-										installSingleBtn.disabled = true
-										installSingleBtn.textContent = 'Installing Homebrew...'
-
-										await invoke('install_brew')
-
-										await window.__TAURI__.dialog.message(
-											'✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
-											{ title: 'Success', type: 'info' },
-										)
-
-										// Restore button state
-										installSingleBtn.disabled = false
-										installSingleBtn.textContent = 'Install'
-
-										// Don't proceed with dependency installation yet, let user click again
-										return
-									} catch (error) {
-										await window.__TAURI__.dialog.message(
-											`Failed to install Homebrew: ${error}\n\nPlease install Homebrew manually from brew.sh`,
-											{ title: 'Installation Failed', type: 'error' },
-										)
-
-										// Restore button state
-										installSingleBtn.disabled = false
-										installSingleBtn.textContent = 'Install'
-										return
-									}
-								} else {
-									// User declined to install brew
-									return
-								}
-							}
-						} catch (error) {
-							console.error('Failed to check brew installation:', error)
+						if (!installSingleBtn.classList.contains('btn-loading')) {
+							setButtonLoading(installSingleBtn, `Installing ${dep.name}...`)
+						} else {
+							updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
 						}
-					}
 
-					const confirmed = await window.__TAURI__.dialog.confirm(
-						`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`,
-						{ title: 'Confirm Installation', type: 'warning' },
-					)
-					if (confirmed) {
+						showProgressTask(taskId, `Installing ${dep.name}...`)
+
 						try {
-							// Show progress
-							installSingleBtn.disabled = true
-							installSingleBtn.textContent = 'Installing...'
-
-							// Install the dependency
 							const installedPath = await invoke('install_dependency', { name: dep.name })
+							finishProgressTask(taskId, { status: 'success', message: `${dep.name} installed` })
+							clearButtonLoading(installSingleBtn)
 
 							if (installedPath) {
-								// Update the path input with the installed path
 								const pathInput = document.getElementById(`path-input-${depIndex}`)
 								if (pathInput) {
 									pathInput.value = installedPath
@@ -5102,19 +5623,65 @@ window.addEventListener('DOMContentLoaded', () => {
 								)
 							}
 
-							// Re-check this dependency
 							await checkDependencies()
 						} catch (error) {
-							await window.__TAURI__.dialog.message(`${error}`, {
-								title: 'Installation Failed',
-								type: 'error',
-							})
+							const errorMessage = typeof error === 'string' ? error : error?.message || `${error}`
 
-							// Restore button state
-							installSingleBtn.disabled = false
-							installSingleBtn.textContent = 'Install'
+							finishProgressTask(taskId, {
+								status: 'error',
+								message: `Failed to install ${dep.name}`,
+							})
+							clearButtonLoading(installSingleBtn)
+
+							await window.__TAURI__.dialog.message(
+								`Failed to install ${dep.name}: ${errorMessage}`,
+								{ title: 'Installation Failed', type: 'error' },
+							)
 						}
 					}
+
+					const confirmed = await window.__TAURI__.dialog.confirm(
+						`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`,
+						{ title: 'Confirm Installation', type: 'warning' },
+					)
+					if (!confirmed) {
+						return
+					}
+
+					const currentPlatform = detectPlatform()
+					if (currentPlatform === 'macos') {
+						try {
+							const brewInstalled = await invoke('check_brew_installed')
+							if (!brewInstalled) {
+								const installBrew = await window.__TAURI__.dialog.confirm(
+									'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
+									{ title: 'Homebrew Required', type: 'warning' },
+								)
+
+								if (!installBrew) {
+									return
+								}
+
+								await runHomebrewInstall({
+									button: installSingleBtn,
+									onSuccess: async () => {
+										updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
+										await proceedWithInstall()
+									},
+								})
+								return
+							}
+						} catch (error) {
+							console.error('Failed to check brew installation:', error)
+							await window.__TAURI__.dialog.message(
+								`Unable to verify Homebrew installation: ${error}`,
+								{ title: 'Error', type: 'error' },
+							)
+							return
+						}
+					}
+
+					await proceedWithInstall()
 				})
 			}
 
@@ -5218,37 +5785,48 @@ window.addEventListener('DOMContentLoaded', () => {
 		const lines = instructions.split('\n')
 		const filteredLines = []
 
+		const isLinuxLabel = (label) =>
+			['ubuntu', 'debian', 'rhel', 'centos', 'linux', 'arch', 'fedora'].includes(label)
+
 		for (const line of lines) {
 			const trimmed = line.trim()
 
-			// Skip empty lines
 			if (!trimmed) continue
 
-			// Check if line starts with an OS prefix (case-insensitive)
-			const osMatch = trimmed.match(/^(macOS|Ubuntu|Debian|RHEL|CentOS|Windows|Linux|Arch):/i)
+			const parts = trimmed.split(/:\s*/, 2)
+			if (parts.length === 2) {
+				const [rawLabel, instruction] = parts
+				const labels = rawLabel
+					.split(/[/,]|\band\b/i)
+					.map((label) => label.trim().toLowerCase())
+					.filter(Boolean)
 
-			if (osMatch) {
-				const osPrefix = osMatch[1].toLowerCase()
+				const hasKnownLabel = labels.some((label) => {
+					if (label === 'macos' || label === 'windows') return true
+					return isLinuxLabel(label)
+				})
 
-				// Map OS prefixes to platform names
-				if (currentPlatform === 'macos' && osPrefix === 'macos') {
-					// Remove the prefix and add the command
-					filteredLines.push(trimmed.replace(/^macOS:\s*/i, ''))
-				} else if (
-					currentPlatform === 'linux' &&
-					['ubuntu', 'debian', 'rhel', 'centos', 'linux', 'arch'].includes(osPrefix)
-				) {
-					filteredLines.push(trimmed.replace(/^[^:]+:\s*/, ''))
-				} else if (currentPlatform === 'windows' && osPrefix === 'windows') {
-					filteredLines.push(trimmed.replace(/^Windows:\s*/i, ''))
+				if (!hasKnownLabel) {
+					filteredLines.push(trimmed)
+					continue
 				}
+
+				const matchesPlatform = labels.some((label) => {
+					if (currentPlatform === 'macos') return label === 'macos'
+					if (currentPlatform === 'windows') return label === 'windows'
+					if (currentPlatform === 'linux') return isLinuxLabel(label)
+					return false
+				})
+
+				if (matchesPlatform) {
+					filteredLines.push(instruction)
+				}
+				// Skip non-matching labelled lines entirely
 			} else {
-				// Lines without OS prefix are included for all platforms
 				filteredLines.push(trimmed)
 			}
 		}
 
-		// If no instructions remain after filtering, return original
 		return filteredLines.length > 0 ? filteredLines.join('\n') : instructions
 	}
 
@@ -5590,6 +6168,16 @@ window.addEventListener('DOMContentLoaded', () => {
 				}
 			}
 		})
+
+		// Allow pressing Enter to proceed when email is valid
+		emailInput.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter') {
+				event.preventDefault()
+				if (nextBtn3 && !nextBtn3.disabled) {
+					nextBtn3.click()
+				}
+			}
+		})
 	}
 
 	// Step 3: Email -> Step 4 (SyftBox OTP)
@@ -5608,10 +6196,80 @@ window.addEventListener('DOMContentLoaded', () => {
 			// Move to step 4 (SyftBox OTP)
 			document.getElementById('onboarding-step-3').style.display = 'none'
 			document.getElementById('onboarding-step-4').style.display = 'block'
+			document.getElementById('syftbox-send-state').style.display = 'block'
+			document.getElementById('syftbox-email-info').style.display = 'none'
+			document.getElementById('syftbox-otp-state').style.display = 'none'
+			document.getElementById('syftbox-error-message').style.display = 'none'
+			const sendBtn = document.getElementById('send-login-code-btn')
+			if (sendBtn) {
+				sendBtn.disabled = false
+				sendBtn.textContent = 'Send Code'
+			}
+			document.querySelectorAll('.syftbox-code-input').forEach((input) => {
+				input.value = ''
+				input.classList.remove('error', 'success')
+			})
+			const verifyBtn = document.getElementById('verify-code-btn')
+			if (verifyBtn) {
+				verifyBtn.disabled = true
+				verifyBtn.textContent = 'Verify Code'
+			}
 		})
 	}
 
-	// Step 4: SyftBox OTP - Send Login Code button
+	// Step 4: SyftBox helpers
+	document.querySelectorAll('.syftbox-link').forEach((link) => {
+		link.addEventListener('click', async (event) => {
+			event.preventDefault()
+			const url = link.dataset.url
+			if (!url) return
+			try {
+				await invoke('open_url', { url })
+			} catch (error) {
+				console.error('Failed to open SyftBox link:', error)
+			}
+		})
+	})
+
+	const syftboxInfoContinueBtn = document.getElementById('syftbox-info-continue-btn')
+	if (syftboxInfoContinueBtn) {
+		syftboxInfoContinueBtn.addEventListener('click', () => {
+			document.getElementById('syftbox-send-state').style.display = 'none'
+			const emailInfo = document.getElementById('syftbox-email-info')
+			emailInfo.style.display = 'block'
+			emailInfo.scrollTop = 0
+			const emailScroll = document.getElementById('syftbox-email-scroll')
+			if (emailScroll) {
+				emailScroll.scrollTop = 0
+			}
+			const email = document.getElementById('onboarding-email').value.trim()
+			const previewLabel = document.getElementById('syftbox-email-preview-address')
+			if (previewLabel) {
+				previewLabel.textContent = email || 'your email'
+			}
+		})
+	}
+
+	const syftboxEmailBackBtn = document.getElementById('syftbox-email-back-btn')
+	if (syftboxEmailBackBtn) {
+		syftboxEmailBackBtn.addEventListener('click', () => {
+			const emailInfo = document.getElementById('syftbox-email-info')
+			emailInfo.style.display = 'none'
+			emailInfo.scrollTop = 0
+			const emailScroll = document.getElementById('syftbox-email-scroll')
+			if (emailScroll) {
+				emailScroll.scrollTop = 0
+			}
+			document.getElementById('syftbox-send-state').style.display = 'block'
+			const sendBtn = document.getElementById('send-login-code-btn')
+			if (sendBtn) {
+				sendBtn.disabled = false
+				sendBtn.textContent = 'Send Code'
+			}
+		})
+	}
+
+	// Step 4: SyftBox OTP - Send Code button
 	const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
 	if (sendLoginCodeBtn) {
 		sendLoginCodeBtn.addEventListener('click', async () => {
@@ -5624,6 +6282,7 @@ window.addEventListener('DOMContentLoaded', () => {
 				await invoke('syftbox_request_otp', { email })
 
 				// Switch to OTP input state
+				document.getElementById('syftbox-email-info').style.display = 'none'
 				document.getElementById('syftbox-send-state').style.display = 'none'
 				document.getElementById('syftbox-otp-state').style.display = 'block'
 				document.getElementById('syftbox-user-email').textContent = email
@@ -5637,7 +6296,7 @@ window.addEventListener('DOMContentLoaded', () => {
 					type: 'error',
 				})
 				sendLoginCodeBtn.disabled = false
-				sendLoginCodeBtn.textContent = 'Send Login Code'
+				sendLoginCodeBtn.textContent = 'Send Code'
 			}
 		})
 	}
@@ -5731,6 +6390,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 						// Reset the OTP state to initial state
 						document.getElementById('syftbox-send-state').style.display = 'block'
+						document.getElementById('syftbox-email-info').style.display = 'none'
 						document.getElementById('syftbox-otp-state').style.display = 'none'
 						document.getElementById('syftbox-error-message').style.display = 'none'
 
@@ -5749,7 +6409,7 @@ window.addEventListener('DOMContentLoaded', () => {
 						const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
 						if (sendLoginCodeBtn) {
 							sendLoginCodeBtn.disabled = false
-							sendLoginCodeBtn.textContent = 'Send Login Code'
+							sendLoginCodeBtn.textContent = 'Send Code'
 						}
 
 						await window.__TAURI__.dialog.message('Successfully authenticated with SyftBox!', {
@@ -5779,6 +6439,7 @@ window.addEventListener('DOMContentLoaded', () => {
 						checkSyftBoxStatus()
 					} else {
 						// Normal onboarding flow - proceed to step 5 (initializing)
+						document.getElementById('syftbox-email-info').style.display = 'none'
 						document.getElementById('onboarding-step-4').style.display = 'none'
 						document.getElementById('onboarding-step-5').style.display = 'block'
 						// Initialize BioVault
@@ -5853,6 +6514,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 				// Reset the OTP state to initial state
 				document.getElementById('syftbox-send-state').style.display = 'block'
+				document.getElementById('syftbox-email-info').style.display = 'none'
 				document.getElementById('syftbox-otp-state').style.display = 'none'
 				document.getElementById('syftbox-error-message').style.display = 'none'
 
@@ -5864,14 +6526,16 @@ window.addEventListener('DOMContentLoaded', () => {
 
 				// Reset verify button
 				const verifyBtn = document.getElementById('verify-code-btn')
-				verifyBtn.disabled = true
-				verifyBtn.textContent = 'Verify Code'
+				if (verifyBtn) {
+					verifyBtn.disabled = true
+					verifyBtn.textContent = 'Verify Code'
+				}
 
 				// Reset send login code button
 				const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
 				if (sendLoginCodeBtn) {
 					sendLoginCodeBtn.disabled = false
-					sendLoginCodeBtn.textContent = 'Send Login Code'
+					sendLoginCodeBtn.textContent = 'Send Code'
 				}
 
 				// Show tabs navigation bar

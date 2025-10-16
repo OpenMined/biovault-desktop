@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -223,6 +223,46 @@ struct AppState {
     db: Mutex<Connection>,
     biovault_db: Arc<Mutex<BioVaultDb>>,
     queue_processor_paused: Arc<AtomicBool>,
+}
+
+fn resolve_biovault_home_path() -> PathBuf {
+    if let Ok(home) = biovault::config::get_biovault_home() {
+        return home;
+    }
+
+    env::var("BIOVAULT_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            dirs::desktop_dir()
+                .unwrap_or_else(|| home_dir.join("Desktop"))
+                .join("BioVault")
+        })
+}
+
+fn desktop_log_path() -> PathBuf {
+    let base = resolve_biovault_home_path();
+    base.join("logs").join("desktop.log")
+}
+
+fn log_desktop_event(message: &str) {
+    let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
+    let log_line = format!("[{}] {}\n", timestamp, message);
+
+    if let Err(err) = (|| -> std::io::Result<()> {
+        let log_path = desktop_log_path();
+        if let Some(parent) = log_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        file.write_all(log_line.as_bytes())?;
+        Ok(())
+    })() {
+        eprintln!("Failed to write desktop log: {}", err);
+    }
 }
 
 fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -2671,19 +2711,55 @@ fn update_saved_dependency_states() -> Result<(), String> {
 #[tauri::command]
 fn check_brew_installed() -> Result<bool, String> {
     eprintln!("🍺 Checking if Homebrew is installed (using library)");
+    log_desktop_event("Checking Homebrew installation status");
 
     // Call the library function
-    biovault::cli::commands::check::check_brew_installed()
-        .map_err(|e| format!("Failed to check brew: {}", e))
+    let result = biovault::cli::commands::check::check_brew_installed()
+        .map_err(|e| format!("Failed to check brew: {}", e))?;
+
+    log_desktop_event(&format!("Homebrew present: {}", result));
+    Ok(result)
 }
 
 #[tauri::command]
 async fn install_brew() -> Result<String, String> {
     eprintln!("🍺 Installing Homebrew (using library)");
+    log_desktop_event("Homebrew installation requested from desktop app");
 
     // Call the library function
-    biovault::cli::commands::check::install_brew()
-        .map_err(|e| format!("Failed to install brew: {}", e))
+    match biovault::cli::commands::check::install_brew() {
+        Ok(path) => {
+            log_desktop_event(&format!(
+                "Homebrew installation completed successfully. Detected brew at: {}",
+                path
+            ));
+            Ok(path)
+        }
+        Err(err) => {
+            eprintln!("🍺 Homebrew installation error: {:#?}", err);
+            log_desktop_event(&format!("Homebrew installation debug: {:#?}", err));
+            log_desktop_event(&format!("Homebrew installation failed: {}", err));
+            Err(format!("Failed to install brew: {}", err))
+        }
+    }
+}
+
+#[tauri::command]
+fn check_command_line_tools_installed() -> Result<bool, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("xcode-select")
+            .arg("-p")
+            .status()
+            .map_err(|e| format!("Failed to check Command Line Tools: {}", e))?;
+
+        Ok(status.success())
+    }
 }
 
 #[tauri::command]
@@ -3211,6 +3287,11 @@ pub fn run() {
     let biovault_home_dir =
         biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
 
+    log_desktop_event(&format!(
+        "Desktop logging initialised. Log file: {}",
+        desktop_log_path().display()
+    ));
+
     let email = load_biovault_email(&Some(biovault_home_dir.clone()));
     let window_title = format!("BioVault - {}", email);
 
@@ -3360,6 +3441,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            {
+                biovault::cli::commands::check::set_homebrew_install_logger(|message| {
+                    log_desktop_event(message);
+                });
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&window_title);
             }
@@ -3427,6 +3515,7 @@ pub fn run() {
             save_custom_path,
             check_brew_installed,
             install_brew,
+            check_command_line_tools_installed,
             install_dependency,
             install_dependencies,
             open_url,

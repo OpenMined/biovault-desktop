@@ -108,6 +108,123 @@
 				border-color: #0066cc;
 			}
 
+			@keyframes button-spin {
+				0% {
+					transform: rotate(0deg);
+				}
+				100% {
+					transform: rotate(360deg);
+				}
+			}
+
+			.btn-loading {
+				opacity: 0.9;
+				pointer-events: none;
+			}
+
+			.button-spinner {
+				display: inline-block;
+				width: 16px;
+				height: 16px;
+				border-radius: 50%;
+				border: 2px solid rgba(255, 255, 255, 0.4);
+				border-top-color: #ffffff;
+				animation: button-spin 0.8s linear infinite;
+				margin-right: 8px;
+				vertical-align: middle;
+			}
+
+			.button-spinner-label {
+				vertical-align: middle;
+				font-size: inherit;
+				font-weight: inherit;
+			}
+
+			.operation-progress {
+				position: fixed;
+				bottom: 18px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 420px;
+				max-width: calc(100vw - 32px);
+				background: rgba(17, 24, 39, 0.92);
+				border-radius: 12px;
+				padding: 14px 16px;
+				box-shadow: 0 18px 36px rgba(15, 23, 42, 0.28);
+				backdrop-filter: blur(8px);
+				display: none;
+				pointer-events: none;
+				z-index: 9998;
+			}
+
+			.operation-progress[data-visible='true'] {
+				display: block;
+			}
+
+			.operation-progress-entry {
+				margin-bottom: 10px;
+				color: #e5e7eb;
+			}
+
+			.operation-progress-entry:last-child {
+				margin-bottom: 0;
+			}
+
+			.operation-progress-label {
+				font-size: 13px;
+				font-weight: 600;
+				margin-bottom: 6px;
+			}
+
+			.operation-progress-track {
+				width: 100%;
+				height: 6px;
+				background: rgba(148, 163, 184, 0.35);
+				border-radius: 999px;
+				overflow: hidden;
+			}
+
+			@keyframes progress-indeterminate {
+				0% {
+					transform: translateX(-100%);
+				}
+				100% {
+					transform: translateX(100%);
+				}
+			}
+
+			.operation-progress-bar {
+				width: 40%;
+				height: 100%;
+				background: linear-gradient(90deg, #60a5fa 0%, #818cf8 100%);
+				border-radius: 999px;
+				animation: progress-indeterminate 1.2s ease-in-out infinite;
+			}
+
+			.operation-progress-entry.waiting .operation-progress-bar {
+				background: linear-gradient(90deg, #fbbf24 0%, #f59e0b 100%);
+			}
+
+			.operation-progress-entry.success .operation-progress-bar {
+				animation: none;
+				width: 100%;
+				background: linear-gradient(90deg, #34d399 0%, #10b981 100%);
+			}
+
+			.operation-progress-entry.error .operation-progress-bar {
+				animation: none;
+				width: 100%;
+				background: linear-gradient(90deg, #f87171 0%, #ef4444 100%);
+			}
+
+			.operation-progress-entry.success .operation-progress-label {
+				color: #bbf7d0;
+			}
+
+			.operation-progress-entry.error .operation-progress-label {
+				color: #fecaca;
+			}
+
 			.file-list-container {
 				flex: 1;
 				overflow-y: auto;
@@ -1184,15 +1301,26 @@
 				background: #5568d3;
 			}
 
-			#skip-dependencies-btn {
+			.onboarding-skip-btn {
 				width: auto !important;
 				min-width: 0;
-				padding: 8px 16px !important;
+				padding: 8px 20px !important;
 				display: inline-flex;
 				align-items: center;
 				justify-content: center;
 				font-size: 14px;
 				font-weight: 500;
+				background: none;
+				border: 1px solid #888;
+				color: #888;
+				border-radius: 6px;
+				cursor: pointer;
+				transition: all 0.2s;
+			}
+
+			.onboarding-skip-btn:hover {
+				border-color: #666;
+				color: #666;
 			}
 
 			.danger-zone {
@@ -1521,24 +1649,7 @@
 							"
 						>
 							<h1 style="font-size: 28px; margin: 0">Configure Your System</h1>
-							<button
-								id="skip-dependencies-btn"
-								style="
-									background: none;
-									border: 1px solid #888;
-									color: #888;
-									padding: 8px 20px;
-									border-radius: 6px;
-									cursor: pointer;
-									font-size: 14px;
-									font-weight: 500;
-									transition: all 0.2s;
-								"
-								onmouseover="this.style.borderColor='#666'; this.style.color='#666';"
-								onmouseout="this.style.borderColor='#888'; this.style.color='#888';"
-							>
-								Skip
-							</button>
+							<button id="skip-dependencies-btn" class="onboarding-skip-btn">Skip</button>
 						</div>
 						<p style="margin-bottom: 20px; font-size: 14px; color: #666">
 							BioVault requires the following dependencies. You can ask BioVault to attempt
@@ -1668,50 +1779,148 @@
 							"
 						>
 							<h1 style="font-size: 28px; margin: 0">SyftBox Authentication</h1>
-							<button
-								id="skip-syftbox-btn"
-								style="
-									background: none;
-									border: 1px solid #888;
-									color: #888;
-									padding: 8px 20px;
-									border-radius: 6px;
-									cursor: pointer;
-									font-size: 14px;
-									font-weight: 500;
-									transition: all 0.2s;
-								"
-								onmouseover="this.style.borderColor='#666'; this.style.color='#666';"
-								onmouseout="this.style.borderColor='#888'; this.style.color='#888';"
-							>
-								Skip
-							</button>
+							<button id="skip-syftbox-btn" class="onboarding-skip-btn">Skip</button>
 						</div>
-						<p style="margin-bottom: 25px; color: #666">
-							Connect your BioVault instance with SyftBox for secure data sharing (optional).
-						</p>
-
-						<!-- Initial state: Send Login Code button -->
+						<!-- Initial state: overview -->
 						<div id="syftbox-send-state" style="display: block">
-							<p style="margin-bottom: 20px; color: #666">
-								Click the button below to receive an authentication code via email.
-							</p>
-							<button
-								id="send-login-code-btn"
+							<div
 								style="
-									width: 100%;
-									padding: 15px;
-									background: #667eea;
-									color: white;
-									border: none;
-									border-radius: 6px;
-									font-size: 16px;
-									font-weight: 600;
-									cursor: pointer;
+									background: linear-gradient(
+										135deg,
+										rgba(102, 126, 234, 0.18),
+										rgba(118, 75, 162, 0.18)
+									);
+									padding: 24px;
+									border-radius: 20px;
+									display: flex;
+									justify-content: center;
+									align-items: center;
+									margin-bottom: 24px;
 								"
 							>
-								Send Login Code
-							</button>
+								<img
+									src="assets/bv-syftbox.png"
+									alt="BioVault + SyftBox"
+									style="max-width: 100%; height: auto; display: block"
+								/>
+							</div>
+							<div style="color: #555; font-size: 15px; line-height: 1.5; margin-bottom: 24px">
+								<p style="margin-bottom: 16px">
+									<strong>BioVault uses SyftBox for its secure networking capability.</strong>
+									Using SyftBox is optional; however, if you want to collaborate with other
+									BioVaults it's highly recommended.
+								</p>
+								<p style="margin-bottom: 16px">
+									It's completely free and open source - just verify your email to get started.
+								</p>
+								<p style="margin: 0">
+									To read more about SyftBox please visit:
+									<a
+										href="#"
+										class="syftbox-link"
+										data-url="https://syftbox.net"
+										style="color: #0066cc; text-decoration: none; font-weight: 600"
+										>https://syftbox.net</a
+									>
+								</p>
+							</div>
+							<div style="display: flex; justify-content: flex-end">
+								<button
+									id="syftbox-info-continue-btn"
+									style="
+										padding: 12px 28px;
+										background: #667eea;
+										color: white;
+										border: none;
+										border-radius: 6px;
+										font-size: 15px;
+										font-weight: 600;
+										cursor: pointer;
+									"
+								>
+									Authenticate SyftBox
+								</button>
+							</div>
+						</div>
+
+						<!-- Email walkthrough before sending code -->
+						<div id="syftbox-email-info" style="display: none">
+							<p style="color: #555; font-size: 15px; line-height: 1.5; margin-bottom: 16px">
+								We'll send a one-time passcode to
+								<strong><span id="syftbox-email-preview-address">your email</span></strong
+								>. You'll use this code on the next screen to finish linking SyftBox.
+							</p>
+							<div
+								id="syftbox-email-scroll"
+								style="max-height: 55vh; overflow-y: auto; padding-right: 4px; margin-bottom: 16px"
+							>
+								<p
+									style="
+										color: #666;
+										font-size: 13px;
+										margin-bottom: 12px;
+										text-align: center;
+										font-weight: 600;
+									"
+								>
+									Example Email
+								</p>
+								<div
+									style="
+										background: linear-gradient(
+											135deg,
+											rgba(102, 126, 234, 0.12),
+											rgba(118, 75, 162, 0.12)
+										);
+										padding: 18px;
+										border-radius: 18px;
+										display: flex;
+										justify-content: center;
+									"
+								>
+									<img
+										src="assets/syftbox-email.png"
+										alt="SyftBox email preview"
+										style="width: 100%; max-height: 500px; object-fit: contain; display: block"
+									/>
+								</div>
+							</div>
+							<p style="color: #666; font-size: 13px; margin-bottom: 24px">
+								Don't close the app - just open your inbox once you click continue, and then enter
+								the 8-digit code.
+							</p>
+							<div style="display: flex; gap: 10px; justify-content: flex-end">
+								<button
+									id="syftbox-email-back-btn"
+									style="
+										padding: 12px 22px;
+										background: none;
+										border: 1px solid #ccc;
+										border-radius: 6px;
+										color: #555;
+										font-size: 14px;
+										font-weight: 500;
+										cursor: pointer;
+									"
+								>
+									Back
+								</button>
+								<button
+									id="send-login-code-btn"
+									style="
+										padding: 12px 28px;
+										background: #667eea;
+										color: white;
+										border: none;
+										border-radius: 6px;
+										font-size: 15px;
+										font-weight: 600;
+										cursor: pointer;
+									"
+								>
+									Send Code
+								</button>
+							</div>
 						</div>
 
 						<!-- OTP Input state -->
