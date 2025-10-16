@@ -1282,12 +1282,28 @@ fn save_project_editor(
     state: tauri::State<AppState>,
     project_id: Option<i64>,
     project_path: String,
-    name: String,
-    author: String,
-    workflow: String,
-    template: Option<String>,
-    assets: Vec<String>,
+    payload: serde_json::Value,
 ) -> Result<Project, String> {
+    #[derive(Deserialize)]
+    struct SaveProjectPayload {
+        name: String,
+        author: String,
+        workflow: String,
+        #[serde(default)]
+        template: Option<String>,
+        #[serde(default)]
+        assets: Vec<String>,
+    }
+
+    let data: SaveProjectPayload =
+        serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
+
+    let name = data.name;
+    let author = data.author;
+    let workflow = data.workflow;
+    let template = data.template;
+    let assets = data.assets;
+
     let name_trimmed = name.trim();
     if name_trimmed.is_empty() {
         return Err("Project name cannot be empty".into());

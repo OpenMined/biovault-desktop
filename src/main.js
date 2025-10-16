@@ -2326,14 +2326,18 @@ async function handleSaveProjectEditor() {
 
 	try {
 		const assets = Array.from(projectEditorState.selectedAssets)
-		const saved = await invoke('save_project_editor', {
-			projectId: projectEditorState.projectId,
-			projectPath: projectEditorState.projectPath,
+		const payload = {
 			name: nameValue,
 			author: authorValue,
 			workflow: workflowValue,
 			template: templateValue || null,
 			assets,
+		}
+
+		const saved = await invoke('save_project_editor', {
+			projectId: projectEditorState.projectId,
+			projectPath: projectEditorState.projectPath,
+			payload,
 		})
 		projectEditorState.projectId = saved.id
 		projectEditorState.projectPath = saved.project_path
