@@ -19,6 +19,30 @@ let columnWidths = {
 let commandLogs = [] // Array of log entries
 let isImportInProgress = false // Track if import is currently running
 let dependencyResults = null // Store dependency check results globally
+let messageThreads = []
+let messageFilter = 'inbox'
+let activeThreadId = null
+let activeThreadMessages = []
+let messageReplyTargetId = null
+let isComposingNewMessage = false
+let messagesAuthorized = false
+let currentUserEmail = ''
+let syftboxStatus = { running: false, mode: 'Direct' }
+let messagesInitialized = false
+let messagesRefreshInterval = null
+let messagesRefreshInProgress = false
+let activeView = 'home'
+
+function updateComposeVisibility(showRecipient) {
+	const recipientContainer = document.querySelector('.message-compose-recipient')
+	const subjectWrapper = document.getElementById('message-subject-wrapper')
+	if (recipientContainer) {
+		recipientContainer.style.display = showRecipient ? 'flex' : 'none'
+	}
+	if (subjectWrapper) {
+		subjectWrapper.style.display = showRecipient ? 'block' : 'none'
+	}
+}
 
 const projectEditorState = {
 	projectId: null,
@@ -2751,6 +2775,7 @@ async function loadSettings() {
 
 		const settings = await invoke('get_settings')
 		document.getElementById('setting-email').value = settings.email || ''
+		currentUserEmail = settings.email || ''
 
 		// Load saved dependency states for settings page (don't re-check)
 		loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
@@ -2935,6 +2960,590 @@ function copyLogs() {
 		})
 }
 
+function escapeHtml(value) {
+	if (value === undefined || value === null) return ''
+	const div = document.createElement('div')
+	div.textContent = value
+	return div.innerHTML
+}
+
+function formatDateTime(value) {
+	if (!value) return ''
+	const date = new Date(value)
+	if (Number.isNaN(date.getTime())) return value
+	return date.toLocaleString()
+}
+
+function setActiveMessageFilterButton(filter) {
+	messageFilter = filter
+	document.querySelectorAll('.message-filter').forEach((btn) => {
+		btn.classList.toggle('active', btn.dataset.filter === filter)
+	})
+}
+
+function collectParticipants(messages) {
+	const set = new Set()
+	messages.forEach((msg) => {
+		if (msg.from) set.add(msg.from)
+		if (msg.to) set.add(msg.to)
+	})
+	return Array.from(set)
+}
+
+function formatParticipants(participants) {
+	if (!participants || participants.length === 0) return ''
+	const others = participants.filter((p) => p !== currentUserEmail)
+	return others.length > 0 ? others.join(', ') : participants.join(', ')
+}
+
+function getPrimaryRecipient(participants) {
+	const others = (participants || []).filter((p) => p !== currentUserEmail)
+	return others[0] || (participants && participants[0]) || ''
+}
+
+function updateMessagesEmptyState() {
+	const mainEl = document.getElementById('messages-main')
+	const emptyEl = document.getElementById('messages-empty-state')
+	const deleteThreadBtn = document.getElementById('delete-thread-btn')
+	if (!mainEl || !emptyEl) return
+
+	if (!messagesAuthorized) {
+		mainEl.style.display = 'none'
+		emptyEl.style.display = 'none'
+		if (deleteThreadBtn) deleteThreadBtn.style.display = 'none'
+		return
+	}
+
+	if (activeThreadId || isComposingNewMessage) {
+		mainEl.style.display = 'flex'
+		emptyEl.style.display = 'none'
+	} else if (!messageThreads.length) {
+		mainEl.style.display = 'none'
+		emptyEl.style.display = 'flex'
+	} else {
+		mainEl.style.display = 'flex'
+		emptyEl.style.display = 'none'
+	}
+
+	if (deleteThreadBtn) {
+		deleteThreadBtn.style.display = activeThreadId ? 'inline-flex' : 'none'
+	}
+}
+
+async function ensureMessagesAuthorization() {
+	try {
+		messagesAuthorized = await invoke('check_syftbox_auth')
+	} catch (error) {
+		console.error('Failed to check SyftBox authorization:', error)
+		messagesAuthorized = false
+	}
+
+	const warningEl = document.getElementById('messages-syftbox-warning')
+	if (warningEl) {
+		warningEl.style.display = messagesAuthorized ? 'none' : 'flex'
+	}
+
+	const container = document.querySelector('#messages-view .messages-container')
+	if (container) {
+		container.style.display = messagesAuthorized ? 'flex' : 'none'
+	}
+
+	if (!messagesAuthorized) {
+		syftboxStatus = { running: false, mode: 'Direct' }
+	}
+	updateSyftboxIndicator()
+
+	updateMessagesEmptyState()
+
+	if (!messagesAuthorized) {
+		stopMessagesAutoRefresh()
+	} else if (syftboxStatus.running && activeView === 'messages') {
+		startMessagesAutoRefresh(true)
+	}
+	return messagesAuthorized
+}
+
+async function refreshSyftboxState() {
+	if (!messagesAuthorized) {
+		syftboxStatus = { running: false, mode: 'Direct' }
+		updateSyftboxIndicator()
+		return
+	}
+
+	try {
+		syftboxStatus = await invoke('get_syftbox_state')
+	} catch (error) {
+		console.error('Failed to fetch SyftBox state:', error)
+		syftboxStatus = { running: false, mode: 'Direct' }
+	}
+
+	updateSyftboxIndicator()
+}
+
+function updateSyftboxIndicator() {
+	const indicator = document.getElementById('message-syftbox-indicator')
+	const dropdown = document.getElementById('message-syftbox-dropdown')
+	if (!indicator || !dropdown) return
+
+	if (syftboxStatus.running) {
+		indicator.textContent = 'Online'
+		indicator.classList.add('status-online')
+		indicator.classList.remove('status-offline')
+		dropdown.value = 'online'
+	} else {
+		indicator.textContent = 'Offline'
+		indicator.classList.add('status-offline')
+		indicator.classList.remove('status-online')
+		dropdown.value = 'offline'
+	}
+
+	dropdown.disabled = !messagesAuthorized
+
+	if (messagesAuthorized && syftboxStatus.running && activeView === 'messages') {
+		startMessagesAutoRefresh()
+	} else if (!syftboxStatus.running) {
+		stopMessagesAutoRefresh()
+	}
+}
+
+function startMessagesAutoRefresh(immediate = false) {
+	if (messagesRefreshInterval) return
+	if (!messagesAuthorized) return
+	if (activeView !== 'messages') return
+
+	messagesRefreshInterval = setInterval(() => {
+		if (activeView !== 'messages') return
+		if (!messagesAuthorized) return
+		if (!syftboxStatus.running) return
+		loadMessageThreads(true).catch((error) => {
+			console.error('Failed to auto refresh messages:', error)
+		})
+	}, 15000)
+
+	if (immediate) {
+		if (syftboxStatus.running) {
+			loadMessageThreads(true).catch((error) => {
+				console.error('Failed to refresh messages:', error)
+			})
+		} else {
+			loadMessageThreads(false).catch((error) => {
+				console.error('Failed to refresh messages:', error)
+			})
+		}
+	}
+}
+
+function stopMessagesAutoRefresh() {
+	if (messagesRefreshInterval) {
+		clearInterval(messagesRefreshInterval)
+		messagesRefreshInterval = null
+	}
+}
+
+async function loadMessageThreads(refresh = false) {
+	if (!messagesAuthorized) return
+	if (messagesRefreshInProgress) return
+	messagesRefreshInProgress = true
+
+	const list = document.getElementById('message-thread-list')
+	if (list && !list.innerHTML.trim()) {
+		list.innerHTML = '<div class="message-thread-empty">Loading threads...</div>'
+	}
+
+	try {
+		if (refresh) {
+			await invoke('sync_messages')
+		}
+		messageThreads = await invoke('list_message_threads', {
+			scope: messageFilter,
+			limit: 100,
+		})
+		renderMessageThreads()
+		if (activeThreadId) {
+			const exists = messageThreads.some((thread) => thread.thread_id === activeThreadId)
+			if (exists) {
+				await openThread(activeThreadId, { silent: true })
+			} else {
+				activeThreadId = null
+				activeThreadMessages = []
+				messageReplyTargetId = null
+			}
+		}
+	} catch (error) {
+		console.error('Failed to load message threads:', error)
+		if (list) {
+			list.innerHTML = `<div class="message-thread-empty">${escapeHtml(error)}</div>`
+		}
+	} finally {
+		messagesRefreshInProgress = false
+	}
+
+	updateMessagesEmptyState()
+}
+
+function renderMessageThreads() {
+	const list = document.getElementById('message-thread-list')
+	if (!list) return
+
+	list.innerHTML = ''
+
+	if (!messageThreads.length) {
+		list.innerHTML = '<div class="message-thread-empty">No messages yet.</div>'
+		return
+	}
+
+	messageThreads.forEach((thread) => {
+		const item = document.createElement('div')
+		item.className = 'message-thread-item'
+		if (thread.thread_id === activeThreadId && !isComposingNewMessage) {
+			item.classList.add('active')
+		}
+		if (thread.unread_count > 0) {
+			item.classList.add('unread')
+		}
+
+		const subject = document.createElement('div')
+		subject.className = 'message-thread-subject'
+		subject.textContent =
+			thread.subject && thread.subject.trim().length > 0 ? thread.subject : '(No Subject)'
+
+		if (thread.unread_count > 0) {
+			const unread = document.createElement('span')
+			unread.className = 'message-thread-unread'
+			unread.textContent = thread.unread_count
+			subject.appendChild(unread)
+		}
+
+		if (thread.has_project) {
+			const badge = document.createElement('span')
+			badge.className = 'message-thread-project'
+			badge.textContent = 'Project'
+			subject.appendChild(badge)
+		}
+
+		const meta = document.createElement('div')
+		meta.className = 'message-thread-meta'
+		meta.textContent = `${formatParticipants(thread.participants)} • ${formatDateTime(thread.last_message_at)}`
+
+		const preview = document.createElement('div')
+		preview.className = 'message-thread-preview'
+		preview.textContent = thread.last_message_preview
+
+		item.appendChild(subject)
+		item.appendChild(meta)
+		item.appendChild(preview)
+		item.dataset.threadId = thread.thread_id
+		item.addEventListener('click', () => {
+			openThread(thread.thread_id)
+		})
+
+		list.appendChild(item)
+	})
+}
+
+function renderConversation(messages) {
+	const container = document.getElementById('message-conversation')
+	if (!container) return
+
+	const items = messages || []
+	if (!items.length) {
+		container.innerHTML = '<div class="messages-empty-thread">No messages yet.</div>'
+		return
+	}
+
+	container.innerHTML = ''
+	items.forEach((msg) => {
+		const isOutgoing = msg.from === currentUserEmail
+		const bubble = document.createElement('div')
+		bubble.className = `message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}`
+
+		const header = document.createElement('div')
+		header.className = 'message-bubble-header'
+		header.textContent = `${msg.from} • ${formatDateTime(msg.created_at)}`
+
+		const body = document.createElement('div')
+		body.className = 'message-bubble-body'
+		const formatted = msg.body
+			? msg.body
+					.split('\n')
+					.map((line) => `<span>${escapeHtml(line)}</span>`)
+					.join('<br>')
+			: ''
+		body.innerHTML = formatted
+
+		bubble.appendChild(header)
+		bubble.appendChild(body)
+
+		const actions = document.createElement('div')
+		actions.className = 'message-bubble-actions'
+		const deleteBtn = document.createElement('button')
+		deleteBtn.type = 'button'
+		deleteBtn.className = 'message-delete-btn'
+		deleteBtn.textContent = 'Delete'
+		deleteBtn.addEventListener('click', (event) => {
+			event.stopPropagation()
+			deleteMessage(msg.id)
+		})
+		actions.appendChild(deleteBtn)
+		bubble.appendChild(actions)
+		container.appendChild(bubble)
+	})
+
+	container.scrollTop = container.scrollHeight
+}
+
+function renderProjectPanel(messages) {
+	const panel = document.getElementById('message-project-panel')
+	const details = document.getElementById('message-project-details')
+	if (!panel || !details) return
+
+	const projectMessage = (messages || []).find((msg) => {
+		if (!msg || !msg.metadata) return false
+		if (msg.metadata.project) return true
+		return false
+	})
+
+	if (!projectMessage) {
+		panel.style.display = 'none'
+		details.innerHTML = ''
+		return
+	}
+
+	const metadata = projectMessage.metadata || {}
+	const project = metadata.project || {}
+	const name = project.name || metadata.project_name || projectMessage.subject || 'Project'
+	const submission = metadata.project_location || metadata.submission_url || ''
+	const date = metadata.date || projectMessage.created_at
+
+	let html = ''
+	html += `<p><strong>Name:</strong> ${escapeHtml(name)}</p>`
+	if (submission) {
+		html += `<p><strong>Submission:</strong> ${escapeHtml(submission)}</p>`
+	}
+	if (date) {
+		html += `<p><strong>Date:</strong> ${escapeHtml(formatDateTime(date))}</p>`
+	}
+	if (project.workflow) {
+		html += `<p><strong>Workflow:</strong> ${escapeHtml(project.workflow)}</p>`
+	}
+	if (Array.isArray(metadata.assets) && metadata.assets.length) {
+		html += '<p><strong>Assets:</strong></p><ul>'
+		metadata.assets.forEach((asset) => {
+			html += `<li>${escapeHtml(asset)}</li>`
+		})
+		html += '</ul>'
+	}
+
+	details.innerHTML = html
+	panel.style.display = 'flex'
+}
+
+async function openThread(threadId, options = {}) {
+	if (!messagesAuthorized) return
+
+	activeThreadId = threadId
+	isComposingNewMessage = false
+	updateComposeVisibility(false)
+	updateMessagesEmptyState()
+
+	try {
+		const messages = await invoke('get_thread_messages', { threadId })
+		activeThreadMessages = messages
+		messageReplyTargetId = messages.length ? messages[messages.length - 1].id : null
+
+		renderConversation(messages)
+		renderProjectPanel(messages)
+
+		const summary = messageThreads.find((thread) => thread.thread_id === threadId)
+		const participants = summary ? summary.participants : collectParticipants(messages)
+
+		const subjectText = summary ? summary.subject : messages[0]?.subject
+		const subjectEl = document.getElementById('message-thread-subject')
+		if (subjectEl) {
+			subjectEl.textContent =
+				subjectText && subjectText.trim().length > 0 ? subjectText : '(No Subject)'
+		}
+		const participantsEl = document.getElementById('message-thread-participants')
+		if (participantsEl) {
+			const formatted = formatParticipants(participants)
+			participantsEl.textContent = formatted ? `Participants: ${formatted}` : ''
+		}
+
+		const recipientInput = document.getElementById('message-recipient-input')
+		if (recipientInput) {
+			recipientInput.value = getPrimaryRecipient(participants)
+			recipientInput.readOnly = true
+		}
+
+		const subjectInput = document.getElementById('message-compose-subject')
+		if (subjectInput) {
+			subjectInput.value = ''
+		}
+
+		const bodyInput = document.getElementById('message-compose-body')
+		if (bodyInput) {
+			bodyInput.value = ''
+			bodyInput.focus()
+		}
+
+		renderMessageThreads()
+	} catch (error) {
+		console.error('Failed to open thread:', error)
+	}
+
+	updateMessagesEmptyState()
+}
+
+function startNewMessage() {
+	isComposingNewMessage = true
+	activeThreadId = null
+	activeThreadMessages = []
+	messageReplyTargetId = null
+	updateComposeVisibility(true)
+
+	const subjectEl = document.getElementById('message-thread-subject')
+	if (subjectEl) subjectEl.textContent = 'New Message'
+
+	const participantsEl = document.getElementById('message-thread-participants')
+	if (participantsEl) participantsEl.textContent = 'Compose a new message'
+
+	const recipientInput = document.getElementById('message-recipient-input')
+	if (recipientInput) {
+		recipientInput.readOnly = false
+		recipientInput.value = ''
+		recipientInput.focus()
+	}
+
+	const subjectInput = document.getElementById('message-compose-subject')
+	if (subjectInput) subjectInput.value = ''
+
+	const bodyInput = document.getElementById('message-compose-body')
+	if (bodyInput) bodyInput.value = ''
+
+	const conversation = document.getElementById('message-conversation')
+	if (conversation) {
+		conversation.innerHTML = '<div class="messages-empty-thread">Compose your message below.</div>'
+	}
+
+	renderProjectPanel([])
+	renderMessageThreads()
+	updateMessagesEmptyState()
+}
+
+async function initializeMessagesTab(forceSync = false) {
+	const authorized = await ensureMessagesAuthorization()
+	if (!authorized) return
+
+	await refreshSyftboxState()
+
+	const shouldImmediate = !messagesInitialized || forceSync
+
+	if (shouldImmediate) {
+		await loadMessageThreads(true)
+	} else {
+		await loadMessageThreads(false)
+	}
+	messagesInitialized = true
+
+	updateMessagesEmptyState()
+
+	if (syftboxStatus.running) {
+		startMessagesAutoRefresh(false)
+	}
+}
+
+async function sendCurrentMessage() {
+	if (!messagesAuthorized) {
+		alert('Authorize SyftBox before sending messages.')
+		return
+	}
+
+	const bodyInput = document.getElementById('message-compose-body')
+	if (!bodyInput) return
+	const body = bodyInput.value.trim()
+	if (!body) {
+		alert('Message body cannot be empty.')
+		return
+	}
+
+	const subjectInput = document.getElementById('message-compose-subject')
+	const subject = subjectInput ? subjectInput.value.trim() : ''
+
+	const recipientInput = document.getElementById('message-recipient-input')
+	const toValue = recipientInput ? recipientInput.value.trim() : ''
+
+	if (isComposingNewMessage && !toValue) {
+		alert('Recipient email is required.')
+		return
+	}
+
+	const sendBtn = document.getElementById('message-send-btn')
+	if (sendBtn) sendBtn.disabled = true
+
+	try {
+		const payload = {
+			body,
+			subject: subject || null,
+			reply_to: !isComposingNewMessage ? messageReplyTargetId : null,
+			to: isComposingNewMessage ? toValue : null,
+		}
+
+		const result = await invoke('send_message', { request: payload })
+		isComposingNewMessage = false
+		const threadId = result.thread_id || result.id
+		setActiveMessageFilterButton('sent')
+		await loadMessageThreads(true)
+		await openThread(threadId)
+	} catch (error) {
+		console.error('Failed to send message:', error)
+		alert(`Failed to send message: ${error}`)
+	} finally {
+		if (sendBtn) sendBtn.disabled = false
+	}
+}
+
+async function deleteMessage(messageId) {
+	if (!messageId) return
+	if (!messagesAuthorized) {
+		alert('SyftBox must be authorized to manage messages.')
+		return
+	}
+
+	const confirmed = confirm('Delete this message?')
+	if (!confirmed) return
+
+	try {
+		await invoke('delete_message', { messageId })
+		await loadMessageThreads(true)
+	} catch (error) {
+		console.error('Failed to delete message:', error)
+		alert(`Failed to delete message: ${error}`)
+	}
+}
+
+async function setSyftboxTarget(target) {
+	const dropdown = document.getElementById('message-syftbox-dropdown')
+	if (dropdown) dropdown.disabled = true
+
+	try {
+		if (target === 'online') {
+			syftboxStatus = await invoke('start_syftbox_client')
+			await loadMessageThreads(true)
+			startMessagesAutoRefresh(true)
+		} else {
+			syftboxStatus = await invoke('stop_syftbox_client')
+			stopMessagesAutoRefresh()
+		}
+	} catch (error) {
+		console.error('Failed to toggle SyftBox:', error)
+		alert(`Failed to ${target === 'online' ? 'start' : 'stop'} SyftBox: ${error}`)
+	} finally {
+		if (dropdown) dropdown.disabled = false
+	}
+
+	updateSyftboxIndicator()
+}
+
 function navigateTo(viewName) {
 	// Check if import is in progress
 	if (isImportInProgress && viewName !== 'import-review') {
@@ -2962,6 +3571,7 @@ function navigateTo(viewName) {
 
 	targetView.classList.add('active')
 	targetView.style.display = ''
+	activeView = viewName
 
 	// Only update tab highlighting if this view has a corresponding tab
 	const tab = document.querySelector(`.tab[data-tab="${viewName}"]`)
@@ -2989,6 +3599,15 @@ function navigateTo(viewName) {
 		displayLogs()
 	} else if (viewName === 'settings') {
 		loadSettings()
+	} else if (viewName === 'messages') {
+		initializeMessagesTab(!messagesInitialized)
+		if (messagesAuthorized && syftboxStatus.running) {
+			startMessagesAutoRefresh(true)
+		}
+	}
+
+	if (viewName !== 'messages') {
+		stopMessagesAutoRefresh()
 	}
 }
 
@@ -3049,6 +3668,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	loadFiles()
 	loadProjects()
 	loadCommandLogs()
+	loadSettings()
 	updateSelectedFileCount()
 
 	// Initialize column resizers
@@ -3091,9 +3711,128 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	})
 
+	const messageFilterButtons = document.querySelectorAll('.message-filter')
+	messageFilterButtons.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			if (btn.classList.contains('active')) return
+			setActiveMessageFilterButton(btn.dataset.filter)
+			activeThreadId = null
+			activeThreadMessages = []
+			messageReplyTargetId = null
+			loadMessageThreads(false)
+		})
+	})
+
+	const refreshMessagesBtn = document.getElementById('refresh-messages-btn')
+	if (refreshMessagesBtn) {
+		refreshMessagesBtn.addEventListener('click', () => loadMessageThreads(true))
+	}
+
+	const newMessageBtn = document.getElementById('new-message-btn')
+	if (newMessageBtn) {
+		newMessageBtn.addEventListener('click', () => {
+			if (!messagesAuthorized) {
+				ensureMessagesAuthorization()
+				return
+			}
+			startNewMessage()
+		})
+	}
+
+	const sendMessageBtn = document.getElementById('message-send-btn')
+	if (sendMessageBtn) {
+		sendMessageBtn.addEventListener('click', sendCurrentMessage)
+	}
+
+	const syftboxDropdown = document.getElementById('message-syftbox-dropdown')
+	if (syftboxDropdown) {
+		syftboxDropdown.addEventListener('change', (event) => {
+			const target = event.target.value
+			if (
+				(target === 'online' && syftboxStatus.running) ||
+				(target === 'offline' && !syftboxStatus.running)
+			) {
+				return
+			}
+			setSyftboxTarget(target)
+		})
+	}
+
+	const messagesAuthBtn = document.getElementById('messages-auth-btn')
+	if (messagesAuthBtn) {
+		messagesAuthBtn.addEventListener('click', async () => {
+			await handleSyftBoxAuthentication()
+			await initializeMessagesTab(true)
+		})
+	}
+
+	const projectBtn = document.getElementById('message-view-project-btn')
+	if (projectBtn) {
+		projectBtn.addEventListener('click', () => navigateTo('projects'))
+	}
+
+	const composeBody = document.getElementById('message-compose-body')
+	if (composeBody) {
+		composeBody.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+				event.preventDefault()
+				sendCurrentMessage()
+			}
+		})
+	}
+
+	const emptyStartBtn = document.getElementById('empty-start-message-btn')
+	if (emptyStartBtn) {
+		emptyStartBtn.addEventListener('click', () => {
+			if (!messagesAuthorized) {
+				ensureMessagesAuthorization()
+				return
+			}
+			startNewMessage()
+		})
+	}
+
+	const deleteThreadBtn = document.getElementById('delete-thread-btn')
+	if (deleteThreadBtn) {
+		deleteThreadBtn.addEventListener('click', async () => {
+			if (!activeThreadId) return
+			if (!messagesAuthorized) {
+				alert('SyftBox must be authorized to manage messages.')
+				return
+			}
+			if (!confirm('Delete all messages in this thread?')) {
+				return
+			}
+			try {
+				await invoke('delete_thread', { threadId: activeThreadId })
+				activeThreadId = null
+				activeThreadMessages = []
+				messageReplyTargetId = null
+				isComposingNewMessage = true
+				updateComposeVisibility(true)
+				renderConversation([])
+				renderProjectPanel([])
+				await loadMessageThreads(true)
+				if (messageThreads.length > 0) {
+					const nextThread = messageThreads[0]
+					await openThread(nextThread.thread_id)
+				} else {
+					startNewMessage()
+				}
+			} catch (error) {
+				console.error('Failed to delete thread:', error)
+				alert(`Failed to delete thread: ${error}`)
+			}
+		})
+	}
+
+	setActiveMessageFilterButton(messageFilter)
+
 	document.getElementById('done-btn').addEventListener('click', () => {
 		navigateTo('home')
 	})
+
+	updateComposeVisibility(false)
 
 	// File type tab switching
 	document.querySelectorAll('.file-type-tab').forEach((tab) => {
