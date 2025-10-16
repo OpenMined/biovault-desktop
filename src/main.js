@@ -2,6 +2,8 @@ const { invoke } = window.__TAURI__.core
 const { open } = window.__TAURI__.dialog
 const { listen } = window.__TAURI__.event
 
+const shellApi = window.__TAURI__ && window.__TAURI__.shell ? window.__TAURI__.shell : null
+
 let selectedFolder = null
 let currentFiles = []
 let currentPattern = ''
@@ -575,6 +577,9 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 	}
 }
 
+let lastImportView = 'import' // Track last import sub-view visited
+let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
+let patternInputDebounce = null
 let messageThreads = []
 let messageFilter = 'inbox'
 let activeThreadId = null
@@ -596,6 +601,129 @@ function updateComposeVisibility(showRecipient) {
 	}
 	if (subjectWrapper) {
 		subjectWrapper.style.display = showRecipient ? 'block' : 'none'
+	}
+}
+
+const projectEditorState = {
+	projectId: null,
+	projectPath: '',
+	metadata: null,
+	selectedAssets: new Set(),
+	treeNodes: new Map(),
+	jupyter: {
+		running: false,
+		port: null,
+	},
+}
+
+const projectCreateState = {
+	selectedDir: null,
+	usingDefault: true,
+	defaultDir: '',
+}
+
+function isLikelyEmail(value) {
+	const trimmed = value ? value.trim() : ''
+	if (!trimmed) return false
+	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+	return emailRegex.test(trimmed)
+}
+
+async function openInExternalBrowser(url) {
+	if (shellApi && typeof shellApi.open === 'function') {
+		try {
+			await shellApi.open(url)
+			return
+		} catch (err) {
+			console.warn('shell.open failed, falling back to window.open:', err)
+		}
+	}
+
+	try {
+		await invoke('open_url', { url })
+		return
+	} catch (error) {
+		console.warn('invoke("open_url") failed, fallback to window.open:', error)
+	}
+
+	window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+async function confirmWithDialog(message, options = {}) {
+	if (window.__TAURI__?.dialog?.confirm) {
+		return await window.__TAURI__.dialog.confirm(message, options)
+	}
+	return window.confirm(message)
+}
+
+async function handleDeleteProject(project) {
+	const name = project.name || project.project_path
+	const prompt = project.orphaned
+		? `Are you sure you want to delete the folder "${project.project_path}"? This cannot be undone.`
+		: `Are you sure you want to delete project "${name}"? This will remove the project directory and cannot be undone.`
+
+	const confirmed = await confirmWithDialog(prompt, {
+		title: 'Delete Project',
+		type: 'warning',
+	})
+
+	if (!confirmed) return
+
+	const modalMsg = project.orphaned
+		? 'Deleting project folder...'
+		: 'Deleting project (database + folder)...'
+	showOperationModal(modalMsg)
+
+	try {
+		if (project.orphaned) {
+			await invoke('delete_project_folder', { projectPath: project.project_path })
+		} else if (project.id !== null && project.id !== undefined) {
+			await invoke('delete_project', { projectId: project.id })
+		}
+		await loadProjects()
+	} catch (error) {
+		alert(`Error deleting project: ${error}`)
+	} finally {
+		hideOperationModal()
+	}
+}
+
+let operationModalDepth = 0
+
+function setOperationButtonsDisabled(disabled) {
+	const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
+	const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+	if (launchBtn) launchBtn.disabled = disabled
+	if (resetBtn) resetBtn.disabled = disabled
+}
+
+function updateOperationModal(message) {
+	const textEl = document.getElementById('operation-modal-text')
+	if (textEl) {
+		textEl.textContent = message
+	}
+}
+
+function showOperationModal(message) {
+	operationModalDepth += 1
+	const modal = document.getElementById('operation-modal')
+	if (modal) {
+		modal.style.display = 'flex'
+	}
+	setOperationButtonsDisabled(true)
+	updateOperationModal(message)
+}
+
+function hideOperationModal() {
+	if (operationModalDepth > 0) {
+		operationModalDepth -= 1
+	}
+	if (operationModalDepth === 0) {
+		const modal = document.getElementById('operation-modal')
+		if (modal) {
+			modal.style.display = 'none'
+		}
+		setOperationButtonsDisabled(false)
 	}
 }
 
@@ -640,17 +768,17 @@ function patternToRegex(pattern) {
 
 	let characterClass
 	if (afterId === '_') {
-		// Exclude underscore from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9\\-]+?)'
+		// Exclude underscore from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9\\-]+)'
 	} else if (afterId === '-') {
-		// Exclude hyphen from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9_]+?)'
+		// Exclude hyphen from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9_]+)'
 	} else if (afterId === '.') {
-		// Exclude period from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9_\\-]+?)'
+		// Exclude period from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9_\\-]+)'
 	} else {
-		// Default: include everything, but non-greedy
-		characterClass = '([a-zA-Z0-9_\\-]+?)'
+		// Default: capture typical ID characters greedily
+		characterClass = '([a-zA-Z0-9_\\-]+)'
 	}
 
 	let regex = pattern
@@ -661,21 +789,36 @@ function patternToRegex(pattern) {
 	return new RegExp(regex)
 }
 
+function normalizeNamedGroupPattern(pattern) {
+	return pattern.replace(/\(\?P<([a-zA-Z0-9_]+)>/g, '(?<$1>')
+}
+
+function buildRegexFromString(pattern) {
+	if (!pattern) return null
+
+	try {
+		return new RegExp(normalizeNamedGroupPattern(pattern))
+	} catch (error) {
+		console.warn('Invalid regex pattern provided:', pattern, error)
+		return null
+	}
+}
+
 function extractIdFromPath(path, pattern) {
 	if (!pattern) return null
 
+	const normalized = pattern.trim()
+
 	// Handle special token patterns
 	if (
-		pattern === '{parent}' ||
-		pattern === '{dirname}' ||
-		pattern === '{dir}' ||
-		pattern === '{id}/*'
+		normalized === '{parent}' ||
+		normalized === '{dirname}' ||
+		normalized === '{dir}' ||
+		normalized === '{id}/*'
 	) {
-		// Extract parent directory name
 		const parts = path.split('/')
 		const parentDir = parts[parts.length - 2]
 		if (parentDir) {
-			// Find position in full path for highlighting
 			const pathBeforeParent = parts.slice(0, -2).join('/') + '/'
 			return {
 				id: parentDir,
@@ -687,9 +830,9 @@ function extractIdFromPath(path, pattern) {
 		return null
 	}
 
-	if (pattern === '{filename}') {
-		// Extract filename without extension
+	if (normalized === '{filename}') {
 		const filename = path.split('/').pop()
+		if (!filename) return null
 		const nameWithoutExt = filename.includes('.')
 			? filename.substring(0, filename.lastIndexOf('.'))
 			: filename
@@ -701,9 +844,9 @@ function extractIdFromPath(path, pattern) {
 		}
 	}
 
-	if (pattern === '{basename}') {
-		// Extract full filename with extension
+	if (normalized === '{basename}') {
 		const filename = path.split('/').pop()
+		if (!filename) return null
 		const dir = path.substring(0, path.lastIndexOf('/') + 1)
 		return {
 			id: filename,
@@ -712,30 +855,124 @@ function extractIdFromPath(path, pattern) {
 		}
 	}
 
-	// Handle {id} patterns with regex
-	const filename = path.split('/').pop()
-	const regex = patternToRegex(pattern)
+	if (normalized.startsWith('{parent:') && normalized.endsWith('}')) {
+		const parts = path.split('/')
+		if (parts.length < 2) return null
+		const parentDir = parts[parts.length - 2]
+		const innerPattern = normalized.slice('{parent:'.length, -1)
+		const pathBeforeParent = parts.slice(0, -2).join('/') + '/'
 
-	if (!regex) return null
+		if (!parentDir) return null
 
-	const match = filename.match(regex)
-	if (match && match[1]) {
-		const dir = path.substring(0, path.lastIndexOf('/') + 1)
-		const idStart = match.index + match[0].indexOf(match[1])
-		return { id: match[1], start: dir.length + idStart, length: match[1].length }
+		if (innerPattern === '{id}') {
+			return {
+				id: parentDir,
+				start: pathBeforeParent.length,
+				length: parentDir.length,
+				isDirectory: true,
+			}
+		}
+
+		const parentRegex = patternToRegex(innerPattern)
+		if (!parentRegex) return null
+		const parentMatch = parentDir.match(parentRegex)
+		if (parentMatch && parentMatch[1]) {
+			const idStartInParent = parentMatch.index + parentMatch[0].indexOf(parentMatch[1])
+			return {
+				id: parentMatch[1],
+				start: pathBeforeParent.length + idStartInParent,
+				length: parentMatch[1].length,
+				isDirectory: true,
+			}
+		}
+		return null
 	}
-	return null
+
+	if (normalized.startsWith('{stem:') && normalized.endsWith('}')) {
+		const filename = path.split('/').pop()
+		if (!filename) return null
+		const stem = filename.includes('.')
+			? filename.substring(0, filename.lastIndexOf('.'))
+			: filename
+		const dir = path.substring(0, path.lastIndexOf('/') + 1)
+		const innerPattern = normalized.slice('{stem:'.length, -1)
+
+		if (innerPattern === '{id}') {
+			return {
+				id: stem,
+				start: dir.length,
+				length: stem.length,
+			}
+		}
+
+		const stemRegex = patternToRegex(innerPattern)
+		if (!stemRegex) return null
+		const stemMatch = stem.match(stemRegex)
+		if (stemMatch && stemMatch[1]) {
+			const idStartInStem = stemMatch.index + stemMatch[0].indexOf(stemMatch[1])
+			return {
+				id: stemMatch[1],
+				start: dir.length + idStartInStem,
+				length: stemMatch[1].length,
+			}
+		}
+		return null
+	}
+
+	if (normalized.includes('{id}')) {
+		const filename = path.split('/').pop()
+		const regex = patternToRegex(normalized)
+
+		if (!regex || !filename) return null
+
+		const match = regex.exec(filename)
+		if (match && match[1]) {
+			const dir = path.substring(0, path.lastIndexOf('/') + 1)
+			const idStart = match.index + match[0].indexOf(match[1])
+			return { id: match[1], start: dir.length + idStart, length: match[1].length }
+		}
+		return null
+	}
+
+	const regex = buildRegexFromString(normalized)
+	if (!regex) return null
+	const match = regex.exec(path)
+	if (!match) return null
+
+	const groups = match.groups || {}
+	const extractedId = groups.id || match[1]
+	if (!extractedId) return null
+
+	const matchIndex = typeof match.index === 'number' ? match.index : path.indexOf(match[0])
+	const idStartWithinMatch = match[0].indexOf(extractedId)
+	const start = matchIndex + (idStartWithinMatch >= 0 ? idStartWithinMatch : 0)
+
+	return { id: extractedId, start, length: extractedId.length }
 }
 
-function highlightPattern(path, pattern) {
-	const result = extractIdFromPath(path, pattern)
+function highlightPath(path, pattern, fallbackId = '') {
+	const normalizedPattern = pattern ? pattern.trim() : ''
+	const extraction = normalizedPattern ? extractIdFromPath(path, normalizedPattern) : null
 
-	if (result) {
-		const before = path.substring(0, result.start)
-		const highlighted = path.substring(result.start, result.start + result.length)
-		const after = path.substring(result.start + result.length)
-
+	if (extraction && extraction.id) {
+		const before = path.substring(0, extraction.start)
+		const highlighted = path.substring(extraction.start, extraction.start + extraction.length)
+		const after = path.substring(extraction.start + extraction.length)
 		return `<span style="color: #666;">${before}</span><span class="highlight">${highlighted}</span><span style="color: #666;">${after}</span>`
+	}
+
+	const candidateId = fallbackId ? fallbackId.toString() : ''
+	if (candidateId) {
+		let index = path.indexOf(candidateId)
+		if (index === -1) {
+			index = path.toLowerCase().indexOf(candidateId.toLowerCase())
+		}
+		if (index !== -1) {
+			const before = path.substring(0, index)
+			const highlighted = path.substring(index, index + candidateId.length)
+			const after = path.substring(index + candidateId.length)
+			return `<span style="color: #666;">${before}</span><span class="highlight">${highlighted}</span><span style="color: #666;">${after}</span>`
+		}
 	}
 
 	const filename = path.split('/').pop()
@@ -890,11 +1127,15 @@ function renderFiles() {
 
 	// Sort files
 	const sortedFiles = sortFiles(currentFiles)
+	const activePattern = currentPattern ? currentPattern.trim() : ''
 
 	sortedFiles.forEach((file) => {
 		const li = document.createElement('li')
 		const alreadyImported = existingFilePaths.has(file)
 		const metadata = getFileMetadata(file)
+		const manualId = fileParticipantIds[file] || ''
+		const autoId = autoParticipantIds[file] || ''
+		const effectiveId = manualId || autoId || ''
 
 		// Checkbox column
 		const checkboxDiv = document.createElement('div')
@@ -925,7 +1166,7 @@ function renderFiles() {
 		// Path column (directory only) with highlighting
 		const pathDiv = document.createElement('div')
 		pathDiv.className = 'file-path col-path'
-		pathDiv.innerHTML = highlightPattern(file, currentPattern)
+		pathDiv.innerHTML = highlightPath(file, activePattern, effectiveId)
 		pathDiv.title = file // Full path on hover
 		pathDiv.style.width = `${columnWidths.path}px`
 		if (alreadyImported) {
@@ -957,19 +1198,18 @@ function renderFiles() {
 		input.placeholder = 'Enter ID'
 
 		// Extract ID if pattern exists
-		const extracted = extractIdFromPath(file, currentPattern)
-		if (extracted && extracted.id) {
-			console.log(`✅ Extracted participant ID for ${file}: ${extracted.id}`)
-			input.value = extracted.id
+		if (manualId) {
+			input.value = manualId
+			input.classList.add('manual')
+			input.classList.remove('extracted')
+		} else if (autoId) {
+			input.value = autoId
 			input.classList.add('extracted')
-			fileParticipantIds[file] = extracted.id
-			console.log(`📝 Stored in fileParticipantIds[${file}] = ${fileParticipantIds[file]}`)
+			input.classList.remove('manual')
 		} else {
-			console.log(`❌ No extraction for ${file}, pattern: ${currentPattern}`)
-			input.value = fileParticipantIds[file] || ''
-			if (fileParticipantIds[file]) {
-				input.classList.add('manual')
-			}
+			input.value = ''
+			input.classList.remove('manual')
+			input.classList.remove('extracted')
 		}
 
 		// Update map when user edits
@@ -977,12 +1217,16 @@ function renderFiles() {
 			const value = e.target.value.trim()
 			if (value) {
 				fileParticipantIds[file] = value
+				delete autoParticipantIds[file]
 				input.classList.remove('extracted')
 				input.classList.add('manual')
 			} else {
 				delete fileParticipantIds[file]
 				input.classList.remove('manual')
 				input.classList.remove('extracted')
+				if (currentPattern) {
+					void applyPattern(currentPattern)
+				}
 			}
 			updateImportButton()
 		})
@@ -1022,28 +1266,179 @@ function renderFiles() {
 	updateImportButton()
 }
 
-async function updatePatternSuggestions() {
-	if (currentFiles.length === 0) return
+function markActivePattern(pattern) {
+	const normalized = pattern ? pattern.trim() : ''
+	const patternCards = document.querySelectorAll('.pattern-card')
+	patternCards.forEach((card) => {
+		const macroValue = card.dataset.macro
+		const regexValue = card.dataset.regex
+		const macroChip = card.querySelector('[data-pattern-type="macro"]')
+		const regexChip = card.querySelector('[data-pattern-type="regex"]')
 
-	const suggestions = await invoke('suggest_patterns', { files: currentFiles })
+		const macroActive = normalized && macroValue === normalized
+		const regexActive = normalized && regexValue === normalized
+
+		card.classList.toggle('active', macroActive || regexActive)
+		if (macroChip) {
+			macroChip.classList.toggle('active', macroActive)
+		}
+		if (regexChip) {
+			regexChip.classList.toggle('active', regexActive)
+		}
+	})
+}
+
+async function applyPattern(pattern) {
+	const normalized = pattern ? pattern.trim() : ''
+	const patternInput = document.getElementById('custom-pattern')
+	if (patternInput && patternInput.value.trim() !== normalized) {
+		patternInput.value = normalized
+	}
+	currentPattern = normalized
+	markActivePattern(normalized)
+
+	if (!normalized || currentFiles.length === 0) {
+		autoParticipantIds = {}
+		renderFiles()
+		updateImportButton()
+		return
+	}
+
+	try {
+		const results = await invoke('extract_ids_for_files', {
+			files: currentFiles,
+			pattern: normalized,
+		})
+
+		autoParticipantIds = {}
+		Object.entries(results || {}).forEach(([filePath, value]) => {
+			if (value !== null && value !== undefined && `${value}`.trim() !== '') {
+				autoParticipantIds[filePath] = `${value}`.trim()
+			}
+		})
+	} catch (error) {
+		console.error('Failed to extract IDs for pattern:', error)
+		autoParticipantIds = {}
+	}
+
+	renderFiles()
+	updateImportButton()
+}
+
+async function copyToClipboard(text) {
+	try {
+		await navigator.clipboard.writeText(text)
+	} catch (error) {
+		console.error('Clipboard error:', error)
+		throw error
+	}
+}
+
+async function updatePatternSuggestions() {
 	const container = document.getElementById('pattern-suggestions')
+	if (!container) return
+
+	if (currentFiles.length === 0) {
+		container.innerHTML =
+			'<div class="pattern-empty">Select a folder and file type to detect patterns.</div>'
+		markActivePattern('')
+		return
+	}
+
+	container.innerHTML = '<div class="pattern-loading">Analyzing filenames for patterns…</div>'
+
+	let suggestions = []
+	try {
+		suggestions = await invoke('suggest_patterns', { files: currentFiles })
+	} catch (error) {
+		console.error('Failed to fetch pattern suggestions:', error)
+		container.innerHTML =
+			'<div class="pattern-error">Unable to detect patterns. Try a different folder or check the console for details.</div>'
+		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		return
+	}
+
+	if (!suggestions || suggestions.length === 0) {
+		container.innerHTML =
+			'<div class="pattern-empty">No ID patterns detected. Try selecting a different file type or adjust your dataset.</div>'
+		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		return
+	}
+
 	container.innerHTML = ''
 
 	suggestions.forEach((sugg) => {
-		const btn = document.createElement('button')
-		btn.className = 'pattern-btn'
-		btn.textContent = sugg.pattern
-		btn.title = sugg.description
-		btn.addEventListener('click', () => {
-			document.querySelectorAll('.pattern-btn').forEach((b) => b.classList.remove('active'))
-			btn.classList.add('active')
-			document.getElementById('custom-pattern').value = sugg.pattern
-			currentPattern = sugg.pattern
-			renderFiles()
-			updateImportButton()
+		const macroValue = (sugg.pattern || '').trim()
+		const regexValue = (sugg.regex_pattern || '').trim()
+
+		const card = document.createElement('div')
+		card.className = 'pattern-card'
+		card.dataset.macro = macroValue
+		card.dataset.regex = regexValue
+
+		const title = document.createElement('div')
+		title.className = 'pattern-card-title'
+		title.textContent = sugg.description
+		card.appendChild(title)
+
+		const chipRow = document.createElement('div')
+		chipRow.className = 'pattern-card-chips'
+
+		const macroChip = document.createElement('button')
+		macroChip.className = 'pattern-chip pattern-chip--macro'
+		macroChip.dataset.patternType = 'macro'
+		macroChip.textContent = macroValue
+		macroChip.title = 'Use macro pattern'
+		macroChip.addEventListener('click', () => {
+			void applyPattern(macroValue)
 		})
-		container.appendChild(btn)
+
+		chipRow.appendChild(macroChip)
+
+		if (regexValue) {
+			const regexChip = document.createElement('button')
+			regexChip.className = 'pattern-chip pattern-chip--regex'
+			regexChip.dataset.patternType = 'regex'
+			regexChip.textContent = regexValue
+			regexChip.title = 'Use regex pattern'
+			regexChip.addEventListener('click', () => {
+				void applyPattern(regexValue)
+			})
+			chipRow.appendChild(regexChip)
+		} else {
+			const regexLabel = document.createElement('span')
+			regexLabel.className = 'pattern-chip pattern-chip--regex disabled'
+			regexLabel.dataset.patternType = 'regex'
+			regexLabel.textContent = 'Regex unavailable'
+			chipRow.appendChild(regexLabel)
+		}
+		card.appendChild(chipRow)
+
+		if (sugg.example) {
+			const exampleRow = document.createElement('div')
+			exampleRow.className = 'pattern-card-example'
+			exampleRow.innerHTML = `<span>Example:</span> <span>${sugg.example}</span>`
+			card.appendChild(exampleRow)
+		}
+
+		if (Array.isArray(sugg.sample_extractions) && sugg.sample_extractions.length > 0) {
+			const sampleList = document.createElement('ul')
+			sampleList.className = 'pattern-card-samples'
+			sugg.sample_extractions.slice(0, 2).forEach((sample) => {
+				const samplePath = sample?.path ?? sample?.[0]
+				const sampleId = sample?.participant_id ?? sample?.[1]
+				if (!samplePath || !sampleId) return
+				const item = document.createElement('li')
+				item.innerHTML = `<span class="pattern-card-sample-path">${samplePath}</span><span class="pattern-card-sample-id">→ ${sampleId}</span>`
+				sampleList.appendChild(item)
+			})
+			card.appendChild(sampleList)
+		}
+
+		container.appendChild(card)
 	})
+
+	markActivePattern(currentPattern ? currentPattern.trim() : '')
 }
 
 async function searchFiles() {
@@ -1053,13 +1448,24 @@ async function searchFiles() {
 	if (extensions.length === 0) {
 		currentFiles = []
 		renderFiles()
+		markActivePattern('')
+		autoParticipantIds = {}
+		fileParticipantIds = {}
+		await updatePatternSuggestions()
 		return
 	}
 
 	currentFiles = await invoke('search_txt_files', { path: selectedFolder, extensions })
 	currentPattern = ''
+	autoParticipantIds = {}
+	fileParticipantIds = {}
+	const patternInput = document.getElementById('custom-pattern')
+	if (patternInput) {
+		patternInput.value = ''
+	}
 
 	renderFiles()
+	markActivePattern(currentPattern)
 	await updatePatternSuggestions()
 }
 
@@ -1130,7 +1536,13 @@ function updateImportButton() {
 	const selectedFilesArray = Array.from(selectedFiles)
 	const hasSelection = selectedFilesArray.length > 0
 	const allSelectedHaveIds =
-		hasSelection && selectedFilesArray.every((file) => fileParticipantIds[file])
+		hasSelection &&
+		selectedFilesArray.every((file) => {
+			const manual = fileParticipantIds[file]
+			const auto = autoParticipantIds[file]
+			const value = manual || auto
+			return value !== undefined && value !== null && `${value}`.trim() !== ''
+		})
 
 	btn.disabled = !allSelectedHaveIds
 }
@@ -1520,6 +1932,8 @@ function resetImportState() {
 	currentPattern = ''
 	reviewSortField = 'path'
 	reviewSortDirection = 'asc'
+	autoParticipantIds = {}
+	lastImportView = 'import'
 
 	// Reset step 1 UI elements
 	const selectedPathEl = document.getElementById('selected-path')
@@ -1554,7 +1968,7 @@ function resetImportState() {
 		customPatternInput.value = ''
 	}
 
-	document.querySelectorAll('.pattern-btn').forEach((btn) => btn.classList.remove('active'))
+	markActivePattern('')
 
 	const fileTypeSelect = document.getElementById('file-type-select')
 	if (fileTypeSelect) {
@@ -1647,6 +2061,12 @@ let reviewSortDirection = 'asc'
 
 function goToReviewStep() {
 	if (selectedFiles.size === 0) return
+
+	selectedFiles.forEach((file) => {
+		if (!fileParticipantIds[file] && autoParticipantIds[file]) {
+			fileParticipantIds[file] = autoParticipantIds[file]
+		}
+	})
 
 	// Build file-to-ID mapping
 	const filesToImport = Array.from(selectedFiles)
@@ -2218,54 +2638,92 @@ async function loadProjects() {
 		const projects = await invoke('get_projects')
 		const container = document.getElementById('projects-list')
 
-		if (projects.length === 0) {
-			container.innerHTML = '<p style="color: #666;">No projects imported yet.</p>'
+		if (!projects || projects.length === 0) {
+			container.innerHTML = '<p style="color: #666;">No projects found in BioVault.</p>'
 			return
 		}
 
 		container.innerHTML = ''
+
 		projects.forEach((project) => {
 			const card = document.createElement('div')
 			card.className = 'project-card'
-			card.innerHTML = `
-				<div class="project-info">
-					<h3>${project.name}</h3>
-					<p><strong>Author:</strong> ${project.author}</p>
-					<p><strong>Workflow:</strong> ${project.workflow}</p>
-					<p><strong>Template:</strong> ${project.template}</p>
-					<p><strong>Path:</strong> ${project.project_path}</p>
-					<p><strong>Created:</strong> ${project.created_at}</p>
-				</div>
-				<div style="display: flex; gap: 10px;">
-					<button class="open-folder-btn" data-path="${project.project_path}">Open Folder</button>
-					<button class="delete-btn" data-project-id="${project.id}">Delete</button>
-				</div>
-			`
-			container.appendChild(card)
-		})
 
-		document.querySelectorAll('.project-card .open-folder-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
+			const info = document.createElement('div')
+			info.className = 'project-info'
+
+			const title = document.createElement('h3')
+			title.textContent = project.name || '(unnamed project)'
+			if (project.orphaned) {
+				const badge = document.createElement('span')
+				badge.className = 'project-badge project-badge-orphan'
+				badge.textContent = 'Unregistered folder'
+				title.appendChild(badge)
+			}
+			info.appendChild(title)
+
+			const author = document.createElement('p')
+			author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
+			info.appendChild(author)
+
+			const workflow = document.createElement('p')
+			workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
+			info.appendChild(workflow)
+
+			const template = document.createElement('p')
+			template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
+			info.appendChild(template)
+
+			const path = document.createElement('p')
+			path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
+			info.appendChild(path)
+
+			const created = document.createElement('p')
+			const meta = project.created_at
+				? `${project.source} | Created: ${project.created_at}`
+				: project.source
+			created.innerHTML = `<strong>Source:</strong> ${meta}`
+			info.appendChild(created)
+
+			card.appendChild(info)
+
+			const actions = document.createElement('div')
+			actions.className = 'project-card-actions'
+
+			const editBtn = document.createElement('button')
+			editBtn.className = 'secondary-btn'
+			editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
+			editBtn.addEventListener('click', async () => {
+				if (project.orphaned) {
+					await openProjectEditor({ projectPath: project.project_path })
+				} else if (project.id !== null && project.id !== undefined) {
+					await openProjectEditor({ projectId: project.id })
+				}
+			})
+			actions.appendChild(editBtn)
+
+			const openBtn = document.createElement('button')
+			openBtn.className = 'open-folder-btn'
+			openBtn.textContent = 'Open Folder'
+			openBtn.addEventListener('click', async () => {
 				try {
-					await invoke('open_folder', { path: e.target.dataset.path })
+					await invoke('open_folder', { path: project.project_path })
 				} catch (error) {
 					alert(`Error opening folder: ${error}`)
 				}
 			})
-		})
+			actions.appendChild(openBtn)
 
-		document.querySelectorAll('.project-card .delete-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				const projectId = parseInt(e.target.dataset.projectId)
-				if (confirm('Are you sure you want to delete this project? This will remove all files.')) {
-					try {
-						await invoke('delete_project', { projectId })
-						await loadProjects()
-					} catch (error) {
-						alert(`Error deleting project: ${error}`)
-					}
-				}
+			const deleteBtn = document.createElement('button')
+			deleteBtn.className = 'delete-btn'
+			deleteBtn.textContent = 'Delete'
+			deleteBtn.addEventListener('click', async () => {
+				await handleDeleteProject(project)
 			})
+			actions.appendChild(deleteBtn)
+
+			card.appendChild(actions)
+			container.appendChild(card)
 		})
 	} catch (error) {
 		console.error('Error loading projects:', error)
@@ -2315,19 +2773,38 @@ async function importProject(overwrite = false) {
 	}
 }
 
-function showCreateProjectModal() {
-	console.log('showCreateProjectModal called')
+async function fetchDefaultProjectPath(name) {
+	const trimmed = name ? name.trim() : ''
+	try {
+		return await invoke('get_default_project_path', {
+			name: trimmed ? trimmed : null,
+		})
+	} catch (error) {
+		console.error('Failed to fetch default project path:', error)
+		return ''
+	}
+}
+
+async function showCreateProjectModal() {
 	const modal = document.getElementById('create-project-modal')
+	const nameInput = document.getElementById('new-project-name')
+	const templateSelect = document.getElementById('new-project-template')
+	const pathInput = document.getElementById('new-project-path')
+
+	nameInput.value = ''
+	nameInput.autocapitalize = 'none'
+	nameInput.autocorrect = 'off'
+	nameInput.spellcheck = false
+	templateSelect.value = ''
+	projectCreateState.selectedDir = null
+	projectCreateState.usingDefault = true
+
+	const defaultPath = await fetchDefaultProjectPath('')
+	projectCreateState.defaultDir = defaultPath
+	pathInput.value = defaultPath
+
 	modal.style.display = 'flex'
-
-	// Reset form
-	document.getElementById('new-project-name').value = ''
-	document.getElementById('new-project-template').value = ''
-
-	// Focus on name input
-	setTimeout(() => {
-		document.getElementById('new-project-name').focus()
-	}, 100)
+	setTimeout(() => nameInput.focus(), 100)
 }
 
 function hideCreateProjectModal() {
@@ -2335,16 +2812,52 @@ function hideCreateProjectModal() {
 	modal.style.display = 'none'
 }
 
-async function createProject() {
-	console.log('createProject function called from modal')
+async function handleProjectNameInputChange() {
+	if (!projectCreateState.usingDefault) {
+		return
+	}
 
+	const nameValue = document.getElementById('new-project-name').value.trim()
+	const defaultPath = await fetchDefaultProjectPath(nameValue)
+	projectCreateState.defaultDir = defaultPath
+	document.getElementById('new-project-path').value = defaultPath
+}
+
+async function chooseProjectDirectory() {
+	try {
+		const selection = await open({ directory: true, multiple: false })
+		if (!selection) {
+			return
+		}
+
+		const chosen = Array.isArray(selection) ? selection[0] : selection
+		if (!chosen) {
+			return
+		}
+
+		projectCreateState.selectedDir = chosen
+		projectCreateState.usingDefault = false
+		document.getElementById('new-project-path').value = chosen
+	} catch (error) {
+		console.error('Folder selection cancelled or failed:', error)
+	}
+}
+
+async function resetProjectDirectory() {
+	projectCreateState.selectedDir = null
+	projectCreateState.usingDefault = true
+	const nameValue = document.getElementById('new-project-name').value.trim()
+	const defaultPath = await fetchDefaultProjectPath(nameValue)
+	projectCreateState.defaultDir = defaultPath
+	document.getElementById('new-project-path').value = defaultPath
+}
+
+async function createProjectFromModal() {
 	const nameInput = document.getElementById('new-project-name')
 	const templateSelect = document.getElementById('new-project-template')
 	const confirmBtn = document.getElementById('create-project-confirm')
 
 	const projectName = nameInput.value.trim()
-	const example = templateSelect.value || null
-
 	if (!projectName) {
 		await window.__TAURI__.dialog.message('Please enter a project name', {
 			title: 'Name Required',
@@ -2354,36 +2867,473 @@ async function createProject() {
 		return
 	}
 
-	console.log('Creating project:', { name: projectName, example })
+	const example = templateSelect.value || null
+	const directory = projectCreateState.selectedDir
 
 	confirmBtn.disabled = true
 	confirmBtn.textContent = 'Creating...'
 
 	try {
-		const result = await invoke('create_project', { name: projectName, example })
-		console.log('Project created:', result)
-
-		// Hide modal
+		const project = await invoke('create_project', {
+			name: projectName,
+			example,
+			directory: directory || null,
+		})
 		hideCreateProjectModal()
-
-		// Reload projects list
 		await loadProjects()
-
-		// Show success message
-		await window.__TAURI__.dialog.message(`Project "${projectName}" created successfully!`, {
-			title: 'Success',
-			type: 'info',
-		})
+		await openProjectEditor({ projectId: project.id })
 	} catch (error) {
-		console.error('Create project error:', error)
 		const errorStr = String(error)
-		await window.__TAURI__.dialog.message(`Error creating project: ${errorStr}`, {
-			title: 'Error',
-			type: 'error',
-		})
+		console.error('Create project error:', errorStr)
+		const targetPath = directory || projectCreateState.defaultDir
+		if (errorStr.includes('project.yaml already exists') && targetPath) {
+			const shouldOpen = confirm(`${errorStr}\n\nOpen the project editor for ${targetPath}?`)
+			if (shouldOpen) {
+				hideCreateProjectModal()
+				await openProjectEditor({ projectPath: targetPath })
+			}
+		} else {
+			await window.__TAURI__.dialog.message(`Error creating project: ${errorStr}`, {
+				title: 'Error',
+				type: 'error',
+			})
+		}
 	} finally {
 		confirmBtn.disabled = false
-		confirmBtn.textContent = 'Create'
+		confirmBtn.textContent = 'Create Project'
+	}
+}
+
+async function openProjectEditor({ projectId = null, projectPath = null }) {
+	if (!projectId && !projectPath) {
+		alert('Unable to open project editor: missing project identifier')
+		return
+	}
+
+	try {
+		const payload = await invoke('load_project_editor', {
+			projectId,
+			projectPath,
+		})
+
+		projectEditorState.projectId = payload.project_id ?? null
+		projectEditorState.projectPath = payload.project_path
+		projectEditorState.metadata = payload.metadata
+		projectEditorState.selectedAssets = new Set(
+			(payload.metadata.assets || []).map((asset) => asset.replace(/\\/g, '/')),
+		)
+		projectEditorState.treeNodes = new Map()
+		projectEditorState.jupyter = {
+			running: false,
+			port: null,
+		}
+
+		renderProjectEditor(payload)
+		await refreshJupyterStatus(true)
+		navigateTo('project-edit')
+	} catch (error) {
+		console.error('Failed to load project editor:', error)
+		alert(`Error loading project: ${error}`)
+	}
+}
+
+function renderProjectEditor(data) {
+	const pathEl = document.getElementById('project-edit-path')
+	pathEl.textContent = data.project_path || ''
+
+	document.getElementById('project-edit-name').value = data.metadata.name || ''
+	document.getElementById('project-edit-author').value = data.metadata.author || ''
+	document.getElementById('project-edit-workflow').value = data.metadata.workflow || ''
+	document.getElementById('project-edit-template').value = data.metadata.template || ''
+
+	const treeContainer = document.getElementById('project-file-tree')
+	treeContainer.innerHTML = ''
+	projectEditorState.treeNodes.clear()
+
+	if (!data.file_tree || data.file_tree.length === 0) {
+		treeContainer.innerHTML =
+			'<p style="color: #666; font-size: 13px;">No files found in this folder.</p>'
+	} else {
+		renderProjectTree(data.file_tree, treeContainer, null)
+		projectEditorState.selectedAssets.forEach((assetPath) => {
+			const info = projectEditorState.treeNodes.get(assetPath)
+			if (!info) return
+			setNodeAndChildren(assetPath, true)
+			updateAncestorStates(info.parent)
+		})
+	}
+
+	const statusEl = document.getElementById('project-edit-status')
+	if (data.has_project_yaml) {
+		statusEl.textContent = ''
+		statusEl.style.color = '#666'
+	} else {
+		statusEl.textContent = 'No project.yaml detected. Saving will create one automatically.'
+		statusEl.style.color = '#ff9800'
+	}
+
+	updateJupyterControls()
+}
+
+function renderProjectTree(nodes, container, parentPath) {
+	nodes.forEach((node) => {
+		const path = node.path
+		if (node.is_dir) {
+			if (node.name === '.venv') {
+				return
+			}
+			const details = document.createElement('details')
+			details.open = true
+			const summary = document.createElement('summary')
+			summary.className = 'tree-node'
+
+			const children = Array.isArray(node.children) ? node.children : []
+
+			const checkbox = document.createElement('input')
+			checkbox.type = 'checkbox'
+			checkbox.dataset.path = path
+			checkbox.addEventListener('click', (e) => e.stopPropagation())
+			checkbox.addEventListener('change', (e) => {
+				setNodeAndChildren(path, e.target.checked)
+				const info = projectEditorState.treeNodes.get(path)
+				if (info) {
+					updateAncestorStates(info.parent)
+				}
+			})
+
+			const label = document.createElement('span')
+			label.textContent = `${node.name}/`
+			summary.appendChild(checkbox)
+			summary.appendChild(label)
+			details.appendChild(summary)
+
+			const childrenContainer = document.createElement('div')
+			details.appendChild(childrenContainer)
+			container.appendChild(details)
+
+			projectEditorState.treeNodes.set(path, {
+				checkbox,
+				isDir: true,
+				parent: parentPath,
+				children: children.map((child) => child.path),
+			})
+
+			renderProjectTree(children, childrenContainer, path)
+		} else {
+			const leaf = document.createElement('div')
+			leaf.className = 'tree-leaf'
+			const checkbox = document.createElement('input')
+			checkbox.type = 'checkbox'
+			checkbox.dataset.path = path
+			checkbox.addEventListener('change', (e) => {
+				if (e.target.checked) {
+					projectEditorState.selectedAssets.add(path)
+				} else {
+					projectEditorState.selectedAssets.delete(path)
+				}
+				const info = projectEditorState.treeNodes.get(path)
+				if (info) {
+					info.checkbox.indeterminate = false
+					updateAncestorStates(info.parent)
+				}
+			})
+
+			const label = document.createElement('span')
+			label.textContent = node.name
+			leaf.appendChild(checkbox)
+			leaf.appendChild(label)
+			container.appendChild(leaf)
+
+			projectEditorState.treeNodes.set(path, {
+				checkbox,
+				isDir: false,
+				parent: parentPath,
+				children: [],
+			})
+		}
+	})
+}
+
+function setNodeAndChildren(path, isChecked) {
+	const node = projectEditorState.treeNodes.get(path)
+	if (!node) return
+
+	node.checkbox.checked = isChecked
+	node.checkbox.indeterminate = false
+
+	if (node.isDir) {
+		node.children.forEach((childPath) => {
+			setNodeAndChildren(childPath, isChecked)
+		})
+	} else if (isChecked) {
+		projectEditorState.selectedAssets.add(path)
+	} else {
+		projectEditorState.selectedAssets.delete(path)
+	}
+}
+
+function updateAncestorStates(startPath) {
+	let currentPath = startPath
+	while (currentPath) {
+		const node = projectEditorState.treeNodes.get(currentPath)
+		if (!node) break
+		if (!node.isDir) {
+			currentPath = node.parent
+			continue
+		}
+
+		let allChecked = true
+		let anyChecked = false
+		node.children.forEach((childPath) => {
+			const childNode = projectEditorState.treeNodes.get(childPath)
+			if (!childNode) return
+			if (childNode.checkbox.indeterminate) {
+				anyChecked = true
+				allChecked = false
+			} else if (childNode.checkbox.checked) {
+				anyChecked = true
+			} else {
+				allChecked = false
+			}
+		})
+
+		node.checkbox.checked = anyChecked && allChecked
+		node.checkbox.indeterminate = anyChecked && !allChecked
+		currentPath = node.parent
+	}
+}
+
+function updateJupyterControls() {
+	const button = document.getElementById('project-edit-launch-jupyter-btn')
+	const statusRow = document.getElementById('project-jupyter-status')
+	if (!button) return
+
+	button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+
+	if (!statusRow) return
+
+	if (projectEditorState.jupyter.running && projectEditorState.jupyter.port) {
+		const url = `http://localhost:${projectEditorState.jupyter.port}`
+		statusRow.style.display = 'block'
+		statusRow.innerHTML =
+			'Running at <button id="jupyter-open-link" class="link-button" type="button">🔗 ' +
+			url +
+			'</button>'
+		const linkButton = document.getElementById('jupyter-open-link')
+		if (linkButton) {
+			linkButton.onclick = async () => {
+				console.log('[Jupyter] Opening lab URL:', url)
+				await openInExternalBrowser(url)
+			}
+		}
+	} else {
+		statusRow.style.display = 'none'
+		statusRow.innerHTML = ''
+	}
+}
+
+async function refreshJupyterStatus(showMessage = false) {
+	if (!projectEditorState.projectPath) return
+	const statusEl = document.getElementById('project-edit-status')
+
+	try {
+		const result = await invoke('get_jupyter_status', {
+			projectPath: projectEditorState.projectPath,
+		})
+		projectEditorState.jupyter.running = !!result.running
+		projectEditorState.jupyter.port = result.port ?? null
+		updateJupyterControls()
+		if (showMessage) {
+			if (projectEditorState.jupyter.running) {
+				const portInfo = projectEditorState.jupyter.port
+				statusEl.textContent = portInfo
+					? `Jupyter is running on port ${portInfo}.`
+					: 'Jupyter server is running.'
+				statusEl.style.color = '#28a745'
+			} else {
+				statusEl.textContent = 'Jupyter server is not running.'
+				statusEl.style.color = '#666'
+			}
+		}
+	} catch (error) {
+		console.error('Failed to fetch Jupyter status:', error)
+		if (showMessage) {
+			statusEl.textContent = `Unable to determine Jupyter status: ${error}`
+			statusEl.style.color = '#dc3545'
+		}
+	}
+}
+
+async function handleSaveProjectEditor() {
+	if (!projectEditorState.projectPath) {
+		alert('Select or create a project first')
+		return
+	}
+
+	const statusEl = document.getElementById('project-edit-status')
+	statusEl.textContent = ''
+	statusEl.style.color = '#666'
+
+	const nameValue = document.getElementById('project-edit-name').value.trim()
+	const authorInputEl = document.getElementById('project-edit-author')
+	const authorValue = authorInputEl.value.trim()
+	const workflowValue = document.getElementById('project-edit-workflow').value.trim()
+	const templateValue = document.getElementById('project-edit-template').value.trim()
+
+	if (!nameValue) {
+		alert('Project name cannot be empty')
+		return
+	}
+
+	if (!workflowValue) {
+		alert('Workflow cannot be empty')
+		return
+	}
+
+	if (authorValue && !isLikelyEmail(authorValue)) {
+		statusEl.textContent = 'Please enter a valid email address.'
+		statusEl.style.color = '#dc3545'
+		authorInputEl.focus()
+		return
+	}
+
+	statusEl.textContent = 'Saving project...'
+	statusEl.style.color = '#666'
+
+	try {
+		const assets = Array.from(projectEditorState.selectedAssets)
+		const payload = {
+			name: nameValue,
+			author: authorValue,
+			workflow: workflowValue,
+			template: templateValue || null,
+			assets,
+		}
+
+		const saved = await invoke('save_project_editor', {
+			projectId: projectEditorState.projectId,
+			projectPath: projectEditorState.projectPath,
+			payload,
+		})
+		projectEditorState.projectId = saved.id
+		projectEditorState.projectPath = saved.project_path
+		statusEl.textContent = '✅ Project saved'
+		statusEl.style.color = '#28a745'
+		await loadProjects()
+	} catch (error) {
+		console.error('Failed to save project:', error)
+		statusEl.textContent = `Error saving project: ${error}`
+		statusEl.style.color = '#dc3545'
+	}
+}
+
+async function handleLaunchJupyter() {
+	if (!projectEditorState.projectPath) {
+		alert('Select a project first')
+		return
+	}
+
+	const statusEl = document.getElementById('project-edit-status')
+	statusEl.style.color = '#666'
+
+	if (projectEditorState.jupyter.running) {
+		const message = 'Stopping Jupyter server...\nCommand: uv run --python .venv jupyter lab stop'
+		showOperationModal(message)
+		statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
+		try {
+			const result = await invoke('stop_jupyter', {
+				projectPath: projectEditorState.projectPath,
+			})
+			projectEditorState.jupyter.running = !!result.running
+			projectEditorState.jupyter.port = result.port ?? null
+			updateJupyterControls()
+			statusEl.textContent = 'Jupyter server stopped.'
+			statusEl.style.color = '#666'
+			await refreshJupyterStatus(false)
+		} catch (error) {
+			console.error('Failed to stop Jupyter:', error)
+			statusEl.textContent = `Error stopping Jupyter: ${error}`
+			statusEl.style.color = '#dc3545'
+		} finally {
+			hideOperationModal()
+		}
+		return
+	}
+
+	const launchMessage =
+		'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab bioscript\n- uv run --python .venv jupyter lab'
+	showOperationModal(launchMessage)
+	statusEl.textContent =
+		'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
+
+	try {
+		const result = await invoke('launch_jupyter', {
+			projectPath: projectEditorState.projectPath,
+			pythonVersion: null,
+		})
+		projectEditorState.jupyter.running = !!result.running
+		projectEditorState.jupyter.port = result.port ?? null
+		updateJupyterControls()
+
+		if (projectEditorState.jupyter.port) {
+			const url = `http://localhost:${projectEditorState.jupyter.port}`
+			updateOperationModal('Opening browser...')
+			await openInExternalBrowser(url)
+			statusEl.textContent = `Jupyter running at ${url}`
+			statusEl.style.color = '#28a745'
+		} else {
+			statusEl.textContent = 'Jupyter server started.'
+			statusEl.style.color = '#28a745'
+		}
+		await refreshJupyterStatus(false)
+	} catch (error) {
+		console.error('Failed to launch Jupyter:', error)
+		statusEl.textContent = `Error launching Jupyter: ${error}`
+		statusEl.style.color = '#dc3545'
+	} finally {
+		hideOperationModal()
+	}
+}
+
+async function handleResetJupyter() {
+	if (!projectEditorState.projectPath) {
+		alert('Select a project first')
+		return
+	}
+
+	const confirmed = await window.__TAURI__.dialog.confirm(
+		'Resetting will delete and recreate the project virtual environment. This will remove any additional packages you installed. Continue?',
+		{ title: 'Reset Jupyter Environment', type: 'warning' },
+	)
+
+	if (!confirmed) {
+		return
+	}
+
+	const statusEl = document.getElementById('project-edit-status')
+	statusEl.textContent = 'Resetting Jupyter environment...'
+	statusEl.style.color = '#666'
+	const modalMessage =
+		'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab bioscript'
+	showOperationModal(modalMessage)
+
+	try {
+		const result = await invoke('reset_jupyter', {
+			projectPath: projectEditorState.projectPath,
+			pythonVersion: null,
+		})
+		projectEditorState.jupyter.running = !!result.status.running
+		projectEditorState.jupyter.port = result.status.port ?? null
+		updateJupyterControls()
+		statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
+		statusEl.style.color = '#28a745'
+		await refreshJupyterStatus(true)
+	} catch (error) {
+		console.error('Failed to reset Jupyter:', error)
+		statusEl.textContent = `Error resetting Jupyter: ${error}`
+		statusEl.style.color = '#dc3545'
+	} finally {
+		hideOperationModal()
 	}
 }
 
@@ -3458,6 +4408,17 @@ async function setSyftboxTarget(target) {
 }
 
 function navigateTo(viewName) {
+	if (!viewName) {
+		return
+	}
+
+	const importSubViews = ['import', 'import-review', 'import-results']
+	const isImportSubView = importSubViews.includes(viewName)
+
+	if (viewName === 'import' && lastImportView !== 'import') {
+		viewName = lastImportView
+	}
+
 	// Check if import is in progress
 	if (isImportInProgress && viewName !== 'import-review') {
 		const confirmed = confirm(
@@ -3487,10 +4448,15 @@ function navigateTo(viewName) {
 	activeView = viewName
 
 	// Only update tab highlighting if this view has a corresponding tab
-	const tab = document.querySelector(`.tab[data-tab="${viewName}"]`)
+	const highlightTabName = isImportSubView ? 'import' : viewName
+	const tab = document.querySelector(`.tab[data-tab="${highlightTabName}"]`)
 	if (tab) {
 		document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'))
 		tab.classList.add('active')
+	}
+
+	if (isImportSubView) {
+		lastImportView = viewName
 	}
 
 	if (viewName === 'participants') {
@@ -3596,31 +4562,13 @@ window.addEventListener('DOMContentLoaded', () => {
 
 	document.querySelectorAll('.home-btn').forEach((btn) => {
 		btn.addEventListener('click', () => {
-			const nav = btn.dataset.nav
-			navigateTo(nav)
+			navigateTo(btn.dataset.nav)
 		})
 	})
 
 	document.querySelectorAll('.tab').forEach((tab) => {
 		tab.addEventListener('click', () => {
-			const targetTab = tab.dataset.tab
-
-			// Check if user is leaving import workflow
-			const currentView = document.querySelector('.tab-content.active')?.id
-			const inImportWorkflow = currentView === 'import-view' || currentView === 'import-review-view'
-			const leavingImport = inImportWorkflow && targetTab !== 'import'
-
-			if (leavingImport) {
-				if (
-					!confirm(
-						'You are in the middle of importing files. Are you sure you want to leave? Your progress will be lost.',
-					)
-				) {
-					return
-				}
-			}
-
-			navigateTo(targetTab)
+			navigateTo(tab.dataset.tab)
 		})
 	})
 
@@ -3985,7 +4933,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 		if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
 			try {
-				const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete })
+				const deleted = await invoke('delete_files_bulk', { file_ids: selectedFilesForDelete })
 				console.log(`Deleted ${deleted} file(s)`)
 				await loadFiles()
 			} catch (error) {
@@ -4056,6 +5004,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	if (backBtn) {
 		backBtn.addEventListener('click', () => {
 			console.log('Back button clicked')
+			lastImportView = 'import'
 			navigateTo('import')
 		})
 	} else {
@@ -4143,30 +5092,48 @@ window.addEventListener('DOMContentLoaded', () => {
 		renderFiles()
 	})
 	document.getElementById('create-project-btn').addEventListener('click', () => {
-		console.log('Create project button clicked')
 		showCreateProjectModal()
 	})
-
-	// Create project modal handlers
 	document.getElementById('create-project-cancel').addEventListener('click', () => {
 		hideCreateProjectModal()
 	})
-
 	document.getElementById('create-project-confirm').addEventListener('click', () => {
-		createProject()
+		createProjectFromModal()
 	})
-
-	// Allow Enter key to submit in the name input
+	document.getElementById('new-project-name').addEventListener('input', () => {
+		handleProjectNameInputChange()
+	})
 	document.getElementById('new-project-name').addEventListener('keypress', (e) => {
 		if (e.key === 'Enter') {
-			createProject()
+			createProjectFromModal()
 		}
+	})
+	document.getElementById('project-path-browse-btn').addEventListener('click', async () => {
+		await chooseProjectDirectory()
+	})
+	document.getElementById('project-path-reset-btn').addEventListener('click', async () => {
+		await resetProjectDirectory()
 	})
 	document.getElementById('import-project-btn').addEventListener('click', () => {
 		console.log('Import project button clicked')
 		importProject()
 	})
 	document.getElementById('run-btn').addEventListener('click', runAnalysis)
+	document
+		.getElementById('project-edit-save-btn')
+		.addEventListener('click', handleSaveProjectEditor)
+	document.getElementById('project-edit-cancel-btn').addEventListener('click', () => {
+		navigateTo('projects')
+	})
+	document.getElementById('project-edit-back-btn').addEventListener('click', () => {
+		navigateTo('projects')
+	})
+	document
+		.getElementById('project-edit-launch-jupyter-btn')
+		.addEventListener('click', handleLaunchJupyter)
+	document
+		.getElementById('project-edit-reset-jupyter-btn')
+		.addEventListener('click', handleResetJupyter)
 
 	document.getElementById('select-all-participants').addEventListener('change', (e) => {
 		const checkboxes = document.querySelectorAll('#run-participants-list input[type="checkbox"]')
@@ -4195,6 +5162,33 @@ window.addEventListener('DOMContentLoaded', () => {
 	const customExtension = document.getElementById('custom-extension')
 	const customExtInput = document.getElementById('custom-ext-input')
 	const customPattern = document.getElementById('custom-pattern')
+	const patternInfoBtn = document.getElementById('pattern-info-btn')
+	const patternHelp = document.getElementById('pattern-help')
+
+	if (patternInfoBtn && patternHelp) {
+		patternInfoBtn.addEventListener('click', () => {
+			const expanded = patternInfoBtn.getAttribute('aria-expanded') === 'true'
+			const nextState = !expanded
+			patternInfoBtn.setAttribute('aria-expanded', nextState)
+			patternHelp.classList.toggle('visible', nextState)
+		})
+
+		document.addEventListener('click', (event) => {
+			if (!patternHelp.classList.contains('visible')) return
+			if (event.target === patternInfoBtn || patternHelp.contains(event.target)) {
+				return
+			}
+			patternInfoBtn.setAttribute('aria-expanded', 'false')
+			patternHelp.classList.remove('visible')
+		})
+
+		document.addEventListener('keydown', (event) => {
+			if (event.key !== 'Escape') return
+			if (!patternHelp.classList.contains('visible')) return
+			patternInfoBtn.setAttribute('aria-expanded', 'false')
+			patternHelp.classList.remove('visible')
+		})
+	}
 
 	fileTypeSelect.addEventListener('change', (e) => {
 		if (e.target.value === 'custom') {
@@ -4210,26 +5204,37 @@ window.addEventListener('DOMContentLoaded', () => {
 	})
 
 	customPattern.addEventListener('input', (e) => {
-		document.querySelectorAll('.pattern-btn').forEach((b) => b.classList.remove('active'))
-		currentPattern = e.target.value
-		renderFiles()
-		updateImportButton()
+		const value = e.target.value
+		if (patternInputDebounce) {
+			clearTimeout(patternInputDebounce)
+		}
+		patternInputDebounce = setTimeout(() => {
+			patternInputDebounce = null
+			void applyPattern(value)
+		}, 300)
+	})
+
+	customPattern.addEventListener('blur', (e) => {
+		if (patternInputDebounce) {
+			clearTimeout(patternInputDebounce)
+			patternInputDebounce = null
+		}
+		void applyPattern(e.target.value)
+	})
+
+	customPattern.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') {
+			if (patternInputDebounce) {
+				clearTimeout(patternInputDebounce)
+				patternInputDebounce = null
+			}
+			void applyPattern(e.target.value)
+		}
 	})
 
 	// Wrapper for onboarding
 	async function checkDependencies() {
 		await checkDependenciesForPanel('deps-list', 'dep-details-panel', false)
-	}
-
-	// Function to copy text to clipboard
-	async function copyToClipboard(text) {
-		try {
-			await navigator.clipboard.writeText(text)
-			return true
-		} catch (err) {
-			console.error('Failed to copy:', err)
-			return false
-		}
 	}
 
 	// Function to show dependency details in right panel (expose globally)

@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -13,11 +13,11 @@ use tauri::{Emitter, Manager};
 // BioVault CLI library imports
 use biovault::cli::commands::check::DependencyCheckResult;
 use biovault::cli::commands::init;
-use biovault::cli::commands::messages::{get_message_db_path, init_message_system_quiet};
+use biovault::cli::commands::jupyter;
+use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::cli::commands::run::{execute as run_execute, RunParams};
-use biovault::data::BioVaultDb;
-use biovault::messages::{Message as VaultMessage, MessageDb, MessageThreadSummary, ThreadFilter};
-use biovault::syftbox::{start_syftbox, stop_syftbox, syftbox_state, SyftBoxState};
+use biovault::data::{BioVaultDb, ProjectFileNode, ProjectMetadata};
+use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Settings {
@@ -41,9 +41,18 @@ impl Default for Settings {
 }
 
 #[derive(Serialize, Deserialize)]
+struct SampleExtraction {
+    path: String,
+    participant_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct PatternSuggestion {
     pattern: String,
+    regex_pattern: String,
     description: String,
+    example: String,
+    sample_extractions: Vec<SampleExtraction>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,6 +147,43 @@ struct Project {
 }
 
 #[derive(Serialize)]
+struct ProjectListEntry {
+    id: Option<i64>,
+    name: String,
+    author: Option<String>,
+    workflow: Option<String>,
+    template: Option<String>,
+    project_path: String,
+    created_at: Option<String>,
+    source: String,
+    orphaned: bool,
+}
+
+#[derive(Serialize)]
+struct MessageThreadSummary {
+    thread_id: String,
+    subject: String,
+    participants: Vec<String>,
+    unread_count: usize,
+    last_message_at: Option<String>,
+    last_message_preview: String,
+    has_project: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MessageFilterScope {
+    Inbox,
+    Sent,
+    All,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SyftBoxState {
+    running: bool,
+    mode: String,
+}
+
+#[derive(Serialize)]
 struct Run {
     id: i64,
     project_id: i64,
@@ -148,15 +194,30 @@ struct Run {
     created_at: String,
 }
 
-#[derive(Deserialize)]
-#[allow(dead_code)]
-struct ProjectYaml {
-    name: String,
-    author: String,
-    workflow: String,
-    template: String,
-    assets: Vec<String>,
+#[derive(Serialize)]
+struct ProjectEditorLoadResponse {
+    project_id: Option<i64>,
+    project_path: String,
+    metadata: ProjectMetadata,
+    file_tree: Vec<ProjectFileNode>,
+    has_project_yaml: bool,
 }
+
+#[derive(Serialize)]
+struct JupyterStatus {
+    running: bool,
+    port: Option<i32>,
+}
+
+#[derive(Serialize)]
+struct JupyterResetResult {
+    status: JupyterStatus,
+    message: String,
+}
+
+const DEFAULT_JUPYTER_PYTHON: &str = "3.12";
+
+static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct AppState {
     db: Mutex<Connection>,
@@ -342,25 +403,43 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
         return Ok(vec![]);
     }
 
-    // Extract directory and extension from first file
-    let first_file = Path::new(&files[0]);
-    let dir = first_file
-        .parent()
-        .and_then(|p| p.to_str())
-        .ok_or("Invalid file path")?;
+    let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
 
-    let extension = first_file
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or("Files must have an extension")?;
-    let ext_with_dot = format!(".{}", extension);
+    let common_root = find_common_root(&paths)
+        .or_else(|| {
+            paths
+                .first()
+                .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
+        })
+        .ok_or("Unable to determine common directory")?;
+
+    let dir = common_root
+        .to_str()
+        .ok_or("Failed to convert directory to UTF-8 string")?;
+
+    // Collect unique extensions from provided files
+    let mut extensions: HashSet<String> = HashSet::new();
+    for file in &paths {
+        if let Some(ext) = file.extension().and_then(|e| e.to_str()) {
+            extensions.insert(format!(".{}", ext));
+        }
+    }
+
+    let extension_filter = if extensions.len() == 1 {
+        extensions.iter().next().map(|s| s.as_str())
+    } else {
+        None
+    };
 
     eprintln!(
-        "📂 Analyzing directory: {} with extension: {}",
-        dir, ext_with_dot
+        "📂 Analyzing directory: {}{}",
+        dir,
+        extension_filter
+            .map(|ext| format!(" with extension: {}", ext))
+            .unwrap_or_default()
     );
 
-    let result = biovault::data::suggest_patterns(dir, Some(&ext_with_dot), false)
+    let result = biovault::data::suggest_patterns(dir, extension_filter, true)
         .map_err(|e| format!("Failed to suggest patterns: {}", e))?;
 
     eprintln!("\n=== PATTERN SUGGESTIONS ===");
@@ -381,12 +460,42 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
         .into_iter()
         .map(|s| PatternSuggestion {
             pattern: s.pattern,
+            regex_pattern: s.regex_pattern,
             description: s.description,
+            example: s.example,
+            sample_extractions: s
+                .sample_extractions
+                .into_iter()
+                .map(|(path, participant_id)| SampleExtraction {
+                    path,
+                    participant_id,
+                })
+                .collect(),
         })
         .collect();
 
     eprintln!("✅ Found {} pattern suggestions", suggestions.len());
     Ok(suggestions)
+}
+
+#[tauri::command]
+fn extract_ids_for_files(
+    files: Vec<String>,
+    pattern: String,
+) -> Result<HashMap<String, Option<String>>, String> {
+    let trimmed = pattern.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(files.into_iter().map(|f| (f, None)).collect());
+    }
+
+    let mut results = HashMap::new();
+    for file in files {
+        let extracted = biovault::data::extract_id_from_pattern(&file, &trimmed)
+            .map_err(|e| format!("Failed to extract ID for {}: {}", file, e))?;
+        results.insert(file, extracted);
+    }
+
+    Ok(results)
 }
 
 /// Find the common root directory of multiple paths
@@ -777,16 +886,17 @@ async fn import_files(
 
         // Convert scanned files to CsvFileImport format
         for file_info in scan_result.files {
+            let filename = std::path::Path::new(&file_info.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
             // Extract participant ID if pattern is provided
-            let participant_id = if !pattern.is_empty() {
-                let extracted = biovault::data::extract_id_from_pattern(&file_info.path, &pattern);
-
-                let filename = std::path::Path::new(&file_info.path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-
-                match extracted {
+            let participant_id = if pattern.trim().is_empty() {
+                None
+            } else {
+                match biovault::data::extract_id_from_pattern(&file_info.path, &pattern) {
                     Ok(Some(id)) => {
                         eprintln!("   ✓ {} → participant: {}", filename, id);
                         Some(id)
@@ -796,12 +906,13 @@ async fn import_files(
                         None
                     }
                     Err(err) => {
-                        eprintln!("   ⚠️ {} → extraction error: {}", filename, err);
+                        eprintln!(
+                            "   ⚠️ {} → failed to extract using pattern '{}': {}",
+                            filename, pattern, err
+                        );
                         None
                     }
                 }
-            } else {
-                None
             };
 
             all_csv_imports.push(biovault::data::CsvFileImport {
@@ -979,30 +1090,83 @@ fn import_project(
 }
 
 #[tauri::command]
-fn get_projects(state: tauri::State<AppState>) -> Result<Vec<Project>, String> {
+fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntry>, String> {
+    use std::collections::HashSet;
+
     eprintln!("🔍 get_projects called (using library)");
 
-    let db = state.biovault_db.lock().unwrap();
-    let cli_projects = db
+    let db_guard = state.biovault_db.lock().unwrap();
+    let cli_projects = db_guard
         .list_projects()
         .map_err(|e| format!("Failed to list projects: {}", e))?;
 
-    // Convert CLI projects to desktop projects
-    let projects: Vec<Project> = cli_projects
-        .into_iter()
-        .map(|p| Project {
-            id: p.id,
-            name: p.name,
-            author: p.author,
-            workflow: p.workflow,
-            template: p.template,
-            project_path: p.project_path,
-            created_at: p.created_at,
-        })
-        .collect();
+    let mut entries: Vec<ProjectListEntry> = Vec::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
 
-    eprintln!("✅ Returning {} projects", projects.len());
-    Ok(projects)
+    for project in cli_projects {
+        let path_buf = PathBuf::from(&project.project_path);
+        let canonical = path_buf
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&project.project_path));
+        seen_paths.insert(canonical.to_string_lossy().to_string());
+
+        entries.push(ProjectListEntry {
+            id: Some(project.id),
+            name: project.name,
+            author: Some(project.author),
+            workflow: Some(project.workflow),
+            template: Some(project.template),
+            project_path: project.project_path,
+            created_at: Some(project.created_at),
+            source: "database".into(),
+            orphaned: false,
+        });
+    }
+    drop(db_guard);
+
+    let projects_dir = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to determine BioVault home: {}", e))?
+        .join("projects");
+
+    if projects_dir.exists() {
+        if let Ok(read_dir) = fs::read_dir(&projects_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+
+                let canonical = path
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone())
+                    .to_string_lossy()
+                    .to_string();
+
+                if seen_paths.contains(&canonical) {
+                    continue;
+                }
+
+                let name = entry.file_name().to_string_lossy().to_string();
+
+                entries.push(ProjectListEntry {
+                    id: None,
+                    name,
+                    author: None,
+                    workflow: None,
+                    template: None,
+                    project_path: path.to_string_lossy().to_string(),
+                    created_at: None,
+                    source: "filesystem".into(),
+                    orphaned: true,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    eprintln!("✅ Returning {} project entry(ies)", entries.len());
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -1012,12 +1176,78 @@ fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), 
         project_id
     );
 
-    let db = state.biovault_db.lock().unwrap();
-    let id_str = project_id.to_string();
-    db.delete_project(&id_str)
-        .map_err(|e| format!("Failed to delete project: {}", e))?;
+    let (project_path, project_name) = {
+        let db = state.biovault_db.lock().unwrap();
+        let id_str = project_id.to_string();
+        let project = db
+            .get_project(&id_str)
+            .map_err(|e| format!("Failed to load project {}: {}", project_id, e))?
+            .ok_or_else(|| format!("Project {} not found", project_id))?;
 
-    eprintln!("✅ Project deleted");
+        db.delete_project(&id_str)
+            .map_err(|e| format!("Failed to delete project: {}", e))?;
+
+        (project.project_path, project.name)
+    };
+
+    let path_buf = PathBuf::from(&project_path);
+    if path_buf.exists() {
+        eprintln!("🗑️  Removing project directory: {}", path_buf.display());
+        if let Err(err) = fs::remove_dir_all(&path_buf) {
+            use std::io::ErrorKind;
+            if err.kind() != ErrorKind::NotFound {
+                return Err(format!(
+                    "Project '{}' removed from database but failed to delete folder {}: {}",
+                    project_name,
+                    path_buf.display(),
+                    err
+                ));
+            }
+        }
+    }
+
+    eprintln!("✅ Project '{}' deleted", project_name);
+    Ok(())
+}
+
+fn ensure_within_projects_dir(path: &Path) -> Result<(), String> {
+    let projects_dir = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to determine BioVault home: {}", e))?
+        .join("projects");
+
+    let base = projects_dir.canonicalize().unwrap_or(projects_dir.clone());
+    let target = path
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize {}: {}", path.display(), e))?;
+
+    if !target.starts_with(&base) {
+        return Err(format!(
+            "Refusing to delete directory outside projects folder: {}",
+            target.display()
+        ));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_project_folder(project_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&project_path);
+
+    if !path.exists() {
+        eprintln!(
+            "ℹ️  Project folder already missing, considered deleted: {}",
+            project_path
+        );
+        return Ok(());
+    }
+
+    ensure_within_projects_dir(&path)?;
+
+    fs::remove_dir_all(&path)
+        .map_err(|e| format!("Failed to delete project folder {}: {}", path.display(), e))?;
+
+    eprintln!("✅ Deleted project folder {}", path.display());
     Ok(())
 }
 
@@ -1026,16 +1256,19 @@ fn create_project(
     _state: tauri::State<AppState>,
     name: String,
     example: Option<String>,
+    directory: Option<String>,
 ) -> Result<Project, String> {
     eprintln!(
         "🔍 create_project called with name: {} example: {:?}",
         name, example
     );
 
+    let target_dir = directory.map(PathBuf::from);
+
     let created = biovault::cli::commands::project_management::create_project_record(
         name.clone(),
         example,
-        None,
+        target_dir,
     )
     .map_err(|e| format!("Failed to create project: {}", e))?;
 
@@ -1053,6 +1286,312 @@ fn create_project(
         project_path: created.project_path,
         created_at: created.created_at,
     })
+}
+
+#[tauri::command]
+fn get_default_project_path(name: Option<String>) -> Result<String, String> {
+    let raw = name.unwrap_or_else(|| "new-project".to_string());
+    let trimmed = raw.trim();
+
+    let mut candidate = trimmed.replace(['/', '\\'], "-").trim().to_string();
+
+    if candidate.is_empty() || candidate == "." || candidate == ".." {
+        candidate = "new-project".to_string();
+    }
+
+    let projects_dir = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to determine BioVault home: {}", e))?
+        .join("projects");
+
+    let path = projects_dir.join(candidate);
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn load_project_editor(
+    state: tauri::State<AppState>,
+    project_id: Option<i64>,
+    project_path: Option<String>,
+) -> Result<ProjectEditorLoadResponse, String> {
+    if project_id.is_none() && project_path.is_none() {
+        return Err("Either project_id or project_path must be provided".into());
+    }
+
+    let (path_buf, resolved_project_id, fallback_name) = if let Some(id) = project_id {
+        let record = {
+            let db = state.biovault_db.lock().unwrap();
+            db.get_project(&id.to_string())
+                .map_err(|e| format!("Failed to load project {}: {}", id, e))?
+                .ok_or_else(|| format!("Project {} not found", id))?
+        };
+        (
+            PathBuf::from(&record.project_path),
+            Some(record.id),
+            Some(record.name),
+        )
+    } else {
+        let raw_path = project_path.unwrap();
+        (PathBuf::from(&raw_path), None, None)
+    };
+
+    let metadata_result = biovault::data::load_project_metadata(&path_buf)
+        .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+    let has_project_yaml = metadata_result.is_some();
+
+    let default_author = biovault::config::Config::load()
+        .map(|cfg| cfg.email)
+        .unwrap_or_default();
+
+    let directory_name = path_buf
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "project".to_string());
+
+    let mut metadata = metadata_result.unwrap_or_else(|| ProjectMetadata {
+        name: fallback_name
+            .clone()
+            .unwrap_or_else(|| directory_name.clone()),
+        author: default_author.clone(),
+        workflow: "workflow.nf".into(),
+        template: None,
+        assets: Vec::new(),
+    });
+
+    if metadata.name.trim().is_empty() {
+        metadata.name = fallback_name.unwrap_or_else(|| directory_name.clone());
+    }
+
+    if metadata.author.trim().is_empty() && !default_author.is_empty() {
+        metadata.author = default_author;
+    }
+
+    if metadata.workflow.trim().is_empty() {
+        metadata.workflow = "workflow.nf".into();
+    }
+
+    metadata.assets = metadata
+        .assets
+        .iter()
+        .map(|entry| entry.trim().replace('\\', "/"))
+        .filter(|entry| !entry.is_empty())
+        .collect();
+
+    let file_tree = biovault::data::build_project_file_tree(&path_buf)
+        .map_err(|e| format!("Failed to build file tree: {}", e))?;
+
+    Ok(ProjectEditorLoadResponse {
+        project_id: resolved_project_id,
+        project_path: path_buf.to_string_lossy().to_string(),
+        metadata,
+        file_tree,
+        has_project_yaml,
+    })
+}
+
+fn canonicalize_project_path(project_path: &str) -> String {
+    Path::new(project_path)
+        .canonicalize()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| project_path.to_string())
+}
+
+fn load_jupyter_status(project_path: &str) -> Result<JupyterStatus, String> {
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open BioVault database: {}", e))?;
+    let canonical = canonicalize_project_path(project_path);
+
+    let env = db
+        .get_dev_env(&canonical)
+        .map_err(|e| format!("Failed to query Jupyter environment: {}", e))?;
+
+    Ok(env.map_or(
+        JupyterStatus {
+            running: false,
+            port: None,
+        },
+        |env| JupyterStatus {
+            running: env.jupyter_pid.is_some() && env.jupyter_port.is_some(),
+            port: env.jupyter_port,
+        },
+    ))
+}
+
+#[tauri::command]
+fn save_project_editor(
+    state: tauri::State<AppState>,
+    project_id: Option<i64>,
+    project_path: String,
+    payload: serde_json::Value,
+) -> Result<Project, String> {
+    #[derive(Deserialize)]
+    struct SaveProjectPayload {
+        name: String,
+        author: String,
+        workflow: String,
+        #[serde(default)]
+        template: Option<String>,
+        #[serde(default)]
+        assets: Vec<String>,
+    }
+
+    let data: SaveProjectPayload =
+        serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
+
+    let name = data.name;
+    let author = data.author;
+    let workflow = data.workflow;
+    let template = data.template;
+    let assets = data.assets;
+
+    let name_trimmed = name.trim();
+    if name_trimmed.is_empty() {
+        return Err("Project name cannot be empty".into());
+    }
+
+    let workflow_trimmed = workflow.trim();
+    if workflow_trimmed.is_empty() {
+        return Err("Workflow cannot be empty".into());
+    }
+
+    let mut author_value = author.trim().to_string();
+    if author_value.is_empty() {
+        author_value = biovault::config::Config::load()
+            .map(|cfg| cfg.email)
+            .unwrap_or_default();
+    }
+
+    let template_value = template.as_ref().and_then(|t| {
+        let trimmed = t.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
+    let mut cleaned_assets: Vec<String> = assets
+        .into_iter()
+        .map(|entry| entry.trim().replace('\\', "/"))
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    cleaned_assets.sort();
+    cleaned_assets.dedup();
+
+    let project_path_buf = PathBuf::from(&project_path);
+    if !project_path_buf.exists() {
+        fs::create_dir_all(&project_path_buf).map_err(|e| {
+            format!(
+                "Failed to create project directory {}: {}",
+                project_path_buf.display(),
+                e
+            )
+        })?;
+    }
+
+    let metadata = ProjectMetadata {
+        name: name_trimmed.to_string(),
+        author: author_value.clone(),
+        workflow: workflow_trimmed.to_string(),
+        template: template_value.clone(),
+        assets: cleaned_assets,
+    };
+
+    biovault::data::save_project_metadata(&project_path_buf, &metadata)
+        .map_err(|e| format!("Failed to save project.yaml: {}", e))?;
+
+    let template_for_db = metadata
+        .template
+        .clone()
+        .unwrap_or_else(|| "custom".to_string());
+
+    let project_record = {
+        let db = state.biovault_db.lock().unwrap();
+        if let Some(id) = project_id {
+            db.update_project_by_id(
+                id,
+                &metadata.name,
+                &metadata.author,
+                &metadata.workflow,
+                &template_for_db,
+                &project_path_buf,
+            )
+            .map_err(|e| format!("Failed to update project: {}", e))?;
+
+            db.get_project(&id.to_string())
+                .map_err(|e| format!("Failed to reload project {}: {}", id, e))?
+                .ok_or_else(|| format!("Project {} not found after update", id))?
+        } else {
+            db.register_project(
+                &metadata.name,
+                &metadata.author,
+                &metadata.workflow,
+                &template_for_db,
+                &project_path_buf,
+            )
+            .map_err(|e| format!("Failed to register project: {}", e))?;
+
+            db.get_project(&metadata.name)
+                .map_err(|e| format!("Failed to load project '{}': {}", metadata.name, e))?
+                .ok_or_else(|| {
+                    format!("Project '{}' not found after registration", metadata.name)
+                })?
+        }
+    };
+
+    Ok(Project {
+        id: project_record.id,
+        name: project_record.name,
+        author: project_record.author,
+        workflow: project_record.workflow,
+        template: project_record.template,
+        project_path: project_record.project_path,
+        created_at: project_record.created_at,
+    })
+}
+
+#[tauri::command]
+fn launch_jupyter(
+    project_path: String,
+    python_version: Option<String>,
+) -> Result<JupyterStatus, String> {
+    let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
+    tauri::async_runtime::block_on(jupyter::start(&project_path, &version))
+        .map_err(|e| format!("Failed to launch Jupyter: {}", e))?;
+
+    load_jupyter_status(&project_path)
+}
+
+#[tauri::command]
+fn reset_jupyter(
+    project_path: String,
+    python_version: Option<String>,
+) -> Result<JupyterResetResult, String> {
+    let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
+    tauri::async_runtime::block_on(jupyter::reset(&project_path, &version))
+        .map_err(|e| format!("Failed to reset Jupyter: {}", e))?;
+
+    if let Err(err) = tauri::async_runtime::block_on(jupyter::stop(&project_path)) {
+        eprintln!("Warning: Failed to stop Jupyter after reset: {}", err);
+    }
+
+    let status = load_jupyter_status(&project_path)?;
+
+    Ok(JupyterResetResult {
+        status,
+        message: "Jupyter environment rebuilt. The server is stopped.".to_string(),
+    })
+}
+
+#[tauri::command]
+fn stop_jupyter(project_path: String) -> Result<JupyterStatus, String> {
+    tauri::async_runtime::block_on(jupyter::stop(&project_path))
+        .map_err(|e| format!("Failed to stop Jupyter: {}", e))?;
+
+    load_jupyter_status(&project_path)
+}
+
+#[tauri::command]
+fn get_jupyter_status(project_path: String) -> Result<JupyterStatus, String> {
+    load_jupyter_status(&project_path)
 }
 
 #[derive(Serialize)]
@@ -1981,12 +2520,12 @@ fn load_config() -> Result<biovault::config::Config, String> {
     biovault::config::Config::load().map_err(|e| format!("Failed to load BioVault config: {}", e))
 }
 
-fn parse_thread_filter(scope: Option<&str>) -> Result<ThreadFilter, String> {
+fn parse_thread_filter(scope: Option<&str>) -> Result<MessageFilterScope, String> {
     let value = scope.unwrap_or("inbox").to_lowercase();
     match value.as_str() {
-        "inbox" | "received" => Ok(ThreadFilter::Inbox),
-        "sent" | "outbox" => Ok(ThreadFilter::Sent),
-        "all" | "threads" => Ok(ThreadFilter::All),
+        "inbox" | "received" => Ok(MessageFilterScope::Inbox),
+        "sent" | "outbox" => Ok(MessageFilterScope::Sent),
+        "all" | "threads" => Ok(MessageFilterScope::All),
         other => Err(format!("Unknown message filter: {}", other)),
     }
 }
@@ -2265,8 +2804,99 @@ fn list_message_threads(
     let db =
         MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
 
-    db.list_thread_summaries(filter, limit)
-        .map_err(|e| format!("Failed to list message threads: {}", e))
+    let mut messages = db
+        .list_messages(None)
+        .map_err(|e| format!("Failed to list messages: {}", e))?;
+
+    let mut threads: HashMap<String, Vec<VaultMessage>> = HashMap::new();
+
+    for message in messages.drain(..) {
+        let key = message
+            .thread_id
+            .clone()
+            .unwrap_or_else(|| message.id.clone());
+        threads.entry(key).or_default().push(message);
+    }
+
+    let mut summaries: Vec<MessageThreadSummary> = threads
+        .into_iter()
+        .filter_map(|(thread_id, mut msgs)| {
+            if msgs.is_empty() {
+                return None;
+            }
+
+            // Sort by creation time ascending to make last() the newest message
+            msgs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+            let last_msg = msgs.last().cloned()?;
+
+            let include = match filter {
+                MessageFilterScope::All => true,
+                MessageFilterScope::Sent => msgs.iter().any(|m| m.status == MessageStatus::Sent),
+                MessageFilterScope::Inbox => msgs
+                    .iter()
+                    .any(|m| matches!(m.status, MessageStatus::Received | MessageStatus::Read)),
+            };
+
+            if !include {
+                return None;
+            }
+
+            let unread_count = msgs
+                .iter()
+                .filter(|m| m.status == MessageStatus::Received)
+                .count();
+
+            let has_project = msgs
+                .iter()
+                .any(|m| matches!(m.message_type, MessageType::Project { .. }));
+
+            let mut participants: HashSet<String> = HashSet::new();
+            for msg in &msgs {
+                if !msg.from.is_empty() {
+                    participants.insert(msg.from.clone());
+                }
+                if !msg.to.is_empty() {
+                    participants.insert(msg.to.clone());
+                }
+            }
+
+            let subject = last_msg
+                .subject
+                .clone()
+                .unwrap_or_else(|| "(No Subject)".to_string());
+
+            let preview = last_msg
+                .body
+                .split_whitespace()
+                .take(40)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let preview = if preview.len() > 200 {
+                format!("{}…", &preview[..200])
+            } else {
+                preview
+            };
+
+            Some(MessageThreadSummary {
+                thread_id,
+                subject,
+                participants: participants.into_iter().collect(),
+                unread_count,
+                last_message_at: Some(last_msg.created_at.to_rfc3339()),
+                last_message_preview: preview,
+                has_project,
+            })
+        })
+        .collect();
+
+    summaries.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+
+    if let Some(limit) = limit {
+        summaries.truncate(limit);
+    }
+
+    Ok(summaries)
 }
 
 #[tauri::command]
@@ -2290,9 +2920,6 @@ fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, String> {
         None => thread_id.clone(),
     };
 
-    db.mark_thread_as_read(&canonical_id)
-        .map_err(|e| format!("Failed to mark messages as read: {}", e))?;
-
     let mut messages = db
         .get_thread_messages(&canonical_id)
         .map_err(|e| format!("Failed to load thread messages: {}", e))?;
@@ -2302,6 +2929,15 @@ fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, String> {
             messages.push(msg);
         } else {
             return Err(format!("Thread not found: {}", thread_id));
+        }
+    }
+
+    for message in messages.iter_mut() {
+        if message.status == MessageStatus::Received {
+            db.mark_as_read(&message.id)
+                .map_err(|e| format!("Failed to mark message as read: {}", e))?;
+            message.status = MessageStatus::Read;
+            message.read_at = Some(Utc::now());
         }
     }
 
@@ -2315,7 +2951,7 @@ fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String> {
     }
 
     let config = load_config()?;
-    let (db, sync) = init_message_system_quiet(&config)
+    let (db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
     let mut message = if let Some(reply_id) = request.reply_to.as_ref() {
@@ -2380,7 +3016,7 @@ fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String> {
 #[tauri::command]
 fn sync_messages() -> Result<MessageSyncResult, String> {
     let config = load_config()?;
-    let (_db, sync) = init_message_system_quiet(&config)
+    let (_db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
     let (ids, count) = sync
@@ -2401,8 +3037,20 @@ fn mark_thread_as_read(thread_id: String) -> Result<usize, String> {
     let db =
         MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
 
-    db.mark_thread_as_read(&thread_id)
-        .map_err(|e| format!("Failed to mark messages as read: {}", e))
+    let messages = db
+        .get_thread_messages(&thread_id)
+        .map_err(|e| format!("Failed to load thread messages: {}", e))?;
+
+    let mut updated = 0;
+    for message in messages {
+        if message.status == MessageStatus::Received {
+            db.mark_as_read(&message.id)
+                .map_err(|e| format!("Failed to mark message as read: {}", e))?;
+            updated += 1;
+        }
+    }
+
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -2579,22 +3227,29 @@ fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
 
 #[tauri::command]
 fn get_syftbox_state() -> Result<SyftBoxState, String> {
-    let config = load_config()?;
-    syftbox_state(&config).map_err(|e| format!("Failed to determine SyftBox state: {}", e))
+    let running = SYFTBOX_RUNNING.load(Ordering::SeqCst);
+    Ok(SyftBoxState {
+        running,
+        mode: if running { "Online" } else { "Direct" }.to_string(),
+    })
 }
 
 #[tauri::command]
 fn start_syftbox_client() -> Result<SyftBoxState, String> {
-    let config = load_config()?;
-    start_syftbox(&config).map_err(|e| format!("Failed to start SyftBox: {}", e))?;
-    syftbox_state(&config).map_err(|e| format!("Failed to determine SyftBox state: {}", e))
+    SYFTBOX_RUNNING.store(true, Ordering::SeqCst);
+    Ok(SyftBoxState {
+        running: true,
+        mode: "Online".to_string(),
+    })
 }
 
 #[tauri::command]
 fn stop_syftbox_client() -> Result<SyftBoxState, String> {
-    let config = load_config()?;
-    stop_syftbox(&config).map_err(|e| format!("Failed to stop SyftBox: {}", e))?;
-    syftbox_state(&config).map_err(|e| format!("Failed to determine SyftBox state: {}", e))
+    SYFTBOX_RUNNING.store(false, Ordering::SeqCst);
+    Ok(SyftBoxState {
+        running: false,
+        mode: "Direct".to_string(),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2801,6 +3456,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_txt_files,
             suggest_patterns,
+            extract_ids_for_files,
             get_extensions,
             import_files,
             import_files_with_metadata,
@@ -2821,7 +3477,15 @@ pub fn run() {
             import_project,
             get_projects,
             delete_project,
+            delete_project_folder,
             create_project,
+            get_default_project_path,
+            load_project_editor,
+            save_project_editor,
+            launch_jupyter,
+            stop_jupyter,
+            get_jupyter_status,
+            reset_jupyter,
             start_analysis,
             execute_analysis,
             get_runs,
