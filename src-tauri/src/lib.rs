@@ -953,6 +953,37 @@ fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), 
     Ok(())
 }
 
+#[tauri::command]
+fn create_project(
+    _state: tauri::State<AppState>,
+    name: String,
+    example: Option<String>,
+) -> Result<Project, String> {
+    eprintln!(
+        "🔍 create_project called with name: {} example: {:?}",
+        name, example
+    );
+
+    let created =
+        biovault::cli::commands::project_management::create_project_record(name.clone(), example)
+            .map_err(|e| format!("Failed to create project: {}", e))?;
+
+    eprintln!(
+        "✅ Project '{}' created successfully via library",
+        created.name
+    );
+
+    Ok(Project {
+        id: created.id,
+        name: created.name,
+        author: created.author,
+        workflow: created.workflow,
+        template: created.template,
+        project_path: created.project_path,
+        created_at: created.created_at,
+    })
+}
+
 #[derive(Serialize)]
 struct RunStartResult {
     run_id: i64,
@@ -2441,6 +2472,7 @@ pub fn run() {
             import_project,
             get_projects,
             delete_project,
+            create_project,
             start_analysis,
             execute_analysis,
             get_runs,
