@@ -293,7 +293,8 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
 
     let common_root = find_common_root(&paths)
         .or_else(|| {
-            paths.first()
+            paths
+                .first()
                 .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
         })
         .ok_or("Unable to determine common directory")?;
