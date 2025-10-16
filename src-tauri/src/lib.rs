@@ -846,45 +846,25 @@ async fn import_files(
 
         // Convert scanned files to CsvFileImport format
         for file_info in scan_result.files {
-<<<<<<< HEAD
             let filename = std::path::Path::new(&file_info.path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .to_string();
 
             // Extract participant ID if pattern is provided
             let participant_id = if pattern.trim().is_empty() {
                 None
             } else {
-                let extracted = biovault::data::extract_id_from_pattern(&file_info.path, &pattern)
-                    .map_err(|e| {
-                        eprintln!("   ⚠️ {} → extraction error: {}", filename, e);
-                        format!("Failed to apply pattern to {}: {}", file_info.path, e)
-                    })?;
-
-                match extracted {
-                    Some(id) => {
-=======
-            // Extract participant ID if pattern is provided
-            let participant_id = if !pattern.is_empty() {
-                let filename = std::path::Path::new(&file_info.path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
                 match biovault::data::extract_id_from_pattern(&file_info.path, &pattern) {
                     Ok(Some(id)) => {
->>>>>>> main
                         eprintln!("   ✓ {} → participant: {}", filename, id);
                         Some(id)
                     }
-                    None => {
+                    Ok(None) => {
                         eprintln!("   ✗ {} → no match", filename);
                         None
                     }
-<<<<<<< HEAD
-=======
                     Err(err) => {
                         eprintln!(
                             "   ⚠️ {} → failed to extract using pattern '{}': {}",
@@ -892,7 +872,6 @@ async fn import_files(
                         );
                         None
                     }
->>>>>>> main
                 }
             };
 
@@ -1244,19 +1223,12 @@ fn create_project(
         name, example
     );
 
-<<<<<<< HEAD
-    let created = biovault::cli::commands::project_management::create_project_record(
-        name.clone(),
-        example,
-        None,
-=======
     let target_dir = directory.map(PathBuf::from);
 
     let created = biovault::cli::commands::project_management::create_project_record(
         name.clone(),
         example,
         target_dir,
->>>>>>> main
     )
     .map_err(|e| format!("Failed to create project: {}", e))?;
 
