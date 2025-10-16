@@ -41,3 +41,12 @@ jobs:
         run: |
           cargo clippy --manifest-path ./src-tauri/Cargo.toml -- -D warnings
           cargo fmt --manifest-path ./src-tauri/Cargo.toml --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Run frontend lint suite
+        run: ./lint.sh

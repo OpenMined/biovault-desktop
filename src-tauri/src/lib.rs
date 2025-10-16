@@ -1237,6 +1237,7 @@ async fn execute_analysis(
         resume: false,
         template: None,
         results_dir: Some(results_subdir.to_string_lossy().to_string()),
+        nextflow_args: Vec::new(),
     };
 
     // Call the execute function directly
