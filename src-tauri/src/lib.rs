@@ -1048,9 +1048,12 @@ fn create_project(
         name, example
     );
 
-    let created =
-        biovault::cli::commands::project_management::create_project_record(name.clone(), example)
-            .map_err(|e| format!("Failed to create project: {}", e))?;
+    let created = biovault::cli::commands::project_management::create_project_record(
+        name.clone(),
+        example,
+        None,
+    )
+    .map_err(|e| format!("Failed to create project: {}", e))?;
 
     eprintln!(
         "✅ Project '{}' created successfully via library",
