@@ -1,3 +1,9 @@
 {
-	"ignores": ["@tauri-apps/api", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-updater"]
+	"ignores": [
+		"@tauri-apps/api",
+		"@tauri-apps/plugin-dialog",
+		"@tauri-apps/plugin-updater",
+		"@tauri-apps/cli",
+		"dotenv-cli"
+	]
 }
