@@ -1589,18 +1589,49 @@
 				</div>
 				<div class="right-panel">
 					<div class="pattern-section">
-						<h3>ID Pattern Detection</h3>
+						<div class="pattern-section-header">
+							<h3>ID Pattern Detection</h3>
+							<div class="pattern-info-wrapper">
+								<button
+									type="button"
+									class="pattern-info-btn"
+									id="pattern-info-btn"
+									aria-label="How ID patterns work"
+									aria-expanded="false"
+								>
+									?
+								</button>
+								<div class="pattern-help" id="pattern-help">
+									<strong>ID Pattern Tips</strong>
+									<p>
+										Use macros like <code>{parent:{id}}</code> to pull IDs from folders, or regex
+										with a named <code>id</code> group such as
+										<code>.*/(?P&lt;id&gt;hu[A-Za-z0-9]{6})/[^/]+$</code>.
+									</p>
+									<ul>
+										<li><code>{parent:{id}}</code> → parent folder becomes the ID</li>
+										<li>
+											<code>{stem:{id}_*}</code> → capture leading digits before an underscore
+										</li>
+										<li>
+											Regex must include <code>(?P&lt;id&gt;…)</code> or another capturing group
+										</li>
+									</ul>
+								</div>
+							</div>
+						</div>
 						<div class="pattern-suggestions" id="pattern-suggestions"></div>
-						<div style="margin-top: 10px">
+						<div class="pattern-input-row">
 							<input
 								type="text"
 								id="custom-pattern"
-								placeholder="Custom pattern: e.g., case_{id}_* or {id}_X_X_*"
-								style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px"
+								class="pattern-input"
+								placeholder="Enter macro (e.g., {parent:hu{id}}) or regex with (?P&lt;id&gt;)"
 							/>
 						</div>
-						<div style="margin-top: 10px; font-size: 12px; color: #666">
-							Use {id} to mark the ID portion. Example: case_{id}_canonical.tsv
+						<div class="pattern-hint">
+							Applied patterns populate the participant column automatically. Tweak the pattern
+							above or paste your own.
 						</div>
 					</div>
 

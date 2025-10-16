@@ -37,9 +37,18 @@ impl Default for Settings {
 }
 
 #[derive(Serialize, Deserialize)]
+struct SampleExtraction {
+    path: String,
+    participant_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct PatternSuggestion {
     pattern: String,
+    regex_pattern: String,
     description: String,
+    example: String,
+    sample_extractions: Vec<SampleExtraction>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -280,25 +289,42 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
         return Ok(vec![]);
     }
 
-    // Extract directory and extension from first file
-    let first_file = Path::new(&files[0]);
-    let dir = first_file
-        .parent()
-        .and_then(|p| p.to_str())
-        .ok_or("Invalid file path")?;
+    let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
 
-    let extension = first_file
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or("Files must have an extension")?;
-    let ext_with_dot = format!(".{}", extension);
+    let common_root = find_common_root(&paths)
+        .or_else(|| {
+            paths.first()
+                .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
+        })
+        .ok_or("Unable to determine common directory")?;
+
+    let dir = common_root
+        .to_str()
+        .ok_or("Failed to convert directory to UTF-8 string")?;
+
+    // Collect unique extensions from provided files
+    let mut extensions: HashSet<String> = HashSet::new();
+    for file in &paths {
+        if let Some(ext) = file.extension().and_then(|e| e.to_str()) {
+            extensions.insert(format!(".{}", ext));
+        }
+    }
+
+    let extension_filter = if extensions.len() == 1 {
+        extensions.iter().next().map(|s| s.as_str())
+    } else {
+        None
+    };
 
     eprintln!(
-        "📂 Analyzing directory: {} with extension: {}",
-        dir, ext_with_dot
+        "📂 Analyzing directory: {}{}",
+        dir,
+        extension_filter
+            .map(|ext| format!(" with extension: {}", ext))
+            .unwrap_or_default()
     );
 
-    let result = biovault::data::suggest_patterns(dir, Some(&ext_with_dot), false)
+    let result = biovault::data::suggest_patterns(dir, extension_filter, true)
         .map_err(|e| format!("Failed to suggest patterns: {}", e))?;
 
     eprintln!("\n=== PATTERN SUGGESTIONS ===");
@@ -319,12 +345,42 @@ fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String
         .into_iter()
         .map(|s| PatternSuggestion {
             pattern: s.pattern,
+            regex_pattern: s.regex_pattern,
             description: s.description,
+            example: s.example,
+            sample_extractions: s
+                .sample_extractions
+                .into_iter()
+                .map(|(path, participant_id)| SampleExtraction {
+                    path,
+                    participant_id,
+                })
+                .collect(),
         })
         .collect();
 
     eprintln!("✅ Found {} pattern suggestions", suggestions.len());
     Ok(suggestions)
+}
+
+#[tauri::command]
+fn extract_ids_for_files(
+    files: Vec<String>,
+    pattern: String,
+) -> Result<HashMap<String, Option<String>>, String> {
+    let trimmed = pattern.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(files.into_iter().map(|f| (f, None)).collect());
+    }
+
+    let mut results = HashMap::new();
+    for file in files {
+        let extracted = biovault::data::extract_id_from_pattern(&file, &trimmed)
+            .map_err(|e| format!("Failed to extract ID for {}: {}", file, e))?;
+        results.insert(file, extracted);
+    }
+
+    Ok(results)
 }
 
 /// Find the common root directory of multiple paths
@@ -715,15 +771,17 @@ async fn import_files(
 
         // Convert scanned files to CsvFileImport format
         for file_info in scan_result.files {
-            // Extract participant ID if pattern is provided
-            let participant_id = if !pattern.is_empty() {
-                let extracted = biovault::data::extract_id_from_pattern(&file_info.path, &pattern);
+            let filename = std::path::Path::new(&file_info.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
 
-                // Log extraction
-                let filename = std::path::Path::new(&file_info.path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
+            // Extract participant ID if pattern is provided
+            let participant_id = if pattern.trim().is_empty() {
+                None
+            } else {
+                let extracted = biovault::data::extract_id_from_pattern(&file_info.path, &pattern)
+                    .map_err(|e| format!("Failed to apply pattern to {}: {}", file_info.path, e))?;
 
                 if let Some(ref id) = extracted {
                     eprintln!("   ✓ {} → participant: {}", filename, id);
@@ -732,8 +790,6 @@ async fn import_files(
                 }
 
                 extracted
-            } else {
-                None
             };
 
             all_csv_imports.push(biovault::data::CsvFileImport {
@@ -2460,6 +2516,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_txt_files,
             suggest_patterns,
+            extract_ids_for_files,
             get_extensions,
             import_files,
             import_files_with_metadata,

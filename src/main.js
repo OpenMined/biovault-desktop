@@ -17,6 +17,9 @@ let columnWidths = {
 let commandLogs = [] // Array of log entries
 let isImportInProgress = false // Track if import is currently running
 let dependencyResults = null // Store dependency check results globally
+let lastImportView = 'import' // Track last import sub-view visited
+let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
+let patternInputDebounce = null
 
 function getFileExtensions() {
 	const select = document.getElementById('file-type-select')
@@ -59,17 +62,17 @@ function patternToRegex(pattern) {
 
 	let characterClass
 	if (afterId === '_') {
-		// Exclude underscore from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9\\-]+?)'
+		// Exclude underscore from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9\\-]+)'
 	} else if (afterId === '-') {
-		// Exclude hyphen from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9_]+?)'
+		// Exclude hyphen from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9_]+)'
 	} else if (afterId === '.') {
-		// Exclude period from character class (non-greedy)
-		characterClass = '([a-zA-Z0-9_\\-]+?)'
+		// Exclude period from character class so it stops before delimiter
+		characterClass = '([a-zA-Z0-9_\\-]+)'
 	} else {
-		// Default: include everything, but non-greedy
-		characterClass = '([a-zA-Z0-9_\\-]+?)'
+		// Default: capture typical ID characters greedily
+		characterClass = '([a-zA-Z0-9_\\-]+)'
 	}
 
 	let regex = pattern
@@ -80,21 +83,36 @@ function patternToRegex(pattern) {
 	return new RegExp(regex)
 }
 
+function normalizeNamedGroupPattern(pattern) {
+	return pattern.replace(/\(\?P<([a-zA-Z0-9_]+)>/g, '(?<$1>')
+}
+
+function buildRegexFromString(pattern) {
+	if (!pattern) return null
+
+	try {
+		return new RegExp(normalizeNamedGroupPattern(pattern))
+	} catch (error) {
+		console.warn('Invalid regex pattern provided:', pattern, error)
+		return null
+	}
+}
+
 function extractIdFromPath(path, pattern) {
 	if (!pattern) return null
 
+	const normalized = pattern.trim()
+
 	// Handle special token patterns
 	if (
-		pattern === '{parent}' ||
-		pattern === '{dirname}' ||
-		pattern === '{dir}' ||
-		pattern === '{id}/*'
+		normalized === '{parent}' ||
+		normalized === '{dirname}' ||
+		normalized === '{dir}' ||
+		normalized === '{id}/*'
 	) {
-		// Extract parent directory name
 		const parts = path.split('/')
 		const parentDir = parts[parts.length - 2]
 		if (parentDir) {
-			// Find position in full path for highlighting
 			const pathBeforeParent = parts.slice(0, -2).join('/') + '/'
 			return {
 				id: parentDir,
@@ -106,9 +124,9 @@ function extractIdFromPath(path, pattern) {
 		return null
 	}
 
-	if (pattern === '{filename}') {
-		// Extract filename without extension
+	if (normalized === '{filename}') {
 		const filename = path.split('/').pop()
+		if (!filename) return null
 		const nameWithoutExt = filename.includes('.')
 			? filename.substring(0, filename.lastIndexOf('.'))
 			: filename
@@ -120,9 +138,9 @@ function extractIdFromPath(path, pattern) {
 		}
 	}
 
-	if (pattern === '{basename}') {
-		// Extract full filename with extension
+	if (normalized === '{basename}') {
 		const filename = path.split('/').pop()
+		if (!filename) return null
 		const dir = path.substring(0, path.lastIndexOf('/') + 1)
 		return {
 			id: filename,
@@ -131,30 +149,124 @@ function extractIdFromPath(path, pattern) {
 		}
 	}
 
-	// Handle {id} patterns with regex
-	const filename = path.split('/').pop()
-	const regex = patternToRegex(pattern)
+	if (normalized.startsWith('{parent:') && normalized.endsWith('}')) {
+		const parts = path.split('/')
+		if (parts.length < 2) return null
+		const parentDir = parts[parts.length - 2]
+		const innerPattern = normalized.slice('{parent:'.length, -1)
+		const pathBeforeParent = parts.slice(0, -2).join('/') + '/'
 
-	if (!regex) return null
+		if (!parentDir) return null
 
-	const match = filename.match(regex)
-	if (match && match[1]) {
-		const dir = path.substring(0, path.lastIndexOf('/') + 1)
-		const idStart = match.index + match[0].indexOf(match[1])
-		return { id: match[1], start: dir.length + idStart, length: match[1].length }
+		if (innerPattern === '{id}') {
+			return {
+				id: parentDir,
+				start: pathBeforeParent.length,
+				length: parentDir.length,
+				isDirectory: true,
+			}
+		}
+
+		const parentRegex = patternToRegex(innerPattern)
+		if (!parentRegex) return null
+		const parentMatch = parentDir.match(parentRegex)
+		if (parentMatch && parentMatch[1]) {
+			const idStartInParent = parentMatch.index + parentMatch[0].indexOf(parentMatch[1])
+			return {
+				id: parentMatch[1],
+				start: pathBeforeParent.length + idStartInParent,
+				length: parentMatch[1].length,
+				isDirectory: true,
+			}
+		}
+		return null
 	}
-	return null
+
+	if (normalized.startsWith('{stem:') && normalized.endsWith('}')) {
+		const filename = path.split('/').pop()
+		if (!filename) return null
+		const stem = filename.includes('.')
+			? filename.substring(0, filename.lastIndexOf('.'))
+			: filename
+		const dir = path.substring(0, path.lastIndexOf('/') + 1)
+		const innerPattern = normalized.slice('{stem:'.length, -1)
+
+		if (innerPattern === '{id}') {
+			return {
+				id: stem,
+				start: dir.length,
+				length: stem.length,
+			}
+		}
+
+		const stemRegex = patternToRegex(innerPattern)
+		if (!stemRegex) return null
+		const stemMatch = stem.match(stemRegex)
+		if (stemMatch && stemMatch[1]) {
+			const idStartInStem = stemMatch.index + stemMatch[0].indexOf(stemMatch[1])
+			return {
+				id: stemMatch[1],
+				start: dir.length + idStartInStem,
+				length: stemMatch[1].length,
+			}
+		}
+		return null
+	}
+
+	if (normalized.includes('{id}')) {
+		const filename = path.split('/').pop()
+		const regex = patternToRegex(normalized)
+
+		if (!regex || !filename) return null
+
+		const match = regex.exec(filename)
+		if (match && match[1]) {
+			const dir = path.substring(0, path.lastIndexOf('/') + 1)
+			const idStart = match.index + match[0].indexOf(match[1])
+			return { id: match[1], start: dir.length + idStart, length: match[1].length }
+		}
+		return null
+	}
+
+	const regex = buildRegexFromString(normalized)
+	if (!regex) return null
+	const match = regex.exec(path)
+	if (!match) return null
+
+	const groups = match.groups || {}
+	const extractedId = groups.id || match[1]
+	if (!extractedId) return null
+
+	const matchIndex = typeof match.index === 'number' ? match.index : path.indexOf(match[0])
+	const idStartWithinMatch = match[0].indexOf(extractedId)
+	const start = matchIndex + (idStartWithinMatch >= 0 ? idStartWithinMatch : 0)
+
+	return { id: extractedId, start, length: extractedId.length }
 }
 
-function highlightPattern(path, pattern) {
-	const result = extractIdFromPath(path, pattern)
+function highlightPath(path, pattern, fallbackId = '') {
+	const normalizedPattern = pattern ? pattern.trim() : ''
+	const extraction = normalizedPattern ? extractIdFromPath(path, normalizedPattern) : null
 
-	if (result) {
-		const before = path.substring(0, result.start)
-		const highlighted = path.substring(result.start, result.start + result.length)
-		const after = path.substring(result.start + result.length)
-
+	if (extraction && extraction.id) {
+		const before = path.substring(0, extraction.start)
+		const highlighted = path.substring(extraction.start, extraction.start + extraction.length)
+		const after = path.substring(extraction.start + extraction.length)
 		return `<span style="color: #666;">${before}</span><span class="highlight">${highlighted}</span><span style="color: #666;">${after}</span>`
+	}
+
+	const candidateId = fallbackId ? fallbackId.toString() : ''
+	if (candidateId) {
+		let index = path.indexOf(candidateId)
+		if (index === -1) {
+			index = path.toLowerCase().indexOf(candidateId.toLowerCase())
+		}
+		if (index !== -1) {
+			const before = path.substring(0, index)
+			const highlighted = path.substring(index, index + candidateId.length)
+			const after = path.substring(index + candidateId.length)
+			return `<span style="color: #666;">${before}</span><span class="highlight">${highlighted}</span><span style="color: #666;">${after}</span>`
+		}
 	}
 
 	const filename = path.split('/').pop()
@@ -309,11 +421,15 @@ function renderFiles() {
 
 	// Sort files
 	const sortedFiles = sortFiles(currentFiles)
+	const activePattern = currentPattern ? currentPattern.trim() : ''
 
 	sortedFiles.forEach((file) => {
 		const li = document.createElement('li')
 		const alreadyImported = existingFilePaths.has(file)
 		const metadata = getFileMetadata(file)
+		const manualId = fileParticipantIds[file] || ''
+		const autoId = autoParticipantIds[file] || ''
+		const effectiveId = manualId || autoId || ''
 
 		// Checkbox column
 		const checkboxDiv = document.createElement('div')
@@ -344,7 +460,7 @@ function renderFiles() {
 		// Path column (directory only) with highlighting
 		const pathDiv = document.createElement('div')
 		pathDiv.className = 'file-path col-path'
-		pathDiv.innerHTML = highlightPattern(file, currentPattern)
+		pathDiv.innerHTML = highlightPath(file, activePattern, effectiveId)
 		pathDiv.title = file // Full path on hover
 		pathDiv.style.width = `${columnWidths.path}px`
 		if (alreadyImported) {
@@ -376,19 +492,18 @@ function renderFiles() {
 		input.placeholder = 'Enter ID'
 
 		// Extract ID if pattern exists
-		const extracted = extractIdFromPath(file, currentPattern)
-		if (extracted && extracted.id) {
-			console.log(`✅ Extracted participant ID for ${file}: ${extracted.id}`)
-			input.value = extracted.id
+		if (manualId) {
+			input.value = manualId
+			input.classList.add('manual')
+			input.classList.remove('extracted')
+		} else if (autoId) {
+			input.value = autoId
 			input.classList.add('extracted')
-			fileParticipantIds[file] = extracted.id
-			console.log(`📝 Stored in fileParticipantIds[${file}] = ${fileParticipantIds[file]}`)
+			input.classList.remove('manual')
 		} else {
-			console.log(`❌ No extraction for ${file}, pattern: ${currentPattern}`)
-			input.value = fileParticipantIds[file] || ''
-			if (fileParticipantIds[file]) {
-				input.classList.add('manual')
-			}
+			input.value = ''
+			input.classList.remove('manual')
+			input.classList.remove('extracted')
 		}
 
 		// Update map when user edits
@@ -396,12 +511,16 @@ function renderFiles() {
 			const value = e.target.value.trim()
 			if (value) {
 				fileParticipantIds[file] = value
+				delete autoParticipantIds[file]
 				input.classList.remove('extracted')
 				input.classList.add('manual')
 			} else {
 				delete fileParticipantIds[file]
 				input.classList.remove('manual')
 				input.classList.remove('extracted')
+				if (currentPattern) {
+					void applyPattern(currentPattern)
+				}
 			}
 			updateImportButton()
 		})
@@ -441,28 +560,179 @@ function renderFiles() {
 	updateImportButton()
 }
 
-async function updatePatternSuggestions() {
-	if (currentFiles.length === 0) return
+function markActivePattern(pattern) {
+	const normalized = pattern ? pattern.trim() : ''
+	const patternCards = document.querySelectorAll('.pattern-card')
+	patternCards.forEach((card) => {
+		const macroValue = card.dataset.macro
+		const regexValue = card.dataset.regex
+		const macroChip = card.querySelector('[data-pattern-type="macro"]')
+		const regexChip = card.querySelector('[data-pattern-type="regex"]')
 
-	const suggestions = await invoke('suggest_patterns', { files: currentFiles })
+		const macroActive = normalized && macroValue === normalized
+		const regexActive = normalized && regexValue === normalized
+
+		card.classList.toggle('active', macroActive || regexActive)
+		if (macroChip) {
+			macroChip.classList.toggle('active', macroActive)
+		}
+		if (regexChip) {
+			regexChip.classList.toggle('active', regexActive)
+		}
+	})
+}
+
+async function applyPattern(pattern) {
+	const normalized = pattern ? pattern.trim() : ''
+	const patternInput = document.getElementById('custom-pattern')
+	if (patternInput && patternInput.value.trim() !== normalized) {
+		patternInput.value = normalized
+	}
+	currentPattern = normalized
+	markActivePattern(normalized)
+
+	if (!normalized || currentFiles.length === 0) {
+		autoParticipantIds = {}
+		renderFiles()
+		updateImportButton()
+		return
+	}
+
+	try {
+		const results = await invoke('extract_ids_for_files', {
+			files: currentFiles,
+			pattern: normalized,
+		})
+
+		autoParticipantIds = {}
+		Object.entries(results || {}).forEach(([filePath, value]) => {
+			if (value !== null && value !== undefined && `${value}`.trim() !== '') {
+				autoParticipantIds[filePath] = `${value}`.trim()
+			}
+		})
+	} catch (error) {
+		console.error('Failed to extract IDs for pattern:', error)
+		autoParticipantIds = {}
+	}
+
+	renderFiles()
+	updateImportButton()
+}
+
+async function copyToClipboard(text) {
+	try {
+		await navigator.clipboard.writeText(text)
+	} catch (error) {
+		console.error('Clipboard error:', error)
+		throw error
+	}
+}
+
+async function updatePatternSuggestions() {
 	const container = document.getElementById('pattern-suggestions')
+	if (!container) return
+
+	if (currentFiles.length === 0) {
+		container.innerHTML =
+			'<div class="pattern-empty">Select a folder and file type to detect patterns.</div>'
+		markActivePattern('')
+		return
+	}
+
+	container.innerHTML = '<div class="pattern-loading">Analyzing filenames for patterns…</div>'
+
+	let suggestions = []
+	try {
+		suggestions = await invoke('suggest_patterns', { files: currentFiles })
+	} catch (error) {
+		console.error('Failed to fetch pattern suggestions:', error)
+		container.innerHTML =
+			'<div class="pattern-error">Unable to detect patterns. Try a different folder or check the console for details.</div>'
+		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		return
+	}
+
+	if (!suggestions || suggestions.length === 0) {
+		container.innerHTML =
+			'<div class="pattern-empty">No ID patterns detected. Try selecting a different file type or adjust your dataset.</div>'
+		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		return
+	}
+
 	container.innerHTML = ''
 
 	suggestions.forEach((sugg) => {
-		const btn = document.createElement('button')
-		btn.className = 'pattern-btn'
-		btn.textContent = sugg.pattern
-		btn.title = sugg.description
-		btn.addEventListener('click', () => {
-			document.querySelectorAll('.pattern-btn').forEach((b) => b.classList.remove('active'))
-			btn.classList.add('active')
-			document.getElementById('custom-pattern').value = sugg.pattern
-			currentPattern = sugg.pattern
-			renderFiles()
-			updateImportButton()
+		const macroValue = (sugg.pattern || '').trim()
+		const regexValue = (sugg.regex_pattern || '').trim()
+
+		const card = document.createElement('div')
+		card.className = 'pattern-card'
+		card.dataset.macro = macroValue
+		card.dataset.regex = regexValue
+
+		const title = document.createElement('div')
+		title.className = 'pattern-card-title'
+		title.textContent = sugg.description
+		card.appendChild(title)
+
+		const chipRow = document.createElement('div')
+		chipRow.className = 'pattern-card-chips'
+
+		const macroChip = document.createElement('button')
+		macroChip.className = 'pattern-chip pattern-chip--macro'
+		macroChip.dataset.patternType = 'macro'
+		macroChip.textContent = macroValue
+		macroChip.title = 'Use macro pattern'
+		macroChip.addEventListener('click', () => {
+			void applyPattern(macroValue)
 		})
-		container.appendChild(btn)
+
+		chipRow.appendChild(macroChip)
+
+		if (regexValue) {
+			const regexChip = document.createElement('button')
+			regexChip.className = 'pattern-chip pattern-chip--regex'
+			regexChip.dataset.patternType = 'regex'
+			regexChip.textContent = regexValue
+			regexChip.title = 'Use regex pattern'
+			regexChip.addEventListener('click', () => {
+				void applyPattern(regexValue)
+			})
+			chipRow.appendChild(regexChip)
+		} else {
+			const regexLabel = document.createElement('span')
+			regexLabel.className = 'pattern-chip pattern-chip--regex disabled'
+			regexLabel.dataset.patternType = 'regex'
+			regexLabel.textContent = 'Regex unavailable'
+			chipRow.appendChild(regexLabel)
+		}
+		card.appendChild(chipRow)
+
+		if (sugg.example) {
+			const exampleRow = document.createElement('div')
+			exampleRow.className = 'pattern-card-example'
+			exampleRow.innerHTML = `<span>Example:</span> <span>${sugg.example}</span>`
+			card.appendChild(exampleRow)
+		}
+
+		if (Array.isArray(sugg.sample_extractions) && sugg.sample_extractions.length > 0) {
+			const sampleList = document.createElement('ul')
+			sampleList.className = 'pattern-card-samples'
+			sugg.sample_extractions.slice(0, 2).forEach((sample) => {
+				const samplePath = sample?.path ?? sample?.[0]
+				const sampleId = sample?.participant_id ?? sample?.[1]
+				if (!samplePath || !sampleId) return
+				const item = document.createElement('li')
+				item.innerHTML = `<span class="pattern-card-sample-path">${samplePath}</span><span class="pattern-card-sample-id">→ ${sampleId}</span>`
+				sampleList.appendChild(item)
+			})
+			card.appendChild(sampleList)
+		}
+
+		container.appendChild(card)
 	})
+
+	markActivePattern(currentPattern ? currentPattern.trim() : '')
 }
 
 async function searchFiles() {
@@ -472,13 +742,24 @@ async function searchFiles() {
 	if (extensions.length === 0) {
 		currentFiles = []
 		renderFiles()
+		markActivePattern('')
+		autoParticipantIds = {}
+		fileParticipantIds = {}
+		await updatePatternSuggestions()
 		return
 	}
 
 	currentFiles = await invoke('search_txt_files', { path: selectedFolder, extensions })
 	currentPattern = ''
+	autoParticipantIds = {}
+	fileParticipantIds = {}
+	const patternInput = document.getElementById('custom-pattern')
+	if (patternInput) {
+		patternInput.value = ''
+	}
 
 	renderFiles()
+	markActivePattern(currentPattern)
 	await updatePatternSuggestions()
 }
 
@@ -549,7 +830,13 @@ function updateImportButton() {
 	const selectedFilesArray = Array.from(selectedFiles)
 	const hasSelection = selectedFilesArray.length > 0
 	const allSelectedHaveIds =
-		hasSelection && selectedFilesArray.every((file) => fileParticipantIds[file])
+		hasSelection &&
+		selectedFilesArray.every((file) => {
+			const manual = fileParticipantIds[file]
+			const auto = autoParticipantIds[file]
+			const value = manual || auto
+			return value !== undefined && value !== null && `${value}`.trim() !== ''
+		})
 
 	btn.disabled = !allSelectedHaveIds
 }
@@ -939,6 +1226,8 @@ function resetImportState() {
 	currentPattern = ''
 	reviewSortField = 'path'
 	reviewSortDirection = 'asc'
+	autoParticipantIds = {}
+	lastImportView = 'import'
 
 	// Reset step 1 UI elements
 	const selectedPathEl = document.getElementById('selected-path')
@@ -973,7 +1262,7 @@ function resetImportState() {
 		customPatternInput.value = ''
 	}
 
-	document.querySelectorAll('.pattern-btn').forEach((btn) => btn.classList.remove('active'))
+	markActivePattern('')
 
 	const fileTypeSelect = document.getElementById('file-type-select')
 	if (fileTypeSelect) {
@@ -1066,6 +1355,12 @@ let reviewSortDirection = 'asc'
 
 function goToReviewStep() {
 	if (selectedFiles.size === 0) return
+
+	selectedFiles.forEach((file) => {
+		if (!fileParticipantIds[file] && autoParticipantIds[file]) {
+			fileParticipantIds[file] = autoParticipantIds[file]
+		}
+	})
 
 	// Build file-to-ID mapping
 	const filesToImport = Array.from(selectedFiles)
@@ -2281,6 +2576,17 @@ function copyLogs() {
 }
 
 function navigateTo(viewName) {
+	if (!viewName) {
+		return
+	}
+
+	const importSubViews = ['import', 'import-review', 'import-results']
+	const isImportSubView = importSubViews.includes(viewName)
+
+	if (viewName === 'import' && lastImportView !== 'import') {
+		viewName = lastImportView
+	}
+
 	// Check if import is in progress
 	if (isImportInProgress && viewName !== 'import-review') {
 		const confirmed = confirm(
@@ -2309,10 +2615,15 @@ function navigateTo(viewName) {
 	targetView.style.display = ''
 
 	// Only update tab highlighting if this view has a corresponding tab
-	const tab = document.querySelector(`.tab[data-tab="${viewName}"]`)
+	const highlightTabName = isImportSubView ? 'import' : viewName
+	const tab = document.querySelector(`.tab[data-tab="${highlightTabName}"]`)
 	if (tab) {
 		document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'))
 		tab.classList.add('active')
+	}
+
+	if (isImportSubView) {
+		lastImportView = viewName
 	}
 
 	if (viewName === 'participants') {
@@ -2408,31 +2719,13 @@ window.addEventListener('DOMContentLoaded', () => {
 
 	document.querySelectorAll('.home-btn').forEach((btn) => {
 		btn.addEventListener('click', () => {
-			const nav = btn.dataset.nav
-			navigateTo(nav)
+			navigateTo(btn.dataset.nav)
 		})
 	})
 
 	document.querySelectorAll('.tab').forEach((tab) => {
 		tab.addEventListener('click', () => {
-			const targetTab = tab.dataset.tab
-
-			// Check if user is leaving import workflow
-			const currentView = document.querySelector('.tab-content.active')?.id
-			const inImportWorkflow = currentView === 'import-view' || currentView === 'import-review-view'
-			const leavingImport = inImportWorkflow && targetTab !== 'import'
-
-			if (leavingImport) {
-				if (
-					!confirm(
-						'You are in the middle of importing files. Are you sure you want to leave? Your progress will be lost.',
-					)
-				) {
-					return
-				}
-			}
-
-			navigateTo(targetTab)
+			navigateTo(tab.dataset.tab)
 		})
 	})
 
@@ -2680,7 +2973,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 		if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
 			try {
-				const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete })
+				const deleted = await invoke('delete_files_bulk', { file_ids: selectedFilesForDelete })
 				console.log(`Deleted ${deleted} file(s)`)
 				await loadFiles()
 			} catch (error) {
@@ -2751,6 +3044,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	if (backBtn) {
 		backBtn.addEventListener('click', () => {
 			console.log('Back button clicked')
+			lastImportView = 'import'
 			navigateTo('import')
 		})
 	} else {
@@ -2890,6 +3184,33 @@ window.addEventListener('DOMContentLoaded', () => {
 	const customExtension = document.getElementById('custom-extension')
 	const customExtInput = document.getElementById('custom-ext-input')
 	const customPattern = document.getElementById('custom-pattern')
+	const patternInfoBtn = document.getElementById('pattern-info-btn')
+	const patternHelp = document.getElementById('pattern-help')
+
+	if (patternInfoBtn && patternHelp) {
+		patternInfoBtn.addEventListener('click', () => {
+			const expanded = patternInfoBtn.getAttribute('aria-expanded') === 'true'
+			const nextState = !expanded
+			patternInfoBtn.setAttribute('aria-expanded', nextState)
+			patternHelp.classList.toggle('visible', nextState)
+		})
+
+		document.addEventListener('click', (event) => {
+			if (!patternHelp.classList.contains('visible')) return
+			if (event.target === patternInfoBtn || patternHelp.contains(event.target)) {
+				return
+			}
+			patternInfoBtn.setAttribute('aria-expanded', 'false')
+			patternHelp.classList.remove('visible')
+		})
+
+		document.addEventListener('keydown', (event) => {
+			if (event.key !== 'Escape') return
+			if (!patternHelp.classList.contains('visible')) return
+			patternInfoBtn.setAttribute('aria-expanded', 'false')
+			patternHelp.classList.remove('visible')
+		})
+	}
 
 	fileTypeSelect.addEventListener('change', (e) => {
 		if (e.target.value === 'custom') {
@@ -2905,26 +3226,37 @@ window.addEventListener('DOMContentLoaded', () => {
 	})
 
 	customPattern.addEventListener('input', (e) => {
-		document.querySelectorAll('.pattern-btn').forEach((b) => b.classList.remove('active'))
-		currentPattern = e.target.value
-		renderFiles()
-		updateImportButton()
+		const value = e.target.value
+		if (patternInputDebounce) {
+			clearTimeout(patternInputDebounce)
+		}
+		patternInputDebounce = setTimeout(() => {
+			patternInputDebounce = null
+			void applyPattern(value)
+		}, 300)
+	})
+
+	customPattern.addEventListener('blur', (e) => {
+		if (patternInputDebounce) {
+			clearTimeout(patternInputDebounce)
+			patternInputDebounce = null
+		}
+		void applyPattern(e.target.value)
+	})
+
+	customPattern.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') {
+			if (patternInputDebounce) {
+				clearTimeout(patternInputDebounce)
+				patternInputDebounce = null
+			}
+			void applyPattern(e.target.value)
+		}
 	})
 
 	// Wrapper for onboarding
 	async function checkDependencies() {
 		await checkDependenciesForPanel('deps-list', 'dep-details-panel', false)
-	}
-
-	// Function to copy text to clipboard
-	async function copyToClipboard(text) {
-		try {
-			await navigator.clipboard.writeText(text)
-			return true
-		} catch (err) {
-			console.error('Failed to copy:', err)
-			return false
-		}
 	}
 
 	// Function to show dependency details in right panel (expose globally)
