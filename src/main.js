@@ -594,7 +594,7 @@ function renderParticipantsTable() {
 	tbody.innerHTML = ''
 
 	selectedParticipantsForDelete = selectedParticipantsForDelete.filter((id) =>
-		allParticipants.some((p) => p.id === id)
+		allParticipants.some((p) => p.id === id),
 	)
 
 	const filtered = allParticipants.filter(participantMatchesSearch)
@@ -603,13 +603,13 @@ function renderParticipantsTable() {
 		const row = document.createElement('tr')
 		const isSelected = selectedParticipantsForDelete.includes(p.id)
 		row.innerHTML = `
-      <td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" ${
-			isSelected ? 'checked' : ''
-		} /></td>
-      <td>${p.id}</td>
-      <td>${p.participant_id}</td>
-      <td>${p.created_at}</td>
-    `
+			<td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" ${
+				isSelected ? 'checked' : ''
+			} /></td>
+			<td>${p.id}</td>
+			<td>${p.participant_id}</td>
+			<td>${p.created_at}</td>
+		`
 		tbody.appendChild(row)
 	})
 
@@ -632,7 +632,7 @@ function renderParticipantsTable() {
 	if (selectAllHeader) {
 		const filteredCount = filtered.length
 		const selectedCount = filtered.filter((p) =>
-			selectedParticipantsForDelete.includes(p.id)
+			selectedParticipantsForDelete.includes(p.id),
 		).length
 		selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
 		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
@@ -791,7 +791,7 @@ function renderFilesTable() {
 	tbody.innerHTML = ''
 
 	selectedFilesForDelete = selectedFilesForDelete.filter((id) =>
-		allFilesData.some((f) => f.id === id)
+		allFilesData.some((f) => f.id === id),
 	)
 
 	const files = allFilesData.slice()
@@ -824,30 +824,30 @@ function renderFilesTable() {
 		const isMarkedForDelete = selectedFilesForDelete.includes(f.id)
 
 		row.innerHTML = `
-      <td><input type="checkbox" class="file-checkbox" data-id="${f.id}" ${
-			isMarkedForDelete ? 'checked' : ''
-		} /></td>
-      <td>${f.id}</td>
-      <td>${statusBadge}</td>
-      <td>${f.participant_name || '-'}</td>
-      <td class="truncate" title="${f.file_path}">${f.file_path}</td>
-      <td>${f.data_type || '-'}</td>
-      <td>${f.source || '-'}</td>
-      <td>${f.grch_version || '-'}</td>
-      <td>${f.row_count ? f.row_count.toLocaleString() : '-'}</td>
-      <td>${f.chromosome_count || '-'}</td>
-      <td style="font-weight: ${f.inferred_sex ? '600' : 'normal'}; color: ${
-			f.inferred_sex === 'Male' ? '#007bff' : f.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-		}">${f.inferred_sex || '-'}</td>
-      <td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${(
-			f.file_hash || ''
-		).substring(0, 16)}${f.file_hash && f.file_hash.length > 16 ? '...' : ''}</td>
-      <td>${f.created_at}</td>
-      <td>${f.updated_at}</td>
-      <td><button class="open-finder-btn" data-path="${
+			<td><input type="checkbox" class="file-checkbox" data-id="${f.id}" ${
+				isMarkedForDelete ? 'checked' : ''
+			} /></td>
+			<td>${f.id}</td>
+			<td>${statusBadge}</td>
+			<td>${f.participant_name || '-'}</td>
+			<td class="truncate" title="${f.file_path}">${f.file_path}</td>
+			<td>${f.data_type || '-'}</td>
+			<td>${f.source || '-'}</td>
+			<td>${f.grch_version || '-'}</td>
+			<td>${f.row_count ? f.row_count.toLocaleString() : '-'}</td>
+			<td>${f.chromosome_count || '-'}</td>
+			<td style="font-weight: ${f.inferred_sex ? '600' : 'normal'}; color: ${
+				f.inferred_sex === 'Male' ? '#007bff' : f.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+			}">${f.inferred_sex || '-'}</td>
+			<td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${(
+				f.file_hash || ''
+			).substring(0, 16)}${f.file_hash && f.file_hash.length > 16 ? '...' : ''}</td>
+			<td>${f.created_at}</td>
+			<td>${f.updated_at}</td>
+			<td><button class="open-finder-btn" data-path="${
 				f.file_path
 			}" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">📁 Open</button></td>
-    `
+		`
 		tbody.appendChild(row)
 
 		row.querySelector('.open-finder-btn').addEventListener('click', async () => {
@@ -923,31 +923,6 @@ function updateDeleteFilesButton() {
 	} else {
 		btn.style.display = 'none'
 	}
-}
-
-function showImportResults(result) {
-	const tbody = document.getElementById('import-results-table')
-	tbody.innerHTML = ''
-
-	result.imported_files.forEach((f) => {
-		const row = document.createElement('tr')
-		row.innerHTML = `
-      <td>${f.id}</td>
-      <td>${f.participant_name}</td>
-      <td class="truncate" title="${f.file_path}">${f.file_path}</td>
-      <td style="font-family: monospace; font-size: 11px;" title="${
-				f.file_hash
-			}">${f.file_hash.substring(0, 16)}...</td>
-      <td>${f.created_at}</td>
-    `
-		tbody.appendChild(row)
-	})
-
-	document.getElementById('import-results-count').textContent = result.imported_files.length
-	document.getElementById('import-results-message').textContent = result.message
-
-	document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'))
-	document.getElementById('import-results-view').classList.add('active')
 }
 
 function resetImportState() {
@@ -1281,11 +1256,9 @@ function showReviewView() {
 		dataTypeSelect.style.width = '100%'
 		dataTypeSelect.style.padding = '6px'
 		dataTypeSelect.innerHTML = `
-      <option value="Unknown" ${metadata.data_type === 'Unknown' ? 'selected' : ''}>Unknown</option>
-      <option value="Genotype" ${
-				metadata.data_type === 'Genotype' ? 'selected' : ''
-			}>Genotype</option>
-    `
+			<option value="Unknown" ${metadata.data_type === 'Unknown' ? 'selected' : ''}>Unknown</option>
+			<option value="Genotype" ${metadata.data_type === 'Genotype' ? 'selected' : ''}>Genotype</option>
+		`
 		dataTypeSelect.addEventListener('change', (e) => {
 			reviewFileMetadata[filePath].data_type = e.target.value
 			updateRowVisibility(row, e.target.value)
@@ -1302,19 +1275,19 @@ function showReviewView() {
 		sourceSelect.style.width = '100%'
 		sourceSelect.style.padding = '6px'
 		sourceSelect.innerHTML = `
-      <option value="">-</option>
-      <option value="Unknown" ${metadata.source === 'Unknown' ? 'selected' : ''}>Unknown</option>
-      <option value="23andMe" ${metadata.source === '23andMe' ? 'selected' : ''}>23andMe</option>
-      <option value="AncestryDNA" ${
+			<option value="">-</option>
+			<option value="Unknown" ${metadata.source === 'Unknown' ? 'selected' : ''}>Unknown</option>
+			<option value="23andMe" ${metadata.source === '23andMe' ? 'selected' : ''}>23andMe</option>
+			<option value="AncestryDNA" ${
 				metadata.source === 'AncestryDNA' ? 'selected' : ''
 			}>AncestryDNA</option>
-      <option value="Genes for Good" ${
+			<option value="Genes for Good" ${
 				metadata.source === 'Genes for Good' ? 'selected' : ''
 			}>Genes for Good</option>
-      <option value="Dynamic DNA" ${
+			<option value="Dynamic DNA" ${
 				metadata.source === 'Dynamic DNA' ? 'selected' : ''
 			}>Dynamic DNA</option>
-    `
+		`
 		sourceSelect.addEventListener('change', (e) => {
 			reviewFileMetadata[filePath].source = e.target.value || null
 			applyReviewRowState(row, reviewFileMetadata[filePath])
@@ -1330,14 +1303,12 @@ function showReviewView() {
 		grchSelect.style.width = '100%'
 		grchSelect.style.padding = '6px'
 		grchSelect.innerHTML = `
-      <option value="">-</option>
-      <option value="Unknown" ${
-				metadata.grch_version === 'Unknown' ? 'selected' : ''
-			}>Unknown</option>
-      <option value="36" ${metadata.grch_version === '36' ? 'selected' : ''}>36</option>
-      <option value="37" ${metadata.grch_version === '37' ? 'selected' : ''}>37</option>
-      <option value="38" ${metadata.grch_version === '38' ? 'selected' : ''}>38</option>
-    `
+			<option value="">-</option>
+			<option value="Unknown" ${metadata.grch_version === 'Unknown' ? 'selected' : ''}>Unknown</option>
+			<option value="36" ${metadata.grch_version === '36' ? 'selected' : ''}>36</option>
+			<option value="37" ${metadata.grch_version === '37' ? 'selected' : ''}>37</option>
+			<option value="38" ${metadata.grch_version === '38' ? 'selected' : ''}>38</option>
+		`
 		grchSelect.addEventListener('change', (e) => {
 			reviewFileMetadata[filePath].grch_version = e.target.value || null
 			applyReviewRowState(row, reviewFileMetadata[filePath])
@@ -1458,13 +1429,13 @@ async function detectFileTypes() {
 				console.log(`🔍 Detection result for ${filePath}:`, detection)
 				if (reviewFileMetadata[filePath] && detection) {
 					console.log(
-						`📝 BEFORE update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`
+						`📝 BEFORE update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`,
 					)
 					reviewFileMetadata[filePath].data_type = detection.data_type
 					reviewFileMetadata[filePath].source = detection.source
 					reviewFileMetadata[filePath].grch_version = detection.grch_version
 					console.log(
-						`📝 AFTER update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`
+						`📝 AFTER update - participant_id: ${reviewFileMetadata[filePath].participant_id}, data_type: ${reviewFileMetadata[filePath].data_type}, source: ${reviewFileMetadata[filePath].source}`,
 					)
 					updateRowInPlace(filePath)
 				}
@@ -1483,75 +1454,6 @@ async function detectFileTypes() {
 	} finally {
 		btn.disabled = false
 		btn.innerHTML = '🔍 Detect File Types'
-
-		// Hide progress bar after a short delay
-		setTimeout(() => {
-			progressDiv.style.display = 'none'
-			progressBar.style.width = '0%'
-		}, 2000)
-	}
-}
-
-async function analyzeFileTypes() {
-	if (selectedReviewFiles.size === 0) {
-		alert('Please select files to analyze')
-		return
-	}
-
-	const btn = document.getElementById('analyze-types-btn')
-	const progressDiv = document.getElementById('detection-progress')
-	const progressBar = document.getElementById('progress-bar')
-	const progressText = document.getElementById('progress-text')
-
-	// Show progress UI IMMEDIATELY before any work
-	btn.disabled = true
-	btn.innerHTML = '<span class="spinner"></span>Analyzing...'
-	progressDiv.style.display = 'flex'
-	progressBar.style.width = '0%'
-	progressText.textContent = 'Starting analysis...'
-
-	// Force UI update before CLI calls
-	await new Promise((resolve) => setTimeout(resolve, 10))
-
-	try {
-		const selectedFilesArray = Array.from(selectedReviewFiles)
-		const batchSize = 10 // Smaller batches for slower analysis
-		const totalFiles = selectedFilesArray.length
-		let processed = 0
-
-		// Process in batches to show progress
-		for (let i = 0; i < selectedFilesArray.length; i += batchSize) {
-			const batch = selectedFilesArray.slice(i, i + batchSize)
-
-			progressText.textContent = `Analyzing files... ${processed}/${totalFiles}`
-			progressBar.style.width = `${(processed / totalFiles) * 100}%`
-
-			const analysis = await invoke('analyze_file_types', { files: batch })
-
-			// Update all metadata and UI for this batch
-			Object.keys(analysis).forEach((filePath) => {
-				const data = analysis[filePath]
-				if (reviewFileMetadata[filePath] && data) {
-					reviewFileMetadata[filePath].row_count = data.row_count
-					reviewFileMetadata[filePath].chromosome_count = data.chromosome_count
-					reviewFileMetadata[filePath].inferred_sex = data.inferred_sex
-					updateRowInPlace(filePath)
-				}
-			})
-
-			processed += batch.length
-		}
-
-		progressText.textContent = `Complete! Analyzed ${totalFiles} files`
-		progressBar.style.width = '100%'
-
-		console.log(`✅ Analyzed ${totalFiles} files`)
-	} catch (error) {
-		alert(`Error analyzing files: ${error}`)
-		console.error('Analysis error:', error)
-	} finally {
-		btn.disabled = false
-		btn.innerHTML = '🧬 Infer Sex & Count'
 
 		// Hide progress bar after a short delay
 		setTimeout(() => {
@@ -1639,8 +1541,6 @@ async function finalizeImport() {
 	try {
 		const filesToImport = Object.keys(reviewFileMetadata)
 		const totalFiles = filesToImport.length
-		const batchSize = 50 // Import in batches of 50
-		let importedCount = 0
 		let allResults = {
 			success: true,
 			imported: 0,
@@ -1660,7 +1560,7 @@ async function finalizeImport() {
 				grch_version: meta.grch_version,
 			}
 			console.log(
-				`🔍 Preparing import - file: ${file}, participant_id: ${meta.participant_id}, data_type: ${meta.data_type}`
+				`🔍 Preparing import - file: ${file}, participant_id: ${meta.participant_id}, data_type: ${meta.data_type}`,
 			)
 		})
 
@@ -1701,7 +1601,7 @@ async function finalizeImport() {
 			}, 1000)
 		} else {
 			const updateConflicts = confirm(
-				`Some files had conflicts.\nDo you want to update the files with conflicts?`
+				`Some files had conflicts.\nDo you want to update the files with conflicts?`,
 			)
 
 			if (updateConflicts) {
@@ -1747,19 +1647,19 @@ async function loadProjects() {
 			const card = document.createElement('div')
 			card.className = 'project-card'
 			card.innerHTML = `
-        <div class="project-info">
-          <h3>${project.name}</h3>
-          <p><strong>Author:</strong> ${project.author}</p>
-          <p><strong>Workflow:</strong> ${project.workflow}</p>
-          <p><strong>Template:</strong> ${project.template}</p>
-          <p><strong>Path:</strong> ${project.project_path}</p>
-          <p><strong>Created:</strong> ${project.created_at}</p>
-        </div>
-        <div style="display: flex; gap: 10px;">
-          <button class="open-folder-btn" data-path="${project.project_path}">Open Folder</button>
-          <button class="delete-btn" data-project-id="${project.id}">Delete</button>
-        </div>
-      `
+				<div class="project-info">
+					<h3>${project.name}</h3>
+					<p><strong>Author:</strong> ${project.author}</p>
+					<p><strong>Workflow:</strong> ${project.workflow}</p>
+					<p><strong>Template:</strong> ${project.template}</p>
+					<p><strong>Path:</strong> ${project.project_path}</p>
+					<p><strong>Created:</strong> ${project.created_at}</p>
+				</div>
+				<div style="display: flex; gap: 10px;">
+					<button class="open-folder-btn" data-path="${project.project_path}">Open Folder</button>
+					<button class="delete-btn" data-project-id="${project.id}">Delete</button>
+				</div>
+			`
 			container.appendChild(card)
 		})
 
@@ -1920,9 +1820,9 @@ async function loadRunParticipants() {
 			item.className = 'selection-item'
 			item.dataset.id = p.id
 			item.innerHTML = `
-        <input type="checkbox" id="part-${p.id}" />
-        <label for="part-${p.id}">${p.participant_id}</label>
-      `
+				<input type="checkbox" id="part-${p.id}" />
+				<label for="part-${p.id}">${p.participant_id}</label>
+			`
 
 			item.addEventListener('click', (e) => {
 				if (e.target.tagName !== 'INPUT') {
@@ -2014,19 +1914,19 @@ async function loadRuns() {
 			}
 
 			card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: start;">
-          <div class="run-info">
-            <h3>${run.project_name} ${statusBadge}</h3>
-            <p><strong>Participants:</strong> ${run.participant_count}</p>
-            <p><strong>Work Directory:</strong> ${run.work_dir}</p>
-            <p><strong>Created:</strong> ${run.created_at}</p>
-          </div>
-          <div style="display: flex; gap: 10px;">
-            <button class="open-folder-btn" data-path="${run.work_dir}">Open Folder</button>
-            <button class="delete-btn" data-run-id="${run.id}">Delete</button>
-          </div>
-        </div>
-      `
+				<div style="display: flex; justify-content: space-between; align-items: start;">
+					<div class="run-info">
+						<h3>${run.project_name} ${statusBadge}</h3>
+						<p><strong>Participants:</strong> ${run.participant_count}</p>
+						<p><strong>Work Directory:</strong> ${run.work_dir}</p>
+						<p><strong>Created:</strong> ${run.created_at}</p>
+					</div>
+					<div style="display: flex; gap: 10px;">
+						<button class="open-folder-btn" data-path="${run.work_dir}">Open Folder</button>
+						<button class="delete-btn" data-run-id="${run.id}">Delete</button>
+					</div>
+				</div>
+			`
 
 			// Make card clickable to show logs
 			card.addEventListener('click', async (e) => {
@@ -2053,7 +1953,7 @@ async function loadRuns() {
 				const runId = parseInt(e.target.dataset.runId)
 				if (
 					confirm(
-						'Are you sure you want to delete this run? This will remove all files and the database entry.'
+						'Are you sure you want to delete this run? This will remove all files and the database entry.',
 					)
 				) {
 					try {
@@ -2300,28 +2200,6 @@ async function handleSyftBoxAuthentication() {
 	})
 }
 
-async function saveSettings() {
-	const settings = {
-		email: document.getElementById('setting-email').value,
-		// Custom paths are saved directly from the dependency panels
-	}
-
-	try {
-		await invoke('save_settings', { settings })
-		alert('Settings saved successfully!')
-	} catch (error) {
-		alert(`Error saving settings: ${error}`)
-	}
-}
-
-async function resetSettings() {
-	if (confirm('Are you sure you want to reset all settings to defaults?')) {
-		document.getElementById('setting-email').value = ''
-		// Re-check dependencies after reset
-		checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel')
-	}
-}
-
 // Log management functions
 async function loadCommandLogs() {
 	try {
@@ -2406,7 +2284,7 @@ function navigateTo(viewName) {
 	// Check if import is in progress
 	if (isImportInProgress && viewName !== 'import-review') {
 		const confirmed = confirm(
-			'Import is currently in progress. Are you sure you want to cancel and leave this page?'
+			'Import is currently in progress. Are you sure you want to cancel and leave this page?',
 		)
 		if (!confirmed) {
 			return // Don't navigate
@@ -2415,8 +2293,20 @@ function navigateTo(viewName) {
 		isImportInProgress = false
 	}
 
-	document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'))
-	document.getElementById(`${viewName}-view`).classList.add('active')
+	const tabContents = document.querySelectorAll('.tab-content')
+	tabContents.forEach((content) => {
+		content.classList.remove('active')
+		content.style.display = 'none'
+	})
+
+	const targetView = document.getElementById(`${viewName}-view`)
+	if (!targetView) {
+		console.warn(`navigateTo: Unknown view "${viewName}"`)
+		return
+	}
+
+	targetView.classList.add('active')
+	targetView.style.display = ''
 
 	// Only update tab highlighting if this view has a corresponding tab
 	const tab = document.querySelector(`.tab[data-tab="${viewName}"]`)
@@ -2460,11 +2350,40 @@ async function loadSavedDependencies(listPanelId, detailsPanelId) {
 	} catch (error) {
 		console.error('Failed to load saved dependencies:', error)
 		depsList.innerHTML = `
-      <div style="text-align: center; color: #999; padding: 20px;">
-        <p>No saved dependency states</p>
-        <p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
-      </div>
-    `
+			<div style="text-align: center; color: #999; padding: 20px;">
+				<p>No saved dependency states</p>
+				<p style="font-size: 12px; margin-top: 10px;">Click "Check Again" to scan</p>
+			</div>
+		`
+	}
+}
+
+async function checkDependenciesForPanel(listPanelId, detailsPanelId, isSettings = false) {
+	const depsList = document.getElementById(listPanelId)
+	if (!depsList) return
+
+	// Show loading state
+	depsList.innerHTML = `
+		<div style="text-align: center; color: #999; padding: 20px;">
+			<div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px;"></div>
+			<p>Checking dependencies...</p>
+		</div>
+	`
+
+	try {
+		const result = await invoke('check_dependencies')
+		dependencyResults = result
+		if (typeof window.displayDependencies === 'function') {
+			window.displayDependencies(result, listPanelId, detailsPanelId, isSettings)
+		}
+	} catch (error) {
+		console.error('Failed to check dependencies:', error)
+		depsList.innerHTML = `
+			<div style="color: #dc3545; padding: 20px; text-align: center;">
+				<p>❌ Failed to check dependencies</p>
+				<p style="font-size: 12px; margin-top: 10px;">${error}</p>
+			</div>
+		`
 	}
 }
 
@@ -2506,7 +2425,7 @@ window.addEventListener('DOMContentLoaded', () => {
 			if (leavingImport) {
 				if (
 					!confirm(
-						'You are in the middle of importing files. Are you sure you want to leave? Your progress will be lost.'
+						'You are in the middle of importing files. Are you sure you want to leave? Your progress will be lost.',
 					)
 				) {
 					return
@@ -2550,7 +2469,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
 	document.getElementById('share-logs-btn').addEventListener('click', async () => {
 		if (currentLogWorkDir) {
-			const logPath = currentLogWorkDir + '/run.log'
 			try {
 				await invoke('open_folder', { path: currentLogWorkDir })
 			} catch (error) {
@@ -2583,7 +2501,7 @@ window.addEventListener('DOMContentLoaded', () => {
 			if (!dependencyResults) return
 
 			const missingDeps = dependencyResults.dependencies.filter(
-				(dep) => !dep.found || (dep.running !== null && dep.running === false)
+				(dep) => !dep.found || (dep.running !== null && dep.running === false),
 			)
 
 			if (missingDeps.length === 0) {
@@ -2663,7 +2581,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 			if (
 				confirm(
-					`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files.`
+					`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files.`,
 				)
 			) {
 				try {
@@ -2725,8 +2643,6 @@ window.addEventListener('DOMContentLoaded', () => {
 	}
 
 	document.getElementById('process-queue-btn').addEventListener('click', async () => {
-		const btn = document.getElementById('process-queue-btn')
-
 		try {
 			const isRunning = await invoke('get_queue_processor_status')
 
@@ -2995,38 +2911,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		updateImportButton()
 	})
 
-	// Multi-step onboarding wizard
-	let onboardingStep = 1
-
-	// Function to check dependencies and display results
-	// Generic function for checking dependencies in any panel
-	async function checkDependenciesForPanel(listPanelId, detailsPanelId, isSettings = false) {
-		const depsList = document.getElementById(listPanelId)
-		if (!depsList) return
-
-		// Show loading state
-		depsList.innerHTML = `
-      <div style="text-align: center; color: #999; padding: 20px;">
-        <div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px;"></div>
-        <p>Checking dependencies...</p>
-      </div>
-    `
-
-		try {
-			const result = await invoke('check_dependencies')
-			dependencyResults = result
-			displayDependencies(result, listPanelId, detailsPanelId, isSettings)
-		} catch (error) {
-			console.error('Failed to check dependencies:', error)
-			depsList.innerHTML = `
-        <div style="color: #dc3545; padding: 20px; text-align: center;">
-          <p>❌ Failed to check dependencies</p>
-          <p style="font-size: 12px; margin-top: 10px;">${error}</p>
-        </div>
-      `
-		}
-	}
-
 	// Wrapper for onboarding
 	async function checkDependencies() {
 		await checkDependenciesForPanel('deps-list', 'dep-details-panel', false)
@@ -3047,7 +2931,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	window.showDependencyDetails = function showDependencyDetails(
 		dep,
 		depIndex,
-		detailsPanelId = 'dep-details-panel'
+		detailsPanelId = 'dep-details-panel',
 	) {
 		const detailsPanel = document.getElementById(detailsPanelId)
 		// Docker Desktop can be installed but not running, so treat found=true as installed
@@ -3064,71 +2948,67 @@ window.addEventListener('DOMContentLoaded', () => {
 			}
 
 			detailsPanel.innerHTML = `
-        <div style="margin-bottom: 20px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-            <h3 style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${
-							dep.name
-						}</h3>
-            ${
+				<div style="margin-bottom: 20px;">
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
+						<h3 style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
+						${
 							dep.website
 								? `
-            <button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
-            `
+						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+						`
 								: ''
 						}
-          </div>
-          <p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
-        </div>
+					</div>
+					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
+				</div>
 
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-          ${
+				<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+					${
 						dep.version
 							? `
-          <div style="margin-bottom: 12px;">
-            <strong style="font-size: 13px; color: #333;">Version:</strong>
-            <div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
-          </div>
-          `
+					<div style="margin-bottom: 12px;">
+						<strong style="font-size: 13px; color: #333;">Version:</strong>
+						<div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
+					</div>
+					`
 							: ''
 					}
 
-          ${
+					${
 						dep.running !== null
 							? `
-          <div style="margin-bottom: 12px;">
-            <strong style="font-size: 13px; color: #333;">Status:</strong>
-            <div style="font-size: 12px; color: ${
-							dep.running ? '#28a745' : '#dc3545'
-						}; margin-top: 5px;">
-              ${dep.running ? '🟢 Running' : '🔴 Not Running'}
-            </div>
-          </div>
-          `
+					<div style="margin-bottom: 12px;">
+						<strong style="font-size: 13px; color: #333;">Status:</strong>
+						<div style="font-size: 12px; color: ${dep.running ? '#28a745' : '#dc3545'}; margin-top: 5px;">
+							${dep.running ? '🟢 Running' : '🔴 Not Running'}
+						</div>
+					</div>
+					`
 							: ''
 					}
 
-          <div style="margin-bottom: 12px;">
-            <strong style="font-size: 13px; color: #333;">Path:</strong>
-            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-              <input
-                type="text"
-                id="path-input-${depIndex}"
-                value="${dep.path || ''}"
-                placeholder="Enter path to ${dep.name} executable"
-                autocapitalize="off"
-                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
-              />
-            </div>
-          </div>
+					<div style="margin-bottom: 12px;">
+						<strong style="font-size: 13px; color: #333;">Path:</strong>
+						<div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+							<input
+								type="text"
+								id="path-input-${depIndex}"
+								value="${dep.path || ''}"
+								placeholder="Enter path to ${dep.name} executable"
+								autocapitalize="off"
+								style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
+							/>
+						</div>
+					</div>
 
-          <div style="display: flex; gap: 8px;">
-            <button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
-            <button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
-          </div>
-          <p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
-        </div>
+					<div style="display: flex; gap: 8px;">
+						<button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
+						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+					</div>
+					<p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
+				</div>
 
-      `
+			`
 
 			// Add open website handler
 			const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`)
@@ -3177,9 +3057,9 @@ window.addEventListener('DOMContentLoaded', () => {
 							}
 
 							depItem.innerHTML = `
-                <span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
-                <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-              `
+								<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
+								<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+							`
 						}
 
 						// Re-render this specific dependency details
@@ -3191,12 +3071,12 @@ window.addEventListener('DOMContentLoaded', () => {
 								`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
-								{ title: 'Success', type: 'info' }
+								{ title: 'Success', type: 'info' },
 							)
 						} else {
 							await window.__TAURI__.dialog.message(
 								`✗ ${dep.name} not found automatically.\n\nPlease install it or enter a custom path.`,
-								{ title: 'Not Found', type: 'warning' }
+								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
@@ -3245,9 +3125,9 @@ window.addEventListener('DOMContentLoaded', () => {
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
 								depItem.innerHTML = `
-                  <span style="font-size: 18px; color: #28a745;">✓</span>
-                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-                `
+									<span style="font-size: 18px; color: #28a745;">✓</span>
+									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+								`
 							}
 
 							// Re-render this specific dependency details
@@ -3257,7 +3137,7 @@ window.addEventListener('DOMContentLoaded', () => {
 								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
-								{ title: 'Success', type: 'info' }
+								{ title: 'Success', type: 'info' },
 							)
 						} else {
 							// Path is invalid - mark as missing but keep the invalid path in the input
@@ -3270,9 +3150,9 @@ window.addEventListener('DOMContentLoaded', () => {
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
 								depItem.innerHTML = `
-                  <span style="font-size: 18px; color: #dc3545;">✗</span>
-                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-                `
+									<span style="font-size: 18px; color: #dc3545;">✗</span>
+									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+								`
 							}
 
 							// Re-render as missing dependency (but keep the path in the input)
@@ -3288,7 +3168,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 							await window.__TAURI__.dialog.message(
 								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
-								{ title: 'Not Found', type: 'warning' }
+								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
@@ -3307,76 +3187,74 @@ window.addEventListener('DOMContentLoaded', () => {
 			const commands = extractCommands(rawInstructions)
 
 			detailsPanel.innerHTML = `
-        <div style="margin-bottom: 20px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-            <h3 style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${
-							dep.name
-						}</h3>
-            ${
+				<div style="margin-bottom: 20px;">
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
+						<h3 style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
+						${
 							dep.website
 								? `
-            <button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
-            `
+						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+						`
 								: ''
 						}
-          </div>
-          <p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
-        </div>
+					</div>
+					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
+				</div>
 
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-          <div style="margin-bottom: 12px;">
-            <strong style="font-size: 13px; color: #333;">Path:</strong>
-            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-              <input
-                type="text"
-                id="path-input-${depIndex}"
-                value="${dep.path || ''}"
-                placeholder="Enter path to ${dep.name} executable (or install)"
-                autocapitalize="off"
-                style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
-              />
-            </div>
-          </div>
+				<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+					<div style="margin-bottom: 12px;">
+						<strong style="font-size: 13px; color: #333;">Path:</strong>
+						<div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+							<input
+								type="text"
+								id="path-input-${depIndex}"
+								value="${dep.path || ''}"
+								placeholder="Enter path to ${dep.name} executable (or install)"
+								autocapitalize="off"
+								style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
+							/>
+						</div>
+					</div>
 
-          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-            <button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
-            <button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
-          </div>
-          <p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
-        </div>
+					<div style="display: flex; gap: 8px; margin-bottom: 8px;">
+						<button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
+						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+					</div>
+					<p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
+				</div>
 
-        <div style="background: #fff8e1; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px; position: relative;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <h4 style="margin: 0; color: #856404; font-size: 14px;">📖 Manual Installation</h4>
-            ${
+				<div style="background: #fff8e1; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px; position: relative;">
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+						<h4 style="margin: 0; color: #856404; font-size: 14px;">📖 Manual Installation</h4>
+						${
 							commands.length > 0
 								? `
-              <button class="copy-cmd-btn" data-command="${encodeURIComponent(
-								commands[0]
+							<button class="copy-cmd-btn" data-command="${encodeURIComponent(
+								commands[0],
 							)}" style="padding: 2px; min-width: 0; width: auto; background: transparent; border: none; cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" title="Copy command" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📋</button>
-            `
+						`
 								: ''
 						}
-          </div>
-          <p style="font-size: 12px; color: #856404; margin-bottom: 10px;">You can also install this dependency manually:</p>
+					</div>
+					<p style="font-size: 12px; color: #856404; margin-bottom: 10px;">You can also install this dependency manually:</p>
 
-          ${
+					${
 						commands.length > 0
 							? commands
 									.map(
-										(cmd, idx) => `
-            <div style="background: #1e1e1e; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-              <pre style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${cmd}</pre>
-            </div>
-          `
+										(cmd) => `
+						<div style="background: #1e1e1e; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+							<pre style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${cmd}</pre>
+						</div>
+					`,
 									)
 									.join('')
 							: `
-            <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 11px; color: #333; white-space: pre-wrap; font-family: monospace;">${installInstructions}</div>
-          `
+						<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 11px; color: #333; white-space: pre-wrap; font-family: monospace;">${installInstructions}</div>
+					`
 					}
-        </div>
-      `
+				</div>
+			`
 
 			// Add open website handler
 			const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`)
@@ -3406,7 +3284,7 @@ window.addEventListener('DOMContentLoaded', () => {
 								// Prompt user to install brew first
 								const installBrew = await window.__TAURI__.dialog.confirm(
 									'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
-									{ title: 'Homebrew Required', type: 'warning' }
+									{ title: 'Homebrew Required', type: 'warning' },
 								)
 
 								if (installBrew) {
@@ -3419,7 +3297,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 										await window.__TAURI__.dialog.message(
 											'✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
-											{ title: 'Success', type: 'info' }
+											{ title: 'Success', type: 'info' },
 										)
 
 										// Restore button state
@@ -3431,7 +3309,7 @@ window.addEventListener('DOMContentLoaded', () => {
 									} catch (error) {
 										await window.__TAURI__.dialog.message(
 											`Failed to install Homebrew: ${error}\n\nPlease install Homebrew manually from brew.sh`,
-											{ title: 'Installation Failed', type: 'error' }
+											{ title: 'Installation Failed', type: 'error' },
 										)
 
 										// Restore button state
@@ -3451,7 +3329,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 					const confirmed = await window.__TAURI__.dialog.confirm(
 						`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`,
-						{ title: 'Confirm Installation', type: 'warning' }
+						{ title: 'Confirm Installation', type: 'warning' },
 					)
 					if (confirmed) {
 						try {
@@ -3471,12 +3349,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
 								await window.__TAURI__.dialog.message(
 									`✓ ${dep.name} installed successfully!\n\nPath: ${installedPath}`,
-									{ title: 'Success', type: 'info' }
+									{ title: 'Success', type: 'info' },
 								)
 							} else {
 								await window.__TAURI__.dialog.message(
 									`✓ ${dep.name} installed successfully!\n\nPlease check the path detection using 'Check Again'.`,
-									{ title: 'Success', type: 'info' }
+									{ title: 'Success', type: 'info' },
 								)
 							}
 
@@ -3506,7 +3384,7 @@ window.addEventListener('DOMContentLoaded', () => {
 					if (!customPath) {
 						await window.__TAURI__.dialog.message(
 							'Please enter a path to check, or use the Install button',
-							{ title: 'Empty Path', type: 'warning' }
+							{ title: 'Empty Path', type: 'warning' },
 						)
 						return
 					}
@@ -3533,9 +3411,9 @@ window.addEventListener('DOMContentLoaded', () => {
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
 								depItem.innerHTML = `
-                  <span style="font-size: 18px; color: #28a745;">✓</span>
-                  <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-                `
+									<span style="font-size: 18px; color: #28a745;">✓</span>
+									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+								`
 							}
 
 							// Re-render this specific dependency details
@@ -3545,13 +3423,13 @@ window.addEventListener('DOMContentLoaded', () => {
 								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
-								{ title: 'Success', type: 'info' }
+								{ title: 'Success', type: 'info' },
 							)
 						} else {
 							// Path is invalid - don't save it
 							await window.__TAURI__.dialog.message(
 								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
-								{ title: 'Not Found', type: 'warning' }
+								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
@@ -3667,7 +3545,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		result,
 		listPanelId = 'deps-list',
 		detailsPanelId = 'dep-details-panel',
-		isSettings = false
+		isSettings = false,
 	) {
 		const depsList = document.getElementById(listPanelId)
 		const nextBtn = isSettings ? null : document.getElementById('onboarding-next-2')
@@ -3676,12 +3554,10 @@ window.addEventListener('DOMContentLoaded', () => {
 			: document.getElementById('install-missing-deps-btn')
 
 		let html = ''
-		let hasMissing = false
 
 		result.dependencies.forEach((dep, index) => {
 			// Docker Desktop can be installed but not running, so treat found=true as installed
 			const isInstalled = dep.found
-			if (!isInstalled) hasMissing = true
 
 			let statusIcon = isInstalled ? '✓' : '✗'
 			let statusColor = isInstalled ? '#28a745' : '#dc3545'
@@ -3693,11 +3569,11 @@ window.addEventListener('DOMContentLoaded', () => {
 			}
 
 			html += `
-        <div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
-          <span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
-          <strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-        </div>
-      `
+				<div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
+					<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
+					<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
+				</div>
+			`
 		})
 
 		depsList.innerHTML = html
@@ -3709,7 +3585,7 @@ window.addEventListener('DOMContentLoaded', () => {
 				const dep = result.dependencies[depIndex]
 
 				// Show details in right panel
-				showDependencyDetails(dep, depIndex, detailsPanelId)
+				window.showDependencyDetails?.(dep, depIndex, detailsPanelId)
 
 				// Highlight selected item
 				document.querySelectorAll(`#${listPanelId} .dep-item`).forEach((i) => {
@@ -3781,8 +3657,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		nextBtn1.addEventListener('click', () => {
 			document.getElementById('onboarding-step-1').style.display = 'none'
 			document.getElementById('onboarding-step-2').style.display = 'block'
-			onboardingStep = 2
-
 			// Check dependencies when entering step 2
 			checkDependencies()
 		})
@@ -3813,7 +3687,7 @@ window.addEventListener('DOMContentLoaded', () => {
 			const depNames = missingDeps.map((d) => d.name).join(', ')
 			const confirmed = await window.__TAURI__.dialog.confirm(
 				`Install the following missing dependencies?\n\n${depNames}\n\nBioVault will attempt to install these automatically. This may take several minutes.`,
-				{ title: 'Confirm Installation', type: 'warning' }
+				{ title: 'Confirm Installation', type: 'warning' },
 			)
 
 			if (confirmed) {
@@ -3840,7 +3714,7 @@ window.addEventListener('DOMContentLoaded', () => {
 					'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
 						'Some features may not work without the required dependencies installed.\n\n' +
 						'Are you sure you want to skip?',
-					{ title: 'Skip Dependency Checks?', type: 'warning' }
+					{ title: 'Skip Dependency Checks?', type: 'warning' },
 				)
 
 				if (!confirmed) {
@@ -3855,7 +3729,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
 				document.getElementById('onboarding-step-2').style.display = 'none'
 				document.getElementById('onboarding-step-3').style.display = 'block'
-				onboardingStep = 3
 			} finally {
 				skipDepsBtn.disabled = false
 			}
@@ -3869,7 +3742,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		nextBtn2.addEventListener('click', () => {
 			document.getElementById('onboarding-step-2').style.display = 'none'
 			document.getElementById('onboarding-step-3').style.display = 'block'
-			onboardingStep = 3
 		})
 	}
 
@@ -3879,7 +3751,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		backBtn3.addEventListener('click', () => {
 			document.getElementById('onboarding-step-3').style.display = 'none'
 			document.getElementById('onboarding-step-2').style.display = 'block'
-			onboardingStep = 2
 		})
 	}
 
@@ -3993,7 +3864,6 @@ window.addEventListener('DOMContentLoaded', () => {
 			// Move to step 4 (SyftBox OTP)
 			document.getElementById('onboarding-step-3').style.display = 'none'
 			document.getElementById('onboarding-step-4').style.display = 'block'
-			onboardingStep = 4
 		})
 	}
 
@@ -4167,8 +4037,6 @@ window.addEventListener('DOMContentLoaded', () => {
 						// Normal onboarding flow - proceed to step 5 (initializing)
 						document.getElementById('onboarding-step-4').style.display = 'none'
 						document.getElementById('onboarding-step-5').style.display = 'block'
-						onboardingStep = 5
-
 						// Initialize BioVault
 						initializeBioVault(email)
 					}
@@ -4288,8 +4156,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
 				document.getElementById('onboarding-step-4').style.display = 'none'
 				document.getElementById('onboarding-step-5').style.display = 'block'
-				onboardingStep = 5
-
 				// Initialize BioVault
 				initializeBioVault(email)
 			}
@@ -4316,7 +4182,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		resetAllBtn.addEventListener('click', async () => {
 			const confirmed = await window.__TAURI__.dialog.confirm(
 				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
-				{ title: 'Reset All Data', type: 'warning' }
+				{ title: 'Reset All Data', type: 'warning' },
 			)
 
 			if (!confirmed) {

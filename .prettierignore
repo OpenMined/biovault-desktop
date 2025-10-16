@@ -1,0 +1,8 @@
+node_modules
+biovault
+src-tauri/target
+src-tauri/gen
+dist
+build
+coverage
+**/*.min.js
