@@ -1,4 +1,5 @@
 import { initOnboarding } from './onboarding.js'
+import { createDashboardShell } from './dashboard.js'
 
 const { invoke } = window.__TAURI__.core
 const { open } = window.__TAURI__.dialog
@@ -579,7 +580,6 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 	}
 }
 
-let lastImportView = 'import' // Track last import sub-view visited
 let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 let patternInputDebounce = null
 let messageThreads = []
@@ -593,7 +593,6 @@ let syftboxStatus = { running: false, mode: 'Direct' }
 let messagesInitialized = false
 let messagesRefreshInterval = null
 let messagesRefreshInProgress = false
-let activeView = 'home'
 
 function updateComposeVisibility(showRecipient) {
 	const recipientContainer = document.querySelector('.message-compose-recipient')
@@ -1935,7 +1934,7 @@ function resetImportState() {
 	reviewSortField = 'path'
 	reviewSortDirection = 'asc'
 	autoParticipantIds = {}
-	lastImportView = 'import'
+	setLastImportView('import')
 
 	// Reset step 1 UI elements
 	const selectedPathEl = document.getElementById('selected-path')
@@ -3416,6 +3415,18 @@ function updateRunButton() {
 	btn.disabled = selectedParticipants.length === 0 || selectedProject === null
 }
 
+function prepareRunView() {
+	selectedParticipants = []
+	selectedProject = null
+	const selectAll = document.getElementById('select-all-participants')
+	if (selectAll) {
+		selectAll.checked = false
+	}
+	loadRunParticipants()
+	loadRunProjects()
+	updateRunButton()
+}
+
 async function loadRuns() {
 	try {
 		const runs = await invoke('get_runs')
@@ -3925,7 +3936,7 @@ async function ensureMessagesAuthorization() {
 
 	if (!messagesAuthorized) {
 		stopMessagesAutoRefresh()
-	} else if (syftboxStatus.running && activeView === 'messages') {
+	} else if (syftboxStatus.running && getActiveView() === 'messages') {
 		startMessagesAutoRefresh(true)
 	}
 	return messagesAuthorized
@@ -3967,7 +3978,7 @@ function updateSyftboxIndicator() {
 
 	dropdown.disabled = !messagesAuthorized
 
-	if (messagesAuthorized && syftboxStatus.running && activeView === 'messages') {
+	if (messagesAuthorized && syftboxStatus.running && getActiveView() === 'messages') {
 		startMessagesAutoRefresh()
 	} else if (!syftboxStatus.running) {
 		stopMessagesAutoRefresh()
@@ -3977,10 +3988,10 @@ function updateSyftboxIndicator() {
 function startMessagesAutoRefresh(immediate = false) {
 	if (messagesRefreshInterval) return
 	if (!messagesAuthorized) return
-	if (activeView !== 'messages') return
+	if (getActiveView() !== 'messages') return
 
 	messagesRefreshInterval = setInterval(() => {
-		if (activeView !== 'messages') return
+		if (getActiveView() !== 'messages') return
 		if (!messagesAuthorized) return
 		if (!syftboxStatus.running) return
 		loadMessageThreads(true).catch((error) => {
@@ -4409,89 +4420,6 @@ async function setSyftboxTarget(target) {
 	updateSyftboxIndicator()
 }
 
-function navigateTo(viewName) {
-	if (!viewName) {
-		return
-	}
-
-	const importSubViews = ['import', 'import-review', 'import-results']
-	const isImportSubView = importSubViews.includes(viewName)
-
-	if (viewName === 'import' && lastImportView !== 'import') {
-		viewName = lastImportView
-	}
-
-	// Check if import is in progress
-	if (isImportInProgress && viewName !== 'import-review') {
-		const confirmed = confirm(
-			'Import is currently in progress. Are you sure you want to cancel and leave this page?',
-		)
-		if (!confirmed) {
-			return // Don't navigate
-		}
-		// User confirmed - cancel the import
-		isImportInProgress = false
-	}
-
-	const tabContents = document.querySelectorAll('.tab-content')
-	tabContents.forEach((content) => {
-		content.classList.remove('active')
-		content.style.display = 'none'
-	})
-
-	const targetView = document.getElementById(`${viewName}-view`)
-	if (!targetView) {
-		console.warn(`navigateTo: Unknown view "${viewName}"`)
-		return
-	}
-
-	targetView.classList.add('active')
-	targetView.style.display = ''
-	activeView = viewName
-
-	// Only update tab highlighting if this view has a corresponding tab
-	const highlightTabName = isImportSubView ? 'import' : viewName
-	const tab = document.querySelector(`.tab[data-tab="${highlightTabName}"]`)
-	if (tab) {
-		document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'))
-		tab.classList.add('active')
-	}
-
-	if (isImportSubView) {
-		lastImportView = viewName
-	}
-
-	if (viewName === 'participants') {
-		loadParticipants()
-	} else if (viewName === 'files') {
-		loadFiles()
-	} else if (viewName === 'projects') {
-		loadProjects()
-	} else if (viewName === 'run') {
-		selectedParticipants = []
-		selectedProject = null
-		document.getElementById('select-all-participants').checked = false
-		loadRunParticipants()
-		loadRunProjects()
-		updateRunButton()
-	} else if (viewName === 'runs') {
-		loadRuns()
-	} else if (viewName === 'logs') {
-		displayLogs()
-	} else if (viewName === 'settings') {
-		loadSettings()
-	} else if (viewName === 'messages') {
-		initializeMessagesTab(!messagesInitialized)
-		if (messagesAuthorized && syftboxStatus.running) {
-			startMessagesAutoRefresh(true)
-		}
-	}
-
-	if (viewName !== 'messages') {
-		stopMessagesAutoRefresh()
-	}
-}
-
 // Function to load saved dependency states without re-checking
 async function loadSavedDependencies(listPanelId, detailsPanelId) {
 	const depsList = document.getElementById(listPanelId)
@@ -4542,6 +4470,27 @@ async function checkDependenciesForPanel(listPanelId, detailsPanelId, isSettings
 	}
 }
 
+const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView } =
+	createDashboardShell({
+		getIsImportInProgress: () => isImportInProgress,
+		setIsImportInProgress: (value) => {
+			isImportInProgress = value
+		},
+		loadParticipants,
+		loadFiles,
+		loadProjects,
+		prepareRunView,
+		loadRuns,
+		displayLogs,
+		loadSettings,
+		initializeMessagesTab,
+		getMessagesInitialized: () => messagesInitialized,
+		getMessagesAuthorized: () => messagesAuthorized,
+		getSyftboxStatus: () => syftboxStatus,
+		startMessagesAutoRefresh,
+		stopMessagesAutoRefresh,
+	})
+
 window.addEventListener('DOMContentLoaded', () => {
 	console.log('🔥 DOMContentLoaded fired')
 	refreshExistingFilePaths()
@@ -4562,17 +4511,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	})
 
-	document.querySelectorAll('.home-btn').forEach((btn) => {
-		btn.addEventListener('click', () => {
-			navigateTo(btn.dataset.nav)
-		})
-	})
-
-	document.querySelectorAll('.tab').forEach((tab) => {
-		tab.addEventListener('click', () => {
-			navigateTo(tab.dataset.tab)
-		})
-	})
+	registerNavigationHandlers()
 
 	const messageFilterButtons = document.querySelectorAll('.message-filter')
 	messageFilterButtons.forEach((btn) => {
@@ -5006,7 +4945,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	if (backBtn) {
 		backBtn.addEventListener('click', () => {
 			console.log('Back button clicked')
-			lastImportView = 'import'
+			setLastImportView('import')
 			navigateTo('import')
 		})
 	} else {
