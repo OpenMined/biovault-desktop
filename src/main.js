@@ -1,5 +1,6 @@
 import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
+import { createParticipantsModule } from './participants.js'
 
 const { invoke } = window.__TAURI__.core
 const { open } = window.__TAURI__.dialog
@@ -30,6 +31,13 @@ let cltWaitState = {
 	onCancel: null,
 	windowState: null,
 }
+
+const {
+	loadParticipants: loadParticipantsView,
+	setSearchTerm: setParticipantsSearchTerm,
+	getSelectedParticipants,
+	handleSelectAll: handleParticipantsSelectAll,
+} = createParticipantsModule({ invoke })
 
 function getAppWindow() {
 	const api = window.__TAURI__?.window
@@ -1548,92 +1556,6 @@ function updateImportButton() {
 	btn.disabled = !allSelectedHaveIds
 }
 
-let selectedParticipantsForDelete = []
-
-async function loadParticipants() {
-	try {
-		const participants = await invoke('get_participants')
-		allParticipants = participants
-		selectedParticipantsForDelete = []
-		renderParticipantsTable()
-	} catch (error) {
-		console.error('Error loading participants:', error)
-	}
-}
-
-function updateDeleteParticipantsButton() {
-	const btn = document.getElementById('delete-selected-participants-btn')
-	if (selectedParticipantsForDelete.length > 0) {
-		btn.style.display = 'block'
-		btn.textContent = `Delete Selected (${selectedParticipantsForDelete.length})`
-	} else {
-		btn.style.display = 'none'
-	}
-}
-
-function participantMatchesSearch(participant) {
-	if (!participantsSearchTerm) return true
-	const term = participantsSearchTerm
-	const values = [participant.id, participant.participant_id, participant.created_at]
-	return values.some((value) => {
-		if (value === null || value === undefined) return false
-		return value.toString().toLowerCase().includes(term)
-	})
-}
-
-function renderParticipantsTable() {
-	const tbody = document.getElementById('participants-table')
-	if (!tbody) return
-
-	tbody.innerHTML = ''
-
-	selectedParticipantsForDelete = selectedParticipantsForDelete.filter((id) =>
-		allParticipants.some((p) => p.id === id),
-	)
-
-	const filtered = allParticipants.filter(participantMatchesSearch)
-
-	filtered.forEach((p) => {
-		const row = document.createElement('tr')
-		const isSelected = selectedParticipantsForDelete.includes(p.id)
-		row.innerHTML = `
-			<td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" ${
-				isSelected ? 'checked' : ''
-			} /></td>
-			<td>${p.id}</td>
-			<td>${p.participant_id}</td>
-			<td>${p.created_at}</td>
-		`
-		tbody.appendChild(row)
-	})
-
-	document.querySelectorAll('#participants-table .participant-checkbox').forEach((checkbox) => {
-		checkbox.addEventListener('change', (e) => {
-			const id = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedParticipantsForDelete.includes(id)) {
-					selectedParticipantsForDelete.push(id)
-				}
-			} else {
-				selectedParticipantsForDelete = selectedParticipantsForDelete.filter((x) => x !== id)
-			}
-			updateDeleteParticipantsButton()
-		})
-	})
-
-	document.getElementById('participant-count').textContent = allParticipants.length
-	const selectAllHeader = document.getElementById('select-all-participants-table')
-	if (selectAllHeader) {
-		const filteredCount = filtered.length
-		const selectedCount = filtered.filter((p) =>
-			selectedParticipantsForDelete.includes(p.id),
-		).length
-		selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
-		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
-	}
-	updateDeleteParticipantsButton()
-}
-
 const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
 
 let selectedFilesForDelete = []
@@ -1643,8 +1565,6 @@ let filesSortDirection = 'asc'
 let existingFilePaths = new Set()
 let allFilesData = []
 let filesSearchTerm = ''
-let allParticipants = []
-let participantsSearchTerm = ''
 let queueProcessorRunning = false
 
 async function refreshExistingFilePaths() {
@@ -2590,7 +2510,7 @@ async function finalizeImport() {
 
 		if (allResults.success) {
 			// Metadata was saved during import via CSV
-			await loadParticipants()
+			await loadParticipantsView()
 			await loadFiles()
 
 			// Navigate to files tab after successful import
@@ -4476,7 +4396,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		setIsImportInProgress: (value) => {
 			isImportInProgress = value
 		},
-		loadParticipants,
+		loadParticipants: loadParticipantsView,
 		loadFiles,
 		loadProjects,
 		prepareRunView,
@@ -4494,7 +4414,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 window.addEventListener('DOMContentLoaded', () => {
 	console.log('🔥 DOMContentLoaded fired')
 	refreshExistingFilePaths()
-	loadParticipants()
+	loadParticipantsView()
 	loadFiles()
 	loadProjects()
 	loadCommandLogs()
@@ -4752,44 +4672,37 @@ window.addEventListener('DOMContentLoaded', () => {
 	document.getElementById('copy-logs-btn').addEventListener('click', copyLogs)
 	document.getElementById('clear-logs-btn').addEventListener('click', clearLogs)
 
-	document.getElementById('select-all-participants-table').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('.participant-checkbox')
-		checkboxes.forEach((checkbox) => {
-			checkbox.checked = e.target.checked
-			const id = parseInt(checkbox.dataset.id)
-			if (e.target.checked) {
-				if (!selectedParticipantsForDelete.includes(id)) {
-					selectedParticipantsForDelete.push(id)
-				}
-			} else {
-				selectedParticipantsForDelete = selectedParticipantsForDelete.filter((x) => x !== id)
-			}
+	const selectAllParticipantsTable = document.getElementById('select-all-participants-table')
+	if (selectAllParticipantsTable) {
+		selectAllParticipantsTable.addEventListener('change', (e) => {
+			handleParticipantsSelectAll(e.target.checked)
 		})
-		updateDeleteParticipantsButton()
-	})
+	}
 
-	document
-		.getElementById('delete-selected-participants-btn')
-		.addEventListener('click', async () => {
-			if (selectedParticipantsForDelete.length === 0) return
+	const deleteParticipantsBtn = document.getElementById('delete-selected-participants-btn')
+	if (deleteParticipantsBtn) {
+		deleteParticipantsBtn.addEventListener('click', async () => {
+			const selected = getSelectedParticipants()
+			if (selected.length === 0) return
 
 			if (
 				confirm(
-					`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files.`,
+					`Are you sure you want to delete ${selected.length} participant(s)? This will also delete all associated files.`,
 				)
 			) {
 				try {
 					const deleted = await invoke('delete_participants_bulk', {
-						participantIds: selectedParticipantsForDelete,
+						participantIds: selected,
 					})
 					console.log(`Deleted ${deleted} participant(s)`)
-					await loadParticipants()
+					await loadParticipantsView()
 					await loadFiles()
 				} catch (error) {
 					alert(`Error deleting participants: ${error}`)
 				}
 			}
 		})
+	}
 
 	document.getElementById('select-all-files-table').addEventListener('change', (e) => {
 		const checkboxes = document.querySelectorAll('.file-checkbox')
@@ -4894,8 +4807,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	const participantsSearchInput = document.getElementById('participants-search')
 	if (participantsSearchInput) {
 		participantsSearchInput.addEventListener('input', (e) => {
-			participantsSearchTerm = e.target.value.trim().toLowerCase()
-			renderParticipantsTable()
+			setParticipantsSearchTerm(e.target.value)
 		})
 	}
 
