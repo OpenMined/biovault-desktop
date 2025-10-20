@@ -27,6 +27,7 @@ if command -v brew >/dev/null 2>&1; then
   echo "🧹 Cleaning Homebrew formulae..."
   FORMULAE=(
     docker
+    docker-desktop
     openjdk
     openjdk@25
     openjdk@21
@@ -54,6 +55,36 @@ if command -v brew >/dev/null 2>&1; then
 
   echo "🧹 Running brew cleanup..."
   brew cleanup || true
+
+  echo "🧹 Removing Homebrew installation directories..."
+  HOMEBREW_PREFIXES=(/opt/homebrew /usr/local/Homebrew)
+  for prefix in "${HOMEBREW_PREFIXES[@]}"; do
+    if [[ -d "$prefix" ]]; then
+      echo "  Deleting $prefix"
+      sudo rm -rf "$prefix"
+    fi
+  done
+
+  HOMEBREW_PATHS=(
+    /usr/local/bin/brew
+    /usr/local/share/doc/homebrew
+    /usr/local/share/man/man1/brew.1
+    /usr/local/share/zsh/site-functions/_brew
+    /usr/local/etc/bash_completion.d/brew
+  )
+  for path in "${HOMEBREW_PATHS[@]}"; do
+    if [[ -e "$path" ]]; then
+      echo "  Removing $path"
+      sudo rm -rf "$path"
+    fi
+  done
+
+  echo "🧹 Clearing Homebrew caches..."
+  rm -rf "$HOME/Library/Caches/Homebrew"
+  rm -rf "$HOME/Library/Logs/Homebrew"
+  rm -rf "$HOME/Library/Preferences/Homebrew"
+  rm -rf "$HOME/.cache/Homebrew"
+  rm -rf "$HOME/.config/homebrew"
 else
   echo "Homebrew is not installed, skipping brew clean-up."
 fi
@@ -82,6 +113,14 @@ fi
 rm -f "$HOME/.sbenv/binaries/syftbox"
 rm -rf "$HOME/.sbenv/cache/syftbox"
 rm -rf "$HOME/Library/Application Support/syftbox"
-
+rm /usr/local/cli-plugins/docker-compose || true
+rm /usr/local/bin/hub-tool || true
+rm /usr/local/bin/kubectl.docker || true
+rm /usr/local/bin/docker-credential-desktop || true
+rm /usr/local/bin/docker-credential-ecr-login || true
+rm /usr/local/bin/docker-credential-osxkeychain || true
+rm /usr/local/bin/docker || true
+rm /Users/test/.local/bin/uv || true
+rm /Users/test/.local/bin/syftbox || true
 echo "✅ macOS BioVault prerequisites have been reset."
 echo "You can now rerun the BioVault desktop dependency installer."
