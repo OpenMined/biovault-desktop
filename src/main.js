@@ -3,6 +3,7 @@ import { createDashboardShell } from './dashboard.js'
 import { createParticipantsModule } from './participants.js'
 import { createLogsModule } from './logs.js'
 import { createRunsModule } from './runs.js'
+import { createFilesModule } from './files.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
 const { open } = dialog
@@ -46,6 +47,13 @@ const {
 	shareCurrentRunLogs,
 	setNavigateTo: setRunNavigateTo,
 } = createRunsModule({ invoke, listen })
+
+const {
+	loadFiles,
+	refreshExistingFilePaths,
+	initializeFilesTab,
+	isFileAlreadyImported,
+} = createFilesModule({ invoke })
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
@@ -1128,7 +1136,7 @@ function renderFiles() {
 	fileList.innerHTML = ''
 
 	for (const file of Array.from(selectedFiles)) {
-		if (!currentFiles.includes(file) || existingFilePaths.has(file)) {
+		if (!currentFiles.includes(file) || isFileAlreadyImported(file)) {
 			selectedFiles.delete(file)
 		}
 	}
@@ -1147,7 +1155,7 @@ function renderFiles() {
 
 	sortedFiles.forEach((file) => {
 		const li = document.createElement('li')
-		const alreadyImported = existingFilePaths.has(file)
+		const alreadyImported = isFileAlreadyImported(file)
 		const metadata = getFileMetadata(file)
 		const manualId = fileParticipantIds[file] || ''
 		const autoId = autoParticipantIds[file] || ''
@@ -1530,7 +1538,7 @@ async function pickFolder() {
 
 function updateSelectAllCheckbox() {
 	const selectAllCheckbox = document.getElementById('select-all-files')
-	const selectableFiles = currentFiles.filter((file) => !existingFilePaths.has(file))
+	const selectableFiles = currentFiles.filter((file) => !isFileAlreadyImported(file))
 	if (selectableFiles.length === 0) {
 		selectAllCheckbox.checked = false
 		return
@@ -1561,289 +1569,6 @@ function updateImportButton() {
 		})
 
 	btn.disabled = !allSelectedHaveIds
-}
-
-const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
-
-let selectedFilesForDelete = []
-let currentFileTypeFilter = 'Genotype' // Default to Genotype tab
-let filesSortField = 'status'
-let filesSortDirection = 'asc'
-let existingFilePaths = new Set()
-let allFilesData = []
-let filesSearchTerm = ''
-let queueProcessorRunning = false
-
-async function refreshExistingFilePaths() {
-	try {
-		const files = await invoke('get_files')
-		existingFilePaths = new Set(files.map((f) => f.file_path))
-	} catch (error) {
-		console.error('Error loading existing file paths:', error)
-		existingFilePaths = new Set()
-	}
-}
-
-function getFileSortValue(file, field) {
-	switch (field) {
-		case 'id':
-			return file.id ?? null
-		case 'status':
-			return FILE_STATUS_PRIORITY[file.status] ?? Number.MAX_SAFE_INTEGER
-		case 'participant':
-			return (file.participant_name || '').toLowerCase()
-		case 'file_path':
-			return (file.file_path || '').toLowerCase()
-		case 'data_type':
-			return (file.data_type || '').toLowerCase()
-		case 'source':
-			return (file.source || '').toLowerCase()
-		case 'grch_version':
-			return (file.grch_version || '').toLowerCase()
-		case 'row_count':
-			return file.row_count ?? null
-		case 'chromosome_count':
-			return file.chromosome_count ?? null
-		case 'inferred_sex':
-			return (file.inferred_sex || '').toLowerCase()
-		case 'file_hash':
-			return (file.file_hash || '').toLowerCase()
-		case 'created_at':
-			return file.created_at ? Date.parse(file.created_at) : null
-		case 'updated_at':
-			return file.updated_at ? Date.parse(file.updated_at) : null
-		default:
-			return (file[field] || '').toString().toLowerCase()
-	}
-}
-
-function compareNullableNumbers(a, b) {
-	const aNull = a === null || a === undefined || Number.isNaN(a)
-	const bNull = b === null || b === undefined || Number.isNaN(b)
-	if (aNull && bNull) return 0
-	if (aNull) return 1
-	if (bNull) return -1
-	return a - b
-}
-
-function compareNullableStrings(a, b) {
-	const aNull = a === null || a === undefined || a === ''
-	const bNull = b === null || b === undefined || b === ''
-	if (aNull && bNull) return 0
-	if (aNull) return 1
-	if (bNull) return -1
-	return a.localeCompare(b, undefined, { sensitivity: 'base' })
-}
-
-function sortFilesForTable(files) {
-	files.sort((a, b) => {
-		const valA = getFileSortValue(a, filesSortField)
-		const valB = getFileSortValue(b, filesSortField)
-
-		let comparison
-		if (typeof valA === 'number' || typeof valB === 'number') {
-			comparison = compareNullableNumbers(valA, valB)
-		} else {
-			comparison = compareNullableStrings(valA, valB)
-		}
-
-		if (comparison === 0) {
-			comparison = compareNullableNumbers(a.id ?? null, b.id ?? null)
-		}
-
-		return filesSortDirection === 'asc' ? comparison : -comparison
-	})
-}
-
-function getDefaultFilesSortDirection(field) {
-	if (field === 'created_at' || field === 'updated_at') {
-		return 'desc'
-	}
-	if (field === 'row_count' || field === 'chromosome_count' || field === 'id') {
-		return 'desc'
-	}
-	if (field === 'status') {
-		return 'asc'
-	}
-	return 'asc'
-}
-
-async function loadFiles() {
-	try {
-		const files = await invoke('get_files')
-		existingFilePaths = new Set(files.map((f) => f.file_path))
-		allFilesData = files
-		selectedFilesForDelete = []
-		renderFilesTable()
-	} catch (error) {
-		console.error('Error loading files:', error)
-	}
-}
-
-function fileMatchesSearch(file) {
-	if (!filesSearchTerm) return true
-	const term = filesSearchTerm
-	const values = [
-		file.id,
-		file.status,
-		file.participant_name,
-		file.participant_id,
-		file.file_path,
-		file.data_type,
-		file.source,
-		file.grch_version,
-		file.row_count,
-		file.chromosome_count,
-		file.inferred_sex,
-		file.file_hash,
-		file.created_at,
-		file.updated_at,
-	]
-	return values.some((value) => {
-		if (value === null || value === undefined) return false
-		return value.toString().toLowerCase().includes(term)
-	})
-}
-
-function renderFilesTable() {
-	const tbody = document.getElementById('files-table')
-	if (!tbody) return
-
-	tbody.innerHTML = ''
-
-	selectedFilesForDelete = selectedFilesForDelete.filter((id) =>
-		allFilesData.some((f) => f.id === id),
-	)
-
-	const files = allFilesData.slice()
-	const filteredFiles = files
-		.filter((f) => f.data_type === currentFileTypeFilter)
-		.filter(fileMatchesSearch)
-
-	sortFilesForTable(filteredFiles)
-
-	filteredFiles.forEach((f) => {
-		const row = document.createElement('tr')
-
-		let statusBadge = ''
-		if (f.status === 'pending') {
-			statusBadge =
-				'<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⏳ PENDING</span>'
-		} else if (f.status === 'processing') {
-			statusBadge =
-				'<span style="background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⚙️ PROCESSING</span>'
-		} else if (f.status === 'error') {
-			statusBadge =
-				'<span style="background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' +
-				(f.processing_error || '') +
-				'">❌ ERROR</span>'
-		} else {
-			statusBadge =
-				'<span style="background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">✓ COMPLETE</span>'
-		}
-
-		const isMarkedForDelete = selectedFilesForDelete.includes(f.id)
-
-		row.innerHTML = `
-			<td><input type="checkbox" class="file-checkbox" data-id="${f.id}" ${
-				isMarkedForDelete ? 'checked' : ''
-			} /></td>
-			<td>${f.id}</td>
-			<td>${statusBadge}</td>
-			<td>${f.participant_name || '-'}</td>
-			<td class="truncate" title="${f.file_path}">${f.file_path}</td>
-			<td>${f.data_type || '-'}</td>
-			<td>${f.source || '-'}</td>
-			<td>${f.grch_version || '-'}</td>
-			<td>${f.row_count ? f.row_count.toLocaleString() : '-'}</td>
-			<td>${f.chromosome_count || '-'}</td>
-			<td style="font-weight: ${f.inferred_sex ? '600' : 'normal'}; color: ${
-				f.inferred_sex === 'Male' ? '#007bff' : f.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-			}">${f.inferred_sex || '-'}</td>
-			<td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${(
-				f.file_hash || ''
-			).substring(0, 16)}${f.file_hash && f.file_hash.length > 16 ? '...' : ''}</td>
-			<td>${f.created_at}</td>
-			<td>${f.updated_at}</td>
-			<td><button class="open-finder-btn" data-path="${
-				f.file_path
-			}" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">📁 Open</button></td>
-		`
-		tbody.appendChild(row)
-
-		row.querySelector('.open-finder-btn').addEventListener('click', async () => {
-			try {
-				await invoke('show_in_folder', { filePath: f.file_path })
-			} catch (error) {
-				alert(`Error opening folder: ${error}`)
-			}
-		})
-	})
-
-	document.querySelectorAll('#files-table .file-checkbox').forEach((checkbox) => {
-		checkbox.addEventListener('change', (e) => {
-			const id = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFilesForDelete.includes(id)) {
-					selectedFilesForDelete.push(id)
-				}
-			} else {
-				selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
-			}
-			updateDeleteFilesButton()
-		})
-	})
-
-	document.getElementById('files-count').textContent = filteredFiles.length
-	updateFilesSortIndicators()
-
-	const pendingCount = allFilesData.filter((f) => f.status === 'pending').length
-	document.getElementById('pending-count').textContent = pendingCount
-
-	const processQueueBtn = document.getElementById('process-queue-btn')
-	if (pendingCount > 0) {
-		processQueueBtn.style.display = 'flex'
-	} else {
-		processQueueBtn.style.display = 'none'
-	}
-
-	const spinner = document.getElementById('queue-spinner')
-	if (spinner) {
-		spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
-	}
-
-	const selectAllHeader = document.getElementById('select-all-files-table')
-	if (selectAllHeader) {
-		const filteredCount = filteredFiles.length
-		const selectedCount = filteredFiles.filter((f) => selectedFilesForDelete.includes(f.id)).length
-		selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
-		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
-	}
-
-	updateDeleteFilesButton()
-}
-
-function updateFilesSortIndicators() {
-	document.querySelectorAll('#files-view .sortable-files-header').forEach((header) => {
-		const indicator = header.querySelector('.sort-indicator')
-		if (!indicator) return
-
-		if (header.dataset.sortField === filesSortField) {
-			indicator.textContent = filesSortDirection === 'asc' ? ' ▲' : ' ▼'
-		} else {
-			indicator.textContent = ''
-		}
-	})
-}
-
-function updateDeleteFilesButton() {
-	const btn = document.getElementById('delete-selected-files-btn')
-	if (selectedFilesForDelete.length > 0) {
-		btn.style.display = 'block'
-		btn.textContent = `Delete Selected (${selectedFilesForDelete.length})`
-	} else {
-		btn.style.display = 'none'
-	}
 }
 
 function resetImportState() {
@@ -4066,6 +3791,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	})
 
 	registerNavigationHandlers()
+	initializeFilesTab()
 
 	const messageFilterButtons = document.querySelectorAll('.message-filter')
 	messageFilterButtons.forEach((btn) => {
@@ -4188,29 +3914,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
 	updateComposeVisibility(false)
 
-	// File type tab switching
-	document.querySelectorAll('.file-type-tab').forEach((tab) => {
-		tab.addEventListener('click', () => {
-			const fileType = tab.dataset.type
-
-			// Update active state
-			document.querySelectorAll('.file-type-tab').forEach((t) => {
-				t.classList.remove('active')
-				t.style.borderBottom = '3px solid transparent'
-				t.style.color = '#666'
-			})
-
-			tab.classList.add('active')
-			tab.style.borderBottom = '3px solid #007bff'
-			tab.style.color = '#007bff'
-
-			// Update filter and reload files
-			currentFileTypeFilter = fileType
-			selectedFilesForDelete = []
-			renderFilesTable()
-		})
-	})
-
 	document.getElementById('close-logs-btn').addEventListener('click', () => {
 		document.getElementById('log-viewer').style.display = 'none'
 	})
@@ -4330,130 +4033,12 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	}
 
-	document.getElementById('select-all-files-table').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('.file-checkbox')
-		checkboxes.forEach((checkbox) => {
-			checkbox.checked = e.target.checked
-			const id = parseInt(checkbox.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFilesForDelete.includes(id)) {
-					selectedFilesForDelete.push(id)
-				}
-			} else {
-				selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
-			}
-		})
-		updateDeleteFilesButton()
-	})
-
-	// Update queue processor button based on status
-	async function updateQueueButton() {
-		try {
-			const isRunning = await invoke('get_queue_processor_status')
-			const btn = document.getElementById('process-queue-btn')
-			const icon = document.getElementById('queue-btn-icon')
-			const text = document.getElementById('queue-btn-text')
-			const spinner = document.getElementById('queue-spinner')
-			queueProcessorRunning = isRunning
-			const pendingCount = parseInt(document.getElementById('pending-count').textContent, 10) || 0
-
-			if (isRunning) {
-				icon.textContent = '⏸'
-				text.textContent = 'Pause Queue'
-				btn.style.background = '#28a745' // Green
-			} else {
-				icon.textContent = '▶'
-				text.textContent = 'Resume Queue'
-				btn.style.background = '#ffc107' // Yellow
-			}
-
-			if (spinner) {
-				spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
-			}
-		} catch (error) {
-			console.error('Error getting queue status:', error)
-		}
-	}
-
-	document.getElementById('process-queue-btn').addEventListener('click', async () => {
-		try {
-			const isRunning = await invoke('get_queue_processor_status')
-
-			if (isRunning) {
-				await invoke('pause_queue_processor')
-			} else {
-				await invoke('resume_queue_processor')
-			}
-
-			await updateQueueButton()
-			await loadFiles() // Refresh files list
-		} catch (error) {
-			alert(`Error toggling queue processor: ${error}`)
-		}
-	})
-
-	// Poll queue status and pending count every 3 seconds
-	setInterval(async () => {
-		await updateQueueButton()
-
-		// Auto-refresh files panel when queue is active
-		const isFilesTabActive = document.getElementById('files-view')?.classList.contains('active')
-		const pendingCount = parseInt(document.getElementById('pending-count')?.textContent || '0', 10)
-
-		if (queueProcessorRunning && isFilesTabActive && pendingCount > 0) {
-			await loadFiles()
-		}
-	}, 3000)
-
-	// Initial button update
-	updateQueueButton()
-
-	document.getElementById('delete-selected-files-btn').addEventListener('click', async () => {
-		if (selectedFilesForDelete.length === 0) return
-
-		if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
-			try {
-				const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete })
-				console.log(`Deleted ${deleted} file(s)`)
-				await loadFiles()
-			} catch (error) {
-				alert(`Error deleting files: ${error}`)
-			}
-		}
-	})
-
-	const filesSearchInput = document.getElementById('files-search')
-	if (filesSearchInput) {
-		filesSearchInput.addEventListener('input', (e) => {
-			filesSearchTerm = e.target.value.trim().toLowerCase()
-			renderFilesTable()
-		})
-	}
-
 	const participantsSearchInput = document.getElementById('participants-search')
 	if (participantsSearchInput) {
 		participantsSearchInput.addEventListener('input', (e) => {
 			setParticipantsSearchTerm(e.target.value)
 		})
 	}
-
-	document.querySelectorAll('#files-view .sortable-files-header').forEach((header) => {
-		header.addEventListener('click', () => {
-			const field = header.dataset.sortField
-			if (!field) return
-
-			if (filesSortField === field) {
-				filesSortDirection = filesSortDirection === 'asc' ? 'desc' : 'asc'
-			} else {
-				filesSortField = field
-				filesSortDirection = getDefaultFilesSortDirection(field)
-			}
-
-			renderFilesTable()
-		})
-	})
-
-	updateFilesSortIndicators()
 
 	document.getElementById('pick-folder').addEventListener('click', pickFolder)
 	document.getElementById('import-btn').addEventListener('click', goToReviewStep)
@@ -4558,18 +4143,18 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	})
 
-	document.getElementById('select-all-files').addEventListener('change', (e) => {
-		if (e.target.checked) {
-			currentFiles.forEach((file) => {
-				if (!existingFilePaths.has(file)) {
-					selectedFiles.add(file)
-				}
-			})
-		} else {
-			selectedFiles.clear()
-		}
-		renderFiles()
-	})
+		document.getElementById('select-all-files').addEventListener('change', (e) => {
+			if (e.target.checked) {
+				currentFiles.forEach((file) => {
+					if (!isFileAlreadyImported(file)) {
+						selectedFiles.add(file)
+					}
+				})
+			} else {
+				selectedFiles.clear()
+			}
+			renderFiles()
+		})
 	document.getElementById('create-project-btn').addEventListener('click', () => {
 		showCreateProjectModal()
 	})
