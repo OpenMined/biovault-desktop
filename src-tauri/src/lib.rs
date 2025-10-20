@@ -2786,10 +2786,23 @@ async fn install_dependency(name: String) -> Result<String, String> {
 #[tauri::command]
 async fn install_dependencies(names: Vec<String>) -> Result<(), String> {
     eprintln!("📦 install_dependencies called: {:?}", names);
+    let mut unique = Vec::new();
+    let mut seen = HashSet::new();
+    for name in names {
+        if seen.insert(name.clone()) {
+            unique.push(name);
+        }
+    }
 
-    // For now, return an error since setup needs to be modified to return paths
-    // TODO: Call setup::install_dependencies once it's implemented
-    Err("Bulk installation is not yet implemented. Please install dependencies manually and use the 'Check Again' button.".to_string())
+    if unique.is_empty() {
+        return Ok(());
+    }
+
+    biovault::cli::commands::setup::install_dependencies(&unique)
+        .await
+        .map_err(|e| format!("Failed to install dependencies: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
