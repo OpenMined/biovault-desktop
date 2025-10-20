@@ -130,6 +130,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "install_dependencies" => {
+            let names: Vec<String> = serde_json::from_value(args.get("names").cloned().unwrap_or_default())
+                .map_err(|e| format!("Failed to parse names: {}", e))?;
+            crate::install_dependencies(names)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(true).unwrap())
+        }
         "check_is_onboarded" => {
             let result = crate::check_is_onboarded().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
