@@ -800,10 +800,23 @@ export function createImportModule({
 	}
 
 	async function pickFolder() {
-		const selected = await open({
+		let selected = await open({
 			directory: true,
 			multiple: false,
 		})
+
+		if (!selected && typeof window !== 'undefined') {
+			const override = window.__TEST_SELECT_FOLDER__
+			if (typeof override === 'function') {
+				try {
+					selected = await override()
+				} catch (error) {
+					console.error('Test folder selection override failed:', error)
+				}
+			} else if (override) {
+				selected = override
+			}
+		}
 
 		if (selected) {
 			selectedFiles.clear()
@@ -849,6 +862,15 @@ export function createImportModule({
 			})
 
 		btn.disabled = !allSelectedHaveIds
+
+		if (typeof window !== 'undefined') {
+			window.__IMPORT_DEBUG__ = {
+				selectedFiles: Array.from(selectedFiles),
+				autoParticipantIds: { ...autoParticipantIds },
+				fileParticipantIds: { ...fileParticipantIds },
+				allSelectedHaveIds,
+			}
+		}
 	}
 
 	function resetImportState() {

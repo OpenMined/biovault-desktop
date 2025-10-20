@@ -82,3 +82,11 @@ pkill -f "chrome-debug-profile"
 - Chrome must launch with `--remote-debugging-port=9222`
 - MCP connects to existing Chrome instance automatically
 - Backend logs: `tail -f /tmp/tauri-dev.log`
+
+## Automated UI Tests
+
+- **Headless sweep:** `./test-ui.sh` runs the full Playwright suite against the WebSocket bridge and streams everything into `logs/unified-ui.log`.
+- **Interactive debug:** add `--interactive` to watch the browser (`./test-ui.sh --interactive`). Use `-g "pattern"` with Playwright’s grep to target specific specs, e.g. `./test-ui.sh --interactive -g "Import Data workflow"`.
+- **Unified log:** the script launches a websocket logger (`ws://localhost:9753`) and captures Tauri, Python server, Playwright, and browser console messages in one file. Override paths/ports with `UNIFIED_LOG_FILE`, `UNIFIED_LOG_PORT`, or mirror to stdout via `UNIFIED_LOG_STDOUT=1`.
+- **Browser hooks:** Import and onboarding tests push checkpoints (pattern selection, bulk actions, detection events, etc.) into the unified log so you can `tail -f logs/unified-ui.log` and follow the flow in real time.
+- **Port hygiene:** the script auto-scans for a free `UI_PORT`; if a previous run left `python3 -m http.server` running, clean it up with `pgrep -fl "python3 -m http.server"` and `pkill -f "python3 -m http.server"` before re-running tests.

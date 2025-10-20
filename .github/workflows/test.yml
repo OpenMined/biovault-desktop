@@ -59,7 +59,7 @@ jobs:
       - name: Run frontend lint suite
         run: ./lint.sh
 
-  tauri-build:
+  test-ui:
     runs-on: ubuntu-22.04
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

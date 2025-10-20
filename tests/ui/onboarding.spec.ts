@@ -1,17 +1,40 @@
 import { expect, test } from '@playwright/test'
+import WebSocket from 'ws'
 
 const STORAGE_KEY = 'playwright:onboarded'
+
+let logSocket = null
+
+async function ensureLogSocket() {
+	if (logSocket || !process.env.UNIFIED_LOG_WS) return
+	logSocket = new WebSocket(process.env.UNIFIED_LOG_WS)
+	await new Promise((resolve, reject) => {
+		logSocket.once('open', resolve)
+		logSocket.once('error', reject)
+	})
+}
+
+function sendUnifiedLog(payload) {
+	if (!logSocket || logSocket.readyState !== WebSocket.OPEN) return
+	try {
+		logSocket.send(JSON.stringify({ timestamp: new Date().toISOString(), ...payload }))
+	} catch (error) {
+		// ignore logging errors
+	}
+}
 
 /**
  * @param {import('@playwright/test').Page} page
  */
 async function advanceToEmailStep(page) {
+	sendUnifiedLog({ event: 'onboarding-advance-start' })
 	await expect(page.locator('#onboarding-step-1')).toBeVisible()
 	await page.locator('#onboarding-next-1').click()
 	await expect(page.locator('#onboarding-step-2')).toBeVisible()
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#skip-dependencies-btn').click()
 	await expect(page.locator('#onboarding-step-3')).toBeVisible()
+	sendUnifiedLog({ event: 'onboarding-advance-complete' })
 }
 
 /**
@@ -26,7 +49,25 @@ async function fillOtp(page, code) {
 }
 
 test.describe('Onboarding flow', () => {
+	test.beforeAll(async () => {
+		await ensureLogSocket()
+	})
+
+	test.afterAll(async () => {
+		if (logSocket) {
+			await new Promise((resolve) => {
+				logSocket.once('close', resolve)
+				logSocket.close()
+			})
+			logSocket = null
+		}
+	})
+
 	test.beforeEach(async ({ page }) => {
+		await ensureLogSocket()
+		page.on('console', (msg) => {
+			sendUnifiedLog({ source: 'browser', type: msg.type(), text: msg.text() })
+		})
 		await page.addInitScript(
 			({ storageKey }) => {
 				const w = /** @type {any} */ window
@@ -107,6 +148,7 @@ test.describe('Onboarding flow', () => {
 			{ storageKey: STORAGE_KEY },
 		)
 
+		sendUnifiedLog({ event: 'test-start', name: 'onboarding' })
 		await page.goto('/')
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window

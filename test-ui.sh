@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${UI_PORT:-8082}"
 MAX_PORT=8092
+LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-ui.log}"
+LOG_PORT="${UNIFIED_LOG_PORT:-9753}"
+mkdir -p "$(dirname "$LOG_FILE")"
+: >"$LOG_FILE"
 
 declare -a FORWARD_ARGS=()
 INTERACTIVE=0
@@ -46,15 +50,25 @@ done
 
 export UI_PORT="${PORT}"
 
+info "Starting unified logger on port ${LOG_PORT} (file: ${LOG_FILE})"
+UNIFIED_LOG_WS_URL="ws://localhost:${LOG_PORT}"
+UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
+node "$ROOT_DIR/scripts/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
+LOGGER_PID=$!
+
 info "Starting static server on port ${PORT}"
 pushd "$ROOT_DIR/src" >/dev/null
-python3 -m http.server "$PORT" >/dev/null 2>&1 &
+python3 -m http.server "$PORT" >>"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 popd >/dev/null
 
 cleanup() {
-	info "Stopping static server"
-	kill "$SERVER_PID" 2>/dev/null || true
+    info "Stopping static server"
+    kill "$SERVER_PID" 2>/dev/null || true
+    if [[ -n "${LOGGER_PID:-}" ]]; then
+        info "Stopping unified logger"
+        kill "$LOGGER_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -66,8 +80,9 @@ for _ in {1..40}; do
 done
 
 info "Running Playwright tests"
+export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 if ((${#FORWARD_ARGS[@]} == 0)); then
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui | tee -a "$LOG_FILE"
 else
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui "${FORWARD_ARGS[@]}"
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
 fi
