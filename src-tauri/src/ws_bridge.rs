@@ -93,7 +93,7 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     eprintln!("🔌 WebSocket connection closed: {}", addr);
 }
 
-async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Value, String> {
+async fn execute_command(app: &AppHandle, cmd: &str, _args: Value) -> Result<Value, String> {
     // Get the app state
     let state = app.state::<crate::AppState>();
 

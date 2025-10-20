@@ -30,12 +30,14 @@ Browser → HTTP (8080) → WebSocket (3333) → Rust Backend
 ## Chrome DevTools MCP Usage
 
 ### List & Navigate
+
 ```typescript
 mcp__chrome-devtools__list_pages()
 mcp__chrome-devtools__navigate_page(url: "http://localhost:8080")
 ```
 
 ### Snapshot & Interact
+
 ```typescript
 // Get page structure (token-efficient)
 mcp__chrome-devtools__take_snapshot()
@@ -53,9 +55,10 @@ mcp__chrome-devtools__evaluate_script(
 ```
 
 ### Monitoring
+
 ```typescript
-mcp__chrome-devtools__list_console_messages()
-mcp__chrome-devtools__list_network_requests()
+mcp__chrome - devtools__list_console_messages()
+mcp__chrome - devtools__list_network_requests()
 ```
 
 ## Dev Workflow

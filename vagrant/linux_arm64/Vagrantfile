@@ -1,0 +1,27 @@
+# frozen_string_literal: true
+
+Vagrant.configure("2") do |config|
+  config.vm.define "linux-arm64" do |vm|
+    vm.vm.box = ENV.fetch("LINUX_ARM64_BOX", "bento/ubuntu-24.04")
+    vm.vm.box_version = ENV.fetch("LINUX_ARM64_BOX_VERSION", ">= 0")
+
+    vm.vm.provider :utm do |utm|
+      utm.cpus = ENV.fetch("LINUX_ARM64_CPUS", "4").to_i
+      utm.memory = ENV.fetch("LINUX_ARM64_MEMORY_MB", "8192").to_i
+    end
+
+    vm.vm.synced_folder "../../", "/workspace/biovault",
+                        type: "rsync",
+                        rsync__exclude: [
+                          ".git/",
+                          "node_modules/",
+                          "target/",
+                          "src-tauri/target/"
+                        ],
+                        rsync__auto: true
+
+    vm.vm.provision "shell",
+                    privileged: false,
+                    path: "provision.sh"
+  end
+end

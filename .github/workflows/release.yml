@@ -16,12 +16,19 @@ jobs:
         include:
           - runs-on: macos-latest
             args: "aarch64-apple-darwin"
+            build_kind: tauri
           - runs-on: macos-latest
             args: "x86_64-apple-darwin"
+            build_kind: tauri
           - runs-on: windows-latest
             args: "x86_64-pc-windows-msvc"
+            build_kind: tauri
           - runs-on: ubuntu-22.04
             args: "x86_64-unknown-linux-gnu"
+            build_kind: tauri
+          - runs-on: ubuntu-22.04
+            args: "aarch64-unknown-linux-gnu"
+            build_kind: docker
     runs-on: ${{ matrix.runs-on }}
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -45,7 +52,7 @@ jobs:
           p12-password: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
 
       - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -60,19 +67,23 @@ jobs:
             librsvg2-dev
 
       - name: Setup Rust
+        if: matrix.build_kind == 'tauri'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.args }}
 
       - name: Setup Node.js
+        if: matrix.build_kind == 'tauri'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install Tauri CLI
+        if: matrix.build_kind == 'tauri'
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Cache Rust dependencies
+        if: matrix.build_kind == 'tauri'
         uses: actions/cache@v4
         with:
           path: |
@@ -108,9 +119,27 @@ jobs:
           Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
 
       - name: Build app (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           tauri build --target ${{ matrix.args }}
+
+          mkdir -p artifacts
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+
+      - name: Build app (Linux arm64 via Docker)
+        if: matrix.build_kind == 'docker'
+        run: |
+          chmod +x docker/linux_arm64/*.sh
+          ./docker/linux_arm64/build-image.sh
+          ./docker/linux_arm64/build-appimage.sh
 
           mkdir -p artifacts
 
