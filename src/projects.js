@@ -288,6 +288,28 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		projectCreateState.selectedDir = null
 		projectCreateState.usingDefault = true
 
+		// Load available examples from biovault submodule
+		try {
+			const examples = await invoke('get_available_project_examples')
+			templateSelect.innerHTML = '<option value="">Blank Project</option>'
+
+			// Sort examples by name for consistent display
+			const sortedExamples = Object.entries(examples).sort((a, b) => a[0].localeCompare(b[0]))
+
+			for (const [exampleId, exampleInfo] of sortedExamples) {
+				const option = document.createElement('option')
+				option.value = exampleId
+				const displayName = exampleInfo.name || exampleId
+				const description = exampleInfo.description || ''
+				option.textContent = description ? `${exampleId} - ${description}` : exampleId
+				templateSelect.appendChild(option)
+			}
+		} catch (error) {
+			console.error('Failed to load project examples:', error)
+			// Fall back to basic options if loading fails
+			templateSelect.innerHTML = '<option value="">Blank Project</option>'
+		}
+
 		const defaultPath = await fetchDefaultProjectPath('')
 		projectCreateState.defaultDir = defaultPath
 		pathInput.value = defaultPath
