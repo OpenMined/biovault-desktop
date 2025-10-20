@@ -139,8 +139,28 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(true).unwrap())
         }
+        "update_saved_dependency_states" => {
+            crate::update_saved_dependency_states().map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "check_is_onboarded" => {
             let result = crate::check_is_onboarded().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "complete_onboarding" => {
+            let email: String = serde_json::from_value(
+                args.get("email")
+                    .cloned()
+                    .ok_or_else(|| "Missing email".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse email: {}", e))?;
+            crate::complete_onboarding(email)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "get_config_path" => {
+            let result = crate::get_config_path().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_queue_processor_status" => {

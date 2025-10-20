@@ -301,7 +301,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				option.value = exampleId
 				const displayName = exampleInfo.name || exampleId
 				const description = exampleInfo.description || ''
-				option.textContent = description ? `${exampleId} - ${description}` : exampleId
+				option.textContent = description ? `${displayName} - ${description}` : displayName
 				templateSelect.appendChild(option)
 			}
 		} catch (error) {

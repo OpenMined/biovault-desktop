@@ -7,9 +7,11 @@
 		"tauri": "dotenv -- tauri",
 		"dev": "tauri dev",
 		"dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG}/.biovault tauri dev",
-		"build": "dotenv -- tauri build"
+		"build": "dotenv -- tauri build",
+		"test:ui": "playwright test"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.48.2",
 		"@tauri-apps/cli": "^2",
 		"dotenv-cli": "^10.0.0"
 	},

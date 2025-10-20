@@ -34,15 +34,15 @@ if [ "${CI:-}" = "true" ]; then
 fi
 
 run_step "Prettier formatting" \
-	npx --yes prettier@3.2.5 "$PRETTIER_MODE" '**/*.{js,jsx,ts,tsx,json,css,html,md}' --ignore-path .prettierignore
+	npx --yes prettier@3.2.5 "$PRETTIER_MODE" '**/*.{js,jsx,ts,tsx,json,css,html,md}' '!**/.cache/**' --ignore-path .prettierignore
 
 # Catch common JavaScript issues
 run_step "ESLint static analysis" \
-	npx --yes eslint@8.57.0 . --ext .js,.jsx,.ts,.tsx
+	npx --yes eslint@8.57.0 . --ext .js,.jsx,.ts,.tsx --ignore-pattern '.cache/**'
 
 # Identify unused or missing dependencies
 run_step "Dependency hygiene (depcheck)" \
-	npx --yes depcheck . --config .depcheckrc.json --ignore-dirs=biovault,node_modules,src-tauri
+	npx --yes depcheck . --config .depcheckrc.json --ignore-dirs=biovault,node_modules,src-tauri,.cache
 
 if [ $EXIT_CODE -ne 0 ]; then
 	echo "❌ Linting failed. Please address the issues above."
