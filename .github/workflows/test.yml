@@ -95,8 +95,11 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Restore Rust cache
-        uses: actions/cache/restore@v4
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@latest
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -104,10 +107,9 @@ jobs:
             ~/.cargo/bin
             target
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-
-      - name: Install dependencies
-        run: npm ci
+          key: x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            x86_64-unknown-linux-gnu-cargo-
 
       - name: Build Tauri application
-        run: npm run tauri build
+        run: tauri build --target x86_64-unknown-linux-gnu
