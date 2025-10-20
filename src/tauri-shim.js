@@ -53,7 +53,7 @@ class WsBridge {
 					this.connected = false
 					this.connecting = false
 					// Reject all pending requests
-					for (const [id, pending] of this.pendingRequests.entries()) {
+					for (const [_id, pending] of this.pendingRequests.entries()) {
 						pending.reject(new Error('WebSocket connection closed'))
 					}
 					this.pendingRequests.clear()
@@ -156,7 +156,7 @@ const mockDialog = {
 
 // Mock event listener
 const mockEvent = {
-	listen: async (event, handler) => {
+	listen: async (event, _handler) => {
 		console.log('[Mock] listen:', event)
 		return () => {}
 	},
