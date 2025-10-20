@@ -93,7 +93,7 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     eprintln!("🔌 WebSocket connection closed: {}", addr);
 }
 
-async fn execute_command(app: &AppHandle, cmd: &str, _args: Value) -> Result<Value, String> {
+async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Value, String> {
     // Get the app state
     let state = app.state::<crate::AppState>();
 
@@ -131,8 +131,9 @@ async fn execute_command(app: &AppHandle, cmd: &str, _args: Value) -> Result<Val
             Ok(serde_json::to_value(result).unwrap())
         }
         "install_dependencies" => {
-            let names: Vec<String> = serde_json::from_value(args.get("names").cloned().unwrap_or_default())
-                .map_err(|e| format!("Failed to parse names: {}", e))?;
+            let names: Vec<String> =
+                serde_json::from_value(args.get("names").cloned().unwrap_or_default())
+                    .map_err(|e| format!("Failed to parse names: {}", e))?;
             crate::install_dependencies(names)
                 .await
                 .map_err(|e| e.to_string())?;
