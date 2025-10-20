@@ -2,12 +2,11 @@ import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
 import { createParticipantsModule } from './participants.js'
 import { createLogsModule } from './logs.js'
+import { createRunsModule } from './runs.js'
+import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
-const { invoke } = window.__TAURI__.core
-const { open } = window.__TAURI__.dialog
-const { listen } = window.__TAURI__.event
-
-const shellApi = window.__TAURI__ && window.__TAURI__.shell ? window.__TAURI__.shell : null
+const { open } = dialog
+const { listen } = event
 
 let selectedFolder = null
 let currentFiles = []
@@ -39,15 +38,23 @@ const {
 	handleSelectAll: handleParticipantsSelectAll,
 } = createParticipantsModule({ invoke })
 
+const {
+	prepareRunView,
+	loadRuns,
+	runAnalysis,
+	toggleSelectAllParticipants,
+	shareCurrentRunLogs,
+	setNavigateTo: setRunNavigateTo,
+} = createRunsModule({ invoke, listen })
+
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
 function getAppWindow() {
-	const api = window.__TAURI__?.window
-	if (!api) return null
-	if (typeof api.getCurrent === 'function') {
-		return api.getCurrent()
+	if (!windowApi) return null
+	if (typeof windowApi.getCurrent === 'function') {
+		return windowApi.getCurrent()
 	}
-	return api.appWindow || null
+	return windowApi.appWindow || null
 }
 
 async function adjustWindowForCltPrompt() {
@@ -60,9 +67,8 @@ async function adjustWindowForCltPrompt() {
 
 		cltWaitState.windowState = { size, position }
 
-		const winApi = window.__TAURI__?.window || {}
-		const logicalSizeCtor = winApi.LogicalSize
-		const logicalPositionCtor = winApi.LogicalPosition
+		const logicalSizeCtor = windowApi?.LogicalSize
+		const logicalPositionCtor = windowApi?.LogicalPosition
 
 		const targetSize = logicalSizeCtor ? new logicalSizeCtor(780, 560) : { width: 780, height: 560 }
 		const targetPosition = logicalPositionCtor ? new logicalPositionCtor(40, 60) : { x: 40, y: 60 }
@@ -84,9 +90,8 @@ async function restoreWindowAfterCltPrompt() {
 	if (!state) return
 
 	try {
-		const winApi = window.__TAURI__?.window || {}
-		const logicalSizeCtor = winApi.LogicalSize
-		const logicalPositionCtor = winApi.LogicalPosition
+		const logicalSizeCtor = windowApi?.LogicalSize
+		const logicalPositionCtor = windowApi?.LogicalPosition
 
 		if (state.size) {
 			const originalSize = logicalSizeCtor
@@ -544,7 +549,7 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 			if (button) {
 				clearButtonLoading(button)
 			}
-			await window.__TAURI__.dialog.message(
+			await dialog.message(
 				'✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
 				{ title: 'Success', type: 'info' },
 			)
@@ -583,7 +588,7 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 		if (button) {
 			clearButtonLoading(button)
 		}
-		await window.__TAURI__.dialog.message(
+		await dialog.message(
 			`Failed to install Homebrew: ${errorMessage}\n\nPlease install Homebrew manually from brew.sh`,
 			{ title: 'Installation Failed', type: 'error' },
 		)
@@ -661,8 +666,8 @@ async function openInExternalBrowser(url) {
 }
 
 async function confirmWithDialog(message, options = {}) {
-	if (window.__TAURI__?.dialog?.confirm) {
-		return await window.__TAURI__.dialog.confirm(message, options)
+	if (dialog?.confirm) {
+		return await dialog.confirm(message, options)
 	}
 	return window.confirm(message)
 }
@@ -2782,7 +2787,7 @@ async function createProjectFromModal() {
 
 	const projectName = nameInput.value.trim()
 	if (!projectName) {
-		await window.__TAURI__.dialog.message('Please enter a project name', {
+		await dialog.message('Please enter a project name', {
 			title: 'Name Required',
 			type: 'warning',
 		})
@@ -2816,7 +2821,7 @@ async function createProjectFromModal() {
 				await openProjectEditor({ projectPath: targetPath })
 			}
 		} else {
-			await window.__TAURI__.dialog.message(`Error creating project: ${errorStr}`, {
+			await dialog.message(`Error creating project: ${errorStr}`, {
 				title: 'Error',
 				type: 'error',
 			})
@@ -3224,7 +3229,7 @@ async function handleResetJupyter() {
 		return
 	}
 
-	const confirmed = await window.__TAURI__.dialog.confirm(
+	const confirmed = await dialog.confirm(
 		'Resetting will delete and recreate the project virtual environment. This will remove any additional packages you installed. Continue?',
 		{ title: 'Reset Jupyter Environment', type: 'warning' },
 	)
@@ -3257,301 +3262,6 @@ async function handleResetJupyter() {
 		statusEl.style.color = '#dc3545'
 	} finally {
 		hideOperationModal()
-	}
-}
-
-let selectedParticipants = []
-let selectedProject = null
-
-async function loadRunParticipants() {
-	try {
-		const participants = await invoke('get_participants')
-		const container = document.getElementById('run-participants-list')
-		container.innerHTML = ''
-
-		participants.forEach((p) => {
-			const item = document.createElement('div')
-			item.className = 'selection-item'
-			item.dataset.id = p.id
-			item.innerHTML = `
-				<input type="checkbox" id="part-${p.id}" />
-				<label for="part-${p.id}">${p.participant_id}</label>
-			`
-
-			item.addEventListener('click', (e) => {
-				if (e.target.tagName !== 'INPUT') {
-					const checkbox = item.querySelector('input')
-					checkbox.checked = !checkbox.checked
-				}
-
-				const participantId = parseInt(item.dataset.id)
-				if (item.querySelector('input').checked) {
-					if (!selectedParticipants.includes(participantId)) {
-						selectedParticipants.push(participantId)
-					}
-					item.classList.add('selected')
-				} else {
-					selectedParticipants = selectedParticipants.filter((id) => id !== participantId)
-					item.classList.remove('selected')
-				}
-				updateRunButton()
-			})
-
-			container.appendChild(item)
-		})
-	} catch (error) {
-		console.error('Error loading participants:', error)
-	}
-}
-
-async function loadRunProjects() {
-	try {
-		const projects = await invoke('get_projects')
-		const container = document.getElementById('run-projects-list')
-		container.innerHTML = ''
-
-		projects.forEach((p) => {
-			const item = document.createElement('div')
-			item.className = 'selection-item'
-			item.dataset.id = p.id
-			item.innerHTML = `<strong>${p.name}</strong> - ${p.workflow}`
-
-			item.addEventListener('click', () => {
-				document
-					.querySelectorAll('#run-projects-list .selection-item')
-					.forEach((i) => i.classList.remove('selected'))
-				item.classList.add('selected')
-				selectedProject = parseInt(item.dataset.id)
-				updateRunButton()
-			})
-
-			container.appendChild(item)
-		})
-	} catch (error) {
-		console.error('Error loading projects:', error)
-	}
-}
-
-function updateRunButton() {
-	const btn = document.getElementById('run-btn')
-	btn.disabled = selectedParticipants.length === 0 || selectedProject === null
-}
-
-function prepareRunView() {
-	selectedParticipants = []
-	selectedProject = null
-	const selectAll = document.getElementById('select-all-participants')
-	if (selectAll) {
-		selectAll.checked = false
-	}
-	loadRunParticipants()
-	loadRunProjects()
-	updateRunButton()
-}
-
-async function loadRuns() {
-	try {
-		const runs = await invoke('get_runs')
-		const container = document.getElementById('runs-list')
-
-		if (runs.length === 0) {
-			container.innerHTML = '<p style="color: #666;">No runs yet.</p>'
-			return
-		}
-
-		container.innerHTML = ''
-		runs.forEach((run) => {
-			const card = document.createElement('div')
-			card.className = `run-card ${run.status}`
-			card.style.cursor = 'pointer'
-			card.dataset.runId = run.id
-			card.dataset.projectName = run.project_name
-
-			let statusBadge
-			if (run.status === 'success') {
-				statusBadge =
-					'<span style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Success</span>'
-			} else if (run.status === 'failed') {
-				statusBadge =
-					'<span style="background: #dc3545; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Failed</span>'
-			} else {
-				statusBadge =
-					'<span style="background: #ffc107; color: black; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Running</span>'
-			}
-
-			card.innerHTML = `
-				<div style="display: flex; justify-content: space-between; align-items: start;">
-					<div class="run-info">
-						<h3>${run.project_name} ${statusBadge}</h3>
-						<p><strong>Participants:</strong> ${run.participant_count}</p>
-						<p><strong>Work Directory:</strong> ${run.work_dir}</p>
-						<p><strong>Created:</strong> ${run.created_at}</p>
-					</div>
-					<div style="display: flex; gap: 10px;">
-						<button class="open-folder-btn" data-path="${run.work_dir}">Open Folder</button>
-						<button class="delete-btn" data-run-id="${run.id}">Delete</button>
-					</div>
-				</div>
-			`
-
-			// Make card clickable to show logs
-			card.addEventListener('click', async (e) => {
-				// Don't trigger if clicking buttons
-				if (e.target.tagName === 'BUTTON') return
-				await showRunLogs(run.id, run.project_name, run.work_dir)
-			})
-
-			container.appendChild(card)
-		})
-
-		document.querySelectorAll('.open-folder-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				try {
-					await invoke('open_folder', { path: e.target.dataset.path })
-				} catch (error) {
-					alert(`Error opening folder: ${error}`)
-				}
-			})
-		})
-
-		document.querySelectorAll('.run-card .delete-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				const runId = parseInt(e.target.dataset.runId)
-				if (
-					confirm(
-						'Are you sure you want to delete this run? This will remove all files and the database entry.',
-					)
-				) {
-					try {
-						await invoke('delete_run', { runId })
-
-						// Hide log viewer if it's showing logs for the deleted run
-						if (currentLogRunId === runId) {
-							document.getElementById('log-viewer').style.display = 'none'
-							currentLogRunId = null
-							currentLogWorkDir = null
-						}
-
-						await loadRuns()
-					} catch (error) {
-						alert(`Error deleting run: ${error}`)
-					}
-				}
-			})
-		})
-	} catch (error) {
-		console.error('Error loading runs:', error)
-	}
-}
-
-let currentRunLogListeners = []
-
-let currentLogRunId = null
-let currentLogWorkDir = null
-
-async function showRunLogs(runId, projectName, workDir = null) {
-	const logViewer = document.getElementById('log-viewer')
-	const logContent = document.getElementById('log-content')
-	const logRunName = document.getElementById('log-run-name')
-	const shareBtn = document.getElementById('share-logs-btn')
-
-	currentLogRunId = runId
-	currentLogWorkDir = workDir
-
-	logViewer.style.display = 'block'
-	logContent.textContent = 'Loading logs...'
-	logRunName.textContent = `(${projectName})`
-
-	// Show share button if we have a work dir
-	if (workDir) {
-		shareBtn.style.display = 'block'
-	} else {
-		shareBtn.style.display = 'none'
-	}
-
-	try {
-		const logs = await invoke('get_run_logs', { runId })
-		logContent.textContent = logs
-		logContent.scrollTop = logContent.scrollHeight
-	} catch (error) {
-		logContent.textContent = `Error loading logs: ${error}`
-	}
-}
-
-async function runAnalysis() {
-	if (selectedParticipants.length === 0 || selectedProject === null) return
-
-	const btn = document.getElementById('run-btn')
-	btn.disabled = true
-	btn.textContent = 'Starting...'
-
-	try {
-		// First, create the run record
-		const result = await invoke('start_analysis', {
-			participantIds: selectedParticipants,
-			projectId: selectedProject,
-		})
-
-		// Navigate to Results tab BEFORE starting execution
-		navigateTo('runs')
-		await loadRuns()
-
-		// Show log viewer and set it up
-		const logViewer = document.getElementById('log-viewer')
-		const logContent = document.getElementById('log-content')
-		const logRunName = document.getElementById('log-run-name')
-		const shareBtn = document.getElementById('share-logs-btn')
-
-		logViewer.style.display = 'block'
-		logContent.textContent = ''
-		logContent.dataset.runId = result.run_id
-		logRunName.textContent = ''
-		shareBtn.style.display = 'block'
-
-		currentLogRunId = result.run_id
-		currentLogWorkDir = result.work_dir
-
-		// Load initial log content
-		try {
-			const initialLogs = await invoke('get_run_logs', { runId: result.run_id })
-			logContent.textContent = initialLogs + '\n'
-			logContent.scrollTop = logContent.scrollHeight
-		} catch (error) {
-			logContent.textContent = 'Initializing...\n'
-		}
-
-		// Clean up old listeners
-		currentRunLogListeners.forEach((unlisten) => unlisten())
-		currentRunLogListeners = []
-
-		// Set up event listeners for logs
-		const unlisten = await listen('log-line', (event) => {
-			logContent.textContent += event.payload + '\n'
-			logContent.scrollTop = logContent.scrollHeight
-		})
-
-		const unlistenComplete = await listen('analysis-complete', async (event) => {
-			logContent.textContent += `\n=== Analysis ${event.payload} ===\n`
-			await loadRuns()
-			unlisten()
-			unlistenComplete()
-			currentRunLogListeners = []
-		})
-
-		currentRunLogListeners = [unlisten, unlistenComplete]
-
-		// Use setTimeout to ensure UI updates before starting execution
-		setTimeout(() => {
-			invoke('execute_analysis', { runId: result.run_id }).catch((error) => {
-				logContent.textContent += `\nError: ${error}\n`
-				console.error('Analysis failed:', error)
-			})
-		}, 100)
-	} catch (error) {
-		alert(`Error: ${error}`)
-	} finally {
-		btn.disabled = false
-		btn.textContent = 'Run Analysis'
 	}
 }
 
@@ -3613,7 +3323,7 @@ async function handleSyftBoxAuthentication() {
 	const email = document.getElementById('setting-email').value.trim()
 
 	if (!email) {
-		await window.__TAURI__.dialog.message('Please enter your email address first.', {
+		await dialog.message('Please enter your email address first.', {
 			title: 'Email Required',
 			type: 'warning',
 		})
@@ -4333,6 +4043,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		stopMessagesAutoRefresh,
 	})
 
+setRunNavigateTo(navigateTo)
+
 window.addEventListener('DOMContentLoaded', () => {
 	console.log('🔥 DOMContentLoaded fired')
 	refreshExistingFilePaths()
@@ -4503,15 +4215,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		document.getElementById('log-viewer').style.display = 'none'
 	})
 
-	document.getElementById('share-logs-btn').addEventListener('click', async () => {
-		if (currentLogWorkDir) {
-			try {
-				await invoke('open_folder', { path: currentLogWorkDir })
-			} catch (error) {
-				alert(`Error opening folder: ${error}`)
-			}
-		}
-	})
+	document.getElementById('share-logs-btn').addEventListener('click', shareCurrentRunLogs)
 
 	// Settings save/reset buttons removed from UI
 
@@ -4911,26 +4615,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		.addEventListener('click', handleResetJupyter)
 
 	document.getElementById('select-all-participants').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('#run-participants-list input[type="checkbox"]')
-		const items = document.querySelectorAll('#run-participants-list .selection-item')
-
-		checkboxes.forEach((checkbox, index) => {
-			checkbox.checked = e.target.checked
-			const item = items[index]
-			const participantId = parseInt(item.dataset.id)
-
-			if (e.target.checked) {
-				if (!selectedParticipants.includes(participantId)) {
-					selectedParticipants.push(participantId)
-				}
-				item.classList.add('selected')
-			} else {
-				selectedParticipants = selectedParticipants.filter((id) => id !== participantId)
-				item.classList.remove('selected')
-			}
-		})
-
-		updateRunButton()
+		toggleSelectAllParticipants(e.target.checked)
 	})
 
 	const fileTypeSelect = document.getElementById('file-type-select')
