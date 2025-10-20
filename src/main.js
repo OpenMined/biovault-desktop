@@ -1,8 +1,13 @@
-const { invoke } = window.__TAURI__.core
-const { open } = window.__TAURI__.dialog
-const { listen } = window.__TAURI__.event
+import { initOnboarding } from './onboarding.js'
+import { createDashboardShell } from './dashboard.js'
+import { createParticipantsModule } from './participants.js'
+import { createLogsModule } from './logs.js'
+import { createRunsModule } from './runs.js'
+import { createFilesModule } from './files.js'
+import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
-const shellApi = window.__TAURI__ && window.__TAURI__.shell ? window.__TAURI__.shell : null
+const { open } = dialog
+const { listen } = event
 
 let selectedFolder = null
 let currentFiles = []
@@ -16,7 +21,6 @@ let columnWidths = {
 	filename: 180,
 	participant: 150,
 }
-let commandLogs = [] // Array of log entries
 let isImportInProgress = false // Track if import is currently running
 let dependencyResults = null // Store dependency check results globally
 let cltWaitState = {
@@ -28,13 +32,33 @@ let cltWaitState = {
 	windowState: null,
 }
 
+const {
+	loadParticipants: loadParticipantsView,
+	setSearchTerm: setParticipantsSearchTerm,
+	getSelectedParticipants,
+	handleSelectAll: handleParticipantsSelectAll,
+} = createParticipantsModule({ invoke })
+
+const {
+	prepareRunView,
+	loadRuns,
+	runAnalysis,
+	toggleSelectAllParticipants,
+	shareCurrentRunLogs,
+	setNavigateTo: setRunNavigateTo,
+} = createRunsModule({ invoke, listen })
+
+const { loadFiles, refreshExistingFilePaths, initializeFilesTab, isFileAlreadyImported } =
+	createFilesModule({ invoke })
+
+const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
+
 function getAppWindow() {
-	const api = window.__TAURI__?.window
-	if (!api) return null
-	if (typeof api.getCurrent === 'function') {
-		return api.getCurrent()
+	if (!windowApi) return null
+	if (typeof windowApi.getCurrent === 'function') {
+		return windowApi.getCurrent()
 	}
-	return api.appWindow || null
+	return windowApi.appWindow || null
 }
 
 async function adjustWindowForCltPrompt() {
@@ -47,9 +71,8 @@ async function adjustWindowForCltPrompt() {
 
 		cltWaitState.windowState = { size, position }
 
-		const winApi = window.__TAURI__?.window || {}
-		const logicalSizeCtor = winApi.LogicalSize
-		const logicalPositionCtor = winApi.LogicalPosition
+		const logicalSizeCtor = windowApi?.LogicalSize
+		const logicalPositionCtor = windowApi?.LogicalPosition
 
 		const targetSize = logicalSizeCtor ? new logicalSizeCtor(780, 560) : { width: 780, height: 560 }
 		const targetPosition = logicalPositionCtor ? new logicalPositionCtor(40, 60) : { x: 40, y: 60 }
@@ -71,9 +94,8 @@ async function restoreWindowAfterCltPrompt() {
 	if (!state) return
 
 	try {
-		const winApi = window.__TAURI__?.window || {}
-		const logicalSizeCtor = winApi.LogicalSize
-		const logicalPositionCtor = winApi.LogicalPosition
+		const logicalSizeCtor = windowApi?.LogicalSize
+		const logicalPositionCtor = windowApi?.LogicalPosition
 
 		if (state.size) {
 			const originalSize = logicalSizeCtor
@@ -531,7 +553,7 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 			if (button) {
 				clearButtonLoading(button)
 			}
-			await window.__TAURI__.dialog.message(
+			await dialog.message(
 				'✓ Homebrew installed successfully!\n\nNow you can proceed with installing dependencies.',
 				{ title: 'Success', type: 'info' },
 			)
@@ -570,14 +592,13 @@ async function runHomebrewInstall({ button, onSuccess } = {}) {
 		if (button) {
 			clearButtonLoading(button)
 		}
-		await window.__TAURI__.dialog.message(
+		await dialog.message(
 			`Failed to install Homebrew: ${errorMessage}\n\nPlease install Homebrew manually from brew.sh`,
 			{ title: 'Installation Failed', type: 'error' },
 		)
 	}
 }
 
-let lastImportView = 'import' // Track last import sub-view visited
 let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 let patternInputDebounce = null
 let messageThreads = []
@@ -591,7 +612,6 @@ let syftboxStatus = { running: false, mode: 'Direct' }
 let messagesInitialized = false
 let messagesRefreshInterval = null
 let messagesRefreshInProgress = false
-let activeView = 'home'
 
 function updateComposeVisibility(showRecipient) {
 	const recipientContainer = document.querySelector('.message-compose-recipient')
@@ -650,8 +670,8 @@ async function openInExternalBrowser(url) {
 }
 
 async function confirmWithDialog(message, options = {}) {
-	if (window.__TAURI__?.dialog?.confirm) {
-		return await window.__TAURI__.dialog.confirm(message, options)
+	if (dialog?.confirm) {
+		return await dialog.confirm(message, options)
 	}
 	return window.confirm(message)
 }
@@ -1112,7 +1132,7 @@ function renderFiles() {
 	fileList.innerHTML = ''
 
 	for (const file of Array.from(selectedFiles)) {
-		if (!currentFiles.includes(file) || existingFilePaths.has(file)) {
+		if (!currentFiles.includes(file) || isFileAlreadyImported(file)) {
 			selectedFiles.delete(file)
 		}
 	}
@@ -1131,7 +1151,7 @@ function renderFiles() {
 
 	sortedFiles.forEach((file) => {
 		const li = document.createElement('li')
-		const alreadyImported = existingFilePaths.has(file)
+		const alreadyImported = isFileAlreadyImported(file)
 		const metadata = getFileMetadata(file)
 		const manualId = fileParticipantIds[file] || ''
 		const autoId = autoParticipantIds[file] || ''
@@ -1514,7 +1534,7 @@ async function pickFolder() {
 
 function updateSelectAllCheckbox() {
 	const selectAllCheckbox = document.getElementById('select-all-files')
-	const selectableFiles = currentFiles.filter((file) => !existingFilePaths.has(file))
+	const selectableFiles = currentFiles.filter((file) => !isFileAlreadyImported(file))
 	if (selectableFiles.length === 0) {
 		selectAllCheckbox.checked = false
 		return
@@ -1547,377 +1567,6 @@ function updateImportButton() {
 	btn.disabled = !allSelectedHaveIds
 }
 
-let selectedParticipantsForDelete = []
-
-async function loadParticipants() {
-	try {
-		const participants = await invoke('get_participants')
-		allParticipants = participants
-		selectedParticipantsForDelete = []
-		renderParticipantsTable()
-	} catch (error) {
-		console.error('Error loading participants:', error)
-	}
-}
-
-function updateDeleteParticipantsButton() {
-	const btn = document.getElementById('delete-selected-participants-btn')
-	if (selectedParticipantsForDelete.length > 0) {
-		btn.style.display = 'block'
-		btn.textContent = `Delete Selected (${selectedParticipantsForDelete.length})`
-	} else {
-		btn.style.display = 'none'
-	}
-}
-
-function participantMatchesSearch(participant) {
-	if (!participantsSearchTerm) return true
-	const term = participantsSearchTerm
-	const values = [participant.id, participant.participant_id, participant.created_at]
-	return values.some((value) => {
-		if (value === null || value === undefined) return false
-		return value.toString().toLowerCase().includes(term)
-	})
-}
-
-function renderParticipantsTable() {
-	const tbody = document.getElementById('participants-table')
-	if (!tbody) return
-
-	tbody.innerHTML = ''
-
-	selectedParticipantsForDelete = selectedParticipantsForDelete.filter((id) =>
-		allParticipants.some((p) => p.id === id),
-	)
-
-	const filtered = allParticipants.filter(participantMatchesSearch)
-
-	filtered.forEach((p) => {
-		const row = document.createElement('tr')
-		const isSelected = selectedParticipantsForDelete.includes(p.id)
-		row.innerHTML = `
-			<td><input type="checkbox" class="participant-checkbox" data-id="${p.id}" ${
-				isSelected ? 'checked' : ''
-			} /></td>
-			<td>${p.id}</td>
-			<td>${p.participant_id}</td>
-			<td>${p.created_at}</td>
-		`
-		tbody.appendChild(row)
-	})
-
-	document.querySelectorAll('#participants-table .participant-checkbox').forEach((checkbox) => {
-		checkbox.addEventListener('change', (e) => {
-			const id = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedParticipantsForDelete.includes(id)) {
-					selectedParticipantsForDelete.push(id)
-				}
-			} else {
-				selectedParticipantsForDelete = selectedParticipantsForDelete.filter((x) => x !== id)
-			}
-			updateDeleteParticipantsButton()
-		})
-	})
-
-	document.getElementById('participant-count').textContent = allParticipants.length
-	const selectAllHeader = document.getElementById('select-all-participants-table')
-	if (selectAllHeader) {
-		const filteredCount = filtered.length
-		const selectedCount = filtered.filter((p) =>
-			selectedParticipantsForDelete.includes(p.id),
-		).length
-		selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
-		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
-	}
-	updateDeleteParticipantsButton()
-}
-
-const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
-
-let selectedFilesForDelete = []
-let currentFileTypeFilter = 'Genotype' // Default to Genotype tab
-let filesSortField = 'status'
-let filesSortDirection = 'asc'
-let existingFilePaths = new Set()
-let allFilesData = []
-let filesSearchTerm = ''
-let allParticipants = []
-let participantsSearchTerm = ''
-let queueProcessorRunning = false
-
-async function refreshExistingFilePaths() {
-	try {
-		const files = await invoke('get_files')
-		existingFilePaths = new Set(files.map((f) => f.file_path))
-	} catch (error) {
-		console.error('Error loading existing file paths:', error)
-		existingFilePaths = new Set()
-	}
-}
-
-function getFileSortValue(file, field) {
-	switch (field) {
-		case 'id':
-			return file.id ?? null
-		case 'status':
-			return FILE_STATUS_PRIORITY[file.status] ?? Number.MAX_SAFE_INTEGER
-		case 'participant':
-			return (file.participant_name || '').toLowerCase()
-		case 'file_path':
-			return (file.file_path || '').toLowerCase()
-		case 'data_type':
-			return (file.data_type || '').toLowerCase()
-		case 'source':
-			return (file.source || '').toLowerCase()
-		case 'grch_version':
-			return (file.grch_version || '').toLowerCase()
-		case 'row_count':
-			return file.row_count ?? null
-		case 'chromosome_count':
-			return file.chromosome_count ?? null
-		case 'inferred_sex':
-			return (file.inferred_sex || '').toLowerCase()
-		case 'file_hash':
-			return (file.file_hash || '').toLowerCase()
-		case 'created_at':
-			return file.created_at ? Date.parse(file.created_at) : null
-		case 'updated_at':
-			return file.updated_at ? Date.parse(file.updated_at) : null
-		default:
-			return (file[field] || '').toString().toLowerCase()
-	}
-}
-
-function compareNullableNumbers(a, b) {
-	const aNull = a === null || a === undefined || Number.isNaN(a)
-	const bNull = b === null || b === undefined || Number.isNaN(b)
-	if (aNull && bNull) return 0
-	if (aNull) return 1
-	if (bNull) return -1
-	return a - b
-}
-
-function compareNullableStrings(a, b) {
-	const aNull = a === null || a === undefined || a === ''
-	const bNull = b === null || b === undefined || b === ''
-	if (aNull && bNull) return 0
-	if (aNull) return 1
-	if (bNull) return -1
-	return a.localeCompare(b, undefined, { sensitivity: 'base' })
-}
-
-function sortFilesForTable(files) {
-	files.sort((a, b) => {
-		const valA = getFileSortValue(a, filesSortField)
-		const valB = getFileSortValue(b, filesSortField)
-
-		let comparison
-		if (typeof valA === 'number' || typeof valB === 'number') {
-			comparison = compareNullableNumbers(valA, valB)
-		} else {
-			comparison = compareNullableStrings(valA, valB)
-		}
-
-		if (comparison === 0) {
-			comparison = compareNullableNumbers(a.id ?? null, b.id ?? null)
-		}
-
-		return filesSortDirection === 'asc' ? comparison : -comparison
-	})
-}
-
-function getDefaultFilesSortDirection(field) {
-	if (field === 'created_at' || field === 'updated_at') {
-		return 'desc'
-	}
-	if (field === 'row_count' || field === 'chromosome_count' || field === 'id') {
-		return 'desc'
-	}
-	if (field === 'status') {
-		return 'asc'
-	}
-	return 'asc'
-}
-
-async function loadFiles() {
-	try {
-		const files = await invoke('get_files')
-		existingFilePaths = new Set(files.map((f) => f.file_path))
-		allFilesData = files
-		selectedFilesForDelete = []
-		renderFilesTable()
-	} catch (error) {
-		console.error('Error loading files:', error)
-	}
-}
-
-function fileMatchesSearch(file) {
-	if (!filesSearchTerm) return true
-	const term = filesSearchTerm
-	const values = [
-		file.id,
-		file.status,
-		file.participant_name,
-		file.participant_id,
-		file.file_path,
-		file.data_type,
-		file.source,
-		file.grch_version,
-		file.row_count,
-		file.chromosome_count,
-		file.inferred_sex,
-		file.file_hash,
-		file.created_at,
-		file.updated_at,
-	]
-	return values.some((value) => {
-		if (value === null || value === undefined) return false
-		return value.toString().toLowerCase().includes(term)
-	})
-}
-
-function renderFilesTable() {
-	const tbody = document.getElementById('files-table')
-	if (!tbody) return
-
-	tbody.innerHTML = ''
-
-	selectedFilesForDelete = selectedFilesForDelete.filter((id) =>
-		allFilesData.some((f) => f.id === id),
-	)
-
-	const files = allFilesData.slice()
-	const filteredFiles = files
-		.filter((f) => f.data_type === currentFileTypeFilter)
-		.filter(fileMatchesSearch)
-
-	sortFilesForTable(filteredFiles)
-
-	filteredFiles.forEach((f) => {
-		const row = document.createElement('tr')
-
-		let statusBadge = ''
-		if (f.status === 'pending') {
-			statusBadge =
-				'<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⏳ PENDING</span>'
-		} else if (f.status === 'processing') {
-			statusBadge =
-				'<span style="background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⚙️ PROCESSING</span>'
-		} else if (f.status === 'error') {
-			statusBadge =
-				'<span style="background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' +
-				(f.processing_error || '') +
-				'">❌ ERROR</span>'
-		} else {
-			statusBadge =
-				'<span style="background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">✓ COMPLETE</span>'
-		}
-
-		const isMarkedForDelete = selectedFilesForDelete.includes(f.id)
-
-		row.innerHTML = `
-			<td><input type="checkbox" class="file-checkbox" data-id="${f.id}" ${
-				isMarkedForDelete ? 'checked' : ''
-			} /></td>
-			<td>${f.id}</td>
-			<td>${statusBadge}</td>
-			<td>${f.participant_name || '-'}</td>
-			<td class="truncate" title="${f.file_path}">${f.file_path}</td>
-			<td>${f.data_type || '-'}</td>
-			<td>${f.source || '-'}</td>
-			<td>${f.grch_version || '-'}</td>
-			<td>${f.row_count ? f.row_count.toLocaleString() : '-'}</td>
-			<td>${f.chromosome_count || '-'}</td>
-			<td style="font-weight: ${f.inferred_sex ? '600' : 'normal'}; color: ${
-				f.inferred_sex === 'Male' ? '#007bff' : f.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-			}">${f.inferred_sex || '-'}</td>
-			<td style="font-family: monospace; font-size: 11px;" title="${f.file_hash}">${(
-				f.file_hash || ''
-			).substring(0, 16)}${f.file_hash && f.file_hash.length > 16 ? '...' : ''}</td>
-			<td>${f.created_at}</td>
-			<td>${f.updated_at}</td>
-			<td><button class="open-finder-btn" data-path="${
-				f.file_path
-			}" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">📁 Open</button></td>
-		`
-		tbody.appendChild(row)
-
-		row.querySelector('.open-finder-btn').addEventListener('click', async () => {
-			try {
-				await invoke('show_in_folder', { filePath: f.file_path })
-			} catch (error) {
-				alert(`Error opening folder: ${error}`)
-			}
-		})
-	})
-
-	document.querySelectorAll('#files-table .file-checkbox').forEach((checkbox) => {
-		checkbox.addEventListener('change', (e) => {
-			const id = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFilesForDelete.includes(id)) {
-					selectedFilesForDelete.push(id)
-				}
-			} else {
-				selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
-			}
-			updateDeleteFilesButton()
-		})
-	})
-
-	document.getElementById('files-count').textContent = filteredFiles.length
-	updateFilesSortIndicators()
-
-	const pendingCount = allFilesData.filter((f) => f.status === 'pending').length
-	document.getElementById('pending-count').textContent = pendingCount
-
-	const processQueueBtn = document.getElementById('process-queue-btn')
-	if (pendingCount > 0) {
-		processQueueBtn.style.display = 'flex'
-	} else {
-		processQueueBtn.style.display = 'none'
-	}
-
-	const spinner = document.getElementById('queue-spinner')
-	if (spinner) {
-		spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
-	}
-
-	const selectAllHeader = document.getElementById('select-all-files-table')
-	if (selectAllHeader) {
-		const filteredCount = filteredFiles.length
-		const selectedCount = filteredFiles.filter((f) => selectedFilesForDelete.includes(f.id)).length
-		selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
-		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
-	}
-
-	updateDeleteFilesButton()
-}
-
-function updateFilesSortIndicators() {
-	document.querySelectorAll('#files-view .sortable-files-header').forEach((header) => {
-		const indicator = header.querySelector('.sort-indicator')
-		if (!indicator) return
-
-		if (header.dataset.sortField === filesSortField) {
-			indicator.textContent = filesSortDirection === 'asc' ? ' ▲' : ' ▼'
-		} else {
-			indicator.textContent = ''
-		}
-	})
-}
-
-function updateDeleteFilesButton() {
-	const btn = document.getElementById('delete-selected-files-btn')
-	if (selectedFilesForDelete.length > 0) {
-		btn.style.display = 'block'
-		btn.textContent = `Delete Selected (${selectedFilesForDelete.length})`
-	} else {
-		btn.style.display = 'none'
-	}
-}
-
 function resetImportState() {
 	console.log('🔄 Resetting import workflow state')
 
@@ -1933,7 +1582,7 @@ function resetImportState() {
 	reviewSortField = 'path'
 	reviewSortDirection = 'asc'
 	autoParticipantIds = {}
-	lastImportView = 'import'
+	setLastImportView('import')
 
 	// Reset step 1 UI elements
 	const selectedPathEl = document.getElementById('selected-path')
@@ -2589,7 +2238,7 @@ async function finalizeImport() {
 
 		if (allResults.success) {
 			// Metadata was saved during import via CSV
-			await loadParticipants()
+			await loadParticipantsView()
 			await loadFiles()
 
 			// Navigate to files tab after successful import
@@ -2859,7 +2508,7 @@ async function createProjectFromModal() {
 
 	const projectName = nameInput.value.trim()
 	if (!projectName) {
-		await window.__TAURI__.dialog.message('Please enter a project name', {
+		await dialog.message('Please enter a project name', {
 			title: 'Name Required',
 			type: 'warning',
 		})
@@ -2893,7 +2542,7 @@ async function createProjectFromModal() {
 				await openProjectEditor({ projectPath: targetPath })
 			}
 		} else {
-			await window.__TAURI__.dialog.message(`Error creating project: ${errorStr}`, {
+			await dialog.message(`Error creating project: ${errorStr}`, {
 				title: 'Error',
 				type: 'error',
 			})
@@ -3301,7 +2950,7 @@ async function handleResetJupyter() {
 		return
 	}
 
-	const confirmed = await window.__TAURI__.dialog.confirm(
+	const confirmed = await dialog.confirm(
 		'Resetting will delete and recreate the project virtual environment. This will remove any additional packages you installed. Continue?',
 		{ title: 'Reset Jupyter Environment', type: 'warning' },
 	)
@@ -3334,289 +2983,6 @@ async function handleResetJupyter() {
 		statusEl.style.color = '#dc3545'
 	} finally {
 		hideOperationModal()
-	}
-}
-
-let selectedParticipants = []
-let selectedProject = null
-
-async function loadRunParticipants() {
-	try {
-		const participants = await invoke('get_participants')
-		const container = document.getElementById('run-participants-list')
-		container.innerHTML = ''
-
-		participants.forEach((p) => {
-			const item = document.createElement('div')
-			item.className = 'selection-item'
-			item.dataset.id = p.id
-			item.innerHTML = `
-				<input type="checkbox" id="part-${p.id}" />
-				<label for="part-${p.id}">${p.participant_id}</label>
-			`
-
-			item.addEventListener('click', (e) => {
-				if (e.target.tagName !== 'INPUT') {
-					const checkbox = item.querySelector('input')
-					checkbox.checked = !checkbox.checked
-				}
-
-				const participantId = parseInt(item.dataset.id)
-				if (item.querySelector('input').checked) {
-					if (!selectedParticipants.includes(participantId)) {
-						selectedParticipants.push(participantId)
-					}
-					item.classList.add('selected')
-				} else {
-					selectedParticipants = selectedParticipants.filter((id) => id !== participantId)
-					item.classList.remove('selected')
-				}
-				updateRunButton()
-			})
-
-			container.appendChild(item)
-		})
-	} catch (error) {
-		console.error('Error loading participants:', error)
-	}
-}
-
-async function loadRunProjects() {
-	try {
-		const projects = await invoke('get_projects')
-		const container = document.getElementById('run-projects-list')
-		container.innerHTML = ''
-
-		projects.forEach((p) => {
-			const item = document.createElement('div')
-			item.className = 'selection-item'
-			item.dataset.id = p.id
-			item.innerHTML = `<strong>${p.name}</strong> - ${p.workflow}`
-
-			item.addEventListener('click', () => {
-				document
-					.querySelectorAll('#run-projects-list .selection-item')
-					.forEach((i) => i.classList.remove('selected'))
-				item.classList.add('selected')
-				selectedProject = parseInt(item.dataset.id)
-				updateRunButton()
-			})
-
-			container.appendChild(item)
-		})
-	} catch (error) {
-		console.error('Error loading projects:', error)
-	}
-}
-
-function updateRunButton() {
-	const btn = document.getElementById('run-btn')
-	btn.disabled = selectedParticipants.length === 0 || selectedProject === null
-}
-
-async function loadRuns() {
-	try {
-		const runs = await invoke('get_runs')
-		const container = document.getElementById('runs-list')
-
-		if (runs.length === 0) {
-			container.innerHTML = '<p style="color: #666;">No runs yet.</p>'
-			return
-		}
-
-		container.innerHTML = ''
-		runs.forEach((run) => {
-			const card = document.createElement('div')
-			card.className = `run-card ${run.status}`
-			card.style.cursor = 'pointer'
-			card.dataset.runId = run.id
-			card.dataset.projectName = run.project_name
-
-			let statusBadge
-			if (run.status === 'success') {
-				statusBadge =
-					'<span style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Success</span>'
-			} else if (run.status === 'failed') {
-				statusBadge =
-					'<span style="background: #dc3545; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Failed</span>'
-			} else {
-				statusBadge =
-					'<span style="background: #ffc107; color: black; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Running</span>'
-			}
-
-			card.innerHTML = `
-				<div style="display: flex; justify-content: space-between; align-items: start;">
-					<div class="run-info">
-						<h3>${run.project_name} ${statusBadge}</h3>
-						<p><strong>Participants:</strong> ${run.participant_count}</p>
-						<p><strong>Work Directory:</strong> ${run.work_dir}</p>
-						<p><strong>Created:</strong> ${run.created_at}</p>
-					</div>
-					<div style="display: flex; gap: 10px;">
-						<button class="open-folder-btn" data-path="${run.work_dir}">Open Folder</button>
-						<button class="delete-btn" data-run-id="${run.id}">Delete</button>
-					</div>
-				</div>
-			`
-
-			// Make card clickable to show logs
-			card.addEventListener('click', async (e) => {
-				// Don't trigger if clicking buttons
-				if (e.target.tagName === 'BUTTON') return
-				await showRunLogs(run.id, run.project_name, run.work_dir)
-			})
-
-			container.appendChild(card)
-		})
-
-		document.querySelectorAll('.open-folder-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				try {
-					await invoke('open_folder', { path: e.target.dataset.path })
-				} catch (error) {
-					alert(`Error opening folder: ${error}`)
-				}
-			})
-		})
-
-		document.querySelectorAll('.run-card .delete-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				const runId = parseInt(e.target.dataset.runId)
-				if (
-					confirm(
-						'Are you sure you want to delete this run? This will remove all files and the database entry.',
-					)
-				) {
-					try {
-						await invoke('delete_run', { runId })
-
-						// Hide log viewer if it's showing logs for the deleted run
-						if (currentLogRunId === runId) {
-							document.getElementById('log-viewer').style.display = 'none'
-							currentLogRunId = null
-							currentLogWorkDir = null
-						}
-
-						await loadRuns()
-					} catch (error) {
-						alert(`Error deleting run: ${error}`)
-					}
-				}
-			})
-		})
-	} catch (error) {
-		console.error('Error loading runs:', error)
-	}
-}
-
-let currentRunLogListeners = []
-
-let currentLogRunId = null
-let currentLogWorkDir = null
-
-async function showRunLogs(runId, projectName, workDir = null) {
-	const logViewer = document.getElementById('log-viewer')
-	const logContent = document.getElementById('log-content')
-	const logRunName = document.getElementById('log-run-name')
-	const shareBtn = document.getElementById('share-logs-btn')
-
-	currentLogRunId = runId
-	currentLogWorkDir = workDir
-
-	logViewer.style.display = 'block'
-	logContent.textContent = 'Loading logs...'
-	logRunName.textContent = `(${projectName})`
-
-	// Show share button if we have a work dir
-	if (workDir) {
-		shareBtn.style.display = 'block'
-	} else {
-		shareBtn.style.display = 'none'
-	}
-
-	try {
-		const logs = await invoke('get_run_logs', { runId })
-		logContent.textContent = logs
-		logContent.scrollTop = logContent.scrollHeight
-	} catch (error) {
-		logContent.textContent = `Error loading logs: ${error}`
-	}
-}
-
-async function runAnalysis() {
-	if (selectedParticipants.length === 0 || selectedProject === null) return
-
-	const btn = document.getElementById('run-btn')
-	btn.disabled = true
-	btn.textContent = 'Starting...'
-
-	try {
-		// First, create the run record
-		const result = await invoke('start_analysis', {
-			participantIds: selectedParticipants,
-			projectId: selectedProject,
-		})
-
-		// Navigate to Results tab BEFORE starting execution
-		navigateTo('runs')
-		await loadRuns()
-
-		// Show log viewer and set it up
-		const logViewer = document.getElementById('log-viewer')
-		const logContent = document.getElementById('log-content')
-		const logRunName = document.getElementById('log-run-name')
-		const shareBtn = document.getElementById('share-logs-btn')
-
-		logViewer.style.display = 'block'
-		logContent.textContent = ''
-		logContent.dataset.runId = result.run_id
-		logRunName.textContent = ''
-		shareBtn.style.display = 'block'
-
-		currentLogRunId = result.run_id
-		currentLogWorkDir = result.work_dir
-
-		// Load initial log content
-		try {
-			const initialLogs = await invoke('get_run_logs', { runId: result.run_id })
-			logContent.textContent = initialLogs + '\n'
-			logContent.scrollTop = logContent.scrollHeight
-		} catch (error) {
-			logContent.textContent = 'Initializing...\n'
-		}
-
-		// Clean up old listeners
-		currentRunLogListeners.forEach((unlisten) => unlisten())
-		currentRunLogListeners = []
-
-		// Set up event listeners for logs
-		const unlisten = await listen('log-line', (event) => {
-			logContent.textContent += event.payload + '\n'
-			logContent.scrollTop = logContent.scrollHeight
-		})
-
-		const unlistenComplete = await listen('analysis-complete', async (event) => {
-			logContent.textContent += `\n=== Analysis ${event.payload} ===\n`
-			await loadRuns()
-			unlisten()
-			unlistenComplete()
-			currentRunLogListeners = []
-		})
-
-		currentRunLogListeners = [unlisten, unlistenComplete]
-
-		// Use setTimeout to ensure UI updates before starting execution
-		setTimeout(() => {
-			invoke('execute_analysis', { runId: result.run_id }).catch((error) => {
-				logContent.textContent += `\nError: ${error}\n`
-				console.error('Analysis failed:', error)
-			})
-		}, 100)
-	} catch (error) {
-		alert(`Error: ${error}`)
-	} finally {
-		btn.disabled = false
-		btn.textContent = 'Run Analysis'
 	}
 }
 
@@ -3678,7 +3044,7 @@ async function handleSyftBoxAuthentication() {
 	const email = document.getElementById('setting-email').value.trim()
 
 	if (!email) {
-		await window.__TAURI__.dialog.message('Please enter your email address first.', {
+		await dialog.message('Please enter your email address first.', {
 			title: 'Email Required',
 			type: 'warning',
 		})
@@ -3744,86 +3110,6 @@ async function handleSyftBoxAuthentication() {
 		input.value = ''
 		input.classList.remove('error', 'success')
 	})
-}
-
-// Log management functions
-async function loadCommandLogs() {
-	try {
-		const logs = await invoke('get_command_logs')
-		commandLogs = logs
-		displayLogs()
-	} catch (error) {
-		console.error('Error loading logs:', error)
-	}
-}
-
-function displayLogs() {
-	const logsContent = document.getElementById('logs-content')
-	if (commandLogs.length === 0) {
-		logsContent.textContent = 'No command logs yet.'
-		return
-	}
-
-	const MAX_OUTPUT_CHARS = 5000
-	let logText = ''
-
-	commandLogs.forEach((log) => {
-		logText += `\n${'='.repeat(80)}\n`
-		logText += `[${log.timestamp}]\n`
-		logText += `Command: ${log.command}\n`
-		logText += `${'-'.repeat(80)}\n`
-
-		if (log.output) {
-			let output = log.output
-			if (output.length > MAX_OUTPUT_CHARS) {
-				output =
-					output.substring(0, MAX_OUTPUT_CHARS) +
-					`\n\n... (output truncated, ${output.length - MAX_OUTPUT_CHARS} chars hidden)`
-			}
-			logText += output
-		}
-
-		if (log.error) {
-			logText += `\nERROR: ${log.error}`
-		}
-
-		logText += '\n'
-	})
-
-	logsContent.textContent = logText
-}
-
-async function clearLogs() {
-	if (!confirm('Are you sure you want to clear all logs?')) {
-		return
-	}
-
-	try {
-		await invoke('clear_command_logs')
-		commandLogs = []
-		displayLogs()
-	} catch (error) {
-		alert(`Error clearing logs: ${error}`)
-	}
-}
-
-function copyLogs() {
-	const logsContent = document.getElementById('logs-content')
-	const text = logsContent.textContent
-
-	navigator.clipboard
-		.writeText(text)
-		.then(() => {
-			const btn = document.getElementById('copy-logs-btn')
-			const originalText = btn.innerHTML
-			btn.innerHTML = '✅ Copied!'
-			setTimeout(() => {
-				btn.innerHTML = originalText
-			}, 2000)
-		})
-		.catch((err) => {
-			alert(`Failed to copy logs: ${err}`)
-		})
 }
 
 function escapeHtml(value) {
@@ -3923,7 +3209,7 @@ async function ensureMessagesAuthorization() {
 
 	if (!messagesAuthorized) {
 		stopMessagesAutoRefresh()
-	} else if (syftboxStatus.running && activeView === 'messages') {
+	} else if (syftboxStatus.running && getActiveView() === 'messages') {
 		startMessagesAutoRefresh(true)
 	}
 	return messagesAuthorized
@@ -3965,7 +3251,7 @@ function updateSyftboxIndicator() {
 
 	dropdown.disabled = !messagesAuthorized
 
-	if (messagesAuthorized && syftboxStatus.running && activeView === 'messages') {
+	if (messagesAuthorized && syftboxStatus.running && getActiveView() === 'messages') {
 		startMessagesAutoRefresh()
 	} else if (!syftboxStatus.running) {
 		stopMessagesAutoRefresh()
@@ -3975,10 +3261,10 @@ function updateSyftboxIndicator() {
 function startMessagesAutoRefresh(immediate = false) {
 	if (messagesRefreshInterval) return
 	if (!messagesAuthorized) return
-	if (activeView !== 'messages') return
+	if (getActiveView() !== 'messages') return
 
 	messagesRefreshInterval = setInterval(() => {
-		if (activeView !== 'messages') return
+		if (getActiveView() !== 'messages') return
 		if (!messagesAuthorized) return
 		if (!syftboxStatus.running) return
 		loadMessageThreads(true).catch((error) => {
@@ -4407,89 +3693,6 @@ async function setSyftboxTarget(target) {
 	updateSyftboxIndicator()
 }
 
-function navigateTo(viewName) {
-	if (!viewName) {
-		return
-	}
-
-	const importSubViews = ['import', 'import-review', 'import-results']
-	const isImportSubView = importSubViews.includes(viewName)
-
-	if (viewName === 'import' && lastImportView !== 'import') {
-		viewName = lastImportView
-	}
-
-	// Check if import is in progress
-	if (isImportInProgress && viewName !== 'import-review') {
-		const confirmed = confirm(
-			'Import is currently in progress. Are you sure you want to cancel and leave this page?',
-		)
-		if (!confirmed) {
-			return // Don't navigate
-		}
-		// User confirmed - cancel the import
-		isImportInProgress = false
-	}
-
-	const tabContents = document.querySelectorAll('.tab-content')
-	tabContents.forEach((content) => {
-		content.classList.remove('active')
-		content.style.display = 'none'
-	})
-
-	const targetView = document.getElementById(`${viewName}-view`)
-	if (!targetView) {
-		console.warn(`navigateTo: Unknown view "${viewName}"`)
-		return
-	}
-
-	targetView.classList.add('active')
-	targetView.style.display = ''
-	activeView = viewName
-
-	// Only update tab highlighting if this view has a corresponding tab
-	const highlightTabName = isImportSubView ? 'import' : viewName
-	const tab = document.querySelector(`.tab[data-tab="${highlightTabName}"]`)
-	if (tab) {
-		document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'))
-		tab.classList.add('active')
-	}
-
-	if (isImportSubView) {
-		lastImportView = viewName
-	}
-
-	if (viewName === 'participants') {
-		loadParticipants()
-	} else if (viewName === 'files') {
-		loadFiles()
-	} else if (viewName === 'projects') {
-		loadProjects()
-	} else if (viewName === 'run') {
-		selectedParticipants = []
-		selectedProject = null
-		document.getElementById('select-all-participants').checked = false
-		loadRunParticipants()
-		loadRunProjects()
-		updateRunButton()
-	} else if (viewName === 'runs') {
-		loadRuns()
-	} else if (viewName === 'logs') {
-		displayLogs()
-	} else if (viewName === 'settings') {
-		loadSettings()
-	} else if (viewName === 'messages') {
-		initializeMessagesTab(!messagesInitialized)
-		if (messagesAuthorized && syftboxStatus.running) {
-			startMessagesAutoRefresh(true)
-		}
-	}
-
-	if (viewName !== 'messages') {
-		stopMessagesAutoRefresh()
-	}
-}
-
 // Function to load saved dependency states without re-checking
 async function loadSavedDependencies(listPanelId, detailsPanelId) {
 	const depsList = document.getElementById(listPanelId)
@@ -4540,10 +3743,33 @@ async function checkDependenciesForPanel(listPanelId, detailsPanelId, isSettings
 	}
 }
 
+const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView } =
+	createDashboardShell({
+		getIsImportInProgress: () => isImportInProgress,
+		setIsImportInProgress: (value) => {
+			isImportInProgress = value
+		},
+		loadParticipants: loadParticipantsView,
+		loadFiles,
+		loadProjects,
+		prepareRunView,
+		loadRuns,
+		displayLogs,
+		loadSettings,
+		initializeMessagesTab,
+		getMessagesInitialized: () => messagesInitialized,
+		getMessagesAuthorized: () => messagesAuthorized,
+		getSyftboxStatus: () => syftboxStatus,
+		startMessagesAutoRefresh,
+		stopMessagesAutoRefresh,
+	})
+
+setRunNavigateTo(navigateTo)
+
 window.addEventListener('DOMContentLoaded', () => {
 	console.log('🔥 DOMContentLoaded fired')
 	refreshExistingFilePaths()
-	loadParticipants()
+	loadParticipantsView()
 	loadFiles()
 	loadProjects()
 	loadCommandLogs()
@@ -4560,17 +3786,8 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	})
 
-	document.querySelectorAll('.home-btn').forEach((btn) => {
-		btn.addEventListener('click', () => {
-			navigateTo(btn.dataset.nav)
-		})
-	})
-
-	document.querySelectorAll('.tab').forEach((tab) => {
-		tab.addEventListener('click', () => {
-			navigateTo(tab.dataset.tab)
-		})
-	})
+	registerNavigationHandlers()
+	initializeFilesTab()
 
 	const messageFilterButtons = document.querySelectorAll('.message-filter')
 	messageFilterButtons.forEach((btn) => {
@@ -4693,42 +3910,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
 	updateComposeVisibility(false)
 
-	// File type tab switching
-	document.querySelectorAll('.file-type-tab').forEach((tab) => {
-		tab.addEventListener('click', () => {
-			const fileType = tab.dataset.type
-
-			// Update active state
-			document.querySelectorAll('.file-type-tab').forEach((t) => {
-				t.classList.remove('active')
-				t.style.borderBottom = '3px solid transparent'
-				t.style.color = '#666'
-			})
-
-			tab.classList.add('active')
-			tab.style.borderBottom = '3px solid #007bff'
-			tab.style.color = '#007bff'
-
-			// Update filter and reload files
-			currentFileTypeFilter = fileType
-			selectedFilesForDelete = []
-			renderFilesTable()
-		})
-	})
-
 	document.getElementById('close-logs-btn').addEventListener('click', () => {
 		document.getElementById('log-viewer').style.display = 'none'
 	})
 
-	document.getElementById('share-logs-btn').addEventListener('click', async () => {
-		if (currentLogWorkDir) {
-			try {
-				await invoke('open_folder', { path: currentLogWorkDir })
-			} catch (error) {
-				alert(`Error opening folder: ${error}`)
-			}
-		}
-	})
+	document.getElementById('share-logs-btn').addEventListener('click', shareCurrentRunLogs)
 
 	// Settings save/reset buttons removed from UI
 
@@ -4811,170 +3997,44 @@ window.addEventListener('DOMContentLoaded', () => {
 	document.getElementById('copy-logs-btn').addEventListener('click', copyLogs)
 	document.getElementById('clear-logs-btn').addEventListener('click', clearLogs)
 
-	document.getElementById('select-all-participants-table').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('.participant-checkbox')
-		checkboxes.forEach((checkbox) => {
-			checkbox.checked = e.target.checked
-			const id = parseInt(checkbox.dataset.id)
-			if (e.target.checked) {
-				if (!selectedParticipantsForDelete.includes(id)) {
-					selectedParticipantsForDelete.push(id)
-				}
-			} else {
-				selectedParticipantsForDelete = selectedParticipantsForDelete.filter((x) => x !== id)
-			}
+	const selectAllParticipantsTable = document.getElementById('select-all-participants-table')
+	if (selectAllParticipantsTable) {
+		selectAllParticipantsTable.addEventListener('change', (e) => {
+			handleParticipantsSelectAll(e.target.checked)
 		})
-		updateDeleteParticipantsButton()
-	})
+	}
 
-	document
-		.getElementById('delete-selected-participants-btn')
-		.addEventListener('click', async () => {
-			if (selectedParticipantsForDelete.length === 0) return
+	const deleteParticipantsBtn = document.getElementById('delete-selected-participants-btn')
+	if (deleteParticipantsBtn) {
+		deleteParticipantsBtn.addEventListener('click', async () => {
+			const selected = getSelectedParticipants()
+			if (selected.length === 0) return
 
 			if (
 				confirm(
-					`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files.`,
+					`Are you sure you want to delete ${selected.length} participant(s)? This will also delete all associated files.`,
 				)
 			) {
 				try {
 					const deleted = await invoke('delete_participants_bulk', {
-						participantIds: selectedParticipantsForDelete,
+						participantIds: selected,
 					})
 					console.log(`Deleted ${deleted} participant(s)`)
-					await loadParticipants()
+					await loadParticipantsView()
 					await loadFiles()
 				} catch (error) {
 					alert(`Error deleting participants: ${error}`)
 				}
 			}
 		})
-
-	document.getElementById('select-all-files-table').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('.file-checkbox')
-		checkboxes.forEach((checkbox) => {
-			checkbox.checked = e.target.checked
-			const id = parseInt(checkbox.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFilesForDelete.includes(id)) {
-					selectedFilesForDelete.push(id)
-				}
-			} else {
-				selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
-			}
-		})
-		updateDeleteFilesButton()
-	})
-
-	// Update queue processor button based on status
-	async function updateQueueButton() {
-		try {
-			const isRunning = await invoke('get_queue_processor_status')
-			const btn = document.getElementById('process-queue-btn')
-			const icon = document.getElementById('queue-btn-icon')
-			const text = document.getElementById('queue-btn-text')
-			const spinner = document.getElementById('queue-spinner')
-			queueProcessorRunning = isRunning
-			const pendingCount = parseInt(document.getElementById('pending-count').textContent, 10) || 0
-
-			if (isRunning) {
-				icon.textContent = '⏸'
-				text.textContent = 'Pause Queue'
-				btn.style.background = '#28a745' // Green
-			} else {
-				icon.textContent = '▶'
-				text.textContent = 'Resume Queue'
-				btn.style.background = '#ffc107' // Yellow
-			}
-
-			if (spinner) {
-				spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
-			}
-		} catch (error) {
-			console.error('Error getting queue status:', error)
-		}
-	}
-
-	document.getElementById('process-queue-btn').addEventListener('click', async () => {
-		try {
-			const isRunning = await invoke('get_queue_processor_status')
-
-			if (isRunning) {
-				await invoke('pause_queue_processor')
-			} else {
-				await invoke('resume_queue_processor')
-			}
-
-			await updateQueueButton()
-			await loadFiles() // Refresh files list
-		} catch (error) {
-			alert(`Error toggling queue processor: ${error}`)
-		}
-	})
-
-	// Poll queue status and pending count every 3 seconds
-	setInterval(async () => {
-		await updateQueueButton()
-
-		// Auto-refresh files panel when queue is active
-		const isFilesTabActive = document.getElementById('files-view')?.classList.contains('active')
-		const pendingCount = parseInt(document.getElementById('pending-count')?.textContent || '0', 10)
-
-		if (queueProcessorRunning && isFilesTabActive && pendingCount > 0) {
-			await loadFiles()
-		}
-	}, 3000)
-
-	// Initial button update
-	updateQueueButton()
-
-	document.getElementById('delete-selected-files-btn').addEventListener('click', async () => {
-		if (selectedFilesForDelete.length === 0) return
-
-		if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
-			try {
-				const deleted = await invoke('delete_files_bulk', { file_ids: selectedFilesForDelete })
-				console.log(`Deleted ${deleted} file(s)`)
-				await loadFiles()
-			} catch (error) {
-				alert(`Error deleting files: ${error}`)
-			}
-		}
-	})
-
-	const filesSearchInput = document.getElementById('files-search')
-	if (filesSearchInput) {
-		filesSearchInput.addEventListener('input', (e) => {
-			filesSearchTerm = e.target.value.trim().toLowerCase()
-			renderFilesTable()
-		})
 	}
 
 	const participantsSearchInput = document.getElementById('participants-search')
 	if (participantsSearchInput) {
 		participantsSearchInput.addEventListener('input', (e) => {
-			participantsSearchTerm = e.target.value.trim().toLowerCase()
-			renderParticipantsTable()
+			setParticipantsSearchTerm(e.target.value)
 		})
 	}
-
-	document.querySelectorAll('#files-view .sortable-files-header').forEach((header) => {
-		header.addEventListener('click', () => {
-			const field = header.dataset.sortField
-			if (!field) return
-
-			if (filesSortField === field) {
-				filesSortDirection = filesSortDirection === 'asc' ? 'desc' : 'asc'
-			} else {
-				filesSortField = field
-				filesSortDirection = getDefaultFilesSortDirection(field)
-			}
-
-			renderFilesTable()
-		})
-	})
-
-	updateFilesSortIndicators()
 
 	document.getElementById('pick-folder').addEventListener('click', pickFolder)
 	document.getElementById('import-btn').addEventListener('click', goToReviewStep)
@@ -5004,7 +4064,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	if (backBtn) {
 		backBtn.addEventListener('click', () => {
 			console.log('Back button clicked')
-			lastImportView = 'import'
+			setLastImportView('import')
 			navigateTo('import')
 		})
 	} else {
@@ -5082,7 +4142,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	document.getElementById('select-all-files').addEventListener('change', (e) => {
 		if (e.target.checked) {
 			currentFiles.forEach((file) => {
-				if (!existingFilePaths.has(file)) {
+				if (!isFileAlreadyImported(file)) {
 					selectedFiles.add(file)
 				}
 			})
@@ -5136,26 +4196,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		.addEventListener('click', handleResetJupyter)
 
 	document.getElementById('select-all-participants').addEventListener('change', (e) => {
-		const checkboxes = document.querySelectorAll('#run-participants-list input[type="checkbox"]')
-		const items = document.querySelectorAll('#run-participants-list .selection-item')
-
-		checkboxes.forEach((checkbox, index) => {
-			checkbox.checked = e.target.checked
-			const item = items[index]
-			const participantId = parseInt(item.dataset.id)
-
-			if (e.target.checked) {
-				if (!selectedParticipants.includes(participantId)) {
-					selectedParticipants.push(participantId)
-				}
-				item.classList.add('selected')
-			} else {
-				selectedParticipants = selectedParticipants.filter((id) => id !== participantId)
-				item.classList.remove('selected')
-			}
-		})
-
-		updateRunButton()
+		toggleSelectAllParticipants(e.target.checked)
 	})
 
 	const fileTypeSelect = document.getElementById('file-type-select')
@@ -5232,1410 +4273,20 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 	})
 
-	// Wrapper for onboarding
-	async function checkDependencies() {
-		await checkDependenciesForPanel('deps-list', 'dep-details-panel', false)
-	}
-
-	// Function to show dependency details in right panel (expose globally)
-	window.showDependencyDetails = function showDependencyDetails(
-		dep,
-		depIndex,
-		detailsPanelId = 'dep-details-panel',
-	) {
-		const detailsPanel = document.getElementById(detailsPanelId)
-		// Docker Desktop can be installed but not running, so treat found=true as installed
-		const isInstalled = dep.found
-
-		if (isInstalled) {
-			// Show installed dependency details
-			let description = dep.description || 'This dependency is installed and ready to use.'
-
-			// Add warning if Docker is installed but not running
-			if (dep.name === 'Docker' && dep.running === false) {
-				description =
-					'Docker Desktop is installed but not currently running. Please start Docker Desktop to use it.'
-			}
-
-			detailsPanel.innerHTML = `
-				<div style="margin-bottom: 20px;">
-					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
-						${
-							dep.website
-								? `
-						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
-						`
-								: ''
-						}
-					</div>
-					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
-				</div>
-
-				<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-					${
-						dep.version
-							? `
-					<div style="margin-bottom: 12px;">
-						<strong style="font-size: 13px; color: #333;">Version:</strong>
-						<div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
-					</div>
-					`
-							: ''
-					}
-
-					${
-						dep.running !== null
-							? `
-					<div style="margin-bottom: 12px;">
-						<strong style="font-size: 13px; color: #333;">Status:</strong>
-						<div style="font-size: 12px; color: ${dep.running ? '#28a745' : '#dc3545'}; margin-top: 5px;">
-							${dep.running ? '🟢 Running' : '🔴 Not Running'}
-						</div>
-					</div>
-					`
-							: ''
-					}
-
-					<div style="margin-bottom: 12px;">
-						<strong style="font-size: 13px; color: #333;">Path:</strong>
-						<div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-							<input
-								type="text"
-								id="path-input-${depIndex}"
-								value="${dep.path || ''}"
-								placeholder="Enter path to ${dep.name} executable"
-								autocapitalize="off"
-								style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
-							/>
-						</div>
-					</div>
-
-					<div style="display: flex; gap: 8px;">
-						<button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
-					</div>
-					<p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
-				</div>
-
-			`
-
-			// Add open website handler
-			const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`)
-			if (openWebsiteBtn) {
-				openWebsiteBtn.addEventListener('click', async () => {
-					if (dep.website) {
-						try {
-							// Use custom Tauri command to open URL in default browser
-							await invoke('open_url', { url: dep.website })
-						} catch (error) {
-							console.error('Failed to open URL:', error)
-						}
-					}
-				})
-			}
-
-			// Add reset path handler - auto-detect
-			const resetPathBtn = document.getElementById(`reset-path-btn-${depIndex}`)
-			if (resetPathBtn) {
-				resetPathBtn.addEventListener('click', async () => {
-					try {
-						// Clear custom path by saving empty string, which triggers auto-detect
-						await invoke('save_custom_path', { name: dep.name, path: '' })
-
-						// Check the dependency without custom path (auto-detect)
-						const result = await invoke('check_single_dependency', { name: dep.name, path: null })
-
-						// Update the dependency data
-						dep.found = result.found
-						dep.path = result.path
-						dep.version = result.version
-						dep.running = result.running
-
-						// Update the dependency list item
-						const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
-						if (depItem) {
-							// Docker Desktop can be installed but not running, so treat found=true as installed
-							const isInstalled = dep.found
-							let statusIcon = isInstalled ? '✓' : '✗'
-							let statusColor = isInstalled ? '#28a745' : '#dc3545'
-
-							// Show warning color if Docker is installed but not running
-							if (dep.name === 'Docker' && dep.found && dep.running === false) {
-								statusColor = '#ffc107' // Warning yellow
-								statusIcon = '⚠️' // Warning icon
-							}
-
-							depItem.innerHTML = `
-								<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
-								<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-							`
-						}
-
-						// Re-render this specific dependency details
-						showDependencyDetails(dep, depIndex)
-
-						// Update the UI with the result
-						if (result.found) {
-							await window.__TAURI__.dialog.message(
-								`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${
-									result.version || 'Unknown'
-								}`,
-								{ title: 'Success', type: 'info' },
-							)
-						} else {
-							await window.__TAURI__.dialog.message(
-								`✗ ${dep.name} not found automatically.\n\nPlease install it or enter a custom path.`,
-								{ title: 'Not Found', type: 'warning' },
-							)
-						}
-					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error resetting path: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				})
-			}
-
-			// Add check path handler - verify custom path
-			const checkPathBtn = document.getElementById(`check-path-btn-${depIndex}`)
-			if (checkPathBtn) {
-				checkPathBtn.addEventListener('click', async () => {
-					const pathInput = document.getElementById(`path-input-${depIndex}`)
-					const customPath = pathInput.value.trim()
-
-					if (!customPath) {
-						await window.__TAURI__.dialog.message('Please enter a path to check', {
-							title: 'Empty Path',
-							type: 'warning',
-						})
-						return
-					}
-
-					try {
-						// Check this single dependency with the custom path (WITHOUT saving first)
-						const result = await invoke('check_single_dependency', {
-							name: dep.name,
-							path: customPath,
-						})
-
-						// Update the UI with the result
-						if (result.found) {
-							// Path is valid - save it and update just this dependency
-							await invoke('save_custom_path', { name: dep.name, path: customPath })
-
-							// Update the dependency data
-							dep.found = result.found
-							dep.path = result.path || customPath
-							dep.version = result.version
-							dep.running = result.running
-
-							// Update the dependency list item to show as installed
-							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
-							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #28a745;">✓</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
-							}
-
-							// Re-render this specific dependency details
-							showDependencyDetails(dep, depIndex)
-
-							await window.__TAURI__.dialog.message(
-								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
-									result.version || 'Unknown'
-								}`,
-								{ title: 'Success', type: 'info' },
-							)
-						} else {
-							// Path is invalid - mark as missing but keep the invalid path in the input
-							dep.found = false
-							dep.path = null
-							dep.version = null
-							dep.running = null
-
-							// Update the dependency list item to show as missing
-							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
-							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #dc3545;">✗</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
-							}
-
-							// Re-render as missing dependency (but keep the path in the input)
-							showDependencyDetails(dep, depIndex)
-
-							// Keep the invalid path in the input box
-							setTimeout(() => {
-								const pathInput = document.getElementById(`path-input-${depIndex}`)
-								if (pathInput) {
-									pathInput.value = customPath
-								}
-							}, 100)
-
-							await window.__TAURI__.dialog.message(
-								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
-								{ title: 'Not Found', type: 'warning' },
-							)
-						}
-					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				})
-			}
-		} else {
-			// Show missing dependency details with install button
-			const description = dep.description || 'This dependency is not installed.'
-			const rawInstructions = dep.install_instructions || 'No installation instructions available'
-			const installInstructions = filterInstructionsByOS(rawInstructions)
-			const commands = extractCommands(rawInstructions)
-
-			detailsPanel.innerHTML = `
-				<div style="margin-bottom: 20px;">
-					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
-						${
-							dep.website
-								? `
-						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
-						`
-								: ''
-						}
-					</div>
-					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
-				</div>
-
-				<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-					<div style="margin-bottom: 12px;">
-						<strong style="font-size: 13px; color: #333;">Path:</strong>
-						<div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-							<input
-								type="text"
-								id="path-input-${depIndex}"
-								value="${dep.path || ''}"
-								placeholder="Enter path to ${dep.name} executable (or install)"
-								autocapitalize="off"
-								style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
-							/>
-						</div>
-					</div>
-
-					<div style="display: flex; gap: 8px; margin-bottom: 8px;">
-						<button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
-					</div>
-					<p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
-				</div>
-
-				<div style="background: #fff8e1; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px; position: relative;">
-					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-						<h4 style="margin: 0; color: #856404; font-size: 14px;">📖 Manual Installation</h4>
-						${
-							commands.length > 0
-								? `
-							<button class="copy-cmd-btn" data-command="${encodeURIComponent(
-								commands[0],
-							)}" style="padding: 2px; min-width: 0; width: auto; background: transparent; border: none; cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" title="Copy command" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📋</button>
-						`
-								: ''
-						}
-					</div>
-					<p style="font-size: 12px; color: #856404; margin-bottom: 10px;">You can also install this dependency manually:</p>
-
-					${
-						commands.length > 0
-							? commands
-									.map(
-										(cmd) => `
-						<div style="background: #1e1e1e; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-							<pre style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${cmd}</pre>
-						</div>
-					`,
-									)
-									.join('')
-							: `
-						<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 11px; color: #333; white-space: pre-wrap; font-family: monospace;">${installInstructions}</div>
-					`
-					}
-				</div>
-			`
-
-			// Add open website handler
-			const openWebsiteBtn = document.getElementById(`open-website-btn-${depIndex}`)
-			if (openWebsiteBtn) {
-				openWebsiteBtn.addEventListener('click', async () => {
-					if (dep.website) {
-						try {
-							// Use custom Tauri command to open URL in default browser
-							await invoke('open_url', { url: dep.website })
-						} catch (error) {
-							console.error('Failed to open URL:', error)
-						}
-					}
-				})
-			}
-
-			// Add install single button handler
-			const installSingleBtn = document.getElementById(`install-single-btn-${depIndex}`)
-			if (installSingleBtn) {
-				installSingleBtn.addEventListener('click', async () => {
-					const proceedWithInstall = async () => {
-						const normalizedName =
-							dep.name
-								.toLowerCase()
-								.replace(/[^a-z0-9]+/g, '-')
-								.replace(/^-+|-+$/g, '') || 'dependency'
-						const taskId = `install-${normalizedName}`
-
-						if (!installSingleBtn.classList.contains('btn-loading')) {
-							setButtonLoading(installSingleBtn, `Installing ${dep.name}...`)
-						} else {
-							updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
-						}
-
-						showProgressTask(taskId, `Installing ${dep.name}...`)
-
-						try {
-							const installedPath = await invoke('install_dependency', { name: dep.name })
-							finishProgressTask(taskId, { status: 'success', message: `${dep.name} installed` })
-							clearButtonLoading(installSingleBtn)
-
-							if (installedPath) {
-								const pathInput = document.getElementById(`path-input-${depIndex}`)
-								if (pathInput) {
-									pathInput.value = installedPath
-								}
-
-								await window.__TAURI__.dialog.message(
-									`✓ ${dep.name} installed successfully!\n\nPath: ${installedPath}`,
-									{ title: 'Success', type: 'info' },
-								)
-							} else {
-								await window.__TAURI__.dialog.message(
-									`✓ ${dep.name} installed successfully!\n\nPlease check the path detection using 'Check Again'.`,
-									{ title: 'Success', type: 'info' },
-								)
-							}
-
-							await checkDependencies()
-						} catch (error) {
-							const errorMessage = typeof error === 'string' ? error : error?.message || `${error}`
-
-							finishProgressTask(taskId, {
-								status: 'error',
-								message: `Failed to install ${dep.name}`,
-							})
-							clearButtonLoading(installSingleBtn)
-
-							await window.__TAURI__.dialog.message(
-								`Failed to install ${dep.name}: ${errorMessage}`,
-								{ title: 'Installation Failed', type: 'error' },
-							)
-						}
-					}
-
-					const confirmed = await window.__TAURI__.dialog.confirm(
-						`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`,
-						{ title: 'Confirm Installation', type: 'warning' },
-					)
-					if (!confirmed) {
-						return
-					}
-
-					const currentPlatform = detectPlatform()
-					if (currentPlatform === 'macos') {
-						try {
-							const brewInstalled = await invoke('check_brew_installed')
-							if (!brewInstalled) {
-								const installBrew = await window.__TAURI__.dialog.confirm(
-									'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
-									{ title: 'Homebrew Required', type: 'warning' },
-								)
-
-								if (!installBrew) {
-									return
-								}
-
-								await runHomebrewInstall({
-									button: installSingleBtn,
-									onSuccess: async () => {
-										updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
-										await proceedWithInstall()
-									},
-								})
-								return
-							}
-						} catch (error) {
-							console.error('Failed to check brew installation:', error)
-							await window.__TAURI__.dialog.message(
-								`Unable to verify Homebrew installation: ${error}`,
-								{ title: 'Error', type: 'error' },
-							)
-							return
-						}
-					}
-
-					await proceedWithInstall()
-				})
-			}
-
-			// Add check path handler - verify manual path for missing dependency
-			const checkPathBtn = document.getElementById(`check-path-btn-${depIndex}`)
-			if (checkPathBtn) {
-				checkPathBtn.addEventListener('click', async () => {
-					const pathInput = document.getElementById(`path-input-${depIndex}`)
-					const customPath = pathInput.value.trim()
-
-					if (!customPath) {
-						await window.__TAURI__.dialog.message(
-							'Please enter a path to check, or use the Install button',
-							{ title: 'Empty Path', type: 'warning' },
-						)
-						return
-					}
-
-					try {
-						// Check this single dependency with the custom path (WITHOUT saving first)
-						const result = await invoke('check_single_dependency', {
-							name: dep.name,
-							path: customPath,
-						})
-
-						// Update the UI with the result
-						if (result.found) {
-							// Path is valid - save it and update just this dependency
-							await invoke('save_custom_path', { name: dep.name, path: customPath })
-
-							// Update the dependency data
-							dep.found = result.found
-							dep.path = result.path || customPath
-							dep.version = result.version
-							dep.running = result.running
-
-							// Update the dependency list item
-							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
-							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #28a745;">✓</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
-							}
-
-							// Re-render this specific dependency details
-							showDependencyDetails(dep, depIndex)
-
-							await window.__TAURI__.dialog.message(
-								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
-									result.version || 'Unknown'
-								}`,
-								{ title: 'Success', type: 'info' },
-							)
-						} else {
-							// Path is invalid - don't save it
-							await window.__TAURI__.dialog.message(
-								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
-								{ title: 'Not Found', type: 'warning' },
-							)
-						}
-					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				})
-			}
-
-			// Add copy button handlers
-			document.querySelectorAll('.copy-cmd-btn').forEach((btn) => {
-				btn.addEventListener('click', async (e) => {
-					e.stopPropagation()
-					const command = decodeURIComponent(btn.dataset.command)
-					await copyToClipboard(command)
-					// Just copy silently, no visual change
-				})
-			})
-		}
-	}
-
-	// Helper function to detect current platform
-	function detectPlatform() {
-		const userAgent = navigator.userAgent.toLowerCase()
-		const platform = navigator.platform.toLowerCase()
-
-		if (platform.indexOf('mac') !== -1 || userAgent.indexOf('macintosh') !== -1) {
-			return 'macos'
-		} else if (platform.indexOf('win') !== -1 || userAgent.indexOf('windows') !== -1) {
-			return 'windows'
-		} else if (platform.indexOf('linux') !== -1 || userAgent.indexOf('linux') !== -1) {
-			return 'linux'
-		}
-		return 'unknown'
-	}
-
-	// Helper function to filter install instructions by current OS
-	function filterInstructionsByOS(instructions) {
-		const currentPlatform = detectPlatform()
-		const lines = instructions.split('\n')
-		const filteredLines = []
-
-		const isLinuxLabel = (label) =>
-			['ubuntu', 'debian', 'rhel', 'centos', 'linux', 'arch', 'fedora'].includes(label)
-
-		for (const line of lines) {
-			const trimmed = line.trim()
-
-			if (!trimmed) continue
-
-			const parts = trimmed.split(/:\s*/, 2)
-			if (parts.length === 2) {
-				const [rawLabel, instruction] = parts
-				const labels = rawLabel
-					.split(/[/,]|\band\b/i)
-					.map((label) => label.trim().toLowerCase())
-					.filter(Boolean)
-
-				const hasKnownLabel = labels.some((label) => {
-					if (label === 'macos' || label === 'windows') return true
-					return isLinuxLabel(label)
-				})
-
-				if (!hasKnownLabel) {
-					filteredLines.push(trimmed)
-					continue
-				}
-
-				const matchesPlatform = labels.some((label) => {
-					if (currentPlatform === 'macos') return label === 'macos'
-					if (currentPlatform === 'windows') return label === 'windows'
-					if (currentPlatform === 'linux') return isLinuxLabel(label)
-					return false
-				})
-
-				if (matchesPlatform) {
-					filteredLines.push(instruction)
-				}
-				// Skip non-matching labelled lines entirely
-			} else {
-				filteredLines.push(trimmed)
-			}
-		}
-
-		return filteredLines.length > 0 ? filteredLines.join('\n') : instructions
-	}
-
-	// Helper function to extract CLI commands from install instructions
-	function extractCommands(instructions) {
-		// First filter by OS
-		const filteredInstructions = filterInstructionsByOS(instructions)
-
-		const commands = []
-		const lines = filteredInstructions.split('\n')
-		for (const line of lines) {
-			const trimmed = line.trim()
-
-			// Skip empty lines
-			if (!trimmed) continue
-
-			// Match lines that contain shell commands
-			// Pattern: optional text followed by command
-			const commandPattern =
-				/(?:.*?:\s*)?((?:brew|apt-get|apt|yum|dnf|pacman|pip|npm|cargo|curl|wget|sudo)\s+.+)/i
-			const match = trimmed.match(commandPattern)
-
-			if (match) {
-				// Extract just the command part (group 1)
-				commands.push(match[1].trim())
-			} else if (
-				trimmed.match(/^(brew|apt-get|apt|yum|dnf|pacman|pip|npm|cargo|curl|wget|sudo)/i)
-			) {
-				// Fallback: if line starts with a command, use the whole line
-				commands.push(trimmed)
-			}
-		}
-		return commands
-	}
-
-	// Function to display dependencies (expose globally for settings page)
-	window.displayDependencies = function displayDependencies(
-		result,
-		listPanelId = 'deps-list',
-		detailsPanelId = 'dep-details-panel',
-		isSettings = false,
-	) {
-		const depsList = document.getElementById(listPanelId)
-		const nextBtn = isSettings ? null : document.getElementById('onboarding-next-2')
-		const installBtn = isSettings
-			? document.getElementById('settings-install-missing-deps-btn')
-			: document.getElementById('install-missing-deps-btn')
-
-		let html = ''
-
-		result.dependencies.forEach((dep, index) => {
-			// Docker Desktop can be installed but not running, so treat found=true as installed
-			const isInstalled = dep.found
-
-			let statusIcon = isInstalled ? '✓' : '✗'
-			let statusColor = isInstalled ? '#28a745' : '#dc3545'
-
-			// Show warning color if Docker is installed but not running
-			if (dep.name === 'Docker' && dep.found && dep.running === false) {
-				statusColor = '#ffc107' // Warning yellow
-				statusIcon = '⚠️' // Warning icon
-			}
-
-			html += `
-				<div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
-					<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
-					<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-				</div>
-			`
-		})
-
-		depsList.innerHTML = html
-
-		// Add click handlers for ALL dependencies
-		document.querySelectorAll(`#${listPanelId} .dep-item`).forEach((item) => {
-			item.addEventListener('click', () => {
-				const depIndex = parseInt(item.dataset.depIndex)
-				const dep = result.dependencies[depIndex]
-
-				// Show details in right panel
-				window.showDependencyDetails?.(dep, depIndex, detailsPanelId)
-
-				// Highlight selected item
-				document.querySelectorAll(`#${listPanelId} .dep-item`).forEach((i) => {
-					i.style.borderColor = 'transparent'
-					i.style.background = 'white'
-				})
-				item.style.borderColor = '#0066cc'
-				item.style.background = '#f0f8ff'
-			})
-
-			// Add hover effect
-			item.addEventListener('mouseenter', () => {
-				if (item.style.borderColor !== 'rgb(0, 102, 204)') {
-					item.style.background = '#f8f9fa'
-				}
-			})
-			item.addEventListener('mouseleave', () => {
-				if (item.style.borderColor !== 'rgb(0, 102, 204)') {
-					item.style.background = 'white'
-				}
-			})
-		})
-
-		// Enable/disable buttons based on dependencies
-		// Check if there are actually missing dependencies (not just not running)
-		const actuallyMissing = result.dependencies.some((dep) => !dep.found)
-
-		// For onboarding, we allow proceeding if all deps are FOUND (installed)
-		// even if some services like Docker aren't running
-		const allDepsFound = result.dependencies.every((dep) => dep.found)
-
-		if (allDepsFound) {
-			if (nextBtn) nextBtn.disabled = false
-			// Disable Install Missing if nothing is actually missing
-			if (installBtn) installBtn.disabled = !actuallyMissing
-		} else {
-			if (nextBtn) nextBtn.disabled = true
-			// Only enable Install Missing if there are dependencies that need installation
-			if (installBtn) installBtn.disabled = !actuallyMissing
-		}
-
-		// Auto-select first missing dependency, or first one if all installed
-		const items = document.querySelectorAll(`#${listPanelId} .dep-item`)
-		if (items.length > 0) {
-			// Find first missing dependency
-			let firstMissing = null
-			result.dependencies.forEach((dep, index) => {
-				// Docker Desktop can be installed but not running, so treat found=true as installed
-				const isInstalled = dep.found
-				if (!isInstalled && firstMissing === null) {
-					firstMissing = index
-				}
-			})
-
-			// Select first missing, or first overall if all installed
-			const indexToSelect = firstMissing !== null ? firstMissing : 0
-			const itemToSelect = items[indexToSelect]
-
-			if (itemToSelect) {
-				// Trigger click on the item
-				itemToSelect.click()
-			}
-		}
-	}
-
-	// Step 1: Welcome -> Step 2
-	const nextBtn1 = document.getElementById('onboarding-next-1')
-	if (nextBtn1) {
-		nextBtn1.addEventListener('click', () => {
-			document.getElementById('onboarding-step-1').style.display = 'none'
-			document.getElementById('onboarding-step-2').style.display = 'block'
-			// Check dependencies when entering step 2
-			checkDependencies()
-		})
-	}
-
-	// Check Again button
-	const checkAgainBtn = document.getElementById('check-again-btn')
-	if (checkAgainBtn) {
-		checkAgainBtn.addEventListener('click', () => {
-			checkDependencies()
-		})
-	}
-
-	// Install Missing button - installs all missing dependencies
-	const installMissingBtn = document.getElementById('install-missing-deps-btn')
-	if (installMissingBtn) {
-		installMissingBtn.addEventListener('click', async () => {
-			if (!dependencyResults) return
-
-			// Find all missing dependencies
-			const missingDeps = dependencyResults.dependencies.filter((dep) => {
-				const isInstalled = dep.found && (dep.running === null || dep.running === true)
-				return !isInstalled
-			})
-
-			if (missingDeps.length === 0) return
-
-			const depNames = missingDeps.map((d) => d.name).join(', ')
-			const confirmed = await window.__TAURI__.dialog.confirm(
-				`Install the following missing dependencies?\n\n${depNames}\n\nBioVault will attempt to install these automatically. This may take several minutes.`,
-				{ title: 'Confirm Installation', type: 'warning' },
-			)
-
-			if (confirmed) {
-				try {
-					await invoke('install_dependencies', { names: missingDeps.map((d) => d.name) })
-					await checkDependencies()
-				} catch (error) {
-					await window.__TAURI__.dialog.message(`${error}`, {
-						title: 'Installation Not Available',
-						type: 'info',
-					})
-				}
-			}
-		})
-	}
-
-	// Skip dependencies button on onboarding step 1
-	const skipDepsBtn = document.getElementById('skip-dependencies-btn')
-	if (skipDepsBtn) {
-		skipDepsBtn.addEventListener('click', async () => {
-			skipDepsBtn.disabled = true
-			try {
-				const confirmed = await window.__TAURI__.dialog.confirm(
-					'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
-						'Some features may not work without the required dependencies installed.\n\n' +
-						'Are you sure you want to skip?',
-					{ title: 'Skip Dependency Checks?', type: 'warning' },
-				)
-
-				if (!confirmed) {
-					return
-				}
-
-				try {
-					await invoke('update_saved_dependency_states')
-				} catch (error) {
-					console.error('Failed to save skipped state:', error)
-				}
-
-				document.getElementById('onboarding-step-2').style.display = 'none'
-				document.getElementById('onboarding-step-3').style.display = 'block'
-			} finally {
-				skipDepsBtn.disabled = false
-			}
-			// If not confirmed, stay on the current page
-		})
-	}
-
-	// Step 2: Dependencies -> Step 3
-	const nextBtn2 = document.getElementById('onboarding-next-2')
-	if (nextBtn2) {
-		nextBtn2.addEventListener('click', () => {
-			document.getElementById('onboarding-step-2').style.display = 'none'
-			document.getElementById('onboarding-step-3').style.display = 'block'
-		})
-	}
-
-	// Step 3: Back to Step 2
-	const backBtn3 = document.getElementById('onboarding-back-3')
-	if (backBtn3) {
-		backBtn3.addEventListener('click', () => {
-			document.getElementById('onboarding-step-3').style.display = 'none'
-			document.getElementById('onboarding-step-2').style.display = 'block'
-		})
-	}
-
-	// Email validation function
-	function isValidEmail(email) {
-		// More thorough email validation
-		if (!email || email.length < 3) return false
-
-		// Split on @ to check parts
-		const parts = email.split('@')
-		if (parts.length !== 2) return false
-
-		const [localPart, domain] = parts
-
-		// Check local part (before @)
-		if (!localPart || localPart.length === 0 || localPart.length > 64) return false
-		if (localPart.startsWith('.') || localPart.endsWith('.')) return false
-		if (localPart.includes('..')) return false
-
-		// Check domain part (after @)
-		if (!domain || domain.length < 3) return false
-
-		// Domain must have at least one dot and a TLD
-		const domainParts = domain.split('.')
-		if (domainParts.length < 2) return false
-
-		// Check each domain part
-		for (const part of domainParts) {
-			if (!part || part.length === 0) return false
-			if (part.length > 63) return false
-			if (part.startsWith('-') || part.endsWith('-')) return false
-			// Only allow alphanumeric and hyphens
-			if (!/^[a-zA-Z0-9-]+$/.test(part)) return false
-		}
-
-		// TLD should be at least 2 characters
-		const tld = domainParts[domainParts.length - 1]
-		if (tld.length < 2) return false
-
-		// TLD should not be all numbers
-		if (/^\d+$/.test(tld)) return false
-
-		return true
-	}
-
-	// Email input validation
-	const emailInput = document.getElementById('onboarding-email')
-	const emailValidationMsg = document.getElementById('email-validation-message')
-
-	if (emailInput) {
-		// Disable Next button initially
-		const nextBtn3 = document.getElementById('onboarding-next-3')
-		if (nextBtn3) {
-			nextBtn3.disabled = true
-			nextBtn3.style.opacity = '0.5'
-			nextBtn3.style.cursor = 'not-allowed'
-		}
-
-		// Real-time email validation
-		emailInput.addEventListener('input', () => {
-			const email = emailInput.value.trim()
-			const isValid = isValidEmail(email)
-
-			if (nextBtn3 && emailValidationMsg) {
-				if (isValid) {
-					nextBtn3.disabled = false
-					nextBtn3.style.opacity = '1'
-					nextBtn3.style.cursor = 'pointer'
-					emailInput.style.borderColor = '#28a745'
-					emailValidationMsg.textContent = '✓ Valid email address'
-					emailValidationMsg.style.color = '#28a745'
-				} else {
-					nextBtn3.disabled = true
-					nextBtn3.style.opacity = '0.5'
-					nextBtn3.style.cursor = 'not-allowed'
-					if (email.length > 0) {
-						emailInput.style.borderColor = '#dc3545'
-						// Provide specific error messages
-						if (!email.includes('@')) {
-							emailValidationMsg.textContent = '✗ Email must contain @'
-						} else if (email.endsWith('@')) {
-							emailValidationMsg.textContent = '✗ Please enter domain after @'
-						} else if (!email.includes('.', email.indexOf('@'))) {
-							emailValidationMsg.textContent = '✗ Domain must contain a dot'
-						} else {
-							emailValidationMsg.textContent = '✗ Please enter a valid email'
-						}
-						emailValidationMsg.style.color = '#dc3545'
-					} else {
-						emailInput.style.borderColor = '#ddd'
-						emailValidationMsg.textContent = ''
-					}
-				}
-			}
-		})
-
-		// Allow pressing Enter to proceed when email is valid
-		emailInput.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter') {
-				event.preventDefault()
-				if (nextBtn3 && !nextBtn3.disabled) {
-					nextBtn3.click()
-				}
-			}
-		})
-	}
-
-	// Step 3: Email -> Step 4 (SyftBox OTP)
-	const nextBtn3 = document.getElementById('onboarding-next-3')
-	if (nextBtn3) {
-		nextBtn3.addEventListener('click', async () => {
-			const email = document.getElementById('onboarding-email').value.trim()
-			if (!isValidEmail(email)) {
-				await window.__TAURI__.dialog.message('Please enter a valid email address', {
-					title: 'Invalid Email',
-					type: 'error',
-				})
-				return
-			}
-
-			// Move to step 4 (SyftBox OTP)
-			document.getElementById('onboarding-step-3').style.display = 'none'
-			document.getElementById('onboarding-step-4').style.display = 'block'
-			document.getElementById('syftbox-send-state').style.display = 'block'
-			document.getElementById('syftbox-email-info').style.display = 'none'
-			document.getElementById('syftbox-otp-state').style.display = 'none'
-			document.getElementById('syftbox-error-message').style.display = 'none'
-			const sendBtn = document.getElementById('send-login-code-btn')
-			if (sendBtn) {
-				sendBtn.disabled = false
-				sendBtn.textContent = 'Send Code'
-			}
-			document.querySelectorAll('.syftbox-code-input').forEach((input) => {
-				input.value = ''
-				input.classList.remove('error', 'success')
-			})
-			const verifyBtn = document.getElementById('verify-code-btn')
-			if (verifyBtn) {
-				verifyBtn.disabled = true
-				verifyBtn.textContent = 'Verify Code'
-			}
-		})
-	}
-
-	// Step 4: SyftBox helpers
-	document.querySelectorAll('.syftbox-link').forEach((link) => {
-		link.addEventListener('click', async (event) => {
-			event.preventDefault()
-			const url = link.dataset.url
-			if (!url) return
-			try {
-				await invoke('open_url', { url })
-			} catch (error) {
-				console.error('Failed to open SyftBox link:', error)
-			}
-		})
+	const onboarding = initOnboarding({
+		invoke,
+		checkDependenciesForPanel,
+		runHomebrewInstall,
+		showProgressTask,
+		finishProgressTask,
+		setButtonLoading,
+		updateButtonLoadingLabel,
+		clearButtonLoading,
+		copyToClipboard,
+		getDependencyResults: () => dependencyResults,
+		checkSyftBoxStatus,
 	})
-
-	const syftboxInfoContinueBtn = document.getElementById('syftbox-info-continue-btn')
-	if (syftboxInfoContinueBtn) {
-		syftboxInfoContinueBtn.addEventListener('click', () => {
-			document.getElementById('syftbox-send-state').style.display = 'none'
-			const emailInfo = document.getElementById('syftbox-email-info')
-			emailInfo.style.display = 'block'
-			emailInfo.scrollTop = 0
-			const emailScroll = document.getElementById('syftbox-email-scroll')
-			if (emailScroll) {
-				emailScroll.scrollTop = 0
-			}
-			const email = document.getElementById('onboarding-email').value.trim()
-			const previewLabel = document.getElementById('syftbox-email-preview-address')
-			if (previewLabel) {
-				previewLabel.textContent = email || 'your email'
-			}
-		})
-	}
-
-	const syftboxEmailBackBtn = document.getElementById('syftbox-email-back-btn')
-	if (syftboxEmailBackBtn) {
-		syftboxEmailBackBtn.addEventListener('click', () => {
-			const emailInfo = document.getElementById('syftbox-email-info')
-			emailInfo.style.display = 'none'
-			emailInfo.scrollTop = 0
-			const emailScroll = document.getElementById('syftbox-email-scroll')
-			if (emailScroll) {
-				emailScroll.scrollTop = 0
-			}
-			document.getElementById('syftbox-send-state').style.display = 'block'
-			const sendBtn = document.getElementById('send-login-code-btn')
-			if (sendBtn) {
-				sendBtn.disabled = false
-				sendBtn.textContent = 'Send Code'
-			}
-		})
-	}
-
-	// Step 4: SyftBox OTP - Send Code button
-	const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
-	if (sendLoginCodeBtn) {
-		sendLoginCodeBtn.addEventListener('click', async () => {
-			const email = document.getElementById('onboarding-email').value.trim()
-
-			sendLoginCodeBtn.disabled = true
-			sendLoginCodeBtn.innerHTML = '<span class="spinner"></span> Sending...'
-
-			try {
-				await invoke('syftbox_request_otp', { email })
-
-				// Switch to OTP input state
-				document.getElementById('syftbox-email-info').style.display = 'none'
-				document.getElementById('syftbox-send-state').style.display = 'none'
-				document.getElementById('syftbox-otp-state').style.display = 'block'
-				document.getElementById('syftbox-user-email').textContent = email
-
-				// Focus first input
-				const firstInput = document.querySelector('.syftbox-code-input[data-index="0"]')
-				if (firstInput) firstInput.focus()
-			} catch (error) {
-				await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, {
-					title: 'Error',
-					type: 'error',
-				})
-				sendLoginCodeBtn.disabled = false
-				sendLoginCodeBtn.textContent = 'Send Code'
-			}
-		})
-	}
-
-	// Step 4: SyftBox OTP - Digit input handling
-	const codeInputs = document.querySelectorAll('.syftbox-code-input')
-	codeInputs.forEach((input, index) => {
-		input.addEventListener('input', (e) => {
-			const value = e.target.value
-
-			// Only allow numbers
-			if (value && !/^\d$/.test(value)) {
-				e.target.value = ''
-				return
-			}
-
-			// Clear error state
-			codeInputs.forEach((inp) => {
-				inp.classList.remove('error')
-			})
-			document.getElementById('syftbox-error-message').style.display = 'none'
-
-			// Move to next input if value entered
-			if (value && index < codeInputs.length - 1) {
-				codeInputs[index + 1].focus()
-			}
-
-			// Check if all inputs filled
-			const allFilled = Array.from(codeInputs).every((inp) => inp.value)
-			document.getElementById('verify-code-btn').disabled = !allFilled
-		})
-
-		// Handle backspace and Enter
-		input.addEventListener('keydown', (e) => {
-			if (e.key === 'Backspace' && !e.target.value && index > 0) {
-				codeInputs[index - 1].focus()
-			} else if (e.key === 'Enter') {
-				// Trigger verify button if all fields are filled
-				const allFilled = Array.from(codeInputs).every((inp) => inp.value)
-				if (allFilled) {
-					document.getElementById('verify-code-btn').click()
-				}
-			}
-		})
-
-		// Handle paste
-		input.addEventListener('paste', (e) => {
-			e.preventDefault()
-			const pastedData = e.clipboardData.getData('text').replace(/\D/g, '')
-
-			for (let i = 0; i < Math.min(pastedData.length, codeInputs.length); i++) {
-				codeInputs[i].value = pastedData[i]
-			}
-
-			// Focus last filled or first empty
-			const lastIndex = Math.min(pastedData.length, codeInputs.length - 1)
-			codeInputs[lastIndex].focus()
-
-			// Enable verify button if all filled
-			const allFilled = Array.from(codeInputs).every((inp) => inp.value)
-			document.getElementById('verify-code-btn').disabled = !allFilled
-		})
-	})
-
-	// Step 4: SyftBox OTP - Verify Code button
-	const verifyCodeBtn = document.getElementById('verify-code-btn')
-	if (verifyCodeBtn) {
-		verifyCodeBtn.addEventListener('click', async () => {
-			const code = Array.from(codeInputs)
-				.map((inp) => inp.value)
-				.join('')
-			const email = document.getElementById('onboarding-email').value.trim()
-			const step4 = document.getElementById('onboarding-step-4')
-			const fromSettings = step4.dataset.fromSettings === 'true'
-
-			verifyCodeBtn.disabled = true
-			verifyCodeBtn.innerHTML = '<span class="spinner"></span> Verifying...'
-
-			try {
-				await invoke('syftbox_submit_otp', { code, email })
-
-				// Success - mark inputs as success
-				codeInputs.forEach((inp) => inp.classList.add('success'))
-
-				// Wait a moment then proceed
-				setTimeout(async () => {
-					if (fromSettings) {
-						// Coming from settings - reset state, show success, and return to settings
-						step4.dataset.fromSettings = 'false'
-						document.getElementById('skip-syftbox-btn').textContent = 'Skip' // Reset button text
-
-						// Reset the OTP state to initial state
-						document.getElementById('syftbox-send-state').style.display = 'block'
-						document.getElementById('syftbox-email-info').style.display = 'none'
-						document.getElementById('syftbox-otp-state').style.display = 'none'
-						document.getElementById('syftbox-error-message').style.display = 'none'
-
-						// Clear OTP inputs
-						document.querySelectorAll('.syftbox-code-input').forEach((input) => {
-							input.value = ''
-							input.classList.remove('error', 'success')
-						})
-
-						// Reset verify button
-						const verifyBtn = document.getElementById('verify-code-btn')
-						verifyBtn.disabled = true
-						verifyBtn.textContent = 'Verify Code'
-
-						// Reset send login code button
-						const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
-						if (sendLoginCodeBtn) {
-							sendLoginCodeBtn.disabled = false
-							sendLoginCodeBtn.textContent = 'Send Code'
-						}
-
-						await window.__TAURI__.dialog.message('Successfully authenticated with SyftBox!', {
-							title: 'Success',
-							type: 'info',
-						})
-
-						// Show tabs navigation bar
-						const tabsBar = document.querySelector('.tabs')
-						if (tabsBar) {
-							tabsBar.style.display = 'flex'
-						}
-
-						// Hide onboarding and show settings
-						document.getElementById('onboarding-view').classList.remove('active')
-						document.getElementById('onboarding-view').style.display = 'none'
-
-						const settingsView = document.getElementById('settings-view')
-						settingsView.classList.add('active')
-						settingsView.style.display = 'flex'
-
-						// Activate settings tab
-						document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'))
-						document.querySelector('.tab[data-tab="settings"]').classList.add('active')
-
-						// Refresh status
-						checkSyftBoxStatus()
-					} else {
-						// Normal onboarding flow - proceed to step 5 (initializing)
-						document.getElementById('syftbox-email-info').style.display = 'none'
-						document.getElementById('onboarding-step-4').style.display = 'none'
-						document.getElementById('onboarding-step-5').style.display = 'block'
-						// Initialize BioVault
-						initializeBioVault(email)
-					}
-				}, 500)
-			} catch (error) {
-				// Error - show error state
-				codeInputs.forEach((inp) => inp.classList.add('error'))
-				document.getElementById('syftbox-error-message').style.display = 'block'
-				document.getElementById('syftbox-error-message').textContent = error
-					.toString()
-					.includes('Invalid')
-					? 'Invalid verification code. Please try again.'
-					: `Error: ${error}`
-
-				verifyCodeBtn.disabled = false
-				verifyCodeBtn.textContent = 'Verify Code'
-			}
-		})
-	}
-
-	// Step 4: SyftBox OTP - Resend Code button
-	const resendCodeBtn = document.getElementById('resend-code-btn')
-	if (resendCodeBtn) {
-		resendCodeBtn.addEventListener('click', async () => {
-			const email = document.getElementById('onboarding-email').value.trim()
-
-			resendCodeBtn.disabled = true
-			resendCodeBtn.textContent = 'Sending...'
-
-			try {
-				await invoke('syftbox_request_otp', { email })
-
-				// Clear inputs
-				codeInputs.forEach((inp) => {
-					inp.value = ''
-					inp.classList.remove('error', 'success')
-				})
-				document.getElementById('syftbox-error-message').style.display = 'none'
-				document.getElementById('verify-code-btn').disabled = true
-
-				// Focus first input
-				codeInputs[0].focus()
-
-				await window.__TAURI__.dialog.message('A new code has been sent to your email.', {
-					title: 'Code Sent',
-				})
-			} catch (error) {
-				await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, {
-					title: 'Error',
-					type: 'error',
-				})
-			} finally {
-				resendCodeBtn.disabled = false
-				resendCodeBtn.textContent = 'Send Again'
-			}
-		})
-	}
-
-	// Step 4: SyftBox OTP - Skip/Cancel button
-	const skipSyftboxBtn = document.getElementById('skip-syftbox-btn')
-	if (skipSyftboxBtn) {
-		skipSyftboxBtn.addEventListener('click', () => {
-			const step4 = document.getElementById('onboarding-step-4')
-			const fromSettings = step4.dataset.fromSettings === 'true'
-
-			if (fromSettings) {
-				// Coming from settings - reset state and return to settings page
-				step4.dataset.fromSettings = 'false'
-				skipSyftboxBtn.textContent = 'Skip' // Reset button text
-
-				// Reset the OTP state to initial state
-				document.getElementById('syftbox-send-state').style.display = 'block'
-				document.getElementById('syftbox-email-info').style.display = 'none'
-				document.getElementById('syftbox-otp-state').style.display = 'none'
-				document.getElementById('syftbox-error-message').style.display = 'none'
-
-				// Clear OTP inputs
-				document.querySelectorAll('.syftbox-code-input').forEach((input) => {
-					input.value = ''
-					input.classList.remove('error', 'success')
-				})
-
-				// Reset verify button
-				const verifyBtn = document.getElementById('verify-code-btn')
-				if (verifyBtn) {
-					verifyBtn.disabled = true
-					verifyBtn.textContent = 'Verify Code'
-				}
-
-				// Reset send login code button
-				const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
-				if (sendLoginCodeBtn) {
-					sendLoginCodeBtn.disabled = false
-					sendLoginCodeBtn.textContent = 'Send Code'
-				}
-
-				// Show tabs navigation bar
-				const tabsBar = document.querySelector('.tabs')
-				if (tabsBar) {
-					tabsBar.style.display = 'flex'
-				}
-
-				// Hide onboarding and show settings
-				document.getElementById('onboarding-view').classList.remove('active')
-				document.getElementById('onboarding-view').style.display = 'none'
-
-				const settingsView = document.getElementById('settings-view')
-				settingsView.classList.add('active')
-				settingsView.style.display = 'flex'
-
-				// Activate settings tab
-				document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'))
-				document.querySelector('.tab[data-tab="settings"]').classList.add('active')
-
-				// Refresh status
-				checkSyftBoxStatus()
-			} else {
-				// Normal onboarding flow - skip to step 5
-				const email = document.getElementById('onboarding-email').value.trim()
-
-				document.getElementById('onboarding-step-4').style.display = 'none'
-				document.getElementById('onboarding-step-5').style.display = 'block'
-				// Initialize BioVault
-				initializeBioVault(email)
-			}
-		})
-	}
-
-	// Helper function to initialize BioVault
-	async function initializeBioVault(email) {
-		try {
-			await invoke('complete_onboarding', { email })
-			// Reload to show main app with updated config
-			location.reload()
-		} catch (error) {
-			await window.__TAURI__.dialog.message(`Error initializing BioVault: ${error}`, {
-				title: 'Error',
-				type: 'error',
-			})
-		}
-	}
-
-	// Reset all data button
-	const resetAllBtn = document.getElementById('reset-all-btn')
-	if (resetAllBtn) {
-		resetAllBtn.addEventListener('click', async () => {
-			const confirmed = await window.__TAURI__.dialog.confirm(
-				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
-				{ title: 'Reset All Data', type: 'warning' },
-			)
-
-			if (!confirmed) {
-				return
-			}
-
-			try {
-				await invoke('reset_all_data')
-				await window.__TAURI__.dialog.message('All data has been reset. The app will now reload.', {
-					title: 'Reset Complete',
-				})
-
-				// Reload the window to restart fresh
-				window.location.reload()
-			} catch (error) {
-				await window.__TAURI__.dialog.message(`Error resetting data: ${error}`, {
-					title: 'Error',
-					type: 'error',
-				})
-			}
-		})
-	}
-
-	// Check if onboarded on app start
-	async function checkOnboarding() {
-		try {
-			const isOnboarded = await invoke('check_is_onboarded')
-			if (!isOnboarded) {
-				// Show onboarding view
-				document.getElementById('onboarding-view').style.display = 'flex'
-				// Hide tabs
-				document.querySelector('.tabs').style.display = 'none'
-				// Hide all other tab-content views
-				document.querySelectorAll('.tab-content:not(#onboarding-view)').forEach((view) => {
-					view.classList.remove('active')
-					view.style.display = 'none'
-				})
-				// Update title
-				document.title = 'BioVault - Setup'
-			}
-		} catch (error) {
-			console.error('Error checking onboarding status:', error)
-		}
-	}
 
 	// Run onboarding check on app start
-	checkOnboarding()
+	onboarding.checkOnboarding()
 })

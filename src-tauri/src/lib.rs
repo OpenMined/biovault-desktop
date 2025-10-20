@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
+// WebSocket bridge for browser development
+mod ws_bridge;
+
 // BioVault CLI library imports
 use biovault::cli::commands::check::DependencyCheckResult;
 use biovault::cli::commands::init;
@@ -3464,6 +3467,17 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&window_title);
             }
+
+            // Start WebSocket bridge for browser development if enabled
+            if std::env::var("DEV_WS_BRIDGE").is_ok() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = ws_bridge::start_ws_server(app_handle, 3333).await {
+                        eprintln!("❌ Failed to start WebSocket server: {}", e);
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
