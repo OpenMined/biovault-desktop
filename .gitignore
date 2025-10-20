@@ -27,3 +27,6 @@ dist-ssr
 
 # Environment variables (signing keys)
 .env
+**/.vagrant/*
+artifacts/*
+.cache/
