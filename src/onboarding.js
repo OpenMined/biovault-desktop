@@ -1,3 +1,5 @@
+import { dialog } from './tauri-shim.js'
+
 export function initOnboarding({
 	invoke,
 	checkDependenciesForPanel,
@@ -156,20 +158,20 @@ export function initOnboarding({
 
 						// Update the UI with the result
 						if (result.found) {
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
 								{ title: 'Success', type: 'info' },
 							)
 						} else {
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✗ ${dep.name} not found automatically.\n\nPlease install it or enter a custom path.`,
 								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error resetting path: ${error}`, {
+						await dialog.message(`Error resetting path: ${error}`, {
 							title: 'Error',
 							type: 'error',
 						})
@@ -185,7 +187,7 @@ export function initOnboarding({
 					const customPath = pathInput.value.trim()
 
 					if (!customPath) {
-						await window.__TAURI__.dialog.message('Please enter a path to check', {
+						await dialog.message('Please enter a path to check', {
 							title: 'Empty Path',
 							type: 'warning',
 						})
@@ -222,7 +224,7 @@ export function initOnboarding({
 							// Re-render this specific dependency details
 							showDependencyDetails(dep, depIndex)
 
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
@@ -255,13 +257,13 @@ export function initOnboarding({
 								}
 							}, 100)
 
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
 								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error: ${error}`, {
+						await dialog.message(`Error: ${error}`, {
 							title: 'Error',
 							type: 'error',
 						})
@@ -391,12 +393,12 @@ export function initOnboarding({
 									pathInput.value = installedPath
 								}
 
-								await window.__TAURI__.dialog.message(
+								await dialog.message(
 									`✓ ${dep.name} installed successfully!\n\nPath: ${installedPath}`,
 									{ title: 'Success', type: 'info' },
 								)
 							} else {
-								await window.__TAURI__.dialog.message(
+								await dialog.message(
 									`✓ ${dep.name} installed successfully!\n\nPlease check the path detection using 'Check Again'.`,
 									{ title: 'Success', type: 'info' },
 								)
@@ -412,14 +414,14 @@ export function initOnboarding({
 							})
 							clearButtonLoading(installSingleBtn)
 
-							await window.__TAURI__.dialog.message(
-								`Failed to install ${dep.name}: ${errorMessage}`,
-								{ title: 'Installation Failed', type: 'error' },
-							)
+							await dialog.message(`Failed to install ${dep.name}: ${errorMessage}`, {
+								title: 'Installation Failed',
+								type: 'error',
+							})
 						}
 					}
 
-					const confirmed = await window.__TAURI__.dialog.confirm(
+					const confirmed = await dialog.confirm(
 						`Install ${dep.name}?\n\nBioVault will attempt to install this dependency for you.`,
 						{ title: 'Confirm Installation', type: 'warning' },
 					)
@@ -432,7 +434,7 @@ export function initOnboarding({
 						try {
 							const brewInstalled = await invoke('check_brew_installed')
 							if (!brewInstalled) {
-								const installBrew = await window.__TAURI__.dialog.confirm(
+								const installBrew = await dialog.confirm(
 									'Homebrew is required to install this dependency.\n\nWould you like to install Homebrew first?',
 									{ title: 'Homebrew Required', type: 'warning' },
 								)
@@ -452,10 +454,10 @@ export function initOnboarding({
 							}
 						} catch (error) {
 							console.error('Failed to check brew installation:', error)
-							await window.__TAURI__.dialog.message(
-								`Unable to verify Homebrew installation: ${error}`,
-								{ title: 'Error', type: 'error' },
-							)
+							await dialog.message(`Unable to verify Homebrew installation: ${error}`, {
+								title: 'Error',
+								type: 'error',
+							})
 							return
 						}
 					}
@@ -472,10 +474,10 @@ export function initOnboarding({
 					const customPath = pathInput.value.trim()
 
 					if (!customPath) {
-						await window.__TAURI__.dialog.message(
-							'Please enter a path to check, or use the Install button',
-							{ title: 'Empty Path', type: 'warning' },
-						)
+						await dialog.message('Please enter a path to check, or use the Install button', {
+							title: 'Empty Path',
+							type: 'warning',
+						})
 						return
 					}
 
@@ -509,7 +511,7 @@ export function initOnboarding({
 							// Re-render this specific dependency details
 							showDependencyDetails(dep, depIndex)
 
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
 									result.version || 'Unknown'
 								}`,
@@ -517,13 +519,13 @@ export function initOnboarding({
 							)
 						} else {
 							// Path is invalid - don't save it
-							await window.__TAURI__.dialog.message(
+							await dialog.message(
 								`✗ ${dep.name} not found at the specified path.\n\nPlease check the path and try again.`,
 								{ title: 'Not Found', type: 'warning' },
 							)
 						}
 					} catch (error) {
-						await window.__TAURI__.dialog.message(`Error: ${error}`, {
+						await dialog.message(`Error: ${error}`, {
 							title: 'Error',
 							type: 'error',
 						})
@@ -787,7 +789,7 @@ export function initOnboarding({
 			if (missingDeps.length === 0) return
 
 			const depNames = missingDeps.map((d) => d.name).join(', ')
-			const confirmed = await window.__TAURI__.dialog.confirm(
+			const confirmed = await dialog.confirm(
 				`Install the following missing dependencies?\n\n${depNames}\n\nBioVault will attempt to install these automatically. This may take several minutes.`,
 				{ title: 'Confirm Installation', type: 'warning' },
 			)
@@ -797,7 +799,7 @@ export function initOnboarding({
 					await invoke('install_dependencies', { names: missingDeps.map((d) => d.name) })
 					await checkDependencies()
 				} catch (error) {
-					await window.__TAURI__.dialog.message(`${error}`, {
+					await dialog.message(`${error}`, {
 						title: 'Installation Not Available',
 						type: 'info',
 					})
@@ -812,7 +814,7 @@ export function initOnboarding({
 		skipDepsBtn.addEventListener('click', async () => {
 			skipDepsBtn.disabled = true
 			try {
-				const confirmed = await window.__TAURI__.dialog.confirm(
+				const confirmed = await dialog.confirm(
 					'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
 						'Some features may not work without the required dependencies installed.\n\n' +
 						'Are you sure you want to skip?',
@@ -966,7 +968,7 @@ export function initOnboarding({
 		nextBtn3.addEventListener('click', async () => {
 			const email = document.getElementById('onboarding-email').value.trim()
 			if (!isValidEmail(email)) {
-				await window.__TAURI__.dialog.message('Please enter a valid email address', {
+				await dialog.message('Please enter a valid email address', {
 					title: 'Invalid Email',
 					type: 'error',
 				})
@@ -1071,7 +1073,7 @@ export function initOnboarding({
 				const firstInput = document.querySelector('.syftbox-code-input[data-index="0"]')
 				if (firstInput) firstInput.focus()
 			} catch (error) {
-				await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, {
+				await dialog.message(`Failed to send OTP: ${error}`, {
 					title: 'Error',
 					type: 'error',
 				})
@@ -1192,7 +1194,7 @@ export function initOnboarding({
 							sendLoginCodeBtn.textContent = 'Send Code'
 						}
 
-						await window.__TAURI__.dialog.message('Successfully authenticated with SyftBox!', {
+						await dialog.message('Successfully authenticated with SyftBox!', {
 							title: 'Success',
 							type: 'info',
 						})
@@ -1265,11 +1267,11 @@ export function initOnboarding({
 				// Focus first input
 				codeInputs[0].focus()
 
-				await window.__TAURI__.dialog.message('A new code has been sent to your email.', {
+				await dialog.message('A new code has been sent to your email.', {
 					title: 'Code Sent',
 				})
 			} catch (error) {
-				await window.__TAURI__.dialog.message(`Failed to send OTP: ${error}`, {
+				await dialog.message(`Failed to send OTP: ${error}`, {
 					title: 'Error',
 					type: 'error',
 				})
@@ -1357,7 +1359,7 @@ export function initOnboarding({
 			// Reload to show main app with updated config
 			location.reload()
 		} catch (error) {
-			await window.__TAURI__.dialog.message(`Error initializing BioVault: ${error}`, {
+			await dialog.message(`Error initializing BioVault: ${error}`, {
 				title: 'Error',
 				type: 'error',
 			})
@@ -1368,7 +1370,7 @@ export function initOnboarding({
 	const resetAllBtn = document.getElementById('reset-all-btn')
 	if (resetAllBtn) {
 		resetAllBtn.addEventListener('click', async () => {
-			const confirmed = await window.__TAURI__.dialog.confirm(
+			const confirmed = await dialog.confirm(
 				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
 				{ title: 'Reset All Data', type: 'warning' },
 			)
@@ -1379,14 +1381,14 @@ export function initOnboarding({
 
 			try {
 				await invoke('reset_all_data')
-				await window.__TAURI__.dialog.message('All data has been reset. The app will now reload.', {
+				await dialog.message('All data has been reset. The app will now reload.', {
 					title: 'Reset Complete',
 				})
 
 				// Reload the window to restart fresh
 				window.location.reload()
 			} catch (error) {
-				await window.__TAURI__.dialog.message(`Error resetting data: ${error}`, {
+				await dialog.message(`Error resetting data: ${error}`, {
 					title: 'Error',
 					type: 'error',
 				})
