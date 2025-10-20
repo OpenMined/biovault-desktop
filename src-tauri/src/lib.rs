@@ -1292,6 +1292,49 @@ fn create_project(
 }
 
 #[tauri::command]
+fn get_available_project_examples() -> Result<HashMap<String, serde_json::Value>, String> {
+    use std::fs;
+    use std::path::PathBuf;
+    
+    // Get the path to the biovault submodule's examples.yaml
+    let examples_yaml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("Failed to get parent directory")?
+        .join("biovault/cli/examples/examples.yaml");
+    
+    if !examples_yaml_path.exists() {
+        return Err(format!(
+            "Examples file not found at: {}",
+            examples_yaml_path.display()
+        ));
+    }
+    
+    let yaml_content = fs::read_to_string(&examples_yaml_path)
+        .map_err(|e| format!("Failed to read examples.yaml: {}", e))?;
+    
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_content)
+        .map_err(|e| format!("Failed to parse examples.yaml: {}", e))?;
+    
+    let examples = yaml
+        .get("examples")
+        .and_then(|e| e.as_mapping())
+        .ok_or("Invalid examples.yaml format")?;
+    
+    let mut result = HashMap::new();
+    for (key, value) in examples {
+        let example_name = key
+            .as_str()
+            .ok_or("Invalid example name")?
+            .to_string();
+        let json_value = serde_json::to_value(value)
+            .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
+        result.insert(example_name, json_value);
+    }
+    
+    Ok(result)
+}
+
+#[tauri::command]
 fn get_default_project_path(name: Option<String>) -> Result<String, String> {
     let raw = name.unwrap_or_else(|| "new-project".to_string());
     let trimmed = raw.trim();
@@ -3493,6 +3536,7 @@ pub fn run() {
             delete_project,
             delete_project_folder,
             create_project,
+            get_available_project_examples,
             get_default_project_path,
             load_project_editor,
             save_project_editor,
