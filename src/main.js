@@ -1,6 +1,7 @@
 import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
 import { createParticipantsModule } from './participants.js'
+import { createLogsModule } from './logs.js'
 
 const { invoke } = window.__TAURI__.core
 const { open } = window.__TAURI__.dialog
@@ -20,7 +21,6 @@ let columnWidths = {
 	filename: 180,
 	participant: 150,
 }
-let commandLogs = [] // Array of log entries
 let isImportInProgress = false // Track if import is currently running
 let dependencyResults = null // Store dependency check results globally
 let cltWaitState = {
@@ -38,6 +38,8 @@ const {
 	getSelectedParticipants,
 	handleSelectAll: handleParticipantsSelectAll,
 } = createParticipantsModule({ invoke })
+
+const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
 function getAppWindow() {
 	const api = window.__TAURI__?.window
@@ -3679,86 +3681,6 @@ async function handleSyftBoxAuthentication() {
 	})
 }
 
-// Log management functions
-async function loadCommandLogs() {
-	try {
-		const logs = await invoke('get_command_logs')
-		commandLogs = logs
-		displayLogs()
-	} catch (error) {
-		console.error('Error loading logs:', error)
-	}
-}
-
-function displayLogs() {
-	const logsContent = document.getElementById('logs-content')
-	if (commandLogs.length === 0) {
-		logsContent.textContent = 'No command logs yet.'
-		return
-	}
-
-	const MAX_OUTPUT_CHARS = 5000
-	let logText = ''
-
-	commandLogs.forEach((log) => {
-		logText += `\n${'='.repeat(80)}\n`
-		logText += `[${log.timestamp}]\n`
-		logText += `Command: ${log.command}\n`
-		logText += `${'-'.repeat(80)}\n`
-
-		if (log.output) {
-			let output = log.output
-			if (output.length > MAX_OUTPUT_CHARS) {
-				output =
-					output.substring(0, MAX_OUTPUT_CHARS) +
-					`\n\n... (output truncated, ${output.length - MAX_OUTPUT_CHARS} chars hidden)`
-			}
-			logText += output
-		}
-
-		if (log.error) {
-			logText += `\nERROR: ${log.error}`
-		}
-
-		logText += '\n'
-	})
-
-	logsContent.textContent = logText
-}
-
-async function clearLogs() {
-	if (!confirm('Are you sure you want to clear all logs?')) {
-		return
-	}
-
-	try {
-		await invoke('clear_command_logs')
-		commandLogs = []
-		displayLogs()
-	} catch (error) {
-		alert(`Error clearing logs: ${error}`)
-	}
-}
-
-function copyLogs() {
-	const logsContent = document.getElementById('logs-content')
-	const text = logsContent.textContent
-
-	navigator.clipboard
-		.writeText(text)
-		.then(() => {
-			const btn = document.getElementById('copy-logs-btn')
-			const originalText = btn.innerHTML
-			btn.innerHTML = '✅ Copied!'
-			setTimeout(() => {
-				btn.innerHTML = originalText
-			}, 2000)
-		})
-		.catch((err) => {
-			alert(`Failed to copy logs: ${err}`)
-		})
-}
-
 function escapeHtml(value) {
 	if (value === undefined || value === null) return ''
 	const div = document.createElement('div')
@@ -4787,7 +4709,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 		if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
 			try {
-				const deleted = await invoke('delete_files_bulk', { file_ids: selectedFilesForDelete })
+				const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete })
 				console.log(`Deleted ${deleted} file(s)`)
 				await loadFiles()
 			} catch (error) {
