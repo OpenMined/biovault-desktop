@@ -172,8 +172,8 @@ export function createFilesModule({ invoke }) {
 			} else if (f.status === 'error') {
 				statusBadge =
 					'<span style="background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' +
-				(f.processing_error || '') +
-				'">❌ ERROR</span>'
+					(f.processing_error || '') +
+					'">❌ ERROR</span>'
 			} else {
 				statusBadge =
 					'<span style="background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">✓ COMPLETE</span>'
@@ -252,7 +252,9 @@ export function createFilesModule({ invoke }) {
 		const selectAllHeader = document.getElementById('select-all-files-table')
 		if (selectAllHeader) {
 			const filteredCount = filteredFiles.length
-			const selectedCount = filteredFiles.filter((f) => selectedFilesForDelete.includes(f.id)).length
+			const selectedCount = filteredFiles.filter((f) =>
+				selectedFilesForDelete.includes(f.id),
+			).length
 			selectAllHeader.checked = filteredCount > 0 && selectedCount === filteredCount
 			selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < filteredCount
 		}
@@ -356,7 +358,10 @@ export function createFilesModule({ invoke }) {
 				await updateQueueButton()
 
 				const isFilesTabActive = document.getElementById('files-view')?.classList.contains('active')
-				const pendingCount = parseInt(document.getElementById('pending-count')?.textContent || '0', 10)
+				const pendingCount = parseInt(
+					document.getElementById('pending-count')?.textContent || '0',
+					10,
+				)
 
 				if (queueProcessorRunning && isFilesTabActive && pendingCount > 0) {
 					await loadFiles()

@@ -48,12 +48,8 @@ const {
 	setNavigateTo: setRunNavigateTo,
 } = createRunsModule({ invoke, listen })
 
-const {
-	loadFiles,
-	refreshExistingFilePaths,
-	initializeFilesTab,
-	isFileAlreadyImported,
-} = createFilesModule({ invoke })
+const { loadFiles, refreshExistingFilePaths, initializeFilesTab, isFileAlreadyImported } =
+	createFilesModule({ invoke })
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
@@ -4143,18 +4139,18 @@ window.addEventListener('DOMContentLoaded', () => {
 		})
 	})
 
-		document.getElementById('select-all-files').addEventListener('change', (e) => {
-			if (e.target.checked) {
-				currentFiles.forEach((file) => {
-					if (!isFileAlreadyImported(file)) {
-						selectedFiles.add(file)
-					}
-				})
-			} else {
-				selectedFiles.clear()
-			}
-			renderFiles()
-		})
+	document.getElementById('select-all-files').addEventListener('change', (e) => {
+		if (e.target.checked) {
+			currentFiles.forEach((file) => {
+				if (!isFileAlreadyImported(file)) {
+					selectedFiles.add(file)
+				}
+			})
+		} else {
+			selectedFiles.clear()
+		}
+		renderFiles()
+	})
 	document.getElementById('create-project-btn').addEventListener('click', () => {
 		showCreateProjectModal()
 	})

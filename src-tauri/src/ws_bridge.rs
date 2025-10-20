@@ -101,63 +101,53 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
     // This is a simplified version - you'll need to add all commands
     match cmd {
         "get_participants" => {
-            let result = crate::get_participants(state)
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_participants(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_files" => {
-            let result = crate::get_files(state)
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_files(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_projects" => {
-            let result = crate::get_projects(state)
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_projects(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_runs" => {
-            let result = crate::get_runs(state)
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_runs(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_command_logs" => {
-            let result = crate::get_command_logs()
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_command_logs().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_settings" => {
-            let result = crate::get_settings()
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_settings().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "check_dependencies" => {
-            let result = crate::check_dependencies().await
+            let result = crate::check_dependencies()
+                .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "check_is_onboarded" => {
-            let result = crate::check_is_onboarded()
-                .map_err(|e| e.to_string())?;
+            let result = crate::check_is_onboarded().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_queue_processor_status" => {
-            let result = crate::get_queue_processor_status(state)
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_queue_processor_status(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_saved_dependency_states" => {
-            let result = crate::get_saved_dependency_states()
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_saved_dependency_states().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_syftbox_state" => {
-            let result = crate::get_syftbox_state()
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_syftbox_state().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_syftbox_config_info" => {
-            let result = crate::get_syftbox_config_info()
-                .map_err(|e| e.to_string())?;
+            let result = crate::get_syftbox_config_info().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         _ => {
