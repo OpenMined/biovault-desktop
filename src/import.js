@@ -19,9 +19,9 @@ export function createImportModule({
 	let sortField = 'path'
 	let sortDirection = 'asc'
 	let columnWidths = {
-		path: 1200,
-		filename: 180,
-		participant: 150,
+		path: 380,
+		filename: 200,
+		participant: 200,
 	}
 	let isImportInProgress = false
 	let reviewFileMetadata = {}
@@ -30,6 +30,7 @@ export function createImportModule({
 	let reviewSortDirection = 'asc'
 	let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 	let patternInputDebounce = null
+	let importSplitterInitialized = false
 
 	function getFileExtensions() {
 		const select = document.getElementById('file-type-select')
@@ -409,6 +410,102 @@ export function createImportModule({
 				document.addEventListener('mouseup', onMouseUp)
 			})
 		})
+
+		updateColumnWidths()
+	}
+
+	function initImportSplitter() {
+		if (importSplitterInitialized) return
+		const layout = document.querySelector('.import-layout')
+		const resizer = document.querySelector('.import-resizer')
+		const topSection = document.querySelector('.import-top')
+		const bottomSection = document.querySelector('.import-files-section')
+		if (!layout || !resizer || !topSection || !bottomSection) return
+
+		importSplitterInitialized = true
+		const MIN_TOP = 160
+		const MIN_BOTTOM = 200
+		let isDragging = false
+		let startY = 0
+		let startTopHeight = 0
+		let availableHeight = 0
+
+		const getClientY = (event) => {
+			if (event.touches && event.touches.length > 0) {
+				return event.touches[0].clientY
+			}
+			return typeof event.clientY === 'number' ? event.clientY : null
+		}
+
+		const stopDrag = () => {
+			if (!isDragging) return
+			isDragging = false
+			resizer.classList.remove('is-dragging')
+			document.body.style.userSelect = ''
+			document.body.style.cursor = ''
+			document.removeEventListener('mousemove', onMove)
+			document.removeEventListener('mouseup', stopDrag)
+			document.removeEventListener('touchmove', onMove)
+			document.removeEventListener('touchend', stopDrag)
+			document.removeEventListener('touchcancel', stopDrag)
+			topSection.style.removeProperty('will-change')
+			bottomSection.style.removeProperty('will-change')
+		}
+
+		const onMove = (event) => {
+			if (!isDragging) return
+			const clientY = getClientY(event)
+			if (clientY === null) return
+			event.preventDefault()
+			const delta = clientY - startY
+			let newHeight = startTopHeight + delta
+			newHeight = Math.max(MIN_TOP, Math.min(newHeight, availableHeight - MIN_BOTTOM))
+			const percent = (newHeight / availableHeight) * 100
+			layout.style.setProperty('--import-top-size', `${percent}%`)
+		}
+
+		const startDrag = (event) => {
+			const clientY = getClientY(event)
+			if (clientY === null) return
+			event.preventDefault()
+			isDragging = true
+			startY = clientY
+			const layoutRect = layout.getBoundingClientRect()
+			const handleRect = resizer.getBoundingClientRect()
+			const topRect = topSection.getBoundingClientRect()
+			const resizerStyles = window.getComputedStyle(resizer)
+			const marginTop = parseFloat(resizerStyles.marginTop) || 0
+			const marginBottom = parseFloat(resizerStyles.marginBottom) || 0
+			const layoutStyles = window.getComputedStyle(layout)
+			const paddingTop = parseFloat(layoutStyles.paddingTop) || 0
+			const paddingBottom = parseFloat(layoutStyles.paddingBottom) || 0
+			availableHeight = Math.max(
+				layoutRect.height -
+					handleRect.height -
+					marginTop -
+					marginBottom -
+					paddingTop -
+					paddingBottom,
+				MIN_TOP + MIN_BOTTOM,
+			)
+			startTopHeight = Math.min(Math.max(topRect.height, MIN_TOP), availableHeight - MIN_BOTTOM)
+			resizer.classList.add('is-dragging')
+			document.body.style.userSelect = 'none'
+			document.body.style.cursor = 'row-resize'
+			topSection.style.setProperty('will-change', 'height')
+			bottomSection.style.setProperty('will-change', 'height')
+			document.addEventListener('mousemove', onMove)
+			document.addEventListener('mouseup', stopDrag)
+			document.addEventListener('touchmove', onMove, { passive: false })
+			document.addEventListener('touchend', stopDrag)
+			document.addEventListener('touchcancel', stopDrag)
+		}
+
+		resizer.addEventListener('mousedown', startDrag)
+		resizer.addEventListener('touchstart', startDrag, { passive: false })
+
+		const existingSize = layout.style.getPropertyValue('--import-top-size').trim()
+		layout.style.setProperty('--import-top-size', existingSize || '50%')
 	}
 
 	function renderFiles() {
@@ -572,23 +669,16 @@ export function createImportModule({
 
 	function markActivePattern(pattern) {
 		const normalized = pattern ? pattern.trim() : ''
-		const patternCards = document.querySelectorAll('.pattern-card')
-		patternCards.forEach((card) => {
-			const macroValue = card.dataset.macro
-			const regexValue = card.dataset.regex
-			const macroChip = card.querySelector('[data-pattern-type="macro"]')
-			const regexChip = card.querySelector('[data-pattern-type="regex"]')
-
-			const macroActive = normalized && macroValue === normalized
-			const regexActive = normalized && regexValue === normalized
-
-			card.classList.toggle('active', macroActive || regexActive)
-			if (macroChip) {
-				macroChip.classList.toggle('active', macroActive)
-			}
-			if (regexChip) {
-				regexChip.classList.toggle('active', regexActive)
-			}
+		document.querySelectorAll('.pattern-option-row').forEach((row) => {
+			const macroValue = row.dataset.macro?.trim() || ''
+			const regexValue = row.dataset.regex?.trim() || ''
+			const isActive = Boolean(
+				normalized && (normalized === macroValue || normalized === regexValue),
+			)
+			row.classList.toggle('active', isActive)
+			row.querySelectorAll('.pattern-option-btn').forEach((button) => {
+				button.classList.toggle('active', isActive)
+			})
 		})
 	}
 
@@ -640,106 +730,118 @@ export function createImportModule({
 
 	async function updatePatternSuggestions() {
 		const container = document.getElementById('pattern-suggestions')
+		const detectionSection = document.getElementById('pattern-detection-section')
+		const feedback = document.getElementById('pattern-feedback')
 		if (!container) return
 
+		const setFeedback = (message, variant = 'info') => {
+			if (!feedback) return
+			feedback.textContent = message
+			if (!message) {
+				feedback.removeAttribute('data-variant')
+			} else if (variant === 'error') {
+				feedback.dataset.variant = 'error'
+			} else {
+				feedback.removeAttribute('data-variant')
+			}
+		}
+
+		const clearSuggestions = () => {
+			container.innerHTML = ''
+			detectionSection?.setAttribute('hidden', '')
+		}
+
 		if (currentFiles.length === 0) {
-			container.innerHTML =
-				'<div class="pattern-empty">Select a folder and file type to detect patterns.</div>'
+			clearSuggestions()
+			setFeedback('Select a folder and file type to detect patterns.')
 			markActivePattern('')
 			return
 		}
 
-		container.innerHTML = '<div class="pattern-loading">Analyzing filenames for patterns…</div>'
+		setFeedback('Analyzing filenames for patterns…')
+		clearSuggestions()
 
 		let suggestions = []
 		try {
 			suggestions = await invoke('suggest_patterns', { files: currentFiles })
 		} catch (error) {
 			console.error('Failed to fetch pattern suggestions:', error)
-			container.innerHTML =
-				'<div class="pattern-error">Unable to detect patterns. Try a different folder or check the console for details.</div>'
+			setFeedback(
+				'Unable to detect patterns. Try a different folder or check the console for details.',
+				'error',
+			)
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
 
 		if (!suggestions || suggestions.length === 0) {
-			container.innerHTML =
-				'<div class="pattern-empty">No ID patterns detected. Try selecting a different file type or adjust your dataset.</div>'
+			setFeedback('No ID patterns detected. Try another file type or adjust your dataset.')
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
 
+		detectionSection?.removeAttribute('hidden')
+		setFeedback('')
 		container.innerHTML = ''
 
 		suggestions.forEach((sugg) => {
 			const macroValue = (sugg.pattern || '').trim()
 			const regexValue = (sugg.regex_pattern || '').trim()
+			const sample = Array.isArray(sugg.sample_extractions) ? sugg.sample_extractions[0] : null
+			const exampleText = sample?.path ?? sugg.example ?? ''
+			const exampleId = sample?.participant_id ?? ''
+			const applyValue = macroValue || regexValue || ''
+			const descriptionText = (sugg.description || '').trim()
 
-			const card = document.createElement('div')
-			card.className = 'pattern-card'
-			card.dataset.macro = macroValue
-			card.dataset.regex = regexValue
+			const row = document.createElement('div')
+			row.className = 'pattern-option-row'
+			row.dataset.macro = macroValue
+			row.dataset.regex = regexValue
 
-			const title = document.createElement('div')
-			title.className = 'pattern-card-title'
-			title.textContent = sugg.description
-			card.appendChild(title)
+			const buttonsRow = document.createElement('div')
+			buttonsRow.className = 'pattern-option-buttons'
 
-			const chipRow = document.createElement('div')
-			chipRow.className = 'pattern-card-chips'
-
-			const macroChip = document.createElement('button')
-			macroChip.className = 'pattern-chip pattern-chip--macro'
-			macroChip.dataset.patternType = 'macro'
-			macroChip.textContent = macroValue
-			macroChip.title = 'Use macro pattern'
-			macroChip.addEventListener('click', () => {
-				void applyPattern(macroValue)
+			const patternButton = document.createElement('button')
+			patternButton.type = 'button'
+			patternButton.className = 'pattern-option-btn'
+			patternButton.dataset.patternType = macroValue ? 'macro' : 'regex'
+			patternButton.textContent = macroValue ? `Pattern: ${macroValue}` : 'Pattern: (none)'
+			patternButton.disabled = !macroValue
+			patternButton.addEventListener('click', () => {
+				if (macroValue) {
+					void applyPattern(macroValue)
+				}
 			})
+			buttonsRow.appendChild(patternButton)
 
-			chipRow.appendChild(macroChip)
-
-			if (regexValue) {
-				const regexChip = document.createElement('button')
-				regexChip.className = 'pattern-chip pattern-chip--regex'
-				regexChip.dataset.patternType = 'regex'
-				regexChip.textContent = regexValue
-				regexChip.title = 'Use regex pattern'
-				regexChip.addEventListener('click', () => {
+			const regexButton = document.createElement('button')
+			regexButton.type = 'button'
+			regexButton.className = 'pattern-option-btn pattern-option-btn--regex'
+			regexButton.textContent = regexValue ? `Regex: ${regexValue}` : 'Regex: (none)'
+			regexButton.disabled = !regexValue
+			regexButton.addEventListener('click', () => {
+				if (regexValue) {
 					void applyPattern(regexValue)
-				})
-				chipRow.appendChild(regexChip)
-			} else {
-				const regexLabel = document.createElement('span')
-				regexLabel.className = 'pattern-chip pattern-chip--regex disabled'
-				regexLabel.dataset.patternType = 'regex'
-				regexLabel.textContent = 'Regex unavailable'
-				chipRow.appendChild(regexLabel)
-			}
-			card.appendChild(chipRow)
+				}
+			})
+			buttonsRow.appendChild(regexButton)
+			row.appendChild(buttonsRow)
 
-			if (sugg.example) {
-				const exampleRow = document.createElement('div')
-				exampleRow.className = 'pattern-card-example'
-				exampleRow.innerHTML = `<span>Example:</span> <span>${sugg.example}</span>`
-				card.appendChild(exampleRow)
+			if (exampleText) {
+				const exampleLabel = document.createElement('div')
+				exampleLabel.className = 'pattern-option-example'
+				exampleLabel.innerHTML = `Example filename: <span class="pattern-option-example-path">${highlightPath(exampleText, applyValue, exampleId)}</span>`
+				row.appendChild(exampleLabel)
 			}
 
-			if (Array.isArray(sugg.sample_extractions) && sugg.sample_extractions.length > 0) {
-				const sampleList = document.createElement('ul')
-				sampleList.className = 'pattern-card-samples'
-				sugg.sample_extractions.slice(0, 2).forEach((sample) => {
-					const samplePath = sample?.path ?? sample?.[0]
-					const sampleId = sample?.participant_id ?? sample?.[1]
-					if (!samplePath || !sampleId) return
-					const item = document.createElement('li')
-					item.innerHTML = `<span class="pattern-card-sample-path">${samplePath}</span><span class="pattern-card-sample-id">→ ${sampleId}</span>`
-					sampleList.appendChild(item)
-				})
-				card.appendChild(sampleList)
+			if (descriptionText) {
+				const description = document.createElement('div')
+				description.className = 'pattern-option-description'
+				description.textContent = descriptionText
+				row.appendChild(description)
 			}
 
-			container.appendChild(card)
+			container.appendChild(row)
 		})
 
 		markActivePattern(currentPattern ? currentPattern.trim() : '')
@@ -800,10 +902,23 @@ export function createImportModule({
 	}
 
 	async function pickFolder() {
-		const selected = await open({
+		let selected = await open({
 			directory: true,
 			multiple: false,
 		})
+
+		if (!selected && typeof window !== 'undefined') {
+			const override = window.__TEST_SELECT_FOLDER__
+			if (typeof override === 'function') {
+				try {
+					selected = await override()
+				} catch (error) {
+					console.error('Test folder selection override failed:', error)
+				}
+			} else if (override) {
+				selected = override
+			}
+		}
 
 		if (selected) {
 			selectedFiles.clear()
@@ -849,6 +964,15 @@ export function createImportModule({
 			})
 
 		btn.disabled = !allSelectedHaveIds
+
+		if (typeof window !== 'undefined') {
+			window.__IMPORT_DEBUG__ = {
+				selectedFiles: Array.from(selectedFiles),
+				autoParticipantIds: { ...autoParticipantIds },
+				fileParticipantIds: { ...fileParticipantIds },
+				allSelectedHaveIds,
+			}
+		}
 	}
 
 	function resetImportState() {
@@ -894,6 +1018,20 @@ export function createImportModule({
 		const patternContainer = document.getElementById('pattern-suggestions')
 		if (patternContainer) {
 			patternContainer.innerHTML = ''
+		}
+		const patternSection = document.getElementById('pattern-detection-section')
+		if (patternSection) {
+			patternSection.setAttribute('hidden', '')
+		}
+		const patternFeedback = document.getElementById('pattern-feedback')
+		if (patternFeedback) {
+			patternFeedback.textContent = 'Select a folder and file type to detect patterns.'
+			patternFeedback.removeAttribute('data-variant')
+		}
+
+		const importLayout = document.querySelector('.import-layout')
+		if (importLayout) {
+			importLayout.style.removeProperty('--import-top-size')
 		}
 
 		const customPatternInput = document.getElementById('custom-pattern')
@@ -1673,6 +1811,7 @@ export function createImportModule({
 		finalizeImport,
 		setSortField,
 		initColumnResizers,
+		initImportSplitter,
 		setReviewSortField,
 		applyPattern,
 		updatePatternSuggestions,

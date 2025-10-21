@@ -424,30 +424,54 @@ export function setupEventHandlers({
 	const customExtInput = document.getElementById('custom-ext-input')
 	const customPattern = document.getElementById('custom-pattern')
 	const patternInfoBtn = document.getElementById('pattern-info-btn')
-	const patternHelp = document.getElementById('pattern-help')
+	const patternInfoModal = document.getElementById('pattern-info-modal')
 
-	if (patternInfoBtn && patternHelp) {
+	if (patternInfoBtn && patternInfoModal) {
+		const openModal = () => {
+			patternInfoModal.removeAttribute('hidden')
+			patternInfoModal.classList.remove('hidden')
+			patternInfoModal.classList.add('visible')
+			document.body.classList.add('modal-open')
+			patternInfoBtn.setAttribute('aria-expanded', 'true')
+			const focusable = patternInfoModal.querySelector('button:not([disabled])')
+			focusable?.focus()
+		}
+
+		const closeModal = ({ skipFocus = false } = {}) => {
+			patternInfoModal.classList.remove('visible')
+			patternInfoModal.classList.add('hidden')
+			patternInfoModal.setAttribute('hidden', '')
+			document.body.classList.remove('modal-open')
+			patternInfoBtn.setAttribute('aria-expanded', 'false')
+			if (!skipFocus) {
+				patternInfoBtn.focus()
+			}
+		}
+
+		closeModal({ skipFocus: true })
+
 		patternInfoBtn.addEventListener('click', () => {
-			const expanded = patternInfoBtn.getAttribute('aria-expanded') === 'true'
-			const nextState = !expanded
-			patternInfoBtn.setAttribute('aria-expanded', nextState)
-			patternHelp.classList.toggle('visible', nextState)
-		})
-
-		document.addEventListener('click', (event) => {
-			if (!patternHelp.classList.contains('visible')) return
-			if (event.target === patternInfoBtn || patternHelp.contains(event.target)) {
+			const importView = document.getElementById('import-view')
+			if (importView && !importView.classList.contains('active')) {
 				return
 			}
-			patternInfoBtn.setAttribute('aria-expanded', 'false')
-			patternHelp.classList.remove('visible')
+			openModal()
+		})
+
+		patternInfoModal.querySelectorAll('[data-modal-close]').forEach((element) => {
+			element.addEventListener('click', () => closeModal())
+		})
+
+		patternInfoModal.addEventListener('click', (event) => {
+			if (event.target === patternInfoModal) {
+				closeModal()
+			}
 		})
 
 		document.addEventListener('keydown', (event) => {
-			if (event.key !== 'Escape') return
-			if (!patternHelp.classList.contains('visible')) return
-			patternInfoBtn.setAttribute('aria-expanded', 'false')
-			patternHelp.classList.remove('visible')
+			if (event.key === 'Escape' && patternInfoModal.classList.contains('visible')) {
+				closeModal()
+			}
 		})
 	}
 

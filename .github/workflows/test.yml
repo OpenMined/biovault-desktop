@@ -59,7 +59,7 @@ jobs:
       - name: Run frontend lint suite
         run: ./lint.sh
 
-  tauri-build:
+  test-ui:
     runs-on: ubuntu-22.04
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -89,15 +89,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli@latest
-
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -111,5 +102,26 @@ jobs:
           restore-keys: |
             x86_64-unknown-linux-gnu-cargo-
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 'latest'
+
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
       - name: Build Tauri application
-        run: tauri build --target x86_64-unknown-linux-gnu
+        run: npx tauri build --target x86_64-unknown-linux-gnu
+
+      - name: Run UI smoke tests
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+        run: ./test-ui.sh

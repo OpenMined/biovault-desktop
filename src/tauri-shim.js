@@ -12,13 +12,15 @@ class WsBridge {
 		this.pendingRequests = new Map()
 		this.connected = false
 		this.connecting = false
+		this.connectPromise = null
 	}
 
 	async connect() {
-		if (this.connected || this.connecting) return
+		if (this.connected) return
+		if (this.connectPromise) return this.connectPromise
 
 		this.connecting = true
-		return new Promise((resolve, reject) => {
+		this.connectPromise = new Promise((resolve, reject) => {
 			try {
 				this.ws = new WebSocket(this.url)
 
@@ -26,6 +28,7 @@ class WsBridge {
 					console.log('🔌 WebSocket connected to Rust backend')
 					this.connected = true
 					this.connecting = false
+					this.connectPromise = null
 					resolve()
 				}
 
@@ -45,6 +48,7 @@ class WsBridge {
 				this.ws.onerror = (error) => {
 					console.error('❌ WebSocket error:', error)
 					this.connecting = false
+					this.connectPromise = null
 					reject(error)
 				}
 
@@ -52,6 +56,7 @@ class WsBridge {
 					console.log('🔌 WebSocket disconnected')
 					this.connected = false
 					this.connecting = false
+					this.connectPromise = null
 					// Reject all pending requests
 					for (const [_id, pending] of this.pendingRequests.entries()) {
 						pending.reject(new Error('WebSocket connection closed'))
@@ -63,19 +68,27 @@ class WsBridge {
 				setTimeout(() => {
 					if (!this.connected) {
 						this.connecting = false
+						this.connectPromise = null
 						reject(new Error('WebSocket connection timeout'))
 					}
 				}, 2000)
 			} catch (error) {
 				this.connecting = false
+				this.connectPromise = null
 				reject(error)
 			}
 		})
+
+		return this.connectPromise
 	}
 
 	async invoke(cmd, args = {}) {
 		if (!this.connected) {
 			await this.connect()
+		}
+
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			throw new Error('WebSocket not connected')
 		}
 
 		const id = ++this.requestId
@@ -113,6 +126,17 @@ async function wsInvoke(cmd, args = {}) {
 // Mock invoke function for browser (fallback)
 async function mockInvoke(cmd, args = {}) {
 	console.log(`[Mock] invoke: ${cmd}`, args)
+
+	if (typeof window !== 'undefined' && window.__TEST_INVOKE_OVERRIDE__) {
+		try {
+			const overrideResult = await window.__TEST_INVOKE_OVERRIDE__(cmd, args)
+			if (overrideResult !== undefined) {
+				return overrideResult
+			}
+		} catch (error) {
+			console.error('[Mock] invoke override failed:', error)
+		}
+	}
 
 	// Return mock data for common commands
 	switch (cmd) {
