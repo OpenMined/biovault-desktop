@@ -138,6 +138,9 @@ const importModule = createImportModule({
 	setLastImportView: (...args) => importSetLastImportView(...args),
 })
 const {
+	openImportModal,
+	closeImportModal,
+	backToSelection,
 	pickFolder,
 	searchFiles,
 	resetImportState,
@@ -146,7 +149,6 @@ const {
 	finalizeImport,
 	setSortField,
 	initColumnResizers,
-	initImportSplitter,
 	setReviewSortField,
 	updateSelectedFileCount,
 	handleSelectAllFiles,
@@ -203,8 +205,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('projects', 'projects-view'),
 			templateLoader.loadAndInject('project-edit', 'project-edit-view'),
 			templateLoader.loadAndInject('run', 'run-view'),
-			templateLoader.loadAndInject('import', 'import-view'),
-			templateLoader.loadAndInject('import-review', 'import-review-view'),
+			// import-review is now inside the import modal, no longer a separate view
 			templateLoader.loadAndInject('import-results', 'import-results-view'),
 			templateLoader.loadAndInject('participants', 'participants-view'),
 			templateLoader.loadAndInject('files', 'files-view'),
@@ -213,6 +214,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('logs', 'logs-view'),
 			templateLoader.loadAndInject('settings', 'settings-view'),
 		])
+
+		// Load import modal separately and append to body
+		const importModalHtml = await templateLoader.load('import')
+		document.body.insertAdjacentHTML('beforeend', importModalHtml)
+
+		// Initialize drag-and-drop for folder selection (async now)
+		await importModule.initFolderDropzone()
+
 		console.log('✅ All templates loaded')
 	} catch (error) {
 		console.error('❌ Failed to load templates:', error)
@@ -249,7 +258,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 	// Initialize UI features
 	initColumnResizers()
-	initImportSplitter()
 	registerNavigationHandlers()
 	initializeFilesTab()
 
@@ -257,6 +265,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 	setupEventHandlers({
 		navigateTo,
 		setLastImportView,
+		openImportModal,
+		closeImportModal,
+		backToSelection,
 		pickFolder,
 		searchFiles,
 		resetImportState,

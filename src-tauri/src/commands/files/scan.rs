@@ -181,6 +181,13 @@ pub fn extract_ids_for_files(
     Ok(results)
 }
 
+/// Check if a path is a directory
+#[tauri::command]
+pub fn is_directory(path: String) -> Result<bool, String> {
+    let path_buf = PathBuf::from(&path);
+    Ok(path_buf.is_dir())
+}
+
 /// Find the common root directory of multiple paths
 fn find_common_root(paths: &[PathBuf]) -> Option<PathBuf> {
     if paths.is_empty() {

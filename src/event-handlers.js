@@ -1,10 +1,14 @@
 export function setupEventHandlers({
 	// Navigation
 	navigateTo,
-	setLastImportView,
+	_setLastImportView,
+	// Import Modal
+	openImportModal,
+	closeImportModal,
+	backToSelection,
 	// Files & Import
 	pickFolder,
-	searchFiles,
+	_searchFiles,
 	resetImportState,
 	goToReviewStep,
 	detectFileTypes,
@@ -19,6 +23,7 @@ export function setupEventHandlers({
 	handleCustomPatternInput,
 	handleCustomPatternBlur,
 	handleCustomPatternKeydown,
+	updatePatternSuggestions,
 	// Messages
 	loadMessageThreads,
 	sendCurrentMessage,
@@ -64,7 +69,7 @@ export function setupEventHandlers({
 	updateComposeVisibilityPublic,
 }) {
 	// Sort headers for import
-	document.querySelectorAll('.file-list-header div[data-sort]').forEach((header) => {
+	document.querySelectorAll('.file-table th[data-sort]').forEach((header) => {
 		header.addEventListener('click', () => {
 			setSortField(header.dataset.sort)
 		})
@@ -232,7 +237,9 @@ export function setupEventHandlers({
 					const progress = ((i / missingDeps.length) * 100).toFixed(0)
 					progressBar.style.width = `${progress}%`
 					statusText.textContent = `Installing ${dep.name}...`
-					installLog.innerHTML += `\n[${new Date().toLocaleTimeString()}] Installing ${dep.name}...\n`
+					installLog.innerHTML += `\n[${new Date().toLocaleTimeString()}] Installing ${
+						dep.name
+					}...\n`
 
 					try {
 						const result = await invoke('install_dependency', { name: dep.name })
@@ -337,66 +344,100 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Import - Pick folder & Import button
-	document.getElementById('pick-folder').addEventListener('click', pickFolder)
-	document.getElementById('import-btn').addEventListener('click', goToReviewStep)
+	// Import Modal - Open/Close
+	document.addEventListener('click', (e) => {
+		// Open modal from import button (will be on participants page)
+		if (e.target.closest('#open-import-modal-btn')) {
+			console.log('📥 Import button clicked')
+			openImportModal()
+		}
 
-	// Import - Reset button
-	const resetBtn = document.getElementById('reset-import-btn')
-	if (resetBtn) {
-		resetBtn.addEventListener('click', () => {
-			console.log('Reset button clicked')
+		// Close modal
+		if (e.target.closest('[data-modal-close="import"]')) {
+			console.log('❌ Close import modal clicked')
+			closeImportModal()
+		}
+	})
+
+	// Import Modal - Delegated event handlers for dynamically loaded content
+	document.addEventListener('click', (e) => {
+		// Clear folder selection (check this FIRST before folder picker)
+		if (e.target.closest('#dropzone-clear-btn')) {
+			e.preventDefault()
+			e.stopPropagation()
 			resetImportState()
-		})
-	} else {
-		console.error('reset-import-btn not found')
-	}
+			return // Stop processing other handlers
+		}
 
-	// Import - Review view buttons
-	const detectBtn = document.getElementById('detect-types-btn')
-	const backBtn = document.getElementById('review-back-btn')
-	const reviewImportBtn = document.getElementById('review-import-btn')
+		// Pick folder
+		if (e.target.closest('#folder-dropzone')) {
+			pickFolder()
+		}
 
-	if (detectBtn) {
-		detectBtn.addEventListener('click', detectFileTypes)
-	} else {
-		console.error('detect-types-btn not found')
-	}
+		// Continue to review
+		if (e.target.closest('#import-continue-btn')) {
+			goToReviewStep()
+		}
 
-	if (backBtn) {
-		backBtn.addEventListener('click', () => {
-			console.log('Back button clicked')
-			setLastImportView('import')
-			navigateTo('import')
-		})
-	} else {
-		console.error('review-back-btn not found')
-	}
+		// Toggle pattern section
+		if (e.target.closest('#autofill-ids-btn')) {
+			const patternSection = document.getElementById('pattern-section')
+			if (patternSection) {
+				if (patternSection.style.display === 'none') {
+					patternSection.style.display = 'block'
+					// Auto-detect patterns when opening
+					updatePatternSuggestions()
+				} else {
+					patternSection.style.display = 'none'
+				}
+			}
+		}
 
-	if (reviewImportBtn) {
-		reviewImportBtn.addEventListener('click', finalizeImport)
-	} else {
-		console.error('review-import-btn not found')
-	}
+		// Close pattern section
+		if (e.target.closest('#pattern-close-btn')) {
+			const patternSection = document.getElementById('pattern-section')
+			if (patternSection) {
+				patternSection.style.display = 'none'
+			}
+		}
 
-	// Import - Bulk actions
-	document.getElementById('set-all-datatype').addEventListener('change', (e) => {
-		handleBulkDataTypeChange(e.target.value)
-		e.target.value = ''
+		// Detect file types
+		if (e.target.closest('#detect-types-btn')) {
+			detectFileTypes()
+		}
+
+		// Back to selection
+		if (e.target.closest('#review-back-btn')) {
+			console.log('Back button clicked - returning to file selection')
+			backToSelection()
+		}
+
+		// Final import
+		if (e.target.closest('#review-import-btn')) {
+			finalizeImport()
+		}
 	})
 
-	document.getElementById('set-all-source').addEventListener('change', (e) => {
-		handleBulkSourceChange(e.target.value)
-		e.target.value = ''
-	})
+	// Bulk actions and checkboxes (using 'change' event)
+	document.addEventListener('change', (e) => {
+		// Bulk actions in review step
+		if (e.target.id === 'set-all-datatype') {
+			handleBulkDataTypeChange(e.target.value)
+			e.target.value = '' // Reset to placeholder
+		}
+		if (e.target.id === 'set-all-source') {
+			handleBulkSourceChange(e.target.value)
+			e.target.value = '' // Reset to placeholder
+		}
+		if (e.target.id === 'set-all-grch-version') {
+			handleBulkGrchVersionChange(e.target.value)
+			e.target.value = '' // Reset to placeholder
+		}
 
-	document.getElementById('set-all-grch').addEventListener('change', (e) => {
-		handleBulkGrchVersionChange(e.target.value)
-		e.target.value = ''
-	})
-
-	document.getElementById('select-all-review').addEventListener('change', (e) => {
-		handleSelectAllReview(e.target.checked)
+		// Select all checkboxes
+		if (e.target.id === 'select-all-review') {
+			handleSelectAllReview(e.target.checked)
+		}
 	})
 
 	// Import - Sort headers in review view
@@ -475,9 +516,6 @@ export function setupEventHandlers({
 	})
 
 	// Import - File type & pattern controls
-	const fileTypeSelect = document.getElementById('file-type-select')
-	const customExtension = document.getElementById('custom-extension')
-	const customExtInput = document.getElementById('custom-ext-input')
 	const customPattern = document.getElementById('custom-pattern')
 	const patternInfoBtn = document.getElementById('pattern-info-btn')
 	const patternInfoModal = document.getElementById('pattern-info-modal')
@@ -531,18 +569,7 @@ export function setupEventHandlers({
 		})
 	}
 
-	fileTypeSelect.addEventListener('change', (e) => {
-		if (e.target.value === 'custom') {
-			customExtension.style.display = 'block'
-		} else {
-			customExtension.style.display = 'none'
-			searchFiles()
-		}
-	})
-
-	customExtInput.addEventListener('input', () => {
-		searchFiles()
-	})
+	// File type checkboxes are handled in import.js updateFileTypeDropdown()
 
 	customPattern.addEventListener('input', (e) => {
 		handleCustomPatternInput(e.target.value)

@@ -334,6 +334,7 @@ pub fn run() {
             suggest_patterns,
             extract_ids_for_files,
             get_extensions,
+            is_directory,
             import_files,
             import_files_with_metadata,
             import_files_pending,

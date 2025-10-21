@@ -219,7 +219,7 @@ test.describe('Import Data workflow', () => {
 								detections[filePath] = {
 									data_type: 'Genotype',
 									source: '23andMe',
-									grch_version: '38',
+									grch_version: 'GRCh38',
 								}
 							})
 							return detections
@@ -287,21 +287,49 @@ test.describe('Import Data workflow', () => {
 			w.__RESET_TEST_STATE__?.()
 		})
 
-		await page.getByRole('button', { name: 'Import Data' }).click()
+		// Navigate to participants view first
+		await page.locator('button.tab[data-tab="participants"]').click()
 
-		// Wait for the import view to fully render
-		const pickFolderBtn = page.locator('#pick-folder')
-		await expect(pickFolderBtn).toBeVisible()
-		await pickFolderBtn.click()
+		// Click the import button to open modal
+		const openImportBtn = page.locator('#open-import-modal-btn')
+		await expect(openImportBtn).toBeVisible()
+		await openImportBtn.click()
 
-		const typeSelect = page.locator('#file-type-select')
-		await expect(typeSelect).toBeVisible()
-		await typeSelect.selectOption(['.txt', '.csv'])
+		// Wait for the import modal to be visible
+		const importModal = page.locator('#import-modal')
+		await expect(importModal).not.toHaveAttribute('hidden')
 
-		const fileList = page.locator('#file-list li')
+		// Click folder dropzone to select folder
+		const folderDropzone = page.locator('#folder-dropzone')
+		await expect(folderDropzone).toBeVisible()
+		await folderDropzone.click()
+
+		// Wait for file types to appear
+		const fileTypeSection = page.locator('#file-types-section')
+		await expect(fileTypeSection).toBeVisible()
+
+		// Select file types by checking the checkboxes
+		const txtCheckbox = page.locator('.file-type-checkbox input[value=".txt"]')
+		const csvCheckbox = page.locator('.file-type-checkbox input[value=".csv"]')
+		await expect(txtCheckbox).toBeVisible()
+		await txtCheckbox.check()
+		await csvCheckbox.check()
+
+		// File list is now table rows
+		const fileList = page.locator('#file-list tr')
 		await expect(fileList).toHaveCount(preparedFiles.length)
 
-		const patternButton = page.locator('.pattern-option-btn', { hasText: 'Pattern: {parent:{id}}' })
+		// Open pattern section by clicking autofill button
+		const autofillBtn = page.locator('#autofill-ids-btn')
+		await expect(autofillBtn).toBeVisible()
+		await autofillBtn.click()
+
+		// Wait for pattern section to appear
+		const patternSection = page.locator('#pattern-section')
+		await expect(patternSection).toBeVisible()
+
+		// Click on suggested pattern
+		const patternButton = page.locator('.pattern-suggestion').first()
 		await expect(patternButton).toBeVisible()
 		await patternButton.click()
 		sendUnifiedLog({ event: 'pattern-selected', value: '{parent:{id}}' })
@@ -335,10 +363,12 @@ test.describe('Import Data workflow', () => {
 
 		const selectAllFiles = page.locator('#select-all-files')
 		await selectAllFiles.check()
-		await expect(page.locator('.file-checkbox:checked')).toHaveCount(preparedFiles.length)
+		await expect(page.locator('#file-list tr input[type="checkbox"]:checked')).toHaveCount(
+			preparedFiles.length,
+		)
 		await expect(page.locator('#selected-count')).toHaveText(String(preparedFiles.length))
 
-		const csvRow = page.locator('#file-list li', { hasText: '.csv' })
+		const csvRow = page.locator('#file-list tr', { hasText: '.csv' })
 		await csvRow.locator('input[type="checkbox"]').uncheck()
 		await expect(page.locator('#selected-count')).toHaveText(String(preparedFiles.length - 1))
 		await csvRow.locator('input[type="checkbox"]').check()
@@ -355,14 +385,17 @@ test.describe('Import Data workflow', () => {
 			})
 			.toBe(1)
 
-		await page.locator('#reset-import-btn').click()
-		await expect(page.locator('#selected-path')).toHaveText('No folder selected')
-		await expect(page.locator('#file-list li')).toHaveCount(0)
+		// Reset via dropzone clear button
+		await page.locator('#dropzone-clear-btn').click()
+		await expect(page.locator('#folder-display')).toHaveText('Drop folder here or click to browse')
+		await expect(page.locator('#file-list tr')).toHaveCount(0)
 
 		// Re-select folder after reset
-		await page.locator('#pick-folder').click()
-		await typeSelect.selectOption(['.txt', '.csv'])
-		await patternButton.click()
+		await folderDropzone.click()
+		await txtCheckbox.check()
+		await csvCheckbox.check()
+		await autofillBtn.click()
+		await page.locator('.pattern-suggestion').first().click()
 		await selectAllFiles.check()
 		await csvRow.locator('input[type="checkbox"]').check()
 		await fillAllParticipantIds()
@@ -386,10 +419,12 @@ test.describe('Import Data workflow', () => {
 				return w.__IMPORT_DEBUG__ || null
 			}),
 		)
-		await expect(page.locator('#import-btn')).toBeEnabled()
-		await page.locator('#import-btn').click()
+		await expect(page.locator('#import-continue-btn')).toBeEnabled()
+		await page.locator('#import-continue-btn').click()
 
-		await expect(page.locator('#import-review-view')).toHaveClass(/active/)
+		// Review view is now shown in the modal
+		const reviewView = page.locator('#import-modal-review')
+		await expect(reviewView).toBeVisible()
 
 		const reviewRows = page.locator('#review-files-table tr')
 		await expect(reviewRows).toHaveCount(preparedFiles.length)
@@ -404,19 +439,19 @@ test.describe('Import Data workflow', () => {
 
 		await page.locator('#set-all-datatype').selectOption('Unknown')
 		await page.locator('#set-all-source').selectOption('Unknown')
-		await page.locator('#set-all-grch').selectOption('36')
-		sendUnifiedLog({ event: 'bulk-set', data_type: 'Unknown', source: 'Unknown', grch: '36' })
+		await page.locator('#set-all-grch-version').selectOption('Unknown')
+		sendUnifiedLog({ event: 'bulk-set', data_type: 'Unknown', source: 'Unknown', grch: 'Unknown' })
 		await expectReviewSelectValues(2, 'Unknown')
 		await expectReviewSelectValues(3, 'Unknown')
-		await expectReviewSelectValues(4, '36')
+		await expectReviewSelectValues(4, 'Unknown')
 
 		await page.locator('#set-all-datatype').selectOption('Genotype')
 		await page.locator('#set-all-source').selectOption('23andMe')
-		await page.locator('#set-all-grch').selectOption('38')
-		sendUnifiedLog({ event: 'bulk-set', data_type: 'Genotype', source: '23andMe', grch: '38' })
+		await page.locator('#set-all-grch-version').selectOption('GRCh38')
+		sendUnifiedLog({ event: 'bulk-set', data_type: 'Genotype', source: '23andMe', grch: 'GRCh38' })
 		await expectReviewSelectValues(2, 'Genotype')
 		await expectReviewSelectValues(3, '23andMe')
-		await expectReviewSelectValues(4, '38')
+		await expectReviewSelectValues(4, 'GRCh38')
 
 		await page.locator('#detect-types-btn').click()
 		sendUnifiedLog({ event: 'detect-types-triggered' })
@@ -435,7 +470,7 @@ test.describe('Import Data workflow', () => {
 				.uncheck()
 		}
 
-		await reviewRows.first().locator('button').click()
+		await reviewRows.first().locator('.show-in-folder-btn').click()
 		await expect
 			.poll(async () => {
 				return page.evaluate(() => {
@@ -447,28 +482,44 @@ test.describe('Import Data workflow', () => {
 
 		await page.locator('#review-import-btn').click()
 
-		await expect(page.locator('#files-view')).toHaveClass(/active/)
+		// Wait for modal to close after successful import
+		await expect(importModal).toHaveAttribute('hidden', '', { timeout: 10000 })
+
+		// Should navigate to Files view automatically
 		await expect(page.locator('#files-table tr')).toHaveCount(
 			preparedFiles.length - incompleteRows.length,
 		)
 
-		await page.getByRole('button', { name: 'Import Data' }).click()
-		await page.locator('#pick-folder').click()
-		await typeSelect.selectOption(['.txt', '.csv'])
+		// Navigate to Participants view and re-open import modal
+		await page.locator('button.tab[data-tab="participants"]').click()
+		await openImportBtn.click()
+		await expect(importModal).not.toHaveAttribute('hidden')
 
-		const alreadyImported = page.locator('#file-list li.already-imported')
+		// Select folder again
+		await folderDropzone.click()
+		await txtCheckbox.check()
+		await csvCheckbox.check()
+
+		const alreadyImported = page.locator('#file-list tr.already-imported')
 		await expect(alreadyImported).toHaveCount(preparedFiles.length - incompleteRows.length)
 
-		const availableCheckboxes = page.locator('#file-list li input[type="checkbox"]:not([disabled])')
+		const availableCheckboxes = page.locator('#file-list tr input[type="checkbox"]:not([disabled])')
 		await expect(availableCheckboxes).toHaveCount(incompleteRows.length)
 
-		await page.getByRole('button', { name: 'Files' }).click()
+		// Close the modal before navigating to other tabs
+		const closeModalBtn = page
+			.locator('#import-selection-view button.modal-close-btn[data-modal-close="import"]')
+			.first()
+		await closeModalBtn.click()
+		await expect(importModal).toHaveAttribute('hidden', '')
+
+		await page.locator('button.tab[data-tab="files"]').click()
 		await page.locator('#select-all-files-table').check()
 		page.once('dialog', (dialog) => dialog.accept())
 		await page.locator('#delete-selected-files-btn').click()
 		await expect.poll(async () => page.locator('#files-table tr').count()).toBe(0)
 
-		await page.getByRole('button', { name: 'Participants' }).click()
+		await page.locator('button.tab[data-tab="participants"]').click()
 		await page.locator('#select-all-participants-table').check()
 		page.once('dialog', (dialog) => dialog.accept())
 		await page.locator('#delete-selected-participants-btn').click()
