@@ -795,14 +795,57 @@ export function initOnboarding({
 			)
 
 			if (confirmed) {
-				try {
-					await invoke('install_dependencies', { names: missingDeps.map((d) => d.name) })
+				// Disable button and show loading state
+				const originalText = installMissingBtn.textContent
+				installMissingBtn.disabled = true
+
+				console.log(
+					'🔧 Starting installation of dependencies:',
+					missingDeps.map((d) => d.name),
+				)
+
+				let successCount = 0
+				let errorCount = 0
+				const errors = []
+
+				// Install dependencies one at a time and refresh UI after each
+				for (let i = 0; i < missingDeps.length; i++) {
+					const dep = missingDeps[i]
+					const progress = `(${i + 1}/${missingDeps.length})`
+
+					installMissingBtn.innerHTML = `<span class="spinner"></span> Installing ${dep.name} ${progress}...`
+					console.log(`🔧 Installing ${dep.name} ${progress}`)
+
+					try {
+						await invoke('install_dependency', { name: dep.name })
+						console.log(`✅ ${dep.name} installed successfully`)
+						successCount++
+					} catch (error) {
+						console.error(`❌ Failed to install ${dep.name}:`, error)
+						errors.push({ name: dep.name, error: error.toString() })
+						errorCount++
+					}
+
+					// Refresh dependencies panel after each install to show live progress
 					await checkDependencies()
-				} catch (error) {
-					await dialog.message(`${error}`, {
-						title: 'Installation Not Available',
-						type: 'info',
-					})
+				}
+
+				// Re-enable button and restore text
+				installMissingBtn.disabled = false
+				installMissingBtn.textContent = originalText
+
+				// Show summary of results
+				if (errorCount > 0) {
+					const errorDetails = errors.map((e) => `${e.name}: ${e.error}`).join('\n\n')
+					await dialog.message(
+						`Installation completed with ${successCount} successful and ${errorCount} failed.\n\nErrors:\n${errorDetails}`,
+						{
+							title: 'Installation Complete',
+							type: 'warning',
+						},
+					)
+				} else {
+					console.log(`✅ All ${successCount} dependencies installed successfully`)
 				}
 			}
 		})

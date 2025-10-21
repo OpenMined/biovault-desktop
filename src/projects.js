@@ -299,7 +299,6 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			for (const [exampleId, exampleInfo] of sortedExamples) {
 				const option = document.createElement('option')
 				option.value = exampleId
-				const displayName = exampleInfo.name || exampleId
 				const description = exampleInfo.description || ''
 				option.textContent = description ? `${exampleId} - ${description}` : exampleId
 				templateSelect.appendChild(option)
