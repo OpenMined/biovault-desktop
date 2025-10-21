@@ -1,49 +1,71 @@
 <div class="import-layout">
-	<div class="import-top">
-		<div class="import-header">
-			<h2 class="import-title">Import Data</h2>
-			<button
-				type="button"
-				class="pattern-info-btn"
-				id="pattern-info-btn"
-				aria-label="How ID patterns work"
-				aria-expanded="false"
-				aria-haspopup="dialog"
-			>
-				?
-			</button>
-		</div>
-		<div class="import-steps">
-			<span>1. Select a folder</span>
-			<span>2. Pick file types</span>
-			<span>3. Choose ID pattern or edit manually</span>
-			<span>4. Select files and click Next</span>
-		</div>
-		<div class="import-config-grid">
-			<section class="import-card import-card--sources">
-				<h3 class="import-card-heading">1. Select a folder on your machine</h3>
-				<div class="import-actions">
-					<button id="pick-folder">Pick Folder</button>
-					<button id="reset-import-btn" class="import-reset-btn">Reset</button>
+	<div class="import-header">
+		<h2 class="import-title">Import Data</h2>
+		<button
+			type="button"
+			class="pattern-info-btn"
+			id="pattern-info-btn"
+			aria-label="How ID patterns work"
+			aria-expanded="false"
+			aria-haspopup="dialog"
+		>
+			?
+		</button>
+	</div>
+
+	<div class="import-workflow">
+		<!-- Step 1 & 2: Source Selection -->
+		<section class="import-step">
+			<div class="import-step-header">
+				<div class="import-step-number">1</div>
+				<h3 class="import-step-title">Select Source</h3>
+			</div>
+			<div class="import-step-content">
+				<div class="import-step-actions">
+					<button id="pick-folder" class="primary-action-btn">
+						<svg
+							width="16"
+							height="16"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							style="margin-right: 6px"
+						>
+							<path
+								d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.99 1.01 14 2.25 14h11.5c1.24 0 2.25-1.01 2.25-2.25v-6.5A1.75 1.75 0 0 0 14.25 3.5H7.5L6.29 2.29A1.75 1.75 0 0 0 5.06 1.75H1.75Z"
+							/>
+						</svg>
+						Choose Folder
+					</button>
+					<button id="reset-import-btn" class="secondary-action-btn">Reset</button>
 				</div>
 				<div class="path-display" id="selected-path">No folder selected</div>
-				<h3 class="import-card-heading import-card-heading--sub">
-					2. Pick file types you want to include
-				</h3>
+			</div>
+		</section>
+
+		<!-- Step 2: File Type Selection -->
+		<section class="import-step">
+			<div class="import-step-header">
+				<div class="import-step-number">2</div>
+				<h3 class="import-step-title">Choose File Types</h3>
+			</div>
+			<div class="import-step-content">
 				<select id="file-type-select" multiple size="5" class="file-type-select">
 					<option value="">Select file type(s)...</option>
 				</select>
 				<div id="custom-extension" class="custom-extension" style="display: none">
 					<input type="text" id="custom-ext-input" placeholder="e.g., *.txt or .csv" />
 				</div>
-			</section>
-			<section class="import-card import-card--pattern">
-				<h3 class="import-card-heading">
-					3. Choose an ID pattern option or manually edit each file&rsquo;s ID
-				</h3>
-				<label class="pattern-input-label" for="custom-pattern"
-					>Currently selected ID pattern</label
-				>
+			</div>
+		</section>
+
+		<!-- Step 3: Pattern Configuration -->
+		<section class="import-step">
+			<div class="import-step-header">
+				<div class="import-step-number">3</div>
+				<h3 class="import-step-title">Configure Participant ID Pattern</h3>
+			</div>
+			<div class="import-step-content">
+				<label class="pattern-input-label" for="custom-pattern">ID Pattern</label>
 				<input
 					type="text"
 					id="custom-pattern"
@@ -54,59 +76,62 @@
 					Select a folder and file type to detect patterns.
 				</div>
 				<p class="pattern-hint">
-					Applied patterns populate the participant column automatically. Tweak the pattern above or
-					paste your own.
+					Patterns auto-populate participant IDs. Choose a detected pattern below or enter your own
+					above.
 				</p>
 				<div id="pattern-detection-section" class="pattern-detection" hidden>
-					<h4 class="pattern-detection-title">Pattern Detection Options</h4>
+					<h4 class="pattern-detection-title">Detected Patterns</h4>
 					<div class="pattern-detection-note">
-						Choose one of the detected patterns or copy the regex to tweak it yourself.
+						Click a pattern to apply it, or copy and modify the regex.
 					</div>
 					<div class="pattern-suggestions" id="pattern-suggestions"></div>
 				</div>
-			</section>
-		</div>
-	</div>
-	<div
-		class="import-resizer"
-		role="separator"
-		aria-label="Resize import sections"
-		aria-orientation="vertical"
-	></div>
-	<section class="import-files-section">
-		<h3 class="import-card-heading">4. Select the files you want and click Next</h3>
-		<div class="file-list-container">
-			<div class="file-list-toolbar">
-				<label class="file-list-select-all">
-					<input type="checkbox" id="select-all-files" />
-					Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count">0</span
-					>)
-				</label>
 			</div>
-			<div class="file-list-wrapper">
-				<div class="file-list-header">
-					<div class="col-checkbox"></div>
-					<div class="col-path" data-sort="path">
-						Path <span class="sort-indicator"></span>
-						<div class="column-resizer" data-col="path"></div>
+		</section>
+
+		<!-- Step 4: File Selection -->
+		<section class="import-step import-step--files">
+			<div class="import-step-header">
+				<div class="import-step-number">4</div>
+				<h3 class="import-step-title">Review & Select Files</h3>
+			</div>
+			<div class="import-step-content import-step-content--files">
+				<div class="file-list-container">
+					<div class="file-list-toolbar">
+						<label class="file-list-select-all">
+							<input type="checkbox" id="select-all-files" />
+							Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count"
+								>0</span
+							>)
+						</label>
 					</div>
-					<div class="col-filename" data-sort="filename">
-						Filename <span class="sort-indicator"></span>
-						<div class="column-resizer" data-col="filename"></div>
+					<div class="file-list-wrapper">
+						<div class="file-list-header">
+							<div class="col-checkbox"></div>
+							<div class="col-path" data-sort="path">
+								Path <span class="sort-indicator"></span>
+								<div class="column-resizer" data-col="path"></div>
+							</div>
+							<div class="col-filename" data-sort="filename">
+								Filename <span class="sort-indicator"></span>
+								<div class="column-resizer" data-col="filename"></div>
+							</div>
+							<div class="col-extension" data-sort="extension">
+								Ext <span class="sort-indicator"></span>
+							</div>
+							<div class="col-participant" data-sort="participant">
+								Participant <span class="sort-indicator"></span>
+								<div class="column-resizer" data-col="participant"></div>
+							</div>
+							<div class="col-actions"></div>
+						</div>
+						<ul class="file-list" id="file-list"></ul>
 					</div>
-					<div class="col-extension" data-sort="extension">
-						Ext <span class="sort-indicator"></span>
-					</div>
-					<div class="col-participant" data-sort="participant">
-						Participant <span class="sort-indicator"></span>
-						<div class="column-resizer" data-col="participant"></div>
-					</div>
-					<div class="col-actions"></div>
 				</div>
-				<ul class="file-list" id="file-list"></ul>
 			</div>
-		</div>
-	</section>
+		</section>
+	</div>
+
 	<div class="import-footer">
 		<button class="import-button" id="import-btn" disabled>Next →</button>
 	</div>

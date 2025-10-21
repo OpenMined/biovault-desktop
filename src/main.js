@@ -249,7 +249,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 	// Initialize UI features
 	initColumnResizers()
-	initImportSplitter()
+	// initImportSplitter() // Removed - using vertical workflow instead
 	registerNavigationHandlers()
 	initializeFilesTab()
 
