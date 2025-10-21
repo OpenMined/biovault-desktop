@@ -16,7 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 #[cfg(unix)]
 use os_pipe::{pipe, PipeWriter};
 #[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, RawFd};
 
 // WebSocket bridge for browser development
 mod ws_bridge;
@@ -2773,26 +2773,68 @@ fn check_brew_installed() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn install_brew() -> Result<String, String> {
+async fn install_brew(window: tauri::Window) -> Result<String, String> {
     eprintln!("🍺 Installing Homebrew (using library)");
     log_desktop_event("Homebrew installation requested from desktop app");
 
-    // Call the library function
-    match biovault::cli::commands::check::install_brew() {
-        Ok(path) => {
+    let dependency_name = "Homebrew".to_string();
+
+    let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let forward_window = window.clone();
+    let forward_dep = dependency_name.clone();
+
+    tauri::async_runtime::spawn(async move {
+        while let Some(line) = log_rx.recv().await {
+            let payload = json!({
+                "dependency": forward_dep,
+                "line": line,
+            });
+            let _ = forward_window.emit("dependency-install-log", payload);
+        }
+    });
+
+    let _ = window.emit(
+        "dependency-install-start",
+        json!({
+            "dependency": dependency_name.clone(),
+        }),
+    );
+
+    let capture = CommandLogCapture::start(log_tx.clone());
+
+    let install_result = biovault::cli::commands::check::install_brew()
+        .map(|path| {
             log_desktop_event(&format!(
                 "Homebrew installation completed successfully. Detected brew at: {}",
                 path
             ));
-            Ok(path)
-        }
-        Err(err) => {
+            path
+        })
+        .map_err(|err| {
             eprintln!("🍺 Homebrew installation error: {:#?}", err);
             log_desktop_event(&format!("Homebrew installation debug: {:#?}", err));
             log_desktop_event(&format!("Homebrew installation failed: {}", err));
-            Err(format!("Failed to install brew: {}", err))
-        }
-    }
+            format!("Failed to install brew: {}", err)
+        });
+
+    capture.finish();
+    drop(log_tx);
+
+    let status_payload = match &install_result {
+        Ok(_) => json!({
+            "dependency": dependency_name.clone(),
+            "status": "success",
+        }),
+        Err(error) => json!({
+            "dependency": dependency_name.clone(),
+            "status": "error",
+            "error": error,
+        }),
+    };
+
+    let _ = window.emit("dependency-install-finished", status_payload);
+
+    install_result
 }
 
 #[tauri::command]
@@ -2839,7 +2881,7 @@ async fn install_dependency(window: tauri::Window, name: String) -> Result<Strin
         }),
     );
 
-    let capture = DependencyLogCapture::start(log_tx.clone());
+    let capture = CommandLogCapture::start(log_tx.clone());
 
     let install_result = biovault::cli::commands::setup::install_single_dependency(&name)
         .await
@@ -2898,19 +2940,17 @@ async fn install_dependencies(names: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-struct DependencyLogCapture {
+struct CommandLogCapture {
     #[cfg(unix)]
     inner: Option<UnixDependencyLogCapture>,
 }
 
-impl DependencyLogCapture {
+impl CommandLogCapture {
     fn start(tx: UnboundedSender<String>) -> Self {
         #[cfg(unix)]
         {
             match UnixDependencyLogCapture::start(tx) {
-                Ok(inner) => Self {
-                    inner: Some(inner),
-                },
+                Ok(inner) => Self { inner: Some(inner) },
                 Err(err) => {
                     eprintln!("⚠️  Failed to capture dependency install logs: {}", err);
                     Self { inner: None }

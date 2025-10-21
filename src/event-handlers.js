@@ -185,7 +185,8 @@ export function setupEventHandlers({
 			// Disable button during check to prevent multiple simultaneous checks
 			const originalText = settingsCheckBtn.textContent
 			settingsCheckBtn.disabled = true
-			settingsCheckBtn.innerHTML = '<span class="spinner" style="width: 14px; height: 14px;"></span> Checking...'
+			settingsCheckBtn.innerHTML =
+				'<span class="spinner" style="width: 14px; height: 14px;"></span> Checking...'
 
 			try {
 				await checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true)

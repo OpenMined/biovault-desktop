@@ -1627,6 +1627,31 @@
 				border-width: 3px;
 			}
 
+			.deps-list-overlay {
+				position: absolute;
+				inset: 0;
+				background: rgba(248, 250, 252, 0.85);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				z-index: 2;
+			}
+
+			.deps-list-overlay .spinner {
+				width: 26px;
+				height: 26px;
+				border-width: 3px;
+				border-color: rgba(51, 102, 204, 0.25);
+				border-top-color: #3366cc;
+				margin: 0;
+			}
+
+			.deps-list-locked {
+				pointer-events: none;
+				user-select: none;
+				opacity: 0.6;
+			}
+
 			.dependency-log-section {
 				margin-top: 24px;
 				padding-top: 16px;
@@ -1721,7 +1746,12 @@
 				border-radius: 18px;
 				box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
 				padding: 34px;
-				font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+				font-family:
+					'Inter',
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
 				color: #1f2933;
 			}
 
@@ -1794,6 +1824,111 @@
 			}
 
 			.docker-sudo-continue-btn:hover {
+				filter: brightness(1.05);
+			}
+
+			.brew-sudo-overlay {
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(14, 28, 49, 0.65);
+				z-index: 10000;
+				padding: 24px;
+			}
+
+			.brew-sudo-overlay[data-visible='true'] {
+				display: flex;
+			}
+
+			.brew-sudo-card {
+				width: min(520px, 96vw);
+				background: #ffffff;
+				border-radius: 18px;
+				box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+				padding: 34px;
+				font-family:
+					'Inter',
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				color: #1f2933;
+			}
+
+			.brew-sudo-icon {
+				width: 52px;
+				height: 52px;
+				border-radius: 14px;
+				background: linear-gradient(135deg, #0ea5e9, #6366f1);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 26px;
+				color: #fff;
+				margin-bottom: 18px;
+			}
+
+			.brew-sudo-card h2 {
+				margin: 0 0 12px 0;
+				font-size: 22px;
+				font-weight: 700;
+				color: #1f2933;
+			}
+
+			.brew-sudo-card p {
+				margin: 0 0 18px 0;
+				line-height: 1.55;
+				color: #4a5568;
+				font-size: 14px;
+			}
+
+			.brew-sudo-note {
+				background: #f8faff;
+				border-radius: 12px;
+				padding: 14px;
+				font-size: 13px;
+				line-height: 1.5;
+				color: #334155;
+				border: 1px solid rgba(36, 182, 255, 0.25);
+				margin-bottom: 22px;
+			}
+
+			.brew-sudo-actions {
+				display: flex;
+				justify-content: flex-end;
+				gap: 12px;
+			}
+
+			.brew-sudo-actions button {
+				border-radius: 8px;
+				padding: 10px 20px;
+				font-weight: 600;
+				font-size: 14px;
+				cursor: pointer;
+				border: none;
+			}
+
+			.brew-sudo-cancel-btn {
+				background: #f1f5f9;
+				color: #475569;
+			}
+
+			.brew-sudo-cancel-btn:hover {
+				background: #e2e8f0;
+			}
+
+			.brew-sudo-continue-btn {
+				background: linear-gradient(135deg, #0ea5e9, #6366f1);
+				color: #ffffff;
+				box-shadow: 0 8px 18px rgba(14, 165, 233, 0.35);
+			}
+
+			.brew-sudo-continue-btn:hover {
 				filter: brightness(1.05);
 			}
 
@@ -2238,6 +2373,7 @@
 									padding: 15px;
 									border-radius: 8px;
 									overflow-y: auto;
+									position: relative;
 								"
 							>
 								<!-- Dependencies will be populated here -->
@@ -2279,6 +2415,10 @@
 										font-size: 14px;
 										font-weight: 500;
 										height: 44px;
+										display: inline-flex;
+										align-items: center;
+										gap: 8px;
+										white-space: nowrap;
 									"
 								>
 									Check Again
