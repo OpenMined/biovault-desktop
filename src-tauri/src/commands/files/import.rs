@@ -1,5 +1,5 @@
 use crate::types::{AppState, FileRecord, ImportResult};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 // Re-export FileMetadata from parent module
