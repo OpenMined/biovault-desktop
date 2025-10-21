@@ -6,7 +6,7 @@ export function createImportModule({
 	refreshExistingFilePaths,
 	loadParticipantsView,
 	loadFiles,
-	navigateTo,
+	_navigateTo,
 	setLastImportView,
 }) {
 	// Internal state
@@ -338,7 +338,7 @@ export function createImportModule({
 		// Table columns resize automatically with CSS, no manual resizing needed
 	}
 	let importSplitterInitialized = false
-	function initImportSplitter() {
+	function _initImportSplitter() {
 		if (importSplitterInitialized) return
 		const layout = document.querySelector('.import-layout')
 		const resizer = document.querySelector('.import-resizer')
@@ -723,7 +723,6 @@ export function createImportModule({
 			const exampleText = sample?.path ?? sugg.example ?? ''
 			const exampleId = sample?.participant_id ?? ''
 			const applyValue = macroValue || regexValue || ''
-			const descriptionText = (sugg.description || '').trim()
 			const row = document.createElement('div')
 			row.className = 'pattern-suggestion'
 			row.dataset.macro = macroValue
@@ -1162,7 +1161,7 @@ export function createImportModule({
 		}
 		showReviewView()
 	}
-	function updateReviewSortIndicators() {
+	function _updateReviewSortIndicators() {
 		// Not used in modal - keeping for compatibility
 	}
 	function showReviewView() {
@@ -1176,7 +1175,7 @@ export function createImportModule({
 		}
 		tbody.innerHTML = ''
 		const sortedFiles = sortReviewFiles(Object.keys(reviewFileMetadata))
-		sortedFiles.forEach((filePath, index) => {
+		sortedFiles.forEach((filePath) => {
 			const metadata = reviewFileMetadata[filePath]
 			const row = document.createElement('tr')
 			row.style.borderBottom = '1px solid #eee'
@@ -1672,7 +1671,7 @@ export function createImportModule({
 			console.error('Failed to copy pattern:', error)
 		}
 	}
-	function updateStepIndicator(step) {
+	function updateStepIndicator(_step) {
 		// Step indicators removed - no longer needed
 	}
 	async function handleFolderDrop(paths) {
@@ -1750,7 +1749,7 @@ export function createImportModule({
 				const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow
 				const currentWindow = getCurrentWebviewWindow()
 
-				const unlisten = await currentWindow.onDragDropEvent((event) => {
+				await currentWindow.onDragDropEvent((event) => {
 					console.log('🎯 Drag-drop event:', event)
 					const dropzone = document.getElementById('folder-dropzone')
 
@@ -1781,7 +1780,8 @@ export function createImportModule({
 		}
 
 		// Fallback: Prevent default drag behaviors and show visual feedback
-		;['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
+		const events = ['dragenter', 'dragover', 'dragleave', 'drop']
+		events.forEach((eventName) => {
 			dropzone.addEventListener(eventName, (e) => {
 				e.preventDefault()
 				e.stopPropagation()
@@ -1789,7 +1789,8 @@ export function createImportModule({
 		})
 
 		// Highlight dropzone when dragging over (fallback for web)
-		;['dragenter', 'dragover'].forEach((eventName) => {
+		const dragEvents = ['dragenter', 'dragover']
+		dragEvents.forEach((eventName) => {
 			dropzone.addEventListener(eventName, () => {
 				dropzone.classList.add('drag-over')
 			})

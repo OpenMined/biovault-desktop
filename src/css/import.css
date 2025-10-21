@@ -45,7 +45,9 @@
 	max-height: 900px;
 	background: #ffffff;
 	border-radius: 16px;
-	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
+	box-shadow:
+		0 20px 60px rgba(0, 0, 0, 0.3),
+		0 0 0 1px rgba(0, 0, 0, 0.05);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -444,7 +446,9 @@
 	outline: none;
 	border-color: #3b82f6;
 	background: white;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+	box-shadow:
+		0 0 0 3px rgba(59, 130, 246, 0.1),
+		0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .pattern-feedback {
@@ -812,7 +816,9 @@
 	outline: none;
 	border-color: #3b82f6;
 	background: white;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+	box-shadow:
+		0 0 0 3px rgba(59, 130, 246, 0.1),
+		0 1px 3px rgba(0, 0, 0, 0.05);
 	color: #1e293b;
 }
 
@@ -911,13 +917,17 @@
 	font-size: 15px;
 	font-weight: 700;
 	transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+	box-shadow:
+		0 4px 12px rgba(59, 130, 246, 0.3),
+		0 0 0 1px rgba(255, 255, 255, 0.1) inset;
 	letter-spacing: -0.01em;
 }
 
 .import-action-btn:hover:not(:disabled) {
 	background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-	box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+	box-shadow:
+		0 6px 16px rgba(59, 130, 246, 0.4),
+		0 0 0 1px rgba(255, 255, 255, 0.1) inset;
 	transform: translateY(-2px);
 }
 
@@ -1245,7 +1255,9 @@
 	outline: none;
 	border-color: #3b82f6;
 	background-color: white;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+	box-shadow:
+		0 0 0 3px rgba(59, 130, 246, 0.1),
+		0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .review-table .genotype-field {

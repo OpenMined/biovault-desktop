@@ -1,14 +1,14 @@
 export function setupEventHandlers({
 	// Navigation
 	navigateTo,
-	setLastImportView,
+	_setLastImportView,
 	// Import Modal
 	openImportModal,
 	closeImportModal,
 	backToSelection,
 	// Files & Import
 	pickFolder,
-	searchFiles,
+	_searchFiles,
 	resetImportState,
 	goToReviewStep,
 	detectFileTypes,
@@ -23,6 +23,7 @@ export function setupEventHandlers({
 	handleCustomPatternInput,
 	handleCustomPatternBlur,
 	handleCustomPatternKeydown,
+	updatePatternSuggestions,
 	// Messages
 	loadMessageThreads,
 	sendCurrentMessage,
