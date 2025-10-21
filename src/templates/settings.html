@@ -1,0 +1,177 @@
+<div style="padding: 40px; max-width: 800px; margin: 0 auto; overflow-y: auto; height: 100%">
+	<h2 style="margin-bottom: 30px">Settings</h2>
+
+	<div style="display: flex; flex-direction: column; gap: 25px">
+		<div
+			class="setting-item"
+			style="background: #f0f8ff; padding: 15px; border-radius: 4px; border-left: 4px solid #0066cc"
+		>
+			<label style="display: block; font-weight: 600; margin-bottom: 8px; color: #0066cc"
+				>BioVault Config Path</label
+			>
+			<div
+				id="config-path-display"
+				style="font-family: monospace; font-size: 13px; color: #333; word-break: break-all"
+			>
+				Loading...
+			</div>
+			<p style="color: #666; font-size: 12px; margin-top: 5px">Current configuration directory</p>
+		</div>
+
+		<!-- Dependencies section with two-panel layout -->
+		<div class="setting-item">
+			<label style="display: block; font-weight: 600; margin-bottom: 15px"
+				>System Dependencies</label
+			>
+
+			<!-- Two-panel layout -->
+			<div style="display: flex; gap: 15px; margin-bottom: 20px; height: 350px">
+				<!-- Left panel: Dependencies list -->
+				<div
+					id="settings-deps-list"
+					style="
+						flex: 0 0 220px;
+						background: #f8f9fa;
+						padding: 15px;
+						border-radius: 8px;
+						overflow-y: auto;
+					"
+				>
+					<!-- Dependencies will be populated here -->
+					<div style="text-align: center; color: #999; padding: 20px">
+						<div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px"></div>
+						<p>Checking...</p>
+					</div>
+				</div>
+
+				<!-- Right panel: Dependency details -->
+				<div
+					id="settings-dep-details-panel"
+					style="
+						flex: 1;
+						background: #fff;
+						border: 2px solid #0066cc;
+						border-radius: 8px;
+						padding: 20px;
+						overflow-y: auto;
+					"
+				>
+					<div style="text-align: center; color: #999; padding: 40px 20px">
+						<p>← Click on a dependency to view details</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- Buttons for checking and installing -->
+			<div style="display: flex; gap: 10px">
+				<button id="settings-check-again-btn" style="background: #17a2b8; padding: 10px 20px">
+					Check Again
+				</button>
+				<button
+					id="settings-install-missing-deps-btn"
+					disabled
+					style="background: #28a745; padding: 10px 20px; white-space: nowrap"
+				>
+					Install Missing
+				</button>
+			</div>
+		</div>
+
+		<div class="setting-item">
+			<label style="display: block; font-weight: 600; margin-bottom: 8px">Email</label>
+			<input
+				type="email"
+				id="setting-email"
+				placeholder="user@example.com"
+				style="
+					width: 100%;
+					padding: 10px;
+					border: 1px solid #ddd;
+					border-radius: 4px;
+					font-size: 14px;
+				"
+			/>
+			<p style="color: #666; font-size: 12px; margin-top: 5px">Your email address</p>
+		</div>
+
+		<div class="setting-item">
+			<label style="display: block; font-weight: 600; margin-bottom: 15px"
+				>SyftBox Integration</label
+			>
+			<div
+				style="
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					padding: 15px;
+					background: #f8f9fa;
+					border-radius: 4px;
+					border: 1px solid #ddd;
+				"
+			>
+				<div>
+					<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px">
+						<span style="font-weight: 500; font-size: 14px">Status:</span>
+						<span
+							id="syftbox-status-badge"
+							style="
+								display: inline-flex;
+								align-items: center;
+								gap: 5px;
+								padding: 4px 12px;
+								border-radius: 12px;
+								font-size: 13px;
+								font-weight: 500;
+							"
+						>
+							<span class="spinner" style="width: 12px; height: 12px; margin: 0"></span>
+							Checking...
+						</span>
+					</div>
+					<p style="color: #666; font-size: 12px; margin: 0">
+						Connect to SyftBox for secure data sharing
+					</p>
+				</div>
+				<button
+					id="syftbox-auth-btn"
+					disabled
+					style="
+						padding: 10px 20px;
+						background: #667eea;
+						color: white;
+						border: none;
+						border-radius: 4px;
+						cursor: pointer;
+						font-size: 14px;
+						font-weight: 500;
+					"
+				>
+					Authenticate
+				</button>
+			</div>
+		</div>
+
+		<div class="danger-zone">
+			<h3>⚠️ Danger Zone</h3>
+			<p>
+				This will delete ALL BioVault data including participants, files, projects, and runs. This
+				cannot be undone!
+			</p>
+			<button
+				id="reset-all-btn"
+				class="danger-btn"
+				style="
+					padding: 12px 24px;
+					border: none;
+					border-radius: 4px;
+					cursor: pointer;
+					font-size: 14px;
+					font-weight: 500;
+					color: white;
+				"
+			>
+				Reset All Data
+			</button>
+		</div>
+	</div>
+</div>

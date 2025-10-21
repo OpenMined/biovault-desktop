@@ -52,6 +52,7 @@ export function setupEventHandlers({
 	checkDependenciesForPanel,
 	getDependencyResults,
 	invoke,
+	dialog,
 	// Participants
 	getSelectedParticipants,
 	handleParticipantsSelectAll,
@@ -244,6 +245,36 @@ export function setupEventHandlers({
 		})
 	}
 
+	// Settings - Reset all data
+	const resetAllBtn = document.getElementById('reset-all-btn')
+	if (resetAllBtn) {
+		resetAllBtn.addEventListener('click', async () => {
+			const confirmed = await dialog.confirm(
+				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
+				{ title: 'Reset All Data', type: 'warning' },
+			)
+
+			if (!confirmed) {
+				return
+			}
+
+			try {
+				await invoke('reset_all_data')
+				await dialog.message('All data has been reset. The app will now reload.', {
+					title: 'Reset Complete',
+				})
+
+				// Reload the window to restart fresh
+				window.location.reload()
+			} catch (error) {
+				await dialog.message(`Error resetting data: ${error}`, {
+					title: 'Error',
+					type: 'error',
+				})
+			}
+		})
+	}
+
 	// Logs - Copy & Clear
 	document.getElementById('copy-logs-btn').addEventListener('click', copyLogs)
 	document.getElementById('clear-logs-btn').addEventListener('click', clearLogs)
@@ -263,11 +294,12 @@ export function setupEventHandlers({
 			const selected = getSelectedParticipants()
 			if (selected.length === 0) return
 
-			if (
-				confirm(
-					`Are you sure you want to delete ${selected.length} participant(s)? This will also delete all associated files.`,
-				)
-			) {
+			const confirmed = await dialog.confirm(
+				`Are you sure you want to delete ${selected.length} participant(s)? This will also delete all associated files.`,
+				{ title: 'Delete Participants', type: 'warning' },
+			)
+
+			if (confirmed) {
 				try {
 					const deleted = await invoke('delete_participants_bulk', {
 						participantIds: selected,
@@ -276,7 +308,10 @@ export function setupEventHandlers({
 					await loadParticipantsView()
 					await loadFiles()
 				} catch (error) {
-					alert(`Error deleting participants: ${error}`)
+					await dialog.message(`Error deleting participants: ${error}`, {
+						title: 'Error',
+						type: 'error',
+					})
 				}
 			}
 		})
@@ -397,15 +432,24 @@ export function setupEventHandlers({
 	document.getElementById('run-btn').addEventListener('click', runAnalysis)
 
 	// Projects - Edit buttons
-	document
-		.getElementById('project-edit-save-btn')
-		.addEventListener('click', handleSaveProjectEditor)
-	document.getElementById('project-edit-cancel-btn').addEventListener('click', () => {
-		navigateTo('projects')
-	})
-	document.getElementById('project-edit-back-btn').addEventListener('click', () => {
-		navigateTo('projects')
-	})
+	const projectEditSaveBtn = document.getElementById('project-edit-save-btn')
+	if (projectEditSaveBtn) {
+		projectEditSaveBtn.addEventListener('click', handleSaveProjectEditor)
+	}
+
+	const projectEditCancelBtn = document.getElementById('project-edit-cancel-btn')
+	if (projectEditCancelBtn) {
+		projectEditCancelBtn.addEventListener('click', () => {
+			navigateTo('projects')
+		})
+	}
+
+	const projectEditBackBtn = document.getElementById('project-edit-back-btn')
+	if (projectEditBackBtn) {
+		projectEditBackBtn.addEventListener('click', () => {
+			navigateTo('projects')
+		})
+	}
 	document
 		.getElementById('project-edit-launch-jupyter-btn')
 		.addEventListener('click', handleLaunchJupyter)

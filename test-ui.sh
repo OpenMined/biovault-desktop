@@ -53,7 +53,7 @@ export UI_PORT="${PORT}"
 info "Starting unified logger on port ${LOG_PORT} (file: ${LOG_FILE})"
 UNIFIED_LOG_WS_URL="ws://localhost:${LOG_PORT}"
 UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
-node "$ROOT_DIR/scripts/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
+node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
 
 info "Starting static server on port ${PORT}"

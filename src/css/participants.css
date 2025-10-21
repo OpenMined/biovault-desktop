@@ -1,0 +1,42 @@
+/* Participants view styles */
+
+.participants-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 20px;
+}
+
+.participants-header {
+	margin-bottom: 20px;
+}
+
+.participants-search {
+	margin-bottom: 15px;
+}
+
+.participants-list {
+	flex: 1;
+	overflow-y: auto;
+}
+
+.participant-item {
+	padding: 12px;
+	border-bottom: 1px solid #e0e0e0;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.participant-item:hover {
+	background-color: #f5f5f5;
+}
+
+.participant-name {
+	font-weight: 500;
+	margin-bottom: 4px;
+}
+
+.participant-email {
+	color: #666;
+	font-size: 13px;
+}

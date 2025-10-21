@@ -1,0 +1,94 @@
+.file-list-container {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	flex: 1;
+	min-height: 0;
+}
+
+.file-list-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 13px;
+	color: #1f2937;
+}
+
+.file-list-wrapper {
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	overflow: auto;
+	background: #ffffff;
+	flex: 1;
+	min-height: 0;
+}
+
+.file-list {
+	list-style: none;
+	width: 100%;
+}
+
+.file-list-header {
+	display: flex;
+	padding: 8px 0;
+	background: #f0f0f0;
+	font-weight: 600;
+	font-size: 12px;
+	border-bottom: 2px solid #ddd;
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	width: 100%;
+}
+
+.file-list-header > div {
+	cursor: pointer;
+	user-select: none;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 8px;
+	position: relative;
+	overflow: hidden;
+}
+
+.file-list-header > div:hover {
+	color: #0066cc;
+}
+
+.file-list-header .sort-indicator {
+	font-size: 10px;
+}
+
+.file-list li {
+	display: flex;
+	padding: 8px 0;
+	border-bottom: 1px solid #eee;
+	font-size: 13px;
+	align-items: center;
+	width: 100%;
+}
+
+.file-list li.already-imported {
+	opacity: 0.5;
+}
+
+.file-list li.already-imported:hover {
+	background: inherit;
+}
+
+.file-list li > * {
+	padding: 0 8px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.file-checkbox {
+	cursor: pointer;
+	margin: 0;
+}
+
+.file-list li:hover {
+	background: #f5f5f5;
+}

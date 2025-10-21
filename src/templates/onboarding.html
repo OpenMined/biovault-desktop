@@ -1,0 +1,577 @@
+<div class="onboarding-view">
+	<div class="onboarding-card" style="max-width: 700px">
+		<!-- Step 1: Welcome -->
+		<div id="onboarding-step-1" class="onboarding-step" style="display: block">
+			<h1>Welcome to BioVault</h1>
+			<p>Let's get your system setup.</p>
+			<button id="onboarding-next-1" style="margin-top: 20px">Next →</button>
+		</div>
+
+		<!-- Step 2: Dependencies -->
+		<div id="onboarding-step-2" class="onboarding-step" style="display: none">
+			<div
+				style="
+					display: flex;
+					justify-content: space-between;
+					align-items: center;
+					margin-bottom: 20px;
+				"
+			>
+				<h1 style="font-size: 28px; margin: 0">Configure Your System</h1>
+				<button id="skip-dependencies-btn" class="onboarding-skip-btn">Skip</button>
+			</div>
+			<p style="margin-bottom: 20px; font-size: 14px; color: #666">
+				BioVault requires the following dependencies. You can ask BioVault to attempt installation
+				for you or manually install the missing dependencies yourself and click 'Check Again' after.
+			</p>
+
+			<!-- Two-panel layout -->
+			<div style="display: flex; gap: 15px; margin-bottom: 20px; height: 350px">
+				<!-- Left panel: Dependencies list -->
+				<div
+					id="deps-list"
+					style="
+						flex: 0 0 220px;
+						background: #f8f9fa;
+						padding: 15px;
+						border-radius: 8px;
+						overflow-y: auto;
+					"
+				>
+					<!-- Dependencies will be populated here -->
+					<div style="text-align: center; color: #999; padding: 20px">
+						<div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px"></div>
+						<p>Checking...</p>
+					</div>
+				</div>
+
+				<!-- Right panel: Dependency details -->
+				<div
+					id="dep-details-panel"
+					style="
+						flex: 1;
+						background: #fff;
+						border: 2px solid #0066cc;
+						border-radius: 8px;
+						padding: 20px;
+						overflow-y: auto;
+					"
+				>
+					<div style="text-align: center; color: #999; padding: 40px 20px">
+						<p>← Click on a dependency to view details</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- Button layout: All buttons in one line -->
+			<div style="display: flex; justify-content: space-between; align-items: center; gap: 15px">
+				<!-- Left side buttons -->
+				<div style="display: flex; gap: 10px">
+					<button
+						id="check-again-btn"
+						style="
+							background: #17a2b8;
+							padding: 12px 22px;
+							font-size: 14px;
+							font-weight: 500;
+							height: 44px;
+						"
+					>
+						Check Again
+					</button>
+					<button
+						id="install-missing-deps-btn"
+						disabled
+						style="
+							background: #28a745;
+							padding: 12px 22px;
+							font-size: 14px;
+							font-weight: 500;
+							height: 44px;
+							white-space: nowrap;
+						"
+					>
+						Install Missing
+					</button>
+				</div>
+
+				<!-- Right side: Next button -->
+				<div>
+					<button
+						id="onboarding-next-2"
+						disabled
+						style="
+							padding: 12px 28px;
+							background: #667eea;
+							font-size: 14px;
+							font-weight: 500;
+							height: 44px;
+						"
+					>
+						Next →
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Step 3: Email -->
+		<div id="onboarding-step-3" class="onboarding-step" style="display: none">
+			<h1 style="font-size: 28px">Enter Your Email</h1>
+			<p style="margin-bottom: 25px">This will be used to identify your BioVault instance.</p>
+			<input
+				type="email"
+				id="onboarding-email"
+				placeholder="your.email@example.com"
+				autocapitalize="off"
+			/>
+			<div
+				id="email-validation-message"
+				style="margin-top: 8px; font-size: 12px; min-height: 16px"
+			></div>
+			<div style="display: flex; gap: 10px; margin-top: 20px">
+				<button id="onboarding-back-3" style="background: #6c757d">← Back</button>
+				<button id="onboarding-next-3" style="flex: 1; white-space: nowrap">Next →</button>
+			</div>
+		</div>
+
+		<!-- Step 4: SyftBox OTP Authentication (Optional) -->
+		<div id="onboarding-step-4" class="onboarding-step" style="display: none">
+			<div
+				style="
+					display: flex;
+					justify-content: space-between;
+					align-items: center;
+					margin-bottom: 20px;
+				"
+			>
+				<h1 style="font-size: 28px; margin: 0">SyftBox Authentication</h1>
+				<button id="skip-syftbox-btn" class="onboarding-skip-btn">Skip</button>
+			</div>
+			<!-- Initial state: overview -->
+			<div id="syftbox-send-state" style="display: block">
+				<div
+					style="
+						background: linear-gradient(
+							135deg,
+							rgba(102, 126, 234, 0.18),
+							rgba(118, 75, 162, 0.18)
+						);
+						padding: 24px;
+						border-radius: 20px;
+						display: flex;
+						justify-content: center;
+						align-items: center;
+						margin-bottom: 24px;
+					"
+				>
+					<img
+						src="assets/bv-syftbox.png"
+						alt="BioVault + SyftBox"
+						style="max-width: 100%; height: auto; display: block"
+					/>
+				</div>
+				<div style="color: #555; font-size: 15px; line-height: 1.5; margin-bottom: 24px">
+					<p style="margin-bottom: 16px">
+						<strong>BioVault uses SyftBox for its secure networking capability.</strong>
+						Using SyftBox is optional; however, if you want to collaborate with other BioVaults it's
+						highly recommended.
+					</p>
+					<p style="margin-bottom: 16px">
+						It's completely free and open source - just verify your email to get started.
+					</p>
+					<p style="margin: 0">
+						To read more about SyftBox please visit:
+						<a
+							href="#"
+							class="syftbox-link"
+							data-url="https://syftbox.net"
+							style="color: #0066cc; text-decoration: none; font-weight: 600"
+							>https://syftbox.net</a
+						>
+					</p>
+				</div>
+				<div style="display: flex; justify-content: flex-end">
+					<button
+						id="syftbox-info-continue-btn"
+						style="
+							padding: 12px 28px;
+							background: #667eea;
+							color: white;
+							border: none;
+							border-radius: 6px;
+							font-size: 15px;
+							font-weight: 600;
+							cursor: pointer;
+						"
+					>
+						Authenticate SyftBox
+					</button>
+				</div>
+			</div>
+
+			<!-- Email walkthrough before sending code -->
+			<div id="syftbox-email-info" style="display: none">
+				<p style="color: #555; font-size: 15px; line-height: 1.5; margin-bottom: 16px">
+					We'll send a one-time passcode to
+					<strong><span id="syftbox-email-preview-address">your email</span></strong
+					>. You'll use this code on the next screen to finish linking SyftBox.
+				</p>
+				<div
+					id="syftbox-email-scroll"
+					style="max-height: 55vh; overflow-y: auto; padding-right: 4px; margin-bottom: 16px"
+				>
+					<p
+						style="
+							color: #666;
+							font-size: 13px;
+							margin-bottom: 12px;
+							text-align: center;
+							font-weight: 600;
+						"
+					>
+						Example Email
+					</p>
+					<div
+						style="
+							background: linear-gradient(
+								135deg,
+								rgba(102, 126, 234, 0.12),
+								rgba(118, 75, 162, 0.12)
+							);
+							padding: 18px;
+							border-radius: 18px;
+							display: flex;
+							justify-content: center;
+						"
+					>
+						<img
+							src="assets/syftbox-email.png"
+							alt="SyftBox email preview"
+							style="width: 100%; max-height: 500px; object-fit: contain; display: block"
+						/>
+					</div>
+				</div>
+				<p style="color: #666; font-size: 13px; margin-bottom: 24px">
+					Don't close the app - just open your inbox once you click continue, and then enter the
+					8-digit code.
+				</p>
+				<div style="display: flex; gap: 10px; justify-content: flex-end">
+					<button
+						id="syftbox-email-back-btn"
+						style="
+							padding: 12px 22px;
+							background: none;
+							border: 1px solid #ccc;
+							border-radius: 6px;
+							color: #555;
+							font-size: 14px;
+							font-weight: 500;
+							cursor: pointer;
+						"
+					>
+						Back
+					</button>
+					<button
+						id="send-login-code-btn"
+						style="
+							padding: 12px 28px;
+							background: #667eea;
+							color: white;
+							border: none;
+							border-radius: 6px;
+							font-size: 15px;
+							font-weight: 600;
+							cursor: pointer;
+						"
+					>
+						Send Code
+					</button>
+				</div>
+			</div>
+
+			<!-- OTP Input state -->
+			<div id="syftbox-otp-state" style="display: none">
+				<div style="text-align: center; margin-bottom: 20px">
+					<div
+						style="
+							display: flex;
+							align-items: center;
+							justify-content: center;
+							color: #666;
+							margin-bottom: 10px;
+						"
+					>
+						<svg
+							style="width: 20px; height: 20px; margin-right: 8px; fill: #28a745"
+							viewBox="0 0 20 20"
+						>
+							<path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+							<path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+						</svg>
+						<span id="syftbox-user-email"></span>
+					</div>
+					<p style="color: #666; font-size: 14px">Enter the 8-digit code we emailed to you</p>
+				</div>
+
+				<!-- 8-digit code input -->
+				<div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 20px">
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="0"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="1"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="2"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="3"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="4"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="5"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="6"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+					<input
+						type="text"
+						class="syftbox-code-input"
+						maxlength="1"
+						data-index="7"
+						style="
+							width: 44px;
+							height: 50px;
+							text-align: center;
+							border: 2px solid #ddd;
+							border-radius: 8px;
+							font-size: 20px;
+							font-weight: 600;
+							transition: all 0.2s;
+						"
+					/>
+				</div>
+
+				<!-- Error Message -->
+				<div
+					id="syftbox-error-message"
+					style="
+						display: none;
+						color: #dc3545;
+						text-align: center;
+						margin-bottom: 15px;
+						font-size: 14px;
+						font-weight: 500;
+					"
+				>
+					Invalid verification code. Please try again.
+				</div>
+
+				<!-- Verify Button -->
+				<button
+					id="verify-code-btn"
+					style="
+						width: 100%;
+						padding: 15px;
+						background: #667eea;
+						color: white;
+						border: none;
+						border-radius: 6px;
+						font-size: 16px;
+						font-weight: 600;
+						cursor: pointer;
+						margin-bottom: 15px;
+					"
+					disabled
+				>
+					Verify Code
+				</button>
+
+				<!-- Resend Code -->
+				<div style="text-align: center">
+					<p style="font-size: 13px; color: #666; margin-bottom: 8px">Didn't receive the code?</p>
+					<button
+						id="resend-code-btn"
+						style="
+							background: none;
+							border: none;
+							color: #667eea;
+							font-size: 14px;
+							font-weight: 500;
+							cursor: pointer;
+							text-decoration: underline;
+						"
+					>
+						Send Again
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Step 5: Initializing -->
+		<div id="onboarding-step-5" class="onboarding-step" style="display: none">
+			<h1 style="font-size: 28px">Initializing BioVault...</h1>
+			<div id="init-status" style="margin: 30px 0; text-align: center">
+				<div class="spinner" style="width: 40px; height: 40px; margin: 0 auto 20px"></div>
+				<p style="color: #666">Please wait...</p>
+			</div>
+			<div
+				id="init-log"
+				style="
+					background: #1e1e1e;
+					color: #d4d4d4;
+					font-family: 'Courier New', monospace;
+					font-size: 12px;
+					padding: 15px;
+					border-radius: 4px;
+					max-height: 300px;
+					overflow-y: auto;
+					white-space: pre-wrap;
+					display: none;
+					margin-top: 20px;
+				"
+			></div>
+		</div>
+	</div>
+</div>
+
+<!-- Installation Progress Modal -->
+<div
+	id="install-modal"
+	style="
+		display: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.7);
+		z-index: 9999;
+		align-items: center;
+		justify-content: center;
+	"
+>
+	<div style="background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 90%">
+		<h2 style="margin: 0 0 20px 0; color: #667eea">Installing Dependencies</h2>
+		<div id="install-progress" style="margin-bottom: 15px">
+			<div style="background: #e0e0e0; border-radius: 4px; height: 8px; overflow: hidden">
+				<div
+					id="install-progress-bar"
+					style="width: 0%; background: #28a745; height: 100%; transition: width 0.3s"
+				></div>
+			</div>
+			<p id="install-status-text" style="font-size: 14px; color: #666; margin-top: 8px">
+				Preparing...
+			</p>
+		</div>
+		<div
+			id="install-log"
+			style="
+				background: #1e1e1e;
+				color: #d4d4d4;
+				font-family: 'Courier New', monospace;
+				font-size: 11px;
+				padding: 12px;
+				border-radius: 4px;
+				max-height: 250px;
+				overflow-y: auto;
+				white-space: pre-wrap;
+				margin-bottom: 15px;
+			"
+		></div>
+		<button id="install-close-btn" disabled style="width: 100%; background: #6c757d">Close</button>
+	</div>
+</div>

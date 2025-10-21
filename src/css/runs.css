@@ -1,0 +1,54 @@
+.run-card {
+	background: white;
+	border: 1px solid #ddd;
+	border-radius: 8px;
+	padding: 20px;
+	margin-bottom: 15px;
+}
+
+.run-card.success {
+	border-left: 4px solid #28a745;
+}
+
+.run-card.failed {
+	border-left: 4px solid #dc3545;
+}
+
+.run-info h3 {
+	margin: 0 0 10px 0;
+	font-size: 18px;
+}
+
+.run-info p {
+	margin: 5px 0;
+	color: #666;
+	font-size: 13px;
+}
+
+.run-container {
+	display: flex;
+	height: 100%;
+	gap: 20px;
+	padding: 20px;
+}
+
+.run-btn {
+	margin-top: 20px;
+	padding: 15px 30px;
+	background: #28a745;
+	color: white;
+	border: none;
+	border-radius: 4px;
+	font-size: 16px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.run-btn:hover {
+	background: #218838;
+}
+
+.run-btn:disabled {
+	background: #ccc;
+	cursor: not-allowed;
+}
