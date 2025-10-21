@@ -594,9 +594,12 @@ export function createImportModule({
 			row.appendChild(participantCell)
 			// Folder button cell
 			const actionsCell = document.createElement('td')
+			actionsCell.style.textAlign = 'center'
+			actionsCell.style.padding = '10px'
 			const folderBtn = document.createElement('button')
 			folderBtn.className = 'show-in-folder-btn'
-			folderBtn.textContent = '📁'
+			folderBtn.innerHTML =
+				'<img src="assets/icons/folder-open.svg" width="16" height="16" alt="" />'
 			folderBtn.title = 'Show in Finder'
 			folderBtn.addEventListener('click', async () => {
 				try {
@@ -1312,11 +1315,16 @@ export function createImportModule({
 			row.appendChild(grchCell)
 			// Folder button cell
 			const folderCell = document.createElement('td')
+			folderCell.style.textAlign = 'center'
+			folderCell.style.padding = '10px'
 			const folderBtn = document.createElement('button')
 			folderBtn.className = 'show-in-folder-btn'
-			folderBtn.textContent = '📁'
+			folderBtn.innerHTML =
+				'<img src="assets/icons/folder-open.svg" width="16" height="16" alt="" />'
 			folderBtn.title = 'Show in Finder'
-			folderBtn.addEventListener('click', async () => {
+			folderBtn.addEventListener('click', async (e) => {
+				e.preventDefault()
+				e.stopPropagation()
 				try {
 					await invoke('show_in_folder', { filePath: filePath })
 				} catch (error) {
@@ -1359,6 +1367,7 @@ export function createImportModule({
 	function updateReviewSelectAllCheckbox() {
 		const selectAllCheckbox = document.getElementById('select-all-review')
 		const reviewSelectedCountEl = document.getElementById('review-selected-count')
+		const reviewStatusEl = document.getElementById('review-status')
 		const totalFiles = Object.keys(reviewFileMetadata).length
 		const selectedCount = selectedReviewFiles.size
 		if (selectAllCheckbox) {
@@ -1367,6 +1376,17 @@ export function createImportModule({
 		}
 		if (reviewSelectedCountEl) {
 			reviewSelectedCountEl.textContent = selectedCount
+		}
+		if (reviewStatusEl) {
+			if (totalFiles === 0) {
+				reviewStatusEl.textContent = 'No files to import'
+			} else if (selectedCount === 0) {
+				reviewStatusEl.textContent = 'Select files to import'
+			} else {
+				reviewStatusEl.textContent = `Ready to import ${selectedCount} file${
+					selectedCount !== 1 ? 's' : ''
+				}`
+			}
 		}
 	}
 	function isReviewMetadataComplete(metadata) {
@@ -1384,11 +1404,9 @@ export function createImportModule({
 			row.classList.remove('review-row-complete')
 		}
 	}
-	function updateRowVisibility(row, dataType) {
-		const genotypeFields = row.querySelectorAll('.genotype-field')
-		genotypeFields.forEach((field) => {
-			field.style.display = dataType === 'Genotype' ? '' : 'none'
-		})
+	function updateRowVisibility(_row, _dataType) {
+		// Keep all fields visible regardless of data type
+		// Users should be able to configure Source and GRCh even if data type is unknown
 	}
 	async function detectFileTypes() {
 		if (selectedReviewFiles.size === 0) {
@@ -1473,18 +1491,19 @@ export function createImportModule({
 		if (grchSelect && metadata.grch_version) {
 			grchSelect.value = metadata.grch_version
 		}
-		// Update row count (column 6)
-		const rowCountCell = targetRow.querySelector('td:nth-child(6)')
+		// Note: Column 6 is detect button (header only), Column 7 is folder button
+		// Update row count (column 8 - hidden)
+		const rowCountCell = targetRow.querySelector('td:nth-child(8)')
 		if (rowCountCell) {
 			rowCountCell.textContent = metadata.row_count ? metadata.row_count.toLocaleString() : '-'
 		}
-		// Update chromosome count (column 7)
-		const chromCountCell = targetRow.querySelector('td:nth-child(7)')
+		// Update chromosome count (column 9 - hidden)
+		const chromCountCell = targetRow.querySelector('td:nth-child(9)')
 		if (chromCountCell) {
 			chromCountCell.textContent = metadata.chromosome_count || '-'
 		}
-		// Update inferred sex (column 8)
-		const sexCell = targetRow.querySelector('td:nth-child(8)')
+		// Update inferred sex (column 10 - hidden)
+		const sexCell = targetRow.querySelector('td:nth-child(10)')
 		if (sexCell) {
 			sexCell.textContent = metadata.inferred_sex || '-'
 			sexCell.style.fontWeight = metadata.inferred_sex ? '600' : 'normal'

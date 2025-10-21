@@ -128,7 +128,7 @@
 											</button>
 										</div>
 									</th>
-									<th style="width: 60px"></th>
+									<th style="width: 60px" aria-label="Actions"></th>
 								</tr>
 							</thead>
 							<tbody id="file-list"></tbody>
@@ -203,6 +203,7 @@
 												title="Set for selected"
 											>
 												<option value="">-</option>
+												<option value="Unknown">Unknown</option>
 												<option value="Genotype">Genotype</option>
 												<option value="Phenotype">Phenotype</option>
 											</select>
@@ -234,6 +235,7 @@
 												title="Set for selected"
 											>
 												<option value="">-</option>
+												<option value="Unknown">Unknown</option>
 												<option value="GRCh37">37</option>
 												<option value="GRCh38">38</option>
 											</select>
@@ -244,6 +246,7 @@
 											<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
 										</button>
 									</th>
+									<th style="width: 60px" aria-label="Actions"></th>
 								</tr>
 							</thead>
 							<tbody id="review-files-table"></tbody>
@@ -253,7 +256,7 @@
 			</div>
 
 			<div class="import-modal-footer">
-				<div class="import-footer-status"></div>
+				<div class="import-footer-status" id="review-status">Ready to import</div>
 				<button class="import-action-btn" id="review-import-btn">Import Files →</button>
 			</div>
 		</div>
