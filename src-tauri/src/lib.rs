@@ -2303,16 +2303,9 @@ fn get_config_path() -> Result<String, String> {
 
 #[tauri::command]
 fn check_is_onboarded() -> Result<bool, String> {
-    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        let home_dir = dirs::home_dir().unwrap();
-        dirs::desktop_dir()
-            .unwrap_or_else(|| home_dir.join("Desktop"))
-            .join("BioVault")
-            .to_string_lossy()
-            .to_string()
-    });
-
-    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let config_path = biovault_home.join("config.yaml");
     Ok(config_path.exists())
 }
 
@@ -2320,17 +2313,9 @@ fn check_is_onboarded() -> Result<bool, String> {
 fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
     eprintln!("🗑️ RESET: Deleting all BioVault data");
 
-    // Delete BIOVAULT_HOME directory (defaults to Desktop/BioVault)
-    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        let home_dir = dirs::home_dir().unwrap();
-        dirs::desktop_dir()
-            .unwrap_or_else(|| home_dir.join("Desktop"))
-            .join("BioVault")
-            .to_string_lossy()
-            .to_string()
-    });
-
-    let biovault_path = PathBuf::from(&biovault_home);
+    // Delete the active BioVault home directory (resolves env vars and persisted location)
+    let biovault_path = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
 
     if biovault_path.exists() {
         fs::remove_dir_all(&biovault_path)

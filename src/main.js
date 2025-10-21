@@ -1,3 +1,4 @@
+import { templateLoader } from './template-loader.js'
 import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
 import { createParticipantsModule } from './participants.js'
@@ -68,7 +69,7 @@ const {
 } = createRunsModule({ invoke, listen })
 
 const { loadFiles, refreshExistingFilePaths, initializeFilesTab, isFileAlreadyImported } =
-	createFilesModule({ invoke })
+	createFilesModule({ invoke, dialog })
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
@@ -191,17 +192,60 @@ messagesGetActiveView = getActiveView
 importNavigateTo = navigateTo
 importSetLastImportView = setLastImportView
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
 	console.log('🔥 DOMContentLoaded fired')
 
-	// Load initial data
-	refreshExistingFilePaths()
-	loadParticipantsView()
-	loadFiles()
-	loadProjects()
-	loadCommandLogs()
-	loadSettings()
-	updateSelectedFileCount()
+	// Load HTML templates for all views
+	try {
+		await Promise.all([
+			templateLoader.loadAndInject('onboarding', 'onboarding-view'),
+			templateLoader.loadAndInject('home', 'home-view'),
+			templateLoader.loadAndInject('projects', 'projects-view'),
+			templateLoader.loadAndInject('project-edit', 'project-edit-view'),
+			templateLoader.loadAndInject('run', 'run-view'),
+			templateLoader.loadAndInject('import', 'import-view'),
+			templateLoader.loadAndInject('import-review', 'import-review-view'),
+			templateLoader.loadAndInject('import-results', 'import-results-view'),
+			templateLoader.loadAndInject('participants', 'participants-view'),
+			templateLoader.loadAndInject('files', 'files-view'),
+			templateLoader.loadAndInject('runs', 'runs-view'),
+			templateLoader.loadAndInject('messages', 'messages-view'),
+			templateLoader.loadAndInject('logs', 'logs-view'),
+			templateLoader.loadAndInject('settings', 'settings-view'),
+		])
+		console.log('✅ All templates loaded')
+	} catch (error) {
+		console.error('❌ Failed to load templates:', error)
+	}
+
+	// Initialize onboarding early to check status
+	const onboarding = initOnboarding({
+		invoke,
+		checkDependenciesForPanel,
+		runHomebrewInstall,
+		showProgressTask,
+		finishProgressTask,
+		setButtonLoading,
+		updateButtonLoadingLabel,
+		clearButtonLoading,
+		copyToClipboard,
+		getDependencyResults,
+		checkSyftBoxStatus,
+	})
+
+	// Check onboarding status first - if not onboarded, skip loading data
+	const isOnboarded = await invoke('check_is_onboarded')
+
+	if (isOnboarded) {
+		// Load initial data only if user is onboarded
+		refreshExistingFilePaths()
+		loadParticipantsView()
+		loadFiles()
+		loadProjects()
+		loadCommandLogs()
+		loadSettings()
+		updateSelectedFileCount()
+	}
 
 	// Initialize UI features
 	initColumnResizers()
@@ -257,6 +301,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		checkDependenciesForPanel,
 		getDependencyResults,
 		invoke,
+		dialog,
 		getSelectedParticipants,
 		handleParticipantsSelectAll,
 		loadParticipantsView,
@@ -266,20 +311,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		updateComposeVisibilityPublic,
 	})
 
-	// Initialize onboarding
-	const onboarding = initOnboarding({
-		invoke,
-		checkDependenciesForPanel,
-		runHomebrewInstall,
-		showProgressTask,
-		finishProgressTask,
-		setButtonLoading,
-		updateButtonLoadingLabel,
-		clearButtonLoading,
-		copyToClipboard,
-		getDependencyResults,
-		checkSyftBoxStatus,
-	})
-
-	onboarding.checkOnboarding()
+	// Show onboarding view if user is not onboarded
+	await onboarding.checkOnboarding()
 })

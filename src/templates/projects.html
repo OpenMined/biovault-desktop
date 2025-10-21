@@ -1,0 +1,101 @@
+<div class="import-project-section">
+	<h3>Projects</h3>
+	<div style="display: flex; gap: 10px; margin-bottom: 15px">
+		<button id="create-project-btn" style="background: #28a745">+ Create New Project</button>
+	</div>
+	<div style="margin-top: 15px">
+		<h4 style="margin-bottom: 10px">Or Import Project from URL</h4>
+		<div style="display: flex; gap: 10px">
+			<input
+				type="text"
+				id="project-url-input"
+				placeholder="Paste GitHub URL to project.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/apol1-sheet/project.yaml)"
+				style="flex: 1"
+			/>
+			<button id="import-project-btn">Import</button>
+		</div>
+	</div>
+</div>
+<div class="projects-list" id="projects-list">
+	<p style="color: #666">No projects imported yet.</p>
+</div>
+
+<!-- Create Project Modal -->
+<div
+	id="create-project-modal"
+	style="
+		display: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.6);
+		z-index: 10000;
+		align-items: center;
+		justify-content: center;
+	"
+>
+	<div class="project-modal">
+		<h2 style="margin: 0 0 20px; color: #667eea">Create New Project</h2>
+
+		<div class="form-group">
+			<label for="new-project-name">Project Name</label>
+			<input
+				type="text"
+				id="new-project-name"
+				placeholder="my-project"
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
+			/>
+		</div>
+
+		<div class="form-group">
+			<label for="new-project-template">Template (Optional)</label>
+			<select id="new-project-template">
+				<option value="">Blank Project</option>
+				<!-- Options loaded dynamically from biovault submodule examples -->
+			</select>
+		</div>
+
+		<div class="form-group">
+			<label for="new-project-path">Destination Folder</label>
+			<div class="project-path-input">
+				<input type="text" id="new-project-path" readonly />
+				<button id="project-path-browse-btn" class="secondary-btn" type="button">Browse…</button>
+				<button id="project-path-reset-btn" class="secondary-btn" type="button">Use Default</button>
+			</div>
+			<p style="font-size: 12px; color: #666; margin-top: 6px">
+				Defaults to BioVault projects (BIOVAULT_HOME/projects/&lt;name&gt;). Choose a different
+				location if you prefer.
+			</p>
+		</div>
+
+		<div class="project-modal-actions">
+			<button id="create-project-cancel" class="secondary-btn" type="button">Cancel</button>
+			<button id="create-project-confirm" class="primary-btn" type="button">Create Project</button>
+		</div>
+	</div>
+</div>
+
+<div
+	id="operation-modal"
+	style="
+		display: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.55);
+		z-index: 12000;
+		align-items: center;
+		justify-content: center;
+	"
+>
+	<div class="operation-modal-content">
+		<div class="spinner" style="width: 32px; height: 32px; margin-bottom: 16px"></div>
+		<p id="operation-modal-text" class="operation-modal-text">Working...</p>
+	</div>
+</div>
