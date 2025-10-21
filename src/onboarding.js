@@ -20,12 +20,10 @@ export function initOnboarding({
 	const dockerSudoOverlayState = {
 		element: null,
 		continueBtn: null,
-		cancelBtn: null,
 	}
 	const homebrewSudoOverlayState = {
 		element: null,
 		continueBtn: null,
-		cancelBtn: null,
 	}
 	const dependencyLogs = new Map()
 	const dependencyLogStates = new Map()
@@ -128,24 +126,7 @@ export function initOnboarding({
 				if (!dep || typeof line !== 'string') return
 				appendDependencyLog(dep, line)
 
-				if (
-					detectPlatform() === 'macos' &&
-					dep.toLowerCase() === 'docker' &&
-					(line.includes('macOS will prompt for your password') ||
-						line.includes('Copying Docker.app to /Applications'))
-				) {
-					showDockerSudoOverlay()
-				}
-
-				if (dep.toLowerCase() === 'homebrew') {
-					const normalizedLine = line.toLowerCase()
-					if (
-						normalizedLine.includes('invoking osascript') ||
-						normalizedLine.includes('administrator privileges')
-					) {
-						showHomebrewSudoOverlay()
-					}
-				}
+				// log streaming only; sudo overlays handled before install begins
 			})
 			.catch((error) => {
 				console.error('Failed to attach dependency install log listener:', error)
@@ -167,14 +148,10 @@ export function initOnboarding({
 
 				if (dep.toLowerCase() === 'docker') {
 					dockerSudoOverlayShown = false
-					if (detectPlatform() === 'macos') {
-						showDockerSudoOverlay()
-					}
 				}
 
 				if (dep.toLowerCase() === 'homebrew') {
 					homebrewSudoOverlayShown = false
-					showHomebrewSudoOverlay()
 				}
 			})
 			.catch((error) => {
@@ -228,7 +205,8 @@ export function initOnboarding({
 			</div>
 			<pre class="dependency-log-output" aria-live="polite"></pre>
 		`
-		container.appendChild(section)
+		container.prepend(section)
+		container.scrollTop = 0
 		updateDependencyLogUI(depName)
 	}
 
@@ -307,18 +285,15 @@ export function initOnboarding({
 					When the macOS password prompt appears, enter your credentials to allow the installation to continue.
 				</p>
 				<div class="docker-sudo-actions">
-					<button type="button" class="docker-sudo-cancel-btn">Cancel</button>
 					<button type="button" class="docker-sudo-continue-btn">Continue</button>
 				</div>
 			</div>
 		`
 
-		const cancelBtn = overlay.querySelector('.docker-sudo-cancel-btn')
 		const continueBtn = overlay.querySelector('.docker-sudo-continue-btn')
 
 		document.body.appendChild(overlay)
 		dockerSudoOverlayState.element = overlay
-		dockerSudoOverlayState.cancelBtn = cancelBtn
 		dockerSudoOverlayState.continueBtn = continueBtn
 
 		return dockerSudoOverlayState
@@ -332,22 +307,23 @@ export function initOnboarding({
 		dockerSudoOverlayShown = false
 	}
 
-	function showDockerSudoOverlay() {
-		const { element, cancelBtn, continueBtn } = ensureDockerSudoOverlay()
-		if (dockerSudoOverlayShown) return
-
-		const dismiss = () => {
-			cancelBtn?.removeEventListener('click', dismiss)
-			continueBtn?.removeEventListener('click', dismiss)
-			hideDockerSudoOverlay()
-		}
+	function showDockerSudoOverlay(onContinue) {
+		const { element, continueBtn } = ensureDockerSudoOverlay()
+		if (dockerSudoOverlayShown) return Promise.resolve()
 
 		element.dataset.visible = 'true'
 		document.body.style.overflow = 'hidden'
 		dockerSudoOverlayShown = true
 
-		cancelBtn?.addEventListener('click', dismiss, { once: true })
-		continueBtn?.addEventListener('click', dismiss, { once: true })
+		return new Promise((resolve) => {
+			const handler = () => {
+				continueBtn?.removeEventListener('click', handler)
+				hideDockerSudoOverlay()
+				onContinue?.()
+				resolve()
+			}
+			continueBtn?.addEventListener('click', handler, { once: true })
+		})
 	}
 
 	function ensureHomebrewSudoOverlay() {
@@ -371,20 +347,16 @@ export function initOnboarding({
 					Keep this window open—BioVault will continue automatically once Homebrew is installed.
 				</p>
 				<div class="brew-sudo-actions">
-					<button type="button" class="brew-sudo-cancel-btn">Dismiss</button>
 					<button type="button" class="brew-sudo-continue-btn">Got it</button>
 				</div>
 			</div>
 		`
 
-		const cancelBtn = overlay.querySelector('.brew-sudo-cancel-btn')
 		const continueBtn = overlay.querySelector('.brew-sudo-continue-btn')
 
 		document.body.appendChild(overlay)
 		homebrewSudoOverlayState.element = overlay
-		homebrewSudoOverlayState.cancelBtn = cancelBtn
 		homebrewSudoOverlayState.continueBtn = continueBtn
-
 		return homebrewSudoOverlayState
 	}
 
@@ -396,22 +368,23 @@ export function initOnboarding({
 		homebrewSudoOverlayShown = false
 	}
 
-	function showHomebrewSudoOverlay() {
-		const { element, cancelBtn, continueBtn } = ensureHomebrewSudoOverlay()
-		if (homebrewSudoOverlayShown) return
-
-		const dismiss = () => {
-			cancelBtn?.removeEventListener('click', dismiss)
-			continueBtn?.removeEventListener('click', dismiss)
-			hideHomebrewSudoOverlay()
-		}
+	function showHomebrewSudoOverlay(onContinue) {
+		const { element, continueBtn } = ensureHomebrewSudoOverlay()
+		if (homebrewSudoOverlayShown) return Promise.resolve()
 
 		element.dataset.visible = 'true'
 		document.body.style.overflow = 'hidden'
 		homebrewSudoOverlayShown = true
 
-		cancelBtn?.addEventListener('click', dismiss, { once: true })
-		continueBtn?.addEventListener('click', dismiss, { once: true })
+		return new Promise((resolve) => {
+			const handler = () => {
+				continueBtn?.removeEventListener('click', handler)
+				hideHomebrewSudoOverlay()
+				onContinue?.()
+				resolve()
+			}
+			continueBtn?.addEventListener('click', handler, { once: true })
+		})
 	}
 
 	function setDependencyPanelsLocked(shouldLock) {
@@ -464,6 +437,23 @@ export function initOnboarding({
 		activeDependencyName = dep.name?.toLowerCase?.() || null
 		const detailsPanel = document.getElementById(detailsPanelId)
 		const safeDepNameAttr = dep.name.replace(/"/g, '&quot;')
+		const depState = getDependencyLogState(dep.name)
+		const logLines = getDependencyLogLines(dep.name)
+		const showLogsOnly = depState === 'running' && logLines.length > 0
+
+		if (showLogsOnly) {
+			detailsPanel.innerHTML = `
+				<div class="dependency-log-section" data-dep-name="${safeDepNameAttr}" data-dep-key="${normalizeDependencyName(dep.name)}" data-visible="true" data-state="${depState}">
+					<div class="dependency-log-title">
+						<span class="log-indicator" data-state="${depState}"></span>
+						<span>Installing ${dep.name}</span>
+					</div>
+					<pre class="dependency-log-output" aria-live="polite"></pre>
+				</div>
+			`
+			updateDependencyLogUI(dep.name)
+			return
+		}
 		// Docker Desktop can be installed but not running, so treat found=true as installed
 		const isInstalled = dep.found
 
@@ -826,8 +816,11 @@ export function initOnboarding({
 
 						showProgressTask(taskId, `Installing ${dep.name}...`)
 
-						try {
-							const installedPath = await invoke('install_dependency', { name: dep.name })
+				try {
+					if (dep.name.toLowerCase() === 'docker' && detectPlatform() === 'macos') {
+						await showDockerSudoOverlay()
+					}
+					const installedPath = await invoke('install_dependency', { name: dep.name })
 							finishProgressTask(taskId, { status: 'success', message: `${dep.name} installed` })
 							clearButtonLoading(installSingleBtn)
 
@@ -889,12 +882,13 @@ export function initOnboarding({
 									return
 								}
 
-								await runHomebrewInstall({
-									button: installSingleBtn,
-									onSuccess: async () => {
-										updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
-										await proceedWithInstall()
-									},
+						await showHomebrewSudoOverlay()
+						await runHomebrewInstall({
+							button: installSingleBtn,
+							onSuccess: async () => {
+								updateButtonLoadingLabel(installSingleBtn, `Installing ${dep.name}...`)
+								await proceedWithInstall()
+							},
 								})
 								return
 							}
@@ -1281,17 +1275,12 @@ export function initOnboarding({
 			document.querySelectorAll('#dep-details-panel h3[data-dep-name]'),
 		).find((el) => (el.dataset.depName || '').toLowerCase() === depName.toLowerCase())
 
-		if (heading) {
-			const displayName = heading.dataset.depName || depName
-			heading.innerHTML = `<span class="spinner" style="width: 18px; height: 18px; border-width: 2px; border-color: rgba(0, 0, 0, 0.2); border-top-color: #0066cc; margin-right: 8px;"></span>${displayName}`
-			heading.style.color = '#0066cc'
-		}
-
-		if (depName.toLowerCase() === 'docker' && detectPlatform() === 'macos') {
-			showDockerSudoOverlay()
-			dockerSudoOverlayShown = true
-		}
+	if (heading) {
+		const displayName = heading.dataset.depName || depName
+		heading.innerHTML = `<span class="spinner" style="width: 18px; height: 18px; border-width: 2px; border-color: rgba(0, 0, 0, 0.2); border-top-color: #0066cc; margin-right: 8px;"></span>${displayName}`
+		heading.style.color = '#0066cc'
 	}
+}
 
 	// Install Missing button - installs all missing dependencies
 	const installMissingBtn = document.getElementById('install-missing-deps-btn')
@@ -1339,15 +1328,16 @@ export function initOnboarding({
 								return
 							}
 
-							// Install Homebrew before proceeding
-							installMissingBtn.disabled = true
-							installMissingBtn.innerHTML = '<span class="spinner"></span> Installing Homebrew...'
+						// Install Homebrew before proceeding
+						installMissingBtn.disabled = true
+						installMissingBtn.innerHTML = '<span class="spinner"></span> Installing Homebrew...'
 
-							try {
-								await runHomebrewInstall({
-									button: installMissingBtn,
-									onSuccess: null, // Will continue below
-								})
+						try {
+							await showHomebrewSudoOverlay()
+							await runHomebrewInstall({
+								button: installMissingBtn,
+								onSuccess: null, // Will continue below
+							})
 								// Reset button after Homebrew install
 								installMissingBtn.textContent = 'Install Missing'
 								installMissingBtn.disabled = false
@@ -1422,8 +1412,11 @@ export function initOnboarding({
 						// Show spinner on the specific dependency in the left panel
 						markDependencyAsInstalling(dep.name)
 
-						try {
-							await invoke('install_dependency', { name: dep.name })
+					try {
+						if (dep.name.toLowerCase() === 'docker' && detectPlatform() === 'macos') {
+							await showDockerSudoOverlay()
+						}
+						await invoke('install_dependency', { name: dep.name })
 							console.log(`✅ ${dep.name} installed successfully`)
 							successCount++
 						} catch (error) {
