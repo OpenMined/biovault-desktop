@@ -57,10 +57,10 @@
 				min-height: 0;
 			}
 
-				#import-view {
-					position: relative;
-					min-height: 0;
-				}
+			#import-view {
+				position: relative;
+				min-height: 0;
+			}
 
 			.import-layout {
 				flex: 1;
@@ -2812,82 +2812,91 @@
 			</div>
 		</div>
 
-		<div id="import-view" class="tab-content">
-				<div class="import-layout">
-					<div class="import-top">
-						<div class="import-header">
-							<h2 class="import-title">Import Data</h2>
-							<button
-								type="button"
-								class="pattern-info-btn"
-								id="pattern-info-btn"
-								aria-label="How ID patterns work"
-								aria-expanded="false"
-								aria-haspopup="dialog"
-							>
-								?
-							</button>
-						</div>
-						<ol class="import-steps">
-							<li>Select a folder on your machine</li>
-							<li>Pick file types you want to include</li>
-							<li>Choose an ID pattern option or manually edit each file&rsquo;s ID</li>
-							<li>Select the files you want and click Next</li>
-						</ol>
-						<div class="import-config-grid">
+		<div id="import-view" class="tab-content" style="display: none">
+			<div class="import-layout">
+				<div class="import-top">
+					<div class="import-header">
+						<h2 class="import-title">Import Data</h2>
+						<button
+							type="button"
+							class="pattern-info-btn"
+							id="pattern-info-btn"
+							aria-label="How ID patterns work"
+							aria-expanded="false"
+							aria-haspopup="dialog"
+						>
+							?
+						</button>
+					</div>
+					<div class="import-steps">
+						<span>1. Select a folder</span>
+						<span>2. Pick file types</span>
+						<span>3. Choose ID pattern or edit manually</span>
+						<span>4. Select files and click Next</span>
+					</div>
+					<div class="import-config-grid">
 						<section class="import-card import-card--sources">
-						<h3 class="import-card-heading">1. Select a folder on your machine</h3>
-						<div class="import-actions">
-							<button id="pick-folder">Pick Folder</button>
-							<button id="reset-import-btn" class="import-reset-btn">Reset</button>
-						</div>
-						<div class="path-display" id="selected-path">No folder selected</div>
-						<h3 class="import-card-heading import-card-heading--sub">2. Pick file types you want to include</h3>
-						<select id="file-type-select" multiple size="5" class="file-type-select">
-							<option value="">Select file type(s)...</option>
-						</select>
-						<div id="custom-extension" class="custom-extension" style="display: none">
-							<input
-								type="text"
-								id="custom-ext-input"
-								placeholder="e.g., *.txt or .csv"
-							/>
-						</div>
+							<h3 class="import-card-heading">1. Select a folder on your machine</h3>
+							<div class="import-actions">
+								<button id="pick-folder">Pick Folder</button>
+								<button id="reset-import-btn" class="import-reset-btn">Reset</button>
+							</div>
+							<div class="path-display" id="selected-path">No folder selected</div>
+							<h3 class="import-card-heading import-card-heading--sub">
+								2. Pick file types you want to include
+							</h3>
+							<select id="file-type-select" multiple size="5" class="file-type-select">
+								<option value="">Select file type(s)...</option>
+							</select>
+							<div id="custom-extension" class="custom-extension" style="display: none">
+								<input type="text" id="custom-ext-input" placeholder="e.g., *.txt or .csv" />
+							</div>
 						</section>
 						<section class="import-card import-card--pattern">
-						<h3 class="import-card-heading">3. Choose an ID pattern option or manually edit each file&rsquo;s ID</h3>
-						<label class="pattern-input-label" for="custom-pattern">Currently selected ID pattern</label>
-						<input
-							type="text"
-							id="custom-pattern"
-							class="pattern-input"
-							placeholder="Enter macro (e.g., {parent:hu{id}}) or regex with (?P&lt;id&gt;)"
-						/>
-						<div class="pattern-feedback" id="pattern-feedback" role="status" aria-live="polite">
-							Select a folder and file type to detect patterns.
-						</div>
-						<p class="pattern-hint">
-							Applied patterns populate the participant column automatically. Tweak the pattern above
-							or paste your own.
-						</p>
-						<div id="pattern-detection-section" class="pattern-detection" hidden>
-							<h4 class="pattern-detection-title">Pattern Detection Options</h4>
-						<div class="pattern-detection-note">
-							Choose one of the detected patterns or copy the regex to tweak it yourself.
-						</div>
-						<div class="pattern-suggestions" id="pattern-suggestions"></div>
-						</div>
+							<h3 class="import-card-heading">
+								3. Choose an ID pattern option or manually edit each file&rsquo;s ID
+							</h3>
+							<label class="pattern-input-label" for="custom-pattern"
+								>Currently selected ID pattern</label
+							>
+							<input
+								type="text"
+								id="custom-pattern"
+								class="pattern-input"
+								placeholder="Enter macro (e.g., {parent:hu{id}}) or regex with (?P&lt;id&gt;)"
+							/>
+							<div class="pattern-feedback" id="pattern-feedback" role="status" aria-live="polite">
+								Select a folder and file type to detect patterns.
+							</div>
+							<p class="pattern-hint">
+								Applied patterns populate the participant column automatically. Tweak the pattern
+								above or paste your own.
+							</p>
+							<div id="pattern-detection-section" class="pattern-detection" hidden>
+								<h4 class="pattern-detection-title">Pattern Detection Options</h4>
+								<div class="pattern-detection-note">
+									Choose one of the detected patterns or copy the regex to tweak it yourself.
+								</div>
+								<div class="pattern-suggestions" id="pattern-suggestions"></div>
+							</div>
 						</section>
 					</div>
-					</div>
-					<div class="import-resizer" role="separator" aria-label="Resize import sections" aria-orientation="vertical"></div>
-					<section class="import-files-section">
+				</div>
+				<div
+					class="import-resizer"
+					role="separator"
+					aria-label="Resize import sections"
+					aria-orientation="vertical"
+				></div>
+				<section class="import-files-section">
 					<h3 class="import-card-heading">4. Select the files you want and click Next</h3>
 					<div class="file-list-container">
 						<div class="file-list-toolbar">
 							<label class="file-list-select-all">
 								<input type="checkbox" id="select-all-files" />
-								Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count">0</span>)
+								Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count"
+									>0</span
+								>)
 							</label>
 						</div>
 						<div class="file-list-wrapper">
@@ -2920,40 +2929,40 @@
 			</div>
 		</div>
 
-			<div
-				id="pattern-info-modal"
-				class="modal hidden modal--alert"
-				hidden
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="pattern-info-title"
-			>
-				<div class="modal-backdrop" data-modal-close></div>
-				<div class="modal-panel modal-panel--alert">
-					<h2 id="pattern-info-title">ID Pattern Tips</h2>
-					<p>
-						Use macros like <code>{parent:{id}}</code> to pull IDs from folders, or supply a regex
-						with a named <code>id</code> capture such as
-						<code>.*/(?P&lt;id&gt;hu[A-Za-z0-9]{6})/[^/]+$</code>.
-					</p>
-					<ul>
-						<li><code>{parent:{id}}</code> &rarr; use the parent folder name as the ID.</li>
-						<li>
-							<code>{stem:{id}_*}</code> &rarr; capture the digits at the beginning of the filename.
-						</li>
-						<li>
-							Regex patterns must include a capturing group (e.g., <code>(?P&lt;id&gt;...)</code>).
-						</li>
-					</ul>
-					<p>
-						You can adjust the pattern and re-run detection at any time to refresh the participant
-						IDs.
-					</p>
-					<div class="modal-alert-actions">
-						<button type="button" class="primary-btn" data-modal-close>OK</button>
-					</div>
+		<div
+			id="pattern-info-modal"
+			class="modal hidden modal--alert"
+			hidden
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="pattern-info-title"
+		>
+			<div class="modal-backdrop" data-modal-close></div>
+			<div class="modal-panel modal-panel--alert">
+				<h2 id="pattern-info-title">ID Pattern Tips</h2>
+				<p>
+					Use macros like <code>{parent:{id}}</code> to pull IDs from folders, or supply a regex
+					with a named <code>id</code> capture such as
+					<code>.*/(?P&lt;id&gt;hu[A-Za-z0-9]{6})/[^/]+$</code>.
+				</p>
+				<ul>
+					<li><code>{parent:{id}}</code> &rarr; use the parent folder name as the ID.</li>
+					<li>
+						<code>{stem:{id}_*}</code> &rarr; capture the digits at the beginning of the filename.
+					</li>
+					<li>
+						Regex patterns must include a capturing group (e.g., <code>(?P&lt;id&gt;...)</code>).
+					</li>
+				</ul>
+				<p>
+					You can adjust the pattern and re-run detection at any time to refresh the participant
+					IDs.
+				</p>
+				<div class="modal-alert-actions">
+					<button type="button" class="primary-btn" data-modal-close>OK</button>
 				</div>
 			</div>
+		</div>
 
 		<div id="participants-view" class="tab-content">
 			<div class="table-container">
@@ -3296,7 +3305,7 @@
 			</div>
 		</div>
 
-		<div id="import-review-view" class="tab-content">
+		<div id="import-review-view" class="tab-content" style="display: none">
 			<div class="review-container">
 				<h2 style="margin-bottom: 20px">
 					Review File Types (<span id="review-file-count">0</span> files)
@@ -3392,7 +3401,7 @@
 					</div>
 				</div>
 
-					<div class="review-table-wrapper">
+				<div class="review-table-wrapper">
 					<table style="width: 100%; border-collapse: collapse">
 						<thead style="position: sticky; top: 0; background: #f5f5f5; z-index: 1">
 							<tr>
@@ -3520,7 +3529,7 @@
 					</table>
 				</div>
 
-					<div class="review-actions">
+				<div class="review-actions">
 					<button
 						id="review-back-btn"
 						style="

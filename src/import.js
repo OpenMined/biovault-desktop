@@ -480,7 +480,12 @@ export function createImportModule({
 			const paddingTop = parseFloat(layoutStyles.paddingTop) || 0
 			const paddingBottom = parseFloat(layoutStyles.paddingBottom) || 0
 			availableHeight = Math.max(
-				layoutRect.height - handleRect.height - marginTop - marginBottom - paddingTop - paddingBottom,
+				layoutRect.height -
+					handleRect.height -
+					marginTop -
+					marginBottom -
+					paddingTop -
+					paddingBottom,
 				MIN_TOP + MIN_BOTTOM,
 			)
 			startTopHeight = Math.min(Math.max(topRect.height, MIN_TOP), availableHeight - MIN_BOTTOM)
@@ -667,7 +672,9 @@ export function createImportModule({
 		document.querySelectorAll('.pattern-option-row').forEach((row) => {
 			const macroValue = row.dataset.macro?.trim() || ''
 			const regexValue = row.dataset.regex?.trim() || ''
-			const isActive = Boolean(normalized && (normalized === macroValue || normalized === regexValue))
+			const isActive = Boolean(
+				normalized && (normalized === macroValue || normalized === regexValue),
+			)
 			row.classList.toggle('active', isActive)
 			row.querySelectorAll('.pattern-option-btn').forEach((button) => {
 				button.classList.toggle('active', isActive)
@@ -759,7 +766,10 @@ export function createImportModule({
 			suggestions = await invoke('suggest_patterns', { files: currentFiles })
 		} catch (error) {
 			console.error('Failed to fetch pattern suggestions:', error)
-			setFeedback('Unable to detect patterns. Try a different folder or check the console for details.', 'error')
+			setFeedback(
+				'Unable to detect patterns. Try a different folder or check the console for details.',
+				'error',
+			)
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
@@ -777,9 +787,7 @@ export function createImportModule({
 		suggestions.forEach((sugg) => {
 			const macroValue = (sugg.pattern || '').trim()
 			const regexValue = (sugg.regex_pattern || '').trim()
-			const sample = Array.isArray(sugg.sample_extractions)
-				? sugg.sample_extractions[0]
-				: null
+			const sample = Array.isArray(sugg.sample_extractions) ? sugg.sample_extractions[0] : null
 			const exampleText = sample?.path ?? sugg.example ?? ''
 			const exampleId = sample?.participant_id ?? ''
 			const applyValue = macroValue || regexValue || ''
@@ -1015,16 +1023,16 @@ export function createImportModule({
 		if (patternSection) {
 			patternSection.setAttribute('hidden', '')
 		}
-			const patternFeedback = document.getElementById('pattern-feedback')
-			if (patternFeedback) {
-				patternFeedback.textContent = 'Select a folder and file type to detect patterns.'
-				patternFeedback.removeAttribute('data-variant')
-			}
+		const patternFeedback = document.getElementById('pattern-feedback')
+		if (patternFeedback) {
+			patternFeedback.textContent = 'Select a folder and file type to detect patterns.'
+			patternFeedback.removeAttribute('data-variant')
+		}
 
-			const importLayout = document.querySelector('.import-layout')
-			if (importLayout) {
-				importLayout.style.removeProperty('--import-top-size')
-			}
+		const importLayout = document.querySelector('.import-layout')
+		if (importLayout) {
+			importLayout.style.removeProperty('--import-top-size')
+		}
 
 		const customPatternInput = document.getElementById('custom-pattern')
 		if (customPatternInput) {
@@ -1802,8 +1810,8 @@ export function createImportModule({
 		detectFileTypes,
 		finalizeImport,
 		setSortField,
-			initColumnResizers,
-			initImportSplitter,
+		initColumnResizers,
+		initImportSplitter,
 		setReviewSortField,
 		applyPattern,
 		updatePatternSuggestions,

@@ -261,12 +261,20 @@ button {
 
 .import-steps {
 	margin: 0;
-	padding-left: 20px;
-	display: grid;
-	row-gap: 4px;
-	font-size: 13px;
+	padding: 8px 0;
+	display: flex;
+	flex-direction: row;
+	gap: 12px;
+	font-size: 11px;
 	color: #475569;
-	list-style-position: inside;
+	flex-wrap: nowrap;
+	overflow-x: auto;
+}
+
+.import-steps span {
+	display: inline;
+	white-space: nowrap;
+	flex-shrink: 0;
 }
 
 .import-config-grid {
@@ -461,7 +469,6 @@ button {
 	color: #ffffff;
 }
 
-
 .pattern-option-btn:disabled {
 	background: #f5f5f8;
 	border-style: dashed;
@@ -487,14 +494,6 @@ button {
 	font-size: 11px;
 	color: #6b7280;
 	line-height: 1.3;
-}
-
-	flex: 1 1 auto;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	min-height: 200px;
-	overflow: hidden;
 }
 
 .file-list-container {

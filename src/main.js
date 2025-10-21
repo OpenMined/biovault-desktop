@@ -143,9 +143,9 @@ const {
 	goToReviewStep,
 	detectFileTypes,
 	finalizeImport,
-		setSortField,
-		initColumnResizers,
-		initImportSplitter,
+	setSortField,
+	initColumnResizers,
+	initImportSplitter,
 	setReviewSortField,
 	updateSelectedFileCount,
 	handleSelectAllFiles,
@@ -203,9 +203,9 @@ window.addEventListener('DOMContentLoaded', () => {
 	loadSettings()
 	updateSelectedFileCount()
 
-		// Initialize UI features
-		initColumnResizers()
-		initImportSplitter()
+	// Initialize UI features
+	initColumnResizers()
+	initImportSplitter()
 	registerNavigationHandlers()
 	initializeFilesTab()
 

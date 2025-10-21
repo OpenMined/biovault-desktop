@@ -298,9 +298,9 @@ test.describe('Import Data workflow', () => {
 		const fileList = page.locator('#file-list li')
 		await expect(fileList).toHaveCount(preparedFiles.length)
 
-		const patternChip = page.locator('.pattern-chip', { hasText: '{parent:{id}}' })
-		await expect(patternChip).toBeVisible()
-		await patternChip.click()
+		const patternButton = page.locator('.pattern-option-btn', { hasText: 'Pattern: {parent:{id}}' })
+		await expect(patternButton).toBeVisible()
+		await patternButton.click()
 		sendUnifiedLog({ event: 'pattern-selected', value: '{parent:{id}}' })
 
 		const fillAllParticipantIds = async () => {
@@ -359,7 +359,7 @@ test.describe('Import Data workflow', () => {
 		// Re-select folder after reset
 		await page.locator('#pick-folder').click()
 		await typeSelect.selectOption(['.txt', '.csv'])
-		await patternChip.click()
+		await patternButton.click()
 		await selectAllFiles.check()
 		await csvRow.locator('input[type="checkbox"]').check()
 		await fillAllParticipantIds()
