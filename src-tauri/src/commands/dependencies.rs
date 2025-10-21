@@ -273,24 +273,53 @@ pub fn check_command_line_tools_installed() -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn install_dependency(name: String) -> Result<String, String> {
+pub async fn install_dependency(window: tauri::Window, name: String) -> Result<String, String> {
+    use serde_json::json;
+    use tauri::Emitter;
+
     eprintln!("📦 install_dependency called: {}", name);
+    log_desktop_event(&format!("Desktop requested installation of {}", name));
+
+    // Emit start event
+    let _ = window.emit(
+        "dependency-install-start",
+        json!({
+            "dependency": name.clone(),
+        }),
+    );
 
     // Call the library function to install just this one dependency
-    let installed_path = biovault::cli::commands::setup::install_single_dependency(&name)
+    let install_result = biovault::cli::commands::setup::install_single_dependency(&name)
         .await
-        .map_err(|e| format!("Failed to install {}: {}", name, e))?;
+        .map(|maybe_path| {
+            if let Some(path) = maybe_path {
+                eprintln!("✅ Installed {} at: {}", name, path);
+                path
+            } else {
+                eprintln!(
+                    "✅ Installed {} (path not detected - may not be in PATH)",
+                    name
+                );
+                String::new()
+            }
+        })
+        .map_err(|e| format!("Failed to install {}: {}", name, e));
 
-    if let Some(path) = installed_path {
-        eprintln!("✅ Installed {} at: {}", name, path);
-        Ok(path)
-    } else {
-        eprintln!(
-            "✅ Installed {} (path not detected - may not be in PATH)",
-            name
-        );
-        Ok(String::new())
-    }
+    // Emit finish event
+    let status_payload = match &install_result {
+        Ok(_) => json!({
+            "dependency": name.clone(),
+            "status": "success",
+        }),
+        Err(error) => json!({
+            "dependency": name.clone(),
+            "status": "error",
+            "error": error,
+        }),
+    };
+    let _ = window.emit("dependency-install-finished", status_payload);
+
+    install_result
 }
 
 #[tauri::command]

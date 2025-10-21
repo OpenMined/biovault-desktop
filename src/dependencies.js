@@ -27,7 +27,11 @@ export function createDependenciesModule({ invoke }) {
 		depsList.innerHTML = `
 		<div style="text-align: center; color: #999; padding: 20px;">
 			<div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px;"></div>
-			<p>Checking dependencies...</p>
+			<p style="margin-bottom: 10px;">Checking dependencies...</p>
+			<p style="font-size: 11px; color: #aaa; line-height: 1.6; max-width: 280px; margin: 0 auto;">
+				Searching system PATH, checking installed versions,<br/>
+				and verifying running services
+			</p>
 		</div>
 	`
 
