@@ -1,169 +1,289 @@
-<div class="import-layout">
-	<div class="import-header">
-		<h2 class="import-title">Import Data</h2>
-		<button
-			type="button"
-			class="pattern-info-btn"
-			id="pattern-info-btn"
-			aria-label="How ID patterns work"
-			aria-expanded="false"
-			aria-haspopup="dialog"
-		>
-			?
-		</button>
-	</div>
+<!-- Import Modal -->
+<div id="import-modal" class="modal import-modal" hidden role="dialog" aria-modal="true">
+	<div class="modal-backdrop" data-modal-close="import"></div>
+	<div class="modal-panel import-modal-panel">
+		<!-- Selection View -->
+		<div class="import-selection-view" id="import-selection-view">
+			<!-- Modal Header -->
+			<div class="import-modal-header">
+				<h2 class="import-modal-title">Import Data</h2>
+				<button type="button" class="modal-close-btn" data-modal-close="import" aria-label="Close">
+					<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+						<path
+							d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"
+						/>
+					</svg>
+				</button>
+			</div>
 
-	<div class="import-workflow">
-		<!-- Step 1 & 2: Source Selection -->
-		<section class="import-step">
-			<div class="import-step-header">
-				<div class="import-step-number">1</div>
-				<h3 class="import-step-title">Select Source</h3>
-			</div>
-			<div class="import-step-content">
-				<div class="import-step-actions">
-					<button id="pick-folder" class="primary-action-btn">
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							style="margin-right: 6px"
-						>
-							<path
-								d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.99 1.01 14 2.25 14h11.5c1.24 0 2.25-1.01 2.25-2.25v-6.5A1.75 1.75 0 0 0 14.25 3.5H7.5L6.29 2.29A1.75 1.75 0 0 0 5.06 1.75H1.75Z"
-							/>
-						</svg>
-						Choose Folder
-					</button>
-					<button id="reset-import-btn" class="secondary-action-btn">Reset</button>
-				</div>
-				<div class="path-display" id="selected-path">No folder selected</div>
-			</div>
-		</section>
-
-		<!-- Step 2: File Type Selection -->
-		<section class="import-step">
-			<div class="import-step-header">
-				<div class="import-step-number">2</div>
-				<h3 class="import-step-title">Choose File Types</h3>
-			</div>
-			<div class="import-step-content">
-				<select id="file-type-select" multiple size="5" class="file-type-select">
-					<option value="">Select file type(s)...</option>
-				</select>
-				<div id="custom-extension" class="custom-extension" style="display: none">
-					<input type="text" id="custom-ext-input" placeholder="e.g., *.txt or .csv" />
-				</div>
-			</div>
-		</section>
-
-		<!-- Step 3: Pattern Configuration -->
-		<section class="import-step">
-			<div class="import-step-header">
-				<div class="import-step-number">3</div>
-				<h3 class="import-step-title">Configure Participant ID Pattern</h3>
-			</div>
-			<div class="import-step-content">
-				<label class="pattern-input-label" for="custom-pattern">ID Pattern</label>
-				<input
-					type="text"
-					id="custom-pattern"
-					class="pattern-input"
-					placeholder="Enter macro (e.g., {parent:hu{id}}) or regex with (?P&lt;id&gt;)"
-				/>
-				<div class="pattern-feedback" id="pattern-feedback" role="status" aria-live="polite">
-					Select a folder and file type to detect patterns.
-				</div>
-				<p class="pattern-hint">
-					Patterns auto-populate participant IDs. Choose a detected pattern below or enter your own
-					above.
-				</p>
-				<div id="pattern-detection-section" class="pattern-detection" hidden>
-					<h4 class="pattern-detection-title">Detected Patterns</h4>
-					<div class="pattern-detection-note">
-						Click a pattern to apply it, or copy and modify the regex.
-					</div>
-					<div class="pattern-suggestions" id="pattern-suggestions"></div>
-				</div>
-			</div>
-		</section>
-
-		<!-- Step 4: File Selection -->
-		<section class="import-step import-step--files">
-			<div class="import-step-header">
-				<div class="import-step-number">4</div>
-				<h3 class="import-step-title">Review & Select Files</h3>
-			</div>
-			<div class="import-step-content import-step-content--files">
-				<div class="file-list-container">
-					<div class="file-list-toolbar">
-						<label class="file-list-select-all">
-							<input type="checkbox" id="select-all-files" />
-							Files Found (<span id="file-count">0</span>) | Selected (<span id="selected-count"
-								>0</span
-							>)
-						</label>
-					</div>
-					<div class="file-list-wrapper">
-						<div class="file-list-header">
-							<div class="col-checkbox"></div>
-							<div class="col-path" data-sort="path">
-								Path <span class="sort-indicator"></span>
-								<div class="column-resizer" data-col="path"></div>
+			<!-- Modal Body -->
+			<div class="import-modal-body">
+				<!-- Compact Config -->
+				<div class="import-config-compact">
+					<!-- Folder Drop Zone -->
+					<div class="folder-dropzone" id="folder-dropzone">
+						<div class="dropzone-content">
+							<svg
+								width="32"
+								height="32"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="folder-icon"
+							>
+								<path
+									d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.99 1.01 14 2.25 14h11.5c1.24 0 2.25-1.01 2.25-2.25v-6.5A1.75 1.75 0 0 0 14.25 3.5H7.5L6.29 2.29A1.75 1.75 0 0 0 5.06 1.75H1.75Z"
+								/>
+							</svg>
+							<div class="dropzone-text">
+								<div class="dropzone-title" id="folder-display">
+									Drop folder here or click to browse
+								</div>
+								<div class="dropzone-subtitle">
+									Select a folder containing participant data files
+								</div>
 							</div>
-							<div class="col-filename" data-sort="filename">
-								Filename <span class="sort-indicator"></span>
-								<div class="column-resizer" data-col="filename"></div>
-							</div>
-							<div class="col-extension" data-sort="extension">
-								Ext <span class="sort-indicator"></span>
-							</div>
-							<div class="col-participant" data-sort="participant">
-								Participant <span class="sort-indicator"></span>
-								<div class="column-resizer" data-col="participant"></div>
-							</div>
-							<div class="col-actions"></div>
+							<button
+								type="button"
+								class="dropzone-clear-btn"
+								id="dropzone-clear-btn"
+								title="Clear folder"
+							>
+								<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+									<path
+										d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"
+									/>
+								</svg>
+							</button>
 						</div>
-						<ul class="file-list" id="file-list"></ul>
+					</div>
+
+					<!-- File Types -->
+					<div id="file-types-section" style="display: none">
+						<div class="file-type-chips" id="file-type-list"></div>
+					</div>
+				</div>
+
+				<!-- File List -->
+				<div class="import-files-section" id="files-panel" style="display: none">
+					<!-- Pattern Section (collapsible) -->
+					<div id="pattern-section" class="pattern-section" style="display: none">
+						<div class="pattern-header">
+							<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
+							<span class="pattern-header-title">Auto-fill Participant IDs</span>
+							<button type="button" class="pattern-close-btn" id="pattern-close-btn" title="Close">
+								<img src="assets/icons/x.svg" width="14" height="14" alt="" />
+							</button>
+						</div>
+						<div class="pattern-body">
+							<input
+								type="text"
+								id="custom-pattern"
+								class="pattern-input"
+								placeholder="e.g., {parent:hu{id}} or {stem:{id}_*}"
+							/>
+							<button
+								type="button"
+								class="pattern-info-btn-inline"
+								id="pattern-info-btn"
+								title="Pattern help"
+							>
+								<img src="assets/icons/info.svg" width="14" height="14" alt="" />
+								Help
+							</button>
+						</div>
+						<div id="pattern-detection-section" class="pattern-suggestions-compact" hidden>
+							<div class="pattern-suggestions" id="pattern-suggestions"></div>
+						</div>
+						<div class="pattern-feedback" id="pattern-feedback"></div>
+					</div>
+
+					<div class="file-table-wrapper">
+						<table class="file-table">
+							<thead>
+								<tr>
+									<th style="width: 40px">
+										<input type="checkbox" id="select-all-files" />
+									</th>
+									<th data-sort="path">
+										<div class="file-header-with-count">
+											<span>File <span class="sort-indicator"></span></span>
+											<span class="file-count-badge"
+												><strong id="file-count">0</strong> files |
+												<strong id="selected-count">0</strong> selected</span
+											>
+										</div>
+									</th>
+									<th style="width: 220px">
+										<div class="participant-header">
+											<span data-sort="participant"
+												>Participant ID <span class="sort-indicator"></span
+											></span>
+											<button
+												type="button"
+												class="autofill-btn"
+												id="autofill-ids-btn"
+												title="Auto-fill IDs from pattern"
+											>
+												<img src="assets/icons/wand-sparkles.svg" width="14" height="14" alt="" />
+											</button>
+										</div>
+									</th>
+									<th style="width: 60px"></th>
+								</tr>
+							</thead>
+							<tbody id="file-list"></tbody>
+						</table>
 					</div>
 				</div>
 			</div>
-		</section>
-	</div>
 
-	<div class="import-footer">
-		<button class="import-button" id="import-btn" disabled>Next →</button>
+			<!-- Modal Footer -->
+			<div class="import-modal-footer" id="import-footer" style="display: none">
+				<div class="import-footer-status" id="import-status">Select files to continue</div>
+				<button class="import-action-btn" id="import-continue-btn" disabled>
+					Review & Configure →
+				</button>
+			</div>
+		</div>
+
+		<!-- Review View (inside modal) -->
+		<div class="import-review-view" id="import-modal-review" style="display: none">
+			<div class="import-modal-header">
+				<button type="button" class="modal-back-btn" id="review-back-btn">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+						<path
+							fill-rule="evenodd"
+							d="M7.78 12.53a.75.75 0 0 1-1.06 0L2.47 8.28a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L4.81 7h7.44a.75.75 0 0 1 0 1.5H4.81l2.97 2.97a.75.75 0 0 1 0 1.06Z"
+						/>
+					</svg>
+					Back
+				</button>
+				<h2 class="import-modal-title">Review & Configure Files</h2>
+				<button type="button" class="modal-close-btn" data-modal-close="import" aria-label="Close">
+					<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+						<path
+							d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"
+						/>
+					</svg>
+				</button>
+			</div>
+
+			<div class="import-modal-body">
+				<!-- Progress Bar (fixed position, doesn't shift layout) -->
+				<div class="review-progress-fixed" id="detection-progress">
+					<div class="progress-bar-container">
+						<div class="progress-bar" id="progress-bar"></div>
+					</div>
+					<div class="progress-text" id="progress-text"></div>
+				</div>
+
+				<div class="review-file-list-wrapper">
+					<div class="review-table-wrapper">
+						<table class="review-table">
+							<thead>
+								<tr>
+									<th style="width: 40px">
+										<input type="checkbox" id="select-all-review" />
+									</th>
+									<th>
+										<div class="file-header-with-count">
+											<span>File</span>
+											<span class="file-count-badge"
+												><strong id="review-file-count">0</strong> files |
+												<strong id="review-selected-count">0</strong> selected</span
+											>
+										</div>
+									</th>
+									<th style="width: 160px">
+										<div class="review-column-header">
+											<span>Data Type</span>
+											<select
+												id="set-all-datatype"
+												class="bulk-select-inline"
+												title="Set for selected"
+											>
+												<option value="">-</option>
+												<option value="Genotype">Genotype</option>
+												<option value="Phenotype">Phenotype</option>
+											</select>
+										</div>
+									</th>
+									<th style="width: 160px">
+										<div class="review-column-header">
+											<span>Source</span>
+											<select
+												id="set-all-source"
+												class="bulk-select-inline"
+												title="Set for selected"
+											>
+												<option value="">-</option>
+												<option value="23andMe">23andMe</option>
+												<option value="AncestryDNA">AncestryDNA</option>
+												<option value="MyHeritage">MyHeritage</option>
+												<option value="Dante Labs">Dante Labs</option>
+												<option value="Unknown">Unknown</option>
+											</select>
+										</div>
+									</th>
+									<th style="width: 120px">
+										<div class="review-column-header">
+											<span>GRCh</span>
+											<select
+												id="set-all-grch-version"
+												class="bulk-select-inline"
+												title="Set for selected"
+											>
+												<option value="">-</option>
+												<option value="GRCh37">37</option>
+												<option value="GRCh38">38</option>
+											</select>
+										</div>
+									</th>
+									<th style="width: 60px">
+										<button id="detect-types-btn" class="detect-btn-icon" title="Detect file types">
+											<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
+										</button>
+									</th>
+								</tr>
+							</thead>
+							<tbody id="review-files-table"></tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+
+			<div class="import-modal-footer">
+				<div class="import-footer-status"></div>
+				<button class="import-action-btn" id="review-import-btn">Import Files →</button>
+			</div>
+		</div>
 	</div>
 </div>
 
+<!-- Pattern Info Modal -->
 <div
 	id="pattern-info-modal"
-	class="modal hidden modal--alert"
+	class="modal"
 	hidden
 	role="dialog"
 	aria-modal="true"
 	aria-labelledby="pattern-info-title"
 >
 	<div class="modal-backdrop" data-modal-close></div>
-	<div class="modal-panel modal-panel--alert">
+	<div class="modal-panel">
 		<h2 id="pattern-info-title">ID Pattern Tips</h2>
 		<p>
-			Use macros like <code>{parent:{id}}</code> to pull IDs from folders, or supply a regex with a
-			named <code>id</code> capture such as <code>.*/(?P&lt;id&gt;hu[A-Za-z0-9]{6})/[^/]+$</code>.
+			Use macros like <code>{parent:hu{id}}</code> to pull IDs from folders, or supply a regex with
+			a named <code>id</code> capture.
 		</p>
 		<ul>
-			<li><code>{parent:{id}}</code> &rarr; use the parent folder name as the ID.</li>
-			<li>
-				<code>{stem:{id}_*}</code> &rarr; capture the digits at the beginning of the filename.
-			</li>
-			<li>Regex patterns must include a capturing group (e.g., <code>(?P&lt;id&gt;...)</code>).</li>
+			<li><code>{parent:hu{id}}</code> - Extract ID from parent folder name</li>
+			<li><code>{stem:hu{id}_*}</code> - Extract ID from filename before extension</li>
+			<li><code>{filename}</code> - Use entire filename as ID</li>
 		</ul>
-		<p>
-			You can adjust the pattern and re-run detection at any time to refresh the participant IDs.
-		</p>
+		<p>IDs update in real-time as you type!</p>
 		<div class="modal-alert-actions">
-			<button type="button" class="primary-btn" data-modal-close>OK</button>
+			<button type="button" class="primary-btn" data-modal-close>Got it</button>
 		</div>
 	</div>
 </div>
