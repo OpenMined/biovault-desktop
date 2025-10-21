@@ -72,27 +72,6 @@ pub struct FileConflict {
     pub new_hash: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FileMetadata {
-    pub participant_id: Option<String>,
-    pub data_type: Option<String>,
-    pub source: Option<String>,
-    pub grch_version: Option<String>,
-    pub row_count: Option<i64>,
-    pub chromosome_count: Option<i64>,
-    pub inferred_sex: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GenotypeMetadata {
-    pub data_type: String,
-    pub source: Option<String>,
-    pub grch_version: Option<String>,
-    pub row_count: Option<i64>,
-    pub chromosome_count: Option<i64>,
-    pub inferred_sex: Option<String>,
-}
-
 // Participant Types
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Participant {
