@@ -1,6 +1,7 @@
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -8,7 +9,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use tauri::{Emitter, Manager};
+use tokio::sync::mpsc::UnboundedSender;
+
+#[cfg(unix)]
+use os_pipe::{pipe, PipeWriter};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 
 // WebSocket bridge for browser development
 mod ws_bridge;
@@ -2806,24 +2814,66 @@ fn check_command_line_tools_installed() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn install_dependency(name: String) -> Result<String, String> {
+async fn install_dependency(window: tauri::Window, name: String) -> Result<String, String> {
     eprintln!("📦 install_dependency called: {}", name);
+    log_desktop_event(&format!("Desktop requested installation of {}", name));
 
-    // Call the library function to install just this one dependency
-    let installed_path = biovault::cli::commands::setup::install_single_dependency(&name)
+    let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let forward_window = window.clone();
+    let forward_dep = name.clone();
+
+    tauri::async_runtime::spawn(async move {
+        while let Some(line) = log_rx.recv().await {
+            let payload = json!({
+                "dependency": forward_dep,
+                "line": line,
+            });
+            let _ = forward_window.emit("dependency-install-log", payload);
+        }
+    });
+
+    let _ = window.emit(
+        "dependency-install-start",
+        json!({
+            "dependency": name.clone(),
+        }),
+    );
+
+    let capture = DependencyLogCapture::start(log_tx.clone());
+
+    let install_result = biovault::cli::commands::setup::install_single_dependency(&name)
         .await
-        .map_err(|e| format!("Failed to install {}: {}", name, e))?;
+        .map(|maybe_path| {
+            if let Some(path) = maybe_path {
+                eprintln!("✅ Installed {} at: {}", name, path);
+                path
+            } else {
+                eprintln!(
+                    "✅ Installed {} (path not detected - may not be in PATH)",
+                    name
+                );
+                String::new()
+            }
+        })
+        .map_err(|e| format!("Failed to install {}: {}", name, e));
 
-    if let Some(path) = installed_path {
-        eprintln!("✅ Installed {} at: {}", name, path);
-        Ok(path)
-    } else {
-        eprintln!(
-            "✅ Installed {} (path not detected - may not be in PATH)",
-            name
-        );
-        Ok(String::new())
-    }
+    capture.finish();
+    drop(log_tx);
+
+    let status_payload = match &install_result {
+        Ok(_) => json!({
+            "dependency": name.clone(),
+            "status": "success",
+        }),
+        Err(error) => json!({
+            "dependency": name.clone(),
+            "status": "error",
+            "error": error,
+        }),
+    };
+    let _ = window.emit("dependency-install-finished", status_payload);
+
+    install_result
 }
 
 #[tauri::command]
@@ -2846,6 +2896,162 @@ async fn install_dependencies(names: Vec<String>) -> Result<(), String> {
         .map_err(|e| format!("Failed to install dependencies: {}", e))?;
 
     Ok(())
+}
+
+struct DependencyLogCapture {
+    #[cfg(unix)]
+    inner: Option<UnixDependencyLogCapture>,
+}
+
+impl DependencyLogCapture {
+    fn start(tx: UnboundedSender<String>) -> Self {
+        #[cfg(unix)]
+        {
+            match UnixDependencyLogCapture::start(tx) {
+                Ok(inner) => Self {
+                    inner: Some(inner),
+                },
+                Err(err) => {
+                    eprintln!("⚠️  Failed to capture dependency install logs: {}", err);
+                    Self { inner: None }
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = tx;
+            Self {}
+        }
+    }
+
+    fn finish(self) {
+        #[cfg(unix)]
+        {
+            if let Some(inner) = self.inner {
+                inner.finish();
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+struct UnixDependencyLogCapture {
+    stdout_fd: RawFd,
+    stderr_fd: RawFd,
+    stdout_dup: RawFd,
+    stderr_dup: RawFd,
+    writer: Option<PipeWriter>,
+    reader_handle: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl UnixDependencyLogCapture {
+    fn start(tx: UnboundedSender<String>) -> Result<Self, String> {
+        use libc::{dup, dup2};
+        use std::io::Error;
+
+        let (reader, writer) = pipe().map_err(|e| format!("Failed to create pipe: {}", e))?;
+
+        let stdout = std::io::stdout();
+        let stderr = std::io::stderr();
+        let stdout_fd = stdout.as_raw_fd();
+        let stderr_fd = stderr.as_raw_fd();
+
+        let stdout_dup = unsafe { dup(stdout_fd) };
+        if stdout_dup < 0 {
+            return Err(format!(
+                "Failed to duplicate stdout: {}",
+                Error::last_os_error()
+            ));
+        }
+
+        let stderr_dup = unsafe { dup(stderr_fd) };
+        if stderr_dup < 0 {
+            unsafe {
+                libc::close(stdout_dup);
+            }
+            return Err(format!(
+                "Failed to duplicate stderr: {}",
+                Error::last_os_error()
+            ));
+        }
+
+        if unsafe { dup2(writer.as_raw_fd(), stdout_fd) } < 0 {
+            let err = Error::last_os_error();
+            unsafe {
+                dup2(stdout_dup, stdout_fd);
+                libc::close(stdout_dup);
+                libc::close(stderr_dup);
+            }
+            return Err(format!("Failed to redirect stdout: {}", err));
+        }
+
+        if unsafe { dup2(writer.as_raw_fd(), stderr_fd) } < 0 {
+            let err = Error::last_os_error();
+            unsafe {
+                dup2(stdout_dup, stdout_fd);
+                dup2(stderr_dup, stderr_fd);
+                libc::close(stdout_dup);
+                libc::close(stderr_dup);
+            }
+            return Err(format!("Failed to redirect stderr: {}", err));
+        }
+
+        let tx_clone = tx.clone();
+        let reader_handle = thread::spawn(move || {
+            let mut reader = BufReader::new(reader);
+            let mut buffer = String::new();
+            loop {
+                buffer.clear();
+                match reader.read_line(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let line = buffer.trim_end_matches(&['\n', '\r'][..]).to_string();
+                        if tx_clone.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            stdout_fd,
+            stderr_fd,
+            stdout_dup,
+            stderr_dup,
+            writer: Some(writer),
+            reader_handle: Some(reader_handle),
+        })
+    }
+
+    fn finish(mut self) {
+        unsafe {
+            libc::fflush(std::ptr::null_mut());
+        }
+
+        if self.stdout_dup >= 0 {
+            unsafe {
+                libc::dup2(self.stdout_dup, self.stdout_fd);
+                libc::close(self.stdout_dup);
+            }
+        }
+
+        if self.stderr_dup >= 0 {
+            unsafe {
+                libc::dup2(self.stderr_dup, self.stderr_fd);
+                libc::close(self.stderr_dup);
+            }
+        }
+
+        drop(self.writer.take());
+
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 #[tauri::command]

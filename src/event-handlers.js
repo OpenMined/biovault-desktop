@@ -181,8 +181,19 @@ export function setupEventHandlers({
 	// Settings - Check dependencies
 	const settingsCheckBtn = document.getElementById('settings-check-again-btn')
 	if (settingsCheckBtn) {
-		settingsCheckBtn.addEventListener('click', () => {
-			checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true)
+		settingsCheckBtn.addEventListener('click', async () => {
+			// Disable button during check to prevent multiple simultaneous checks
+			const originalText = settingsCheckBtn.textContent
+			settingsCheckBtn.disabled = true
+			settingsCheckBtn.innerHTML = '<span class="spinner" style="width: 14px; height: 14px;"></span> Checking...'
+
+			try {
+				await checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true)
+			} finally {
+				// Re-enable button after check completes
+				settingsCheckBtn.disabled = false
+				settingsCheckBtn.textContent = originalText
+			}
 		})
 	}
 

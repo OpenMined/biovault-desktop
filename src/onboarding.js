@@ -1,4 +1,4 @@
-import { dialog } from './tauri-shim.js'
+import { dialog, event } from './tauri-shim.js'
 
 export function initOnboarding({
 	invoke,
@@ -13,9 +13,350 @@ export function initOnboarding({
 	getDependencyResults,
 	checkSyftBoxStatus,
 }) {
+	const LOCKED_BUTTON_ATTR = 'data-locked-original-disabled'
+	let dependencyPanelsLocked = false
+	let dockerSudoPromptAcknowledged = false
+	const dockerSudoOverlayState = {
+		element: null,
+		continueBtn: null,
+		cancelBtn: null,
+	}
+	const dependencyLogs = new Map()
+	const dependencyLogStates = new Map()
+	let dependencyLogListenersRegistered = false
+
+	function normalizeDependencyName(name) {
+		return typeof name === 'string' ? name.trim().toLowerCase() : ''
+	}
+
+	function getDependencyLogLines(name) {
+		const key = normalizeDependencyName(name)
+		if (!dependencyLogs.has(key)) {
+			dependencyLogs.set(key, [])
+		}
+		return dependencyLogs.get(key)
+	}
+
+	function getDependencyLogState(name) {
+		const key = normalizeDependencyName(name)
+		return dependencyLogStates.get(key) || 'idle'
+	}
+
+	function setDependencyLogState(name, state) {
+		const key = normalizeDependencyName(name)
+		dependencyLogStates.set(key, state)
+
+		const detailsPanel = document.getElementById('dep-details-panel')
+		if (!detailsPanel) return
+
+		const section = detailsPanel.querySelector(
+			`.dependency-log-section[data-dep-key="${key}"]`,
+		)
+		if (!section) return
+
+		section.dataset.state = state
+		const indicator = section.querySelector('.log-indicator')
+		if (indicator) {
+			indicator.dataset.state = state
+		}
+	}
+
+	function updateDependencyLogUI(depName) {
+		const key = normalizeDependencyName(depName)
+		const detailsPanel = document.getElementById('dep-details-panel')
+		if (!detailsPanel) return
+
+		const section = detailsPanel.querySelector(
+			`.dependency-log-section[data-dep-key="${key}"]`,
+		)
+		if (!section) return
+
+		const state = getDependencyLogState(depName)
+		section.dataset.state = state
+		const indicator = section.querySelector('.log-indicator')
+		if (indicator) {
+			indicator.dataset.state = state
+		}
+
+		const output = section.querySelector('.dependency-log-output')
+		if (!output) return
+
+		const lines = getDependencyLogLines(depName)
+		if (!lines.length) {
+			section.dataset.visible = 'false'
+			output.textContent = ''
+			return
+		}
+
+		section.dataset.visible = 'true'
+		output.textContent = lines.join('\n')
+		output.scrollTop = output.scrollHeight
+	}
+
+	function beginDependencyInstall(depName) {
+		const lines = getDependencyLogLines(depName)
+		lines.length = 0
+		lines.push('Starting installation…')
+		setDependencyLogState(depName, 'running')
+		updateDependencyLogUI(depName)
+	}
+
+	function appendDependencyLog(depName, line) {
+		if (!line) return
+		const lines = getDependencyLogLines(depName)
+		lines.push(line)
+		// Trim very long logs to avoid unbounded growth
+		const MAX_LINES = 500
+		if (lines.length > MAX_LINES) {
+			lines.splice(0, lines.length - MAX_LINES)
+		}
+		updateDependencyLogUI(depName)
+	}
+
+	function ensureDependencyLogListeners() {
+		if (dependencyLogListenersRegistered) return
+		dependencyLogListenersRegistered = true
+
+		// Stream live log lines from backend
+		event
+			.listen('dependency-install-log', ({ payload }) => {
+				const dep = payload?.dependency
+				const line = payload?.line
+				if (!dep || typeof line !== 'string') return
+				appendDependencyLog(dep, line)
+			})
+			.catch((error) => {
+				console.error('Failed to attach dependency install log listener:', error)
+			})
+
+		// Installation lifecycle notifications
+		event
+			.listen('dependency-install-start', ({ payload }) => {
+				const dep = payload?.dependency
+				if (!dep) return
+				const lines = getDependencyLogLines(dep)
+				if (!lines.length) {
+					lines.push('Starting installation…')
+				}
+				setDependencyLogState(dep, 'running')
+				updateDependencyLogUI(dep)
+			})
+			.catch((error) => {
+				console.error('Failed to attach dependency install start listener:', error)
+			})
+
+		event
+			.listen('dependency-install-finished', ({ payload }) => {
+				const dep = payload?.dependency
+				if (!dep) return
+				const status = payload?.status
+				const error = payload?.error
+				if (status === 'success') {
+					appendDependencyLog(dep, 'Installation complete.')
+					setDependencyLogState(dep, 'success')
+				} else if (status === 'error') {
+					appendDependencyLog(dep, `Installation failed: ${error || 'Unknown error'}`)
+					setDependencyLogState(dep, 'error')
+				}
+			})
+			.catch((error) => {
+				console.error('Failed to attach dependency install finished listener:', error)
+			})
+	}
+
+	function injectDependencyLogSection(container, depName, safeDepNameAttr) {
+		if (!container) return
+		const existing = container.querySelector('.dependency-log-section')
+		if (existing) {
+			existing.remove()
+		}
+
+		const section = document.createElement('div')
+		section.className = 'dependency-log-section'
+		section.dataset.depName = safeDepNameAttr
+		section.dataset.depKey = normalizeDependencyName(depName)
+		section.dataset.visible = 'false'
+		section.dataset.state = getDependencyLogState(depName)
+		section.innerHTML = `
+			<div class="dependency-log-title">
+				<span class="log-indicator" data-state="${getDependencyLogState(depName)}"></span>
+				<span>Install Output</span>
+			</div>
+			<pre class="dependency-log-output" aria-live="polite"></pre>
+		`
+		container.appendChild(section)
+		updateDependencyLogUI(depName)
+	}
+
+	ensureDependencyLogListeners()
+
+	function findDependencyListItemByName(depName) {
+		const normalized = depName?.toLowerCase?.() || ''
+		return Array.from(document.querySelectorAll('#deps-list .dep-item')).find((item) => {
+			const itemName = (item.dataset.depName || '').toLowerCase()
+			return itemName === normalized
+		})
+	}
+
+	function disableDetailsPanelButtons() {
+		const detailsPanel = document.getElementById('dep-details-panel')
+		if (!detailsPanel) return
+
+		detailsPanel.querySelectorAll('button').forEach((btn) => {
+			if (!btn.hasAttribute(LOCKED_BUTTON_ATTR)) {
+				btn.setAttribute(LOCKED_BUTTON_ATTR, btn.disabled ? 'true' : 'false')
+			}
+			btn.disabled = true
+		})
+	}
+
+	function restoreDetailsPanelButtons() {
+		const detailsPanel = document.getElementById('dep-details-panel')
+		if (!detailsPanel) return
+
+		detailsPanel.querySelectorAll('button').forEach((btn) => {
+			const wasDisabled = btn.getAttribute(LOCKED_BUTTON_ATTR)
+			if (wasDisabled !== null) {
+				btn.disabled = wasDisabled === 'true'
+				btn.removeAttribute(LOCKED_BUTTON_ATTR)
+			}
+		})
+	}
+
+	function ensureDockerSudoOverlay() {
+		if (dockerSudoOverlayState.element) return dockerSudoOverlayState
+
+		const overlay = document.createElement('div')
+		overlay.className = 'docker-sudo-overlay'
+		overlay.dataset.visible = 'false'
+		overlay.innerHTML = `
+			<div class="docker-sudo-card">
+				<div class="docker-sudo-icon">🐳</div>
+				<h2>Administrator Access Needed</h2>
+				<p>
+					BioVault needs to copy <strong>Docker.app</strong> into your <strong>/Applications</strong> folder.
+					macOS will ask for your administrator password so we can complete the copy.
+				</p>
+				<div class="docker-sudo-note">
+					After the copy finishes, open Docker Desktop manually. The whale icon in your menu bar will turn solid once Docker is fully running.
+				</div>
+				<p>
+					When the macOS password prompt appears, enter your credentials to allow the installation to continue.
+				</p>
+				<div class="docker-sudo-actions">
+					<button type="button" class="docker-sudo-cancel-btn">Cancel</button>
+					<button type="button" class="docker-sudo-continue-btn">Continue</button>
+				</div>
+			</div>
+		`
+
+		const cancelBtn = overlay.querySelector('.docker-sudo-cancel-btn')
+		const continueBtn = overlay.querySelector('.docker-sudo-continue-btn')
+
+		document.body.appendChild(overlay)
+		dockerSudoOverlayState.element = overlay
+		dockerSudoOverlayState.cancelBtn = cancelBtn
+		dockerSudoOverlayState.continueBtn = continueBtn
+
+		return dockerSudoOverlayState
+	}
+
+	function hideDockerSudoOverlay() {
+		const { element } = dockerSudoOverlayState
+		if (!element) return
+		element.dataset.visible = 'false'
+		document.body.style.removeProperty('overflow')
+	}
+
+	async function showDockerSudoPrompt() {
+		const { element, cancelBtn, continueBtn } = ensureDockerSudoOverlay()
+		element.dataset.visible = 'true'
+		document.body.style.overflow = 'hidden'
+
+		return new Promise((resolve) => {
+			const cleanup = (result) => {
+				cancelBtn.removeEventListener('click', onCancel)
+				continueBtn.removeEventListener('click', onContinue)
+				hideDockerSudoOverlay()
+				resolve(result)
+			}
+
+			function onCancel() {
+				cleanup(false)
+			}
+
+			function onContinue() {
+				cleanup(true)
+			}
+
+			cancelBtn.addEventListener('click', onCancel, { once: true })
+			continueBtn.addEventListener('click', onContinue, { once: true })
+		})
+	}
+
+	async function maybePromptForDockerInstall(depName) {
+		if (dockerSudoPromptAcknowledged) return true
+		if (!depName || depName.toLowerCase() !== 'docker') return true
+		if (detectPlatform() !== 'macos') return true
+
+		const proceed = await showDockerSudoPrompt()
+		if (proceed) {
+			dockerSudoPromptAcknowledged = true
+		}
+		return proceed
+	}
+
+	function setDependencyPanelsLocked(shouldLock) {
+		const container = document.getElementById('dependency-panels')
+		const depsList = document.getElementById('deps-list')
+		const detailsPanel = document.getElementById('dep-details-panel')
+
+		dependencyPanelsLocked = shouldLock
+
+		if (!container) return
+
+		let overlay = container.querySelector('.dependency-panels-overlay')
+		if (shouldLock) {
+			if (!overlay) {
+				overlay = document.createElement('div')
+				overlay.className = 'dependency-panels-overlay'
+				const spinner = document.createElement('span')
+				spinner.className = 'spinner'
+				overlay.appendChild(spinner)
+				container.appendChild(overlay)
+			}
+
+			if (depsList) {
+				depsList.style.pointerEvents = 'none'
+				depsList.setAttribute('aria-disabled', 'true')
+			}
+			if (detailsPanel) {
+				detailsPanel.style.pointerEvents = 'none'
+				detailsPanel.setAttribute('aria-disabled', 'true')
+			}
+			disableDetailsPanelButtons()
+		} else {
+			if (overlay) {
+				overlay.remove()
+			}
+			if (depsList) {
+				depsList.style.pointerEvents = ''
+				depsList.removeAttribute('aria-disabled')
+			}
+			if (detailsPanel) {
+				detailsPanel.style.pointerEvents = ''
+				detailsPanel.removeAttribute('aria-disabled')
+			}
+			restoreDetailsPanelButtons()
+		}
+	}
+
 	// Wrapper for onboarding
 	async function checkDependencies() {
 		await checkDependenciesForPanel('deps-list', 'dep-details-panel', false)
+		if (dependencyPanelsLocked) {
+			disableDetailsPanelButtons()
+		}
 	}
 
 	// Function to show dependency details in right panel (expose globally)
@@ -25,6 +366,7 @@ export function initOnboarding({
 		detailsPanelId = 'dep-details-panel',
 	) {
 		const detailsPanel = document.getElementById(detailsPanelId)
+		const safeDepNameAttr = dep.name.replace(/"/g, '&quot;')
 		// Docker Desktop can be installed but not running, so treat found=true as installed
 		const isInstalled = dep.found
 
@@ -41,7 +383,7 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
 						${
 							dep.website
 								? `
@@ -147,10 +489,11 @@ export function initOnboarding({
 								statusIcon = '⚠️' // Warning icon
 							}
 
-							depItem.innerHTML = `
-								<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
-								<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-							`
+							const statusEl = depItem.querySelector('.dep-status')
+							if (statusEl) {
+								statusEl.textContent = statusIcon
+								statusEl.style.color = statusColor
+							}
 						}
 
 						// Re-render this specific dependency details
@@ -215,10 +558,11 @@ export function initOnboarding({
 							// Update the dependency list item to show as installed
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #28a745;">✓</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
+								const statusEl = depItem.querySelector('.dep-status')
+								if (statusEl) {
+									statusEl.textContent = '✓'
+									statusEl.style.color = '#28a745'
+								}
 							}
 
 							// Re-render this specific dependency details
@@ -240,10 +584,11 @@ export function initOnboarding({
 							// Update the dependency list item to show as missing
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #dc3545;">✗</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
+								const statusEl = depItem.querySelector('.dep-status')
+								if (statusEl) {
+									statusEl.textContent = '✗'
+									statusEl.style.color = '#dc3545'
+								}
 							}
 
 							// Re-render as missing dependency (but keep the path in the input)
@@ -280,7 +625,7 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
 						${
 							dep.website
 								? `
@@ -367,6 +712,12 @@ export function initOnboarding({
 			if (installSingleBtn) {
 				installSingleBtn.addEventListener('click', async () => {
 					const proceedWithInstall = async () => {
+						if (!(await maybePromptForDockerInstall(dep.name))) {
+							return
+						}
+
+						markDependencyAsInstalling(dep.name)
+
 						const normalizedName =
 							dep.name
 								.toLowerCase()
@@ -502,10 +853,11 @@ export function initOnboarding({
 							// Update the dependency list item
 							const depItem = document.querySelector(`.dep-item[data-dep-index="${depIndex}"]`)
 							if (depItem) {
-								depItem.innerHTML = `
-									<span style="font-size: 18px; color: #28a745;">✓</span>
-									<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
-								`
+								const statusEl = depItem.querySelector('.dep-status')
+								if (statusEl) {
+									statusEl.textContent = '✓'
+									statusEl.style.color = '#28a745'
+								}
 							}
 
 							// Re-render this specific dependency details
@@ -542,6 +894,10 @@ export function initOnboarding({
 					// Just copy silently, no visual change
 				})
 			})
+		}
+
+		if (dependencyPanelsLocked) {
+			disableDetailsPanelButtons()
 		}
 	}
 
@@ -664,6 +1020,7 @@ export function initOnboarding({
 
 			let statusIcon = isInstalled ? '✓' : '✗'
 			let statusColor = isInstalled ? '#28a745' : '#dc3545'
+			const safeNameAttr = dep.name.replace(/"/g, '&quot;')
 
 			// Show warning color if Docker is installed but not running
 			if (dep.name === 'Docker' && dep.found && dep.running === false) {
@@ -672,8 +1029,8 @@ export function initOnboarding({
 			}
 
 			html += `
-				<div class="dep-item" data-dep-index="${index}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
-					<span style="font-size: 18px; color: ${statusColor};">${statusIcon}</span>
+				<div class="dep-item" data-dep-index="${index}" data-dep-name="${safeNameAttr}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
+					<span class="dep-status" style="color: ${statusColor};">${statusIcon}</span>
 					<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
 				</div>
 			`
@@ -768,22 +1125,61 @@ export function initOnboarding({
 	// Check Again button
 	const checkAgainBtn = document.getElementById('check-again-btn')
 	if (checkAgainBtn) {
-		checkAgainBtn.addEventListener('click', () => {
-			checkDependencies()
+		checkAgainBtn.addEventListener('click', async () => {
+			// Disable button during check to prevent multiple simultaneous checks
+			const originalText = checkAgainBtn.textContent
+			checkAgainBtn.disabled = true
+			checkAgainBtn.innerHTML = '<span class="spinner" style="width: 14px; height: 14px;"></span> Checking...'
+
+			try {
+				await checkDependencies()
+			} finally {
+				// Re-enable button after check completes
+				checkAgainBtn.disabled = false
+				checkAgainBtn.textContent = originalText
+			}
 		})
+	}
+
+	// Helper function to show installing state for a specific dependency
+	function markDependencyAsInstalling(depName) {
+		const depItem = findDependencyListItemByName(depName)
+		if (!depItem) return
+
+		const statusEl = depItem.querySelector('.dep-status')
+		if (!statusEl) return
+
+		statusEl.innerHTML =
+			'<span class="spinner" style="width: 16px; height: 16px; border-width: 2px; border-color: rgba(0, 0, 0, 0.2); border-top-color: #0066cc;"></span>'
+		statusEl.style.color = '#0066cc'
+
+		beginDependencyInstall(depName)
+
+		const heading = Array.from(
+			document.querySelectorAll('#dep-details-panel h3[data-dep-name]'),
+		).find((el) => (el.dataset.depName || '').toLowerCase() === depName.toLowerCase())
+
+		if (heading) {
+			const displayName = heading.dataset.depName || depName
+			heading.innerHTML =
+				`<span class="spinner" style="width: 18px; height: 18px; border-width: 2px; border-color: rgba(0, 0, 0, 0.2); border-top-color: #0066cc; margin-right: 8px;"></span>${displayName}`
+			heading.style.color = '#0066cc'
+		}
 	}
 
 	// Install Missing button - installs all missing dependencies
 	const installMissingBtn = document.getElementById('install-missing-deps-btn')
 	if (installMissingBtn) {
+		let installCancelled = false
+
 		installMissingBtn.addEventListener('click', async () => {
 			const dependencyResults = getDependencyResults()
 			if (!dependencyResults) return
 
-			// Find all missing dependencies
+			// Find all missing dependencies (only check if found, not if running)
+			// Docker Desktop can be installed but not running - that's OK for onboarding
 			const missingDeps = dependencyResults.dependencies.filter((dep) => {
-				const isInstalled = dep.found && (dep.running === null || dep.running === true)
-				return !isInstalled
+				return !dep.found
 			})
 
 			if (missingDeps.length === 0) return
@@ -795,9 +1191,84 @@ export function initOnboarding({
 			)
 
 			if (confirmed) {
-				// Disable button and show loading state
-				const originalText = installMissingBtn.textContent
+				installCancelled = false
+
+				// Check if any missing dependencies require Homebrew (on macOS)
+				const currentPlatform = detectPlatform()
+				const homebrewDeps = ['java', 'nextflow'] // Dependencies that need Homebrew on macOS
+				const needsHomebrew = missingDeps.some((dep) =>
+					homebrewDeps.includes(dep.name.toLowerCase()),
+				)
+
+				if (currentPlatform === 'macos' && needsHomebrew) {
+					try {
+						const brewInstalled = await invoke('check_brew_installed')
+						if (!brewInstalled) {
+							const installBrew = await dialog.confirm(
+								'Homebrew is required to install some dependencies (Java, Nextflow).\n\nWould you like to install Homebrew first?',
+								{ title: 'Homebrew Required', type: 'warning' },
+							)
+
+							if (!installBrew) {
+								return
+							}
+
+							// Install Homebrew before proceeding
+							installMissingBtn.disabled = true
+							installMissingBtn.innerHTML =
+								'<span class="spinner"></span> Installing Homebrew...'
+
+							try {
+								await runHomebrewInstall({
+									button: installMissingBtn,
+									onSuccess: null, // Will continue below
+								})
+								// Reset button after Homebrew install
+								installMissingBtn.textContent = 'Install Missing'
+								installMissingBtn.disabled = false
+							} catch (error) {
+								console.error('Homebrew installation failed:', error)
+								installMissingBtn.disabled = false
+								installMissingBtn.textContent = 'Install Missing'
+								// Don't continue with dependency installation if Homebrew failed
+								return
+							}
+						}
+					} catch (error) {
+						console.error('Failed to check brew installation:', error)
+						await dialog.message(`Unable to verify Homebrew installation: ${error}`, {
+							title: 'Error',
+							type: 'error',
+						})
+						return
+					}
+				}
+
+				// Get all buttons to disable during installation
+				const checkAgainBtn = document.getElementById('check-again-btn')
+				const skipBtn = document.getElementById('skip-dependencies-btn')
+				const nextBtn = document.getElementById('onboarding-next-2')
+
+				// Store original button states
+			const originalInstallContent = installMissingBtn.innerHTML
+				const originalCheckText = checkAgainBtn?.textContent
+				const originalCheckDisabled = checkAgainBtn?.disabled
+
+				// Disable all action buttons and change Check Again to Cancel
 				installMissingBtn.disabled = true
+				if (skipBtn) skipBtn.disabled = true
+				if (nextBtn) nextBtn.disabled = true
+				if (checkAgainBtn) {
+					checkAgainBtn.textContent = 'Cancel'
+					checkAgainBtn.disabled = false
+					checkAgainBtn.onclick = () => {
+						installCancelled = true
+						checkAgainBtn.textContent = 'Cancelling...'
+						checkAgainBtn.disabled = true
+					}
+				}
+
+				setDependencyPanelsLocked(true)
 
 				console.log(
 					'🔧 Starting installation of dependencies:',
@@ -808,34 +1279,78 @@ export function initOnboarding({
 				let errorCount = 0
 				const errors = []
 
-				// Install dependencies one at a time and refresh UI after each
-				for (let i = 0; i < missingDeps.length; i++) {
-					const dep = missingDeps[i]
-					const progress = `(${i + 1}/${missingDeps.length})`
+				try {
+					// Install dependencies one at a time and refresh UI after each
+					for (let i = 0; i < missingDeps.length; i++) {
+						if (installCancelled) {
+							console.log('⚠️  Installation cancelled by user')
+							break
+						}
 
-					installMissingBtn.innerHTML = `<span class="spinner"></span> Installing ${dep.name} ${progress}...`
-					console.log(`🔧 Installing ${dep.name} ${progress}`)
+						const dep = missingDeps[i]
+						const progress = `(${i + 1}/${missingDeps.length})`
 
-					try {
-						await invoke('install_dependency', { name: dep.name })
-						console.log(`✅ ${dep.name} installed successfully`)
-						successCount++
-					} catch (error) {
-						console.error(`❌ Failed to install ${dep.name}:`, error)
-						errors.push({ name: dep.name, error: error.toString() })
-						errorCount++
+						if (!(await maybePromptForDockerInstall(dep.name))) {
+							installCancelled = true
+							break
+						}
+
+						// Update button text
+						installMissingBtn.innerHTML = `<span class="spinner"></span> Installing ${dep.name} ${progress}...`
+						console.log(`🔧 Installing ${dep.name} ${progress}`)
+
+						// Show spinner on the specific dependency in the left panel
+						markDependencyAsInstalling(dep.name)
+
+						try {
+							await invoke('install_dependency', { name: dep.name })
+							console.log(`✅ ${dep.name} installed successfully`)
+							successCount++
+						} catch (error) {
+							console.error(`❌ Failed to install ${dep.name}:`, error)
+							errors.push({ name: dep.name, error: error.toString() })
+							errorCount++
+						}
+
+						// Refresh dependencies panel after each install to show live progress
+						await checkDependencies()
 					}
-
-					// Refresh dependencies panel after each install to show live progress
-					await checkDependencies()
+				} finally {
+					setDependencyPanelsLocked(false)
 				}
 
-				// Re-enable button and restore text
-				installMissingBtn.disabled = false
-				installMissingBtn.textContent = originalText
+				// Re-enable buttons and restore original states
+			installMissingBtn.disabled = false
+			installMissingBtn.innerHTML = originalInstallContent
+				if (skipBtn) skipBtn.disabled = false
+				if (nextBtn) {
+					// Re-check if we should enable Next button
+					const results = getDependencyResults()
+					if (results) {
+						const allFound = results.dependencies.every((dep) => dep.found)
+						nextBtn.disabled = !allFound
+					}
+				}
+				if (checkAgainBtn) {
+					checkAgainBtn.textContent = originalCheckText
+					checkAgainBtn.disabled = originalCheckDisabled
+					checkAgainBtn.onclick = null
+					// Restore original click handler
+					checkAgainBtn.addEventListener('click', () => {
+						checkDependencies()
+					})
+				}
 
 				// Show summary of results
-				if (errorCount > 0) {
+				if (installCancelled) {
+					await dialog.message(
+						`Installation cancelled.\n\n${successCount} dependencies installed successfully before cancellation.`,
+						{
+							title: 'Installation Cancelled',
+							type: 'info',
+						},
+					)
+				} else if (errorCount > 0) {
 					const errorDetails = errors.map((e) => `${e.name}: ${e.error}`).join('\n\n')
 					await dialog.message(
 						`Installation completed with ${successCount} successful and ${errorCount} failed.\n\nErrors:\n${errorDetails}`,
@@ -1407,6 +1922,8 @@ export function initOnboarding({
 				type: 'error',
 			})
 		}
+
+		injectDependencyLogSection(detailsPanel, dep.name, safeDepNameAttr)
 	}
 
 	// Reset all data button

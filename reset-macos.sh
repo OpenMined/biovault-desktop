@@ -6,8 +6,8 @@ usage() {
   cat <<'USAGE'
 Usage: ./reset-macos.sh [--light|--full] [--force]
 
-  --light   Remove BioVault prerequisites without deleting macOS Command Line Tools (default).
-  --full    Remove Command Line Tools and all BioVault prerequisites (requires passwordless sudo).
+  --light   Remove BioVault dependencies (Java, Docker, Nextflow, UV) but keep Command Line Tools and Homebrew (default).
+  --full    Remove Command Line Tools and all BioVault dependencies. Homebrew and other packages (gh, git, etc.) are preserved (requires passwordless sudo).
   --force   Skip confirmation prompt.
   -h, --help  Show this help message.
 USAGE
@@ -96,9 +96,9 @@ prompt_confirmation() {
 
 if ! $FORCE; then
   if [[ "$MODE" == "full" ]]; then
-    prompt_confirmation "⚠️  Full reset will remove macOS Command Line Tools and all BioVault dependencies."
+    prompt_confirmation "⚠️  Full reset will remove macOS Command Line Tools and BioVault dependencies (Java, Docker, Nextflow, UV). Homebrew and other packages (gh, git, etc.) will be preserved."
   else
-    prompt_confirmation "⚠️  Light reset will remove BioVault dependencies but keep Command Line Tools."
+    prompt_confirmation "⚠️  Light reset will remove BioVault dependencies (Java, Docker, Nextflow, UV) but keep Command Line Tools and Homebrew."
   fi
 fi
 
@@ -152,30 +152,21 @@ cleanup_homebrew() {
     run_brew_command "brew cleanup" || true
 
     if [[ "$remove_system_dirs" == "true" ]]; then
-      echo "🧹 Removing Homebrew installation directories..."
-      local prefixes=(/opt/homebrew /usr/local/Homebrew)
-      for prefix in "${prefixes[@]}"; do
-        if [[ -d "$prefix" ]]; then
-          echo "  Deleting $prefix"
-          rm -rf "$prefix" || true
-        fi
-      done
-
-      local paths=(
+      echo "🧹 Removing Homebrew binary (will trigger reinstall)..."
+      # Delete the brew binary to trigger a fresh reinstall, but preserve installed packages
+      local brew_binaries=(
+        /opt/homebrew/bin/brew
         /usr/local/bin/brew
-        /usr/local/share/doc/homebrew
-        /usr/local/share/man/man1/brew.1
-        /usr/local/share/zsh/site-functions/_brew
-        /usr/local/etc/bash_completion.d/brew
       )
-      for path in "${paths[@]}"; do
-        if [[ -e "$path" ]]; then
-          echo "  Removing $path"
-          rm -rf "$path" || true
+      for brew_bin in "${brew_binaries[@]}"; do
+        if [[ -f "$brew_bin" ]]; then
+          echo "  Deleting $brew_bin"
+          rm -f "$brew_bin" || true
         fi
       done
+      echo "ℹ️  Homebrew binary removed. Installed packages preserved in Cellar."
     else
-      echo "🧹 Skipping Homebrew installation directory removal (light mode)."
+      echo "ℹ️  Homebrew installation preserved (light mode)."
     fi
 
     echo "🧹 Clearing Homebrew caches..."
