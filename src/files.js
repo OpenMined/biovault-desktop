@@ -1,4 +1,4 @@
-export function createFilesModule({ invoke }) {
+export function createFilesModule({ invoke, dialog }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
 
 	let selectedFilesForDelete = []
@@ -110,7 +110,6 @@ export function createFilesModule({ invoke }) {
 			const files = await invoke('get_files')
 			existingFilePaths = new Set(files.map((f) => f.file_path))
 			allFilesData = files
-			selectedFilesForDelete = []
 			renderFilesTable()
 		} catch (error) {
 			console.error('Error loading files:', error)
@@ -374,13 +373,21 @@ export function createFilesModule({ invoke }) {
 			deleteFilesBtn.addEventListener('click', async () => {
 				if (selectedFilesForDelete.length === 0) return
 
-				if (confirm(`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`)) {
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to delete ${selectedFilesForDelete.length} file(s)?`,
+					{ title: 'Delete Files', type: 'warning' },
+				)
+
+				if (confirmed) {
 					try {
 						const deleted = await invoke('delete_files_bulk', { fileIds: selectedFilesForDelete })
 						console.log(`Deleted ${deleted} file(s)`)
 						await loadFiles()
 					} catch (error) {
-						alert(`Error deleting files: ${error}`)
+						await dialog.message(`Error deleting files: ${error}`, {
+							title: 'Error',
+							type: 'error',
+						})
 					}
 				}
 			})

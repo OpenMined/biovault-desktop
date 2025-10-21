@@ -1,0 +1,42 @@
+<div class="table-container">
+	<div
+		style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px"
+	>
+		<h2 style="margin: 0">Participants (<span id="participant-count">0</span>)</h2>
+		<div style="display: flex; gap: 10px; align-items: center">
+			<input
+				type="text"
+				id="participants-search"
+				class="table-search-input"
+				placeholder="Search participants..."
+			/>
+			<button
+				id="delete-selected-participants-btn"
+				style="
+					padding: 8px 16px;
+					background: #dc3545;
+					color: white;
+					border: none;
+					border-radius: 4px;
+					cursor: pointer;
+					display: none;
+				"
+			>
+				Delete Selected
+			</button>
+		</div>
+	</div>
+	<table>
+		<thead>
+			<tr>
+				<th style="width: 40px">
+					<input type="checkbox" id="select-all-participants-table" />
+				</th>
+				<th>ID</th>
+				<th>Participant ID</th>
+				<th>Created At</th>
+			</tr>
+		</thead>
+		<tbody id="participants-table"></tbody>
+	</table>
+</div>

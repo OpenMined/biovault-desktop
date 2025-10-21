@@ -1,0 +1,13 @@
+.log-viewer {
+	margin-top: 15px;
+	background: #1e1e1e;
+	color: #d4d4d4;
+	font-family: 'Courier New', monospace;
+	font-size: 12px;
+	padding: 15px;
+	border-radius: 4px;
+	max-height: 400px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+}

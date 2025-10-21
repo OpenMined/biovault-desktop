@@ -2040,50 +2040,25 @@ export function initOnboarding({
 		}
 	}
 
-	// Reset all data button
-	const resetAllBtn = document.getElementById('reset-all-btn')
-	if (resetAllBtn) {
-		resetAllBtn.addEventListener('click', async () => {
-			const confirmed = await dialog.confirm(
-				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
-				{ title: 'Reset All Data', type: 'warning' },
-			)
-
-			if (!confirmed) {
-				return
-			}
-
-			try {
-				await invoke('reset_all_data')
-				await dialog.message('All data has been reset. The app will now reload.', {
-					title: 'Reset Complete',
-				})
-
-				// Reload the window to restart fresh
-				window.location.reload()
-			} catch (error) {
-				await dialog.message(`Error resetting data: ${error}`, {
-					title: 'Error',
-					type: 'error',
-				})
-			}
-		})
-	}
-
 	// Check if onboarded on app start
 	async function checkOnboarding() {
 		try {
 			const isOnboarded = await invoke('check_is_onboarded')
 			if (!isOnboarded) {
 				// Show onboarding view
-				document.getElementById('onboarding-view').style.display = 'flex'
+				const onboardingView = document.getElementById('onboarding-view')
+				onboardingView.classList.add('active')
+				onboardingView.style.display = 'flex'
+
 				// Hide tabs
 				document.querySelector('.tabs').style.display = 'none'
+
 				// Hide all other tab-content views
 				document.querySelectorAll('.tab-content:not(#onboarding-view)').forEach((view) => {
 					view.classList.remove('active')
 					view.style.display = 'none'
 				})
+
 				// Update title
 				document.title = 'BioVault - Setup'
 			}

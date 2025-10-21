@@ -289,7 +289,10 @@ test.describe('Import Data workflow', () => {
 
 		await page.getByRole('button', { name: 'Import Data' }).click()
 
-		await page.locator('#pick-folder').click()
+		// Wait for the import view to fully render
+		const pickFolderBtn = page.locator('#pick-folder')
+		await expect(pickFolderBtn).toBeVisible()
+		await pickFolderBtn.click()
 
 		const typeSelect = page.locator('#file-type-select')
 		await expect(typeSelect).toBeVisible()

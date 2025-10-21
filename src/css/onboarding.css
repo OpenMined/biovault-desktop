@@ -1,0 +1,49 @@
+.onboarding-view {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1;
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.onboarding-card {
+	background: white;
+	border-radius: 12px;
+	padding: 50px;
+	max-width: 500px;
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.onboarding-card h1 {
+	color: #667eea;
+	margin: 0 0 10px 0;
+	font-size: 36px;
+}
+
+.onboarding-card p {
+	color: #666;
+	margin: 0 0 30px 0;
+	font-size: 16px;
+}
+
+.onboarding-skip-btn {
+	width: auto !important;
+	min-width: 0;
+	padding: 8px 20px !important;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 14px;
+	font-weight: 500;
+	background: none;
+	border: 1px solid #888;
+	color: #888;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.onboarding-skip-btn:hover {
+	border-color: #666;
+	color: #666;
+}
