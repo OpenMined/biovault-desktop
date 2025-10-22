@@ -1,36 +1,10 @@
+/* Legacy horizontal tabs (hidden by default - vertical sidebar is primary) */
 .tabs {
-	display: flex;
-	background: #f5f5f5;
-	border-bottom: 2px solid #ddd;
+	display: none;
 }
 
 .tab {
-	padding: 15px 30px;
-	cursor: pointer;
-	border: none;
-	background: none;
-	font-size: 14px;
-	font-weight: 500;
-	color: #666;
-}
-
-.tab.active {
-	background: white;
-	color: #0066cc;
-	border-bottom: 2px solid #0066cc;
-	margin-bottom: -2px;
-}
-
-.tab-content {
 	display: none;
-	flex: 1;
-	min-height: 0;
-}
-
-.tab-content.active {
-	display: flex;
-	flex-direction: column;
-	min-height: 0;
 }
 
 .custom-extension {
@@ -274,7 +248,7 @@ h3 {
 }
 
 .primary-btn {
-	background: #667eea;
+	background: #10b981;
 	color: white;
 }
 
