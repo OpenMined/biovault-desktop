@@ -41,6 +41,8 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
+          import json
+          import json
           import os
           import re
           from pathlib import Path
@@ -87,6 +89,9 @@ jobs:
           - runs-on: ubuntu-22.04
             args: "x86_64-unknown-linux-gnu"
             build_kind: tauri
+          - runs-on: ubuntu-22.04-arm
+            args: "aarch64-unknown-linux-gnu"
+            build_kind: docker
     runs-on: ${{ matrix.runs-on }}
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -106,6 +111,19 @@ jobs:
       - name: Dry run mode notice
         if: ${{ inputs.dry_run }}
         run: echo "Dry run enabled - release artifacts will not be published."
+
+      - name: Set up Docker Buildx
+        if: matrix.build_kind == 'docker'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        if: matrix.build_kind == 'docker'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-arm64-${{ hashFiles('docker/linux_arm64/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-arm64-
 
       - name: Sync version metadata
         shell: bash
@@ -127,6 +145,14 @@ jobs:
           replace_line(Path('package.json'), r'(\"version\"\s*:\s*)\"[^\"]+\"')
           replace_line(Path('src-tauri/tauri.conf.json'), r'(\"version\"\s*:\s*)\"[^\"]+\"')
           replace_line(Path('src-tauri/Cargo.toml'), r'(version\s*=\s*)\"[^\"]+\"')
+
+          package_lock = Path('package-lock.json')
+          if package_lock.exists():
+              data = json.loads(package_lock.read_text())
+              data['version'] = version
+              if 'packages' in data and '' in data['packages']:
+                  data['packages']['']['version'] = version
+              package_lock.write_text(json.dumps(data, indent=2) + '\n')
 
           lock_path = Path('src-tauri/Cargo.lock')
           if lock_path.exists():
@@ -227,6 +253,30 @@ jobs:
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
 
+      - name: Build app (Linux arm64 via Docker)
+        if: matrix.build_kind == 'docker'
+        run: |
+          chmod +x docker/linux_arm64/*.sh
+          FORCE_BUILDX=1 BUILD_CACHE="--cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max" ./docker/linux_arm64/build-image.sh --arm64
+          ./docker/linux_arm64/build-appimage.sh --arm64
+
+          mkdir -p artifacts
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+
+      - name: Move Docker cache
+        if: matrix.build_kind == 'docker'
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+
       - name: Create release
         if: ${{ inputs.dry_run != true }}
         uses: ncipollo/release-action@v1
@@ -270,31 +320,28 @@ jobs:
             fi
           done
 
-  build-linux-arm64:
-    name: Build Linux arm64 bundle
+  commit-version:
+    name: Commit version bump
     needs:
       - prepare-version
       - build
-    runs-on: ubuntu-22.04-arm
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
-
-      - name: Dry run mode notice
-        if: ${{ inputs.dry_run }}
-        run: echo "Dry run enabled - release artifacts will not be published."
+          fetch-depth: 0
 
       - name: Sync version metadata
-        shell: bash
         run: |
           python - <<'PY'
+          import json
           import os
           import re
           from pathlib import Path
@@ -312,6 +359,14 @@ jobs:
           replace_line(Path('src-tauri/tauri.conf.json'), r'(\"version\"\s*:\s*)\"[^\"]+\"')
           replace_line(Path('src-tauri/Cargo.toml'), r'(version\s*=\s*)\"[^\"]+\"')
 
+          package_lock = Path('package-lock.json')
+          if package_lock.exists():
+              data = json.loads(package_lock.read_text())
+              data['version'] = version
+              if 'packages' in data and '' in data['packages']:
+                  data['packages']['']['version'] = version
+              package_lock.write_text(json.dumps(data, indent=2) + '\n')
+
           lock_path = Path('src-tauri/Cargo.lock')
           if lock_path.exists():
               content = lock_path.read_text()
@@ -321,53 +376,15 @@ jobs:
               lock_path.write_text(content)
           PY
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-arm64-${{ hashFiles('docker/linux_arm64/Dockerfile') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-arm64-
-
-      - name: Build app (Linux arm64 via Docker)
+      - name: Commit and push changes
         run: |
-          chmod +x docker/linux_arm64/*.sh
-          FORCE_BUILDX=1 BUILD_CACHE="--cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max" ./docker/linux_arm64/build-image.sh --arm64
-          ./docker/linux_arm64/build-appimage.sh --arm64
+          if git diff --quiet; then
+            echo "No version changes to commit."
+            exit 0
+          fi
 
-          mkdir -p artifacts
-
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.deb || true
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.deb.sig || true
-
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.rpm || true
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.rpm.sig || true
-
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage || true
-          mv src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage.sig || true
-
-      - name: Move Docker cache
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
-
-      - name: Publish arm64 artifacts to release
-        if: ${{ inputs.dry_run != true }}
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ needs.prepare-version.outputs.tag }}
-          name: ${{ needs.prepare-version.outputs.tag }}
-          draft: false
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          makeLatest: true
-          artifacts: |
-            ./artifacts/*.AppImage
-            ./artifacts/*.AppImage.sig
-            ./artifacts/*.deb
-            ./artifacts/*.deb.sig
-            ./artifacts/*.rpm
-            ./artifacts/*.rpm.sig
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+          git commit -m "chore: release ${RELEASE_TAG}"
+          git push origin HEAD:${{ github.ref_name }}
