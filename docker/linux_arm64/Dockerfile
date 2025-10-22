@@ -15,13 +15,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN cat <<'EOF' >/etc/apt/sources.list
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb [arch=amd64] http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
+ && cat <<'EOF' >/etc/apt/sources.list.d/ubuntu-amd64.sources
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu
+Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security ${UBUNTU_CODENAME}-backports
+Components: main restricted universe multiverse
+Architectures: amd64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
-
-RUN cat <<EOF >/etc/apt/sources.list.d/arm64-ports.sources
+ && cat <<'EOF' >/etc/apt/sources.list.d/arm64-ports.sources
 Types: deb
 URIs: http://ports.ubuntu.com/ubuntu-ports
 Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security
