@@ -8,6 +8,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		jupyter: {
 			running: false,
 			port: null,
+			url: null,
+			token: null,
 		},
 	}
 
@@ -58,6 +60,31 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
 		if (launchBtn) launchBtn.disabled = disabled
 		if (resetBtn) resetBtn.disabled = disabled
+	}
+
+	function setButtonLoadingState(button, isLoading, loadingLabel) {
+		if (!button) return
+		if (isLoading) {
+			if (!button.dataset.originalLabel) {
+				button.dataset.originalLabel = button.textContent
+			}
+			button.dataset.loading = 'true'
+			button.classList.add('btn-loading')
+			button.disabled = true
+			const label = loadingLabel || button.dataset.originalLabel || ''
+			button.innerHTML =
+				'<span class="button-spinner"></span><span class="button-spinner-label">' +
+				label +
+				'</span>'
+		} else {
+			button.classList.remove('btn-loading')
+			button.disabled = false
+			if (button.dataset.originalLabel) {
+				button.textContent = button.dataset.originalLabel
+				delete button.dataset.originalLabel
+			}
+			delete button.dataset.loading
+		}
 	}
 
 	function updateOperationModal(message) {
@@ -437,6 +464,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			projectEditorState.jupyter = {
 				running: false,
 				port: null,
+				url: null,
+				token: null,
 			}
 
 			renderProjectEditor(payload)
@@ -619,23 +648,45 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const statusRow = document.getElementById('project-jupyter-status')
 		if (!button) return
 
-		button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		const isLoading = button.dataset.loading === 'true'
+		if (!isLoading) {
+			button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		}
 
 		if (!statusRow) return
 
-		if (projectEditorState.jupyter.running && projectEditorState.jupyter.port) {
-			const url = `http://localhost:${projectEditorState.jupyter.port}`
-			statusRow.style.display = 'block'
-			statusRow.innerHTML =
-				'Running at <button id="jupyter-open-link" class="link-button" type="button">🔗 ' +
-				url +
-				'</button>'
-			const linkButton = document.getElementById('jupyter-open-link')
-			if (linkButton) {
-				linkButton.onclick = async () => {
-					console.log('[Jupyter] Opening lab URL:', url)
-					await openInExternalBrowser(url)
-				}
+		if (projectEditorState.jupyter.running) {
+			let linkUrl =
+				projectEditorState.jupyter.url ||
+				(projectEditorState.jupyter.port
+					? `http://localhost:${projectEditorState.jupyter.port}`
+					: null)
+
+			// Append token if available
+			if (linkUrl && projectEditorState.jupyter.token) {
+				const separator = linkUrl.includes('?') ? '&' : '?'
+				linkUrl = `${linkUrl}${separator}token=${projectEditorState.jupyter.token}`
+			}
+
+			if (linkUrl) {
+				statusRow.style.display = 'block'
+				statusRow.innerHTML = ''
+				statusRow.append('Running at ')
+				const linkButton = document.createElement('button')
+				linkButton.id = 'jupyter-open-link'
+				linkButton.className = 'link-button'
+				linkButton.type = 'button'
+				// Display URL without token for cleaner UI
+				const displayUrl = linkUrl.split('?')[0]
+				linkButton.textContent = `🔗 ${displayUrl}`
+				linkButton.addEventListener('click', async () => {
+					console.log('[Jupyter] Opening lab URL:', linkUrl)
+					await openInExternalBrowser(linkUrl)
+				})
+				statusRow.appendChild(linkButton)
+			} else {
+				statusRow.style.display = 'block'
+				statusRow.textContent = 'Jupyter server is running.'
 			}
 		} else {
 			statusRow.style.display = 'none'
@@ -653,12 +704,18 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.running
 			projectEditorState.jupyter.port = result.port ?? null
+			projectEditorState.jupyter.url = result.url ?? null
+			projectEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 			if (showMessage) {
 				if (projectEditorState.jupyter.running) {
-					const portInfo = projectEditorState.jupyter.port
-					statusEl.textContent = portInfo
-						? `Jupyter is running on port ${portInfo}.`
+					const linkUrl =
+						projectEditorState.jupyter.url ||
+						(projectEditorState.jupyter.port
+							? `http://localhost:${projectEditorState.jupyter.port}`
+							: null)
+					statusEl.textContent = linkUrl
+						? `Jupyter is running at ${linkUrl}.`
 						: 'Jupyter server is running.'
 					statusEl.style.color = '#28a745'
 				} else {
@@ -739,6 +796,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	}
 
 	async function handleLaunchJupyter() {
+		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
+		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
 			return
@@ -750,6 +810,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (projectEditorState.jupyter.running) {
 			const message = 'Stopping Jupyter server...\nCommand: uv run --python .venv jupyter lab stop'
 			showOperationModal(message)
+			setButtonLoadingState(launchBtn, true, 'Stopping...')
+			if (resetBtn) resetBtn.disabled = true
 			statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
 			try {
 				const result = await invoke('stop_jupyter', {
@@ -757,6 +819,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				})
 				projectEditorState.jupyter.running = !!result.running
 				projectEditorState.jupyter.port = result.port ?? null
+				projectEditorState.jupyter.url = result.url ?? null
+				projectEditorState.jupyter.token = result.token ?? null
 				updateJupyterControls()
 				statusEl.textContent = 'Jupyter server stopped.'
 				statusEl.style.color = '#666'
@@ -766,6 +830,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				statusEl.textContent = `Error stopping Jupyter: ${error}`
 				statusEl.style.color = '#dc3545'
 			} finally {
+				setButtonLoadingState(launchBtn, false)
+				if (resetBtn) resetBtn.disabled = false
+				updateJupyterControls()
 				hideOperationModal()
 			}
 			return
@@ -774,6 +841,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const launchMessage =
 			'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab bioscript\n- uv run --python .venv jupyter lab'
 		showOperationModal(launchMessage)
+		setButtonLoadingState(launchBtn, true, 'Starting...')
+		if (resetBtn) resetBtn.disabled = true
 		statusEl.textContent =
 			'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
 
@@ -784,13 +853,19 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.running
 			projectEditorState.jupyter.port = result.port ?? null
+			projectEditorState.jupyter.url = result.url ?? null
+			projectEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 
-			if (projectEditorState.jupyter.port) {
-				const url = `http://localhost:${projectEditorState.jupyter.port}`
+			const launchUrl =
+				projectEditorState.jupyter.url ||
+				(projectEditorState.jupyter.port
+					? `http://localhost:${projectEditorState.jupyter.port}`
+					: null)
+			if (launchUrl) {
 				updateOperationModal('Opening browser...')
-				await openInExternalBrowser(url)
-				statusEl.textContent = `Jupyter running at ${url}`
+				await openInExternalBrowser(launchUrl)
+				statusEl.textContent = `Jupyter running at ${launchUrl}`
 				statusEl.style.color = '#28a745'
 			} else {
 				statusEl.textContent = 'Jupyter server started.'
@@ -802,11 +877,16 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			statusEl.textContent = `Error launching Jupyter: ${error}`
 			statusEl.style.color = '#dc3545'
 		} finally {
+			setButtonLoadingState(launchBtn, false)
+			if (resetBtn) resetBtn.disabled = false
+			updateJupyterControls()
 			hideOperationModal()
 		}
 	}
 
 	async function handleResetJupyter() {
+		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
 			return
@@ -824,6 +904,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const statusEl = document.getElementById('project-edit-status')
 		statusEl.textContent = 'Resetting Jupyter environment...'
 		statusEl.style.color = '#666'
+		setButtonLoadingState(resetBtn, true, 'Resetting...')
+		if (launchBtn) launchBtn.disabled = true
 		const modalMessage =
 			'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab bioscript'
 		showOperationModal(modalMessage)
@@ -835,15 +917,20 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.status.running
 			projectEditorState.jupyter.port = result.status.port ?? null
+			projectEditorState.jupyter.url = result.status.url ?? null
+			projectEditorState.jupyter.token = result.status.token ?? null
 			updateJupyterControls()
 			statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
 			statusEl.style.color = '#28a745'
-			await refreshJupyterStatus(true)
+			await refreshJupyterStatus(false)
 		} catch (error) {
 			console.error('Failed to reset Jupyter:', error)
 			statusEl.textContent = `Error resetting Jupyter: ${error}`
 			statusEl.style.color = '#dc3545'
 		} finally {
+			setButtonLoadingState(resetBtn, false)
+			if (launchBtn) launchBtn.disabled = false
+			updateJupyterControls()
 			hideOperationModal()
 		}
 	}

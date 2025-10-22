@@ -76,6 +76,7 @@ test.describe('SQL tab', () => {
 
 	test('displays tables, schema, and query results', async ({ page }) => {
 		await page.getByRole('button', { name: 'SQL' }).click()
+		await expect(page.locator('#sql-view.tab-content.active')).toBeVisible()
 
 		const tableList = page.locator('#sql-table-list .sql-table-btn')
 		await expect(tableList).toHaveCount(2)
