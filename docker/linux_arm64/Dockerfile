@@ -15,11 +15,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN rm -f /etc/apt/sources.list.d/ubuntu.sources \
- && cat <<EOF >/etc/apt/sources.list.d/arm64-ports.list
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main restricted universe multiverse
+RUN cat <<EOF >/etc/apt/sources.list.d/arm64-ports.sources
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports
+Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security
+Components: main restricted universe multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
 
 RUN dpkg --add-architecture arm64 \
