@@ -114,6 +114,14 @@ EOF_BUILD
     ;;
 esac
 
+DOCKER_ENV_ARGS=()
+if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "TAURI_SIGNING_PRIVATE_KEY=${TAURI_SIGNING_PRIVATE_KEY}")
+fi
+if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}")
+fi
+
 if [ "${COMMAND}" = "shell" ]; then
   docker run --rm -it \
     --platform "${RUN_PLATFORM}" \
@@ -121,6 +129,7 @@ if [ "${COMMAND}" = "shell" ]; then
     -v "${CACHE_ROOT}/cargo/registry:/root/.cargo/registry" \
     -v "${CACHE_ROOT}/cargo/git:/root/.cargo/git" \
     -w /workspace/biovault \
+    "${DOCKER_ENV_ARGS[@]}" \
     "${IMAGE_NAME}" \
     bash
 else
@@ -130,6 +139,7 @@ else
     -v "${CACHE_ROOT}/cargo/registry:/root/.cargo/registry" \
     -v "${CACHE_ROOT}/cargo/git:/root/.cargo/git" \
     -w /workspace/biovault \
+    "${DOCKER_ENV_ARGS[@]}" \
     "${IMAGE_NAME}" \
     bash -lc "${BUILD_CMD}"
 fi
