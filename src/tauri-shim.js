@@ -180,12 +180,9 @@ async function mockInvoke(cmd, args = {}) {
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':
-<<<<<<< HEAD
 			// Default to true so main app loads
 			// Onboarding tests override this via __TEST_INVOKE_OVERRIDE__
 			return true
-=======
-			return false
 		case 'sql_list_tables':
 			return [{ name: 'participants' }, { name: 'measurements' }]
 		case 'sql_get_table_schema':
@@ -216,7 +213,6 @@ async function mockInvoke(cmd, args = {}) {
 				path: args?.destination || '/tmp/query-results.csv',
 				rows_written: 2,
 			}
->>>>>>> main
 		default:
 			console.warn(`[Mock] Unhandled command: ${cmd}`)
 			return null
