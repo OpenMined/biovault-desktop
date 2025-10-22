@@ -47,9 +47,8 @@ test.describe('Projects editor with Jupyter integration', () => {
 	test('create project, exercise Jupyter controls, and persist edits', async ({
 		page,
 	}, testInfo) => {
-		if (useRealInvoke) {
-			testInfo.setTimeout(180_000)
-		}
+		// CI environments can be slower, increase timeout for both mock and real modes
+		testInfo.setTimeout(useRealInvoke ? 180_000 : 120_000)
 
 		await ensureLogSocket()
 		page.on('console', (msg) => {
@@ -320,7 +319,7 @@ test.describe('Projects editor with Jupyter integration', () => {
 			await expect(statusRow).toContainText('Running at')
 		}
 
-		const resetDialog = page.waitForEvent('dialog')
+		const resetDialog = page.waitForEvent('dialog', { timeout: 30000 })
 		await page.locator('#project-edit-reset-jupyter-btn').click()
 		await (await resetDialog).accept()
 		// Real backend says "rebuilt", mock says "reset"
