@@ -7,4 +7,5 @@ pub mod participants;
 pub mod projects;
 pub mod runs;
 pub mod settings;
+pub mod sql;
 pub mod syftbox;

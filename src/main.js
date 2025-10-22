@@ -13,6 +13,7 @@ import { createCltManager } from './clt-manager.js'
 import { createHomebrewInstaller } from './homebrew-installer.js'
 import { createDependenciesModule } from './dependencies.js'
 import { createSettingsModule } from './settings.js'
+import { createSqlModule } from './sql.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
@@ -43,6 +44,8 @@ const { runHomebrewInstall } = createHomebrewInstaller({
 const { loadSavedDependencies, checkDependenciesForPanel, getDependencyResults } =
 	createDependenciesModule({ invoke })
 
+const { initializeSqlTab, activateSqlTab, invalidateAiConfig } = createSqlModule({ invoke, dialog })
+
 const {
 	loadSettings,
 	checkSyftBoxStatus,
@@ -50,7 +53,13 @@ const {
 	getCurrentUserEmail,
 	getSyftboxStatus,
 	setSyftboxStatus,
-} = createSettingsModule({ invoke, dialog, loadSavedDependencies })
+	saveSettings,
+} = createSettingsModule({
+	invoke,
+	dialog,
+	loadSavedDependencies,
+	onAiConfigUpdated: invalidateAiConfig,
+})
 
 const {
 	loadParticipants: loadParticipantsView,
@@ -184,6 +193,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		getSyftboxStatus,
 		startMessagesAutoRefresh,
 		stopMessagesAutoRefresh,
+		loadSql: activateSqlTab,
 	})
 
 setRunNavigateTo(navigateTo)
@@ -209,6 +219,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('import-results', 'import-results-view'),
 			templateLoader.loadAndInject('participants', 'participants-view'),
 			templateLoader.loadAndInject('files', 'files-view'),
+			templateLoader.loadAndInject('sql', 'sql-view'),
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
 			templateLoader.loadAndInject('logs', 'logs-view'),
@@ -221,6 +232,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 		// Initialize drag-and-drop for folder selection (async now)
 		await importModule.initFolderDropzone()
+
+		await initializeSqlTab()
 
 		console.log('✅ All templates loaded')
 	} catch (error) {
@@ -309,6 +322,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		copyLogs,
 		clearLogs,
 		handleSyftBoxAuthentication,
+		saveSettings,
 		checkDependenciesForPanel,
 		getDependencyResults,
 		invoke,

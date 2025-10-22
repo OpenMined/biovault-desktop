@@ -9,6 +9,7 @@ export function createDashboardShell({
 	loadRuns,
 	displayLogs,
 	loadSettings,
+	loadSql,
 	initializeMessagesTab,
 	getMessagesInitialized,
 	getMessagesAuthorized,
@@ -88,6 +89,9 @@ export function createDashboardShell({
 				break
 			case 'settings':
 				loadSettings?.()
+				break
+			case 'sql':
+				loadSql?.()
 				break
 			case 'messages': {
 				const initialized = getMessagesInitialized?.()

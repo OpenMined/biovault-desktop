@@ -15,12 +15,16 @@ pub struct AppState {
 
 // Settings
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct Settings {
     pub docker_path: String,
     pub java_path: String,
     pub syftbox_path: String,
     pub biovault_path: String,
     pub email: String,
+    pub ai_api_url: String,
+    pub ai_api_token: String,
+    pub ai_model: String,
 }
 
 impl Default for Settings {
@@ -31,6 +35,9 @@ impl Default for Settings {
             syftbox_path: String::from("/usr/local/bin/syftbox"),
             biovault_path: String::from("bv"),
             email: String::new(),
+            ai_api_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            ai_api_token: String::new(),
+            ai_model: "openrouter/auto".to_string(),
         }
     }
 }

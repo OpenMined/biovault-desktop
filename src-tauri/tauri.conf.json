@@ -26,7 +26,9 @@
 						"dialog:allow-open",
 						"dialog:allow-confirm",
 						"dialog:allow-ask",
-						"dialog:allow-message"
+						"dialog:allow-message",
+						"dialog:allow-save",
+						"dialog:default"
 					]
 				}
 			]
