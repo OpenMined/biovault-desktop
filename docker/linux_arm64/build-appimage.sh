@@ -88,7 +88,6 @@ export PKG_CONFIG_SYSROOT_DIR=/
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
 export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-export APPIMAGE_EXTRACT_AND_RUN=1
 export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib:/usr/aarch64-linux-gnu/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 export RUST_BACKTRACE=1
@@ -105,23 +104,24 @@ if [ ! -f "${LINUXDEPLOY_APPIMAGE}" ]; then
   chmod +x "${LINUXDEPLOY_APPIMAGE}"
 fi
 
-cat >"${LINUXDEPLOY_BIN_DIR}/linuxdeploy" <<'WRAPPER'
-#!/usr/bin/env bash
-set -euo pipefail
-export APPIMAGE_EXTRACT_AND_RUN=1
-exec /usr/bin/qemu-aarch64-static -L /usr/aarch64-linux-gnu "${LINUXDEPLOY_APPIMAGE}" "$@"
-WRAPPER
-chmod +x "${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
-export PATH="${LINUXDEPLOY_BIN_DIR}:${PATH}"
-export LINUXDEPLOY="${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
-export LINUXDEPLOY_APPIMAGE="${LINUXDEPLOY_APPIMAGE}"
-
 ARCH="$(uname -m)"
 case "${ARCH}" in
   aarch64|arm64)
+    export APPIMAGE_EXTRACT_AND_RUN=1
     export LINUXDEPLOY="${LINUXDEPLOY_APPIMAGE}"
     ;;
+  *)
+    cat >"${LINUXDEPLOY_BIN_DIR}/linuxdeploy" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/qemu-aarch64-static -L /usr/aarch64-linux-gnu "${LINUXDEPLOY_APPIMAGE}" "\$@"
+WRAPPER
+    chmod +x "${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
+    export PATH="${LINUXDEPLOY_BIN_DIR}:${PATH}"
+    export LINUXDEPLOY="${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
+    ;;
 esac
+export LINUXDEPLOY_APPIMAGE="${LINUXDEPLOY_APPIMAGE}"
 
 echo "[preflight] linuxdeploy version check"
 "${LINUXDEPLOY}" --appimage-version
