@@ -82,17 +82,6 @@ case "${COMMAND}" in
   build)
     BUILD_CMD="$(cat <<'EOF_BUILD'
 set -euo pipefail
-
-# Register ARM64 binfmt handler for x86_64 systems
-ARCH="$(uname -m)"
-if [ "${ARCH}" != "aarch64" ] && [ "${ARCH}" != "arm64" ]; then
-  echo "[setup] Registering ARM64 binfmt handler"
-  update-binfmts --enable qemu-aarch64 2>/dev/null || true
-  if [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-    echo ':qemu-aarch64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-aarch64-static:F' > /proc/sys/fs/binfmt_misc/register 2>/dev/null || true
-  fi
-fi
-
 cd /workspace/biovault
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=/
@@ -141,8 +130,6 @@ if [ "${COMMAND}" = "shell" ]; then
 else
   docker run --rm \
     --platform "${RUN_PLATFORM}" \
-    --privileged \
-    -v /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc \
     -v "${REPO_ROOT}:/workspace/biovault" \
     -v "${CACHE_ROOT}/cargo/registry:/root/.cargo/registry" \
     -v "${CACHE_ROOT}/cargo/git:/root/.cargo/git" \

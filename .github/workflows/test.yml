@@ -139,6 +139,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Linux arm64 AppImage dry run
         run: |
           chmod +x docker/linux_arm64/*.sh

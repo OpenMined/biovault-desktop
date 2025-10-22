@@ -53,6 +53,12 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: echo "Dry run enabled - release artifacts will not be published."
 
+      - name: Set up QEMU
+        if: matrix.build_kind == 'docker'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
         uses: apple-actions/import-codesign-certs@v3
