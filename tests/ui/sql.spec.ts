@@ -78,6 +78,7 @@ test.describe('SQL tab', () => {
 		// First make sure workbench panel exists
 		await expect(page.locator('.workbench-panel')).toBeVisible()
 
+
 		// Click SQL in the workbench (bottom panel)
 		const sqlTab = page.locator('.workbench-tab[data-workbench-tab="sql"]')
 		await expect(sqlTab).toBeVisible()

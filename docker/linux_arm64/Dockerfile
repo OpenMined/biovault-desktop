@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.6
-
 ARG UBUNTU_VERSION=24.04
 ARG UBUNTU_CODENAME=noble
 FROM ubuntu:${UBUNTU_VERSION}
@@ -15,17 +13,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN rm -f /etc/apt/sources.list \
- && cat <<EOF >/etc/apt/sources.list
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb [arch=amd64] http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main restricted universe multiverse
-EOF
-
-RUN rm -f /etc/apt/sources.list.d/ubuntu.sources
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \
+    echo 'Types: deb' >/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'URIs: http://archive.ubuntu.com/ubuntu' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo "Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security ${UBUNTU_CODENAME}-backports" >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Components: main restricted universe multiverse' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Architectures: amd64' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Types: deb' >/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'URIs: http://ports.ubuntu.com/ubuntu-ports' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo "Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security" >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Components: main restricted universe multiverse' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Architectures: arm64' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' >>/etc/apt/sources.list.d/arm64-ports.sources
 
 RUN dpkg --add-architecture arm64 \
  && apt-get update \
@@ -43,6 +43,7 @@ RUN dpkg --add-architecture arm64 \
       file \
       unzip \
       binutils \
+      binutils-aarch64-linux-gnu \
       gcc-aarch64-linux-gnu \
       g++-aarch64-linux-gnu \
       qemu-user-static \
@@ -56,10 +57,14 @@ RUN dpkg --add-architecture arm64 \
       libxdo-dev:arm64 \
       libpango1.0-dev:arm64 \
       libssl-dev:arm64 \
- && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      libstdc++6:arm64 \
+      libgcc-s1:arm64 \
+      libfuse2:arm64 \
+      && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
  && /root/.cargo/bin/rustup default stable \
