@@ -263,14 +263,35 @@ jobs:
 
           mkdir -p artifacts
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+          echo "Checking for built artifacts..."
+          ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/deb/ || echo "No deb directory"
+          ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/rpm/ || echo "No rpm directory"
+          ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/appimage/ || echo "No appimage directory"
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+          if ls src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig
+          else
+            echo "Warning: No .deb artifacts found"
+          fi
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+          if ls src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm 1> /dev/null 2>&1; then
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig
+          else
+            echo "Warning: No .rpm artifacts found"
+          fi
+
+          if ls src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage 1> /dev/null 2>&1; then
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig
+          else
+            echo "Error: No .AppImage artifacts found - build may have failed"
+            exit 1
+          fi
+
+          echo "Final artifacts:"
+          ls -lh artifacts/
 
       - name: Move Docker cache
         if: matrix.build_kind == 'docker'
