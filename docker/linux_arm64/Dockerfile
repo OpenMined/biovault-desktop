@@ -43,6 +43,7 @@ RUN dpkg --add-architecture arm64 \
       file \
       unzip \
       binutils \
+      binutils-aarch64-linux-gnu \
       gcc-aarch64-linux-gnu \
       g++-aarch64-linux-gnu \
       qemu-user-static \
@@ -56,7 +57,10 @@ RUN dpkg --add-architecture arm64 \
       libxdo-dev:arm64 \
       libpango1.0-dev:arm64 \
       libssl-dev:arm64 \
- && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      libstdc++6:arm64 \
+      libgcc-s1:arm64 \
+      libfuse2:arm64 \
+      && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
