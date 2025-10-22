@@ -15,6 +15,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
+RUN cat <<'EOF' >/etc/apt/sources.list
+deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
+deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb [arch=amd64] http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
+EOF
+
 RUN cat <<EOF >/etc/apt/sources.list.d/arm64-ports.sources
 Types: deb
 URIs: http://ports.ubuntu.com/ubuntu-ports
