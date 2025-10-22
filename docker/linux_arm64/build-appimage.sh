@@ -82,6 +82,17 @@ case "${COMMAND}" in
   build)
     BUILD_CMD="$(cat <<'EOF_BUILD'
 set -euo pipefail
+
+# Register ARM64 binfmt handler for x86_64 systems
+ARCH="$(uname -m)"
+if [ "${ARCH}" != "aarch64" ] && [ "${ARCH}" != "arm64" ]; then
+  echo "[setup] Registering ARM64 binfmt handler"
+  update-binfmts --enable qemu-aarch64 2>/dev/null || true
+  if [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+    echo ':qemu-aarch64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-aarch64-static:F' > /proc/sys/fs/binfmt_misc/register 2>/dev/null || true
+  fi
+fi
+
 cd /workspace/biovault
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=/
@@ -93,38 +104,15 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aa
 export RUST_BACKTRACE=1
 export RUST_LOG=tauri_bundler=debug
 
-LINUXDEPLOY_CACHE=/tmp/linuxdeploy-cache
-LINUXDEPLOY_APPIMAGE="${LINUXDEPLOY_CACHE}/linuxdeploy-aarch64.AppImage"
-LINUXDEPLOY_BIN_DIR=/tmp/linuxdeploy-bin
-mkdir -p "${LINUXDEPLOY_CACHE}" "${LINUXDEPLOY_BIN_DIR}"
-
-if [ ! -f "${LINUXDEPLOY_APPIMAGE}" ]; then
-  echo "[setup] Downloading linuxdeploy AppImage"
-  curl -fsSL https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-aarch64.AppImage -o "${LINUXDEPLOY_APPIMAGE}"
-  chmod +x "${LINUXDEPLOY_APPIMAGE}"
-fi
-
 ARCH="$(uname -m)"
 case "${ARCH}" in
   aarch64|arm64)
     export APPIMAGE_EXTRACT_AND_RUN=1
-    export LINUXDEPLOY="${LINUXDEPLOY_APPIMAGE}"
-    ;;
-  *)
-    cat >"${LINUXDEPLOY_BIN_DIR}/linuxdeploy" <<WRAPPER
-#!/usr/bin/env bash
-set -euo pipefail
-exec /usr/bin/qemu-aarch64-static -L /usr/aarch64-linux-gnu "${LINUXDEPLOY_APPIMAGE}" "\$@"
-WRAPPER
-    chmod +x "${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
-    export PATH="${LINUXDEPLOY_BIN_DIR}:${PATH}"
-    export LINUXDEPLOY="${LINUXDEPLOY_BIN_DIR}/linuxdeploy"
     ;;
 esac
-export LINUXDEPLOY_APPIMAGE="${LINUXDEPLOY_APPIMAGE}"
 
-echo "[preflight] linuxdeploy version check"
-"${LINUXDEPLOY}" --appimage-version
+echo "[preflight] Architecture: ${ARCH}, binfmt status:"
+ls -la /proc/sys/fs/binfmt_misc/ 2>/dev/null || echo "binfmt_misc not available"
 
 npm install
 npm run tauri build -- --target aarch64-unknown-linux-gnu
@@ -153,6 +141,8 @@ if [ "${COMMAND}" = "shell" ]; then
 else
   docker run --rm \
     --platform "${RUN_PLATFORM}" \
+    --privileged \
+    -v /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc \
     -v "${REPO_ROOT}:/workspace/biovault" \
     -v "${CACHE_ROOT}/cargo/registry:/root/.cargo/registry" \
     -v "${CACHE_ROOT}/cargo/git:/root/.cargo/git" \
