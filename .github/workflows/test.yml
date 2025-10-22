@@ -129,3 +129,18 @@ jobs:
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
         run: ./test-ui.sh
+
+  linux-aarch64-release-dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Linux arm64 AppImage dry run
+        run: |
+          chmod +x docker/linux_arm64/*.sh
+          ./docker/linux_arm64/build-image.sh
+          ./docker/linux_arm64/build-appimage.sh

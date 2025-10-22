@@ -10,12 +10,20 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[docker] Ensuring qemu-aarch64 binfmt is registered..."
-if ! docker run --rm --privileged tonistiigi/binfmt --install arm64 >/dev/null 2>&1; then
-  echo "[docker] Failed to register binfmt for arm64 via tonistiigi/binfmt" >&2
-  exit 1
+if [ "${SKIP_BINFMT_REGISTRATION:-0}" != "1" ]; then
+  echo "[docker] Ensuring qemu-aarch64 binfmt is registered..."
+  if docker run --rm --privileged tonistiigi/binfmt --install arm64; then
+    echo "[docker] binfmt registration via tonistiigi/binfmt complete"
+  elif docker run --rm --privileged multiarch/qemu-user-static --reset -p yes; then
+    echo "[docker] binfmt registration via multiarch/qemu-user-static complete"
+  else
+    echo "[docker] Failed to register binfmt for arm64" >&2
+    echo "[docker] Set SKIP_BINFMT_REGISTRATION=1 to bypass (AppImage build may fail)" >&2
+    exit 1
+  fi
+else
+  echo "[docker] Skipping binfmt registration (SKIP_BINFMT_REGISTRATION=1)"
 fi
-echo "[docker] binfmt registration complete"
 
 if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
   "${SCRIPT_DIR}/build-image.sh"
@@ -35,6 +43,8 @@ export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
 export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
 export APPIMAGE_EXTRACT_AND_RUN=1
+export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
+export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib:/usr/aarch64-linux-gnu/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 npm install
 npm run tauri build -- --target aarch64-unknown-linux-gnu'
     ;;
