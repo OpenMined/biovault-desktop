@@ -47,6 +47,7 @@ else
   docker buildx build \
     --platform "${BUILD_PLATFORM}" \
     ${BUILD_OUTPUT} \
+    ${BUILD_CACHE:-} \
     --tag "${IMAGE_NAME}" \
     "${CONTEXT_DIR}"
 fi

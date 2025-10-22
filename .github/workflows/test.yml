@@ -132,7 +132,7 @@ jobs:
 
   linux-aarch64-release-dry-run:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -142,13 +142,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Cache Docker layers
+        uses: actions/cache@v4
         with:
-          platforms: arm64
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-arm64-${{ hashFiles('docker/linux_arm64/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-arm64-
 
       - name: Linux arm64 AppImage dry run
         run: |
           chmod +x docker/linux_arm64/*.sh
-          FORCE_BUILDX=1 ./docker/linux_arm64/build-image.sh --arm64
+          FORCE_BUILDX=1 BUILD_CACHE="--cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max" ./docker/linux_arm64/build-image.sh --arm64
           ./docker/linux_arm64/build-appimage.sh --arm64
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
