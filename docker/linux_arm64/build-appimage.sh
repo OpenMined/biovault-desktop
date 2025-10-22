@@ -45,6 +45,14 @@ export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
 export APPIMAGE_EXTRACT_AND_RUN=1
 export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib:/usr/aarch64-linux-gnu/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+export RUST_BACKTRACE=1
+export RUST_LOG=tauri_bundler=debug
+
+echo "[preflight] Verifying aarch64 linuxdeploy executable"
+curl -fsSL https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-aarch64.AppImage -o /tmp/linuxdeploy-aarch64.AppImage
+chmod +x /tmp/linuxdeploy-aarch64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 /tmp/linuxdeploy-aarch64.AppImage --appimage-version
+
 npm install
 npm run tauri build -- --target aarch64-unknown-linux-gnu'
     ;;
