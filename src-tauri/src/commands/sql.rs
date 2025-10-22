@@ -54,7 +54,6 @@ pub struct SqlQueryOptions {
     pub max_rows: Option<usize>,
 }
 
-
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -63,7 +62,6 @@ pub struct SqlExportOptions {
     pub allow_write: bool,
     pub allow_ddl: bool,
 }
-
 
 #[derive(Serialize)]
 pub struct SqlExportResponse {
