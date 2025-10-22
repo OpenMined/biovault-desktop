@@ -132,36 +132,15 @@ jobs:
 
   linux-aarch64-release-dry-run:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-22.04
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Verify QEMU setup
-        run: |
-          echo "Checking binfmt_misc registration:"
-          ls -la /proc/sys/fs/binfmt_misc/ || true
-          if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-            echo "✓ qemu-aarch64 handler registered"
-            cat /proc/sys/fs/binfmt_misc/qemu-aarch64
-          else
-            echo "✗ qemu-aarch64 handler NOT registered"
-          fi
-          echo "Testing ARM64 container execution:"
-          docker run --rm --platform linux/arm64 alpine uname -m
-          echo "Checking qemu binary location:"
-          ls -la /usr/bin/qemu-aarch64* || echo "qemu-aarch64 not in /usr/bin"
-          which qemu-aarch64-static || echo "qemu-aarch64-static not in PATH"
-
       - name: Linux arm64 AppImage dry run
         run: |
           chmod +x docker/linux_arm64/*.sh
-          ./docker/linux_arm64/build-image.sh
-          ./docker/linux_arm64/build-appimage.sh
+          ./docker/linux_arm64/build-image.sh --arm64
+          ./docker/linux_arm64/build-appimage.sh --arm64

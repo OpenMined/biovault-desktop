@@ -38,15 +38,15 @@ BUILD_OUTPUT="${BUILD_OUTPUT:---load}"
 
 echo "[docker] Building ${IMAGE_NAME} (platform ${BUILD_PLATFORM})..."
 
-if command -v docker-buildx >/dev/null 2>&1 || docker buildx version >/dev/null 2>&1; then
-  docker buildx build \
+if [ "${BUILD_OUTPUT}" = "--load" ] && [ -z "${FORCE_BUILDX:-}" ]; then
+  DOCKER_BUILDKIT=0 docker build \
     --platform "${BUILD_PLATFORM}" \
-    ${BUILD_OUTPUT} \
     --tag "${IMAGE_NAME}" \
     "${CONTEXT_DIR}"
 else
-  docker build \
+  docker buildx build \
     --platform "${BUILD_PLATFORM}" \
+    ${BUILD_OUTPUT} \
     --tag "${IMAGE_NAME}" \
     "${CONTEXT_DIR}"
 fi

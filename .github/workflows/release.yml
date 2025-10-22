@@ -31,7 +31,7 @@ jobs:
           - runs-on: ubuntu-22.04
             args: "x86_64-unknown-linux-gnu"
             build_kind: tauri
-          - runs-on: ubuntu-22.04
+          - runs-on: macos-latest
             args: "aarch64-unknown-linux-gnu"
             build_kind: docker
     runs-on: ${{ matrix.runs-on }}
@@ -52,29 +52,6 @@ jobs:
       - name: Dry run mode notice
         if: ${{ inputs.dry_run }}
         run: echo "Dry run enabled - release artifacts will not be published."
-
-      - name: Set up QEMU
-        if: matrix.build_kind == 'docker'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Verify QEMU setup
-        if: matrix.build_kind == 'docker'
-        run: |
-          echo "Checking binfmt_misc registration:"
-          ls -la /proc/sys/fs/binfmt_misc/ || true
-          if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-            echo "✓ qemu-aarch64 handler registered"
-            cat /proc/sys/fs/binfmt_misc/qemu-aarch64
-          else
-            echo "✗ qemu-aarch64 handler NOT registered"
-          fi
-          echo "Testing ARM64 container execution:"
-          docker run --rm --platform linux/arm64 alpine uname -m
-          echo "Checking qemu binary location:"
-          ls -la /usr/bin/qemu-aarch64* || echo "qemu-aarch64 not in /usr/bin"
-          which qemu-aarch64-static || echo "qemu-aarch64-static not in PATH"
 
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
@@ -170,8 +147,8 @@ jobs:
         if: matrix.build_kind == 'docker'
         run: |
           chmod +x docker/linux_arm64/*.sh
-          ./docker/linux_arm64/build-image.sh
-          ./docker/linux_arm64/build-appimage.sh
+          ./docker/linux_arm64/build-image.sh --arm64
+          ./docker/linux_arm64/build-appimage.sh --arm64
 
           mkdir -p artifacts
 
