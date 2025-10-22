@@ -70,7 +70,11 @@ jobs:
           else
             echo "✗ qemu-aarch64 handler NOT registered"
           fi
-          docker run --rm arm64v8/alpine uname -m || echo "Failed to run ARM64 container"
+          echo "Testing ARM64 container execution:"
+          docker run --rm --platform linux/arm64 alpine uname -m
+          echo "Checking qemu binary location:"
+          ls -la /usr/bin/qemu-aarch64* || echo "qemu-aarch64 not in /usr/bin"
+          which qemu-aarch64-static || echo "qemu-aarch64-static not in PATH"
 
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
