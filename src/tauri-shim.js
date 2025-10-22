@@ -167,13 +167,56 @@ async function mockInvoke(cmd, args = {}) {
 		case 'get_command_logs':
 			return []
 		case 'get_settings':
-			return { data_dir: '/mock/data', cli_path: '/mock/bv' }
+			return {
+				docker_path: '/usr/local/bin/docker',
+				java_path: '/usr/bin/java',
+				syftbox_path: '/usr/local/bin/syftbox',
+				biovault_path: 'bv',
+				email: 'mock@example.com',
+				ai_api_url: 'https://openrouter.ai/api/v1/chat/completions',
+				ai_api_token: '',
+				ai_model: 'openrouter/auto',
+			}
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':
+<<<<<<< HEAD
 			// Default to true so main app loads
 			// Onboarding tests override this via __TEST_INVOKE_OVERRIDE__
 			return true
+=======
+			return false
+		case 'sql_list_tables':
+			return [{ name: 'participants' }, { name: 'measurements' }]
+		case 'sql_get_table_schema':
+			return {
+				columns: [
+					{ name: 'id', type: 'INTEGER', nullable: false, primary_key: true },
+					{ name: 'name', type: 'TEXT', nullable: true, primary_key: false },
+				],
+				indexes: ['idx_participants_name'],
+				foreign_keys: [],
+			}
+		case 'sql_run_query':
+			return {
+				operation: 'read',
+				headers: ['id', 'name'],
+				rows: [
+					['1', 'Alice'],
+					['2', 'Bob'],
+				],
+				total_rows: 2,
+				truncated: false,
+				execution_time_ms: 2,
+				affected_rows: null,
+				message: null,
+			}
+		case 'sql_export_query':
+			return {
+				path: args?.destination || '/tmp/query-results.csv',
+				rows_written: 2,
+			}
+>>>>>>> main
 		default:
 			console.warn(`[Mock] Unhandled command: ${cmd}`)
 			return null
@@ -185,6 +228,10 @@ const mockDialog = {
 	open: async (options) => {
 		console.log('[Mock] dialog.open:', options)
 		return null
+	},
+	save: async (options) => {
+		console.log('[Mock] dialog.save:', options)
+		return options?.defaultPath || 'mock-query-results.csv'
 	},
 	message: async (message, options) => {
 		console.log('[Mock] dialog.message called:', message, options)
