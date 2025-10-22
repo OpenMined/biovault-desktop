@@ -31,7 +31,7 @@ jobs:
           - runs-on: ubuntu-22.04
             args: "x86_64-unknown-linux-gnu"
             build_kind: tauri
-          - runs-on: macos-latest
+          - runs-on: ubuntu-22.04
             args: "aarch64-unknown-linux-gnu"
             build_kind: docker
     runs-on: ${{ matrix.runs-on }}
@@ -53,11 +53,15 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: echo "Dry run enabled - release artifacts will not be published."
 
-      - name: Install Docker
+      - name: Set up Docker Buildx
         if: matrix.build_kind == 'docker'
-        run: |
-          brew install docker colima qemu
-          colima start --cpu 4 --memory 8 --vm-type=qemu
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        if: matrix.build_kind == 'docker'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
@@ -153,7 +157,7 @@ jobs:
         if: matrix.build_kind == 'docker'
         run: |
           chmod +x docker/linux_arm64/*.sh
-          ./docker/linux_arm64/build-image.sh --arm64
+          FORCE_BUILDX=1 ./docker/linux_arm64/build-image.sh --arm64
           ./docker/linux_arm64/build-appimage.sh --arm64
 
           mkdir -p artifacts
