@@ -54,16 +54,14 @@ export function setupEventHandlers({
 	clearLogs,
 	// Settings
 	handleSyftBoxAuthentication,
+	saveSettings,
 	checkDependenciesForPanel,
 	getDependencyResults,
 	invoke,
 	dialog,
-	// Participants
-	getSelectedParticipants,
-	handleParticipantsSelectAll,
-	loadParticipantsView,
-	setParticipantsSearchTerm,
-	loadFiles,
+	// Data (unified participants + files)
+	_getSelectedParticipants,
+	_loadData,
 	// Messages module state
 	initializeMessagesTab,
 	updateComposeVisibilityPublic,
@@ -184,6 +182,23 @@ export function setupEventHandlers({
 		})
 	}
 
+	// Settings - Save changes
+	const settingsSaveBtn = document.getElementById('settings-save-btn')
+	if (settingsSaveBtn) {
+		settingsSaveBtn.addEventListener('click', async () => {
+			const originalText = settingsSaveBtn.textContent
+			settingsSaveBtn.disabled = true
+			settingsSaveBtn.textContent = 'Saving…'
+
+			try {
+				await saveSettings()
+			} finally {
+				settingsSaveBtn.disabled = false
+				settingsSaveBtn.textContent = originalText
+			}
+		})
+	}
+
 	// Settings - Check dependencies
 	const settingsCheckBtn = document.getElementById('settings-check-again-btn')
 	if (settingsCheckBtn) {
@@ -298,51 +313,7 @@ export function setupEventHandlers({
 	document.getElementById('copy-logs-btn').addEventListener('click', copyLogs)
 	document.getElementById('clear-logs-btn').addEventListener('click', clearLogs)
 
-	// Participants - Select all
-	const selectAllParticipantsTable = document.getElementById('select-all-participants-table')
-	if (selectAllParticipantsTable) {
-		selectAllParticipantsTable.addEventListener('change', (e) => {
-			handleParticipantsSelectAll(e.target.checked)
-		})
-	}
-
-	// Participants - Delete
-	const deleteParticipantsBtn = document.getElementById('delete-selected-participants-btn')
-	if (deleteParticipantsBtn) {
-		deleteParticipantsBtn.addEventListener('click', async () => {
-			const selected = getSelectedParticipants()
-			if (selected.length === 0) return
-
-			const confirmed = await dialog.confirm(
-				`Are you sure you want to delete ${selected.length} participant(s)? This will also delete all associated files.`,
-				{ title: 'Delete Participants', type: 'warning' },
-			)
-
-			if (confirmed) {
-				try {
-					const deleted = await invoke('delete_participants_bulk', {
-						participantIds: selected,
-					})
-					console.log(`Deleted ${deleted} participant(s)`)
-					await loadParticipantsView()
-					await loadFiles()
-				} catch (error) {
-					await dialog.message(`Error deleting participants: ${error}`, {
-						title: 'Error',
-						type: 'error',
-					})
-				}
-			}
-		})
-	}
-
-	// Participants - Search
-	const participantsSearchInput = document.getElementById('participants-search')
-	if (participantsSearchInput) {
-		participantsSearchInput.addEventListener('input', (e) => {
-			setParticipantsSearchTerm(e.target.value)
-		})
-	}
+	// Data view event handlers are now initialized in data.js via initializeDataTab()
 
 	// Import Modal - Open/Close
 	document.addEventListener('click', (e) => {

@@ -1,6 +1,14 @@
-export function createSettingsModule({ invoke, dialog, loadSavedDependencies }) {
+export function createSettingsModule({ invoke, dialog, loadSavedDependencies, onAiConfigUpdated }) {
 	let currentUserEmail = ''
 	let syftboxStatus = { running: false, mode: 'Direct' }
+	let currentSettings = null
+
+	function setSaveStatus(message, tone = 'info') {
+		const statusEl = document.getElementById('settings-save-status')
+		if (!statusEl) return
+		statusEl.textContent = message
+		statusEl.dataset.tone = tone
+	}
 
 	async function loadSettings() {
 		try {
@@ -8,8 +16,14 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies }) 
 			document.getElementById('config-path-display').textContent = configPath
 
 			const settings = await invoke('get_settings')
+			currentSettings = settings
 			document.getElementById('setting-email').value = settings.email || ''
 			currentUserEmail = settings.email || ''
+
+			document.getElementById('setting-ai-url').value = settings.ai_api_url || ''
+			document.getElementById('setting-ai-token').value = settings.ai_api_token || ''
+			document.getElementById('setting-ai-model').value = settings.ai_model || ''
+			setSaveStatus('', 'info')
 
 			loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
 
@@ -117,6 +131,36 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies }) 
 		})
 	}
 
+	async function saveSettingsChanges() {
+		if (!currentSettings) {
+			currentSettings = await invoke('get_settings').catch(() => ({}))
+		}
+
+		const email = document.getElementById('setting-email').value.trim()
+		const aiApiUrl = document.getElementById('setting-ai-url').value.trim()
+		const aiApiToken = document.getElementById('setting-ai-token').value.trim()
+		const aiModel = document.getElementById('setting-ai-model').value.trim()
+
+		const settings = {
+			...(currentSettings || {}),
+			email,
+			ai_api_url: aiApiUrl,
+			ai_api_token: aiApiToken,
+			ai_model: aiModel,
+		}
+
+		try {
+			await invoke('save_settings', { settings })
+			currentSettings = settings
+			currentUserEmail = email
+			setSaveStatus('Settings saved successfully.', 'success')
+			onAiConfigUpdated?.()
+		} catch (error) {
+			console.error('Error saving settings:', error)
+			setSaveStatus(error?.message || 'Failed to save settings.', 'error')
+		}
+	}
+
 	function getCurrentUserEmail() {
 		return currentUserEmail
 	}
@@ -136,5 +180,6 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies }) 
 		getCurrentUserEmail,
 		getSyftboxStatus,
 		setSyftboxStatus,
+		saveSettings: saveSettingsChanges,
 	}
 }

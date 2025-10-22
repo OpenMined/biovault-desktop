@@ -28,6 +28,7 @@ use commands::participants::*;
 use commands::projects::*;
 use commands::runs::*;
 use commands::settings::*;
+use commands::sql::*;
 use commands::syftbox::*;
 
 // BioVault CLI library imports
@@ -382,6 +383,11 @@ pub fn run() {
             get_run_logs_tail,
             get_run_logs_full,
             delete_run,
+            // SQL commands
+            sql_list_tables,
+            sql_get_table_schema,
+            sql_run_query,
+            sql_export_query,
             // Settings commands
             get_settings,
             save_settings,

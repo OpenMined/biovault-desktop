@@ -3,12 +3,13 @@ export function createDashboardShell({
 	getIsImportInProgress,
 	setIsImportInProgress,
 	loadParticipants,
-	loadFiles,
+	_loadFiles,
 	loadProjects,
 	prepareRunView,
 	loadRuns,
 	displayLogs,
 	loadSettings,
+	loadSql,
 	initializeMessagesTab,
 	getMessagesInitialized,
 	getMessagesAuthorized,
@@ -68,11 +69,8 @@ export function createDashboardShell({
 		}
 
 		switch (targetView) {
-			case 'participants':
-				loadParticipants?.()
-				break
-			case 'files':
-				loadFiles?.()
+			case 'data':
+				loadParticipants?.() // loadParticipants is actually loadData now
 				break
 			case 'projects':
 				loadProjects?.()
@@ -88,6 +86,9 @@ export function createDashboardShell({
 				break
 			case 'settings':
 				loadSettings?.()
+				break
+			case 'sql':
+				loadSql?.()
 				break
 			case 'messages': {
 				const initialized = getMessagesInitialized?.()
