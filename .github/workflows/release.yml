@@ -59,6 +59,19 @@ jobs:
         with:
           platforms: arm64
 
+      - name: Verify QEMU setup
+        if: matrix.build_kind == 'docker'
+        run: |
+          echo "Checking binfmt_misc registration:"
+          ls -la /proc/sys/fs/binfmt_misc/ || true
+          if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+            echo "✓ qemu-aarch64 handler registered"
+            cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+          else
+            echo "✗ qemu-aarch64 handler NOT registered"
+          fi
+          docker run --rm arm64v8/alpine uname -m || echo "Failed to run ARM64 container"
+
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
         uses: apple-actions/import-codesign-certs@v3

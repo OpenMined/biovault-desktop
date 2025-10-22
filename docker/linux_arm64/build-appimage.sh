@@ -94,14 +94,34 @@ export RUST_BACKTRACE=1
 export RUST_LOG=tauri_bundler=debug
 
 ARCH="$(uname -m)"
+echo "[preflight] Architecture: ${ARCH}"
+
+# Check QEMU/binfmt setup
+echo "[preflight] Checking QEMU ARM64 support:"
+if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+  echo "  ✓ binfmt_misc qemu-aarch64 handler is registered"
+  cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+else
+  echo "  ✗ binfmt_misc qemu-aarch64 handler NOT found"
+  echo "  Available handlers:"
+  ls -la /proc/sys/fs/binfmt_misc/ 2>/dev/null || echo "  binfmt_misc not available"
+fi
+
+# Test if we can run ARM64 binaries
+if [ "${ARCH}" != "aarch64" ] && [ "${ARCH}" != "arm64" ]; then
+  echo "[preflight] Testing ARM64 binary execution:"
+  if command -v qemu-aarch64-static >/dev/null 2>&1; then
+    echo "  ✓ qemu-aarch64-static is available"
+  else
+    echo "  ✗ qemu-aarch64-static NOT found"
+  fi
+fi
+
 case "${ARCH}" in
   aarch64|arm64)
     export APPIMAGE_EXTRACT_AND_RUN=1
     ;;
 esac
-
-echo "[preflight] Architecture: ${ARCH}, binfmt status:"
-ls -la /proc/sys/fs/binfmt_misc/ 2>/dev/null || echo "binfmt_misc not available"
 
 npm install
 npm run tauri build -- --target aarch64-unknown-linux-gnu
