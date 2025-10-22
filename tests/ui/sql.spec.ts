@@ -71,12 +71,22 @@ test.describe('SQL tab', () => {
 		})
 
 		await page.goto('/')
-		await expect(page.locator('.tabs')).toBeVisible()
+		await expect(page.locator('.app-sidebar')).toBeVisible()
 	})
 
 	test('displays tables, schema, and query results', async ({ page }) => {
-		await page.getByRole('button', { name: 'SQL' }).click()
+		// First make sure workbench panel exists
+		await expect(page.locator('.workbench-panel')).toBeVisible()
 
+		// Click SQL in the workbench (bottom panel)
+		const sqlTab = page.locator('.workbench-tab[data-workbench-tab="sql"]')
+		await expect(sqlTab).toBeVisible()
+		await sqlTab.click()
+
+		// Wait a moment for panel to expand and content to load
+		await page.waitForTimeout(500)
+
+		// Wait for SQL table list to be visible (which means panel expanded and SQL loaded)
 		const tableList = page.locator('#sql-table-list .sql-table-btn')
 		await expect(tableList).toHaveCount(2)
 		await expect(tableList.nth(0)).toHaveText('participants')
@@ -91,9 +101,20 @@ test.describe('SQL tab', () => {
 	})
 
 	test('AI assistant populates the SQL editor', async ({ page }) => {
-		await page.getByRole('button', { name: 'SQL' }).click()
+		// First make sure workbench panel exists
+		await expect(page.locator('.workbench-panel')).toBeVisible()
 
+		// Click SQL in the workbench (bottom panel)
+		const sqlTab = page.locator('.workbench-tab[data-workbench-tab="sql"]')
+		await expect(sqlTab).toBeVisible()
+		await sqlTab.click()
+
+		// Wait a moment for panel to expand and content to load
+		await page.waitForTimeout(500)
+
+		// Wait for SQL AI prompt to be visible (which means panel expanded and SQL loaded)
 		const prompt = page.locator('#sql-ai-prompt')
+		await expect(prompt).toBeVisible()
 		await prompt.fill('Show latest participant records.')
 		await page.locator('#sql-ai-submit-btn').click()
 

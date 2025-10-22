@@ -288,7 +288,7 @@ test.describe('Import Data workflow', () => {
 		})
 
 		// Navigate to data view first
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
 
 		// Click the import button to open modal
 		const openImportBtn = page.locator('#open-import-modal-btn')
@@ -493,7 +493,7 @@ test.describe('Import Data workflow', () => {
 		)
 
 		// Navigate to Data view and re-open import modal
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
 		await openImportBtn.click()
 		await expect(importModal).not.toHaveAttribute('hidden')
 
@@ -516,7 +516,7 @@ test.describe('Import Data workflow', () => {
 		await expect(importModal).toHaveAttribute('hidden', '')
 
 		// Delete all data (select all files and delete)
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
 		// Make sure we're showing all files by clicking the "All Files" view button
 		const viewAllBtn = page.locator('#view-all-btn')
 		if (!(await viewAllBtn.getAttribute('class'))?.includes('active')) {

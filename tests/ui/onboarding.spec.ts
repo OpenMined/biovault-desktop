@@ -193,9 +193,12 @@ test.describe('Onboarding flow', () => {
 		await page.locator('#verify-code-btn').click()
 		const errorMessage = page.locator('#syftbox-error-message')
 		await expect(errorMessage).toHaveText('Invalid verification code. Please try again.')
-		const dialogPromise = page.waitForEvent('dialog')
+
+		// Set up dialog handler BEFORE clicking resend button
+		page.once('dialog', (dialog) => dialog.accept())
 		await page.locator('#resend-code-btn').click()
-		await (await dialogPromise).accept()
+
+		// Wait for inputs to be cleared (confirmation that resend worked)
 		const inputs = page.locator('.syftbox-code-input')
 		await expect(inputs.first()).toHaveValue('')
 		await expect(page.locator('#verify-code-btn')).toBeDisabled()
