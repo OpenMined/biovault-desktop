@@ -4,41 +4,23 @@ export function createDataModule({ invoke, dialog }) {
 	// State
 	let allParticipants = []
 	let allFiles = []
-	let selectedForDelete = [] // Can include both participant IDs and file IDs
-	let expandedParticipants = new Set()
+	let selectedParticipantIds = [] // IDs of selected participants (for filtering view)
+	let selectedFileIds = [] // File IDs selected for workflows/operations
+	let showAllFiles = false // Toggle between "selected participants" and "all files"
+	let participantFilter = 'all' // Filter for participant sidebar
+	let participantSearchTerm = ''
 	let currentDataTypeFilter = 'All'
+	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
-	let searchTerm = ''
 	let queueProcessorRunning = false
 	let queueIntervalId = null
 	let existingFilePaths = new Set()
 
-	// Helper: Group files by participant
-	function groupFilesByParticipant() {
-		const grouped = new Map()
+	// ============================================================================
+	// HELPERS
+	// ============================================================================
 
-		// Key by participant_id string (e.g., "P001"), not numeric id
-		allParticipants.forEach((p) => {
-			grouped.set(p.participant_id, {
-				participant: p,
-				files: [],
-			})
-		})
-
-		allFiles.forEach((file) => {
-			if (file.participant_id) {
-				const group = grouped.get(file.participant_id)
-				if (group) {
-					group.files.push(file)
-				}
-			}
-		})
-
-		return Array.from(grouped.values())
-	}
-
-	// Helper: Get aggregated status for participant
 	function getParticipantStatus(files) {
 		if (files.length === 0) return 'unknown'
 		const statuses = files.map((f) => f.status)
@@ -49,30 +31,8 @@ export function createDataModule({ invoke, dialog }) {
 		return 'mixed'
 	}
 
-	// Helper: Get sort value for participant group
-	function getGroupSortValue(group, field) {
-		const { participant, files } = group
-
-		switch (field) {
-			case 'id':
-				return participant.id
-			case 'participant_id':
-				return (participant.participant_id || '').toLowerCase()
-			case 'status': {
-				const status = getParticipantStatus(files)
-				return FILE_STATUS_PRIORITY[status] ?? Number.MAX_SAFE_INTEGER
-			}
-			case 'file_count':
-				return files.length
-			case 'created_at':
-				return participant.created_at ? Date.parse(participant.created_at) : null
-			default:
-				// For file-level fields, use first file's value
-				if (files.length > 0) {
-					return getFileSortValue(files[0], field)
-				}
-				return null
-		}
+	function getFilesForParticipant(participantId) {
+		return allFiles.filter((f) => f.participant_id === participantId)
 	}
 
 	function getFileSortValue(file, field) {
@@ -95,6 +55,8 @@ export function createDataModule({ invoke, dialog }) {
 				return file.chromosome_count ?? null
 			case 'inferred_sex':
 				return (file.inferred_sex || '').toLowerCase()
+			case 'participant_id':
+				return (file.participant_id || '').toLowerCase()
 			case 'created_at':
 				return file.created_at ? Date.parse(file.created_at) : null
 			default:
@@ -120,10 +82,10 @@ export function createDataModule({ invoke, dialog }) {
 		return a.localeCompare(b, undefined, { sensitivity: 'base' })
 	}
 
-	function sortGroups(groups) {
-		groups.sort((a, b) => {
-			const valA = getGroupSortValue(a, sortField)
-			const valB = getGroupSortValue(b, sortField)
+	function sortFiles(files) {
+		files.sort((a, b) => {
+			const valA = getFileSortValue(a, sortField)
+			const valB = getFileSortValue(b, sortField)
 
 			let comparison
 			if (typeof valA === 'number' || typeof valB === 'number') {
@@ -133,7 +95,7 @@ export function createDataModule({ invoke, dialog }) {
 			}
 
 			if (comparison === 0) {
-				comparison = compareNullableNumbers(a.participant.id, b.participant.id)
+				comparison = compareNullableNumbers(a.id, b.id)
 			}
 
 			return sortDirection === 'asc' ? comparison : -comparison
@@ -147,43 +109,57 @@ export function createDataModule({ invoke, dialog }) {
 		return 'asc'
 	}
 
-	function matchesSearch(group) {
-		if (!searchTerm) return true
-		const term = searchTerm.toLowerCase()
+	// ============================================================================
+	// FILTERING
+	// ============================================================================
 
-		// Search in participant
-		const participant = group.participant
-		const participantValues = [participant.id, participant.participant_id, participant.created_at]
+	function matchesParticipantSearch(participant) {
+		if (!participantSearchTerm) return true
+		const term = participantSearchTerm.toLowerCase()
+		const values = [participant.id, participant.participant_id, participant.created_at]
+		return values.some((v) => v && v.toString().toLowerCase().includes(term))
+	}
 
-		if (participantValues.some((v) => v && v.toString().toLowerCase().includes(term))) {
-			return true
+	function matchesParticipantFilter(participant) {
+		const files = getFilesForParticipant(participant.participant_id)
+
+		switch (participantFilter) {
+			case 'all':
+				return true
+			case 'genotype':
+				return files.some((f) => f.data_type === 'Genotype')
+			case 'incomplete':
+				return files.some((f) => f.status === 'pending' || f.status === 'error')
+			default:
+				return true
 		}
-
-		// Search in files
-		return group.files.some((file) => {
-			const fileValues = [
-				file.id,
-				file.status,
-				file.file_path,
-				file.data_type,
-				file.source,
-				file.grch_version,
-				file.row_count,
-				file.chromosome_count,
-				file.inferred_sex,
-				file.file_hash,
-				file.created_at,
-			]
-			return fileValues.some((v) => v && v.toString().toLowerCase().includes(term))
-		})
 	}
 
-	function matchesDataTypeFilter(group) {
+	function matchesFileSearch(file) {
+		if (!fileSearchTerm) return true
+		const term = fileSearchTerm.toLowerCase()
+		const values = [
+			file.id,
+			file.status,
+			file.file_path,
+			file.data_type,
+			file.source,
+			file.grch_version,
+			file.participant_id,
+			file.inferred_sex,
+		]
+		return values.some((v) => v && v.toString().toLowerCase().includes(term))
+	}
+
+	function matchesDataTypeFilter(file) {
 		if (currentDataTypeFilter === 'All') return true
-		return group.files.some((f) => f.data_type === currentDataTypeFilter)
+		return file.data_type === currentDataTypeFilter
 	}
 
-	// Render status badge
+	// ============================================================================
+	// RENDERING - STATUS BADGE
+	// ============================================================================
+
 	function renderStatusBadge(status, error = null) {
 		const badges = {
 			pending: '<span class="status-badge status-pending" title="Pending">⏳ PENDING</span>',
@@ -197,40 +173,178 @@ export function createDataModule({ invoke, dialog }) {
 		return badges[status] || badges.unknown
 	}
 
-	// Render file row
-	function renderFileRow(file, isNested = false) {
+	// ============================================================================
+	// RENDERING - PARTICIPANTS SIDEBAR
+	// ============================================================================
+
+	function renderParticipantItem(participant) {
+		const files = getFilesForParticipant(participant.participant_id)
+		const status = getParticipantStatus(files)
+		const isSelected = selectedParticipantIds.includes(participant.id)
+
+		const item = document.createElement('div')
+		item.className = `participant-item ${isSelected ? 'selected' : ''}`
+		item.dataset.participantId = participant.id
+
+		const fileCountText = files.length === 1 ? '1 file' : `${files.length} files`
+
+		item.innerHTML = `
+			<div class="participant-checkbox">
+				<input type="checkbox" ${isSelected ? 'checked' : ''} />
+			</div>
+			<div class="participant-info">
+				<div class="participant-name">${participant.participant_id}</div>
+				<div class="participant-meta">
+					<span class="file-count">${fileCountText}</span>
+					<span class="status-dot status-${status}"></span>
+				</div>
+			</div>
+			<div class="participant-status">
+				${renderStatusBadge(status)}
+			</div>
+		`
+
+		// Click handler for entire item
+		item.addEventListener('click', (e) => {
+			// Don't toggle if clicking checkbox directly (it handles itself)
+			if (e.target.type === 'checkbox') return
+
+			const checkbox = item.querySelector('input[type="checkbox"]')
+			checkbox.checked = !checkbox.checked
+			checkbox.dispatchEvent(new Event('change'))
+		})
+
+		// Checkbox change handler - selects/deselects ALL FILES for this participant
+		const checkbox = item.querySelector('input[type="checkbox"]')
+		checkbox.addEventListener('change', (e) => {
+			e.stopPropagation()
+			const participantId = parseInt(participant.id)
+			const participantFiles = getFilesForParticipant(participant.participant_id)
+
+			if (e.target.checked) {
+				// Select all files for this participant
+				participantFiles.forEach((file) => {
+					if (!selectedFileIds.includes(file.id)) {
+						selectedFileIds.push(file.id)
+					}
+				})
+				if (!selectedParticipantIds.includes(participantId)) {
+					selectedParticipantIds.push(participantId)
+				}
+				// Auto-switch to "Selected" view when user selects a participant
+				if (showAllFiles) {
+					showAllFiles = false
+					updateShowAllFilesButton()
+				}
+			} else {
+				// Deselect all files for this participant
+				const fileIdsToRemove = participantFiles.map((f) => f.id)
+				selectedFileIds = selectedFileIds.filter((id) => !fileIdsToRemove.includes(id))
+				selectedParticipantIds = selectedParticipantIds.filter((id) => id !== participantId)
+			}
+
+			renderFilesPanel()
+			updateActionButtons()
+		})
+
+		return item
+	}
+
+	function renderParticipantsSidebar() {
+		const listContainer = document.getElementById('participants-list')
+		if (!listContainer) return
+
+		listContainer.innerHTML = ''
+
+		// Filter participants
+		const filtered = allParticipants
+			.filter(matchesParticipantSearch)
+			.filter(matchesParticipantFilter)
+
+		// Sort by participant_id
+		filtered.sort((a, b) => {
+			const idA = (a.participant_id || '').toLowerCase()
+			const idB = (b.participant_id || '').toLowerCase()
+			return idA.localeCompare(idB)
+		})
+
+		filtered.forEach((participant) => {
+			const item = renderParticipantItem(participant)
+			listContainer.appendChild(item)
+		})
+
+		// Update participant checkboxes based on file selections (only when in Selected view)
+		setTimeout(() => updateParticipantCheckboxes(), 0)
+
+		// Participant count is updated in loadData() - shows total, not filtered
+	}
+
+	function updateParticipantCheckboxes() {
+		// Only update participant checkboxes when in "Selected" view
+		// In "All Files" view, participant list is dimmed and shouldn't update
+		if (showAllFiles) return
+
+		allParticipants.forEach((participant) => {
+			const item = document.querySelector(
+				`.participant-item[data-participant-id="${participant.id}"]`,
+			)
+			if (!item) return
+
+			const checkbox = item.querySelector('input[type="checkbox"]')
+			if (!checkbox) return
+
+			const participantFiles = getFilesForParticipant(participant.participant_id)
+			const allFilesSelected =
+				participantFiles.length > 0 &&
+				participantFiles.every((file) => selectedFileIds.includes(file.id))
+			const someFilesSelected = participantFiles.some((file) => selectedFileIds.includes(file.id))
+
+			checkbox.checked = allFilesSelected
+			checkbox.indeterminate = someFilesSelected && !allFilesSelected
+
+			// Update selection state for visual feedback
+			if (allFilesSelected || someFilesSelected) {
+				item.classList.add('selected')
+			} else {
+				item.classList.remove('selected')
+			}
+		})
+	}
+
+	// ============================================================================
+	// RENDERING - FILES TABLE
+	// ============================================================================
+
+	function renderFileRow(file) {
 		const row = document.createElement('tr')
-		row.className = isNested ? 'nested-file-row' : 'file-row'
+		row.className = 'file-row'
 		row.dataset.fileId = file.id
+
+		const isSelected = selectedFileIds.includes(file.id)
+		if (isSelected) row.classList.add('selected')
 
 		const statusBadge = renderStatusBadge(file.status, file.processing_error)
 
-		const indent = isNested ? '<span class="file-indent">└─</span>' : ''
-
-		const createdDate = file.created_at ? file.created_at.split(' ')[0] : '-'
-
 		row.innerHTML = `
-			<td class="checkbox-cell">${
-				isNested
-					? ''
-					: `<input type="checkbox" class="item-checkbox" data-type="file" data-id="${file.id}" />`
-			}</td>
+			<td class="checkbox-cell">
+				<input type="checkbox" class="file-checkbox" data-id="${file.id}" ${isSelected ? 'checked' : ''} />
+			</td>
 			<td>${file.id}</td>
 			<td>${statusBadge}</td>
-			<td>${isNested ? '-' : file.participant_id || '-'}</td>
-			<td title="${file.file_path}">${indent}${file.file_path.split('/').pop()}</td>
+			<td><strong>${file.participant_id || '-'}</strong></td>
+			<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
+			<td>
+				<span class="type-badge type-${(file.data_type || 'unknown').toLowerCase()}">
+					${file.data_type || 'Unknown'}
+				</span>
+			</td>
 			<td>${file.source || '-'}</td>
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-						? '#e83e8c'
-						: '#666'
-			}">${file.inferred_sex || '-'}</td>
-			<td>${createdDate}</td>
+			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+		}">${file.inferred_sex || '-'}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${
 					file.file_path
@@ -238,7 +352,7 @@ export function createDataModule({ invoke, dialog }) {
 			</td>
 		`
 
-		// Add event listener for open finder button
+		// Open finder button
 		row.querySelector('.open-finder-btn').addEventListener('click', async () => {
 			try {
 				await invoke('show_in_folder', { filePath: file.file_path })
@@ -247,143 +361,32 @@ export function createDataModule({ invoke, dialog }) {
 			}
 		})
 
-		if (!isNested) {
-			const checkbox = row.querySelector('.item-checkbox')
-
-			// Make entire row clickable (except buttons)
-			row.addEventListener('click', (e) => {
-				// Don't toggle if clicking on checkbox, button, or actions cell
-				if (
-					e.target.tagName === 'INPUT' ||
-					e.target.tagName === 'BUTTON' ||
-					e.target.closest('.actions-cell') ||
-					e.target.closest('.checkbox-cell')
-				) {
-					return
+		// Checkbox handler
+		const checkbox = row.querySelector('.file-checkbox')
+		checkbox.addEventListener('change', (e) => {
+			const fileId = parseInt(e.target.dataset.id)
+			if (e.target.checked) {
+				if (!selectedFileIds.includes(fileId)) {
+					selectedFileIds.push(fileId)
 				}
-				checkbox.checked = !checkbox.checked
-				checkbox.dispatchEvent(new Event('change'))
-			})
+				row.classList.add('selected')
+			} else {
+				selectedFileIds = selectedFileIds.filter((id) => id !== fileId)
+				row.classList.remove('selected')
+			}
+			updateDeleteButton()
+			updateSelectAllCheckbox()
+			updateActionButtons()
+			updateParticipantCheckboxes()
+		})
 
-			checkbox.addEventListener('change', (e) => {
-				const fileId = parseInt(e.target.dataset.id)
-				if (e.target.checked) {
-					if (!selectedForDelete.includes(`file-${fileId}`)) {
-						selectedForDelete.push(`file-${fileId}`)
-					}
-					row.classList.add('selected')
-				} else {
-					selectedForDelete = selectedForDelete.filter((x) => x !== `file-${fileId}`)
-					row.classList.remove('selected')
-				}
-				updateDeleteButton()
-			})
-
-			row.style.cursor = 'pointer'
-		}
-
-		return row
-	}
-
-	// Render participant group
-	function renderParticipantGroup(group) {
-		const { participant, files } = group
-		const filteredFiles =
-			currentDataTypeFilter === 'All'
-				? files
-				: files.filter((f) => f.data_type === currentDataTypeFilter)
-
-		if (filteredFiles.length === 0) return []
-
-		const rows = []
-		const status = getParticipantStatus(filteredFiles)
-		const isExpanded = expandedParticipants.has(participant.id)
-		const isSingleFile = filteredFiles.length === 1
-
-		// Create main participant row
-		const mainRow = document.createElement('tr')
-		mainRow.className = 'participant-row'
-		mainRow.dataset.participantId = participant.id
-
-		const statusBadge = renderStatusBadge(status)
-		const expandIcon = isSingleFile ? '→' : isExpanded ? '▼' : `▶ (${filteredFiles.length})`
-
-		// For single file, show file info inline
-		if (isSingleFile) {
-			const file = filteredFiles[0]
-			const createdDate = participant.created_at ? participant.created_at.split(' ')[0] : '-'
-
-			mainRow.innerHTML = `
-				<td class="checkbox-cell"><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${
-					participant.id
-				}" /></td>
-				<td>${participant.id}</td>
-				<td>${renderStatusBadge(file.status, file.processing_error)}</td>
-				<td><strong>${participant.participant_id}</strong></td>
-				<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
-				<td>${file.source || '-'}</td>
-				<td>${file.grch_version || '-'}</td>
-				<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
-				<td>${file.chromosome_count || '-'}</td>
-				<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-					file.inferred_sex === 'Male'
-						? '#007bff'
-						: file.inferred_sex === 'Female'
-							? '#e83e8c'
-							: '#666'
-				}">${file.inferred_sex || '-'}</td>
-				<td>${createdDate}</td>
-				<td class="actions-cell">
-					<button class="btn-icon open-finder-btn" data-path="${
-						file.file_path
-					}" title="Show in folder">📁</button>
-				</td>
-			`
-
-			mainRow.querySelector('.open-finder-btn').addEventListener('click', async () => {
-				try {
-					await invoke('show_in_folder', { filePath: file.file_path })
-				} catch (error) {
-					alert(`Error opening folder: ${error}`)
-				}
-			})
-		} else {
-			// Multiple files - show participant row with expand toggle
-			const createdDate = participant.created_at ? participant.created_at.split(' ')[0] : '-'
-
-			mainRow.innerHTML = `
-				<td class="checkbox-cell"><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${participant.id}" /></td>
-				<td>${participant.id}</td>
-				<td>${statusBadge}</td>
-				<td class="expandable-cell"><span class="expand-icon">${expandIcon}</span> <strong>${participant.participant_id}</strong></td>
-				<td colspan="6" class="text-muted">${filteredFiles.length} files</td>
-				<td>${createdDate}</td>
-				<td></td>
-			`
-
-			// Add expand/collapse functionality
-			mainRow.querySelector('.expandable-cell').addEventListener('click', () => {
-				if (expandedParticipants.has(participant.id)) {
-					expandedParticipants.delete(participant.id)
-				} else {
-					expandedParticipants.add(participant.id)
-				}
-				renderDataTable()
-			})
-		}
-
-		// Add checkbox listener and row click functionality
-		const checkbox = mainRow.querySelector('.item-checkbox')
-
-		// Make entire row clickable (except actions and expandable cells)
-		mainRow.addEventListener('click', (e) => {
-			// Don't toggle if clicking on checkbox, button, actions, or expandable cell
+		// Make row clickable (except buttons and checkbox)
+		row.addEventListener('click', (e) => {
 			if (
 				e.target.tagName === 'INPUT' ||
 				e.target.tagName === 'BUTTON' ||
 				e.target.closest('.actions-cell') ||
-				e.target.closest('.checkbox-cell') ||
-				e.target.closest('.expandable-cell')
+				e.target.closest('.checkbox-cell')
 			) {
 				return
 			}
@@ -391,109 +394,91 @@ export function createDataModule({ invoke, dialog }) {
 			checkbox.dispatchEvent(new Event('change'))
 		})
 
-		checkbox.addEventListener('change', (e) => {
-			const participantId = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedForDelete.includes(`participant-${participantId}`)) {
-					selectedForDelete.push(`participant-${participantId}`)
-				}
-				mainRow.classList.add('selected')
-			} else {
-				selectedForDelete = selectedForDelete.filter((x) => x !== `participant-${participantId}`)
-				mainRow.classList.remove('selected')
-			}
-			updateDeleteButton()
-		})
+		row.style.cursor = 'pointer'
 
-		mainRow.style.cursor = 'pointer'
-
-		rows.push(mainRow)
-
-		// Add nested file rows if expanded
-		if (!isSingleFile && isExpanded) {
-			filteredFiles.forEach((file) => {
-				const fileRow = renderFileRow(file, true)
-				rows.push(fileRow)
-			})
-		}
-
-		return rows
+		return row
 	}
 
-	async function loadData() {
-		try {
-			const [participants, files] = await Promise.all([
-				invoke('get_participants'),
-				invoke('get_files'),
-			])
+	function renderFilesPanel() {
+		const tbody = document.getElementById('files-table-body')
+		const emptyState = document.getElementById('files-empty-state')
+		const tableWrapper = document.querySelector('.files-table-wrapper')
+		const panelTitle = document.getElementById('files-panel-title')
 
-			allParticipants = participants
-			allFiles = files
-			existingFilePaths = new Set(files.map((f) => f.file_path))
-
-			renderDataTable()
-		} catch (error) {
-			console.error('Error loading data:', error)
-		}
-	}
-
-	function renderDataTable() {
-		const tbody = document.getElementById('data-table')
 		if (!tbody) return
 
 		tbody.innerHTML = ''
 
-		// Clean up selection
-		selectedForDelete = selectedForDelete.filter((id) => {
-			if (id.startsWith('participant-')) {
-				const pId = parseInt(id.split('-')[1])
-				return allParticipants.some((p) => p.id === pId)
-			} else if (id.startsWith('file-')) {
-				const fId = parseInt(id.split('-')[1])
-				return allFiles.some((f) => f.id === fId)
+		// Get files to display
+		let filesToDisplay = []
+
+		if (showAllFiles) {
+			// Show all files
+			filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
+			panelTitle.textContent = `All Files (${filesToDisplay.length})`
+		} else {
+			// Show files for selected participants only
+			if (selectedParticipantIds.length === 0) {
+				// No participants selected - show empty state
+				tableWrapper.style.display = 'none'
+				emptyState.style.display = 'flex'
+				document.getElementById('empty-state-title').textContent = 'No participants selected'
+				document.getElementById('empty-state-message').textContent =
+					'Select participants from the sidebar to view their files, or click "Show All Files"'
+				document.getElementById('file-count').textContent = '0'
+				return
 			}
-			return false
-		})
 
-		// Group and filter
-		const groups = groupFilesByParticipant()
-		const filtered = groups.filter(matchesSearch).filter(matchesDataTypeFilter)
+			const selectedParticipantStrings = selectedParticipantIds.map((id) => {
+				const p = allParticipants.find((p) => p.id === id)
+				return p ? p.participant_id : null
+			})
 
-		sortGroups(filtered)
+			filesToDisplay = allFiles
+				.filter((f) => selectedParticipantStrings.includes(f.participant_id))
+				.filter(matchesDataTypeFilter)
+				.filter(matchesFileSearch)
 
-		// Render all rows
-		filtered.forEach((group) => {
-			const rows = renderParticipantGroup(group)
-			rows.forEach((row) => tbody.appendChild(row))
-		})
-
-		// Update counts and UI
-		const totalCount = filtered.reduce((sum, g) => {
-			const fileCount =
-				currentDataTypeFilter === 'All'
-					? g.files.length
-					: g.files.filter((f) => f.data_type === currentDataTypeFilter).length
-			return sum + fileCount
-		}, 0)
-		document.getElementById('data-count').textContent = totalCount
-
-		const pendingCount = allFiles.filter((f) => f.status === 'pending').length
-		document.getElementById('pending-count').textContent = pendingCount
-
-		const processQueueBtn = document.getElementById('process-queue-btn')
-		if (processQueueBtn) {
-			processQueueBtn.style.display = pendingCount > 0 ? 'flex' : 'none'
+			const participantText =
+				selectedParticipantIds.length === 1
+					? '1 participant'
+					: `${selectedParticipantIds.length} participants`
+			panelTitle.textContent = `Files for ${participantText} (${filesToDisplay.length})`
 		}
 
-		const spinner = document.getElementById('queue-spinner')
-		if (spinner) {
-			spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
+		// Clean up file selections (remove files that don't exist anymore)
+		selectedFileIds = selectedFileIds.filter((id) => allFiles.some((f) => f.id === id))
+
+		// Sort files
+		sortFiles(filesToDisplay)
+
+		// Render files
+		if (filesToDisplay.length === 0) {
+			tableWrapper.style.display = 'none'
+			emptyState.style.display = 'flex'
+			document.getElementById('empty-state-title').textContent = 'No files found'
+			document.getElementById('empty-state-message').textContent =
+				'Try adjusting your filters or search term'
+		} else {
+			tableWrapper.style.display = 'block'
+			emptyState.style.display = 'none'
+
+			filesToDisplay.forEach((file) => {
+				const row = renderFileRow(file)
+				tbody.appendChild(row)
+			})
 		}
 
 		updateSortIndicators()
-		updateDeleteButton()
 		updateSelectAllCheckbox()
+		updateDeleteButton()
+		updateActionButtons()
+		updateParticipantCheckboxes()
 	}
+
+	// ============================================================================
+	// UI UPDATES
+	// ============================================================================
 
 	function updateSortIndicators() {
 		document.querySelectorAll('.sortable-header').forEach((header) => {
@@ -510,44 +495,44 @@ export function createDataModule({ invoke, dialog }) {
 
 	function updateDeleteButton() {
 		const btn = document.getElementById('delete-selected-btn')
-		const runBtn = document.getElementById('run-analysis-btn')
+		if (!btn) return
 
-		const participantCount = selectedForDelete.filter((id) => id.startsWith('participant-')).length
-
-		if (selectedForDelete.length > 0) {
-			btn.style.display = 'block'
-			btn.textContent = `Delete Selected (${selectedForDelete.length})`
-
-			if (participantCount > 0 && runBtn) {
-				runBtn.style.display = 'flex'
-				runBtn.textContent = `🔬 Run Analysis (${participantCount})`
-			}
+		if (selectedFileIds.length > 0) {
+			btn.style.display = 'flex'
+			btn.textContent = `Delete (${selectedFileIds.length})`
 		} else {
 			btn.style.display = 'none'
-			if (runBtn) {
-				runBtn.style.display = 'none'
-			}
+		}
+	}
+
+	function updateActionButtons() {
+		const runBtn = document.getElementById('run-analysis-btn')
+		const runText = document.getElementById('run-analysis-text')
+
+		const fileCount = selectedFileIds.length
+		if (fileCount > 0) {
+			runBtn.disabled = false
+			runText.textContent = `Run Workflow (${fileCount} ${fileCount === 1 ? 'file' : 'files'})`
+		} else {
+			runBtn.disabled = true
+			runText.textContent = 'Run Workflow'
 		}
 	}
 
 	function updateSelectAllCheckbox() {
-		const selectAllHeader = document.getElementById('select-all-data-table')
-		if (!selectAllHeader) return
+		const selectAllCheckbox = document.getElementById('select-all-files')
+		if (!selectAllCheckbox) return
 
-		const groups = groupFilesByParticipant()
-		const filtered = groups.filter(matchesSearch).filter(matchesDataTypeFilter)
-		const totalItems = filtered.length
+		const visibleFileIds = Array.from(document.querySelectorAll('.file-checkbox')).map((cb) =>
+			parseInt(cb.dataset.id),
+		)
 
-		const selectedCount = selectedForDelete.filter((id) => {
-			if (id.startsWith('participant-')) {
-				const pId = parseInt(id.split('-')[1])
-				return filtered.some((g) => g.participant.id === pId)
-			}
-			return false
-		}).length
+		const allSelected =
+			visibleFileIds.length > 0 && visibleFileIds.every((id) => selectedFileIds.includes(id))
+		const someSelected = visibleFileIds.some((id) => selectedFileIds.includes(id))
 
-		selectAllHeader.checked = totalItems > 0 && selectedCount === totalItems
-		selectAllHeader.indeterminate = selectedCount > 0 && selectedCount < totalItems
+		selectAllCheckbox.checked = allSelected
+		selectAllCheckbox.indeterminate = someSelected && !allSelected
 	}
 
 	async function updateQueueButton() {
@@ -584,47 +569,138 @@ export function createDataModule({ invoke, dialog }) {
 		}
 	}
 
+	function updateShowAllFilesButton() {
+		const selectedBtn = document.getElementById('view-selected-btn')
+		const allBtn = document.getElementById('view-all-btn')
+		const participantsList = document.getElementById('participants-list')
+
+		if (!selectedBtn || !allBtn) return
+
+		if (showAllFiles) {
+			selectedBtn.classList.remove('active')
+			allBtn.classList.add('active')
+			// Dim the participant list to show it's not affecting the current view
+			if (participantsList) {
+				participantsList.classList.add('dimmed')
+			}
+		} else {
+			selectedBtn.classList.add('active')
+			allBtn.classList.remove('active')
+			// Re-enable participant list
+			if (participantsList) {
+				participantsList.classList.remove('dimmed')
+			}
+		}
+	}
+
+	// ============================================================================
+	// MAIN DATA LOADING
+	// ============================================================================
+
+	async function loadData() {
+		try {
+			const [participants, files] = await Promise.all([
+				invoke('get_participants'),
+				invoke('get_files'),
+			])
+
+			allParticipants = participants
+			allFiles = files
+			existingFilePaths = new Set(files.map((f) => f.file_path))
+
+			// Update header counts - these should always show totals
+			document.getElementById('participant-count').textContent = participants.length
+			document.getElementById('file-count').textContent = files.length
+
+			const pendingCount = files.filter((f) => f.status === 'pending').length
+			document.getElementById('pending-count').textContent = pendingCount
+
+			const processQueueBtn = document.getElementById('process-queue-btn')
+			if (processQueueBtn) {
+				processQueueBtn.style.display = pendingCount > 0 ? 'flex' : 'none'
+			}
+
+			// Show/hide main UI or global empty state
+			const mainLayout = document.querySelector('.data-main-layout')
+			const globalEmptyState = document.getElementById('data-empty-state')
+
+			if (participants.length === 0 && files.length === 0) {
+				mainLayout.style.display = 'none'
+				globalEmptyState.style.display = 'flex'
+			} else {
+				mainLayout.style.display = 'flex'
+				globalEmptyState.style.display = 'none'
+			}
+
+			renderParticipantsSidebar()
+			renderFilesPanel()
+			updateActionButtons()
+			updateShowAllFilesButton()
+		} catch (error) {
+			console.error('Error loading data:', error)
+		}
+	}
+
+	// ============================================================================
+	// INITIALIZATION
+	// ============================================================================
+
 	function initializeDataTab() {
-		// Select all checkbox
-		const selectAllHeader = document.getElementById('select-all-data-table')
-		if (selectAllHeader) {
-			selectAllHeader.addEventListener('change', (e) => {
-				const groups = groupFilesByParticipant()
-				const filtered = groups.filter(matchesSearch).filter(matchesDataTypeFilter)
-
-				if (e.target.checked) {
-					filtered.forEach((group) => {
-						const key = `participant-${group.participant.id}`
-						if (!selectedForDelete.includes(key)) {
-							selectedForDelete.push(key)
-						}
-					})
-				} else {
-					filtered.forEach((group) => {
-						const key = `participant-${group.participant.id}`
-						selectedForDelete = selectedForDelete.filter((x) => x !== key)
-					})
-				}
-
-				renderDataTable()
+		// Participant search
+		const participantSearch = document.getElementById('participant-search')
+		if (participantSearch) {
+			participantSearch.addEventListener('input', (e) => {
+				participantSearchTerm = e.target.value.trim().toLowerCase()
+				renderParticipantsSidebar()
 			})
 		}
 
-		// Search input
-		const searchInput = document.getElementById('data-search')
-		if (searchInput) {
-			searchInput.addEventListener('input', (e) => {
-				searchTerm = e.target.value.trim().toLowerCase()
-				renderDataTable()
+		// Participant filter dropdown
+		const participantFilterSelect = document.getElementById('participant-filter')
+		if (participantFilterSelect) {
+			participantFilterSelect.addEventListener('change', (e) => {
+				participantFilter = e.target.value
+				renderParticipantsSidebar()
 			})
 		}
 
-		// Data type filter dropdown
+		// View mode segmented control
+		const viewSelectedBtn = document.getElementById('view-selected-btn')
+		const viewAllBtn = document.getElementById('view-all-btn')
+
+		if (viewSelectedBtn) {
+			viewSelectedBtn.addEventListener('click', () => {
+				if (!showAllFiles) return // Already in this mode
+				showAllFiles = false
+				updateShowAllFilesButton()
+				renderFilesPanel()
+			})
+		}
+
+		if (viewAllBtn) {
+			viewAllBtn.addEventListener('click', () => {
+				if (showAllFiles) return // Already in this mode
+				showAllFiles = true
+				updateShowAllFilesButton()
+				renderFilesPanel()
+			})
+		}
+
+		// File search
+		const fileSearch = document.getElementById('file-search')
+		if (fileSearch) {
+			fileSearch.addEventListener('input', (e) => {
+				fileSearchTerm = e.target.value.trim().toLowerCase()
+				renderFilesPanel()
+			})
+		}
+
+		// Data type filter
 		const dataTypeFilter = document.getElementById('data-type-filter')
 		if (dataTypeFilter) {
 			dataTypeFilter.addEventListener('change', (e) => {
 				currentDataTypeFilter = e.target.value
-				renderDataTable()
+				renderFilesPanel()
 			})
 		}
 
@@ -641,9 +717,87 @@ export function createDataModule({ invoke, dialog }) {
 					sortDirection = getDefaultSortDirection(field)
 				}
 
-				renderDataTable()
+				renderFilesPanel()
 			})
 		})
+
+		// Select all files checkbox
+		const selectAllFiles = document.getElementById('select-all-data-files')
+		if (selectAllFiles) {
+			selectAllFiles.addEventListener('change', (e) => {
+				const visibleFileIds = Array.from(document.querySelectorAll('.file-checkbox')).map((cb) =>
+					parseInt(cb.dataset.id),
+				)
+
+				if (e.target.checked) {
+					visibleFileIds.forEach((id) => {
+						if (!selectedFileIds.includes(id)) {
+							selectedFileIds.push(id)
+						}
+					})
+				} else {
+					selectedFileIds = selectedFileIds.filter((id) => !visibleFileIds.includes(id))
+				}
+
+				renderFilesPanel()
+			})
+		}
+
+		// Delete selected files button
+		const deleteBtn = document.getElementById('delete-selected-btn')
+		if (deleteBtn) {
+			deleteBtn.addEventListener('click', async () => {
+				if (selectedFileIds.length === 0) return
+
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to delete ${selectedFileIds.length} file(s)?`,
+					{ title: 'Delete Files', type: 'warning' },
+				)
+
+				if (confirmed) {
+					try {
+						await invoke('delete_files_bulk', { fileIds: selectedFileIds })
+						selectedFileIds = []
+						await loadData()
+					} catch (error) {
+						await dialog.message(`Error deleting files: ${error}`, {
+							title: 'Error',
+							type: 'error',
+						})
+					}
+				}
+			})
+		}
+
+		// Run Analysis button
+		const runAnalysisBtn = document.getElementById('run-analysis-btn')
+		if (runAnalysisBtn) {
+			runAnalysisBtn.addEventListener('click', () => {
+				if (selectedFileIds.length > 0) {
+					// Get unique participant IDs from selected files
+					const participantIds = [
+						...new Set(
+							selectedFileIds
+								.map((fileId) => {
+									const file = allFiles.find((f) => f.id === fileId)
+									if (!file) return null
+									const participant = allParticipants.find(
+										(p) => p.participant_id === file.participant_id,
+									)
+									return participant ? participant.id : null
+								})
+								.filter(Boolean),
+						),
+					]
+
+					// Store selected participant IDs and navigate to Run view
+					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+					const navigateTo =
+						window.navigateTo || ((_view) => console.warn('navigateTo not available'))
+					navigateTo('run')
+				}
+			})
+		}
 
 		// Queue processor button
 		const processQueueBtn = document.getElementById('process-queue-btn')
@@ -663,77 +817,6 @@ export function createDataModule({ invoke, dialog }) {
 				} catch (error) {
 					alert(`Error toggling queue processor: ${error}`)
 				}
-			})
-		}
-
-		// Delete button
-		const deleteBtn = document.getElementById('delete-selected-btn')
-		if (deleteBtn) {
-			deleteBtn.addEventListener('click', async () => {
-				if (selectedForDelete.length === 0) return
-
-				const participantIds = selectedForDelete
-					.filter((id) => id.startsWith('participant-'))
-					.map((id) => parseInt(id.split('-')[1]))
-
-				const fileIds = selectedForDelete
-					.filter((id) => id.startsWith('file-'))
-					.map((id) => parseInt(id.split('-')[1]))
-
-				const confirmed = await dialog.confirm(
-					`Are you sure you want to delete ${participantIds.length} participant(s) and ${fileIds.length} file(s)?`,
-					{ title: 'Delete Data', type: 'warning' },
-				)
-
-				if (confirmed) {
-					try {
-						let deleted = 0
-						if (participantIds.length > 0) {
-							deleted += await invoke('delete_participants_bulk', {
-								participantIds: participantIds,
-							})
-						}
-						if (fileIds.length > 0) {
-							deleted += await invoke('delete_files_bulk', { fileIds: fileIds })
-						}
-
-						console.log(`Deleted ${deleted} item(s)`)
-						selectedForDelete = []
-						await loadData()
-					} catch (error) {
-						await dialog.message(`Error deleting data: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				}
-			})
-		}
-
-		// Run Analysis button
-		const runAnalysisBtn = document.getElementById('run-analysis-btn')
-		if (runAnalysisBtn) {
-			runAnalysisBtn.addEventListener('click', () => {
-				const participantIds = selectedForDelete
-					.filter((id) => id.startsWith('participant-'))
-					.map((id) => parseInt(id.split('-')[1]))
-
-				if (participantIds.length > 0) {
-					// Store selected participant IDs and navigate to Run view
-					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
-					const navigateTo =
-						window.navigateTo || ((_view) => console.warn('navigateTo not available'))
-					navigateTo('run')
-				}
-			})
-		}
-
-		// Clear Selection button
-		const clearSelectionBtn = document.getElementById('clear-selection-btn')
-		if (clearSelectionBtn) {
-			clearSelectionBtn.addEventListener('click', () => {
-				selectedForDelete = []
-				renderDataTable()
 			})
 		}
 
@@ -763,18 +846,14 @@ export function createDataModule({ invoke, dialog }) {
 
 	return {
 		loadData,
-		renderDataTable,
+		renderDataTable: renderFilesPanel, // Alias for compatibility
 		initializeDataTab,
 		refreshExistingFilePaths,
 		isFileAlreadyImported: (filePath) => existingFilePaths.has(filePath),
 		getExistingFilePaths: () => new Set(existingFilePaths),
 		getSelectedParticipants: () => {
-			return selectedForDelete
-				.filter((id) => id.startsWith('participant-'))
-				.map((id) => {
-					const pId = parseInt(id.split('-')[1])
-					return allParticipants.find((p) => p.id === pId)
-				})
+			return selectedParticipantIds
+				.map((id) => allParticipants.find((p) => p.id === id))
 				.filter(Boolean)
 		},
 	}
