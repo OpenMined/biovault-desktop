@@ -191,3 +191,54 @@ select {
 	border-radius: 4px;
 	font-size: 14px;
 }
+
+.settings-ai-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.settings-ai-field label {
+	display: block;
+	font-weight: 600;
+	margin-bottom: 6px;
+	color: #334155;
+	font-size: 13px;
+}
+
+.settings-ai-field input {
+	width: 100%;
+	padding: 10px;
+	border: 1px solid #cbd5f5;
+	border-radius: 6px;
+	background: #f8fafc;
+	font-size: 14px;
+}
+
+.settings-ai-field input:focus {
+	outline: none;
+	border-color: #6366f1;
+	box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.settings-ai-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 8px;
+}
+
+.settings-save-status {
+	font-size: 12px;
+	color: #64748b;
+	min-height: 18px;
+}
+
+.settings-save-status[data-tone='success'] {
+	color: #047857;
+}
+
+.settings-save-status[data-tone='error'] {
+	color: #b91c1c;
+}

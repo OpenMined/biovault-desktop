@@ -1,0 +1,73 @@
+<div class="sql-view">
+	<div class="sql-pane sql-pane--tables">
+		<div class="sql-pane-header">
+			<h3>Tables</h3>
+			<button
+				type="button"
+				id="sql-refresh-tables-btn"
+				class="sql-action-btn"
+				title="Refresh tables"
+			>
+				↻
+			</button>
+		</div>
+		<ul id="sql-table-list" class="sql-table-list">
+			<li class="sql-list-placeholder">Tables will appear here.</li>
+		</ul>
+		<div id="sql-table-schema" class="sql-table-schema"></div>
+	</div>
+
+	<div class="sql-pane sql-pane--editor">
+		<div class="sql-editor-toolbar">
+			<div class="sql-toolbar-left">
+				<button type="button" id="sql-format-btn" class="sql-primary-btn">Format</button>
+				<button type="button" id="sql-run-btn" class="sql-accent-btn">Run</button>
+				<button type="button" id="sql-download-btn" class="sql-secondary-btn" disabled>
+					Download
+				</button>
+			</div>
+			<div id="sql-status" class="sql-status" data-tone="info">Ready to run SQL queries.</div>
+		</div>
+
+		<div class="sql-editor-wrapper">
+			<pre id="sql-editor-highlight" class="sql-editor-highlight"></pre>
+			<textarea
+				id="sql-editor-input"
+				class="sql-editor-input"
+				spellcheck="false"
+				placeholder="Write a SQL query or select a table to start..."
+			></textarea>
+		</div>
+
+		<div id="sql-result-meta" class="sql-result-meta"></div>
+		<div class="sql-result-table-wrapper">
+			<table id="sql-result-table" class="sql-result-table">
+				<thead></thead>
+				<tbody></tbody>
+			</table>
+			<div id="sql-result-placeholder" class="sql-result-placeholder">
+				<p>No query executed yet.</p>
+				<p>
+					Write a SQL query and press <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> or click Run.
+				</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="sql-pane sql-pane--assistant">
+		<div class="sql-pane-header">
+			<h3>AI Assistant</h3>
+		</div>
+		<p class="sql-assistant-description">
+			Let the assistant draft SQL for you. Configure the OpenRouter endpoint and token in Settings.
+		</p>
+		<textarea
+			id="sql-ai-prompt"
+			class="sql-ai-prompt"
+			placeholder="Describe what you want to query..."
+		></textarea>
+		<button type="button" id="sql-ai-submit-btn" class="sql-primary-btn">Generate SQL</button>
+		<div id="sql-ai-status" class="sql-ai-status"></div>
+		<div id="sql-ai-history" class="sql-ai-history"></div>
+	</div>
+</div>

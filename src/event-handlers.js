@@ -54,6 +54,7 @@ export function setupEventHandlers({
 	clearLogs,
 	// Settings
 	handleSyftBoxAuthentication,
+	saveSettings,
 	checkDependenciesForPanel,
 	getDependencyResults,
 	invoke,
@@ -181,6 +182,23 @@ export function setupEventHandlers({
 	if (syftboxAuthBtn) {
 		syftboxAuthBtn.addEventListener('click', async () => {
 			await handleSyftBoxAuthentication()
+		})
+	}
+
+	// Settings - Save changes
+	const settingsSaveBtn = document.getElementById('settings-save-btn')
+	if (settingsSaveBtn) {
+		settingsSaveBtn.addEventListener('click', async () => {
+			const originalText = settingsSaveBtn.textContent
+			settingsSaveBtn.disabled = true
+			settingsSaveBtn.textContent = 'Saving…'
+
+			try {
+				await saveSettings()
+			} finally {
+				settingsSaveBtn.disabled = false
+				settingsSaveBtn.textContent = originalText
+			}
 		})
 	}
 
