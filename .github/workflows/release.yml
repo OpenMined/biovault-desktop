@@ -162,7 +162,7 @@ jobs:
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
 
       - name: Create release
-        if: ${{ not inputs.dry_run }}
+        if: ${{ inputs.dry_run != true }}
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ inputs.version }}
