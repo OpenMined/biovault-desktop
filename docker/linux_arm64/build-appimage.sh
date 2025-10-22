@@ -82,6 +82,43 @@ case "${COMMAND}" in
   build)
     BUILD_CMD="$(cat <<'EOF_BUILD'
 set -euo pipefail
+
+# Re-register binfmt inside container to use container's qemu binary
+ARCH="$(uname -m)"
+if [ "${ARCH}" != "aarch64" ] && [ "${ARCH}" != "arm64" ]; then
+  echo "[binfmt] Re-registering ARM64 handler with container's qemu-aarch64-static"
+  if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+    echo -1 > /proc/sys/fs/binfmt_misc/qemu-aarch64 2>/dev/null || true
+  fi
+  echo ':qemu-aarch64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-aarch64-static:OCF' > /proc/sys/fs/binfmt_misc/register 2>/dev/null || echo "[binfmt] Could not register (needs --privileged or binfmt mount)"
+
+  # Verify it worked
+  if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+    echo "[binfmt] ARM64 handler registered:"
+    cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+  fi
+
+  # Test ARM64 execution with a simple test binary
+  echo "[binfmt] Testing ARM64 binary execution:"
+  TEST_BIN="/usr/bin/ls"
+  if file /usr/bin/ls | grep -q "ARM aarch64"; then
+    TEST_BIN="/bin/ls"
+  fi
+
+  # Create a minimal ARM64 test
+  if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+    cat > /tmp/test_arm64.c <<'TESTC'
+#include <stdio.h>
+int main() { printf("ARM64 OK\n"); return 0; }
+TESTC
+    aarch64-linux-gnu-gcc -static /tmp/test_arm64.c -o /tmp/test_arm64 2>/dev/null || echo "[binfmt] Could not compile test"
+    if [ -x /tmp/test_arm64 ]; then
+      /tmp/test_arm64 && echo "[binfmt] ✓ ARM64 binaries execute successfully" || echo "[binfmt] ✗ ARM64 binary execution FAILED"
+      rm -f /tmp/test_arm64 /tmp/test_arm64.c
+    fi
+  fi
+fi
+
 cd /workspace/biovault
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=/
@@ -150,6 +187,7 @@ if [ "${COMMAND}" = "shell" ]; then
 else
   docker run --rm \
     --platform "${RUN_PLATFORM}" \
+    --cap-add SYS_ADMIN \
     -v "${REPO_ROOT}:/workspace/biovault" \
     -v "${CACHE_ROOT}/cargo/registry:/root/.cargo/registry" \
     -v "${CACHE_ROOT}/cargo/git:/root/.cargo/git" \
