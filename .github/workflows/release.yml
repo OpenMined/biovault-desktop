@@ -13,6 +13,14 @@ on:
         required: false
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        type: boolean
 
 jobs:
   prepare-version:
@@ -100,6 +108,7 @@ jobs:
         run: echo "Dry run enabled - release artifacts will not be published."
 
       - name: Sync version metadata
+        shell: bash
         run: |
           python - <<'PY'
           import os
@@ -224,7 +233,7 @@ jobs:
         with:
           tag: ${{ needs.prepare-version.outputs.tag }}
           name: ${{ needs.prepare-version.outputs.tag }}
-          draft: true
+          draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
           makeLatest: true
@@ -283,6 +292,7 @@ jobs:
         run: echo "Dry run enabled - release artifacts will not be published."
 
       - name: Sync version metadata
+        shell: bash
         run: |
           python - <<'PY'
           import os
@@ -350,7 +360,7 @@ jobs:
         with:
           tag: ${{ needs.prepare-version.outputs.tag }}
           name: ${{ needs.prepare-version.outputs.tag }}
-          draft: true
+          draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
           makeLatest: true
