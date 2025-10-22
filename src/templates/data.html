@@ -1,0 +1,152 @@
+<div class="data-container">
+	<!-- Data Type Filter Tabs -->
+	<div class="data-type-tabs">
+		<button class="data-type-tab active" data-type="Genotype">
+			<svg
+				width="16"
+				height="16"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+				style="margin-right: 6px; vertical-align: middle"
+			>
+				<path
+					d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2Z"
+				/>
+			</svg>
+			Genotype Files
+		</button>
+		<button class="data-type-tab" data-type="Unknown">
+			<svg
+				width="16"
+				height="16"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+				style="margin-right: 6px; vertical-align: middle"
+			>
+				<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
+				<path
+					d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"
+				/>
+			</svg>
+			Unknown Files
+		</button>
+	</div>
+
+	<!-- Header with Actions -->
+	<div class="data-header">
+		<div class="data-header-left">
+			<h2 class="data-title">
+				Data
+				<span class="data-badge" id="data-count">0</span>
+			</h2>
+		</div>
+		<div class="data-header-right">
+			<div class="search-container">
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="search-icon">
+					<path
+						d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"
+					/>
+				</svg>
+				<input
+					type="text"
+					id="data-search"
+					class="data-search-input"
+					placeholder="Search participants and files..."
+				/>
+			</div>
+
+			<button id="process-queue-btn" class="btn-queue">
+				<span id="queue-btn-icon">⏸</span>
+				<span id="queue-btn-text">Pause Queue</span>
+				<span id="queue-spinner" class="queue-spinner" style="display: none"></span>
+				<span class="queue-count">(<span id="pending-count">0</span>)</span>
+			</button>
+
+			<button id="open-import-modal-btn" class="btn-primary">
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 16 16"
+					fill="currentColor"
+					style="margin-right: 6px"
+				>
+					<path
+						d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"
+					/>
+				</svg>
+				Import
+			</button>
+
+			<button id="delete-selected-btn" class="btn-danger" style="display: none">
+				Delete Selected
+			</button>
+		</div>
+	</div>
+
+	<!-- Data Table -->
+	<div class="data-table-wrapper">
+		<table class="data-table">
+			<thead>
+				<tr>
+					<th class="col-checkbox">
+						<input type="checkbox" id="select-all-data-table" title="Select all" />
+					</th>
+					<th class="col-id sortable-header" data-sort-field="id">
+						ID
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-status sortable-header" data-sort-field="status">
+						Status
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-participant sortable-header" data-sort-field="participant_id">
+						Participant / File
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-path sortable-header" data-sort-field="file_path">
+						Path
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-source sortable-header" data-sort-field="source">
+						Source
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-grch sortable-header" data-sort-field="grch_version">
+						GRCh
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-rows sortable-header" data-sort-field="row_count">
+						Rows
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-chr sortable-header" data-sort-field="chromosome_count">
+						Chr
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-sex sortable-header" data-sort-field="inferred_sex">
+						Sex
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-hash">Hash</th>
+					<th class="col-created sortable-header" data-sort-field="created_at">
+						Created
+						<span class="sort-indicator"></span>
+					</th>
+					<th class="col-actions">Actions</th>
+				</tr>
+			</thead>
+			<tbody id="data-table"></tbody>
+		</table>
+	</div>
+
+	<!-- Empty State -->
+	<div id="data-empty-state" class="empty-state" style="display: none">
+		<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
+			<path
+				d="M9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.825a2 2 0 0 1-1.991-1.819l-.637-7a1.99 1.99 0 0 1 .342-1.31L.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3zm-8.322.12C1.72 3.042 1.95 3 2.19 3h5.396l-.707-.707A1 1 0 0 0 6.172 2H2.5a1 1 0 0 0-1 .981l.006.139z"
+			/>
+		</svg>
+		<h3>No data imported yet</h3>
+		<p>Click "Import" to add your first genotype file</p>
+	</div>
+</div>

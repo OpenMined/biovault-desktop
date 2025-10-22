@@ -1,0 +1,529 @@
+/* ============================================================================
+   DATA VIEW - Unified Participants & Files
+   ============================================================================ */
+
+.data-container {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	padding: 20px;
+	gap: 20px;
+}
+
+/* Data Type Tabs */
+.data-type-tabs {
+	display: flex;
+	gap: 4px;
+	border-bottom: 2px solid #e5e7eb;
+	margin-bottom: -20px;
+}
+
+.data-type-tab {
+	display: flex;
+	align-items: center;
+	padding: 12px 20px;
+	background: none;
+	border: none;
+	border-bottom: 3px solid transparent;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+	color: #6b7280;
+	transition: all 0.2s ease;
+	position: relative;
+	bottom: -2px;
+}
+
+.data-type-tab:hover {
+	color: #374151;
+	background: #f9fafb;
+}
+
+.data-type-tab.active {
+	color: #3b82f6;
+	border-bottom-color: #3b82f6;
+	font-weight: 600;
+}
+
+/* Header */
+.data-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 20px;
+	flex-wrap: wrap;
+}
+
+.data-header-left {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.data-title {
+	margin: 0;
+	font-size: 24px;
+	font-weight: 700;
+	color: #111827;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.data-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 32px;
+	height: 24px;
+	padding: 0 8px;
+	background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+	color: white;
+	border-radius: 12px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.data-header-right {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+/* Search */
+.search-container {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.search-icon {
+	position: absolute;
+	left: 12px;
+	color: #9ca3af;
+	pointer-events: none;
+}
+
+.data-search-input {
+	padding: 8px 12px 8px 36px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	font-size: 14px;
+	width: 280px;
+	transition: all 0.2s ease;
+}
+
+.data-search-input:focus {
+	outline: none;
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Buttons */
+.btn-primary {
+	display: flex;
+	align-items: center;
+	padding: 10px 20px;
+	background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	font-weight: 600;
+	font-size: 14px;
+	box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
+	transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+	transform: translateY(-1px);
+	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.btn-primary:active {
+	transform: translateY(0);
+}
+
+.btn-queue {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 16px;
+	background: #28a745;
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 500;
+	transition: all 0.2s ease;
+}
+
+.btn-queue:hover {
+	background: #218838;
+	transform: translateY(-1px);
+}
+
+.queue-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	height: 20px;
+	padding: 0 6px;
+	background: rgba(0, 0, 0, 0.15);
+	border-radius: 10px;
+	font-size: 12px;
+}
+
+.queue-spinner {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 2px solid rgba(255, 255, 255, 0.3);
+	border-top-color: white;
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.btn-danger {
+	padding: 8px 16px;
+	background: #dc3545;
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+	transition: all 0.2s ease;
+}
+
+.btn-danger:hover {
+	background: #c82333;
+	transform: translateY(-1px);
+}
+
+.btn-icon {
+	padding: 4px 8px;
+	background: #3b82f6;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 12px;
+	transition: all 0.2s ease;
+}
+
+.btn-icon:hover {
+	background: #2563eb;
+	transform: scale(1.05);
+}
+
+/* Table */
+.data-table-wrapper {
+	flex: 1;
+	overflow: auto;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	background: white;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.data-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+.data-table thead {
+	background: #f9fafb;
+	position: sticky;
+	top: 0;
+	z-index: 10;
+}
+
+.data-table th {
+	padding: 12px 16px;
+	text-align: left;
+	font-weight: 600;
+	font-size: 12px;
+	color: #6b7280;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	border-bottom: 2px solid #e5e7eb;
+	white-space: nowrap;
+}
+
+.data-table td {
+	padding: 12px 16px;
+	border-bottom: 1px solid #f3f4f6;
+	color: #374151;
+}
+
+.data-table tbody tr {
+	transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+	background: #f9fafb;
+}
+
+/* Column Widths */
+.col-checkbox {
+	width: 40px;
+	text-align: center;
+}
+
+.col-id {
+	width: 60px;
+}
+
+.col-status {
+	width: 120px;
+}
+
+.col-participant {
+	min-width: 250px;
+}
+
+.col-path {
+	min-width: 200px;
+	max-width: 400px;
+}
+
+.col-source {
+	width: 120px;
+}
+
+.col-grch {
+	width: 80px;
+}
+
+.col-rows {
+	width: 100px;
+	text-align: right;
+}
+
+.col-chr {
+	width: 60px;
+	text-align: center;
+}
+
+.col-sex {
+	width: 80px;
+	text-align: center;
+}
+
+.col-hash {
+	width: 140px;
+	font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+	font-size: 11px;
+}
+
+.col-created {
+	width: 160px;
+}
+
+.col-actions {
+	width: 80px;
+	text-align: center;
+}
+
+/* Sortable Headers */
+.sortable-header {
+	cursor: pointer;
+	user-select: none;
+	transition: color 0.15s ease;
+}
+
+.sortable-header:hover {
+	color: #3b82f6;
+}
+
+.sort-indicator {
+	display: inline-block;
+	margin-left: 4px;
+	color: #3b82f6;
+	font-size: 10px;
+}
+
+/* Participant Rows */
+.participant-row {
+	background: white;
+}
+
+.participant-row.expanded {
+	background: #f9fafb;
+}
+
+.participant-row strong {
+	color: #111827;
+	font-weight: 600;
+}
+
+.expandable-cell {
+	cursor: pointer;
+	user-select: none;
+}
+
+.expand-icon {
+	display: inline-block;
+	margin-right: 8px;
+	color: #6b7280;
+	font-size: 12px;
+	transition: transform 0.2s ease;
+}
+
+.expandable-cell:hover .expand-icon {
+	color: #3b82f6;
+}
+
+/* Nested File Rows */
+.nested-file-row {
+	background: #fafbfc;
+}
+
+.nested-file-row:hover {
+	background: #f3f4f6;
+}
+
+.file-indent {
+	display: inline-block;
+	margin-right: 8px;
+	color: #9ca3af;
+	font-family: monospace;
+}
+
+.filename {
+	color: #6b7280;
+	font-size: 12px;
+	margin-left: 4px;
+}
+
+/* Status Badges */
+.status-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 10px;
+	border-radius: 6px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+
+.status-pending {
+	background: #fef3c7;
+	color: #92400e;
+}
+
+.status-processing {
+	background: #dbeafe;
+	color: #1e40af;
+}
+
+.status-error {
+	background: #fee2e2;
+	color: #991b1b;
+}
+
+.status-complete {
+	background: #d1fae5;
+	color: #065f46;
+}
+
+.status-mixed {
+	background: #e0e7ff;
+	color: #3730a3;
+}
+
+.status-unknown {
+	background: #f3f4f6;
+	color: #4b5563;
+}
+
+/* Sex Cell */
+.sex-cell {
+	font-weight: 600;
+}
+
+/* Hash Cell */
+.hash-cell {
+	font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+	font-size: 11px;
+	color: #6b7280;
+}
+
+/* Text Utilities */
+.text-muted {
+	color: #9ca3af;
+}
+
+.small {
+	font-size: 11px;
+}
+
+/* Empty State */
+.empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 60px 20px;
+	text-align: center;
+	color: #9ca3af;
+}
+
+.empty-state svg {
+	margin-bottom: 16px;
+}
+
+.empty-state h3 {
+	margin: 0 0 8px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: #6b7280;
+}
+
+.empty-state p {
+	margin: 0;
+	font-size: 14px;
+	color: #9ca3af;
+}
+
+/* Checkbox Styling */
+input[type='checkbox'] {
+	cursor: pointer;
+	width: 16px;
+	height: 16px;
+	accent-color: #3b82f6;
+}
+
+input[type='checkbox']:hover {
+	transform: scale(1.1);
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+	.data-header {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.data-header-right {
+		flex-wrap: wrap;
+	}
+
+	.data-search-input {
+		width: 100%;
+	}
+}
