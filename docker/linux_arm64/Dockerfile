@@ -15,17 +15,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN rm -f /etc/apt/sources.list \
- && cat <<EOF >/etc/apt/sources.list
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb [arch=amd64] http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
+RUN rm -f /etc/apt/sources.list.d/ubuntu.sources \
+ && cat <<EOF >/etc/apt/sources.list.d/arm64-ports.list
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main restricted universe multiverse
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main restricted universe multiverse
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main restricted universe multiverse
 EOF
-
-RUN rm -f /etc/apt/sources.list.d/ubuntu.sources
 
 RUN dpkg --add-architecture arm64 \
  && apt-get update \
