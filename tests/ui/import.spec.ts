@@ -287,8 +287,8 @@ test.describe('Import Data workflow', () => {
 			w.__RESET_TEST_STATE__?.()
 		})
 
-		// Navigate to participants view first
-		await page.locator('button.tab[data-tab="participants"]').click()
+		// Navigate to data view first
+		await page.locator('button.tab[data-tab="data"]').click()
 
 		// Click the import button to open modal
 		const openImportBtn = page.locator('#open-import-modal-btn')
@@ -485,13 +485,15 @@ test.describe('Import Data workflow', () => {
 		// Wait for modal to close after successful import
 		await expect(importModal).toHaveAttribute('hidden', '', { timeout: 10000 })
 
-		// Should navigate to Files view automatically
-		await expect(page.locator('#files-table tr')).toHaveCount(
+		// Should navigate to Data view automatically
+		// Click "All Files" view button to see all imported files
+		await page.locator('#view-all-btn').click()
+		await expect(page.locator('#files-table-body tr')).toHaveCount(
 			preparedFiles.length - incompleteRows.length,
 		)
 
-		// Navigate to Participants view and re-open import modal
-		await page.locator('button.tab[data-tab="participants"]').click()
+		// Navigate to Data view and re-open import modal
+		await page.locator('button.tab[data-tab="data"]').click()
 		await openImportBtn.click()
 		await expect(importModal).not.toHaveAttribute('hidden')
 
@@ -513,17 +515,17 @@ test.describe('Import Data workflow', () => {
 		await closeModalBtn.click()
 		await expect(importModal).toHaveAttribute('hidden', '')
 
-		await page.locator('button.tab[data-tab="files"]').click()
-		await page.locator('#select-all-files-table').check()
+		// Delete all data (select all files and delete)
+		await page.locator('button.tab[data-tab="data"]').click()
+		// Make sure we're showing all files by clicking the "All Files" view button
+		const viewAllBtn = page.locator('#view-all-btn')
+		if (!(await viewAllBtn.getAttribute('class'))?.includes('active')) {
+			await viewAllBtn.click()
+		}
+		await page.locator('#select-all-data-files').check()
 		page.once('dialog', (dialog) => dialog.accept())
-		await page.locator('#delete-selected-files-btn').click()
-		await expect.poll(async () => page.locator('#files-table tr').count()).toBe(0)
-
-		await page.locator('button.tab[data-tab="participants"]').click()
-		await page.locator('#select-all-participants-table').check()
-		page.once('dialog', (dialog) => dialog.accept())
-		await page.locator('#delete-selected-participants-btn').click()
-		await expect.poll(async () => page.locator('#participants-table tr').count()).toBe(0)
+		await page.locator('#delete-selected-btn').click()
+		await expect.poll(async () => page.locator('#files-table-body tr').count()).toBe(0)
 
 		const showCalls = await page.evaluate(() => {
 			const w = /** @type {any} */ window

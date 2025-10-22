@@ -12,12 +12,28 @@ export function createRunsModule({ invoke, listen }) {
 			const container = document.getElementById('run-participants-list')
 			container.innerHTML = ''
 
+			// Check for preselected participants from Data view
+			const preselectedJson = sessionStorage.getItem('preselectedParticipants')
+			const preselectedIds = preselectedJson ? JSON.parse(preselectedJson) : []
+
+			// Clear from session storage after reading
+			if (preselectedIds.length > 0) {
+				sessionStorage.removeItem('preselectedParticipants')
+				selectedParticipants = [...preselectedIds]
+			}
+
 			participants.forEach((p) => {
 				const item = document.createElement('div')
 				item.className = 'selection-item'
 				item.dataset.id = p.id
+
+				const isPreselected = preselectedIds.includes(p.id)
+				if (isPreselected) {
+					item.classList.add('selected')
+				}
+
 				item.innerHTML = `
-					<input type="checkbox" id="part-${p.id}" />
+					<input type="checkbox" id="part-${p.id}" ${isPreselected ? 'checked' : ''} />
 					<label for="part-${p.id}">${p.participant_id}</label>
 				`
 
@@ -42,6 +58,9 @@ export function createRunsModule({ invoke, listen }) {
 
 				container.appendChild(item)
 			})
+
+			// Update button after loading with preselections
+			updateRunButton()
 		} catch (error) {
 			console.error('Error loading participants:', error)
 		}

@@ -1,10 +1,9 @@
 import { templateLoader } from './template-loader.js'
 import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
-import { createParticipantsModule } from './participants.js'
+import { createDataModule } from './data.js'
 import { createLogsModule } from './logs.js'
 import { createRunsModule } from './runs.js'
-import { createFilesModule } from './files.js'
 import { createProjectsModule } from './projects.js'
 import { createMessagesModule } from './messages.js'
 import { createImportModule } from './import.js'
@@ -62,11 +61,12 @@ const {
 })
 
 const {
-	loadParticipants: loadParticipantsView,
-	setSearchTerm: setParticipantsSearchTerm,
+	loadData,
+	initializeDataTab,
+	refreshExistingFilePaths,
+	isFileAlreadyImported,
 	getSelectedParticipants,
-	handleSelectAll: handleParticipantsSelectAll,
-} = createParticipantsModule({ invoke })
+} = createDataModule({ invoke, dialog })
 
 const {
 	prepareRunView,
@@ -76,9 +76,6 @@ const {
 	shareCurrentRunLogs,
 	setNavigateTo: setRunNavigateTo,
 } = createRunsModule({ invoke, listen })
-
-const { loadFiles, refreshExistingFilePaths, initializeFilesTab, isFileAlreadyImported } =
-	createFilesModule({ invoke, dialog })
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
@@ -141,8 +138,8 @@ const importModule = createImportModule({
 	open,
 	isFileAlreadyImported,
 	refreshExistingFilePaths,
-	loadParticipantsView,
-	loadFiles,
+	loadParticipantsView: loadData,
+	loadFiles: loadData,
 	navigateTo: (...args) => importNavigateTo(...args),
 	setLastImportView: (...args) => importSetLastImportView(...args),
 })
@@ -180,8 +177,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 				'setIsImportInProgress is no longer supported - import state is internal to import module',
 			)
 		},
-		loadParticipants: loadParticipantsView,
-		loadFiles,
+		loadParticipants: loadData,
+		loadFiles: loadData,
 		loadProjects,
 		prepareRunView,
 		loadRuns,
@@ -197,6 +194,9 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 	})
 
 setRunNavigateTo(navigateTo)
+
+// Make navigateTo available globally for data module
+window.navigateTo = navigateTo
 
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
@@ -217,8 +217,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('run', 'run-view'),
 			// import-review is now inside the import modal, no longer a separate view
 			templateLoader.loadAndInject('import-results', 'import-results-view'),
-			templateLoader.loadAndInject('participants', 'participants-view'),
-			templateLoader.loadAndInject('files', 'files-view'),
+			templateLoader.loadAndInject('data', 'data-view'),
 			templateLoader.loadAndInject('sql', 'sql-view'),
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
@@ -261,8 +260,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	if (isOnboarded) {
 		// Load initial data only if user is onboarded
 		refreshExistingFilePaths()
-		loadParticipantsView()
-		loadFiles()
+		loadData()
 		loadProjects()
 		loadCommandLogs()
 		loadSettings()
@@ -272,7 +270,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	// Initialize UI features
 	initColumnResizers()
 	registerNavigationHandlers()
-	initializeFilesTab()
+	initializeDataTab()
 
 	// Setup all event handlers
 	setupEventHandlers({
@@ -328,10 +326,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		invoke,
 		dialog,
 		getSelectedParticipants,
-		handleParticipantsSelectAll,
-		loadParticipantsView,
-		setParticipantsSearchTerm,
-		loadFiles,
+		loadData,
 		initializeMessagesTab,
 		updateComposeVisibilityPublic,
 	})

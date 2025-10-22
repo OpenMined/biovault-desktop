@@ -1,0 +1,314 @@
+<div class="data-container">
+	<!-- Header -->
+	<div class="data-header">
+		<div class="data-header-left">
+			<h2 class="data-title">Data Management</h2>
+			<div class="data-stats">
+				<span class="stat-pill">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<circle cx="12" cy="8" r="5" />
+						<path d="M20 21a8 8 0 1 0-16 0" />
+					</svg>
+					<span id="participant-count">0</span>
+					Participants
+				</span>
+				<span class="stat-pill">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+						<polyline points="14 2 14 8 20 8" />
+						<line x1="16" y1="13" x2="8" y2="13" />
+						<line x1="16" y1="17" x2="8" y2="17" />
+						<polyline points="10 9 9 9 8 9" />
+					</svg>
+					<span id="file-count">0</span>
+					Files
+				</span>
+			</div>
+		</div>
+		<div class="data-header-right">
+			<button id="process-queue-btn" class="btn-queue">
+				<span id="queue-btn-icon">⏸</span>
+				<span id="queue-btn-text">Pause Queue</span>
+				<span id="queue-spinner" class="queue-spinner" style="display: none"></span>
+				<span class="queue-count">(<span id="pending-count">0</span>)</span>
+			</button>
+			<button id="run-analysis-btn" class="btn-success" title="Select files to run workflow">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<polygon points="5 3 19 12 5 21 5 3" />
+				</svg>
+				<span id="run-analysis-text">Run Workflow</span>
+			</button>
+			<button id="open-import-modal-btn" class="btn-primary">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+					<polyline points="7 10 12 15 17 10" />
+					<line x1="12" y1="15" x2="12" y2="3" />
+				</svg>
+				Import Data
+			</button>
+		</div>
+	</div>
+
+	<!-- Main Layout: Sidebar + File Panel -->
+	<div class="data-main-layout">
+		<!-- Participants Sidebar -->
+		<aside class="participants-sidebar">
+			<div class="sidebar-header">
+				<div class="sidebar-title-row">
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						class="sidebar-icon"
+					>
+						<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+						<circle cx="9" cy="7" r="4" />
+						<path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+						<path d="M16 3.13a4 4 0 0 1 0 7.75" />
+					</svg>
+					<h3 class="sidebar-title">Participants</h3>
+					<select id="participant-filter" class="participant-filter-select">
+						<option value="all">All</option>
+						<option value="genotype">With Genotype</option>
+						<option value="incomplete">Incomplete</option>
+					</select>
+				</div>
+				<div class="sidebar-search">
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="search-icon">
+						<path
+							d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"
+						/>
+					</svg>
+					<input
+						type="text"
+						id="participant-search"
+						class="sidebar-search-input"
+						placeholder="Search participants..."
+					/>
+				</div>
+			</div>
+
+			<div class="sidebar-actions">
+				<div class="view-mode-toggle">
+					<button id="view-selected-btn" class="view-mode-btn active">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<circle cx="12" cy="8" r="5" />
+							<path d="M20 21a8 8 0 1 0-16 0" />
+						</svg>
+						Selected
+					</button>
+					<button id="view-all-btn" class="view-mode-btn">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+							<polyline points="14 2 14 8 20 8" />
+							<line x1="16" y1="13" x2="8" y2="13" />
+							<line x1="16" y1="17" x2="8" y2="17" />
+						</svg>
+						All Files
+					</button>
+				</div>
+			</div>
+
+			<div class="participants-list-wrapper">
+				<div class="participants-list" id="participants-list">
+					<!-- Participants will be rendered here -->
+				</div>
+			</div>
+		</aside>
+
+		<!-- Files Panel -->
+		<div class="files-panel">
+			<div class="files-panel-header">
+				<div class="panel-title-section">
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+						<polyline points="14 2 14 8 20 8" />
+						<line x1="16" y1="13" x2="8" y2="13" />
+						<line x1="16" y1="17" x2="8" y2="17" />
+						<polyline points="10 9 9 9 8 9" />
+					</svg>
+					<h3 id="files-panel-title">Files for selected participants</h3>
+				</div>
+				<div class="panel-actions">
+					<select id="data-type-filter" class="data-type-select">
+						<option value="All">All Types</option>
+						<option value="Genotype">Genotype</option>
+						<option value="Unknown">Unknown</option>
+					</select>
+					<div class="search-container">
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="search-icon">
+							<path
+								d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"
+							/>
+						</svg>
+						<input
+							type="text"
+							id="file-search"
+							class="file-search-input"
+							placeholder="Search files..."
+						/>
+					</div>
+					<button id="delete-selected-btn" class="btn-danger-small" style="display: none">
+						Delete
+					</button>
+				</div>
+			</div>
+
+			<!-- Files Table -->
+			<div class="files-table-wrapper">
+				<table class="files-table">
+					<thead>
+						<tr>
+							<th class="col-checkbox">
+								<input
+									type="checkbox"
+									id="select-all-data-files"
+									title="Select all visible files"
+								/>
+							</th>
+							<th class="col-id sortable-header" data-sort-field="id">
+								ID
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-status sortable-header" data-sort-field="status">
+								Status
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-participant sortable-header" data-sort-field="participant_id">
+								Participant
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-file sortable-header" data-sort-field="file_path">
+								File
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-type sortable-header" data-sort-field="data_type">
+								Type
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-source sortable-header" data-sort-field="source">
+								Source
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-grch sortable-header" data-sort-field="grch_version">
+								GRCh
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-rows sortable-header" data-sort-field="row_count">
+								Rows
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-chr sortable-header" data-sort-field="chromosome_count">
+								Chr
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-sex sortable-header" data-sort-field="inferred_sex">
+								Sex
+								<span class="sort-indicator"></span>
+							</th>
+							<th class="col-actions">Actions</th>
+						</tr>
+					</thead>
+					<tbody id="files-table-body">
+						<!-- Files will be rendered here -->
+					</tbody>
+				</table>
+			</div>
+
+			<!-- Empty State -->
+			<div id="files-empty-state" class="files-empty-state" style="display: none">
+				<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.2">
+					<path
+						d="M5 4a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5zm-.5 2.5A.5.5 0 0 1 5 6h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zM5 8a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5zm0 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1H5z"
+					/>
+					<path
+						d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2zm10-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1z"
+					/>
+				</svg>
+				<h3 id="empty-state-title">No files to display</h3>
+				<p id="empty-state-message">
+					Select participants to view their files, or click "Show All Files"
+				</p>
+			</div>
+		</div>
+	</div>
+
+	<!-- Global Empty State (no data at all) -->
+	<div id="data-empty-state" class="empty-state" style="display: none">
+		<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
+			<path
+				d="M9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.825a2 2 0 0 1-1.991-1.819l-.637-7a1.99 1.99 0 0 1 .342-1.31L.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3zm-8.322.12C1.72 3.042 1.95 3 2.19 3h5.396l-.707-.707A1 1 0 0 0 6.172 2H2.5a1 1 0 0 0-1 .981l.006.139z"
+			/>
+		</svg>
+		<h3>No data imported yet</h3>
+		<p>Click "Import Data" to add your first genotype file</p>
+	</div>
+</div>
