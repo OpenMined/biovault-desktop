@@ -243,7 +243,7 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await expect(page.locator('#home-view')).toBeVisible()
 
 		await page.locator('button.tab[data-tab="projects"]').click()
-		await expect(page.locator('#projects-view')).toBeVisible()
+		await expect(page.locator('#projects-view.tab-content.active')).toBeVisible()
 
 		// Clean up any existing projects (mock mode only - real backend doesn't support delete_project via WebSocket)
 		if (!useRealInvoke) {

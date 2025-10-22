@@ -3,7 +3,7 @@ export function createDashboardShell({
 	getIsImportInProgress,
 	setIsImportInProgress,
 	loadParticipants,
-	loadFiles,
+	_loadFiles,
 	loadProjects,
 	prepareRunView,
 	loadRuns,
@@ -67,11 +67,8 @@ export function createDashboardShell({
 		}
 
 		switch (targetView) {
-			case 'participants':
-				loadParticipants?.()
-				break
-			case 'files':
-				loadFiles?.()
+			case 'data':
+				loadParticipants?.() // loadParticipants is actually loadData now
 				break
 			case 'projects':
 				loadProjects?.()
