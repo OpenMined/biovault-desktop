@@ -139,6 +139,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Docker
+        run: |
+          brew install docker
+          colima start --arch aarch64 --vm-type=vz --vz-rosetta
+
       - name: Linux arm64 AppImage dry run
         run: |
           chmod +x docker/linux_arm64/*.sh
