@@ -6,7 +6,6 @@ export function createImportModule({
 	refreshExistingFilePaths,
 	loadParticipantsView,
 	loadFiles,
-	navigateTo,
 	setLastImportView,
 }) {
 	// Internal state

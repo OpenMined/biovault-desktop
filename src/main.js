@@ -195,6 +195,9 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 
 setRunNavigateTo(navigateTo)
 
+// Make navigateTo available globally for data module
+window.navigateTo = navigateTo
+
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
 messagesGetActiveView = getActiveView

@@ -3,7 +3,7 @@ export function createDashboardShell({
 	getIsImportInProgress,
 	setIsImportInProgress,
 	loadParticipants,
-	loadFiles,
+	_loadFiles,
 	loadProjects,
 	prepareRunView,
 	loadRuns,

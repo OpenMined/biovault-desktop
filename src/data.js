@@ -6,7 +6,7 @@ export function createDataModule({ invoke, dialog }) {
 	let allFiles = []
 	let selectedForDelete = [] // Can include both participant IDs and file IDs
 	let expandedParticipants = new Set()
-	let currentDataTypeFilter = 'Genotype'
+	let currentDataTypeFilter = 'All'
 	let sortField = 'status'
 	let sortDirection = 'asc'
 	let searchTerm = ''
@@ -58,9 +58,10 @@ export function createDataModule({ invoke, dialog }) {
 				return participant.id
 			case 'participant_id':
 				return (participant.participant_id || '').toLowerCase()
-			case 'status':
+			case 'status': {
 				const status = getParticipantStatus(files)
 				return FILE_STATUS_PRIORITY[status] ?? Number.MAX_SAFE_INTEGER
+			}
 			case 'file_count':
 				return files.length
 			case 'created_at':
@@ -178,6 +179,7 @@ export function createDataModule({ invoke, dialog }) {
 	}
 
 	function matchesDataTypeFilter(group) {
+		if (currentDataTypeFilter === 'All') return true
 		return group.files.some((f) => f.data_type === currentDataTypeFilter)
 	}
 
@@ -205,28 +207,31 @@ export function createDataModule({ invoke, dialog }) {
 
 		const indent = isNested ? '<span class="file-indent">└─</span>' : ''
 
+		const createdDate = file.created_at ? file.created_at.split(' ')[0] : '-'
+
 		row.innerHTML = `
-			<td>${
+			<td class="checkbox-cell">${
 				isNested
 					? ''
 					: `<input type="checkbox" class="item-checkbox" data-type="file" data-id="${file.id}" />`
 			}</td>
 			<td>${file.id}</td>
 			<td>${statusBadge}</td>
-			<td>${indent}${file.file_path.split('/').pop()}</td>
-			<td class="text-muted small" title="${file.file_path}">${file.file_path}</td>
+			<td>${isNested ? '-' : file.participant_id || '-'}</td>
+			<td title="${file.file_path}">${indent}${file.file_path.split('/').pop()}</td>
 			<td>${file.source || '-'}</td>
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-		}">${file.inferred_sex || '-'}</td>
-			<td class="hash-cell" title="${file.file_hash}">${(file.file_hash || '').substring(0, 12)}${
-			file.file_hash && file.file_hash.length > 12 ? '...' : ''
-		}</td>
-			<td>${file.created_at}</td>
-			<td>
+				file.inferred_sex === 'Male'
+					? '#007bff'
+					: file.inferred_sex === 'Female'
+						? '#e83e8c'
+						: '#666'
+			}">${file.inferred_sex || '-'}</td>
+			<td>${createdDate}</td>
+			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${
 					file.file_path
 				}" title="Show in folder">📁</button>
@@ -243,17 +248,38 @@ export function createDataModule({ invoke, dialog }) {
 		})
 
 		if (!isNested) {
-			row.querySelector('.item-checkbox').addEventListener('change', (e) => {
+			const checkbox = row.querySelector('.item-checkbox')
+
+			// Make entire row clickable (except buttons)
+			row.addEventListener('click', (e) => {
+				// Don't toggle if clicking on checkbox, button, or actions cell
+				if (
+					e.target.tagName === 'INPUT' ||
+					e.target.tagName === 'BUTTON' ||
+					e.target.closest('.actions-cell') ||
+					e.target.closest('.checkbox-cell')
+				) {
+					return
+				}
+				checkbox.checked = !checkbox.checked
+				checkbox.dispatchEvent(new Event('change'))
+			})
+
+			checkbox.addEventListener('change', (e) => {
 				const fileId = parseInt(e.target.dataset.id)
 				if (e.target.checked) {
 					if (!selectedForDelete.includes(`file-${fileId}`)) {
 						selectedForDelete.push(`file-${fileId}`)
 					}
+					row.classList.add('selected')
 				} else {
 					selectedForDelete = selectedForDelete.filter((x) => x !== `file-${fileId}`)
+					row.classList.remove('selected')
 				}
 				updateDeleteButton()
 			})
+
+			row.style.cursor = 'pointer'
 		}
 
 		return row
@@ -262,7 +288,10 @@ export function createDataModule({ invoke, dialog }) {
 	// Render participant group
 	function renderParticipantGroup(group) {
 		const { participant, files } = group
-		const filteredFiles = files.filter((f) => f.data_type === currentDataTypeFilter)
+		const filteredFiles =
+			currentDataTypeFilter === 'All'
+				? files
+				: files.filter((f) => f.data_type === currentDataTypeFilter)
 
 		if (filteredFiles.length === 0) return []
 
@@ -282,34 +311,29 @@ export function createDataModule({ invoke, dialog }) {
 		// For single file, show file info inline
 		if (isSingleFile) {
 			const file = filteredFiles[0]
+			const createdDate = participant.created_at ? participant.created_at.split(' ')[0] : '-'
+
 			mainRow.innerHTML = `
-				<td><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${
+				<td class="checkbox-cell"><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${
 					participant.id
 				}" /></td>
 				<td>${participant.id}</td>
 				<td>${renderStatusBadge(file.status, file.processing_error)}</td>
-				<td><strong>${
-					participant.participant_id
-				}</strong> ${expandIcon} <span class="filename">${file.file_path
-				.split('/')
-				.pop()}</span></td>
-				<td class="text-muted small" title="${file.file_path}">${file.file_path}</td>
+				<td><strong>${participant.participant_id}</strong></td>
+				<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
 				<td>${file.source || '-'}</td>
 				<td>${file.grch_version || '-'}</td>
 				<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 				<td>${file.chromosome_count || '-'}</td>
 				<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-					? '#e83e8c'
-					: '#666'
-			}">${file.inferred_sex || '-'}</td>
-				<td class="hash-cell" title="${file.file_hash}">${(file.file_hash || '').substring(0, 12)}${
-				file.file_hash && file.file_hash.length > 12 ? '...' : ''
-			}</td>
-				<td>${participant.created_at}</td>
-				<td>
+					file.inferred_sex === 'Male'
+						? '#007bff'
+						: file.inferred_sex === 'Female'
+							? '#e83e8c'
+							: '#666'
+				}">${file.inferred_sex || '-'}</td>
+				<td>${createdDate}</td>
+				<td class="actions-cell">
 					<button class="btn-icon open-finder-btn" data-path="${
 						file.file_path
 					}" title="Show in folder">📁</button>
@@ -325,13 +349,15 @@ export function createDataModule({ invoke, dialog }) {
 			})
 		} else {
 			// Multiple files - show participant row with expand toggle
+			const createdDate = participant.created_at ? participant.created_at.split(' ')[0] : '-'
+
 			mainRow.innerHTML = `
-				<td><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${participant.id}" /></td>
+				<td class="checkbox-cell"><input type="checkbox" class="item-checkbox" data-type="participant" data-id="${participant.id}" /></td>
 				<td>${participant.id}</td>
 				<td>${statusBadge}</td>
 				<td class="expandable-cell"><span class="expand-icon">${expandIcon}</span> <strong>${participant.participant_id}</strong></td>
-				<td colspan="8" class="text-muted">${filteredFiles.length} files</td>
-				<td>${participant.created_at}</td>
+				<td colspan="6" class="text-muted">${filteredFiles.length} files</td>
+				<td>${createdDate}</td>
 				<td></td>
 			`
 
@@ -344,21 +370,42 @@ export function createDataModule({ invoke, dialog }) {
 				}
 				renderDataTable()
 			})
-			mainRow.style.cursor = 'pointer'
 		}
 
-		// Add checkbox listener
-		mainRow.querySelector('.item-checkbox').addEventListener('change', (e) => {
+		// Add checkbox listener and row click functionality
+		const checkbox = mainRow.querySelector('.item-checkbox')
+
+		// Make entire row clickable (except actions and expandable cells)
+		mainRow.addEventListener('click', (e) => {
+			// Don't toggle if clicking on checkbox, button, actions, or expandable cell
+			if (
+				e.target.tagName === 'INPUT' ||
+				e.target.tagName === 'BUTTON' ||
+				e.target.closest('.actions-cell') ||
+				e.target.closest('.checkbox-cell') ||
+				e.target.closest('.expandable-cell')
+			) {
+				return
+			}
+			checkbox.checked = !checkbox.checked
+			checkbox.dispatchEvent(new Event('change'))
+		})
+
+		checkbox.addEventListener('change', (e) => {
 			const participantId = parseInt(e.target.dataset.id)
 			if (e.target.checked) {
 				if (!selectedForDelete.includes(`participant-${participantId}`)) {
 					selectedForDelete.push(`participant-${participantId}`)
 				}
+				mainRow.classList.add('selected')
 			} else {
 				selectedForDelete = selectedForDelete.filter((x) => x !== `participant-${participantId}`)
+				mainRow.classList.remove('selected')
 			}
 			updateDeleteButton()
 		})
+
+		mainRow.style.cursor = 'pointer'
 
 		rows.push(mainRow)
 
@@ -422,7 +469,10 @@ export function createDataModule({ invoke, dialog }) {
 
 		// Update counts and UI
 		const totalCount = filtered.reduce((sum, g) => {
-			const fileCount = g.files.filter((f) => f.data_type === currentDataTypeFilter).length
+			const fileCount =
+				currentDataTypeFilter === 'All'
+					? g.files.length
+					: g.files.filter((f) => f.data_type === currentDataTypeFilter).length
 			return sum + fileCount
 		}, 0)
 		document.getElementById('data-count').textContent = totalCount
@@ -460,13 +510,23 @@ export function createDataModule({ invoke, dialog }) {
 
 	function updateDeleteButton() {
 		const btn = document.getElementById('delete-selected-btn')
-		if (!btn) return
+		const runBtn = document.getElementById('run-analysis-btn')
+
+		const participantCount = selectedForDelete.filter((id) => id.startsWith('participant-')).length
 
 		if (selectedForDelete.length > 0) {
 			btn.style.display = 'block'
 			btn.textContent = `Delete Selected (${selectedForDelete.length})`
+
+			if (participantCount > 0 && runBtn) {
+				runBtn.style.display = 'flex'
+				runBtn.textContent = `🔬 Run Analysis (${participantCount})`
+			}
 		} else {
 			btn.style.display = 'none'
+			if (runBtn) {
+				runBtn.style.display = 'none'
+			}
 		}
 	}
 
@@ -559,17 +619,14 @@ export function createDataModule({ invoke, dialog }) {
 			})
 		}
 
-		// Data type tabs
-		document.querySelectorAll('.data-type-tab').forEach((tab) => {
-			tab.addEventListener('click', () => {
-				document.querySelectorAll('.data-type-tab').forEach((t) => {
-					t.classList.remove('active')
-				})
-				tab.classList.add('active')
-				currentDataTypeFilter = tab.dataset.type
+		// Data type filter dropdown
+		const dataTypeFilter = document.getElementById('data-type-filter')
+		if (dataTypeFilter) {
+			dataTypeFilter.addEventListener('change', (e) => {
+				currentDataTypeFilter = e.target.value
 				renderDataTable()
 			})
-		})
+		}
 
 		// Sortable headers
 		document.querySelectorAll('.sortable-header').forEach((header) => {
@@ -623,7 +680,6 @@ export function createDataModule({ invoke, dialog }) {
 					.filter((id) => id.startsWith('file-'))
 					.map((id) => parseInt(id.split('-')[1]))
 
-				const totalCount = participantIds.length + fileIds.length
 				const confirmed = await dialog.confirm(
 					`Are you sure you want to delete ${participantIds.length} participant(s) and ${fileIds.length} file(s)?`,
 					{ title: 'Delete Data', type: 'warning' },
@@ -651,6 +707,33 @@ export function createDataModule({ invoke, dialog }) {
 						})
 					}
 				}
+			})
+		}
+
+		// Run Analysis button
+		const runAnalysisBtn = document.getElementById('run-analysis-btn')
+		if (runAnalysisBtn) {
+			runAnalysisBtn.addEventListener('click', () => {
+				const participantIds = selectedForDelete
+					.filter((id) => id.startsWith('participant-'))
+					.map((id) => parseInt(id.split('-')[1]))
+
+				if (participantIds.length > 0) {
+					// Store selected participant IDs and navigate to Run view
+					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+					const navigateTo =
+						window.navigateTo || ((_view) => console.warn('navigateTo not available'))
+					navigateTo('run')
+				}
+			})
+		}
+
+		// Clear Selection button
+		const clearSelectionBtn = document.getElementById('clear-selection-btn')
+		if (clearSelectionBtn) {
+			clearSelectionBtn.addEventListener('click', () => {
+				selectedForDelete = []
+				renderDataTable()
 			})
 		}
 

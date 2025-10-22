@@ -60,8 +60,8 @@ export function setupEventHandlers({
 	invoke,
 	dialog,
 	// Data (unified participants + files)
-	getSelectedParticipants,
-	loadData,
+	_getSelectedParticipants,
+	_loadData,
 	// Messages module state
 	initializeMessagesTab,
 	updateComposeVisibilityPublic,
