@@ -191,8 +191,22 @@ const mockDialog = {
 		return null
 	},
 	message: async (message, options) => {
-		console.log('[Mock] dialog.message:', message, options)
-		alert(message)
+		console.log('[Mock] dialog.message called:', message, options)
+		try {
+			// Use setTimeout to ensure alert() is called asynchronously
+			// This prevents blocking the event loop and allows Playwright to intercept
+			await new Promise((resolve) => {
+				setTimeout(() => {
+					console.log('[Mock] Calling alert now')
+					alert(message)
+					console.log('[Mock] Alert completed')
+					resolve()
+				}, 0)
+			})
+		} catch (error) {
+			console.error('[Mock] dialog.message error:', error)
+			throw error
+		}
 	},
 	confirm: async (message, options) => {
 		console.log('[Mock] dialog.confirm:', message, options)

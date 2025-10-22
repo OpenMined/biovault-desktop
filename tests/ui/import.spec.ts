@@ -429,6 +429,12 @@ test.describe('Import Data workflow', () => {
 		const reviewRows = page.locator('#review-files-table tr')
 		await expect(reviewRows).toHaveCount(preparedFiles.length)
 
+		// Wait for automatic file type detection to complete
+		// (triggered by showReviewViewInModal after 100ms)
+		await expect(page.locator('#detection-progress')).toBeVisible({ timeout: 5000 })
+		await expect(page.locator('#detection-progress')).toBeHidden({ timeout: 10_000 })
+		sendUnifiedLog({ event: 'auto-detection-complete' })
+
 		const reviewSelectAll = page.locator('#select-all-review')
 		await reviewSelectAll.check()
 		sendUnifiedLog({ event: 'review-select-all', state: 'checked' })
@@ -441,6 +447,8 @@ test.describe('Import Data workflow', () => {
 		await page.locator('#set-all-source').selectOption('Unknown')
 		await page.locator('#set-all-grch-version').selectOption('Unknown')
 		sendUnifiedLog({ event: 'bulk-set', data_type: 'Unknown', source: 'Unknown', grch: 'Unknown' })
+		// Wait for bulk update to propagate and re-render to complete
+		await page.waitForTimeout(500)
 		await expectReviewSelectValues(2, 'Unknown')
 		await expectReviewSelectValues(3, 'Unknown')
 		await expectReviewSelectValues(4, 'Unknown')
@@ -449,6 +457,8 @@ test.describe('Import Data workflow', () => {
 		await page.locator('#set-all-source').selectOption('23andMe')
 		await page.locator('#set-all-grch-version').selectOption('GRCh38')
 		sendUnifiedLog({ event: 'bulk-set', data_type: 'Genotype', source: '23andMe', grch: 'GRCh38' })
+		// Wait for bulk update to propagate and re-render to complete
+		await page.waitForTimeout(500)
 		await expectReviewSelectValues(2, 'Genotype')
 		await expectReviewSelectValues(3, '23andMe')
 		await expectReviewSelectValues(4, 'GRCh38')
