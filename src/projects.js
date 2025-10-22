@@ -656,11 +656,18 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (!statusRow) return
 
 		if (projectEditorState.jupyter.running) {
-			const linkUrl =
+			let linkUrl =
 				projectEditorState.jupyter.url ||
 				(projectEditorState.jupyter.port
 					? `http://localhost:${projectEditorState.jupyter.port}`
 					: null)
+
+			// Append token if available
+			if (linkUrl && projectEditorState.jupyter.token) {
+				const separator = linkUrl.includes('?') ? '&' : '?'
+				linkUrl = `${linkUrl}${separator}token=${projectEditorState.jupyter.token}`
+			}
+
 			if (linkUrl) {
 				statusRow.style.display = 'block'
 				statusRow.innerHTML = ''
@@ -669,7 +676,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				linkButton.id = 'jupyter-open-link'
 				linkButton.className = 'link-button'
 				linkButton.type = 'button'
-				linkButton.textContent = `🔗 ${linkUrl}`
+				// Display URL without token for cleaner UI
+				const displayUrl = linkUrl.split('?')[0]
+				linkButton.textContent = `🔗 ${displayUrl}`
 				linkButton.addEventListener('click', async () => {
 					console.log('[Jupyter] Opening lab URL:', linkUrl)
 					await openInExternalBrowser(linkUrl)
@@ -913,7 +922,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			updateJupyterControls()
 			statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
 			statusEl.style.color = '#28a745'
-			await refreshJupyterStatus(true)
+			await refreshJupyterStatus(false)
 		} catch (error) {
 			console.error('Failed to reset Jupyter:', error)
 			statusEl.textContent = `Error resetting Jupyter: ${error}`

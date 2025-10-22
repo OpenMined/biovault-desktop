@@ -148,13 +148,9 @@ async function mockInvoke(cmd, args = {}) {
 	console.log(`[Mock] invoke: ${cmd}`, args)
 
 	if (typeof window !== 'undefined' && window.__TEST_INVOKE_OVERRIDE__) {
-		try {
-			const overrideResult = await window.__TEST_INVOKE_OVERRIDE__(cmd, args)
-			if (overrideResult !== undefined) {
-				return overrideResult
-			}
-		} catch (error) {
-			console.error('[Mock] invoke override failed:', error)
+		const overrideResult = await window.__TEST_INVOKE_OVERRIDE__(cmd, args)
+		if (overrideResult !== undefined) {
+			return overrideResult
 		}
 	}
 
@@ -210,7 +206,14 @@ const mockDialog = {
 	},
 	confirm: async (message, options) => {
 		console.log('[Mock] dialog.confirm:', message, options)
-		return window.confirm(message)
+		// Use setTimeout to ensure confirm() is called asynchronously
+		// This prevents blocking the event loop and allows Playwright to intercept
+		return new Promise((resolve) => {
+			setTimeout(() => {
+				const result = window.confirm(message)
+				resolve(result)
+			}, 0)
+		})
 	},
 }
 

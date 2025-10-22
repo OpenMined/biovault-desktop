@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Test Jupyter Lab</title>
+		<style>
+			body {
+				font-family: system-ui, sans-serif;
+				margin: 2rem;
+			}
+			h1 {
+				color: #1565c0;
+			}
+			button {
+				padding: 0.5rem 1rem;
+				font-size: 1rem;
+			}
+			#status {
+				margin-top: 1rem;
+				font-weight: 600;
+				color: #2e7d32;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Test Jupyter Lab</h1>
+		<p>This is a lightweight stand-in for a Jupyter Lab session used by Playwright tests.</p>
+		<button id="create-notebook" type="button">Create Notebook</button>
+		<div id="status"></div>
+		<script>
+			const status = document.getElementById('status')
+			document.getElementById('create-notebook').addEventListener('click', () => {
+				status.textContent = 'Notebook created!'
+			})
+		</script>
+	</body>
+</html>
