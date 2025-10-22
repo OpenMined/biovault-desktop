@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.6
-
 ARG UBUNTU_VERSION=24.04
 ARG UBUNTU_CODENAME=noble
 FROM ubuntu:${UBUNTU_VERSION}
@@ -15,23 +13,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && cat <<'EOF' >/etc/apt/sources.list.d/ubuntu-amd64.sources
-Types: deb
-URIs: http://archive.ubuntu.com/ubuntu
-Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security ${UBUNTU_CODENAME}-backports
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-EOF
- && cat <<'EOF' >/etc/apt/sources.list.d/arm64-ports.sources
-Types: deb
-URIs: http://ports.ubuntu.com/ubuntu-ports
-Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security
-Components: main restricted universe multiverse
-Architectures: arm64
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-EOF
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \
+    echo 'Types: deb' >/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'URIs: http://archive.ubuntu.com/ubuntu' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo "Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security ${UBUNTU_CODENAME}-backports" >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Components: main restricted universe multiverse' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Architectures: amd64' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' >>/etc/apt/sources.list.d/ubuntu-amd64.sources && \
+    echo 'Types: deb' >/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'URIs: http://ports.ubuntu.com/ubuntu-ports' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo "Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-security" >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Components: main restricted universe multiverse' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Architectures: arm64' >>/etc/apt/sources.list.d/arm64-ports.sources && \
+    echo 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' >>/etc/apt/sources.list.d/arm64-ports.sources
 
 RUN dpkg --add-architecture arm64 \
  && apt-get update \
