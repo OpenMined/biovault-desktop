@@ -129,6 +129,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import json
           import os
           import re
           from pathlib import Path
