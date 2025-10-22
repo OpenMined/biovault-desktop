@@ -45,11 +45,15 @@ class WsBridge {
 					}
 				}
 
-				this.ws.onerror = (error) => {
-					console.error('❌ WebSocket error:', error)
+				this.ws.onerror = (_error) => {
+					console.log('🔌 WebSocket connection failed (no backend available)')
 					this.connecting = false
 					this.connectPromise = null
-					reject(error)
+					if (this.ws) {
+						this.ws.close()
+						this.ws = null
+					}
+					reject(new Error('WebSocket not available'))
 				}
 
 				this.ws.onclose = () => {
@@ -64,14 +68,14 @@ class WsBridge {
 					this.pendingRequests.clear()
 				}
 
-				// Timeout after 2 seconds
+				// Timeout after 500ms for faster test feedback
 				setTimeout(() => {
 					if (!this.connected) {
 						this.connecting = false
 						this.connectPromise = null
 						reject(new Error('WebSocket connection timeout'))
 					}
-				}, 2000)
+				}, 500)
 			} catch (error) {
 				this.connecting = false
 				this.connectPromise = null
@@ -114,13 +118,29 @@ const wsBridge = new WsBridge()
 
 // WebSocket invoke function
 async function wsInvoke(cmd, args = {}) {
-	try {
-		return await wsBridge.invoke(cmd, args)
-	} catch (error) {
-		console.error(`[WS] Failed to invoke ${cmd}:`, error)
-		// Fall back to mock on error
+	// If test override is present, skip WebSocket entirely and go straight to mock
+	if (typeof window !== 'undefined' && window.__TEST_INVOKE_OVERRIDE__) {
 		return mockInvoke(cmd, args)
 	}
+
+	const preferReal = typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true'
+	if (preferReal) {
+		console.log('[WS] Using real backend mode - will throw on WebSocket failure')
+	}
+	try {
+		const result = await wsBridge.invoke(cmd, args)
+		console.log(`[WS] Successfully invoked ${cmd}`)
+		return result
+	} catch (error) {
+		console.error(`[WS] Failed to invoke ${cmd}:`, error)
+		if (preferReal) {
+			throw error
+		}
+	}
+
+	// Fall back to mock when backend is unavailable
+	console.log(`[WS] Falling back to mock for ${cmd}`)
+	return mockInvoke(cmd, args)
 }
 
 // Mock invoke function for browser (fallback)
@@ -155,7 +175,9 @@ async function mockInvoke(cmd, args = {}) {
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':
-			return false
+			// Default to true so main app loads
+			// Onboarding tests override this via __TEST_INVOKE_OVERRIDE__
+			return true
 		default:
 			console.warn(`[Mock] Unhandled command: ${cmd}`)
 			return null

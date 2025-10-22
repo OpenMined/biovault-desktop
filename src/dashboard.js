@@ -43,7 +43,6 @@ export function createDashboardShell({
 		const tabContents = doc.querySelectorAll('.tab-content')
 		tabContents.forEach((content) => {
 			content.classList.remove('active')
-			content.style.display = 'none'
 		})
 
 		const targetElement = doc.getElementById(`${targetView}-view`)
@@ -53,7 +52,6 @@ export function createDashboardShell({
 		}
 
 		targetElement.classList.add('active')
-		targetElement.style.display = ''
 		activeView = targetView
 
 		const highlightTabName = importSubViews.includes(targetView) ? 'import' : targetView

@@ -209,6 +209,10 @@ pub enum MessageFilterScope {
 pub struct JupyterStatus {
     pub running: bool,
     pub port: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 #[derive(Serialize)]
