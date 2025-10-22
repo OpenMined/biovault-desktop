@@ -291,21 +291,16 @@ jobs:
           artifacts: |
             ./artifacts/*.app.tar.gz
             ./artifacts/*.app.tar.gz.sig
-
-            ./artifacts/*.AppImage
-            ./artifacts/*.AppImage.sig
-
-            ./artifacts/*.deb
-            ./artifacts/*.deb.sig
-
             ./artifacts/*.dmg
             ./artifacts/*.dmg.sig
-
             ./artifacts/*.exe
             ./artifacts/*.exe.sig
-
+            ./artifacts/*.deb
+            ./artifacts/*.deb.sig
             ./artifacts/*.rpm
             ./artifacts/*.rpm.sig
+            ./artifacts/*.AppImage
+            ./artifacts/*.AppImage.sig
 
       - name: Clean up all user keychains
         if: always() && runner.os == 'macOS'
