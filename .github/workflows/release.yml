@@ -7,6 +7,11 @@ on:
         description: "Version (e.g., v0.1.0)"
         required: true
         type: string
+      dry_run:
+        description: "Skip publishing release artifacts"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -43,6 +48,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Dry run mode notice
+        if: ${{ inputs.dry_run }}
+        run: echo "Dry run enabled - release artifacts will not be published."
 
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
@@ -153,6 +162,7 @@ jobs:
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
 
       - name: Create release
+        if: ${{ not inputs.dry_run }}
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ inputs.version }}
