@@ -10,6 +10,13 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "[docker] Ensuring qemu-aarch64 binfmt is registered..."
+if ! docker run --rm --privileged tonistiigi/binfmt --install arm64 >/dev/null 2>&1; then
+  echo "[docker] Failed to register binfmt for arm64 via tonistiigi/binfmt" >&2
+  exit 1
+fi
+echo "[docker] binfmt registration complete"
+
 if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
   "${SCRIPT_DIR}/build-image.sh"
 fi
