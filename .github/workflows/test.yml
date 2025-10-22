@@ -142,7 +142,7 @@ jobs:
       - name: Install Docker
         run: |
           brew install docker colima
-          colima start --cpu 4 --memory 8
+          colima start --cpu 4 --memory 8 --vm-type=qemu
 
       - name: Linux arm64 AppImage dry run
         run: |

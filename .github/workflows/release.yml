@@ -57,7 +57,7 @@ jobs:
         if: matrix.build_kind == 'docker'
         run: |
           brew install docker colima
-          colima start --cpu 4 --memory 8
+          colima start --cpu 4 --memory 8 --vm-type=qemu
 
       - name: Import signing certificate into keychain
         if: runner.os == 'macOS'
