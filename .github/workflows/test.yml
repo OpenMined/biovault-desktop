@@ -141,7 +141,7 @@ jobs:
 
       - name: Install Docker
         run: |
-          brew install docker
+          brew install docker colima
           colima start --arch aarch64 --vm-type=vz --vz-rosetta
 
       - name: Linux arm64 AppImage dry run

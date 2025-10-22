@@ -56,7 +56,7 @@ jobs:
       - name: Install Docker
         if: matrix.build_kind == 'docker'
         run: |
-          brew install docker
+          brew install docker colima
           colima start --arch aarch64 --vm-type=vz --vz-rosetta
 
       - name: Import signing certificate into keychain
