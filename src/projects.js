@@ -524,19 +524,23 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const current = projectCreateState.currentStep || 0
 
 		if (current === 0) {
-			const projectName = document.getElementById('new-project-name').value.trim()
-			if (!projectName) {
-				await dialog.message('Please enter a project name to continue.', {
-					title: 'Name Required',
+			const nameInput = document.getElementById('new-project-name')
+			const projectName = nameInput.value
+			const validation = validateProjectName(projectName)
+
+			// Validate project name
+			if (!validation.valid) {
+				await dialog.message(validation.error, {
+					title: 'Invalid Project Name',
 					type: 'warning',
 				})
-				document.getElementById('new-project-name').focus()
+				nameInput.focus()
 				return
 			}
 
 			let destination = document.getElementById('new-project-path').value.trim()
 			if (!destination) {
-				destination = await fetchDefaultProjectPath(projectName)
+				destination = await fetchDefaultProjectPath(projectName.trim())
 				document.getElementById('new-project-path').value = destination
 				projectCreateState.defaultDir = destination
 				projectCreateState.selectedDir = null
@@ -967,13 +971,50 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		document.body.classList.remove('modal-open')
 	}
 
+	function validateProjectName(name) {
+		const trimmed = name.trim()
+
+		// Cannot be empty
+		if (trimmed.length === 0) {
+			return { valid: false, error: 'Project name cannot be empty' }
+		}
+
+		// Cannot be . or ..
+		if (trimmed === '.' || trimmed === '..') {
+			return { valid: false, error: 'Project name cannot be "." or ".."' }
+		}
+
+		// Cannot contain / or \
+		if (trimmed.includes('/') || trimmed.includes('\\')) {
+			return { valid: false, error: 'Project name cannot contain / or \\' }
+		}
+
+		return { valid: true, error: null }
+	}
+
 	async function handleProjectNameInputChange() {
-		const nameValue = document.getElementById('new-project-name').value.trim()
-		if (projectCreateState.usingDefault) {
-			const defaultPath = await fetchDefaultProjectPath(nameValue)
+		const nameInput = document.getElementById('new-project-name')
+		const errorEl = document.getElementById('project-name-error')
+		const nameValue = nameInput.value
+		const validation = validateProjectName(nameValue)
+
+		// Show/hide error
+		if (!validation.valid) {
+			nameInput.classList.add('invalid')
+			errorEl.textContent = validation.error
+			errorEl.style.display = 'block'
+		} else {
+			nameInput.classList.remove('invalid')
+			errorEl.style.display = 'none'
+		}
+
+		// Update path if using default
+		if (projectCreateState.usingDefault && validation.valid) {
+			const defaultPath = await fetchDefaultProjectPath(nameValue.trim())
 			projectCreateState.defaultDir = defaultPath
 			document.getElementById('new-project-path').value = defaultPath
 		}
+
 		updateCreateSpecSummary()
 	}
 
@@ -1015,10 +1056,12 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const confirmBtn = document.getElementById('create-project-confirm')
 		const versionInput = document.getElementById('new-project-version')
 
-		const projectName = nameInput.value.trim()
-		if (!projectName) {
-			await dialog.message('Please enter a project name', {
-				title: 'Name Required',
+		const projectName = nameInput.value
+		const validation = validateProjectName(projectName)
+
+		if (!validation.valid) {
+			await dialog.message(validation.error, {
+				title: 'Invalid Project Name',
 				type: 'warning',
 			})
 			nameInput.focus()
@@ -1037,7 +1080,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 
 		try {
 			const project = await invoke('create_project', {
-				name: projectName,
+				name: projectName.trim(),
 				example,
 				directory: directory || null,
 			})
@@ -1048,7 +1091,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 					})
 					const metadata = editorPayload.metadata
 					const payload = buildSpecSavePayload({
-						name: metadata.name || projectName,
+						name: metadata.name || projectName.trim(),
 						author: metadata.author,
 						workflow: metadata.workflow,
 						template: metadata.template || null,

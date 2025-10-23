@@ -1018,3 +1018,20 @@
 .advanced-options-content .project-destination-card {
 	margin: 0;
 }
+
+/* Validation errors */
+.validation-error {
+	color: #dc3545;
+	font-size: 12px;
+	margin-top: 4px;
+	display: block;
+}
+
+.validation-error::before {
+	content: '⚠ ';
+}
+
+input.invalid {
+	border-color: #dc3545;
+	background: #fff5f5;
+}
