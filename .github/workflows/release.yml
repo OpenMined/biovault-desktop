@@ -302,8 +302,8 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
-      - name: Create release
-        if: ${{ inputs.dry_run != true }}
+      - name: Create release (macOS)
+        if: ${{ inputs.dry_run != true && runner.os == 'macOS' }}
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ needs.prepare-version.outputs.tag }}
@@ -317,14 +317,34 @@ jobs:
             ./artifacts/*.app.tar.gz.sig
             ./artifacts/*.dmg
             ./artifacts/*.dmg.sig
-            ./artifacts/*.exe
-            ./artifacts/*.exe.sig
-            ./artifacts/*.deb
-            ./artifacts/*.deb.sig
-            ./artifacts/*.rpm
-            ./artifacts/*.rpm.sig
+
+      - name: Create release (Linux)
+        if: ${{ inputs.dry_run != true && runner.os == 'Linux' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.prepare-version.outputs.tag }}
+          name: ${{ needs.prepare-version.outputs.tag }}
+          draft: false
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          artifacts: |
             ./artifacts/*.AppImage
             ./artifacts/*.AppImage.sig
+
+      - name: Create release (Windows)
+        if: ${{ inputs.dry_run != true && runner.os == 'Windows' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.prepare-version.outputs.tag }}
+          name: ${{ needs.prepare-version.outputs.tag }}
+          draft: false
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          artifacts: |
+            ./artifacts/*.exe
+            ./artifacts/*.exe.sig
 
       - name: Clean up all user keychains
         if: always() && runner.os == 'macOS'
