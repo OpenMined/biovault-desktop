@@ -1,23 +1,72 @@
-<div class="import-project-section">
-	<h3>Projects</h3>
-	<div style="display: flex; gap: 10px; margin-bottom: 15px">
-		<button id="create-project-btn" style="background: #28a745">+ Create New Project</button>
-	</div>
-	<div style="margin-top: 15px">
-		<h4 style="margin-bottom: 10px">Or Import Project from URL</h4>
-		<div style="display: flex; gap: 10px">
-			<input
-				type="text"
-				id="project-url-input"
-				placeholder="Paste GitHub URL to project.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/apol1-sheet/project.yaml)"
-				style="flex: 1"
-			/>
-			<button id="import-project-btn">Import</button>
+<div class="pipelines-and-projects-container">
+	<!-- Pipelines Section -->
+	<div class="section-card pipelines-section">
+		<div class="section-header">
+			<div class="section-title">
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<circle cx="5" cy="12" r="3" />
+					<circle cx="19" cy="12" r="3" />
+					<line x1="8" y1="12" x2="16" y2="12" />
+				</svg>
+				<h3>Pipelines</h3>
+				<span class="section-count" id="pipelines-count">0</span>
+			</div>
+			<button id="create-pipeline-btn" class="btn-primary-small">+ New Pipeline</button>
+		</div>
+		<div class="section-description">Multi-step workflows that chain projects together</div>
+		<div class="pipelines-list" id="pipelines-list">
+			<p style="color: #666; padding: 20px; text-align: center">
+				No pipelines yet. Create one to get started.
+			</p>
 		</div>
 	</div>
-</div>
-<div class="projects-list" id="projects-list">
-	<p style="color: #666">No projects imported yet.</p>
+
+	<!-- Projects Section -->
+	<div class="section-card projects-section">
+		<div class="section-header">
+			<div class="section-title">
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+					<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+				</svg>
+				<h3>Projects</h3>
+				<span class="section-count" id="projects-count">0</span>
+			</div>
+			<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
+		</div>
+		<div class="section-description">Reusable computational components used in pipelines</div>
+		<div style="margin-top: 15px; margin-bottom: 15px">
+			<details class="import-details">
+				<summary>Import Project from URL</summary>
+				<div style="display: flex; gap: 10px; margin-top: 10px">
+					<input
+						type="text"
+						id="project-url-input"
+						placeholder="Paste GitHub URL to project.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/apol1-sheet/project.yaml)"
+						style="flex: 1"
+					/>
+					<button id="import-project-btn">Import</button>
+				</div>
+			</details>
+		</div>
+		<div class="projects-list" id="projects-list">
+			<p style="color: #666; padding: 20px; text-align: center">No projects imported yet.</p>
+		</div>
+	</div>
 </div>
 
 <!-- Create Project Wizard -->
@@ -41,12 +90,10 @@
 			<section class="project-wizard-step" data-step="0">
 				<header>
 					<h3>Project Details</h3>
-					<p>
-						Set the project identity and where it should live on disk. Defaults are usually fine.
-					</p>
+					<p>Start by naming your project and optionally choosing a template.</p>
 				</header>
 				<div class="project-wizard-grid">
-					<label>
+					<label style="grid-column: 1 / -1">
 						<span>Project Name *</span>
 						<input
 							type="text"
@@ -57,43 +104,51 @@
 							spellcheck="false"
 						/>
 					</label>
-					<label>
-						<span>Template (Optional)</span>
+					<label style="grid-column: 1 / -1">
+						<span>Use Template</span>
 						<select id="new-project-template">
 							<option value="">Blank Project</option>
 						</select>
 					</label>
-					<label>
-						<span>Contract Version (Optional)</span>
-						<input
-							type="text"
-							id="new-project-version"
-							placeholder="e.g. 1.0.0"
-							autocapitalize="none"
-							autocorrect="off"
-							spellcheck="false"
-							value="1.0.0"
-						/>
-					</label>
 				</div>
-				<div class="project-destination-card">
-					<label for="new-project-path">Destination Folder</label>
-					<div class="project-path-input">
-						<input type="text" id="new-project-path" readonly />
-						<div class="project-path-buttons">
-							<button id="project-path-browse-btn" class="secondary-btn" type="button">
-								Browse…
-							</button>
-							<button id="project-path-reset-btn" class="secondary-btn" type="button">
-								Use Default
-							</button>
+
+				<!-- Advanced Options -->
+				<details class="project-advanced-options" style="margin-top: 24px">
+					<summary>Advanced Options</summary>
+					<div class="advanced-options-content">
+						<div class="project-destination-card">
+							<label for="new-project-path">Destination Folder</label>
+							<div class="project-path-input">
+								<input type="text" id="new-project-path" readonly />
+								<div class="project-path-buttons">
+									<button id="project-path-browse-btn" class="secondary-btn" type="button">
+										Browse…
+									</button>
+									<button id="project-path-reset-btn" class="secondary-btn" type="button">
+										Use Default
+									</button>
+								</div>
+							</div>
+							<p class="project-path-hint">
+								Defaults to BioVault projects (BIOVAULT_HOME/projects/&lt;name&gt;). Choose a
+								different location if you prefer.
+							</p>
 						</div>
+						<label style="margin-top: 16px">
+							<span>Contract Version</span>
+							<input
+								type="text"
+								id="new-project-version"
+								placeholder="e.g. 1.0.0"
+								autocapitalize="none"
+								autocorrect="off"
+								spellcheck="false"
+								value="1.0.0"
+								style="max-width: 200px"
+							/>
+						</label>
 					</div>
-					<p class="project-path-hint">
-						Defaults to BioVault projects (BIOVAULT_HOME/projects/&lt;name&gt;). Choose a different
-						location if you prefer.
-					</p>
-				</div>
+				</details>
 			</section>
 			<section class="project-wizard-step" data-step="1">
 				<header>

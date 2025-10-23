@@ -752,95 +752,108 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	async function loadProjects() {
 		try {
 			const projects = await invoke('get_projects')
-			const container = document.getElementById('projects-list')
+			const projectsContainer = document.getElementById('projects-list')
+			const pipelinesContainer = document.getElementById('pipelines-list')
 
+			// Update counts
+			const projectsCount = document.getElementById('projects-count')
+			const pipelinesCount = document.getElementById('pipelines-count')
+
+			if (projectsCount) projectsCount.textContent = projects?.length || 0
+			if (pipelinesCount) pipelinesCount.textContent = 0 // TODO: Load actual pipelines
+
+			// Render projects
 			if (!projects || projects.length === 0) {
-				container.innerHTML = '<p style="color: #666;">No projects found in BioVault.</p>'
-				return
-			}
-
-			container.innerHTML = ''
-
-			projects.forEach((project) => {
-				const card = document.createElement('div')
-				card.className = 'project-card'
-
-				const info = document.createElement('div')
-				info.className = 'project-info'
-
-				const title = document.createElement('h3')
-				title.textContent = project.name || '(unnamed project)'
-				if (project.orphaned) {
-					const badge = document.createElement('span')
-					badge.className = 'project-badge project-badge-orphan'
-					badge.textContent = 'Unregistered folder'
-					title.appendChild(badge)
+				if (projectsContainer) {
+					projectsContainer.innerHTML =
+						'<p style="color: #666; padding: 20px; text-align: center;">No projects imported yet.</p>'
 				}
-				info.appendChild(title)
+			} else {
+				if (projectsContainer) {
+					projectsContainer.innerHTML = ''
 
-				const author = document.createElement('p')
-				author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
-				info.appendChild(author)
+					projects.forEach((project) => {
+						const card = document.createElement('div')
+						card.className = 'project-card'
 
-				const workflow = document.createElement('p')
-				workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
-				info.appendChild(workflow)
+						const info = document.createElement('div')
+						info.className = 'project-info'
 
-				const template = document.createElement('p')
-				template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
-				info.appendChild(template)
+						const title = document.createElement('h3')
+						title.textContent = project.name || '(unnamed project)'
+						if (project.orphaned) {
+							const badge = document.createElement('span')
+							badge.className = 'project-badge project-badge-orphan'
+							badge.textContent = 'Unregistered folder'
+							title.appendChild(badge)
+						}
+						info.appendChild(title)
 
-				const path = document.createElement('p')
-				path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
-				info.appendChild(path)
+						const author = document.createElement('p')
+						author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
+						info.appendChild(author)
 
-				const created = document.createElement('p')
-				const meta = project.created_at
-					? `${project.source} | Created: ${project.created_at}`
-					: project.source
-				created.innerHTML = `<strong>Source:</strong> ${meta}`
-				info.appendChild(created)
+						const workflow = document.createElement('p')
+						workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
+						info.appendChild(workflow)
 
-				card.appendChild(info)
+						const template = document.createElement('p')
+						template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
+						info.appendChild(template)
 
-				const actions = document.createElement('div')
-				actions.className = 'project-card-actions'
+						const path = document.createElement('p')
+						path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
+						info.appendChild(path)
 
-				const editBtn = document.createElement('button')
-				editBtn.className = 'secondary-btn'
-				editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
-				editBtn.addEventListener('click', async () => {
-					if (project.orphaned) {
-						await openProjectEditor({ projectPath: project.project_path })
-					} else if (project.id !== null && project.id !== undefined) {
-						await openProjectEditor({ projectId: project.id })
-					}
-				})
-				actions.appendChild(editBtn)
+						const created = document.createElement('p')
+						const meta = project.created_at
+							? `${project.source} | Created: ${project.created_at}`
+							: project.source
+						created.innerHTML = `<strong>Source:</strong> ${meta}`
+						info.appendChild(created)
 
-				const openBtn = document.createElement('button')
-				openBtn.className = 'open-folder-btn'
-				openBtn.textContent = 'Open Folder'
-				openBtn.addEventListener('click', async () => {
-					try {
-						await invoke('open_folder', { path: project.project_path })
-					} catch (error) {
-						alert(`Error opening folder: ${error}`)
-					}
-				})
-				actions.appendChild(openBtn)
+						card.appendChild(info)
 
-				const deleteBtn = document.createElement('button')
-				deleteBtn.className = 'delete-btn'
-				deleteBtn.textContent = 'Delete'
-				deleteBtn.addEventListener('click', async () => {
-					await handleDeleteProject(project)
-				})
-				actions.appendChild(deleteBtn)
+						const actions = document.createElement('div')
+						actions.className = 'project-card-actions'
 
-				card.appendChild(actions)
-				container.appendChild(card)
-			})
+						const editBtn = document.createElement('button')
+						editBtn.className = 'secondary-btn'
+						editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
+						editBtn.addEventListener('click', async () => {
+							if (project.orphaned) {
+								await openProjectEditor({ projectPath: project.project_path })
+							} else if (project.id !== null && project.id !== undefined) {
+								await openProjectEditor({ projectId: project.id })
+							}
+						})
+						actions.appendChild(editBtn)
+
+						const openBtn = document.createElement('button')
+						openBtn.className = 'open-folder-btn'
+						openBtn.textContent = 'Open Folder'
+						openBtn.addEventListener('click', async () => {
+							try {
+								await invoke('open_folder', { path: project.project_path })
+							} catch (error) {
+								alert(`Error opening folder: ${error}`)
+							}
+						})
+						actions.appendChild(openBtn)
+
+						const deleteBtn = document.createElement('button')
+						deleteBtn.className = 'delete-btn'
+						deleteBtn.textContent = 'Delete'
+						deleteBtn.addEventListener('click', async () => {
+							await handleDeleteProject(project)
+						})
+						actions.appendChild(deleteBtn)
+
+						card.appendChild(actions)
+						projectsContainer.appendChild(card)
+					})
+				}
+			}
 		} catch (error) {
 			console.error('Error loading projects:', error)
 		}
@@ -1632,10 +1645,15 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 	}
 
+	function showCreatePipelineModal() {
+		alert('Pipeline creation wizard coming soon! For now, use the CLI:\n\nbv pipeline create')
+	}
+
 	return {
 		loadProjects,
 		importProject,
 		showCreateProjectModal,
+		showCreatePipelineModal,
 		hideCreateProjectModal,
 		handleProjectNameInputChange,
 		chooseProjectDirectory,

@@ -36,6 +36,7 @@ export function setupEventHandlers({
 	getSyftboxStatus,
 	// Projects
 	showCreateProjectModal,
+	showCreatePipelineModal,
 	hideCreateProjectModal,
 	createProjectFromModal,
 	handleCreateWizardNext,
@@ -461,6 +462,9 @@ export function setupEventHandlers({
 	// Projects - Create project modal
 	document.getElementById('create-project-btn').addEventListener('click', () => {
 		showCreateProjectModal()
+	})
+	document.getElementById('create-pipeline-btn')?.addEventListener('click', () => {
+		showCreatePipelineModal()
 	})
 	document.getElementById('create-project-cancel').addEventListener('click', () => {
 		hideCreateProjectModal()
