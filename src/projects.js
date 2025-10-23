@@ -1,3 +1,34 @@
+import { createProjectSpecForm, generateContractAscii } from './project-spec-form.js'
+
+const CREATE_WIZARD_STEP_COUNT = 5
+const CREATE_WIZARD_STEP_LABELS = [
+	'Project Details',
+	'Inputs',
+	'Parameters',
+	'Outputs',
+	'Review & Create',
+]
+const CREATE_SPEC_STEP_CONFIG = {
+	1: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
+	2: {
+		containerId: 'create-project-parameters',
+		sections: ['parameters'],
+		defaultTab: 'parameters',
+	},
+	3: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
+}
+
+const CREATE_ADD_BUTTONS = {
+	inputs: () => document.getElementById('create-project-add-input'),
+	parameters: () => document.getElementById('create-project-add-parameter'),
+	outputs: () => document.getElementById('create-project-add-output'),
+}
+
+let wizardPreviewRequestId = 0
+let editorPreviewRequestId = 0
+let wizardPreviewScheduled = false
+let editorPreviewScheduled = false
+
 export function createProjectsModule({ invoke, dialog, open, shellApi, navigateTo }) {
 	const projectEditorState = {
 		projectId: null,
@@ -9,13 +40,66 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			running: false,
 			port: null,
 		},
+		specForm: null,
+		specData: {
+			parameters: [],
+			inputs: [],
+			outputs: [],
+		},
+		specSummaryEl: null,
+		lastSpecDigest: null,
+		specDigestTimer: null,
+		skipNextDigestReload: false,
+		nameListenerBound: false,
 	}
 
 	const projectCreateState = {
 		selectedDir: null,
 		usingDefault: true,
 		defaultDir: '',
+		specForm: null,
+		specData: {
+			parameters: [],
+			inputs: [],
+			outputs: [],
+		},
+		nameListenerBound: false,
+		currentStep: 0,
 	}
+
+	const wizardAddButtonCache = {}
+
+	function getWizardAddButton(kind) {
+		if (!CREATE_ADD_BUTTONS[kind]) return null
+		if (!wizardAddButtonCache[kind]) {
+			const button = CREATE_ADD_BUTTONS[kind]()
+			if (button) {
+				if (!button.dataset.bound) {
+					button.addEventListener('click', () => {
+						if (!projectCreateState.specForm) return
+						projectCreateState.specForm.addEntry(kind)
+						scheduleWizardPreview()
+					})
+					button.dataset.bound = 'true'
+				}
+				wizardAddButtonCache[kind] = button
+			}
+		}
+		return wizardAddButtonCache[kind] ?? null
+	}
+
+	function updateWizardAddButtons(config) {
+		const visibleKinds = config ? config.sections : []
+		;['inputs', 'parameters', 'outputs'].forEach((kind) => {
+			const button = getWizardAddButton(kind)
+			if (!button) return
+			button.style.display = visibleKinds.includes(kind) ? 'inline-flex' : 'none'
+		})
+	}
+
+	;['inputs', 'parameters', 'outputs'].forEach((kind) => {
+		getWizardAddButton(kind)
+	})
 
 	let operationModalDepth = 0
 
@@ -51,6 +135,501 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			return await dialog.confirm(message, options)
 		}
 		return window.confirm(message)
+	}
+
+	function ensureEditorSpecForm() {
+		const container = document.getElementById('project-spec-editor')
+		if (!projectEditorState.specForm) {
+			if (container) {
+				projectEditorState.specForm = createProjectSpecForm({
+					container,
+					onChange: (parameters, inputs, outputs) => {
+						projectEditorState.specData = { parameters, inputs, outputs }
+						updateEditorSpecSummary()
+					},
+				})
+			}
+		} else if (container) {
+			projectEditorState.specForm.mount(container)
+		}
+		if (projectEditorState.specForm) {
+			projectEditorState.specForm.configureSections(
+				['parameters', 'inputs', 'outputs'],
+				'parameters',
+			)
+		}
+		if (!projectEditorState.specSummaryEl) {
+			projectEditorState.specSummaryEl = document.getElementById('project-spec-summary')
+		}
+		if (!projectEditorState.nameListenerBound) {
+			const nameInput = document.getElementById('project-edit-name')
+			if (nameInput) {
+				nameInput.addEventListener('input', () => updateEditorSpecSummary())
+				projectEditorState.nameListenerBound = true
+			}
+		}
+	}
+
+	function updateEditorSpecSummary() {
+		if (!projectEditorState.specSummaryEl) return
+		const nameInput = document.getElementById('project-edit-name')
+		const projectName = nameInput ? nameInput.value.trim() : projectEditorState.metadata?.name || ''
+		const ascii = generateContractAscii({
+			name: projectName,
+			parameters: projectEditorState.specData.parameters,
+			inputs: projectEditorState.specData.inputs,
+			outputs: projectEditorState.specData.outputs,
+		})
+		projectEditorState.specSummaryEl.textContent = ascii
+		scheduleEditorPreview()
+	}
+
+	function getEditorSpecPayload() {
+		return {
+			parameters: projectEditorState.specData.parameters || [],
+			inputs: projectEditorState.specData.inputs || [],
+			outputs: projectEditorState.specData.outputs || [],
+		}
+	}
+
+	function clearWizardPreview(message) {
+		const yamlEl = document.getElementById('create-project-preview-yaml')
+		const templateEl = document.getElementById('create-project-preview-template')
+		if (yamlEl) yamlEl.textContent = message
+		if (templateEl) templateEl.textContent = message
+	}
+
+	function clearEditorPreview(message) {
+		const yamlEl = document.getElementById('project-edit-preview-yaml')
+		const templateEl = document.getElementById('project-edit-preview-template')
+		if (yamlEl) yamlEl.textContent = message
+		if (templateEl) templateEl.textContent = message
+	}
+
+	async function requestWizardPreview(payload) {
+		wizardPreviewRequestId += 1
+		const requestId = wizardPreviewRequestId
+		try {
+			const preview = await invoke('preview_project_spec', { payload })
+			if (requestId !== wizardPreviewRequestId) return
+			const yamlEl = document.getElementById('create-project-preview-yaml')
+			const templateEl = document.getElementById('create-project-preview-template')
+			if (yamlEl) yamlEl.textContent = preview.yaml
+			if (templateEl) templateEl.textContent = preview.template
+		} catch (error) {
+			if (requestId !== wizardPreviewRequestId) return
+			console.error('Failed to generate project preview:', error)
+			clearWizardPreview('Unable to generate preview. Check your inputs.')
+		}
+	}
+
+	async function requestEditorPreview(payload) {
+		editorPreviewRequestId += 1
+		const requestId = editorPreviewRequestId
+		try {
+			const preview = await invoke('preview_project_spec', { payload })
+			if (requestId !== editorPreviewRequestId) return
+			const yamlEl = document.getElementById('project-edit-preview-yaml')
+			const templateEl = document.getElementById('project-edit-preview-template')
+			if (yamlEl) yamlEl.textContent = preview.yaml
+			if (templateEl) templateEl.textContent = preview.template
+		} catch (error) {
+			if (requestId !== editorPreviewRequestId) return
+			console.error('Failed to generate editor preview:', error)
+			clearEditorPreview('Unable to generate preview. Check project fields.')
+		}
+	}
+
+	function scheduleEditorPreview() {
+		if (editorPreviewScheduled) {
+			return
+		}
+		editorPreviewScheduled = true
+		setTimeout(() => {
+			editorPreviewScheduled = false
+			updateEditorPreview()
+		}, 0)
+	}
+
+	function updateWizardPreview() {
+		const nameInput = document.getElementById('new-project-name')
+		const templateSelect = document.getElementById('new-project-template')
+		const versionInput = document.getElementById('new-project-version')
+		const projectName = nameInput ? nameInput.value.trim() : ''
+		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
+		if (!projectName) {
+			wizardPreviewRequestId += 1
+			clearWizardPreview('Enter a project name to generate a preview.')
+			return
+		}
+		const spec = getCreateSpecPayload()
+		const payload = buildSpecSavePayload({
+			name: projectName,
+			author: '',
+			workflow: 'workflow.nf',
+			template: templateSelect && templateSelect.value ? templateSelect.value : null,
+			assets: [],
+			version: versionValue,
+			spec,
+		})
+		requestWizardPreview(payload)
+	}
+
+	function scheduleWizardPreview() {
+		if (wizardPreviewScheduled) {
+			return
+		}
+		wizardPreviewScheduled = true
+		setTimeout(() => {
+			wizardPreviewScheduled = false
+			updateWizardPreview()
+		}, 0)
+	}
+
+	function updateEditorPreview() {
+		const nameInput = document.getElementById('project-edit-name')
+		const workflowInput = document.getElementById('project-edit-workflow')
+		if (!nameInput || !workflowInput) {
+			return
+		}
+		const nameValue = nameInput.value.trim()
+		const workflowValue = workflowInput.value.trim() || 'workflow.nf'
+		if (!nameValue || !workflowInput.value.trim()) {
+			editorPreviewRequestId += 1
+			clearEditorPreview('Enter a project name and workflow to generate a preview.')
+			return
+		}
+		const authorValue = document.getElementById('project-edit-author')?.value.trim() || ''
+		const templateValue = document.getElementById('project-edit-template')?.value.trim() || ''
+		const versionValue = document.getElementById('project-edit-version')?.value.trim() || '1.0.0'
+		const payload = buildSpecSavePayload({
+			name: nameValue,
+			author: authorValue,
+			workflow: workflowValue,
+			template: templateValue || null,
+			assets: Array.from(projectEditorState.selectedAssets).map((entry) =>
+				typeof entry === 'string' ? entry.replace(/\\/g, '/') : entry,
+			),
+			version: versionValue,
+			spec: getEditorSpecPayload(),
+		})
+		requestEditorPreview(payload)
+	}
+
+	function ensureCreateSpecForm(config) {
+		const targetId = config?.containerId || 'create-project-parameters'
+		const target = document.getElementById(targetId)
+		if (!projectCreateState.specForm) {
+			if (target) {
+				projectCreateState.specForm = createProjectSpecForm({
+					container: target,
+					onChange: (parameters, inputs, outputs) => {
+						projectCreateState.specData = { parameters, inputs, outputs }
+						renderCreateReview()
+					},
+				})
+			} else {
+				return
+			}
+		} else if (target) {
+			projectCreateState.specForm.mount(target)
+		}
+
+		if (projectCreateState.specForm && config) {
+			projectCreateState.specForm.configureSections(config.sections, config.defaultTab)
+		}
+		if (projectCreateState.specForm) {
+			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		}
+
+		if (!projectCreateState.nameListenerBound) {
+			const nameInput = document.getElementById('new-project-name')
+			if (nameInput) {
+				nameInput.addEventListener('input', () => updateCreateSpecSummary())
+				projectCreateState.nameListenerBound = true
+			}
+		}
+	}
+
+	function updateCreateSpecSummary() {
+		renderCreateReview()
+	}
+
+	function getCreateSpecPayload() {
+		return {
+			parameters: projectCreateState.specData.parameters || [],
+			inputs: projectCreateState.specData.inputs || [],
+			outputs: projectCreateState.specData.outputs || [],
+		}
+	}
+
+	function buildSpecSavePayload({ name, author, workflow, template, assets, version, spec }) {
+		const nameValue = name && name.trim() ? name.trim() : ''
+		const workflowValue = workflow && workflow.trim() ? workflow.trim() : 'workflow.nf'
+		const templateValue =
+			template && typeof template === 'string' && template.trim().length ? template.trim() : null
+		const assetsValue = Array.isArray(assets)
+			? assets
+					.map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+					.filter((entry) => entry.length)
+			: []
+		const versionValue =
+			version && typeof version === 'string' && version.trim().length ? version.trim() : null
+
+		const parameters = (spec.parameters || []).map((param) => ({
+			name: param.name,
+			type: param.raw_type,
+			raw_type: param.raw_type,
+			description: param.description || null,
+			default: param.default && param.default.trim() ? param.default.trim() : null,
+			choices: param.choices && param.choices.length ? param.choices : null,
+			advanced: param.advanced ? true : null,
+		}))
+
+		const inputs = (spec.inputs || []).map((input) => ({
+			name: input.name,
+			type: input.raw_type,
+			raw_type: input.raw_type,
+			description: input.description || null,
+			format: input.format || null,
+			path: input.path || null,
+			mapping: input.mapping || null,
+		}))
+
+		const outputs = (spec.outputs || []).map((output) => ({
+			name: output.name,
+			type: output.raw_type,
+			raw_type: output.raw_type,
+			description: output.description || null,
+			format: output.format || null,
+			path: output.path || null,
+		}))
+
+		return {
+			name: nameValue,
+			author,
+			workflow: workflowValue,
+			template: templateValue,
+			assets: assetsValue,
+			version: versionValue,
+			parameters,
+			inputs,
+			outputs,
+		}
+	}
+
+	function renderCreateReview() {
+		const nameEl = document.getElementById('create-project-review-name')
+		if (!nameEl) return
+		const nameInput = document.getElementById('new-project-name')
+		const templateSelect = document.getElementById('new-project-template')
+		const versionInput = document.getElementById('new-project-version')
+		const pathInput = document.getElementById('new-project-path')
+
+		const nameValue = nameInput ? nameInput.value.trim() : ''
+		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
+		const pathValue = pathInput ? pathInput.value.trim() : ''
+
+		nameEl.textContent = nameValue || '—'
+		const templateLabel = document.querySelector('#new-project-template option:checked')
+		const templateText = templateLabel?.textContent?.trim() || 'Blank project'
+		const templateEl = document.getElementById('create-project-review-template')
+		if (templateEl) {
+			templateEl.textContent = templateText
+		}
+		const versionEl = document.getElementById('create-project-review-version')
+		if (versionEl) {
+			versionEl.textContent = versionValue || '—'
+		}
+		const pathEl = document.getElementById('create-project-review-path')
+		if (pathEl) {
+			pathEl.textContent = pathValue || '—'
+		}
+
+		const spec = getCreateSpecPayload()
+		const ascii = generateContractAscii({
+			name: nameValue || 'New Project',
+			parameters: spec.parameters,
+			inputs: spec.inputs,
+			outputs: spec.outputs,
+		})
+		const asciiEl = document.getElementById('create-project-review-ascii')
+		if (asciiEl) {
+			asciiEl.textContent = ascii
+		}
+		scheduleWizardPreview()
+	}
+
+	function setCreateWizardStep(step) {
+		projectCreateState.currentStep = step
+		const sections = document.querySelectorAll('.project-wizard-step')
+		sections.forEach((section) => {
+			const idx = Number(section.dataset.step)
+			section.classList.toggle('active', idx === step)
+		})
+		const indicators = document.querySelectorAll('.project-wizard-steps li')
+		indicators.forEach((indicator) => {
+			indicator.classList.toggle('active', Number(indicator.dataset.step) === step)
+		})
+
+		const backBtn = document.getElementById('create-project-back')
+		const nextBtn = document.getElementById('create-project-next')
+		const confirmBtn = document.getElementById('create-project-confirm')
+		if (backBtn) backBtn.disabled = step === 0
+		if (nextBtn) {
+			if (step >= CREATE_WIZARD_STEP_COUNT - 1) {
+				nextBtn.style.display = 'none'
+			} else {
+				nextBtn.style.display = 'inline-flex'
+				const nextLabel = CREATE_WIZARD_STEP_LABELS[step + 1] || 'Next'
+				nextBtn.textContent = `Next: ${nextLabel}`
+			}
+		}
+		if (confirmBtn) {
+			confirmBtn.style.display = step === CREATE_WIZARD_STEP_COUNT - 1 ? 'inline-flex' : 'none'
+		}
+
+		const specConfig = CREATE_SPEC_STEP_CONFIG[step]
+		if (specConfig) {
+			ensureCreateSpecForm(specConfig)
+			updateWizardAddButtons(specConfig)
+			scheduleWizardPreview()
+		} else if (step === CREATE_WIZARD_STEP_COUNT - 1) {
+			renderCreateReview()
+			updateWizardAddButtons(null)
+		} else {
+			updateWizardAddButtons(null)
+			scheduleWizardPreview()
+		}
+	}
+
+	async function handleCreateWizardNext() {
+		const current = projectCreateState.currentStep || 0
+
+		if (current === 0) {
+			const projectName = document.getElementById('new-project-name').value.trim()
+			if (!projectName) {
+				await dialog.message('Please enter a project name to continue.', {
+					title: 'Name Required',
+					type: 'warning',
+				})
+				document.getElementById('new-project-name').focus()
+				return
+			}
+
+			let destination = document.getElementById('new-project-path').value.trim()
+			if (!destination) {
+				destination = await fetchDefaultProjectPath(projectName)
+				document.getElementById('new-project-path').value = destination
+				projectCreateState.defaultDir = destination
+				projectCreateState.selectedDir = null
+			}
+
+			if (!destination) {
+				await dialog.message(
+					'Unable to determine a destination folder. Please choose one manually.',
+					{
+						title: 'Destination Required',
+						type: 'warning',
+					},
+				)
+				return
+			}
+		}
+
+		if (current < CREATE_WIZARD_STEP_COUNT - 1) {
+			setCreateWizardStep(current + 1)
+		}
+	}
+
+	function handleCreateWizardBack() {
+		const current = projectCreateState.currentStep || 0
+		if (current > 0) {
+			setCreateWizardStep(current - 1)
+		}
+	}
+
+	async function reloadSpecFromDisk(showMessage = true) {
+		if (!projectEditorState.projectPath) return
+		try {
+			const payload = await invoke('load_project_editor', {
+				projectId: projectEditorState.projectId,
+				projectPath: projectEditorState.projectPath,
+			})
+			projectEditorState.metadata = payload.metadata
+			projectEditorState.selectedAssets = new Set(
+				(payload.metadata.assets || []).map((asset) => asset.replace(/\\/g, '/')),
+			)
+			renderProjectEditor(payload)
+			if (showMessage) {
+				const statusEl = document.getElementById('project-edit-status')
+				if (statusEl) {
+					statusEl.textContent = 'Detected external project.yaml changes. Editor reloaded.'
+					statusEl.style.color = '#28a745'
+				}
+			}
+		} catch (error) {
+			console.error('Failed to reload project metadata:', error)
+		}
+	}
+
+	async function handleReloadProjectSpec() {
+		await reloadSpecFromDisk(false)
+		const statusEl = document.getElementById('project-edit-status')
+		if (statusEl) {
+			statusEl.textContent = 'Reloaded project.yaml from disk.'
+			statusEl.style.color = '#666'
+		}
+		await checkSpecDigest(true)
+	}
+
+	async function checkSpecDigest(force = false) {
+		if (!projectEditorState.projectPath) return
+		try {
+			const digest = await invoke('get_project_spec_digest', {
+				projectPath: projectEditorState.projectPath,
+			})
+			const digestStr = digest ?? null
+			if (force) {
+				projectEditorState.lastSpecDigest = digestStr
+				return
+			}
+			if (projectEditorState.skipNextDigestReload) {
+				projectEditorState.skipNextDigestReload = false
+				projectEditorState.lastSpecDigest = digestStr
+				return
+			}
+			if (
+				projectEditorState.lastSpecDigest &&
+				digestStr &&
+				digestStr !== projectEditorState.lastSpecDigest
+			) {
+				await reloadSpecFromDisk(true)
+			}
+			projectEditorState.lastSpecDigest = digestStr
+		} catch (error) {
+			console.error('Failed to compute project.yaml digest:', error)
+		}
+	}
+
+	function startSpecDigestPolling() {
+		if (projectEditorState.specDigestTimer) {
+			clearInterval(projectEditorState.specDigestTimer)
+		}
+		projectEditorState.specDigestTimer = setInterval(() => {
+			checkSpecDigest(false)
+		}, 4000)
+	}
+
+	function stopSpecDigestPolling() {
+		if (projectEditorState.specDigestTimer) {
+			clearInterval(projectEditorState.specDigestTimer)
+			projectEditorState.specDigestTimer = null
+		}
+	}
+
+	function handleLeaveProjectEditor() {
+		stopSpecDigestPolling()
 	}
 
 	function setOperationButtonsDisabled(disabled) {
@@ -279,59 +858,63 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const nameInput = document.getElementById('new-project-name')
 		const templateSelect = document.getElementById('new-project-template')
 		const pathInput = document.getElementById('new-project-path')
+		const versionInput = document.getElementById('new-project-version')
 
-		nameInput.value = ''
-		nameInput.autocapitalize = 'none'
-		nameInput.autocorrect = 'off'
-		nameInput.spellcheck = false
-		templateSelect.value = ''
+		if (nameInput) {
+			nameInput.value = ''
+			nameInput.autocapitalize = 'none'
+			nameInput.autocorrect = 'off'
+			nameInput.spellcheck = false
+		}
+		if (templateSelect) {
+			templateSelect.value = ''
+			templateSelect.onchange = () => renderCreateReview()
+		}
+		if (versionInput) {
+			versionInput.value = '1.0.0'
+			versionInput.oninput = () => renderCreateReview()
+		}
 		projectCreateState.selectedDir = null
 		projectCreateState.usingDefault = true
 
-		// Load available examples from biovault submodule
-		try {
-			const examples = await invoke('get_available_project_examples')
-			templateSelect.innerHTML = '<option value="">Blank Project</option>'
-
-			// Sort examples by name for consistent display
-			const sortedExamples = Object.entries(examples).sort((a, b) => a[0].localeCompare(b[0]))
-
-			for (const [exampleId, exampleInfo] of sortedExamples) {
-				const option = document.createElement('option')
-				option.value = exampleId
-				const displayName = exampleInfo.name || exampleId
-				const description = exampleInfo.description || ''
-				option.textContent = description ? `${displayName} - ${description}` : displayName
-				templateSelect.appendChild(option)
-			}
-		} catch (error) {
-			console.error('Failed to load project examples:', error)
-			// Fall back to basic options if loading fails
+		// Supported templates list intentionally left blank for now
+		if (templateSelect) {
 			templateSelect.innerHTML = '<option value="">Blank Project</option>'
 		}
 
 		const defaultPath = await fetchDefaultProjectPath('')
 		projectCreateState.defaultDir = defaultPath
-		pathInput.value = defaultPath
+		if (pathInput) {
+			pathInput.value = defaultPath
+		}
 
+		ensureCreateSpecForm(CREATE_SPEC_STEP_CONFIG[1])
+		projectCreateState.specData = { parameters: [], inputs: [], outputs: [] }
+		projectCreateState.specForm?.setSpec(projectCreateState.specData)
+		projectCreateState.specForm?.configureSections(['inputs'], 'inputs')
+		updateCreateSpecSummary()
+		clearWizardPreview('Preview will appear once details are filled in.')
+		updateWizardAddButtons(null)
+		setCreateWizardStep(0)
 		modal.style.display = 'flex'
-		setTimeout(() => nameInput.focus(), 100)
+		document.body.classList.add('modal-open')
+		setTimeout(() => nameInput?.focus(), 100)
 	}
 
 	function hideCreateProjectModal() {
 		const modal = document.getElementById('create-project-modal')
 		modal.style.display = 'none'
+		document.body.classList.remove('modal-open')
 	}
 
 	async function handleProjectNameInputChange() {
-		if (!projectCreateState.usingDefault) {
-			return
-		}
-
 		const nameValue = document.getElementById('new-project-name').value.trim()
-		const defaultPath = await fetchDefaultProjectPath(nameValue)
-		projectCreateState.defaultDir = defaultPath
-		document.getElementById('new-project-path').value = defaultPath
+		if (projectCreateState.usingDefault) {
+			const defaultPath = await fetchDefaultProjectPath(nameValue)
+			projectCreateState.defaultDir = defaultPath
+			document.getElementById('new-project-path').value = defaultPath
+		}
+		updateCreateSpecSummary()
 	}
 
 	async function chooseProjectDirectory() {
@@ -349,6 +932,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			projectCreateState.selectedDir = chosen
 			projectCreateState.usingDefault = false
 			document.getElementById('new-project-path').value = chosen
+			renderCreateReview()
 		} catch (error) {
 			console.error('Folder selection cancelled or failed:', error)
 		}
@@ -361,12 +945,15 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const defaultPath = await fetchDefaultProjectPath(nameValue)
 		projectCreateState.defaultDir = defaultPath
 		document.getElementById('new-project-path').value = defaultPath
+		renderCreateReview()
 	}
 
 	async function createProjectFromModal() {
+		ensureCreateSpecForm()
 		const nameInput = document.getElementById('new-project-name')
 		const templateSelect = document.getElementById('new-project-template')
 		const confirmBtn = document.getElementById('create-project-confirm')
+		const versionInput = document.getElementById('new-project-version')
 
 		const projectName = nameInput.value.trim()
 		if (!projectName) {
@@ -380,6 +967,10 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 
 		const example = templateSelect.value || null
 		const directory = projectCreateState.selectedDir
+		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
+		const spec = getCreateSpecPayload()
+		const hasContract =
+			spec.parameters.length > 0 || spec.inputs.length > 0 || spec.outputs.length > 0
 
 		confirmBtn.disabled = true
 		confirmBtn.textContent = 'Creating...'
@@ -390,6 +981,30 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				example,
 				directory: directory || null,
 			})
+			if (hasContract) {
+				try {
+					const editorPayload = await invoke('load_project_editor', {
+						projectId: project.id,
+					})
+					const metadata = editorPayload.metadata
+					const payload = buildSpecSavePayload({
+						name: metadata.name || projectName,
+						author: metadata.author,
+						workflow: metadata.workflow,
+						template: metadata.template || null,
+						assets: metadata.assets || [],
+						version: versionValue,
+						spec,
+					})
+					await invoke('save_project_editor', {
+						projectId: project.id,
+						projectPath: editorPayload.project_path,
+						payload,
+					})
+				} catch (specError) {
+					console.error('Failed to apply project contract during creation:', specError)
+				}
+			}
 			hideCreateProjectModal()
 			await loadProjects()
 			await openProjectEditor({ projectId: project.id })
@@ -441,6 +1056,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 
 			renderProjectEditor(payload)
 			await refreshJupyterStatus(true)
+			await checkSpecDigest(true)
+			startSpecDigestPolling()
 			navigateTo('project-edit')
 		} catch (error) {
 			console.error('Failed to load project editor:', error)
@@ -451,11 +1068,37 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	function renderProjectEditor(data) {
 		const pathEl = document.getElementById('project-edit-path')
 		pathEl.textContent = data.project_path || ''
+		clearEditorPreview('Preview updates as you edit.')
 
 		document.getElementById('project-edit-name').value = data.metadata.name || ''
 		document.getElementById('project-edit-author').value = data.metadata.author || ''
 		document.getElementById('project-edit-workflow').value = data.metadata.workflow || ''
 		document.getElementById('project-edit-template').value = data.metadata.template || ''
+		document.getElementById('project-edit-version').value = data.metadata.version || ''
+
+		const previewFields = [
+			'project-edit-author',
+			'project-edit-workflow',
+			'project-edit-template',
+			'project-edit-version',
+		]
+		previewFields.forEach((id) => {
+			const el = document.getElementById(id)
+			if (el && !el.dataset.previewBound) {
+				el.addEventListener('input', () => scheduleEditorPreview())
+				el.dataset.previewBound = 'true'
+			}
+		})
+
+		ensureEditorSpecForm()
+		projectEditorState.specData = {
+			parameters: data.metadata.parameters || [],
+			inputs: data.metadata.inputs || [],
+			outputs: data.metadata.outputs || [],
+		}
+		if (projectEditorState.specForm) {
+			projectEditorState.specForm.setSpec(projectEditorState.specData)
+		}
 
 		const treeContainer = document.getElementById('project-file-tree')
 		treeContainer.innerHTML = ''
@@ -484,6 +1127,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 
 		updateJupyterControls()
+		updateEditorSpecSummary()
 	}
 
 	function renderProjectTree(nodes, container, parentPath) {
@@ -581,6 +1225,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		} else {
 			projectEditorState.selectedAssets.delete(path)
 		}
+		scheduleEditorPreview()
 	}
 
 	function updateAncestorStates(startPath) {
@@ -690,6 +1335,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const authorValue = authorInputEl.value.trim()
 		const workflowValue = document.getElementById('project-edit-workflow').value.trim()
 		const templateValue = document.getElementById('project-edit-template').value.trim()
+		const versionValue = document.getElementById('project-edit-version').value.trim()
 
 		if (!nameValue) {
 			alert('Project name cannot be empty')
@@ -713,13 +1359,17 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 
 		try {
 			const assets = Array.from(projectEditorState.selectedAssets)
-			const payload = {
+			const spec = getEditorSpecPayload()
+			const payload = buildSpecSavePayload({
 				name: nameValue,
 				author: authorValue,
 				workflow: workflowValue,
-				template: templateValue || null,
+				template: templateValue,
 				assets,
-			}
+				version: versionValue,
+				spec,
+			})
+			projectEditorState.skipNextDigestReload = true
 
 			const saved = await invoke('save_project_editor', {
 				projectId: projectEditorState.projectId,
@@ -728,9 +1378,22 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.projectId = saved.id
 			projectEditorState.projectPath = saved.project_path
+			projectEditorState.metadata = {
+				...(projectEditorState.metadata || {}),
+				name: payload.name,
+				author: payload.author,
+				workflow: payload.workflow,
+				template: payload.template,
+				version: payload.version,
+				parameters: payload.parameters,
+				inputs: payload.inputs,
+				outputs: payload.outputs,
+				assets: payload.assets,
+			}
 			statusEl.textContent = '✅ Project saved'
 			statusEl.style.color = '#28a745'
 			await loadProjects()
+			await checkSpecDigest(true)
 		} catch (error) {
 			console.error('Failed to save project:', error)
 			statusEl.textContent = `Error saving project: ${error}`
@@ -860,5 +1523,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		handleSaveProjectEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,
+		handleLeaveProjectEditor,
+		handleReloadProjectSpec,
+		handleCreateWizardNext,
+		handleCreateWizardBack,
 	}
 }

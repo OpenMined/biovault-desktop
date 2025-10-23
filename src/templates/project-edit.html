@@ -18,9 +18,86 @@
 	</div>
 	<div class="project-edit-main">
 		<div class="project-edit-tree">
-			<div style="margin-bottom: 12px">
-				<h4 style="margin-bottom: 4px">Assets</h4>
-				<p style="font-size: 12px; color: #666">Check the files that belong to this project.</p>
+			<div class="project-edit-tree-header">
+				<h4>Assets</h4>
+				<p>Check the files that belong to this project.</p>
+			</div>
+			<div id="project-file-tree" class="project-file-tree"></div>
+		</div>
+		<div class="project-edit-form">
+			<section class="project-edit-section">
+				<h4>Project Details</h4>
+				<div class="project-edit-grid">
+					<label>
+						<span>Name</span>
+						<input id="project-edit-name" type="text" spellcheck="false" />
+					</label>
+					<label>
+						<span>Author Email</span>
+						<input id="project-edit-author" type="email" spellcheck="false" />
+					</label>
+					<label>
+						<span>Workflow</span>
+						<input id="project-edit-workflow" type="text" spellcheck="false" />
+					</label>
+					<label>
+						<span>Template</span>
+						<input id="project-edit-template" type="text" spellcheck="false" />
+					</label>
+					<label>
+						<span>Version</span>
+						<input
+							id="project-edit-version"
+							type="text"
+							spellcheck="false"
+							placeholder="e.g. 1.0.0"
+						/>
+					</label>
+				</div>
+			</section>
+			<section class="project-edit-section">
+				<div class="section-header">
+					<h4>Pipeline Contract</h4>
+					<p>
+						Use the tabs to manage parameters, inputs, and outputs for this project. Parameters are
+						optional toggles surfaced to users and become <code>params.&lt;name&gt;</code> in your
+						workflow.
+					</p>
+				</div>
+				<div id="project-spec-editor"></div>
+			</section>
+			<section class="project-edit-section">
+				<div class="section-header">
+					<h4>Contract Summary</h4>
+					<p>Auto-updates as you edit.</p>
+				</div>
+				<pre id="project-spec-summary" class="project-spec-summary"></pre>
+			</section>
+			<section class="project-edit-section">
+				<div class="section-header">
+					<h4>Generated Previews</h4>
+					<p>Peek at the project.yaml and template.nf that will be produced.</p>
+				</div>
+				<details class="preview-block" id="project-edit-preview-yaml-wrapper">
+					<summary>Project YAML Preview</summary>
+					<pre class="code-block language-yaml" id="project-edit-preview-yaml">
+Preview updates as you edit.</pre
+					>
+				</details>
+				<details class="preview-block" id="project-edit-preview-template-wrapper">
+					<summary>template.nf Preview</summary>
+					<pre class="code-block language-groovy" id="project-edit-preview-template">
+Preview updates as you edit.</pre
+					>
+				</details>
+			</section>
+			<div id="project-edit-status" class="project-edit-status"></div>
+			<div class="project-edit-actions">
+				<button id="project-edit-cancel-btn" class="secondary-btn" type="button">Cancel</button>
+				<button id="project-spec-reload-btn" class="secondary-btn" type="button">
+					Reload project.yaml
+				</button>
+				<button id="project-edit-save-btn" class="primary-btn" type="button">Save Changes</button>
 			</div>
 		</div>
 	</div>

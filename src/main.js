@@ -97,9 +97,13 @@ const {
 	chooseProjectDirectory,
 	resetProjectDirectory,
 	createProjectFromModal,
+	handleCreateWizardNext,
+	handleCreateWizardBack,
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
+	handleLeaveProjectEditor,
+	handleReloadProjectSpec,
 } = projectsModule
 
 // Create messages module early with placeholder getActiveView
@@ -307,6 +311,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 		showCreateProjectModal,
 		hideCreateProjectModal,
 		createProjectFromModal,
+		handleCreateWizardNext,
+		handleCreateWizardBack,
 		handleProjectNameInputChange,
 		chooseProjectDirectory,
 		resetProjectDirectory,
@@ -314,6 +320,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 		handleSaveProjectEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,
+		handleLeaveProjectEditor,
+		handleReloadProjectSpec,
 		runAnalysis,
 		shareCurrentRunLogs,
 		toggleSelectAllParticipants,

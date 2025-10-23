@@ -38,6 +38,8 @@ export function setupEventHandlers({
 	showCreateProjectModal,
 	hideCreateProjectModal,
 	createProjectFromModal,
+	handleCreateWizardNext,
+	handleCreateWizardBack,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
 	resetProjectDirectory,
@@ -45,6 +47,8 @@ export function setupEventHandlers({
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
+	handleLeaveProjectEditor,
+	handleReloadProjectSpec,
 	// Runs
 	runAnalysis,
 	shareCurrentRunLogs,
@@ -430,16 +434,17 @@ export function setupEventHandlers({
 	document.getElementById('create-project-cancel').addEventListener('click', () => {
 		hideCreateProjectModal()
 	})
+	document.getElementById('create-project-back').addEventListener('click', () => {
+		handleCreateWizardBack()
+	})
+	document.getElementById('create-project-next').addEventListener('click', () => {
+		handleCreateWizardNext()
+	})
 	document.getElementById('create-project-confirm').addEventListener('click', () => {
 		createProjectFromModal()
 	})
 	document.getElementById('new-project-name').addEventListener('input', () => {
 		handleProjectNameInputChange()
-	})
-	document.getElementById('new-project-name').addEventListener('keypress', (e) => {
-		if (e.key === 'Enter') {
-			createProjectFromModal()
-		}
 	})
 	document.getElementById('project-path-browse-btn').addEventListener('click', async () => {
 		await chooseProjectDirectory()
@@ -464,6 +469,7 @@ export function setupEventHandlers({
 	const projectEditCancelBtn = document.getElementById('project-edit-cancel-btn')
 	if (projectEditCancelBtn) {
 		projectEditCancelBtn.addEventListener('click', () => {
+			handleLeaveProjectEditor()
 			navigateTo('projects')
 		})
 	}
@@ -471,6 +477,7 @@ export function setupEventHandlers({
 	const projectEditBackBtn = document.getElementById('project-edit-back-btn')
 	if (projectEditBackBtn) {
 		projectEditBackBtn.addEventListener('click', () => {
+			handleLeaveProjectEditor()
 			navigateTo('projects')
 		})
 	}
@@ -480,6 +487,11 @@ export function setupEventHandlers({
 	document
 		.getElementById('project-edit-reset-jupyter-btn')
 		.addEventListener('click', handleResetJupyter)
+
+	const projectSpecReloadBtn = document.getElementById('project-spec-reload-btn')
+	if (projectSpecReloadBtn) {
+		projectSpecReloadBtn.addEventListener('click', handleReloadProjectSpec)
+	}
 
 	// Runs - Select all participants
 	document.getElementById('select-all-participants').addEventListener('change', (e) => {
