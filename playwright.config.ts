@@ -26,4 +26,10 @@ export default defineConfig({
 		screenshot: 'only-on-failure',
 	},
 	reporter: [['list'], ['html', { outputFolder: 'artifacts/playwright-report', open: 'never' }]],
+	webServer: {
+		command: 'cd src && python3 -m http.server ' + PORT,
+		port: Number(PORT),
+		reuseExistingServer: !process.env.CI,
+		timeout: 120_000,
+	},
 })

@@ -39,7 +39,7 @@ test.beforeEach(async ({ page, context }) => {
 	await context.addInitScript((storageKey) => {
 		localStorage.setItem(storageKey, 'true')
 	}, STORAGE_KEY)
-	await page.goto('http://localhost:5173')
+	await page.goto('/')
 	await page.waitForSelector('#app', { state: 'visible', timeout: 10000 })
 })
 
