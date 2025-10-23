@@ -304,6 +304,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -391,6 +392,7 @@ pub fn run() {
             // Settings commands
             get_settings,
             save_settings,
+            get_app_version,
             open_folder,
             show_in_folder,
             get_config_path,
