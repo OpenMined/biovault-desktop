@@ -595,7 +595,7 @@ export function createProjectSpecForm({ container, onChange }) {
 		notify()
 	}
 
-	container.addEventListener('click', (event) => {
+	layout.addEventListener('click', (event) => {
 		const action = event.target.closest('button')?.dataset?.action
 		if (!action) return
 		switch (action) {

@@ -1,11 +1,12 @@
 import { createProjectSpecForm, generateContractAscii } from './project-spec-form.js'
 
-const CREATE_WIZARD_STEP_COUNT = 5
+const CREATE_WIZARD_STEP_COUNT = 6
 const CREATE_WIZARD_STEP_LABELS = [
 	'Project Details',
 	'Inputs',
 	'Parameters',
 	'Outputs',
+	'Preview',
 	'Review & Create',
 ]
 const CREATE_SPEC_STEP_CONFIG = {
@@ -16,12 +17,6 @@ const CREATE_SPEC_STEP_CONFIG = {
 		defaultTab: 'parameters',
 	},
 	3: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
-}
-
-const CREATE_ADD_BUTTONS = {
-	inputs: () => document.getElementById('create-project-add-input'),
-	parameters: () => document.getElementById('create-project-add-parameter'),
-	outputs: () => document.getElementById('create-project-add-output'),
 }
 
 let wizardPreviewRequestId = 0
@@ -66,40 +61,6 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		nameListenerBound: false,
 		currentStep: 0,
 	}
-
-	const wizardAddButtonCache = {}
-
-	function getWizardAddButton(kind) {
-		if (!CREATE_ADD_BUTTONS[kind]) return null
-		if (!wizardAddButtonCache[kind]) {
-			const button = CREATE_ADD_BUTTONS[kind]()
-			if (button) {
-				if (!button.dataset.bound) {
-					button.addEventListener('click', () => {
-						if (!projectCreateState.specForm) return
-						projectCreateState.specForm.addEntry(kind)
-						scheduleWizardPreview()
-					})
-					button.dataset.bound = 'true'
-				}
-				wizardAddButtonCache[kind] = button
-			}
-		}
-		return wizardAddButtonCache[kind] ?? null
-	}
-
-	function updateWizardAddButtons(config) {
-		const visibleKinds = config ? config.sections : []
-		;['inputs', 'parameters', 'outputs'].forEach((kind) => {
-			const button = getWizardAddButton(kind)
-			if (!button) return
-			button.style.display = visibleKinds.includes(kind) ? 'inline-flex' : 'none'
-		})
-	}
-
-	;['inputs', 'parameters', 'outputs'].forEach((kind) => {
-		getWizardAddButton(kind)
-	})
 
 	let operationModalDepth = 0
 
@@ -206,6 +167,44 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (templateEl) templateEl.textContent = message
 	}
 
+	function escapeHtml(text) {
+		const div = document.createElement('div')
+		div.textContent = text
+		return div.innerHTML
+	}
+
+	function highlightYaml(code) {
+		const escaped = escapeHtml(code)
+		return escaped
+			.replace(/^(\s*)([\w_-]+)(\s*):/gm, '$1<span class="yaml-key">$2</span>$3:')
+			.replace(/:\s*([^\n]+)/g, ': <span class="yaml-value">$1</span>')
+			.replace(/(#[^\n]*)/g, '<span class="yaml-comment">$1</span>')
+	}
+
+	function highlightGroovy(code) {
+		const lines = code.split('\n')
+		const highlighted = lines.map((line) => {
+			// Skip if line is a comment
+			if (line.trim().startsWith('//')) {
+				return `<span class="groovy-comment">${escapeHtml(line)}</span>`
+			}
+			// Escape HTML first
+			let result = escapeHtml(line)
+			// Highlight strings
+			result = result.replace(
+				/(&quot;[^&]*&quot;|&#39;[^&#]*&#39;)/g,
+				'<span class="groovy-string">$1</span>',
+			)
+			// Highlight keywords (must be whole words)
+			result = result.replace(
+				/\b(workflow|process|params|def|if|else|return|include|from|nextflow|enable|dsl|instanceof|Map|Collection)\b/g,
+				'<span class="groovy-keyword">$1</span>',
+			)
+			return result
+		})
+		return highlighted.join('\n')
+	}
+
 	async function requestWizardPreview(payload) {
 		wizardPreviewRequestId += 1
 		const requestId = wizardPreviewRequestId
@@ -213,9 +212,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			const preview = await invoke('preview_project_spec', { payload })
 			if (requestId !== wizardPreviewRequestId) return
 			const yamlEl = document.getElementById('create-project-preview-yaml')
-			const templateEl = document.getElementById('create-project-preview-template')
-			if (yamlEl) yamlEl.textContent = preview.yaml
-			if (templateEl) templateEl.textContent = preview.template
+			const workflowEl = document.getElementById('create-project-preview-template')
+			if (yamlEl) yamlEl.innerHTML = highlightYaml(preview.yaml)
+			if (workflowEl) workflowEl.innerHTML = highlightGroovy(preview.workflow || preview.template)
 		} catch (error) {
 			if (requestId !== wizardPreviewRequestId) return
 			console.error('Failed to generate project preview:', error)
@@ -230,9 +229,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			const preview = await invoke('preview_project_spec', { payload })
 			if (requestId !== editorPreviewRequestId) return
 			const yamlEl = document.getElementById('project-edit-preview-yaml')
-			const templateEl = document.getElementById('project-edit-preview-template')
-			if (yamlEl) yamlEl.textContent = preview.yaml
-			if (templateEl) templateEl.textContent = preview.template
+			const workflowEl = document.getElementById('project-edit-preview-template')
+			if (yamlEl) yamlEl.innerHTML = highlightYaml(preview.yaml)
+			if (workflowEl) workflowEl.innerHTML = highlightGroovy(preview.workflow || preview.template)
 		} catch (error) {
 			if (requestId !== editorPreviewRequestId) return
 			console.error('Failed to generate editor preview:', error)
@@ -376,34 +375,42 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const versionValue =
 			version && typeof version === 'string' && version.trim().length ? version.trim() : null
 
-		const parameters = (spec.parameters || []).map((param) => ({
-			name: param.name,
-			type: param.raw_type,
-			raw_type: param.raw_type,
-			description: param.description || null,
-			default: param.default && param.default.trim() ? param.default.trim() : null,
-			choices: param.choices && param.choices.length ? param.choices : null,
-			advanced: param.advanced ? true : null,
-		}))
+		const parameters = (spec.parameters || [])
+			.filter((param) => param.name && param.name.trim() && param.raw_type && param.raw_type.trim())
+			.map((param) => ({
+				name: param.name,
+				type: param.raw_type,
+				raw_type: param.raw_type,
+				description: param.description || null,
+				default: param.default && param.default.trim() ? param.default.trim() : null,
+				choices: param.choices && param.choices.length ? param.choices : null,
+				advanced: param.advanced ? true : null,
+			}))
 
-		const inputs = (spec.inputs || []).map((input) => ({
-			name: input.name,
-			type: input.raw_type,
-			raw_type: input.raw_type,
-			description: input.description || null,
-			format: input.format || null,
-			path: input.path || null,
-			mapping: input.mapping || null,
-		}))
+		const inputs = (spec.inputs || [])
+			.filter((input) => input.name && input.name.trim() && input.raw_type && input.raw_type.trim())
+			.map((input) => ({
+				name: input.name,
+				type: input.raw_type,
+				raw_type: input.raw_type,
+				description: input.description || null,
+				format: input.format || null,
+				path: input.path || null,
+				mapping: input.mapping || null,
+			}))
 
-		const outputs = (spec.outputs || []).map((output) => ({
-			name: output.name,
-			type: output.raw_type,
-			raw_type: output.raw_type,
-			description: output.description || null,
-			format: output.format || null,
-			path: output.path || null,
-		}))
+		const outputs = (spec.outputs || [])
+			.filter(
+				(output) => output.name && output.name.trim() && output.raw_type && output.raw_type.trim(),
+			)
+			.map((output) => ({
+				name: output.name,
+				type: output.raw_type,
+				raw_type: output.raw_type,
+				description: output.description || null,
+				format: output.format || null,
+				path: output.path || null,
+			}))
 
 		return {
 			name: nameValue,
@@ -422,7 +429,6 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const nameEl = document.getElementById('create-project-review-name')
 		if (!nameEl) return
 		const nameInput = document.getElementById('new-project-name')
-		const templateSelect = document.getElementById('new-project-template')
 		const versionInput = document.getElementById('new-project-version')
 		const pathInput = document.getElementById('new-project-path')
 
@@ -472,6 +478,14 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			indicator.classList.toggle('active', Number(indicator.dataset.step) === step)
 		})
 
+		// Auto-collapse preview panels when entering step 4
+		if (step === 4) {
+			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
+			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
+			if (yamlWrapper) yamlWrapper.open = true
+			if (templateWrapper) templateWrapper.open = false
+		}
+
 		const backBtn = document.getElementById('create-project-back')
 		const nextBtn = document.getElementById('create-project-next')
 		const confirmBtn = document.getElementById('create-project-confirm')
@@ -492,13 +506,14 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const specConfig = CREATE_SPEC_STEP_CONFIG[step]
 		if (specConfig) {
 			ensureCreateSpecForm(specConfig)
-			updateWizardAddButtons(specConfig)
+			scheduleWizardPreview()
+		} else if (step === 4) {
+			// Preview step - update code previews
 			scheduleWizardPreview()
 		} else if (step === CREATE_WIZARD_STEP_COUNT - 1) {
+			// Final review step
 			renderCreateReview()
-			updateWizardAddButtons(null)
 		} else {
-			updateWizardAddButtons(null)
 			scheduleWizardPreview()
 		}
 	}
@@ -546,6 +561,12 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const current = projectCreateState.currentStep || 0
 		if (current > 0) {
 			setCreateWizardStep(current - 1)
+		}
+	}
+
+	function handleWizardStepClick(targetStep) {
+		if (targetStep >= 0 && targetStep < CREATE_WIZARD_STEP_COUNT) {
+			setCreateWizardStep(targetStep)
 		}
 	}
 
@@ -894,7 +915,6 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		projectCreateState.specForm?.configureSections(['inputs'], 'inputs')
 		updateCreateSpecSummary()
 		clearWizardPreview('Preview will appear once details are filled in.')
-		updateWizardAddButtons(null)
 		setCreateWizardStep(0)
 		modal.style.display = 'flex'
 		document.body.classList.add('modal-open')
@@ -1401,6 +1421,20 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 	}
 
+	async function handleOpenProjectFolder() {
+		if (!projectEditorState.projectPath) {
+			alert('Select a project first')
+			return
+		}
+
+		try {
+			await invoke('open_folder', { path: projectEditorState.projectPath })
+		} catch (error) {
+			console.error('Failed to open project folder:', error)
+			alert(`Failed to open folder: ${error}`)
+		}
+	}
+
 	async function handleLaunchJupyter() {
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
@@ -1523,9 +1557,11 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		handleSaveProjectEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,
+		handleOpenProjectFolder,
 		handleLeaveProjectEditor,
 		handleReloadProjectSpec,
 		handleCreateWizardNext,
 		handleCreateWizardBack,
+		handleWizardStepClick,
 	}
 }

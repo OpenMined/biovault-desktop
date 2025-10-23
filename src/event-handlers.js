@@ -40,6 +40,7 @@ export function setupEventHandlers({
 	createProjectFromModal,
 	handleCreateWizardNext,
 	handleCreateWizardBack,
+	handleWizardStepClick,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
 	resetProjectDirectory,
@@ -47,6 +48,7 @@ export function setupEventHandlers({
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
+	handleOpenProjectFolder,
 	handleLeaveProjectEditor,
 	handleReloadProjectSpec,
 	// Runs
@@ -443,6 +445,31 @@ export function setupEventHandlers({
 	document.getElementById('create-project-confirm').addEventListener('click', () => {
 		createProjectFromModal()
 	})
+	// Allow clicking on wizard step indicators to navigate
+	document.querySelectorAll('.project-wizard-steps li').forEach((indicator) => {
+		indicator.addEventListener('click', () => {
+			handleWizardStepClick(Number(indicator.dataset.step))
+		})
+	})
+	// Preview expand/collapse controls
+	const expandAllBtn = document.getElementById('preview-expand-all')
+	const collapseAllBtn = document.getElementById('preview-collapse-all')
+	if (expandAllBtn) {
+		expandAllBtn.addEventListener('click', () => {
+			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
+			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
+			if (yamlWrapper) yamlWrapper.open = true
+			if (templateWrapper) templateWrapper.open = true
+		})
+	}
+	if (collapseAllBtn) {
+		collapseAllBtn.addEventListener('click', () => {
+			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
+			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
+			if (yamlWrapper) yamlWrapper.open = false
+			if (templateWrapper) templateWrapper.open = false
+		})
+	}
 	document.getElementById('new-project-name').addEventListener('input', () => {
 		handleProjectNameInputChange()
 	})
@@ -481,6 +508,9 @@ export function setupEventHandlers({
 			navigateTo('projects')
 		})
 	}
+	document
+		.getElementById('project-edit-open-folder-btn')
+		.addEventListener('click', handleOpenProjectFolder)
 	document
 		.getElementById('project-edit-launch-jupyter-btn')
 		.addEventListener('click', handleLaunchJupyter)

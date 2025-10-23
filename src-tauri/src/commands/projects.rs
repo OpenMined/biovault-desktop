@@ -72,6 +72,7 @@ struct OutputPayload {
 pub struct ProjectPreviewResponse {
     yaml: String,
     template: String,
+    workflow: String,
 }
 
 fn ensure_within_projects_dir(path: &Path) -> Result<(), String> {
@@ -270,18 +271,126 @@ fn parse_spec_payload(data: SaveProjectPayload) -> Result<(ProjectMetadata, Proj
     Ok((metadata, spec))
 }
 
+fn format_project_yaml(spec: &ProjectSpec) -> String {
+    let mut yaml = String::new();
+    yaml.push_str(&format!("name: {}\n", spec.name));
+    yaml.push_str(&format!("author: {}\n", spec.author));
+    yaml.push_str(&format!("workflow: {}\n", spec.workflow));
+    if let Some(ref template) = spec.template {
+        yaml.push_str(&format!("template: {}\n", template));
+    }
+    if let Some(ref version) = spec.version {
+        yaml.push_str(&format!("version: {}\n", version));
+    }
+
+    yaml.push_str("assets:");
+    if spec.assets.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for asset in &spec.assets {
+            yaml.push_str(&format!("  - {}\n", asset));
+        }
+    }
+
+    yaml.push_str("parameters:");
+    if spec.parameters.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for param in &spec.parameters {
+            yaml.push_str(&format!("  - name: {}\n", param.name));
+            yaml.push_str(&format!("    type: {}\n", param.raw_type));
+            if let Some(ref desc) = param.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref default) = param.default {
+                let default_str = serde_yaml::to_string(default)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                yaml.push_str(&format!("    default: {}\n", default_str));
+            }
+            if let Some(ref choices) = param.choices {
+                yaml.push_str("    choices:\n");
+                for choice in choices {
+                    yaml.push_str(&format!("      - {}\n", choice));
+                }
+            }
+            if let Some(advanced) = param.advanced {
+                if advanced {
+                    yaml.push_str("    advanced: true\n");
+                }
+            }
+        }
+    }
+
+    yaml.push_str("inputs:");
+    if spec.inputs.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for input in &spec.inputs {
+            yaml.push_str(&format!("  - name: {}\n", input.name));
+            yaml.push_str(&format!("    type: {}\n", input.raw_type));
+            if let Some(ref desc) = input.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref format) = input.format {
+                yaml.push_str(&format!("    format: {}\n", format));
+            }
+            if let Some(ref path) = input.path {
+                yaml.push_str(&format!("    path: {}\n", path));
+            }
+            if let Some(ref mapping) = input.mapping {
+                yaml.push_str("    mapping:\n");
+                for (key, value) in mapping {
+                    yaml.push_str(&format!("      {}: {}\n", key, value));
+                }
+            }
+        }
+    }
+
+    yaml.push_str("outputs:");
+    if spec.outputs.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for output in &spec.outputs {
+            yaml.push_str(&format!("  - name: {}\n", output.name));
+            yaml.push_str(&format!("    type: {}\n", output.raw_type));
+            if let Some(ref desc) = output.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref format) = output.format {
+                yaml.push_str(&format!("    format: {}\n", format));
+            }
+            if let Some(ref path) = output.path {
+                yaml.push_str(&format!("    path: {}\n", path));
+            }
+        }
+    }
+
+    yaml
+}
+
 #[tauri::command]
 pub fn preview_project_spec(payload: serde_json::Value) -> Result<ProjectPreviewResponse, String> {
     let data: SaveProjectPayload =
         serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
     let (_, spec) = parse_spec_payload(data)?;
 
-    let yaml =
-        serde_yaml::to_string(&spec).map_err(|e| format!("Failed to serialize preview: {}", e))?;
+    let yaml = format_project_yaml(&spec);
     let template = project_spec::generate_template_nf(&spec)
         .map_err(|e| format!("Failed to generate template preview: {}", e))?;
+    let workflow = project_spec::generate_workflow_stub(&spec)
+        .map_err(|e| format!("Failed to generate workflow preview: {}", e))?;
 
-    Ok(ProjectPreviewResponse { yaml, template })
+    Ok(ProjectPreviewResponse {
+        yaml,
+        template,
+        workflow,
+    })
 }
 
 #[tauri::command]
@@ -655,7 +764,7 @@ pub fn save_project_editor(
 ) -> Result<Project, String> {
     let data: SaveProjectPayload =
         serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
-    let (metadata, _spec) = parse_spec_payload(data)?;
+    let (metadata, spec) = parse_spec_payload(data)?;
 
     let project_path_buf = PathBuf::from(&project_path);
     if !project_path_buf.exists() {
@@ -670,6 +779,15 @@ pub fn save_project_editor(
 
     biovault::data::save_project_metadata(&project_path_buf, &metadata)
         .map_err(|e| format!("Failed to save project.yaml: {}", e))?;
+
+    // Regenerate workflow.nf if template is dynamic-nextflow
+    if metadata.template.as_deref() == Some("dynamic-nextflow") {
+        let workflow_stub = project_spec::generate_workflow_stub(&spec)
+            .map_err(|e| format!("Failed to generate workflow stub: {}", e))?;
+        let workflow_path = project_path_buf.join(&metadata.workflow);
+        fs::write(&workflow_path, workflow_stub)
+            .map_err(|e| format!("Failed to write workflow.nf: {}", e))?;
+    }
 
     let template_for_db = metadata
         .template

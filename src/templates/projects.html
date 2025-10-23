@@ -30,11 +30,11 @@
 				<li data-step="1">2. Inputs</li>
 				<li data-step="2">3. Parameters</li>
 				<li data-step="3">4. Outputs</li>
-				<li data-step="4">5. Review &amp; Create</li>
+				<li data-step="4">5. Preview</li>
+				<li data-step="5">6. Review &amp; Create</li>
 			</ol>
 			<p class="project-wizard-hint">
-				You can navigate with Back/Next at the bottom. Your progress is saved locally until you
-				finish.
+				Click on any step to navigate. Your progress is saved locally until you finish.
 			</p>
 		</aside>
 		<div class="project-wizard-content">
@@ -100,15 +100,6 @@
 					<h3>Inputs</h3>
 					<p>Describe the data your project expects.</p>
 				</header>
-				<div class="spec-step-actions">
-					<button
-						id="create-project-add-input"
-						class="secondary-btn contract-add-btn"
-						type="button"
-					>
-						+ Add Input
-					</button>
-				</div>
 				<div id="create-project-inputs"></div>
 			</section>
 			<section class="project-wizard-step" data-step="2">
@@ -120,15 +111,6 @@
 						behaviour per run.
 					</p>
 				</header>
-				<div class="spec-step-actions">
-					<button
-						id="create-project-add-parameter"
-						class="secondary-btn contract-add-btn"
-						type="button"
-					>
-						+ Add Parameter
-					</button>
-				</div>
 				<div id="create-project-parameters"></div>
 			</section>
 			<section class="project-wizard-step" data-step="3">
@@ -136,18 +118,41 @@
 					<h3>Outputs</h3>
 					<p>Define what artifacts this project produces.</p>
 				</header>
-				<div class="spec-step-actions">
-					<button
-						id="create-project-add-output"
-						class="secondary-btn contract-add-btn"
-						type="button"
-					>
-						+ Add Output
-					</button>
-				</div>
 				<div id="create-project-outputs"></div>
 			</section>
 			<section class="project-wizard-step" data-step="4">
+				<header>
+					<h3>Preview Generated Code</h3>
+					<p>Review the project.yaml and workflow.nf files that will be generated.</p>
+				</header>
+				<div class="preview-controls">
+					<button id="preview-expand-all" class="secondary-btn" type="button">Expand All</button>
+					<button id="preview-collapse-all" class="secondary-btn" type="button">
+						Collapse All
+					</button>
+				</div>
+				<div class="project-preview-stack">
+					<details
+						class="preview-block preview-block-full"
+						id="create-project-preview-yaml-wrapper"
+					>
+						<summary>project.yaml</summary>
+						<pre class="code-block language-yaml" id="create-project-preview-yaml">
+Preview will appear once details are filled in.</pre
+						>
+					</details>
+					<details
+						class="preview-block preview-block-full"
+						id="create-project-preview-template-wrapper"
+					>
+						<summary>workflow.nf</summary>
+						<pre class="code-block language-groovy" id="create-project-preview-template">
+Preview will appear once details are filled in.</pre
+						>
+					</details>
+				</div>
+			</section>
+			<section class="project-wizard-step" data-step="5">
 				<header>
 					<h3>Review &amp; Create</h3>
 					<p>Confirm everything looks right before generating the project scaffolding.</p>
@@ -171,22 +176,10 @@
 							<dd id="create-project-review-path">—</dd>
 						</div>
 					</dl>
-					<div class="project-review-contract">
-						<label>Pipeline Contract Summary</label>
-						<pre id="create-project-review-ascii" class="project-spec-summary"></pre>
-					</div>
-					<details class="preview-block" id="create-project-preview-yaml-wrapper">
-						<summary>Show project.yaml preview</summary>
-						<pre class="code-block language-yaml" id="create-project-preview-yaml">
-Preview will appear once details are filled in.</pre
-						>
-					</details>
-					<details class="preview-block" id="create-project-preview-template-wrapper">
-						<summary>Show template.nf preview</summary>
-						<pre class="code-block language-groovy" id="create-project-preview-template">
-Preview will appear once details are filled in.</pre
-						>
-					</details>
+				</div>
+				<div class="project-review-contract-full">
+					<label>Pipeline Contract Summary</label>
+					<pre id="create-project-review-ascii" class="project-spec-summary"></pre>
 				</div>
 			</section>
 			<footer class="project-wizard-actions">
