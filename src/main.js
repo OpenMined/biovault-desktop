@@ -206,8 +206,9 @@ setRunNavigateTo(navigateTo)
 // Make navigateTo available globally for data module
 window.navigateTo = navigateTo
 
-// Expose navigation readiness for automated tests
+// Expose readiness markers for automated tests
 window.__NAV_HANDLERS_READY__ = false
+window.__EVENT_HANDLERS_READY__ = false
 
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
@@ -354,6 +355,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		initializeMessagesTab,
 		updateComposeVisibilityPublic,
 	})
+	window.__EVENT_HANDLERS_READY__ = true
 
 	// Show onboarding view if user is not onboarded
 	await onboarding.checkOnboarding()
