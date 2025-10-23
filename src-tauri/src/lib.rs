@@ -461,6 +461,10 @@ pub fn run() {
             save_project_editor,
             preview_project_spec,
             get_project_spec_digest,
+            get_supported_input_types,
+            get_supported_output_types,
+            get_supported_parameter_types,
+            get_common_formats,
             // Jupyter commands
             launch_jupyter,
             stop_jupyter,

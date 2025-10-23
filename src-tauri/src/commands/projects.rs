@@ -289,7 +289,7 @@ fn format_project_yaml(spec: &ProjectSpec) -> String {
     } else {
         yaml.push('\n');
         for asset in &spec.assets {
-            yaml.push_str(&format!("  - {}\n", asset));
+            yaml.push_str(&format!("- {}\n", asset));
         }
     }
 
@@ -497,7 +497,15 @@ pub fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntr
         }
     }
 
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    // Sort by created_at descending (most recent first), then by name
+    entries.sort_by(|a, b| {
+        match (&a.created_at, &b.created_at) {
+            (Some(time_a), Some(time_b)) => time_b.cmp(time_a), // Reverse for descending
+            (Some(_), None) => std::cmp::Ordering::Less,        // Items with timestamps come first
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()), // Fallback to name
+        }
+    });
 
     eprintln!("✅ Returning {} project entry(ies)", entries.len());
     Ok(entries)
@@ -571,10 +579,12 @@ pub fn create_project(
     name: String,
     example: Option<String>,
     directory: Option<String>,
+    create_python_script: Option<bool>,
+    script_name: Option<String>,
 ) -> Result<Project, String> {
     eprintln!(
-        "🔍 create_project called with name: {} example: {:?}",
-        name, example
+        "🔍 create_project called with name: {} example: {:?} python_script: {:?}",
+        name, example, create_python_script
     );
 
     let target_dir = directory.map(PathBuf::from);
@@ -585,6 +595,41 @@ pub fn create_project(
         target_dir,
     )
     .map_err(|e| format!("Failed to create project: {}", e))?;
+
+    // Add Python script if requested for blank projects
+    if create_python_script.unwrap_or(false) && created.template == "dynamic-nextflow" {
+        let project_path = PathBuf::from(&created.project_path);
+        let assets_dir = project_path.join("assets");
+        std::fs::create_dir_all(&assets_dir)
+            .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+        
+        let filename = script_name.as_deref().unwrap_or("process.py");
+        let script_path = assets_dir.join(filename);
+        let script_content = biovault::project_spec::generate_python_script_template(filename);
+        
+        std::fs::write(&script_path, script_content)
+            .map_err(|e| format!("Failed to write Python script: {}", e))?;
+        
+        // Update project.yaml to include the asset
+        let project_yaml_path = project_path.join("project.yaml");
+        let yaml_content = std::fs::read_to_string(&project_yaml_path)
+            .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+        
+        let mut spec: biovault::project_spec::ProjectSpec = serde_yaml::from_str(&yaml_content)
+            .map_err(|e| format!("Failed to parse project.yaml: {}", e))?;
+        
+        // Add asset if not already present
+        if !spec.assets.contains(&filename.to_string()) {
+            spec.assets.push(filename.to_string());
+        }
+        
+        let updated_yaml = serde_yaml::to_string(&spec)
+            .map_err(|e| format!("Failed to serialize project.yaml: {}", e))?;
+        std::fs::write(&project_yaml_path, updated_yaml)
+            .map_err(|e| format!("Failed to update project.yaml: {}", e))?;
+        
+        eprintln!("✅ Created Python script: {} and updated assets", script_path.display());
+    }
 
     eprintln!(
         "✅ Project '{}' created successfully via library",
@@ -607,36 +652,56 @@ pub fn get_available_project_examples() -> Result<HashMap<String, serde_json::Va
     use std::fs;
     use std::path::PathBuf;
 
-    // Get the path to the biovault submodule's examples.yaml
-    let examples_yaml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // Get the path to the pipeline examples directory
+    let pipeline_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to get parent directory")?
-        .join("biovault/cli/examples/examples.yaml");
+        .join("biovault/cli/examples/pipeline");
 
-    if !examples_yaml_path.exists() {
+    if !pipeline_dir.exists() {
         return Err(format!(
-            "Examples file not found at: {}",
-            examples_yaml_path.display()
+            "Pipeline examples directory not found at: {}",
+            pipeline_dir.display()
         ));
     }
 
-    let yaml_content = fs::read_to_string(&examples_yaml_path)
-        .map_err(|e| format!("Failed to read examples.yaml: {}", e))?;
-
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_content)
-        .map_err(|e| format!("Failed to parse examples.yaml: {}", e))?;
-
-    let examples = yaml
-        .get("examples")
-        .and_then(|e| e.as_mapping())
-        .ok_or("Invalid examples.yaml format")?;
-
     let mut result = HashMap::new();
-    for (key, value) in examples {
-        let example_name = key.as_str().ok_or("Invalid example name")?.to_string();
-        let json_value =
-            serde_json::to_value(value).map_err(|e| format!("Failed to convert to JSON: {}", e))?;
-        result.insert(example_name, json_value);
+
+    // Scan for subdirectories with project.yaml
+    let entries = fs::read_dir(&pipeline_dir)
+        .map_err(|e| format!("Failed to read pipeline directory: {}", e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+
+        // Skip files, only process directories
+        if !path.is_dir() {
+            continue;
+        }
+
+        let project_yaml = path.join("project.yaml");
+        if project_yaml.exists() {
+            // Load the project.yaml
+            let yaml_content = fs::read_to_string(&project_yaml)
+                .map_err(|e| format!("Failed to read {}: {}", project_yaml.display(), e))?;
+
+            let spec: biovault::project_spec::ProjectSpec = serde_yaml::from_str(&yaml_content)
+                .map_err(|e| format!("Failed to parse {}: {}", project_yaml.display(), e))?;
+
+            // Use directory name as key
+            let dir_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or("Invalid directory name")?
+                .to_string();
+
+            // Convert to JSON
+            let json_value = serde_json::to_value(&spec)
+                .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
+
+            result.insert(dir_name, json_value);
+        }
     }
 
     Ok(result)
@@ -843,4 +908,28 @@ pub fn save_project_editor(
 pub fn get_project_spec_digest(project_path: String) -> Result<Option<String>, String> {
     let project_root = PathBuf::from(&project_path);
     project_yaml_hash(&project_root).map_err(|e| format!("Failed to hash project.yaml: {}", e))
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn get_supported_input_types() -> project_spec::TypeInfo {
+    project_spec::get_supported_input_types()
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn get_supported_output_types() -> project_spec::TypeInfo {
+    project_spec::get_supported_output_types()
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn get_supported_parameter_types() -> Vec<String> {
+    project_spec::get_supported_parameter_types()
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn get_common_formats() -> Vec<String> {
+    project_spec::get_common_formats()
 }
