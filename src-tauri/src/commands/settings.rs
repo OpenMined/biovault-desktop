@@ -3,6 +3,7 @@ use biovault::cli::commands::init;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri_plugin_autostart::ManagerExt;
 
 // Helper function to save dependency states during onboarding
 fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
@@ -260,4 +261,27 @@ pub fn show_in_folder(file_path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    let autostart = app.autolaunch();
+    autostart
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {}", e))
+}
+
+#[tauri::command]
+pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let autostart = app.autolaunch();
+
+    if enabled {
+        autostart
+            .enable()
+            .map_err(|e| format!("Failed to enable autostart: {}", e))
+    } else {
+        autostart
+            .disable()
+            .map_err(|e| format!("Failed to disable autostart: {}", e))
+    }
 }

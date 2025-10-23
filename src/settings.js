@@ -28,9 +28,51 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
 
 			checkSyftBoxStatus()
+			loadAutostartStatus()
 		} catch (error) {
 			console.error('Error loading settings:', error)
 		}
+	}
+
+	async function loadAutostartStatus() {
+		try {
+			const enabled = await invoke('get_autostart_enabled')
+			const toggle = document.getElementById('autostart-toggle')
+			if (toggle) {
+				toggle.checked = enabled
+
+				// Attach event listener if not already attached
+				if (!toggle.dataset.listenerAttached) {
+					toggle.addEventListener('change', async (e) => {
+						const newEnabled = e.target.checked
+						try {
+							await invoke('set_autostart_enabled', { enabled: newEnabled })
+						} catch (error) {
+							console.error('Error toggling autostart:', error)
+							e.target.checked = !newEnabled
+						}
+					})
+					toggle.dataset.listenerAttached = 'true'
+				}
+			}
+		} catch (error) {
+			console.error('Error loading autostart status:', error)
+		}
+	}
+
+	// Listen for autostart changes from tray menu
+	if (typeof window.__TAURI__ !== 'undefined') {
+		window.__TAURI__.event.listen('autostart-changed', async () => {
+			const autostartToggle = document.getElementById('autostart-toggle')
+			if (autostartToggle) {
+				try {
+					const enabled = await invoke('get_autostart_enabled')
+					autostartToggle.checked = enabled
+				} catch (error) {
+					console.error('Error updating autostart status:', error)
+				}
+			}
+		})
 	}
 
 	async function checkSyftBoxStatus() {
