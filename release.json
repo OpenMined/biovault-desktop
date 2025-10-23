@@ -1,0 +1,26 @@
+{
+  "version": "0.1.4",
+  "pub_date": "2024-10-23T00:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcndnUDdJeTV2TFNxTUwzUmE0dDhXK2R6MFZHRk0xMXpzQUEvOEV1aWZPcGxVUWpaYlhka3hmaFZlbVQxbFJJbnR2M0t4TExieXdoL3YyWmdYelFUVUtPMHVpdHRBZVFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzYxMTc2MTQ4CWZpbGU6QmlvVmF1bHQuYXBwLnRhci5negptWFhCWjZZRXowOUUrMkZNU1lDRG9MbTd3OGpFVWZSekdGRjZBMVdCRERwSkluTDRsTkJIN3NZT1VWM3ZFbTQ1STUxYTNlaXRZZmpmUlIxVmxXMHVBZz09Cg==",
+      "url": "https://github.com/OpenMined/biovault-desktop/releases/download/v0.1.4/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcndnUDdJeTV2TFQrZmkvWjdhb01CSjVxZ252SUMrajIxM1JXcnp5WkxnWXovVjd4SS9GTkU5dzY3T2J5U2xXdUxCQzNuNDVpdE4vOEpPM0lRV3pzdmZmZnVmbFpZaGdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzYxMTc2MTc1CWZpbGU6QmlvVmF1bHQuYXBwLnRhci5negp5OXBMclRZYkpNV3RnMDhwUlY1M1oyVkhnNzgvQ29MeGh4TXU4WXRuaUFiTFBVdUZFSlZjZGtOUVFOMGtRS2xJN3Z4SG1NOFA5Yndsb04zaG8zRkFDQT09Cg==",
+      "url": "https://github.com/OpenMined/biovault-desktop/releases/download/v0.1.4/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcndnUDdJeTV2TGRXWHZPbU9PSFlWUXRjblQ1R3ptUUpYazRRdmk1Q1pFU2NOSmR0OHdVVnkrUGlMK09FTG0vTkFweER0VGRmTDVKQXhaV2EzL3JzYmRFSVNZVm1SK2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzYxMTc2MjY5CWZpbGU6QmlvVmF1bHRfMC4xLjRfYW1kNjQuQXBwSW1hZ2UKY1QxRm5ZVjRQaWg0SFVNS0hFTGM5WCs1c01JdE8vNmN5UkFMZjNlZkIrdDE1R00zbk9EdDFWb3d1YUVhWFU2alJ2dmlxSlNRaFIvVFhJYkxaRnFqQkE9PQo=",
+      "url": "https://github.com/OpenMined/biovault-desktop/releases/download/v0.1.4/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage"
+    },
+    "linux-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcndnUDdJeTV2TGZPQUlYWmlzYlBnTGpIZmZtSzI5aFlCUkZRYjRzdmREZzlENGJhaWFlSG5SYUp5c2JpKzZ6VlQyUGxuK1JRcXF6Sy8wRXhyNzNjY3N6ZlhHUzFLR0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzYxMTc2MzczCWZpbGU6QmlvVmF1bHRfMC4xLjRfYWFyY2g2NC5BcHBJbWFnZQoyUjFkZldwM0NnbzM1RlY4eE9ZWThDeWowWU9pcE9DNVpzSU5SQjJSVkdCY1VFWTR0RU51Z2tXVFJERXhhbktNQ3ExRHBkUmpZcmdQR3FaamJQVHNEZz09Cg==",
+      "url": "https://github.com/OpenMined/biovault-desktop/releases/download/v0.1.4/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcndnUDdJeTV2TGZrL1p3NkJabm1VWExlZmpxbXpOSTlHV3BrOFdTWHF6STI5b2VXbituUUtvTHk0UThCRTlVYUFoanNWQXNJVFovMi9LcENDYUJabDM0Z05FamZKSGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzYxMTc2MjM3CWZpbGU6QmlvVmF1bHRfMC4xLjRfeDY0LXNldHVwLmV4ZQpZcVZEdXFKZzFQazYwR0orZXM5eEkzMHlSTit4MFlRd1BNQllidnFFTiszeXV1T2ZrR3ZJeEliNXJsTnV5TDh5aVJZdnpiVXBYUlJzczV0QUtoYU5BUT09Cg==",
+      "url": "https://github.com/OpenMined/biovault-desktop/releases/download/v0.1.4/BioVault-Desktop-x86_64-pc-windows-msvc.exe"
+    }
+  }
+}
