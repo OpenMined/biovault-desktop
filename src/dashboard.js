@@ -7,22 +7,33 @@ export function createDashboardShell({
 	loadProjects,
 	prepareRunView,
 	loadRuns,
-	displayLogs,
+	_displayLogs,
 	loadSettings,
-	loadSql,
+	_loadSql,
 	initializeMessagesTab,
 	getMessagesInitialized,
 	getMessagesAuthorized,
 	getSyftboxStatus,
 	startMessagesAutoRefresh,
 	stopMessagesAutoRefresh,
+	getWorkbench,
 }) {
 	let activeView = 'home'
 	let lastImportView = 'import'
 	const importSubViews = ['import', 'import-review', 'import-results']
+	const workbenchViews = ['sql', 'logs'] // These open in workbench, not as full tabs
 
 	function navigateTo(requestedView) {
 		if (!requestedView) return
+
+		// Handle workbench views
+		if (workbenchViews.includes(requestedView)) {
+			const workbench = getWorkbench ? getWorkbench() : null
+			if (workbench) {
+				workbench.openPanel(requestedView)
+			}
+			return
+		}
 
 		let targetView = requestedView
 
@@ -55,11 +66,14 @@ export function createDashboardShell({
 		targetElement.classList.add('active')
 		activeView = targetView
 
+		// Update active state in sidebar navigation
 		const highlightTabName = importSubViews.includes(targetView) ? 'import' : targetView
-		const tab = doc.querySelector(`.tab[data-tab="${highlightTabName}"]`)
-		if (tab) {
-			doc.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'))
-			tab.classList.add('active')
+
+		// Update sidebar nav items (includes both main nav and footer items)
+		doc.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'))
+		const navItem = doc.querySelector(`.nav-item[data-tab="${highlightTabName}"]`)
+		if (navItem) {
+			navItem.classList.add('active')
 		}
 
 		if (importSubViews.includes(targetView)) {
@@ -79,14 +93,8 @@ export function createDashboardShell({
 			case 'runs':
 				loadRuns?.()
 				break
-			case 'logs':
-				displayLogs?.()
-				break
 			case 'settings':
 				loadSettings?.()
-				break
-			case 'sql':
-				loadSql?.()
 				break
 			case 'messages': {
 				const initialized = getMessagesInitialized?.()
@@ -107,15 +115,18 @@ export function createDashboardShell({
 
 	function registerNavigationHandlers() {
 		const doc = documentRef || document
+
+		// Home button clicks
 		doc.querySelectorAll('.home-btn').forEach((btn) => {
 			btn.addEventListener('click', () => {
 				navigateTo(btn.dataset.nav)
 			})
 		})
 
-		doc.querySelectorAll('.tab').forEach((tab) => {
-			tab.addEventListener('click', () => {
-				navigateTo(tab.dataset.tab)
+		// Sidebar navigation items (includes both main nav and footer items)
+		doc.querySelectorAll('.nav-item').forEach((item) => {
+			item.addEventListener('click', () => {
+				navigateTo(item.dataset.tab)
 			})
 		})
 	}

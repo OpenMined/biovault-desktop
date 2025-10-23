@@ -6,6 +6,8 @@
 
 /* 2. Layout - grid, flex, containers, tabs */
 @import url('css/layout.css');
+@import url('css/sidebar.css');
+@import url('css/workbench.css');
 
 /* 3. Forms - inputs, selects, labels */
 @import url('css/forms.css');
