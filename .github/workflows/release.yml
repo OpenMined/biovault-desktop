@@ -245,16 +245,14 @@ jobs:
 
           mkdir -p artifacts
 
-          if ls src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig
-          else
-            echo "Error: No .AppImage artifacts found - build may have failed"
-            exit 1
-          fi
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
 
-          echo "Final artifacts:"
-          ls -lh artifacts/
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
 
       - name: Build app (Linux arm64 via Docker)
         if: matrix.build_kind == 'docker'
@@ -266,10 +264,26 @@ jobs:
           mkdir -p artifacts
 
           echo "Checking for built artifacts..."
+          ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/deb/ || echo "No deb directory"
+          ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/rpm/ || echo "No rpm directory"
           ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/appimage/ || echo "No appimage directory"
 
           echo "Fixing ownership of Docker-built artifacts..."
           sudo chown -R $(id -u):$(id -g) src-tauri/target/${{ matrix.args }}/release/bundle/ || true
+
+          if ls src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig
+          else
+            echo "Warning: No .deb artifacts found"
+          fi
+
+          if ls src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm 1> /dev/null 2>&1; then
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig
+          else
+            echo "Warning: No .rpm artifacts found"
+          fi
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage 1> /dev/null 2>&1; then
             mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage
@@ -288,15 +302,8 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
-      - name: Upload artifacts for release.json generation
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-${{ matrix.args }}
-          path: artifacts/
-          retention-days: 1
-
-      - name: Create release
-        if: ${{ inputs.dry_run != true }}
+      - name: Create release (macOS)
+        if: ${{ inputs.dry_run != true && runner.os == 'macOS' }}
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ needs.prepare-version.outputs.tag }}
@@ -310,10 +317,34 @@ jobs:
             ./artifacts/*.app.tar.gz.sig
             ./artifacts/*.dmg
             ./artifacts/*.dmg.sig
-            ./artifacts/*.exe
-            ./artifacts/*.exe.sig
+
+      - name: Create release (Linux)
+        if: ${{ inputs.dry_run != true && runner.os == 'Linux' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.prepare-version.outputs.tag }}
+          name: ${{ needs.prepare-version.outputs.tag }}
+          draft: false
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          artifacts: |
             ./artifacts/*.AppImage
             ./artifacts/*.AppImage.sig
+
+      - name: Create release (Windows)
+        if: ${{ inputs.dry_run != true && runner.os == 'Windows' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.prepare-version.outputs.tag }}
+          name: ${{ needs.prepare-version.outputs.tag }}
+          draft: false
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          artifacts: |
+            ./artifacts/*.exe
+            ./artifacts/*.exe.sig
 
       - name: Clean up all user keychains
         if: always() && runner.os == 'macOS'
@@ -329,97 +360,11 @@ jobs:
             fi
           done
 
-  generate-release-json:
-    name: Generate release.json for updater
-    needs:
-      - prepare-version
-      - build
-    if: ${{ inputs.dry_run != true }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
-      RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: artifacts-*
-          merge-multiple: true
-          path: artifacts
-
-      - name: Generate release.json
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          from datetime import datetime, timezone
-
-          version = os.environ['RELEASE_VERSION']
-          tag = os.environ['RELEASE_TAG']
-          repo = os.environ['GITHUB_REPOSITORY']
-
-          base_url = f"https://github.com/{repo}/releases/download/{tag}"
-
-          artifacts_dir = Path('artifacts')
-
-          # Platform mappings: filename pattern -> Tauri platform name -> actual filename
-          platform_mapping = {
-              'darwin-aarch64': ('BioVault-Desktop-aarch64-apple-darwin.app.tar.gz', 'BioVault-Desktop-aarch64-apple-darwin.app.tar.gz.sig'),
-              'darwin-x86_64': ('BioVault-Desktop-x86_64-apple-darwin.app.tar.gz', 'BioVault-Desktop-x86_64-apple-darwin.app.tar.gz.sig'),
-              'linux-x86_64': ('BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage', 'BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage.sig'),
-              'linux-aarch64': ('BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage', 'BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage.sig'),
-              'windows-x86_64': ('BioVault-Desktop-x86_64-pc-windows-msvc.exe', 'BioVault-Desktop-x86_64-pc-windows-msvc.exe.sig'),
-          }
-
-          platforms = {}
-
-          for platform, (artifact_name, sig_name) in platform_mapping.items():
-              sig_file = artifacts_dir / sig_name
-              if sig_file.exists():
-                  signature = sig_file.read_text().strip()
-                  platforms[platform] = {
-                      "signature": signature,
-                      "url": f"{base_url}/{artifact_name}"
-                  }
-                  print(f"✓ Added {platform}")
-              else:
-                  print(f"⚠ Skipping {platform} - signature file not found: {sig_file}")
-
-          if not platforms:
-              raise SystemExit("Error: No platform artifacts found!")
-
-          release_data = {
-              "version": version,
-              "pub_date": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-              "platforms": platforms
-          }
-
-          release_json = Path('release.json')
-          release_json.write_text(json.dumps(release_data, indent=2) + '\n')
-
-          print(f"\n✓ Generated release.json with {len(platforms)} platforms")
-          print(f"Content:\n{release_json.read_text()}")
-          PY
-
-      - name: Upload release.json to release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ needs.prepare-version.outputs.tag }}
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          omitNameDuringUpdate: true
-          artifacts: release.json
-
   commit-version:
     name: Commit version bump
     needs:
       - prepare-version
       - build
-      - generate-release-json
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     permissions:
