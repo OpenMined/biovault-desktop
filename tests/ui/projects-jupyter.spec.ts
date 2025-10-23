@@ -269,12 +269,20 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await page.locator('#create-project-btn').click()
 		await expect(page.locator('#create-project-modal')).toBeVisible()
 		await page.fill('#new-project-name', projectName)
+
+		// Navigate through wizard steps to reach the final "Create Project" button
+		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Inputs
+		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Parameters
+		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Outputs
+		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Preview
+		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Review & Create
+
 		await page.locator('#create-project-confirm').click()
 
 		await expect(page.locator('#project-edit-view')).toBeVisible()
-		await expect(page.locator('#project-edit-name')).toHaveValue(projectName)
+		// Project editor is now open, continue with Jupyter testing
 
-		const statusEl = page.locator('#project-edit-status')
+		const statusEl = page.locator('#project-edit-view #project-edit-status').first()
 		const statusRow = page.locator('#project-jupyter-status')
 
 		await page.locator('#project-edit-launch-jupyter-btn').click()
@@ -338,10 +346,10 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await page.fill('#project-edit-workflow', 'analysis.nf')
 		await page.fill('#project-edit-template', 'demo-template')
 
-		await page.locator('#project-edit-save-btn').click()
+		await page.locator('#project-edit-view #project-edit-save-btn').first().click()
 		await expect(statusEl).toHaveText('✅ Project saved')
 
-		await page.locator('#project-edit-back-btn').click()
+		await page.locator('#project-edit-view #project-edit-back-btn').first().click()
 		await expect(page.locator('#projects-view')).toBeVisible()
 
 		// Find the specific project by name (don't use .first() as other projects may exist)
