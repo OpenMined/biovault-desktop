@@ -316,7 +316,6 @@ jobs:
             ./artifacts/*.app.tar.gz
             ./artifacts/*.app.tar.gz.sig
             ./artifacts/*.dmg
-            ./artifacts/*.dmg.sig
 
       - name: Create release (Linux)
         if: ${{ inputs.dry_run != true && runner.os == 'Linux' }}
@@ -359,6 +358,102 @@ jobs:
               echo "Skipping system keychain: $keychain"
             fi
           done
+
+  create-updater-json:
+    name: Generate updater manifest
+    needs:
+      - prepare-version
+      - build
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+    steps:
+      - name: Download release artifacts
+        run: |
+          gh release download ${{ env.RELEASE_TAG }} \
+            --repo ${{ github.repository }} \
+            --pattern '*.sig' \
+            --dir signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate release.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ['RELEASE_VERSION']
+          tag = os.environ['RELEASE_TAG']
+          repo = os.environ['GITHUB_REPOSITORY']
+
+          sig_dir = Path('signatures')
+
+          platforms = {}
+
+          # macOS aarch64
+          sig_file = sig_dir / 'BioVault-Desktop-aarch64-apple-darwin.app.tar.gz.sig'
+          if sig_file.exists():
+              platforms['darwin-aarch64'] = {
+                  'signature': sig_file.read_text().strip(),
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz'
+              }
+
+          # macOS x86_64
+          sig_file = sig_dir / 'BioVault-Desktop-x86_64-apple-darwin.app.tar.gz.sig'
+          if sig_file.exists():
+              platforms['darwin-x86_64'] = {
+                  'signature': sig_file.read_text().strip(),
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz'
+              }
+
+          # Windows x86_64
+          sig_file = sig_dir / 'BioVault-Desktop-x86_64-pc-windows-msvc.exe.sig'
+          if sig_file.exists():
+              platforms['windows-x86_64'] = {
+                  'signature': sig_file.read_text().strip(),
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-pc-windows-msvc.exe'
+              }
+
+          # Linux x86_64
+          sig_file = sig_dir / 'BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage.sig'
+          if sig_file.exists():
+              platforms['linux-x86_64'] = {
+                  'signature': sig_file.read_text().strip(),
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage'
+              }
+
+          # Linux aarch64
+          sig_file = sig_dir / 'BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage.sig'
+          if sig_file.exists():
+              platforms['linux-aarch64'] = {
+                  'signature': sig_file.read_text().strip(),
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage'
+              }
+
+          release_data = {
+              'version': tag,
+              'notes': f'Release {tag}',
+              'pub_date': os.environ.get('RELEASE_DATE', ''),
+              'platforms': platforms
+          }
+
+          Path('release.json').write_text(json.dumps(release_data, indent=2))
+          print(f'Generated release.json with {len(platforms)} platforms')
+          PY
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_DATE: ${{ github.event.repository.updated_at }}
+
+      - name: Upload release.json to release
+        run: |
+          gh release upload ${{ env.RELEASE_TAG }} release.json --clobber \
+            --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   commit-version:
     name: Commit version bump
