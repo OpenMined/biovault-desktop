@@ -1,8 +1,8 @@
-const isTauri = typeof window !== 'undefined' && window.__TAURI__
-
 export function createUpdaterModule() {
 	async function checkUpdates(silent = false) {
 		// Only works in Tauri mode, not browser dev mode
+		// Check at runtime, not module load time (for testing)
+		const isTauri = typeof window !== 'undefined' && window.__TAURI__
 		if (!isTauri) {
 			if (!silent) {
 				console.log('[Updater] Skipping update check - only available in installed app')
@@ -13,7 +13,9 @@ export function createUpdaterModule() {
 		try {
 			console.log('[Updater] Starting update check...')
 			console.log('[Updater] Current version:', window.__TAURI_INTERNALS__)
-			console.log('[Updater] Configured endpoint: https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json')
+			console.log(
+				'[Updater] Configured endpoint: https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json',
+			)
 
 			// Use Tauri v2 APIs from window.__TAURI__
 			const { check: checkForUpdate } = window.__TAURI__.updater

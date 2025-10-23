@@ -39,7 +39,7 @@ test.describe('Updater', () => {
 
 	test('should show "no updates" when running latest version', async ({ page }) => {
 		// Mock the Tauri updater API to return null (no update available)
-		await page.addInitScript(() => {
+		await page.evaluate(() => {
 			if (!window.__TAURI__) {
 				window.__TAURI__ = {
 					updater: {},
@@ -77,7 +77,7 @@ test.describe('Updater', () => {
 
 	test('should show update dialog when update is available', async ({ page }) => {
 		// Mock the Tauri updater API to return an update
-		await page.addInitScript(() => {
+		await page.evaluate(() => {
 			if (!window.__TAURI__) {
 				window.__TAURI__ = {
 					updater: {},
@@ -132,8 +132,16 @@ test.describe('Updater', () => {
 	})
 
 	test('should handle update check errors gracefully', async ({ page }) => {
+		// Listen for console errors
+		const consoleErrors = []
+		page.on('console', (msg) => {
+			if (msg.type() === 'error') {
+				consoleErrors.push(msg.text())
+			}
+		})
+
 		// Mock the Tauri updater API to throw an error
-		await page.addInitScript(() => {
+		await page.evaluate(() => {
 			if (!window.__TAURI__) {
 				window.__TAURI__ = {
 					updater: {},
@@ -145,14 +153,6 @@ test.describe('Updater', () => {
 			window.__TAURI__.updater.check = async () => {
 				console.log('[Mock] updater.check throwing error')
 				throw new Error('Could not fetch a valid release JSON from the remote')
-			}
-		})
-
-		// Listen for console errors
-		const consoleErrors = []
-		page.on('console', (msg) => {
-			if (msg.type() === 'error') {
-				consoleErrors.push(msg.text())
 			}
 		})
 
@@ -168,7 +168,7 @@ test.describe('Updater', () => {
 
 		// Verify error was logged
 		const hasUpdaterError = consoleErrors.some((err) =>
-			err.includes('[Updater] Failed to check for updates')
+			err.includes('[Updater] Failed to check for updates'),
 		)
 		expect(hasUpdaterError).toBe(true)
 	})
