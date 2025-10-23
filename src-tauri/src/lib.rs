@@ -459,6 +459,8 @@ pub fn run() {
             get_default_project_path,
             load_project_editor,
             save_project_editor,
+            preview_project_spec,
+            get_project_spec_digest,
             // Jupyter commands
             launch_jupyter,
             stop_jupyter,

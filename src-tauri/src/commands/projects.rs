@@ -1,9 +1,79 @@
 use crate::types::{AppState, Project, ProjectEditorLoadResponse, ProjectListEntry};
-use biovault::data::ProjectMetadata;
-use serde::Deserialize;
+use biovault::data::{project_yaml_hash, ProjectMetadata};
+use biovault::project_spec::{self, InputSpec, OutputSpec, ParameterSpec, ProjectSpec};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[derive(Deserialize)]
+struct SaveProjectPayload {
+    name: String,
+    author: String,
+    workflow: String,
+    #[serde(default)]
+    template: Option<String>,
+    #[serde(default)]
+    assets: Vec<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    parameters: Vec<ParameterPayload>,
+    #[serde(default)]
+    inputs: Vec<InputPayload>,
+    #[serde(default)]
+    outputs: Vec<OutputPayload>,
+}
+
+#[derive(Deserialize)]
+struct ParameterPayload {
+    name: String,
+    #[serde(rename = "type")]
+    raw_type: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    default: Option<String>,
+    #[serde(default)]
+    choices: Option<Vec<String>>,
+    #[serde(default)]
+    advanced: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct InputPayload {
+    name: String,
+    #[serde(rename = "type")]
+    raw_type: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    mapping: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+struct OutputPayload {
+    name: String,
+    #[serde(rename = "type")]
+    raw_type: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProjectPreviewResponse {
+    yaml: String,
+    template: String,
+    workflow: String,
+}
 
 fn ensure_within_projects_dir(path: &Path) -> Result<(), String> {
     let projects_dir = biovault::config::get_biovault_home()
@@ -23,6 +93,304 @@ fn ensure_within_projects_dir(path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn parse_spec_payload(data: SaveProjectPayload) -> Result<(ProjectMetadata, ProjectSpec), String> {
+    let SaveProjectPayload {
+        name,
+        author,
+        workflow,
+        template,
+        assets,
+        version,
+        parameters,
+        inputs,
+        outputs,
+    } = data;
+
+    let name_trimmed = name.trim();
+    if name_trimmed.is_empty() {
+        return Err("Project name cannot be empty".into());
+    }
+
+    let workflow_trimmed = workflow.trim();
+    if workflow_trimmed.is_empty() {
+        return Err("Workflow cannot be empty".into());
+    }
+
+    let mut author_value = author.trim().to_string();
+    if author_value.is_empty() {
+        author_value = biovault::config::Config::load()
+            .map(|cfg| cfg.email)
+            .unwrap_or_default();
+    }
+
+    let template_value = template.and_then(|t| {
+        let trimmed = t.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
+    let mut cleaned_assets: Vec<String> = assets
+        .into_iter()
+        .map(|entry| entry.trim().replace('\\', "/"))
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    cleaned_assets.sort();
+    cleaned_assets.dedup();
+
+    let parameter_specs: Vec<ParameterSpec> = parameters
+        .into_iter()
+        .map(
+            |ParameterPayload {
+                 name,
+                 raw_type,
+                 description,
+                 default,
+                 choices,
+                 advanced,
+             }| {
+                let description = description
+                    .map(|d| d.trim().to_string())
+                    .filter(|d| !d.is_empty());
+
+                let choices = choices.and_then(|items| {
+                    let cleaned: Vec<String> = items
+                        .into_iter()
+                        .map(|choice| choice.trim().to_string())
+                        .filter(|choice| !choice.is_empty())
+                        .collect();
+                    if cleaned.is_empty() {
+                        None
+                    } else {
+                        Some(cleaned)
+                    }
+                });
+
+                let default = default.and_then(|raw| {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        match serde_yaml::from_str::<serde_yaml::Value>(trimmed) {
+                            Ok(value) => Some(value),
+                            Err(_) => Some(serde_yaml::Value::String(trimmed.to_string())),
+                        }
+                    }
+                });
+
+                ParameterSpec {
+                    name: name.trim().to_string(),
+                    raw_type: raw_type.trim().to_string(),
+                    description,
+                    default,
+                    choices,
+                    advanced,
+                }
+            },
+        )
+        .collect();
+
+    let input_specs: Vec<InputSpec> = inputs
+        .into_iter()
+        .map(|input| InputSpec {
+            name: input.name.trim().to_string(),
+            raw_type: input.raw_type.trim().to_string(),
+            description: input
+                .description
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty()),
+            format: input
+                .format
+                .map(|f| f.trim().to_string())
+                .filter(|f| !f.is_empty()),
+            path: input
+                .path
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty()),
+            mapping: input.mapping.map(|map| {
+                map.into_iter()
+                    .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                    .collect()
+            }),
+        })
+        .collect();
+
+    let output_specs: Vec<OutputSpec> = outputs
+        .into_iter()
+        .map(|output| OutputSpec {
+            name: output.name.trim().to_string(),
+            raw_type: output.raw_type.trim().to_string(),
+            description: output
+                .description
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty()),
+            format: output
+                .format
+                .map(|f| f.trim().to_string())
+                .filter(|f| !f.is_empty()),
+            path: output
+                .path
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty()),
+        })
+        .collect();
+
+    let version_value = match version {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => "1.0.0".to_string(),
+    };
+
+    let metadata = ProjectMetadata {
+        name: name_trimmed.to_string(),
+        author: author_value.clone(),
+        workflow: workflow_trimmed.to_string(),
+        template: template_value.clone(),
+        version: Some(version_value.clone()),
+        assets: cleaned_assets.clone(),
+        parameters: parameter_specs.clone(),
+        inputs: input_specs.clone(),
+        outputs: output_specs.clone(),
+    };
+
+    let spec = ProjectSpec {
+        name: name_trimmed.to_string(),
+        author: author_value,
+        workflow: workflow_trimmed.to_string(),
+        template: template_value,
+        version: Some(version_value),
+        assets: cleaned_assets,
+        parameters: parameter_specs,
+        inputs: input_specs,
+        outputs: output_specs,
+    };
+
+    Ok((metadata, spec))
+}
+
+fn format_project_yaml(spec: &ProjectSpec) -> String {
+    let mut yaml = String::new();
+    yaml.push_str(&format!("name: {}\n", spec.name));
+    yaml.push_str(&format!("author: {}\n", spec.author));
+    yaml.push_str(&format!("workflow: {}\n", spec.workflow));
+    if let Some(ref template) = spec.template {
+        yaml.push_str(&format!("template: {}\n", template));
+    }
+    if let Some(ref version) = spec.version {
+        yaml.push_str(&format!("version: {}\n", version));
+    }
+
+    yaml.push_str("assets:");
+    if spec.assets.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for asset in &spec.assets {
+            yaml.push_str(&format!("  - {}\n", asset));
+        }
+    }
+
+    yaml.push_str("parameters:");
+    if spec.parameters.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for param in &spec.parameters {
+            yaml.push_str(&format!("  - name: {}\n", param.name));
+            yaml.push_str(&format!("    type: {}\n", param.raw_type));
+            if let Some(ref desc) = param.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref default) = param.default {
+                let default_str = serde_yaml::to_string(default)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                yaml.push_str(&format!("    default: {}\n", default_str));
+            }
+            if let Some(ref choices) = param.choices {
+                yaml.push_str("    choices:\n");
+                for choice in choices {
+                    yaml.push_str(&format!("      - {}\n", choice));
+                }
+            }
+            if let Some(advanced) = param.advanced {
+                if advanced {
+                    yaml.push_str("    advanced: true\n");
+                }
+            }
+        }
+    }
+
+    yaml.push_str("inputs:");
+    if spec.inputs.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for input in &spec.inputs {
+            yaml.push_str(&format!("  - name: {}\n", input.name));
+            yaml.push_str(&format!("    type: {}\n", input.raw_type));
+            if let Some(ref desc) = input.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref format) = input.format {
+                yaml.push_str(&format!("    format: {}\n", format));
+            }
+            if let Some(ref path) = input.path {
+                yaml.push_str(&format!("    path: {}\n", path));
+            }
+            if let Some(ref mapping) = input.mapping {
+                yaml.push_str("    mapping:\n");
+                for (key, value) in mapping {
+                    yaml.push_str(&format!("      {}: {}\n", key, value));
+                }
+            }
+        }
+    }
+
+    yaml.push_str("outputs:");
+    if spec.outputs.is_empty() {
+        yaml.push_str(" []\n");
+    } else {
+        yaml.push('\n');
+        for output in &spec.outputs {
+            yaml.push_str(&format!("  - name: {}\n", output.name));
+            yaml.push_str(&format!("    type: {}\n", output.raw_type));
+            if let Some(ref desc) = output.description {
+                yaml.push_str(&format!("    description: {}\n", desc));
+            }
+            if let Some(ref format) = output.format {
+                yaml.push_str(&format!("    format: {}\n", format));
+            }
+            if let Some(ref path) = output.path {
+                yaml.push_str(&format!("    path: {}\n", path));
+            }
+        }
+    }
+
+    yaml
+}
+
+#[tauri::command]
+pub fn preview_project_spec(payload: serde_json::Value) -> Result<ProjectPreviewResponse, String> {
+    let data: SaveProjectPayload =
+        serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
+    let (_, spec) = parse_spec_payload(data)?;
+
+    let yaml = format_project_yaml(&spec);
+    let template = project_spec::generate_template_nf(&spec)
+        .map_err(|e| format!("Failed to generate template preview: {}", e))?;
+    let workflow = project_spec::generate_workflow_stub(&spec)
+        .map_err(|e| format!("Failed to generate workflow preview: {}", e))?;
+
+    Ok(ProjectPreviewResponse {
+        yaml,
+        template,
+        workflow,
+    })
 }
 
 #[tauri::command]
@@ -340,7 +708,11 @@ pub fn load_project_editor(
         author: default_author.clone(),
         workflow: "workflow.nf".into(),
         template: None,
+        version: None,
         assets: Vec::new(),
+        parameters: Vec::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
     });
 
     if metadata.name.trim().is_empty() {
@@ -353,6 +725,15 @@ pub fn load_project_editor(
 
     if metadata.workflow.trim().is_empty() {
         metadata.workflow = "workflow.nf".into();
+    }
+
+    if metadata
+        .version
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        metadata.version = Some("1.0.0".into());
     }
 
     metadata.assets = metadata
@@ -381,59 +762,9 @@ pub fn save_project_editor(
     project_path: String,
     payload: serde_json::Value,
 ) -> Result<Project, String> {
-    #[derive(Deserialize)]
-    struct SaveProjectPayload {
-        name: String,
-        author: String,
-        workflow: String,
-        #[serde(default)]
-        template: Option<String>,
-        #[serde(default)]
-        assets: Vec<String>,
-    }
-
     let data: SaveProjectPayload =
         serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
-
-    let name = data.name;
-    let author = data.author;
-    let workflow = data.workflow;
-    let template = data.template;
-    let assets = data.assets;
-
-    let name_trimmed = name.trim();
-    if name_trimmed.is_empty() {
-        return Err("Project name cannot be empty".into());
-    }
-
-    let workflow_trimmed = workflow.trim();
-    if workflow_trimmed.is_empty() {
-        return Err("Workflow cannot be empty".into());
-    }
-
-    let mut author_value = author.trim().to_string();
-    if author_value.is_empty() {
-        author_value = biovault::config::Config::load()
-            .map(|cfg| cfg.email)
-            .unwrap_or_default();
-    }
-
-    let template_value = template.as_ref().and_then(|t| {
-        let trimmed = t.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    });
-
-    let mut cleaned_assets: Vec<String> = assets
-        .into_iter()
-        .map(|entry| entry.trim().replace('\\', "/"))
-        .filter(|entry| !entry.is_empty())
-        .collect();
-    cleaned_assets.sort();
-    cleaned_assets.dedup();
+    let (metadata, spec) = parse_spec_payload(data)?;
 
     let project_path_buf = PathBuf::from(&project_path);
     if !project_path_buf.exists() {
@@ -446,16 +777,17 @@ pub fn save_project_editor(
         })?;
     }
 
-    let metadata = ProjectMetadata {
-        name: name_trimmed.to_string(),
-        author: author_value.clone(),
-        workflow: workflow_trimmed.to_string(),
-        template: template_value.clone(),
-        assets: cleaned_assets,
-    };
-
     biovault::data::save_project_metadata(&project_path_buf, &metadata)
         .map_err(|e| format!("Failed to save project.yaml: {}", e))?;
+
+    // Regenerate workflow.nf if template is dynamic-nextflow
+    if metadata.template.as_deref() == Some("dynamic-nextflow") {
+        let workflow_stub = project_spec::generate_workflow_stub(&spec)
+            .map_err(|e| format!("Failed to generate workflow stub: {}", e))?;
+        let workflow_path = project_path_buf.join(&metadata.workflow);
+        fs::write(&workflow_path, workflow_stub)
+            .map_err(|e| format!("Failed to write workflow.nf: {}", e))?;
+    }
 
     let template_for_db = metadata
         .template
@@ -505,4 +837,10 @@ pub fn save_project_editor(
         project_path: project_record.project_path,
         created_at: project_record.created_at,
     })
+}
+
+#[tauri::command]
+pub fn get_project_spec_digest(project_path: String) -> Result<Option<String>, String> {
+    let project_root = PathBuf::from(&project_path);
+    project_yaml_hash(&project_root).map_err(|e| format!("Failed to hash project.yaml: {}", e))
 }

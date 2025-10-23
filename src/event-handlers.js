@@ -38,6 +38,9 @@ export function setupEventHandlers({
 	showCreateProjectModal,
 	hideCreateProjectModal,
 	createProjectFromModal,
+	handleCreateWizardNext,
+	handleCreateWizardBack,
+	handleWizardStepClick,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
 	resetProjectDirectory,
@@ -45,6 +48,9 @@ export function setupEventHandlers({
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
+	handleOpenProjectFolder,
+	handleLeaveProjectEditor,
+	handleReloadProjectSpec,
 	// Runs
 	runAnalysis,
 	shareCurrentRunLogs,
@@ -459,16 +465,42 @@ export function setupEventHandlers({
 	document.getElementById('create-project-cancel').addEventListener('click', () => {
 		hideCreateProjectModal()
 	})
+	document.getElementById('create-project-back').addEventListener('click', () => {
+		handleCreateWizardBack()
+	})
+	document.getElementById('create-project-next').addEventListener('click', () => {
+		handleCreateWizardNext()
+	})
 	document.getElementById('create-project-confirm').addEventListener('click', () => {
 		createProjectFromModal()
 	})
+	// Allow clicking on wizard step indicators to navigate
+	document.querySelectorAll('.project-wizard-steps li').forEach((indicator) => {
+		indicator.addEventListener('click', () => {
+			handleWizardStepClick(Number(indicator.dataset.step))
+		})
+	})
+	// Preview expand/collapse controls
+	const expandAllBtn = document.getElementById('preview-expand-all')
+	const collapseAllBtn = document.getElementById('preview-collapse-all')
+	if (expandAllBtn) {
+		expandAllBtn.addEventListener('click', () => {
+			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
+			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
+			if (yamlWrapper) yamlWrapper.open = true
+			if (templateWrapper) templateWrapper.open = true
+		})
+	}
+	if (collapseAllBtn) {
+		collapseAllBtn.addEventListener('click', () => {
+			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
+			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
+			if (yamlWrapper) yamlWrapper.open = false
+			if (templateWrapper) templateWrapper.open = false
+		})
+	}
 	document.getElementById('new-project-name').addEventListener('input', () => {
 		handleProjectNameInputChange()
-	})
-	document.getElementById('new-project-name').addEventListener('keypress', (e) => {
-		if (e.key === 'Enter') {
-			createProjectFromModal()
-		}
 	})
 	document.getElementById('project-path-browse-btn').addEventListener('click', async () => {
 		await chooseProjectDirectory()
@@ -493,6 +525,7 @@ export function setupEventHandlers({
 	const projectEditCancelBtn = document.getElementById('project-edit-cancel-btn')
 	if (projectEditCancelBtn) {
 		projectEditCancelBtn.addEventListener('click', () => {
+			handleLeaveProjectEditor()
 			navigateTo('projects')
 		})
 	}
@@ -500,15 +533,24 @@ export function setupEventHandlers({
 	const projectEditBackBtn = document.getElementById('project-edit-back-btn')
 	if (projectEditBackBtn) {
 		projectEditBackBtn.addEventListener('click', () => {
+			handleLeaveProjectEditor()
 			navigateTo('projects')
 		})
 	}
+	document
+		.getElementById('project-edit-open-folder-btn')
+		.addEventListener('click', handleOpenProjectFolder)
 	document
 		.getElementById('project-edit-launch-jupyter-btn')
 		.addEventListener('click', handleLaunchJupyter)
 	document
 		.getElementById('project-edit-reset-jupyter-btn')
 		.addEventListener('click', handleResetJupyter)
+
+	const projectSpecReloadBtn = document.getElementById('project-spec-reload-btn')
+	if (projectSpecReloadBtn) {
+		projectSpecReloadBtn.addEventListener('click', handleReloadProjectSpec)
+	}
 
 	// Runs - Select all participants
 	document.getElementById('select-all-participants').addEventListener('change', (e) => {

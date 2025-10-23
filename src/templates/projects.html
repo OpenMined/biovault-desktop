@@ -20,61 +20,185 @@
 	<p style="color: #666">No projects imported yet.</p>
 </div>
 
-<!-- Create Project Modal -->
-<div
-	id="create-project-modal"
-	style="
-		display: none;
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background: rgba(0, 0, 0, 0.6);
-		z-index: 10000;
-		align-items: center;
-		justify-content: center;
-	"
->
-	<div class="project-modal">
-		<h2 style="margin: 0 0 20px; color: #667eea">Create New Project</h2>
-
-		<div class="form-group">
-			<label for="new-project-name">Project Name</label>
-			<input
-				type="text"
-				id="new-project-name"
-				placeholder="my-project"
-				autocapitalize="none"
-				autocorrect="off"
-				spellcheck="false"
-			/>
-		</div>
-
-		<div class="form-group">
-			<label for="new-project-template">Template (Optional)</label>
-			<select id="new-project-template">
-				<option value="">Blank Project</option>
-				<!-- Options loaded dynamically from biovault submodule examples -->
-			</select>
-		</div>
-
-		<div class="form-group">
-			<label for="new-project-path">Destination Folder</label>
-			<div class="project-path-input">
-				<input type="text" id="new-project-path" readonly />
-				<button id="project-path-browse-btn" class="secondary-btn" type="button">Browse…</button>
-				<button id="project-path-reset-btn" class="secondary-btn" type="button">Use Default</button>
-			</div>
-			<p style="font-size: 12px; color: #666; margin-top: 6px">
-				Defaults to BioVault projects (BIOVAULT_HOME/projects/&lt;name&gt;). Choose a different
-				location if you prefer.
+<!-- Create Project Wizard -->
+<div id="create-project-modal" class="project-wizard-overlay" style="display: none">
+	<div class="project-wizard">
+		<aside class="project-wizard-sidebar">
+			<h2>Create New Project</h2>
+			<ol class="project-wizard-steps">
+				<li data-step="0" class="active">1. Project Details</li>
+				<li data-step="1">2. Inputs</li>
+				<li data-step="2">3. Parameters</li>
+				<li data-step="3">4. Outputs</li>
+				<li data-step="4">5. Preview</li>
+				<li data-step="5">6. Review &amp; Create</li>
+			</ol>
+			<p class="project-wizard-hint">
+				Click on any step to navigate. Your progress is saved locally until you finish.
 			</p>
-		</div>
-
-		<div class="project-modal-actions">
-			<button id="create-project-cancel" class="secondary-btn" type="button">Cancel</button>
-			<button id="create-project-confirm" class="primary-btn" type="button">Create Project</button>
+		</aside>
+		<div class="project-wizard-content">
+			<section class="project-wizard-step" data-step="0">
+				<header>
+					<h3>Project Details</h3>
+					<p>
+						Set the project identity and where it should live on disk. Defaults are usually fine.
+					</p>
+				</header>
+				<div class="project-wizard-grid">
+					<label>
+						<span>Project Name *</span>
+						<input
+							type="text"
+							id="new-project-name"
+							placeholder="my-project"
+							autocapitalize="none"
+							autocorrect="off"
+							spellcheck="false"
+						/>
+					</label>
+					<label>
+						<span>Template (Optional)</span>
+						<select id="new-project-template">
+							<option value="">Blank Project</option>
+						</select>
+					</label>
+					<label>
+						<span>Contract Version (Optional)</span>
+						<input
+							type="text"
+							id="new-project-version"
+							placeholder="e.g. 1.0.0"
+							autocapitalize="none"
+							autocorrect="off"
+							spellcheck="false"
+							value="1.0.0"
+						/>
+					</label>
+				</div>
+				<div class="project-destination-card">
+					<label for="new-project-path">Destination Folder</label>
+					<div class="project-path-input">
+						<input type="text" id="new-project-path" readonly />
+						<div class="project-path-buttons">
+							<button id="project-path-browse-btn" class="secondary-btn" type="button">
+								Browse…
+							</button>
+							<button id="project-path-reset-btn" class="secondary-btn" type="button">
+								Use Default
+							</button>
+						</div>
+					</div>
+					<p class="project-path-hint">
+						Defaults to BioVault projects (BIOVAULT_HOME/projects/&lt;name&gt;). Choose a different
+						location if you prefer.
+					</p>
+				</div>
+			</section>
+			<section class="project-wizard-step" data-step="1">
+				<header>
+					<h3>Inputs</h3>
+					<p>Describe the data your project expects.</p>
+				</header>
+				<div id="create-project-inputs"></div>
+			</section>
+			<section class="project-wizard-step" data-step="2">
+				<header>
+					<h3>Parameters</h3>
+					<p>
+						Add optional configuration knobs that surface in the UI. These values flow into your
+						Nextflow workflow as <code>params.&lt;name&gt;</code>, allowing users to tailor
+						behaviour per run.
+					</p>
+				</header>
+				<div id="create-project-parameters"></div>
+			</section>
+			<section class="project-wizard-step" data-step="3">
+				<header>
+					<h3>Outputs</h3>
+					<p>Define what artifacts this project produces.</p>
+				</header>
+				<div id="create-project-outputs"></div>
+			</section>
+			<section class="project-wizard-step" data-step="4">
+				<header>
+					<h3>Preview Generated Code</h3>
+					<p>Review the project.yaml and workflow.nf files that will be generated.</p>
+				</header>
+				<div class="preview-controls">
+					<button id="preview-expand-all" class="secondary-btn" type="button">Expand All</button>
+					<button id="preview-collapse-all" class="secondary-btn" type="button">
+						Collapse All
+					</button>
+				</div>
+				<div class="project-preview-stack">
+					<details
+						class="preview-block preview-block-full"
+						id="create-project-preview-yaml-wrapper"
+					>
+						<summary>project.yaml</summary>
+						<pre class="code-block language-yaml" id="create-project-preview-yaml">
+Preview will appear once details are filled in.</pre
+						>
+					</details>
+					<details
+						class="preview-block preview-block-full"
+						id="create-project-preview-template-wrapper"
+					>
+						<summary>workflow.nf</summary>
+						<pre class="code-block language-groovy" id="create-project-preview-template">
+Preview will appear once details are filled in.</pre
+						>
+					</details>
+				</div>
+			</section>
+			<section class="project-wizard-step" data-step="5">
+				<header>
+					<h3>Review &amp; Create</h3>
+					<p>Confirm everything looks right before generating the project scaffolding.</p>
+				</header>
+				<div class="project-review-card">
+					<dl class="project-review-info">
+						<div>
+							<dt>Name</dt>
+							<dd id="create-project-review-name">—</dd>
+						</div>
+						<div>
+							<dt>Template</dt>
+							<dd id="create-project-review-template">Blank project</dd>
+						</div>
+						<div>
+							<dt>Version</dt>
+							<dd id="create-project-review-version">—</dd>
+						</div>
+						<div>
+							<dt>Destination</dt>
+							<dd id="create-project-review-path">—</dd>
+						</div>
+					</dl>
+				</div>
+				<div class="project-review-contract-full">
+					<label>Pipeline Contract Summary</label>
+					<pre id="create-project-review-ascii" class="project-spec-summary"></pre>
+				</div>
+			</section>
+			<footer class="project-wizard-actions">
+				<div class="left-actions">
+					<button id="create-project-cancel" class="link-button" type="button">Cancel</button>
+				</div>
+				<div class="right-actions">
+					<button id="create-project-back" class="secondary-btn" type="button">Back</button>
+					<button id="create-project-next" class="primary-btn" type="button">Next</button>
+					<button
+						id="create-project-confirm"
+						class="primary-btn"
+						type="button"
+						style="display: none"
+					>
+						Create Project
+					</button>
+				</div>
+			</footer>
 		</div>
 	</div>
 </div>
