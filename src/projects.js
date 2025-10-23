@@ -1,22 +1,13 @@
-import { createProjectSpecForm, generateContractAscii } from './project-spec-form.js'
+import { createProjectSpecForm, generateContractAscii } from './project-spec-form-modal.js'
 
-const CREATE_WIZARD_STEP_COUNT = 6
-const CREATE_WIZARD_STEP_LABELS = [
-	'Project Details',
-	'Inputs',
-	'Parameters',
-	'Outputs',
-	'Preview',
-	'Review & Create',
-]
-const CREATE_SPEC_STEP_CONFIG = {
-	1: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
-	2: {
+const CREATE_TAB_CONFIG = {
+	inputs: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
+	parameters: {
 		containerId: 'create-project-parameters',
 		sections: ['parameters'],
 		defaultTab: 'parameters',
 	},
-	3: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
+	outputs: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
 }
 
 let wizardPreviewRequestId = 0
@@ -61,7 +52,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			outputs: [],
 		},
 		nameListenerBound: false,
-		currentStep: 0,
+		activeTab: 'details',
 	}
 
 	let operationModalDepth = 0
@@ -106,6 +97,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			if (container) {
 				projectEditorState.specForm = createProjectSpecForm({
 					container,
+					invoke,
 					onChange: (parameters, inputs, outputs) => {
 						projectEditorState.specData = { parameters, inputs, outputs }
 						updateEditorSpecSummary()
@@ -258,18 +250,24 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const versionInput = document.getElementById('new-project-version')
 		const projectName = nameInput ? nameInput.value.trim() : ''
 		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
-		if (!projectName) {
-			wizardPreviewRequestId += 1
-			clearWizardPreview('Enter a project name to generate a preview.')
-			return
-		}
+
+		// Use placeholder name if empty for preview purposes
+		const previewName = projectName || 'my-project'
+
+		// Get scripting language selection for preview
+		const selectedScriptCard = document.querySelector(
+			'#blank-project-options .option-card.active[data-type="script"]',
+		)
+		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
+		const assets = !templateSelect?.value && scriptLang === 'python' ? ['process.py'] : []
+
 		const spec = getCreateSpecPayload()
 		const payload = buildSpecSavePayload({
-			name: projectName,
+			name: previewName,
 			author: '',
 			workflow: 'workflow.nf',
 			template: templateSelect && templateSelect.value ? templateSelect.value : null,
-			assets: [],
+			assets: assets,
 			version: versionValue,
 			spec,
 		})
@@ -324,9 +322,11 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			if (target) {
 				projectCreateState.specForm = createProjectSpecForm({
 					container: target,
+					invoke,
 					onChange: (parameters, inputs, outputs) => {
 						projectCreateState.specData = { parameters, inputs, outputs }
-						renderCreateReview()
+						updateTabCounts()
+						scheduleWizardPreview()
 					},
 				})
 			} else {
@@ -346,14 +346,94 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (!projectCreateState.nameListenerBound) {
 			const nameInput = document.getElementById('new-project-name')
 			if (nameInput) {
-				nameInput.addEventListener('input', () => updateCreateSpecSummary())
+				nameInput.addEventListener('input', () => {
+					updateCreateSpecSummary()
+					scheduleWizardPreview()
+				})
 				projectCreateState.nameListenerBound = true
 			}
 		}
 	}
 
 	function updateCreateSpecSummary() {
-		renderCreateReview()
+		// Update preview when spec data changes
+		scheduleWizardPreview()
+	}
+
+	function updateTabCounts() {
+		const counts = {
+			inputs: projectCreateState.specData.inputs.length,
+			parameters: projectCreateState.specData.parameters.length,
+			outputs: projectCreateState.specData.outputs.length,
+		}
+
+		Object.entries(counts).forEach(([key, value]) => {
+			const countEl = document.querySelector(`[data-count="${key}"]`)
+			if (countEl) {
+				countEl.textContent = value
+				countEl.style.display = value > 0 ? 'inline-flex' : 'none'
+			}
+		})
+	}
+
+	async function loadTemplateIntoWizard(templateData) {
+		// Normalize template data - convert 'type' to 'raw_type' for UI compatibility
+		const normalizeSpec = (spec) => {
+			if (!spec) return spec
+			const normalized = { ...spec }
+			// Convert 'type' field to 'raw_type' for UI
+			if (normalized.type) {
+				normalized.raw_type = normalized.type
+				delete normalized.type
+			}
+			return normalized
+		}
+
+		// Update spec data from template
+		projectCreateState.specData = {
+			parameters: (templateData.parameters || []).map(normalizeSpec),
+			inputs: (templateData.inputs || []).map(normalizeSpec),
+			outputs: (templateData.outputs || []).map(normalizeSpec),
+		}
+
+		console.log('Loaded template data:', projectCreateState.specData)
+
+		// Update form if it exists
+		if (projectCreateState.specForm) {
+			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		}
+
+		// Update tab counts
+		updateTabCounts()
+
+		// Update version if template has one
+		const versionInput = document.getElementById('new-project-version')
+		if (versionInput && templateData.version) {
+			versionInput.value = templateData.version
+		}
+	}
+
+	function resetWizardToBlank() {
+		// Reset spec data
+		projectCreateState.specData = {
+			parameters: [],
+			inputs: [],
+			outputs: [],
+		}
+
+		// Update form if it exists
+		if (projectCreateState.specForm) {
+			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		}
+
+		// Update tab counts
+		updateTabCounts()
+
+		// Reset version
+		const versionInput = document.getElementById('new-project-version')
+		if (versionInput) {
+			versionInput.value = '1.0.0'
+		}
 	}
 
 	function getCreateSpecPayload() {
@@ -427,152 +507,76 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 	}
 
-	function renderCreateReview() {
-		const nameEl = document.getElementById('create-project-review-name')
-		if (!nameEl) return
-		const nameInput = document.getElementById('new-project-name')
-		const versionInput = document.getElementById('new-project-version')
-		const pathInput = document.getElementById('new-project-path')
+	function switchCreateTab(tabName) {
+		projectCreateState.activeTab = tabName
 
-		const nameValue = nameInput ? nameInput.value.trim() : ''
-		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
-		const pathValue = pathInput ? pathInput.value.trim() : ''
-
-		nameEl.textContent = nameValue || '—'
-		const templateLabel = document.querySelector('#new-project-template option:checked')
-		const templateText = templateLabel?.textContent?.trim() || 'Blank project'
-		const templateEl = document.getElementById('create-project-review-template')
-		if (templateEl) {
-			templateEl.textContent = templateText
-		}
-		const versionEl = document.getElementById('create-project-review-version')
-		if (versionEl) {
-			versionEl.textContent = versionValue || '—'
-		}
-		const pathEl = document.getElementById('create-project-review-path')
-		if (pathEl) {
-			pathEl.textContent = pathValue || '—'
-		}
-
-		const spec = getCreateSpecPayload()
-		const ascii = generateContractAscii({
-			name: nameValue || 'New Project',
-			parameters: spec.parameters,
-			inputs: spec.inputs,
-			outputs: spec.outputs,
+		// Update tab buttons
+		document.querySelectorAll('.create-tab').forEach((tab) => {
+			tab.classList.toggle('active', tab.dataset.tab === tabName)
 		})
-		const asciiEl = document.getElementById('create-project-review-ascii')
-		if (asciiEl) {
-			asciiEl.textContent = ascii
+
+		// Update content sections
+		document.querySelectorAll('.create-tab-content').forEach((content) => {
+			content.classList.toggle('active', content.dataset.content === tabName)
+		})
+
+		// Initialize spec form if switching to inputs/parameters/outputs
+		const config = CREATE_TAB_CONFIG[tabName]
+		if (config) {
+			ensureCreateSpecForm(config)
 		}
-		scheduleWizardPreview()
+
+		// Update footer navigation
+		updateCreateFooter()
 	}
 
-	function setCreateWizardStep(step) {
-		projectCreateState.currentStep = step
-		const sections = document.querySelectorAll('.project-wizard-step')
-		sections.forEach((section) => {
-			const idx = Number(section.dataset.step)
-			section.classList.toggle('active', idx === step)
-		})
-		const indicators = document.querySelectorAll('.project-wizard-steps li')
-		indicators.forEach((indicator) => {
-			indicator.classList.toggle('active', Number(indicator.dataset.step) === step)
-		})
-
-		// Auto-collapse preview panels when entering step 4
-		if (step === 4) {
-			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
-			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
-			if (yamlWrapper) yamlWrapper.open = true
-			if (templateWrapper) templateWrapper.open = false
-		}
+	function updateCreateFooter() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
 		const backBtn = document.getElementById('create-project-back')
 		const nextBtn = document.getElementById('create-project-next')
 		const confirmBtn = document.getElementById('create-project-confirm')
-		if (backBtn) backBtn.disabled = step === 0
-		if (nextBtn) {
-			if (step >= CREATE_WIZARD_STEP_COUNT - 1) {
-				nextBtn.style.display = 'none'
-			} else {
-				nextBtn.style.display = 'inline-flex'
-				const nextLabel = CREATE_WIZARD_STEP_LABELS[step + 1] || 'Next'
-				nextBtn.textContent = `Next: ${nextLabel}`
-			}
-		}
-		if (confirmBtn) {
-			confirmBtn.style.display = step === CREATE_WIZARD_STEP_COUNT - 1 ? 'inline-flex' : 'none'
-		}
 
-		const specConfig = CREATE_SPEC_STEP_CONFIG[step]
-		if (specConfig) {
-			ensureCreateSpecForm(specConfig)
-			scheduleWizardPreview()
-		} else if (step === 4) {
-			// Preview step - update code previews
-			scheduleWizardPreview()
-		} else if (step === CREATE_WIZARD_STEP_COUNT - 1) {
-			// Final review step
-			renderCreateReview()
+		if (!backBtn || !nextBtn || !confirmBtn) return
+
+		// Back button
+		backBtn.disabled = currentIndex === 0
+
+		// Next button - show appropriate label
+		if (currentIndex < tabOrder.length - 1) {
+			const nextTab = tabOrder[currentIndex + 1]
+			const labels = {
+				details: 'Details',
+				inputs: 'Inputs',
+				parameters: 'Parameters',
+				outputs: 'Outputs',
+			}
+			nextBtn.textContent = `Next: ${labels[nextTab]} →`
+			nextBtn.style.display = 'inline-flex'
+			confirmBtn.style.display = 'none'
 		} else {
-			scheduleWizardPreview()
+			// Last tab - show Create Project button
+			nextBtn.style.display = 'none'
+			confirmBtn.style.display = 'inline-flex'
 		}
 	}
 
-	async function handleCreateWizardNext() {
-		const current = projectCreateState.currentStep || 0
+	function handleCreateTabNext() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
-		if (current === 0) {
-			const nameInput = document.getElementById('new-project-name')
-			const projectName = nameInput.value
-			const validation = validateProjectName(projectName)
-
-			// Validate project name
-			if (!validation.valid) {
-				await dialog.message(validation.error, {
-					title: 'Invalid Project Name',
-					type: 'warning',
-				})
-				nameInput.focus()
-				return
-			}
-
-			let destination = document.getElementById('new-project-path').value.trim()
-			if (!destination) {
-				destination = await fetchDefaultProjectPath(projectName.trim())
-				document.getElementById('new-project-path').value = destination
-				projectCreateState.defaultDir = destination
-				projectCreateState.selectedDir = null
-			}
-
-			if (!destination) {
-				await dialog.message(
-					'Unable to determine a destination folder. Please choose one manually.',
-					{
-						title: 'Destination Required',
-						type: 'warning',
-					},
-				)
-				return
-			}
-		}
-
-		if (current < CREATE_WIZARD_STEP_COUNT - 1) {
-			setCreateWizardStep(current + 1)
+		if (currentIndex < tabOrder.length - 1) {
+			switchCreateTab(tabOrder[currentIndex + 1])
 		}
 	}
 
-	function handleCreateWizardBack() {
-		const current = projectCreateState.currentStep || 0
-		if (current > 0) {
-			setCreateWizardStep(current - 1)
-		}
-	}
+	function handleCreateTabBack() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
-	function handleWizardStepClick(targetStep) {
-		if (targetStep >= 0 && targetStep < CREATE_WIZARD_STEP_COUNT) {
-			setCreateWizardStep(targetStep)
+		if (currentIndex > 0) {
+			switchCreateTab(tabOrder[currentIndex - 1])
 		}
 	}
 
@@ -757,7 +761,6 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		try {
 			const projects = await invoke('get_projects')
 			const projectsContainer = document.getElementById('projects-list')
-			const pipelinesContainer = document.getElementById('pipelines-list')
 
 			// Update counts
 			const projectsCount = document.getElementById('projects-count')
@@ -933,18 +936,52 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 		if (templateSelect) {
 			templateSelect.value = ''
-			templateSelect.onchange = () => renderCreateReview()
+			templateSelect.onchange = () => scheduleWizardPreview()
 		}
 		if (versionInput) {
 			versionInput.value = '1.0.0'
-			versionInput.oninput = () => renderCreateReview()
+			versionInput.oninput = () => scheduleWizardPreview()
 		}
 		projectCreateState.selectedDir = null
 		projectCreateState.usingDefault = true
 
-		// Supported templates list intentionally left blank for now
+		// Load available templates from CLI
+		let availableExamples = {}
 		if (templateSelect) {
-			templateSelect.innerHTML = '<option value="">Blank Project</option>'
+			try {
+				const examples = await invoke('get_available_project_examples')
+				availableExamples = examples || {}
+				let optionsHtml = '<option value="">Blank Project</option>'
+
+				if (Object.keys(examples).length > 0) {
+					Object.entries(examples).forEach(([key, example]) => {
+						const displayName = example.name || key
+						optionsHtml += `<option value="${key}">${displayName}</option>`
+					})
+				}
+
+				templateSelect.innerHTML = optionsHtml
+			} catch (error) {
+				console.warn('Failed to load project examples:', error)
+				templateSelect.innerHTML = '<option value="">Blank Project</option>'
+			}
+
+			// Handle template selection changes
+			templateSelect.onchange = async () => {
+				const selectedTemplate = templateSelect.value
+				const blankOptions = document.getElementById('blank-project-options')
+
+				if (selectedTemplate && availableExamples[selectedTemplate]) {
+					// Hide blank project options
+					if (blankOptions) blankOptions.style.display = 'none'
+					await loadTemplateIntoWizard(availableExamples[selectedTemplate])
+				} else {
+					// Show blank project options
+					if (blankOptions) blankOptions.style.display = 'block'
+					resetWizardToBlank()
+				}
+				scheduleWizardPreview()
+			}
 		}
 
 		const defaultPath = await fetchDefaultProjectPath('')
@@ -953,16 +990,88 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			pathInput.value = defaultPath
 		}
 
-		ensureCreateSpecForm(CREATE_SPEC_STEP_CONFIG[1])
+		// Initialize form state
 		projectCreateState.specData = { parameters: [], inputs: [], outputs: [] }
+		projectCreateState.activeTab = 'details'
+
+		// Initialize inputs tab
+		ensureCreateSpecForm(CREATE_TAB_CONFIG.inputs)
 		projectCreateState.specForm?.setSpec(projectCreateState.specData)
-		projectCreateState.specForm?.configureSections(['inputs'], 'inputs')
-		updateCreateSpecSummary()
-		clearWizardPreview('Preview will appear once details are filled in.')
-		setCreateWizardStep(0)
+
+		// Switch to Details tab
+		switchCreateTab('details')
+		updateTabCounts()
+
+		// Setup tab click handlers
+		setupCreateTabHandlers()
+
+		// Setup option card handlers
+		setupOptionCardHandlers()
+
+		// Initialize footer buttons
+		updateCreateFooter()
+
+		// Generate initial preview
+		scheduleWizardPreview()
+
 		modal.style.display = 'flex'
 		document.body.classList.add('modal-open')
 		setTimeout(() => nameInput?.focus(), 100)
+	}
+
+	function setupCreateTabHandlers() {
+		document.querySelectorAll('.create-tab').forEach((tab) => {
+			// Remove old listeners by cloning
+			const newTab = tab.cloneNode(true)
+			tab.parentNode.replaceChild(newTab, tab)
+
+			newTab.addEventListener('click', () => {
+				switchCreateTab(newTab.dataset.tab)
+			})
+		})
+
+		// Setup navigation button handlers
+		const cancelBtn = document.getElementById('create-project-cancel')
+		const backBtn = document.getElementById('create-project-back')
+		const nextBtn = document.getElementById('create-project-next')
+		const confirmBtn = document.getElementById('create-project-confirm')
+
+		if (cancelBtn) {
+			cancelBtn.onclick = () => hideCreateProjectModal()
+		}
+		if (backBtn) {
+			backBtn.onclick = () => handleCreateTabBack()
+		}
+		if (nextBtn) {
+			nextBtn.onclick = () => handleCreateTabNext()
+		}
+		if (confirmBtn) {
+			confirmBtn.onclick = () => createProjectFromModal()
+		}
+	}
+
+	function setupOptionCardHandlers() {
+		document.querySelectorAll('.option-card').forEach((card) => {
+			card.addEventListener('click', () => {
+				if (card.classList.contains('disabled')) return
+
+				// Get parent group to only deselect siblings of same type
+				const group = card.closest('.option-group')
+				const cardType = card.dataset.type
+
+				if (group && cardType) {
+					// Deselect all cards of the same type within this group
+					group.querySelectorAll(`.option-card[data-type="${cardType}"]`).forEach((c) => {
+						c.classList.remove('active')
+					})
+				}
+
+				card.classList.add('active')
+
+				// Update preview when selection changes
+				scheduleWizardPreview()
+			})
+		})
 	}
 
 	function hideCreateProjectModal() {
@@ -1033,7 +1142,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			projectCreateState.selectedDir = chosen
 			projectCreateState.usingDefault = false
 			document.getElementById('new-project-path').value = chosen
-			renderCreateReview()
+			scheduleWizardPreview()
 		} catch (error) {
 			console.error('Folder selection cancelled or failed:', error)
 		}
@@ -1046,11 +1155,10 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const defaultPath = await fetchDefaultProjectPath(nameValue)
 		projectCreateState.defaultDir = defaultPath
 		document.getElementById('new-project-path').value = defaultPath
-		renderCreateReview()
+		scheduleWizardPreview()
 	}
 
 	async function createProjectFromModal() {
-		ensureCreateSpecForm()
 		const nameInput = document.getElementById('new-project-name')
 		const templateSelect = document.getElementById('new-project-template')
 		const confirmBtn = document.getElementById('create-project-confirm')
@@ -1064,7 +1172,30 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				title: 'Invalid Project Name',
 				type: 'warning',
 			})
+			// Switch to details tab to show error
+			switchCreateTab('details')
 			nameInput.focus()
+			return
+		}
+
+		// Validate destination path
+		let destination = document.getElementById('new-project-path').value.trim()
+		if (!destination) {
+			destination = await fetchDefaultProjectPath(projectName.trim())
+			document.getElementById('new-project-path').value = destination
+			projectCreateState.defaultDir = destination
+			projectCreateState.selectedDir = null
+		}
+
+		if (!destination) {
+			await dialog.message(
+				'Unable to determine a destination folder. Please choose one manually.',
+				{
+					title: 'Destination Required',
+					type: 'warning',
+				},
+			)
+			switchCreateTab('details')
 			return
 		}
 
@@ -1075,6 +1206,14 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const hasContract =
 			spec.parameters.length > 0 || spec.inputs.length > 0 || spec.outputs.length > 0
 
+		// Get scripting language option (only for blank projects)
+		const selectedScriptCard = document.querySelector(
+			'#blank-project-options .option-card.active[data-type="script"]',
+		)
+		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
+		const createPythonScript = !example && scriptLang === 'python'
+		const scriptName = createPythonScript ? 'process.py' : null
+
 		confirmBtn.disabled = true
 		confirmBtn.textContent = 'Creating...'
 
@@ -1083,6 +1222,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				name: projectName.trim(),
 				example,
 				directory: directory || null,
+				createPythonScript: createPythonScript,
+				scriptName: scriptName,
 			})
 			if (hasContract) {
 				try {
@@ -1708,8 +1849,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		handleOpenProjectFolder,
 		handleLeaveProjectEditor,
 		handleReloadProjectSpec,
-		handleCreateWizardNext,
-		handleCreateWizardBack,
-		handleWizardStepClick,
+		handleCreateTabNext,
+		handleCreateTabBack,
 	}
 }

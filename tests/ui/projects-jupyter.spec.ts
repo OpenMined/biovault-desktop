@@ -263,7 +263,7 @@ test.describe('Projects editor with Jupyter integration', () => {
 					await page.waitForTimeout(500)
 				}
 			}
-			await expect(page.locator('#projects-list')).toContainText('No projects found in BioVault.')
+			await expect(page.locator('#projects-list')).toContainText('No projects imported yet.')
 		}
 
 		await page.locator('#create-project-btn').click()

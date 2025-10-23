@@ -1,19 +1,239 @@
-const TYPE_SUGGESTIONS = [
-	'Bool',
-	'String',
-	'Enum[...]',
-	'File',
-	'Directory',
-	'ParticipantSheet',
-	'GenotypeRecord',
-	'BiovaultContext',
-	'List[String]',
-	'List[File]',
-	'List[ParticipantSheet]',
-	'Map[String]',
-]
+// Type registry - will be populated from CLI
+let cachedInputTypeInfo = null
+let cachedOutputTypeInfo = null
+let cachedParameterTypes = null
+let cachedCommonFormats = null
 
 let entryCounter = 0
+
+async function getInputTypeInfo(invoke) {
+	if (!cachedInputTypeInfo && invoke) {
+		try {
+			cachedInputTypeInfo = await invoke('get_supported_input_types')
+		} catch (error) {
+			console.warn('Failed to load input types from CLI, using defaults:', error)
+			cachedInputTypeInfo = {
+				base_types: [
+					'String',
+					'Bool',
+					'File',
+					'Directory',
+					'ParticipantSheet',
+					'GenotypeRecord',
+					'BiovaultContext',
+				],
+				common_types: ['File', 'Directory', 'String', 'List[File]'],
+			}
+		}
+	}
+	return cachedInputTypeInfo || { base_types: [], common_types: [] }
+}
+
+async function getOutputTypeInfo(invoke) {
+	if (!cachedOutputTypeInfo && invoke) {
+		try {
+			cachedOutputTypeInfo = await invoke('get_supported_output_types')
+		} catch (error) {
+			console.warn('Failed to load output types from CLI, using defaults:', error)
+			cachedOutputTypeInfo = {
+				base_types: ['String', 'Bool', 'File', 'Directory', 'ParticipantSheet', 'GenotypeRecord'],
+				common_types: ['File', 'Directory'],
+			}
+		}
+	}
+	return cachedOutputTypeInfo || { base_types: [], common_types: [] }
+}
+
+async function getParameterTypes(invoke) {
+	if (!cachedParameterTypes && invoke) {
+		try {
+			cachedParameterTypes = await invoke('get_supported_parameter_types')
+		} catch (error) {
+			console.warn('Failed to load parameter types from CLI, using defaults:', error)
+			cachedParameterTypes = ['String', 'Bool', 'Enum[...]']
+		}
+	}
+	return cachedParameterTypes || []
+}
+
+async function getCommonFormats(invoke) {
+	if (!cachedCommonFormats && invoke) {
+		try {
+			cachedCommonFormats = await invoke('get_common_formats')
+		} catch (error) {
+			console.warn('Failed to load formats from CLI, using defaults:', error)
+			cachedCommonFormats = ['csv', 'tsv', 'txt', 'json', 'vcf', 'fasta']
+		}
+	}
+	return cachedCommonFormats || []
+}
+
+// Get icon for type
+function getTypeIcon(type) {
+	if (type.includes('File') || type === 'File') return '📄'
+	if (type.includes('Directory') || type === 'Directory') return '📁'
+	if (type.includes('String') || type === 'String') return '📝'
+	if (type.includes('List')) return '📋'
+	return '•'
+}
+
+// Parse a type string into components
+function parseTypeString(typeStr) {
+	if (!typeStr) return { base: '', isList: false, isMap: false, isOptional: false }
+
+	let working = typeStr.trim()
+	const isOptional = working.endsWith('?')
+	if (isOptional) working = working.slice(0, -1).trim()
+
+	let isList = false
+	let isMap = false
+	let base = working
+
+	if (working.startsWith('List[') && working.endsWith(']')) {
+		isList = true
+		base = working.slice(5, -1).trim()
+	}
+
+	if (base.startsWith('Map[String,') && base.endsWith(']')) {
+		isMap = true
+		// Extract value type from Map[String, Type]
+		const inner = base.slice(11, -1).trim()
+		base = inner.startsWith(',') ? inner.slice(1).trim() : inner
+	}
+
+	return { base, isList, isMap, isOptional }
+}
+
+// Build a type string from components
+function buildTypeString(base, isList, isMap, isOptional) {
+	if (!base) return ''
+
+	let result = base
+	if (isMap) result = `Map[String, ${result}]`
+	if (isList) result = `List[${result}]`
+	if (isOptional) result = `${result}?`
+
+	return result
+}
+
+// Get base primitives (no List/Map/Optional)
+function getBasePrimitives(types) {
+	if (!types || types.length === 0) return []
+
+	// Filter to only base primitives (no List, Map, or ?)
+	return types.filter((t) => {
+		return !t.includes('List[') && !t.includes('Map[') && !t.includes('?')
+	})
+}
+
+// Type builder component with compositional UI
+function createTypeBuilder(types, selectedValue, onChange) {
+	const wrapper = document.createElement('div')
+	wrapper.className = 'type-builder'
+
+	const parsed = parseTypeString(selectedValue)
+	const basePrimitives = getBasePrimitives(types)
+
+	// Base type selector
+	const baseSelect = document.createElement('select')
+	baseSelect.className = 'type-builder-base'
+	baseSelect.innerHTML = '<option value="">Select base type...</option>'
+	basePrimitives.forEach((type) => {
+		const option = document.createElement('option')
+		option.value = type
+		option.textContent = type
+		if (type === parsed.base) option.selected = true
+		baseSelect.appendChild(option)
+	})
+
+	// Collection type radios
+	const collectionGroup = document.createElement('div')
+	collectionGroup.className = 'type-builder-collection'
+	collectionGroup.innerHTML = `
+		<span class="modifier-label">Collection:</span>
+		<label class="modifier-radio">
+			<input type="radio" name="collection-${Date.now()}" value="single" ${
+				!parsed.isList && !parsed.isMap ? 'checked' : ''
+			} />
+			Single value
+		</label>
+		<label class="modifier-radio">
+			<input type="radio" name="collection-${Date.now()}" value="list" ${
+				parsed.isList ? 'checked' : ''
+			} />
+			List (array)
+		</label>
+		<label class="modifier-radio">
+			<input type="radio" name="collection-${Date.now()}" value="map" ${parsed.isMap ? 'checked' : ''} />
+			Map (key-value)
+		</label>
+	`
+
+	// Optional checkbox
+	const optionalLabel = document.createElement('label')
+	optionalLabel.className = 'modifier-checkbox'
+	optionalLabel.innerHTML = `
+		<input type="checkbox" class="mod-optional" ${parsed.isOptional ? 'checked' : ''} />
+		Optional (can be null)
+	`
+
+	// Preview
+	const preview = document.createElement('div')
+	preview.className = 'type-builder-preview'
+
+	const updatePreview = () => {
+		const base = baseSelect.value
+		const collectionRadio = wrapper.querySelector('input[type="radio"]:checked')
+		const collection = collectionRadio ? collectionRadio.value : 'single'
+		const optional = wrapper.querySelector('.mod-optional')?.checked || false
+
+		const isList = collection === 'list'
+		const isMap = collection === 'map'
+
+		const result = buildTypeString(base, isList, isMap, optional)
+
+		preview.innerHTML = result
+			? `<span class="preview-label">Type:</span> <code class="type-preview-code">${result}</code>`
+			: '<span class="preview-label">Select a base type</span>'
+
+		if (result) onChange(result)
+	}
+
+	baseSelect.addEventListener('change', updatePreview)
+	collectionGroup.addEventListener('change', updatePreview)
+	optionalLabel.addEventListener('change', updatePreview)
+
+	const baseLabel = document.createElement('label')
+	baseLabel.innerHTML = '<span>Base Type</span>'
+	baseLabel.appendChild(baseSelect)
+
+	wrapper.appendChild(baseLabel)
+	wrapper.appendChild(collectionGroup)
+	wrapper.appendChild(optionalLabel)
+	wrapper.appendChild(preview)
+
+	updatePreview()
+
+	return {
+		wrapper,
+		setValue: (val) => {
+			const p = parseTypeString(val)
+			baseSelect.value = p.base
+
+			const radios = wrapper.querySelectorAll('input[type="radio"]')
+			radios.forEach((r) => {
+				if (r.value === 'list' && p.isList) r.checked = true
+				else if (r.value === 'map' && p.isMap) r.checked = true
+				else if (r.value === 'single' && !p.isList && !p.isMap) r.checked = true
+			})
+
+			const optCheck = wrapper.querySelector('.mod-optional')
+			if (optCheck) optCheck.checked = p.isOptional
+
+			updatePreview()
+		},
+	}
+}
 
 function createId(prefix) {
 	entryCounter += 1
@@ -45,41 +265,19 @@ function normaliseList(value) {
 		.filter((item) => item.length)
 }
 
-function normaliseMapping(mappingText) {
-	if (!mappingText) return null
-	const lines = mappingText
-		.split('\n')
-		.map((line) => line.trim())
-		.filter((line) => line.length)
-	if (!lines.length) return null
-	const result = {}
-	lines.forEach((line) => {
-		const [key, ...rest] = line.split('=')
-		if (!key) return
-		const value = rest.join('=').trim()
-		result[key.trim()] = value
-	})
-	return Object.keys(result).length ? result : null
-}
+// Removed normaliseMapping - mapping field is unused in practice
 
-function renderTypeDatalist() {
-	const datalist = document.createElement('datalist')
-	datalist.id = 'spec-type-suggestions'
-	TYPE_SUGGESTIONS.forEach((item) => {
-		const option = document.createElement('option')
-		option.value = item.trim()
-		datalist.appendChild(option)
-	})
-	return datalist
-}
+// No longer needed - using dropdowns instead of datalist
 
-function buildParameterEntry(entry, update) {
+function buildParameterEntry(entry, update, parameterTypes = null) {
 	const wrapper = document.createElement('div')
-	wrapper.className = 'spec-entry'
+	wrapper.className = 'spec-entry spec-entry-compact'
 	wrapper.dataset.entryId = entry.id
+
 	wrapper.innerHTML = `
 		<div class="spec-entry-header">
 			<strong>Parameter</strong>
+			<span class="entry-hint">Configuration setting</span>
 			<div class="spec-entry-actions">
 				<button type="button" class="link-button" data-action="duplicate">Duplicate</button>
 				<button type="button" class="link-button danger" data-action="remove">Remove</button>
@@ -88,26 +286,26 @@ function buildParameterEntry(entry, update) {
 		<div class="spec-entry-grid">
 			<label>
 				<span>Name</span>
-				<input type="text" data-field="name" spellcheck="false" />
+				<input type="text" data-field="name" placeholder="quality_threshold" spellcheck="false" />
 			</label>
 			<label>
 				<span>Type</span>
-				<input type="text" list="spec-type-suggestions" data-field="raw_type" spellcheck="false" />
+				<select data-field="raw_type" class="parameter-type-select">
+					<option value="">Select...</option>
+					${parameterTypes ? parameterTypes.map((t) => `<option value="${t}">${t}</option>`).join('') : ''}
+				</select>
 			</label>
 			<label>
-				<span>Default</span>
-				<input type="text" data-field="default" spellcheck="false" />
+				<span>Default Value</span>
+				<input type="text" data-field="default" placeholder="30" spellcheck="false" />
 			</label>
-			<label>
-				<span>Choices (comma separated)</span>
-				<input type="text" data-field="choices" spellcheck="false" />
+			<label class="card-span2 choices-field" style="display: none;">
+				<span>Choices (for Enum - comma separated)</span>
+				<input type="text" data-field="choices" placeholder="fast, normal, thorough" spellcheck="false" />
 			</label>
 			<label class="card-span2">
-				<span>Description</span>
-				<textarea data-field="description" rows="2"></textarea>
-			</label>
-			<label class="spec-entry-checkbox">
-				<input type="checkbox" data-field="advanced" /> Hide from UI
+				<span>Description (optional)</span>
+				<textarea data-field="description" rows="2" placeholder="Minimum quality score threshold"></textarea>
 			</label>
 		</div>
 	`
@@ -123,13 +321,25 @@ function buildParameterEntry(entry, update) {
 	}
 
 	setField('input[data-field="name"]', entry.name)
-	setField('input[data-field="raw_type"]', entry.raw_type)
+	setField('select[data-field="raw_type"]', entry.raw_type)
 	setField('textarea[data-field="description"]', entry.description)
 	setField('input[data-field="default"]', entry.default)
 	setField('input[data-field="choices"]', entry.choices?.join(', ') ?? '')
-	setField('input[data-field="advanced"]', entry.advanced)
 
-	wrapper.addEventListener('input', (event) => {
+	// Show/hide choices field based on type
+	const typeSelect = wrapper.querySelector('select[data-field="raw_type"]')
+	const choicesField = wrapper.querySelector('.choices-field')
+	const updateChoicesVisibility = () => {
+		if (typeSelect.value.startsWith('Enum')) {
+			choicesField.style.display = 'block'
+		} else {
+			choicesField.style.display = 'none'
+		}
+	}
+	typeSelect.addEventListener('change', updateChoicesVisibility)
+	updateChoicesVisibility()
+
+	const handleFieldChange = (event) => {
 		const target = event.target
 		const field = target.dataset.field
 		if (!field) return
@@ -138,7 +348,10 @@ function buildParameterEntry(entry, update) {
 			return
 		}
 		update(entry.id, { [field]: target.value })
-	})
+	}
+
+	wrapper.addEventListener('input', handleFieldChange)
+	wrapper.addEventListener('change', handleFieldChange)
 
 	wrapper.querySelector('[data-action="remove"]').addEventListener('click', () => {
 		update(entry.id, null)
@@ -151,42 +364,62 @@ function buildParameterEntry(entry, update) {
 	return wrapper
 }
 
-function buildInputEntry(entry, update) {
+function buildInputEntry(entry, update, typeInfo = null, formats = null) {
 	const wrapper = document.createElement('div')
 	wrapper.className = 'spec-entry'
 	wrapper.dataset.entryId = entry.id
+
+	const commonTypes = typeInfo?.common_types || []
+	const formatOptions = formats
+		? formats.map((f) => `<option value="${f}">${f}</option>`).join('')
+		: ''
+
 	wrapper.innerHTML = `
 		<div class="spec-entry-header">
 			<strong>Input</strong>
+			<span class="entry-hint">Data file or directory to analyze</span>
 			<div class="spec-entry-actions">
 				<button type="button" class="link-button" data-action="duplicate">Duplicate</button>
 				<button type="button" class="link-button danger" data-action="remove">Remove</button>
 			</div>
 		</div>
 		<div class="spec-entry-grid">
-			<label>
+			<label class="card-span2">
 				<span>Name</span>
-				<input type="text" data-field="name" spellcheck="false" />
+				<input type="text" data-field="name" placeholder="samplesheet" spellcheck="false" />
 			</label>
-			<label>
+			<label class="card-span2">
 				<span>Type</span>
-				<input type="text" list="spec-type-suggestions" data-field="raw_type" spellcheck="false" />
+				<div class="type-quick-select">
+					${commonTypes
+						.map(
+							(t) =>
+								`<button type="button" class="type-quick-btn" data-type="${t}">${getTypeIcon(
+									t,
+								)} ${t}</button>`,
+						)
+						.join('')}
+				</div>
+				<input type="hidden" data-field="raw_type" value="${entry.raw_type || ''}" />
+				<details class="type-advanced">
+					<summary>Build Custom Type</summary>
+					<div class="type-field-wrapper"></div>
+				</details>
 			</label>
 			<label>
-				<span>Format</span>
-				<input type="text" data-field="format" spellcheck="false" />
+				<span>Format (optional)</span>
+				<select data-field="format">
+					<option value="">Auto-detect</option>
+					${formatOptions}
+				</select>
 			</label>
 			<label>
-				<span>Path / Pattern</span>
-				<input type="text" data-field="path" spellcheck="false" />
+				<span>Path / Pattern (optional)</span>
+				<input type="text" data-field="path" placeholder="data/*.csv" spellcheck="false" />
 			</label>
 			<label class="card-span2">
-				<span>Description</span>
-				<textarea data-field="description" rows="2"></textarea>
-			</label>
-			<label class="card-span2">
-				<span>Mapping (key=value per line)</span>
-				<textarea data-field="mapping" rows="2" spellcheck="false"></textarea>
+				<span>Description (optional)</span>
+				<textarea data-field="description" rows="2" placeholder="CSV file with sample metadata"></textarea>
 			</label>
 		</div>
 	`
@@ -198,18 +431,54 @@ function buildInputEntry(entry, update) {
 	}
 
 	setField('input[data-field="name"]', entry.name)
-	setField('input[data-field="raw_type"]', entry.raw_type)
-	setField('input[data-field="format"]', entry.format)
+	setField('select[data-field="format"]', entry.format)
 	setField('input[data-field="path"]', entry.path)
 	setField('textarea[data-field="description"]', entry.description)
-	setField('textarea[data-field="mapping"]', entry.mappingText)
+	setField('input[data-field="raw_type"]', entry.raw_type)
 
-	wrapper.addEventListener('input', (event) => {
+	// Quick-pick buttons
+	const quickBtns = wrapper.querySelectorAll('.type-quick-btn')
+	const typeHiddenInput = wrapper.querySelector('input[data-field="raw_type"]')
+	const updateQuickBtnStates = () => {
+		quickBtns.forEach((btn) => {
+			if (btn.dataset.type === typeHiddenInput.value) {
+				btn.classList.add('active')
+			} else {
+				btn.classList.remove('active')
+			}
+		})
+	}
+
+	quickBtns.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			const selectedType = btn.dataset.type
+			typeHiddenInput.value = selectedType
+			update(entry.id, { raw_type: selectedType })
+			updateQuickBtnStates()
+		})
+	})
+	updateQuickBtnStates()
+
+	// Advanced type builder
+	const typeFieldWrapper = wrapper.querySelector('.type-field-wrapper')
+	if (typeFieldWrapper && typeInfo) {
+		const builder = createTypeBuilder(typeInfo.base_types, entry.raw_type, (value) => {
+			typeHiddenInput.value = value
+			update(entry.id, { raw_type: value })
+			updateQuickBtnStates()
+		})
+		typeFieldWrapper.appendChild(builder.wrapper)
+	}
+
+	const handleFieldChange = (event) => {
 		const target = event.target
 		const field = target.dataset.field
 		if (!field) return
 		update(entry.id, { [field]: target.value })
-	})
+	}
+
+	wrapper.addEventListener('input', handleFieldChange)
+	wrapper.addEventListener('change', handleFieldChange)
 
 	wrapper.querySelector('[data-action="remove"]').addEventListener('click', () => {
 		update(entry.id, null)
@@ -222,38 +491,62 @@ function buildInputEntry(entry, update) {
 	return wrapper
 }
 
-function buildOutputEntry(entry, update) {
+function buildOutputEntry(entry, update, typeInfo = null, formats = null) {
 	const wrapper = document.createElement('div')
 	wrapper.className = 'spec-entry'
 	wrapper.dataset.entryId = entry.id
+
+	const commonTypes = typeInfo?.common_types || []
+	const formatOptions = formats
+		? formats.map((f) => `<option value="${f}">${f}</option>`).join('')
+		: ''
+
 	wrapper.innerHTML = `
 		<div class="spec-entry-header">
 			<strong>Output</strong>
+			<span class="entry-hint">File or directory this project creates</span>
 			<div class="spec-entry-actions">
 				<button type="button" class="link-button" data-action="duplicate">Duplicate</button>
 				<button type="button" class="link-button danger" data-action="remove">Remove</button>
 			</div>
 		</div>
 		<div class="spec-entry-grid">
-			<label>
+			<label class="card-span2">
 				<span>Name</span>
-				<input type="text" data-field="name" spellcheck="false" />
+				<input type="text" data-field="name" placeholder="results" spellcheck="false" />
 			</label>
-			<label>
+			<label class="card-span2">
 				<span>Type</span>
-				<input type="text" list="spec-type-suggestions" data-field="raw_type" spellcheck="false" />
+				<div class="type-quick-select">
+					${commonTypes
+						.map(
+							(t) =>
+								`<button type="button" class="type-quick-btn" data-type="${t}">${getTypeIcon(
+									t,
+								)} ${t}</button>`,
+						)
+						.join('')}
+				</div>
+				<input type="hidden" data-field="raw_type" value="${entry.raw_type || ''}" />
+				<details class="type-advanced">
+					<summary>Build Custom Type</summary>
+					<div class="type-field-wrapper"></div>
+				</details>
 			</label>
 			<label>
-				<span>Format</span>
-				<input type="text" data-field="format" spellcheck="false" />
+				<span>Format (optional)</span>
+				<select data-field="format">
+					<option value="">Auto-detect</option>
+					${formatOptions}
+				</select>
 			</label>
 			<label>
 				<span>Path</span>
-				<input type="text" data-field="path" spellcheck="false" />
+				<input type="text" data-field="path" placeholder="results.csv" spellcheck="false" />
 			</label>
 			<label class="card-span2">
-				<span>Description</span>
-				<textarea data-field="description" rows="2"></textarea>
+				<span>Description (optional)</span>
+				<textarea data-field="description" rows="2" placeholder="Analysis results with quality metrics"></textarea>
 			</label>
 		</div>
 	`
@@ -265,17 +558,54 @@ function buildOutputEntry(entry, update) {
 	}
 
 	setField('input[data-field="name"]', entry.name)
-	setField('input[data-field="raw_type"]', entry.raw_type)
-	setField('input[data-field="format"]', entry.format)
+	setField('select[data-field="format"]', entry.format)
 	setField('input[data-field="path"]', entry.path)
 	setField('textarea[data-field="description"]', entry.description)
+	setField('input[data-field="raw_type"]', entry.raw_type)
 
-	wrapper.addEventListener('input', (event) => {
+	// Quick-pick buttons
+	const quickBtns = wrapper.querySelectorAll('.type-quick-btn')
+	const typeHiddenInput = wrapper.querySelector('input[data-field="raw_type"]')
+	const updateQuickBtnStates = () => {
+		quickBtns.forEach((btn) => {
+			if (btn.dataset.type === typeHiddenInput.value) {
+				btn.classList.add('active')
+			} else {
+				btn.classList.remove('active')
+			}
+		})
+	}
+
+	quickBtns.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			const selectedType = btn.dataset.type
+			typeHiddenInput.value = selectedType
+			update(entry.id, { raw_type: selectedType })
+			updateQuickBtnStates()
+		})
+	})
+	updateQuickBtnStates()
+
+	// Advanced type builder
+	const typeFieldWrapper = wrapper.querySelector('.type-field-wrapper')
+	if (typeFieldWrapper && typeInfo) {
+		const builder = createTypeBuilder(typeInfo.base_types, entry.raw_type, (value) => {
+			typeHiddenInput.value = value
+			update(entry.id, { raw_type: value })
+			updateQuickBtnStates()
+		})
+		typeFieldWrapper.appendChild(builder.wrapper)
+	}
+
+	const handleFieldChange = (event) => {
 		const target = event.target
 		const field = target.dataset.field
 		if (!field) return
 		update(entry.id, { [field]: target.value })
-	})
+	}
+
+	wrapper.addEventListener('input', handleFieldChange)
+	wrapper.addEventListener('change', handleFieldChange)
 
 	wrapper.querySelector('[data-action="remove"]').addEventListener('click', () => {
 		update(entry.id, null)
@@ -309,7 +639,6 @@ function serialiseInputs(entries) {
 			description: entry.description?.trim() || null,
 			format: entry.format?.trim() || null,
 			path: entry.path?.trim() || null,
-			mapping: normaliseMapping(entry.mappingText),
 		}))
 		.filter((entry) => entry.name.length)
 }
@@ -331,7 +660,6 @@ function duplicateEntry(entry) {
 		...entry,
 		id: createId('entry'),
 		choices: Array.isArray(entry.choices) ? [...entry.choices] : entry.choices,
-		mappingText: typeof entry.mappingText === 'string' ? `${entry.mappingText}` : entry.mappingText,
 	}
 }
 
@@ -355,7 +683,6 @@ function createEmptyEntry(kind) {
 				description: '',
 				format: '',
 				path: '',
-				mappingText: '',
 			}
 		case 'outputs':
 			return {
@@ -371,7 +698,7 @@ function createEmptyEntry(kind) {
 	}
 }
 
-export function createProjectSpecForm({ container, onChange }) {
+export function createProjectSpecForm({ container, onChange, invoke }) {
 	if (!container) {
 		throw new Error('Missing container for project spec form')
 	}
@@ -382,11 +709,37 @@ export function createProjectSpecForm({ container, onChange }) {
 		outputs: [],
 		activeTab: 'parameters',
 		visibleSections: ['parameters', 'inputs', 'outputs'],
+		inputTypeInfo: null,
+		outputTypeInfo: null,
+		parameterTypes: null,
+		formats: null,
+		typesLoaded: false,
 	}
 
-	if (!document.getElementById('spec-type-suggestions')) {
-		document.body.appendChild(renderTypeDatalist())
+	// Load types and formats from CLI on initialization
+	if (invoke) {
+		Promise.all([
+			getInputTypeInfo(invoke),
+			getOutputTypeInfo(invoke),
+			getParameterTypes(invoke),
+			getCommonFormats(invoke),
+		])
+			.then(([inputTypeInfo, outputTypeInfo, parameterTypes, formats]) => {
+				state.inputTypeInfo = inputTypeInfo
+				state.outputTypeInfo = outputTypeInfo
+				state.parameterTypes = parameterTypes
+				state.formats = formats
+				state.typesLoaded = true
+				// Re-render to update UI with actual types
+				render()
+			})
+			.catch((error) => {
+				console.error('Failed to load types from CLI:', error)
+				state.typesLoaded = true
+			})
 	}
+
+	// No longer need datalist since we're using dropdowns
 
 	container.innerHTML = ''
 	const layout = document.createElement('div')
@@ -432,7 +785,9 @@ export function createProjectSpecForm({ container, onChange }) {
 		addBtn.dataset.action = action
 		addBtn.dataset.tab = key
 		addBtn.className = 'secondary-btn spec-add-btn'
-		addBtn.textContent = `Add ${key === 'inputs' ? 'Input' : key === 'outputs' ? 'Output' : 'Parameter'}`
+		addBtn.textContent = `Add ${
+			key === 'inputs' ? 'Input' : key === 'outputs' ? 'Output' : 'Parameter'
+		}`
 		navActions.appendChild(addBtn)
 		addButtons.set(key, addBtn)
 	})
@@ -453,12 +808,19 @@ export function createProjectSpecForm({ container, onChange }) {
 		outputs: document.createElement('section'),
 	}
 
+	const sectionDescriptions = {
+		parameters: 'Configuration settings like thresholds, toggles, and options',
+		inputs: 'Data files and directories to analyze',
+		outputs: 'Files and directories this project creates',
+	}
+
 	Object.entries(sectionElements).forEach(([key, section]) => {
 		section.className = 'spec-section'
 		section.dataset.section = key
 		section.innerHTML = `
 			<div class="spec-section-header">
 				<h4>${key.charAt(0).toUpperCase() + key.slice(1)}</h4>
+				<p class="section-description">${sectionDescriptions[key]}</p>
 			</div>
 			<div class="spec-section-body" data-target="${key}"></div>
 		`
@@ -568,17 +930,33 @@ export function createProjectSpecForm({ container, onChange }) {
 
 		state.parameters.forEach((entry) => {
 			paramBody.appendChild(
-				buildParameterEntry(entry, (id, changes) => mutate('parameters', id, changes)),
+				buildParameterEntry(
+					entry,
+					(id, changes) => mutate('parameters', id, changes),
+					state.parameterTypes,
+				),
 			)
 		})
 
 		state.inputs.forEach((entry) => {
-			inputBody.appendChild(buildInputEntry(entry, (id, changes) => mutate('inputs', id, changes)))
+			inputBody.appendChild(
+				buildInputEntry(
+					entry,
+					(id, changes) => mutate('inputs', id, changes),
+					state.inputTypeInfo,
+					state.formats,
+				),
+			)
 		})
 
 		state.outputs.forEach((entry) => {
 			outputBody.appendChild(
-				buildOutputEntry(entry, (id, changes) => mutate('outputs', id, changes)),
+				buildOutputEntry(
+					entry,
+					(id, changes) => mutate('outputs', id, changes),
+					state.outputTypeInfo,
+					state.formats,
+				),
 			)
 		})
 
