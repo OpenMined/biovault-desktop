@@ -13,6 +13,7 @@ import { createHomebrewInstaller } from './homebrew-installer.js'
 import { createDependenciesModule } from './dependencies.js'
 import { createSettingsModule } from './settings.js'
 import { createSqlModule } from './sql.js'
+import { createUpdaterModule } from './updater.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
@@ -44,6 +45,8 @@ const { loadSavedDependencies, checkDependenciesForPanel, getDependencyResults }
 	createDependenciesModule({ invoke })
 
 const { initializeSqlTab, activateSqlTab, invalidateAiConfig } = createSqlModule({ invoke, dialog })
+
+const { checkUpdates, checkUpdatesOnStartup } = createUpdaterModule()
 
 const {
 	loadSettings,
@@ -323,6 +326,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		saveSettings,
 		checkDependenciesForPanel,
 		getDependencyResults,
+		checkUpdates,
 		invoke,
 		dialog,
 		getSelectedParticipants,
@@ -333,4 +337,11 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 	// Show onboarding view if user is not onboarded
 	await onboarding.checkOnboarding()
+
+	// Check for updates after app initialization (silent check)
+	setTimeout(() => {
+		checkUpdatesOnStartup().catch((err) => {
+			console.warn('Update check failed:', err)
+		})
+	}, 3000) // Delay 3s to avoid blocking startup
 })

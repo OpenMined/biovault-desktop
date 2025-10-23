@@ -57,6 +57,7 @@ export function setupEventHandlers({
 	saveSettings,
 	checkDependenciesForPanel,
 	getDependencyResults,
+	checkUpdates,
 	invoke,
 	dialog,
 	// Data (unified participants + files)
@@ -275,6 +276,34 @@ export function setupEventHandlers({
 				await checkDependenciesForPanel('settings-deps-list', 'settings-dep-details-panel', true)
 			} finally {
 				closeBtn.disabled = false
+			}
+		})
+	}
+
+	// Settings - Display app version
+	const appVersionEl = document.getElementById('app-version')
+	if (appVersionEl) {
+		invoke('get_app_version')
+			.then((version) => {
+				appVersionEl.textContent = `v${version}`
+			})
+			.catch((err) => {
+				console.error('Failed to get app version:', err)
+				appVersionEl.textContent = 'Unknown'
+			})
+	}
+
+	// Settings - Check for updates
+	const checkUpdatesBtn = document.getElementById('check-updates-btn')
+	if (checkUpdatesBtn) {
+		checkUpdatesBtn.addEventListener('click', async () => {
+			checkUpdatesBtn.disabled = true
+			checkUpdatesBtn.textContent = 'Checking...'
+			try {
+				await checkUpdates(false) // Not silent - show dialog
+			} finally {
+				checkUpdatesBtn.disabled = false
+				checkUpdatesBtn.textContent = 'Check for Updates'
 			}
 		})
 	}
