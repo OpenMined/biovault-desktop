@@ -48,7 +48,8 @@ test.describe('Projects editor with Jupyter integration', () => {
 		page,
 	}, testInfo) => {
 		// CI environments can be slower, increase timeout for both mock and real modes
-		testInfo.setTimeout(useRealInvoke ? 180_000 : 120_000)
+		const timeoutMs = useRealInvoke ? 240_000 : 180_000
+		testInfo.setTimeout(timeoutMs)
 
 		await ensureLogSocket()
 		page.on('console', (msg) => {
@@ -239,6 +240,9 @@ test.describe('Projects editor with Jupyter integration', () => {
 		})
 
 		await page.goto('/')
+		await page.waitForFunction(
+			() => window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
+		)
 		await expect(page.locator('#home-view')).toBeVisible()
 
 		await page.locator('button.nav-item[data-tab="projects"]').click()

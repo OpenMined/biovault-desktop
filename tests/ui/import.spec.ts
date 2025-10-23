@@ -287,6 +287,10 @@ test.describe('Import Data workflow', () => {
 			w.__RESET_TEST_STATE__?.()
 		})
 
+		await page.waitForFunction(
+			() => window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
+		)
+
 		// Navigate to data view first
 		await page.locator('button.nav-item[data-tab="data"]').click()
 
