@@ -3,6 +3,7 @@
 		"@tauri-apps/api",
 		"@tauri-apps/plugin-dialog",
 		"@tauri-apps/plugin-updater",
+		"@tauri-apps/plugin-process",
 		"@tauri-apps/cli",
 		"dotenv-cli"
 	]

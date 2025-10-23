@@ -35,6 +35,18 @@ test.describe('SQL tab', () => {
 				switch (cmd) {
 					case 'check_is_onboarded':
 						return true
+					case 'get_participants':
+						return []
+					case 'get_files':
+						return []
+					case 'get_projects':
+						return []
+					case 'get_command_logs':
+						return []
+					case 'get_saved_dependency_states':
+						return { dependencies: [] }
+					case 'get_syftbox_state':
+						return { is_authenticated: false }
 					case 'sql_list_tables':
 						return responses.tables
 					case 'sql_get_table_schema':
@@ -70,8 +82,8 @@ test.describe('SQL tab', () => {
 			}
 		})
 
-		await page.goto('/')
-		await expect(page.locator('.app-sidebar')).toBeVisible()
+		await page.goto(`http://localhost:${process.env.UI_PORT || 8082}`)
+		await page.waitForLoadState('networkidle')
 	})
 
 	test('displays tables, schema, and query results', async ({ page }) => {

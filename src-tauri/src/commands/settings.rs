@@ -33,6 +33,11 @@ pub fn get_config_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
 pub fn check_is_onboarded() -> Result<bool, String> {
     let biovault_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;

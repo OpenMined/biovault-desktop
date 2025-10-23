@@ -3,5 +3,14 @@
 	"identifier": "default",
 	"description": "Capability for the main window",
 	"windows": ["main"],
-	"permissions": ["core:default", "opener:default"]
+	"permissions": [
+		"core:default",
+		"opener:default",
+		"opener:allow-open-url",
+		"updater:default",
+		"updater:allow-check",
+		"dialog:default",
+		"process:default",
+		"process:allow-restart"
+	]
 }
