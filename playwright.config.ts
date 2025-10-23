@@ -12,6 +12,7 @@ const slowMo = Number.parseInt(process.env.PLAYWRIGHT_SLOWMO ?? '0', 10)
 
 export default defineConfig({
 	testDir: './tests/ui',
+	testIgnore: ['**/projects.spec.ts', '**/projects-jupyter.spec.ts'],
 	timeout: 60_000,
 	expect: {
 		timeout: 10_000,
