@@ -6,7 +6,12 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{
+    image::Image,
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
+    tray::TrayIconBuilder,
+    Emitter, Manager,
+};
 
 // WebSocket bridge for browser development
 mod ws_bridge;
@@ -304,6 +309,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .manage(app_state)
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -315,7 +325,86 @@ pub fn run() {
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&window_title);
+
+                // Handle window close event - minimize to tray instead of quitting
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                    }
+                });
             }
+
+            // Create system tray menu
+            let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+
+            // Check current autostart status
+            use tauri_plugin_autostart::ManagerExt;
+            let autolaunch = app.autolaunch();
+            let is_enabled = autolaunch.is_enabled().unwrap_or(false);
+
+            let autostart_item = CheckMenuItemBuilder::with_id("autostart", "Start on Startup")
+                .checked(is_enabled)
+                .build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+            let menu = MenuBuilder::new(app)
+                .items(&[&show, &autostart_item, &quit])
+                .build()?;
+
+            // Clone the autostart item for use in the event handler
+            let autostart_item_clone = autostart_item.clone();
+
+            // Load tray icon from embedded PNG
+            let icon_bytes = include_bytes!("../icons/icon.png");
+            let img = image::load_from_memory(icon_bytes)
+                .map_err(|e| format!("Failed to decode tray icon: {}", e))?;
+            let rgba = img.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            let icon = Image::new_owned(rgba.into_raw(), width, height);
+
+            // Create tray icon
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(icon)
+                .menu(&menu)
+                .on_menu_event(move |app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "autostart" => {
+                            use tauri_plugin_autostart::ManagerExt;
+                            let autolaunch = app.autolaunch();
+                            match autolaunch.is_enabled() {
+                                Ok(enabled) => {
+                                    let result = if enabled {
+                                        autolaunch.disable()
+                                    } else {
+                                        autolaunch.enable()
+                                    };
+                                    if let Err(e) = result {
+                                        eprintln!("Failed to toggle autostart: {}", e);
+                                    } else {
+                                        // Update the menu item checkbox
+                                        let _ = autostart_item_clone.set_checked(!enabled);
+                                    }
+                                    // Emit event to update UI
+                                    let _ = app.emit("autostart-changed", ());
+                                }
+                                Err(e) => eprintln!("Failed to check autostart status: {}", e),
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
 
             // Start WebSocket bridge for browser development if enabled
             if std::env::var("DEV_WS_BRIDGE").is_ok() {
@@ -393,12 +482,15 @@ pub fn run() {
             // Settings commands
             get_settings,
             save_settings,
+            get_app_version,
             open_folder,
             show_in_folder,
             get_config_path,
             check_is_onboarded,
             complete_onboarding,
             reset_all_data,
+            get_autostart_enabled,
+            set_autostart_enabled,
             // Logs commands
             get_command_logs,
             clear_command_logs,

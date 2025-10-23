@@ -1,7 +1,7 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
 	"productName": "BioVault",
-	"version": "0.1.0",
+	"version": "0.1.5",
 	"identifier": "org.openmined.biovault-desktop",
 	"build": {
 		"frontendDist": "../src"
@@ -28,7 +28,13 @@
 						"dialog:allow-ask",
 						"dialog:allow-message",
 						"dialog:allow-save",
-						"dialog:default"
+						"dialog:default",
+						"opener:default",
+						"opener:allow-open-url",
+						"updater:default",
+						"updater:allow-check",
+						"process:default",
+						"process:allow-restart"
 					]
 				}
 			]
@@ -48,7 +54,7 @@
 			"entitlements": "./Entitlements.plist",
 			"minimumSystemVersion": "10.13"
 		},
-		"targets": ["app", "appimage", "deb", "dmg", "nsis", "rpm"]
+		"targets": ["app", "appimage", "dmg", "nsis"]
 	},
 	"plugins": {
 		"updater": {

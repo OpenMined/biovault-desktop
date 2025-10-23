@@ -45,11 +45,15 @@ class WsBridge {
 					}
 				}
 
-				this.ws.onerror = (error) => {
-					console.error('❌ WebSocket error:', error)
+				this.ws.onerror = (_error) => {
+					console.log('🔌 WebSocket connection failed (no backend available)')
 					this.connecting = false
 					this.connectPromise = null
-					reject(error)
+					if (this.ws) {
+						this.ws.close()
+						this.ws = null
+					}
+					reject(new Error('WebSocket not available'))
 				}
 
 				this.ws.onclose = () => {
@@ -64,14 +68,14 @@ class WsBridge {
 					this.pendingRequests.clear()
 				}
 
-				// Timeout after 2 seconds
+				// Timeout after 500ms for faster test feedback
 				setTimeout(() => {
 					if (!this.connected) {
 						this.connecting = false
 						this.connectPromise = null
 						reject(new Error('WebSocket connection timeout'))
 					}
-				}, 2000)
+				}, 500)
 			} catch (error) {
 				this.connecting = false
 				this.connectPromise = null
@@ -114,13 +118,29 @@ const wsBridge = new WsBridge()
 
 // WebSocket invoke function
 async function wsInvoke(cmd, args = {}) {
-	try {
-		return await wsBridge.invoke(cmd, args)
-	} catch (error) {
-		console.error(`[WS] Failed to invoke ${cmd}:`, error)
-		// Fall back to mock on error
+	// If test override is present, skip WebSocket entirely and go straight to mock
+	if (typeof window !== 'undefined' && window.__TEST_INVOKE_OVERRIDE__) {
 		return mockInvoke(cmd, args)
 	}
+
+	const preferReal = typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true'
+	if (preferReal) {
+		console.log('[WS] Using real backend mode - will throw on WebSocket failure')
+	}
+	try {
+		const result = await wsBridge.invoke(cmd, args)
+		console.log(`[WS] Successfully invoked ${cmd}`)
+		return result
+	} catch (error) {
+		console.error(`[WS] Failed to invoke ${cmd}:`, error)
+		if (preferReal) {
+			throw error
+		}
+	}
+
+	// Fall back to mock when backend is unavailable
+	console.log(`[WS] Falling back to mock for ${cmd}`)
+	return mockInvoke(cmd, args)
 }
 
 // Mock invoke function for browser (fallback)
@@ -128,13 +148,9 @@ async function mockInvoke(cmd, args = {}) {
 	console.log(`[Mock] invoke: ${cmd}`, args)
 
 	if (typeof window !== 'undefined' && window.__TEST_INVOKE_OVERRIDE__) {
-		try {
-			const overrideResult = await window.__TEST_INVOKE_OVERRIDE__(cmd, args)
-			if (overrideResult !== undefined) {
-				return overrideResult
-			}
-		} catch (error) {
-			console.error('[Mock] invoke override failed:', error)
+		const overrideResult = await window.__TEST_INVOKE_OVERRIDE__(cmd, args)
+		if (overrideResult !== undefined) {
+			return overrideResult
 		}
 	}
 
@@ -164,7 +180,9 @@ async function mockInvoke(cmd, args = {}) {
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':
-			return false
+			// Default to true so main app loads
+			// Onboarding tests override this via __TEST_INVOKE_OVERRIDE__
+			return true
 		case 'sql_list_tables':
 			return [{ name: 'participants' }, { name: 'measurements' }]
 		case 'sql_get_table_schema':
@@ -212,12 +230,33 @@ const mockDialog = {
 		return options?.defaultPath || 'mock-query-results.csv'
 	},
 	message: async (message, options) => {
-		console.log('[Mock] dialog.message:', message, options)
-		alert(message)
+		console.log('[Mock] dialog.message called:', message, options)
+		try {
+			// Use setTimeout to ensure alert() is called asynchronously
+			// This prevents blocking the event loop and allows Playwright to intercept
+			await new Promise((resolve) => {
+				setTimeout(() => {
+					console.log('[Mock] Calling alert now')
+					alert(message)
+					console.log('[Mock] Alert completed')
+					resolve()
+				}, 0)
+			})
+		} catch (error) {
+			console.error('[Mock] dialog.message error:', error)
+			throw error
+		}
 	},
 	confirm: async (message, options) => {
 		console.log('[Mock] dialog.confirm:', message, options)
-		return window.confirm(message)
+		// Use setTimeout to ensure confirm() is called asynchronously
+		// This prevents blocking the event loop and allows Playwright to intercept
+		return new Promise((resolve) => {
+			setTimeout(() => {
+				const result = window.confirm(message)
+				resolve(result)
+			}, 0)
+		})
 	},
 }
 

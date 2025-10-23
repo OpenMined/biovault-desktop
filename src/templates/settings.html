@@ -194,6 +194,93 @@
 			</div>
 		</div>
 
+		<div class="setting-item">
+			<label style="display: block; font-weight: 600; margin-bottom: 15px">Updates</label>
+			<div
+				style="
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					padding: 15px;
+					background: #f8f9fa;
+					border-radius: 4px;
+					border: 1px solid #ddd;
+				"
+			>
+				<div>
+					<div style="margin-bottom: 5px">
+						<span style="font-weight: 500; font-size: 14px">Version:</span>
+						<span id="app-version" style="font-family: monospace; margin-left: 8px"
+							>Loading...</span
+						>
+					</div>
+					<p style="color: #666; font-size: 12px; margin: 0 0 8px 0">
+						Check for new updates to get the latest features and fixes
+					</p>
+					<a
+						href="https://github.com/OpenMined/biovault-desktop/releases"
+						target="_blank"
+						style="
+							color: #6366f1;
+							text-decoration: none;
+							font-size: 12px;
+							display: inline-flex;
+							align-items: center;
+							gap: 4px;
+						"
+					>
+						<span>🔗</span>
+						<span>View all releases</span>
+					</a>
+				</div>
+				<button
+					id="check-updates-btn"
+					style="
+						padding: 10px 20px;
+						background: #6366f1;
+						color: white;
+						border: none;
+						border-radius: 4px;
+						cursor: pointer;
+						font-size: 14px;
+						font-weight: 500;
+					"
+				>
+					Check for Updates
+				</button>
+			</div>
+		</div>
+
+		<div class="setting-item">
+			<label style="display: block; font-weight: 600; margin-bottom: 15px"
+				>Application Settings</label
+			>
+			<div
+				style="
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					padding: 15px;
+					background: #f8f9fa;
+					border-radius: 4px;
+					border: 1px solid #ddd;
+				"
+			>
+				<div>
+					<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px">
+						<span style="font-weight: 500; font-size: 14px">Start on Startup</span>
+					</div>
+					<p style="color: #666; font-size: 12px; margin: 0">
+						Automatically launch BioVault when you log in
+					</p>
+				</div>
+				<label class="toggle-switch">
+					<input type="checkbox" id="autostart-toggle" />
+					<span class="toggle-slider"></span>
+				</label>
+			</div>
+		</div>
+
 		<div class="danger-zone">
 			<h3>⚠️ Danger Zone</h3>
 			<p>

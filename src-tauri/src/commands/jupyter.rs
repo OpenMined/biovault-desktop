@@ -22,37 +22,65 @@ fn load_jupyter_status(project_path: &str) -> Result<JupyterStatus, String> {
         JupyterStatus {
             running: false,
             port: None,
+            url: None,
+            token: None,
         },
         |env| JupyterStatus {
             running: env.jupyter_pid.is_some() && env.jupyter_port.is_some(),
             port: env.jupyter_port,
+            url: env.jupyter_url.clone(),
+            token: env.jupyter_token.clone(),
         },
     ))
 }
 
 #[tauri::command]
-pub fn launch_jupyter(
+pub async fn launch_jupyter(
     project_path: String,
     python_version: Option<String>,
 ) -> Result<JupyterStatus, String> {
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    tauri::async_runtime::block_on(jupyter::start(&project_path, &version))
-        .map_err(|e| format!("Failed to launch Jupyter: {}", e))?;
+    let project_path_clone = project_path.clone();
+    let version_clone = version.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(jupyter::start(&project_path_clone, &version_clone))
+    })
+    .await
+    .map_err(|e| format!("Failed to launch Jupyter (task join): {}", e))?
+    .map_err(|e| format!("Failed to launch Jupyter: {}", e))?;
 
     load_jupyter_status(&project_path)
 }
 
 #[tauri::command]
-pub fn reset_jupyter(
+pub async fn reset_jupyter(
     project_path: String,
     python_version: Option<String>,
 ) -> Result<JupyterResetResult, String> {
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    tauri::async_runtime::block_on(jupyter::reset(&project_path, &version))
-        .map_err(|e| format!("Failed to reset Jupyter: {}", e))?;
+    let project_path_clone = project_path.clone();
+    let version_clone = version.clone();
 
-    if let Err(err) = tauri::async_runtime::block_on(jupyter::stop(&project_path)) {
-        eprintln!("Warning: Failed to stop Jupyter after reset: {}", err);
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(jupyter::reset(&project_path_clone, &version_clone))
+    })
+    .await
+    .map_err(|e| format!("Failed to reset Jupyter (task join): {}", e))?
+    .map_err(|e| format!("Failed to reset Jupyter: {}", e))?;
+
+    let stop_path = project_path.clone();
+    match tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(jupyter::stop(&stop_path))
+    })
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => eprintln!("Warning: Failed to stop Jupyter after reset: {}", err),
+        Err(join_err) => eprintln!(
+            "Warning: Failed to stop Jupyter after reset (task join): {}",
+            join_err
+        ),
     }
 
     let status = load_jupyter_status(&project_path)?;
@@ -64,9 +92,14 @@ pub fn reset_jupyter(
 }
 
 #[tauri::command]
-pub fn stop_jupyter(project_path: String) -> Result<JupyterStatus, String> {
-    tauri::async_runtime::block_on(jupyter::stop(&project_path))
-        .map_err(|e| format!("Failed to stop Jupyter: {}", e))?;
+pub async fn stop_jupyter(project_path: String) -> Result<JupyterStatus, String> {
+    let project_path_clone = project_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(jupyter::stop(&project_path_clone))
+    })
+    .await
+    .map_err(|e| format!("Failed to stop Jupyter (task join): {}", e))?
+    .map_err(|e| format!("Failed to stop Jupyter: {}", e))?;
 
     load_jupyter_status(&project_path)
 }
