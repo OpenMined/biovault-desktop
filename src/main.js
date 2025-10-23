@@ -206,6 +206,9 @@ setRunNavigateTo(navigateTo)
 // Make navigateTo available globally for data module
 window.navigateTo = navigateTo
 
+// Expose navigation readiness for automated tests
+window.__NAV_HANDLERS_READY__ = false
+
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
 messagesGetActiveView = getActiveView
@@ -289,6 +292,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	// Initialize UI features
 	initColumnResizers()
 	registerNavigationHandlers()
+	window.__NAV_HANDLERS_READY__ = true
 	initializeDataTab()
 
 	// Setup all event handlers
