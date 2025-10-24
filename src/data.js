@@ -429,7 +429,7 @@ export function createDataModule({ invoke, dialog }) {
 				document.getElementById('empty-state-title').textContent = 'No participants selected'
 				document.getElementById('empty-state-message').textContent =
 					'Select participants from the sidebar to view their files, or click "Show All Files"'
-				document.getElementById('file-count').textContent = '0'
+				// Don't reset file-count here - header should always show total files
 				return
 			}
 
@@ -613,8 +613,17 @@ export function createDataModule({ invoke, dialog }) {
 			existingFilePaths = new Set(files.map((f) => f.file_path))
 
 			// Update header counts - these should always show totals
-			document.getElementById('participant-count').textContent = participants.length
-			document.getElementById('file-count').textContent = files.length
+			const participantCountEl = document.getElementById('participant-count')
+			const fileCountEl = document.getElementById('file-count')
+
+			if (participantCountEl) {
+				participantCountEl.textContent = participants.length
+			}
+			if (fileCountEl) {
+				fileCountEl.textContent = files.length
+			}
+
+			console.log('📊 Data loaded:', { participants: participants.length, files: files.length })
 
 			const pendingCount = files.filter((f) => f.status === 'pending').length
 			document.getElementById('pending-count').textContent = pendingCount

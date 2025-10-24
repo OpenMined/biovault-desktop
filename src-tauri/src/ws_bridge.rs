@@ -179,6 +179,128 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_syftbox_config_info().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_available_project_examples" => {
+            let result = crate::get_available_project_examples().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_default_project_path" => {
+            let name: Option<String> = args
+                .get("name")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::get_default_project_path(name).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "create_project" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let example: Option<String> = args
+                .get("example")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let directory: Option<String> = args
+                .get("directory")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let create_python_script: Option<bool> = args
+                .get("createPythonScript")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let script_name: Option<String> = args
+                .get("scriptName")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::create_project(
+                state,
+                name,
+                example,
+                directory,
+                create_python_script,
+                script_name,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "load_project_editor" => {
+            let project_id: Option<i64> = args
+                .get("projectId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let project_path: Option<String> = args
+                .get("projectPath")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::load_project_editor(state, project_id, project_path)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_project_editor" => {
+            let project_id: Option<i64> = args
+                .get("projectId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let payload: serde_json::Value = args
+                .get("payload")
+                .cloned()
+                .ok_or_else(|| "Missing payload".to_string())?;
+            let result = crate::save_project_editor(state, project_id, project_path, payload)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_jupyter_status" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let result = crate::get_jupyter_status(project_path).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "launch_jupyter" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let python_version: Option<String> = args
+                .get("pythonVersion")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::launch_jupyter(project_path, python_version)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "stop_jupyter" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let result = crate::stop_jupyter(project_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "reset_jupyter" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let python_version: Option<String> = args
+                .get("pythonVersion")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::reset_jupyter(project_path, python_version)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             eprintln!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))

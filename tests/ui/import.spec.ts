@@ -287,8 +287,15 @@ test.describe('Import Data workflow', () => {
 			w.__RESET_TEST_STATE__?.()
 		})
 
+		await page.waitForFunction(
+			() => window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
+		)
+
 		// Navigate to data view first
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
+
+		// Wait for data view to be fully loaded
+		await expect(page.locator('#data-view.tab-content.active')).toBeVisible()
 
 		// Click the import button to open modal
 		const openImportBtn = page.locator('#open-import-modal-btn')
@@ -429,6 +436,12 @@ test.describe('Import Data workflow', () => {
 		const reviewRows = page.locator('#review-files-table tr')
 		await expect(reviewRows).toHaveCount(preparedFiles.length)
 
+		// Wait for automatic file type detection to complete
+		// (triggered by showReviewViewInModal after 100ms)
+		await expect(page.locator('#detection-progress')).toBeVisible({ timeout: 5000 })
+		await expect(page.locator('#detection-progress')).toBeHidden({ timeout: 10_000 })
+		sendUnifiedLog({ event: 'auto-detection-complete' })
+
 		const reviewSelectAll = page.locator('#select-all-review')
 		await reviewSelectAll.check()
 		sendUnifiedLog({ event: 'review-select-all', state: 'checked' })
@@ -441,6 +454,8 @@ test.describe('Import Data workflow', () => {
 		await page.locator('#set-all-source').selectOption('Unknown')
 		await page.locator('#set-all-grch-version').selectOption('Unknown')
 		sendUnifiedLog({ event: 'bulk-set', data_type: 'Unknown', source: 'Unknown', grch: 'Unknown' })
+		// Wait for bulk update to propagate and re-render to complete
+		await page.waitForTimeout(500)
 		await expectReviewSelectValues(2, 'Unknown')
 		await expectReviewSelectValues(3, 'Unknown')
 		await expectReviewSelectValues(4, 'Unknown')
@@ -449,6 +464,8 @@ test.describe('Import Data workflow', () => {
 		await page.locator('#set-all-source').selectOption('23andMe')
 		await page.locator('#set-all-grch-version').selectOption('GRCh38')
 		sendUnifiedLog({ event: 'bulk-set', data_type: 'Genotype', source: '23andMe', grch: 'GRCh38' })
+		// Wait for bulk update to propagate and re-render to complete
+		await page.waitForTimeout(500)
 		await expectReviewSelectValues(2, 'Genotype')
 		await expectReviewSelectValues(3, '23andMe')
 		await expectReviewSelectValues(4, 'GRCh38')
@@ -493,7 +510,7 @@ test.describe('Import Data workflow', () => {
 		)
 
 		// Navigate to Data view and re-open import modal
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
 		await openImportBtn.click()
 		await expect(importModal).not.toHaveAttribute('hidden')
 
@@ -516,7 +533,7 @@ test.describe('Import Data workflow', () => {
 		await expect(importModal).toHaveAttribute('hidden', '')
 
 		// Delete all data (select all files and delete)
-		await page.locator('button.tab[data-tab="data"]').click()
+		await page.locator('button.nav-item[data-tab="data"]').click()
 		// Make sure we're showing all files by clicking the "All Files" view button
 		const viewAllBtn = page.locator('#view-all-btn')
 		if (!(await viewAllBtn.getAttribute('class'))?.includes('active')) {

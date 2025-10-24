@@ -218,7 +218,7 @@ select {
 
 .settings-ai-field input:focus {
 	outline: none;
-	border-color: #6366f1;
+	border-color: #10b981;
 	box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 
@@ -241,4 +241,54 @@ select {
 
 .settings-save-status[data-tone='error'] {
 	color: #b91c1c;
+}
+
+.toggle-switch {
+	position: relative;
+	display: inline-block;
+	width: 50px;
+	height: 26px;
+}
+
+.toggle-switch input {
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+
+.toggle-slider {
+	position: absolute;
+	cursor: pointer;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: #ccc;
+	transition: 0.3s;
+	border-radius: 26px;
+}
+
+.toggle-slider:before {
+	position: absolute;
+	content: '';
+	height: 20px;
+	width: 20px;
+	left: 3px;
+	bottom: 3px;
+	background-color: white;
+	transition: 0.3s;
+	border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+	background-color: #4f46e5;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+	transform: translateX(24px);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+	opacity: 0.5;
+	cursor: not-allowed;
 }

@@ -14,6 +14,8 @@ import { createHomebrewInstaller } from './homebrew-installer.js'
 import { createDependenciesModule } from './dependencies.js'
 import { createSettingsModule } from './settings.js'
 import { createSqlModule } from './sql.js'
+import { createUpdaterModule } from './updater.js'
+import { createWorkbench } from './workbench.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
@@ -45,6 +47,8 @@ const { loadSavedDependencies, checkDependenciesForPanel, getDependencyResults }
 	createDependenciesModule({ invoke })
 
 const { initializeSqlTab, activateSqlTab, invalidateAiConfig } = createSqlModule({ invoke, dialog })
+
+const { checkUpdates, checkUpdatesOnStartup } = createUpdaterModule()
 
 const {
 	loadSettings,
@@ -87,6 +91,9 @@ const pipelinesModule = createPipelinesModule({
 	open,
 	navigateTo: (...args) => projectsNavigateTo(...args),
 })
+
+// Create workbench (will be initialized after templates load)
+let workbench = null
 
 // Create projects module early with placeholder navigateTo
 let projectsNavigateTo = () => console.warn('navigateTo not yet initialized')
@@ -207,12 +214,17 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		startMessagesAutoRefresh,
 		stopMessagesAutoRefresh,
 		loadSql: activateSqlTab,
+		getWorkbench: () => workbench,
 	})
 
 setRunNavigateTo(navigateTo)
 
 // Make navigateTo available globally for data module
 window.navigateTo = navigateTo
+
+// Expose readiness markers for automated tests
+window.__NAV_HANDLERS_READY__ = false
+window.__EVENT_HANDLERS_READY__ = false
 
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
@@ -234,10 +246,11 @@ window.addEventListener('DOMContentLoaded', async () => {
 			// import-review is now inside the import modal, no longer a separate view
 			templateLoader.loadAndInject('import-results', 'import-results-view'),
 			templateLoader.loadAndInject('data', 'data-view'),
-			templateLoader.loadAndInject('sql', 'sql-view'),
+			// SQL and Logs now load into workbench panels
+			templateLoader.loadAndInject('sql', 'workbench-sql-panel'),
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
-			templateLoader.loadAndInject('logs', 'logs-view'),
+			templateLoader.loadAndInject('logs', 'workbench-logs-panel'),
 			templateLoader.loadAndInject('settings', 'settings-view'),
 		])
 
@@ -249,6 +262,16 @@ window.addEventListener('DOMContentLoaded', async () => {
 		await importModule.initFolderDropzone()
 
 		await initializeSqlTab()
+
+		// Initialize workbench
+		workbench = createWorkbench({
+			loadSql: activateSqlTab,
+			displayLogs: displayLogs,
+		})
+		workbench.init()
+
+		// Make workbench globally accessible
+		window.workbench = workbench
 
 		console.log('✅ All templates loaded')
 	} catch (error) {
@@ -286,6 +309,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	// Initialize UI features
 	initColumnResizers()
 	registerNavigationHandlers()
+	window.__NAV_HANDLERS_READY__ = true
 	initializeDataTab()
 	pipelinesModule.initialize()
 
@@ -347,6 +371,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		saveSettings,
 		checkDependenciesForPanel,
 		getDependencyResults,
+		checkUpdates,
 		invoke,
 		dialog,
 		getSelectedParticipants,
@@ -354,7 +379,15 @@ window.addEventListener('DOMContentLoaded', async () => {
 		initializeMessagesTab,
 		updateComposeVisibilityPublic,
 	})
+	window.__EVENT_HANDLERS_READY__ = true
 
 	// Show onboarding view if user is not onboarded
 	await onboarding.checkOnboarding()
+
+	// Check for updates after app initialization (silent check)
+	setTimeout(() => {
+		checkUpdatesOnStartup().catch((err) => {
+			console.warn('Update check failed:', err)
+		})
+	}, 3000) // Delay 3s to avoid blocking startup
 })

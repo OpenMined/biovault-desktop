@@ -1,22 +1,13 @@
-import { createProjectSpecForm, generateContractAscii } from './project-spec-form.js'
+import { createProjectSpecForm, generateContractAscii } from './project-spec-form-modal.js'
 
-const CREATE_WIZARD_STEP_COUNT = 6
-const CREATE_WIZARD_STEP_LABELS = [
-	'Project Details',
-	'Inputs',
-	'Parameters',
-	'Outputs',
-	'Preview',
-	'Review & Create',
-]
-const CREATE_SPEC_STEP_CONFIG = {
-	1: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
-	2: {
+const CREATE_TAB_CONFIG = {
+	inputs: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
+	parameters: {
 		containerId: 'create-project-parameters',
 		sections: ['parameters'],
 		defaultTab: 'parameters',
 	},
-	3: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
+	outputs: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
 }
 
 let wizardPreviewRequestId = 0
@@ -34,6 +25,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		jupyter: {
 			running: false,
 			port: null,
+			url: null,
+			token: null,
 		},
 		specForm: null,
 		specData: {
@@ -59,7 +52,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			outputs: [],
 		},
 		nameListenerBound: false,
-		currentStep: 0,
+		activeTab: 'details',
 	}
 
 	let operationModalDepth = 0
@@ -104,6 +97,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			if (container) {
 				projectEditorState.specForm = createProjectSpecForm({
 					container,
+					invoke,
 					onChange: (parameters, inputs, outputs) => {
 						projectEditorState.specData = { parameters, inputs, outputs }
 						updateEditorSpecSummary()
@@ -256,18 +250,24 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const versionInput = document.getElementById('new-project-version')
 		const projectName = nameInput ? nameInput.value.trim() : ''
 		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
-		if (!projectName) {
-			wizardPreviewRequestId += 1
-			clearWizardPreview('Enter a project name to generate a preview.')
-			return
-		}
+
+		// Use placeholder name if empty for preview purposes
+		const previewName = projectName || 'my-project'
+
+		// Get scripting language selection for preview
+		const selectedScriptCard = document.querySelector(
+			'#blank-project-options .option-card.active[data-type="script"]',
+		)
+		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
+		const assets = !templateSelect?.value && scriptLang === 'python' ? ['process.py'] : []
+
 		const spec = getCreateSpecPayload()
 		const payload = buildSpecSavePayload({
-			name: projectName,
+			name: previewName,
 			author: '',
 			workflow: 'workflow.nf',
 			template: templateSelect && templateSelect.value ? templateSelect.value : null,
-			assets: [],
+			assets: assets,
 			version: versionValue,
 			spec,
 		})
@@ -322,9 +322,11 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			if (target) {
 				projectCreateState.specForm = createProjectSpecForm({
 					container: target,
+					invoke,
 					onChange: (parameters, inputs, outputs) => {
 						projectCreateState.specData = { parameters, inputs, outputs }
-						renderCreateReview()
+						updateTabCounts()
+						scheduleWizardPreview()
 					},
 				})
 			} else {
@@ -344,14 +346,94 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (!projectCreateState.nameListenerBound) {
 			const nameInput = document.getElementById('new-project-name')
 			if (nameInput) {
-				nameInput.addEventListener('input', () => updateCreateSpecSummary())
+				nameInput.addEventListener('input', () => {
+					updateCreateSpecSummary()
+					scheduleWizardPreview()
+				})
 				projectCreateState.nameListenerBound = true
 			}
 		}
 	}
 
 	function updateCreateSpecSummary() {
-		renderCreateReview()
+		// Update preview when spec data changes
+		scheduleWizardPreview()
+	}
+
+	function updateTabCounts() {
+		const counts = {
+			inputs: projectCreateState.specData.inputs.length,
+			parameters: projectCreateState.specData.parameters.length,
+			outputs: projectCreateState.specData.outputs.length,
+		}
+
+		Object.entries(counts).forEach(([key, value]) => {
+			const countEl = document.querySelector(`[data-count="${key}"]`)
+			if (countEl) {
+				countEl.textContent = value
+				countEl.style.display = value > 0 ? 'inline-flex' : 'none'
+			}
+		})
+	}
+
+	async function loadTemplateIntoWizard(templateData) {
+		// Normalize template data - convert 'type' to 'raw_type' for UI compatibility
+		const normalizeSpec = (spec) => {
+			if (!spec) return spec
+			const normalized = { ...spec }
+			// Convert 'type' field to 'raw_type' for UI
+			if (normalized.type) {
+				normalized.raw_type = normalized.type
+				delete normalized.type
+			}
+			return normalized
+		}
+
+		// Update spec data from template
+		projectCreateState.specData = {
+			parameters: (templateData.parameters || []).map(normalizeSpec),
+			inputs: (templateData.inputs || []).map(normalizeSpec),
+			outputs: (templateData.outputs || []).map(normalizeSpec),
+		}
+
+		console.log('Loaded template data:', projectCreateState.specData)
+
+		// Update form if it exists
+		if (projectCreateState.specForm) {
+			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		}
+
+		// Update tab counts
+		updateTabCounts()
+
+		// Update version if template has one
+		const versionInput = document.getElementById('new-project-version')
+		if (versionInput && templateData.version) {
+			versionInput.value = templateData.version
+		}
+	}
+
+	function resetWizardToBlank() {
+		// Reset spec data
+		projectCreateState.specData = {
+			parameters: [],
+			inputs: [],
+			outputs: [],
+		}
+
+		// Update form if it exists
+		if (projectCreateState.specForm) {
+			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		}
+
+		// Update tab counts
+		updateTabCounts()
+
+		// Reset version
+		const versionInput = document.getElementById('new-project-version')
+		if (versionInput) {
+			versionInput.value = '1.0.0'
+		}
 	}
 
 	function getCreateSpecPayload() {
@@ -425,148 +507,76 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 	}
 
-	function renderCreateReview() {
-		const nameEl = document.getElementById('create-project-review-name')
-		if (!nameEl) return
-		const nameInput = document.getElementById('new-project-name')
-		const versionInput = document.getElementById('new-project-version')
-		const pathInput = document.getElementById('new-project-path')
+	function switchCreateTab(tabName) {
+		projectCreateState.activeTab = tabName
 
-		const nameValue = nameInput ? nameInput.value.trim() : ''
-		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
-		const pathValue = pathInput ? pathInput.value.trim() : ''
-
-		nameEl.textContent = nameValue || '—'
-		const templateLabel = document.querySelector('#new-project-template option:checked')
-		const templateText = templateLabel?.textContent?.trim() || 'Blank project'
-		const templateEl = document.getElementById('create-project-review-template')
-		if (templateEl) {
-			templateEl.textContent = templateText
-		}
-		const versionEl = document.getElementById('create-project-review-version')
-		if (versionEl) {
-			versionEl.textContent = versionValue || '—'
-		}
-		const pathEl = document.getElementById('create-project-review-path')
-		if (pathEl) {
-			pathEl.textContent = pathValue || '—'
-		}
-
-		const spec = getCreateSpecPayload()
-		const ascii = generateContractAscii({
-			name: nameValue || 'New Project',
-			parameters: spec.parameters,
-			inputs: spec.inputs,
-			outputs: spec.outputs,
+		// Update tab buttons
+		document.querySelectorAll('.create-tab').forEach((tab) => {
+			tab.classList.toggle('active', tab.dataset.tab === tabName)
 		})
-		const asciiEl = document.getElementById('create-project-review-ascii')
-		if (asciiEl) {
-			asciiEl.textContent = ascii
+
+		// Update content sections
+		document.querySelectorAll('.create-tab-content').forEach((content) => {
+			content.classList.toggle('active', content.dataset.content === tabName)
+		})
+
+		// Initialize spec form if switching to inputs/parameters/outputs
+		const config = CREATE_TAB_CONFIG[tabName]
+		if (config) {
+			ensureCreateSpecForm(config)
 		}
-		scheduleWizardPreview()
+
+		// Update footer navigation
+		updateCreateFooter()
 	}
 
-	function setCreateWizardStep(step) {
-		projectCreateState.currentStep = step
-		const sections = document.querySelectorAll('.project-wizard-step')
-		sections.forEach((section) => {
-			const idx = Number(section.dataset.step)
-			section.classList.toggle('active', idx === step)
-		})
-		const indicators = document.querySelectorAll('.project-wizard-steps li')
-		indicators.forEach((indicator) => {
-			indicator.classList.toggle('active', Number(indicator.dataset.step) === step)
-		})
-
-		// Auto-collapse preview panels when entering step 4
-		if (step === 4) {
-			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
-			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
-			if (yamlWrapper) yamlWrapper.open = true
-			if (templateWrapper) templateWrapper.open = false
-		}
+	function updateCreateFooter() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
 		const backBtn = document.getElementById('create-project-back')
 		const nextBtn = document.getElementById('create-project-next')
 		const confirmBtn = document.getElementById('create-project-confirm')
-		if (backBtn) backBtn.disabled = step === 0
-		if (nextBtn) {
-			if (step >= CREATE_WIZARD_STEP_COUNT - 1) {
-				nextBtn.style.display = 'none'
-			} else {
-				nextBtn.style.display = 'inline-flex'
-				const nextLabel = CREATE_WIZARD_STEP_LABELS[step + 1] || 'Next'
-				nextBtn.textContent = `Next: ${nextLabel}`
-			}
-		}
-		if (confirmBtn) {
-			confirmBtn.style.display = step === CREATE_WIZARD_STEP_COUNT - 1 ? 'inline-flex' : 'none'
-		}
 
-		const specConfig = CREATE_SPEC_STEP_CONFIG[step]
-		if (specConfig) {
-			ensureCreateSpecForm(specConfig)
-			scheduleWizardPreview()
-		} else if (step === 4) {
-			// Preview step - update code previews
-			scheduleWizardPreview()
-		} else if (step === CREATE_WIZARD_STEP_COUNT - 1) {
-			// Final review step
-			renderCreateReview()
+		if (!backBtn || !nextBtn || !confirmBtn) return
+
+		// Back button
+		backBtn.disabled = currentIndex === 0
+
+		// Next button - show appropriate label
+		if (currentIndex < tabOrder.length - 1) {
+			const nextTab = tabOrder[currentIndex + 1]
+			const labels = {
+				details: 'Details',
+				inputs: 'Inputs',
+				parameters: 'Parameters',
+				outputs: 'Outputs',
+			}
+			nextBtn.textContent = `Next: ${labels[nextTab]} →`
+			nextBtn.style.display = 'inline-flex'
+			confirmBtn.style.display = 'none'
 		} else {
-			scheduleWizardPreview()
+			// Last tab - show Create Project button
+			nextBtn.style.display = 'none'
+			confirmBtn.style.display = 'inline-flex'
 		}
 	}
 
-	async function handleCreateWizardNext() {
-		const current = projectCreateState.currentStep || 0
+	function handleCreateTabNext() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
-		if (current === 0) {
-			const projectName = document.getElementById('new-project-name').value.trim()
-			if (!projectName) {
-				await dialog.message('Please enter a project name to continue.', {
-					title: 'Name Required',
-					type: 'warning',
-				})
-				document.getElementById('new-project-name').focus()
-				return
-			}
-
-			let destination = document.getElementById('new-project-path').value.trim()
-			if (!destination) {
-				destination = await fetchDefaultProjectPath(projectName)
-				document.getElementById('new-project-path').value = destination
-				projectCreateState.defaultDir = destination
-				projectCreateState.selectedDir = null
-			}
-
-			if (!destination) {
-				await dialog.message(
-					'Unable to determine a destination folder. Please choose one manually.',
-					{
-						title: 'Destination Required',
-						type: 'warning',
-					},
-				)
-				return
-			}
-		}
-
-		if (current < CREATE_WIZARD_STEP_COUNT - 1) {
-			setCreateWizardStep(current + 1)
+		if (currentIndex < tabOrder.length - 1) {
+			switchCreateTab(tabOrder[currentIndex + 1])
 		}
 	}
 
-	function handleCreateWizardBack() {
-		const current = projectCreateState.currentStep || 0
-		if (current > 0) {
-			setCreateWizardStep(current - 1)
-		}
-	}
+	function handleCreateTabBack() {
+		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
+		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
 
-	function handleWizardStepClick(targetStep) {
-		if (targetStep >= 0 && targetStep < CREATE_WIZARD_STEP_COUNT) {
-			setCreateWizardStep(targetStep)
+		if (currentIndex > 0) {
+			switchCreateTab(tabOrder[currentIndex - 1])
 		}
 	}
 
@@ -660,6 +670,31 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (resetBtn) resetBtn.disabled = disabled
 	}
 
+	function setButtonLoadingState(button, isLoading, loadingLabel) {
+		if (!button) return
+		if (isLoading) {
+			if (!button.dataset.originalLabel) {
+				button.dataset.originalLabel = button.textContent
+			}
+			button.dataset.loading = 'true'
+			button.classList.add('btn-loading')
+			button.disabled = true
+			const label = loadingLabel || button.dataset.originalLabel || ''
+			button.innerHTML =
+				'<span class="button-spinner"></span><span class="button-spinner-label">' +
+				label +
+				'</span>'
+		} else {
+			button.classList.remove('btn-loading')
+			button.disabled = false
+			if (button.dataset.originalLabel) {
+				button.textContent = button.dataset.originalLabel
+				delete button.dataset.originalLabel
+			}
+			delete button.dataset.loading
+		}
+	}
+
 	function updateOperationModal(message) {
 		const textEl = document.getElementById('operation-modal-text')
 		if (textEl) {
@@ -725,95 +760,107 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	async function loadProjects() {
 		try {
 			const projects = await invoke('get_projects')
-			const container = document.getElementById('projects-list')
+			const projectsContainer = document.getElementById('projects-list')
 
+			// Update counts
+			const projectsCount = document.getElementById('projects-count')
+			const pipelinesCount = document.getElementById('pipelines-count')
+
+			if (projectsCount) projectsCount.textContent = projects?.length || 0
+			if (pipelinesCount) pipelinesCount.textContent = 0 // TODO: Load actual pipelines
+
+			// Render projects
 			if (!projects || projects.length === 0) {
-				container.innerHTML = '<p style="color: #666;">No projects found in BioVault.</p>'
-				return
-			}
-
-			container.innerHTML = ''
-
-			projects.forEach((project) => {
-				const card = document.createElement('div')
-				card.className = 'project-card'
-
-				const info = document.createElement('div')
-				info.className = 'project-info'
-
-				const title = document.createElement('h3')
-				title.textContent = project.name || '(unnamed project)'
-				if (project.orphaned) {
-					const badge = document.createElement('span')
-					badge.className = 'project-badge project-badge-orphan'
-					badge.textContent = 'Unregistered folder'
-					title.appendChild(badge)
+				if (projectsContainer) {
+					projectsContainer.innerHTML =
+						'<p style="color: #666; padding: 20px; text-align: center;">No projects imported yet.</p>'
 				}
-				info.appendChild(title)
+			} else {
+				if (projectsContainer) {
+					projectsContainer.innerHTML = ''
 
-				const author = document.createElement('p')
-				author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
-				info.appendChild(author)
+					projects.forEach((project) => {
+						const card = document.createElement('div')
+						card.className = 'project-card'
 
-				const workflow = document.createElement('p')
-				workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
-				info.appendChild(workflow)
+						const info = document.createElement('div')
+						info.className = 'project-info'
 
-				const template = document.createElement('p')
-				template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
-				info.appendChild(template)
+						const title = document.createElement('h3')
+						title.textContent = project.name || '(unnamed project)'
+						if (project.orphaned) {
+							const badge = document.createElement('span')
+							badge.className = 'project-badge project-badge-orphan'
+							badge.textContent = 'Unregistered folder'
+							title.appendChild(badge)
+						}
+						info.appendChild(title)
 
-				const path = document.createElement('p')
-				path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
-				info.appendChild(path)
+						const author = document.createElement('p')
+						author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
+						info.appendChild(author)
 
-				const created = document.createElement('p')
-				const meta = project.created_at
-					? `${project.source} | Created: ${project.created_at}`
-					: project.source
-				created.innerHTML = `<strong>Source:</strong> ${meta}`
-				info.appendChild(created)
+						const workflow = document.createElement('p')
+						workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
+						info.appendChild(workflow)
 
-				card.appendChild(info)
+						const template = document.createElement('p')
+						template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
+						info.appendChild(template)
 
-				const actions = document.createElement('div')
-				actions.className = 'project-card-actions'
+						const path = document.createElement('p')
+						path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
+						info.appendChild(path)
 
-				const editBtn = document.createElement('button')
-				editBtn.className = 'secondary-btn'
-				editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
-				editBtn.addEventListener('click', async () => {
-					if (project.orphaned) {
-						await openProjectEditor({ projectPath: project.project_path })
-					} else if (project.id !== null && project.id !== undefined) {
-						await openProjectEditor({ projectId: project.id })
-					}
-				})
-				actions.appendChild(editBtn)
+						const created = document.createElement('p')
+						const meta = project.created_at
+							? `${project.source} | Created: ${project.created_at}`
+							: project.source
+						created.innerHTML = `<strong>Source:</strong> ${meta}`
+						info.appendChild(created)
 
-				const openBtn = document.createElement('button')
-				openBtn.className = 'open-folder-btn'
-				openBtn.textContent = 'Open Folder'
-				openBtn.addEventListener('click', async () => {
-					try {
-						await invoke('open_folder', { path: project.project_path })
-					} catch (error) {
-						alert(`Error opening folder: ${error}`)
-					}
-				})
-				actions.appendChild(openBtn)
+						card.appendChild(info)
 
-				const deleteBtn = document.createElement('button')
-				deleteBtn.className = 'delete-btn'
-				deleteBtn.textContent = 'Delete'
-				deleteBtn.addEventListener('click', async () => {
-					await handleDeleteProject(project)
-				})
-				actions.appendChild(deleteBtn)
+						const actions = document.createElement('div')
+						actions.className = 'project-card-actions'
 
-				card.appendChild(actions)
-				container.appendChild(card)
-			})
+						const editBtn = document.createElement('button')
+						editBtn.className = 'secondary-btn'
+						editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
+						editBtn.addEventListener('click', async () => {
+							if (project.orphaned) {
+								await openProjectEditor({ projectPath: project.project_path })
+							} else if (project.id !== null && project.id !== undefined) {
+								await openProjectEditor({ projectId: project.id })
+							}
+						})
+						actions.appendChild(editBtn)
+
+						const openBtn = document.createElement('button')
+						openBtn.className = 'open-folder-btn'
+						openBtn.textContent = 'Open Folder'
+						openBtn.addEventListener('click', async () => {
+							try {
+								await invoke('open_folder', { path: project.project_path })
+							} catch (error) {
+								alert(`Error opening folder: ${error}`)
+							}
+						})
+						actions.appendChild(openBtn)
+
+						const deleteBtn = document.createElement('button')
+						deleteBtn.className = 'delete-btn'
+						deleteBtn.textContent = 'Delete'
+						deleteBtn.addEventListener('click', async () => {
+							await handleDeleteProject(project)
+						})
+						actions.appendChild(deleteBtn)
+
+						card.appendChild(actions)
+						projectsContainer.appendChild(card)
+					})
+				}
+			}
 		} catch (error) {
 			console.error('Error loading projects:', error)
 		}
@@ -923,18 +970,52 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 		if (templateSelect) {
 			templateSelect.value = ''
-			templateSelect.onchange = () => renderCreateReview()
+			templateSelect.onchange = () => scheduleWizardPreview()
 		}
 		if (versionInput) {
 			versionInput.value = '1.0.0'
-			versionInput.oninput = () => renderCreateReview()
+			versionInput.oninput = () => scheduleWizardPreview()
 		}
 		projectCreateState.selectedDir = null
 		projectCreateState.usingDefault = true
 
-		// Supported templates list intentionally left blank for now
+		// Load available templates from CLI
+		let availableExamples = {}
 		if (templateSelect) {
-			templateSelect.innerHTML = '<option value="">Blank Project</option>'
+			try {
+				const examples = await invoke('get_available_project_examples')
+				availableExamples = examples || {}
+				let optionsHtml = '<option value="">Blank Project</option>'
+
+				if (Object.keys(examples).length > 0) {
+					Object.entries(examples).forEach(([key, example]) => {
+						const displayName = example.name || key
+						optionsHtml += `<option value="${key}">${displayName}</option>`
+					})
+				}
+
+				templateSelect.innerHTML = optionsHtml
+			} catch (error) {
+				console.warn('Failed to load project examples:', error)
+				templateSelect.innerHTML = '<option value="">Blank Project</option>'
+			}
+
+			// Handle template selection changes
+			templateSelect.onchange = async () => {
+				const selectedTemplate = templateSelect.value
+				const blankOptions = document.getElementById('blank-project-options')
+
+				if (selectedTemplate && availableExamples[selectedTemplate]) {
+					// Hide blank project options
+					if (blankOptions) blankOptions.style.display = 'none'
+					await loadTemplateIntoWizard(availableExamples[selectedTemplate])
+				} else {
+					// Show blank project options
+					if (blankOptions) blankOptions.style.display = 'block'
+					resetWizardToBlank()
+				}
+				scheduleWizardPreview()
+			}
 		}
 
 		const defaultPath = await fetchDefaultProjectPath('')
@@ -943,16 +1024,88 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			pathInput.value = defaultPath
 		}
 
-		ensureCreateSpecForm(CREATE_SPEC_STEP_CONFIG[1])
+		// Initialize form state
 		projectCreateState.specData = { parameters: [], inputs: [], outputs: [] }
+		projectCreateState.activeTab = 'details'
+
+		// Initialize inputs tab
+		ensureCreateSpecForm(CREATE_TAB_CONFIG.inputs)
 		projectCreateState.specForm?.setSpec(projectCreateState.specData)
-		projectCreateState.specForm?.configureSections(['inputs'], 'inputs')
-		updateCreateSpecSummary()
-		clearWizardPreview('Preview will appear once details are filled in.')
-		setCreateWizardStep(0)
+
+		// Switch to Details tab
+		switchCreateTab('details')
+		updateTabCounts()
+
+		// Setup tab click handlers
+		setupCreateTabHandlers()
+
+		// Setup option card handlers
+		setupOptionCardHandlers()
+
+		// Initialize footer buttons
+		updateCreateFooter()
+
+		// Generate initial preview
+		scheduleWizardPreview()
+
 		modal.style.display = 'flex'
 		document.body.classList.add('modal-open')
 		setTimeout(() => nameInput?.focus(), 100)
+	}
+
+	function setupCreateTabHandlers() {
+		document.querySelectorAll('.create-tab').forEach((tab) => {
+			// Remove old listeners by cloning
+			const newTab = tab.cloneNode(true)
+			tab.parentNode.replaceChild(newTab, tab)
+
+			newTab.addEventListener('click', () => {
+				switchCreateTab(newTab.dataset.tab)
+			})
+		})
+
+		// Setup navigation button handlers
+		const cancelBtn = document.getElementById('create-project-cancel')
+		const backBtn = document.getElementById('create-project-back')
+		const nextBtn = document.getElementById('create-project-next')
+		const confirmBtn = document.getElementById('create-project-confirm')
+
+		if (cancelBtn) {
+			cancelBtn.onclick = () => hideCreateProjectModal()
+		}
+		if (backBtn) {
+			backBtn.onclick = () => handleCreateTabBack()
+		}
+		if (nextBtn) {
+			nextBtn.onclick = () => handleCreateTabNext()
+		}
+		if (confirmBtn) {
+			confirmBtn.onclick = () => createProjectFromModal()
+		}
+	}
+
+	function setupOptionCardHandlers() {
+		document.querySelectorAll('.option-card').forEach((card) => {
+			card.addEventListener('click', () => {
+				if (card.classList.contains('disabled')) return
+
+				// Get parent group to only deselect siblings of same type
+				const group = card.closest('.option-group')
+				const cardType = card.dataset.type
+
+				if (group && cardType) {
+					// Deselect all cards of the same type within this group
+					group.querySelectorAll(`.option-card[data-type="${cardType}"]`).forEach((c) => {
+						c.classList.remove('active')
+					})
+				}
+
+				card.classList.add('active')
+
+				// Update preview when selection changes
+				scheduleWizardPreview()
+			})
+		})
 	}
 
 	function hideCreateProjectModal() {
@@ -961,13 +1114,50 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		document.body.classList.remove('modal-open')
 	}
 
+	function validateProjectName(name) {
+		const trimmed = name.trim()
+
+		// Cannot be empty
+		if (trimmed.length === 0) {
+			return { valid: false, error: 'Project name cannot be empty' }
+		}
+
+		// Cannot be . or ..
+		if (trimmed === '.' || trimmed === '..') {
+			return { valid: false, error: 'Project name cannot be "." or ".."' }
+		}
+
+		// Cannot contain / or \
+		if (trimmed.includes('/') || trimmed.includes('\\')) {
+			return { valid: false, error: 'Project name cannot contain / or \\' }
+		}
+
+		return { valid: true, error: null }
+	}
+
 	async function handleProjectNameInputChange() {
-		const nameValue = document.getElementById('new-project-name').value.trim()
-		if (projectCreateState.usingDefault) {
-			const defaultPath = await fetchDefaultProjectPath(nameValue)
+		const nameInput = document.getElementById('new-project-name')
+		const errorEl = document.getElementById('project-name-error')
+		const nameValue = nameInput.value
+		const validation = validateProjectName(nameValue)
+
+		// Show/hide error
+		if (!validation.valid) {
+			nameInput.classList.add('invalid')
+			errorEl.textContent = validation.error
+			errorEl.style.display = 'block'
+		} else {
+			nameInput.classList.remove('invalid')
+			errorEl.style.display = 'none'
+		}
+
+		// Update path if using default
+		if (projectCreateState.usingDefault && validation.valid) {
+			const defaultPath = await fetchDefaultProjectPath(nameValue.trim())
 			projectCreateState.defaultDir = defaultPath
 			document.getElementById('new-project-path').value = defaultPath
 		}
+
 		updateCreateSpecSummary()
 	}
 
@@ -986,7 +1176,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			projectCreateState.selectedDir = chosen
 			projectCreateState.usingDefault = false
 			document.getElementById('new-project-path').value = chosen
-			renderCreateReview()
+			scheduleWizardPreview()
 		} catch (error) {
 			console.error('Folder selection cancelled or failed:', error)
 		}
@@ -999,23 +1189,47 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const defaultPath = await fetchDefaultProjectPath(nameValue)
 		projectCreateState.defaultDir = defaultPath
 		document.getElementById('new-project-path').value = defaultPath
-		renderCreateReview()
+		scheduleWizardPreview()
 	}
 
 	async function createProjectFromModal() {
-		ensureCreateSpecForm()
 		const nameInput = document.getElementById('new-project-name')
 		const templateSelect = document.getElementById('new-project-template')
 		const confirmBtn = document.getElementById('create-project-confirm')
 		const versionInput = document.getElementById('new-project-version')
 
-		const projectName = nameInput.value.trim()
-		if (!projectName) {
-			await dialog.message('Please enter a project name', {
-				title: 'Name Required',
+		const projectName = nameInput.value
+		const validation = validateProjectName(projectName)
+
+		if (!validation.valid) {
+			await dialog.message(validation.error, {
+				title: 'Invalid Project Name',
 				type: 'warning',
 			})
+			// Switch to details tab to show error
+			switchCreateTab('details')
 			nameInput.focus()
+			return
+		}
+
+		// Validate destination path
+		let destination = document.getElementById('new-project-path').value.trim()
+		if (!destination) {
+			destination = await fetchDefaultProjectPath(projectName.trim())
+			document.getElementById('new-project-path').value = destination
+			projectCreateState.defaultDir = destination
+			projectCreateState.selectedDir = null
+		}
+
+		if (!destination) {
+			await dialog.message(
+				'Unable to determine a destination folder. Please choose one manually.',
+				{
+					title: 'Destination Required',
+					type: 'warning',
+				},
+			)
+			switchCreateTab('details')
 			return
 		}
 
@@ -1026,14 +1240,24 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const hasContract =
 			spec.parameters.length > 0 || spec.inputs.length > 0 || spec.outputs.length > 0
 
+		// Get scripting language option (only for blank projects)
+		const selectedScriptCard = document.querySelector(
+			'#blank-project-options .option-card.active[data-type="script"]',
+		)
+		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
+		const createPythonScript = !example && scriptLang === 'python'
+		const scriptName = createPythonScript ? 'process.py' : null
+
 		confirmBtn.disabled = true
 		confirmBtn.textContent = 'Creating...'
 
 		try {
 			const project = await invoke('create_project', {
-				name: projectName,
+				name: projectName.trim(),
 				example,
 				directory: directory || null,
+				createPythonScript: createPythonScript,
+				scriptName: scriptName,
 			})
 			if (hasContract) {
 				try {
@@ -1042,7 +1266,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 					})
 					const metadata = editorPayload.metadata
 					const payload = buildSpecSavePayload({
-						name: metadata.name || projectName,
+						name: metadata.name || projectName.trim(),
 						author: metadata.author,
 						workflow: metadata.workflow,
 						template: metadata.template || null,
@@ -1106,6 +1330,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			projectEditorState.jupyter = {
 				running: false,
 				port: null,
+				url: null,
+				token: null,
 			}
 
 			renderProjectEditor(payload)
@@ -1318,23 +1544,45 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const statusRow = document.getElementById('project-jupyter-status')
 		if (!button) return
 
-		button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		const isLoading = button.dataset.loading === 'true'
+		if (!isLoading) {
+			button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		}
 
 		if (!statusRow) return
 
-		if (projectEditorState.jupyter.running && projectEditorState.jupyter.port) {
-			const url = `http://localhost:${projectEditorState.jupyter.port}`
-			statusRow.style.display = 'block'
-			statusRow.innerHTML =
-				'Running at <button id="jupyter-open-link" class="link-button" type="button">🔗 ' +
-				url +
-				'</button>'
-			const linkButton = document.getElementById('jupyter-open-link')
-			if (linkButton) {
-				linkButton.onclick = async () => {
-					console.log('[Jupyter] Opening lab URL:', url)
-					await openInExternalBrowser(url)
-				}
+		if (projectEditorState.jupyter.running) {
+			let linkUrl =
+				projectEditorState.jupyter.url ||
+				(projectEditorState.jupyter.port
+					? `http://localhost:${projectEditorState.jupyter.port}`
+					: null)
+
+			// Append token if available
+			if (linkUrl && projectEditorState.jupyter.token) {
+				const separator = linkUrl.includes('?') ? '&' : '?'
+				linkUrl = `${linkUrl}${separator}token=${projectEditorState.jupyter.token}`
+			}
+
+			if (linkUrl) {
+				statusRow.style.display = 'block'
+				statusRow.innerHTML = ''
+				statusRow.append('Running at ')
+				const linkButton = document.createElement('button')
+				linkButton.id = 'jupyter-open-link'
+				linkButton.className = 'link-button'
+				linkButton.type = 'button'
+				// Display URL without token for cleaner UI
+				const displayUrl = linkUrl.split('?')[0]
+				linkButton.textContent = `🔗 ${displayUrl}`
+				linkButton.addEventListener('click', async () => {
+					console.log('[Jupyter] Opening lab URL:', linkUrl)
+					await openInExternalBrowser(linkUrl)
+				})
+				statusRow.appendChild(linkButton)
+			} else {
+				statusRow.style.display = 'block'
+				statusRow.textContent = 'Jupyter server is running.'
 			}
 		} else {
 			statusRow.style.display = 'none'
@@ -1352,12 +1600,18 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.running
 			projectEditorState.jupyter.port = result.port ?? null
+			projectEditorState.jupyter.url = result.url ?? null
+			projectEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 			if (showMessage) {
 				if (projectEditorState.jupyter.running) {
-					const portInfo = projectEditorState.jupyter.port
-					statusEl.textContent = portInfo
-						? `Jupyter is running on port ${portInfo}.`
+					const linkUrl =
+						projectEditorState.jupyter.url ||
+						(projectEditorState.jupyter.port
+							? `http://localhost:${projectEditorState.jupyter.port}`
+							: null)
+					statusEl.textContent = linkUrl
+						? `Jupyter is running at ${linkUrl}.`
 						: 'Jupyter server is running.'
 					statusEl.style.color = '#28a745'
 				} else {
@@ -1470,6 +1724,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	}
 
 	async function handleLaunchJupyter() {
+		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
+		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
 			return
@@ -1481,6 +1738,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		if (projectEditorState.jupyter.running) {
 			const message = 'Stopping Jupyter server...\nCommand: uv run --python .venv jupyter lab stop'
 			showOperationModal(message)
+			setButtonLoadingState(launchBtn, true, 'Stopping...')
+			if (resetBtn) resetBtn.disabled = true
 			statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
 			try {
 				const result = await invoke('stop_jupyter', {
@@ -1488,6 +1747,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				})
 				projectEditorState.jupyter.running = !!result.running
 				projectEditorState.jupyter.port = result.port ?? null
+				projectEditorState.jupyter.url = result.url ?? null
+				projectEditorState.jupyter.token = result.token ?? null
 				updateJupyterControls()
 				statusEl.textContent = 'Jupyter server stopped.'
 				statusEl.style.color = '#666'
@@ -1497,6 +1758,9 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 				statusEl.textContent = `Error stopping Jupyter: ${error}`
 				statusEl.style.color = '#dc3545'
 			} finally {
+				setButtonLoadingState(launchBtn, false)
+				if (resetBtn) resetBtn.disabled = false
+				updateJupyterControls()
 				hideOperationModal()
 			}
 			return
@@ -1505,6 +1769,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const launchMessage =
 			'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab bioscript\n- uv run --python .venv jupyter lab'
 		showOperationModal(launchMessage)
+		setButtonLoadingState(launchBtn, true, 'Starting...')
+		if (resetBtn) resetBtn.disabled = true
 		statusEl.textContent =
 			'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
 
@@ -1515,13 +1781,19 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.running
 			projectEditorState.jupyter.port = result.port ?? null
+			projectEditorState.jupyter.url = result.url ?? null
+			projectEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 
-			if (projectEditorState.jupyter.port) {
-				const url = `http://localhost:${projectEditorState.jupyter.port}`
+			const launchUrl =
+				projectEditorState.jupyter.url ||
+				(projectEditorState.jupyter.port
+					? `http://localhost:${projectEditorState.jupyter.port}`
+					: null)
+			if (launchUrl) {
 				updateOperationModal('Opening browser...')
-				await openInExternalBrowser(url)
-				statusEl.textContent = `Jupyter running at ${url}`
+				await openInExternalBrowser(launchUrl)
+				statusEl.textContent = `Jupyter running at ${launchUrl}`
 				statusEl.style.color = '#28a745'
 			} else {
 				statusEl.textContent = 'Jupyter server started.'
@@ -1533,11 +1805,16 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			statusEl.textContent = `Error launching Jupyter: ${error}`
 			statusEl.style.color = '#dc3545'
 		} finally {
+			setButtonLoadingState(launchBtn, false)
+			if (resetBtn) resetBtn.disabled = false
+			updateJupyterControls()
 			hideOperationModal()
 		}
 	}
 
 	async function handleResetJupyter() {
+		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
 			return
@@ -1555,6 +1832,8 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		const statusEl = document.getElementById('project-edit-status')
 		statusEl.textContent = 'Resetting Jupyter environment...'
 		statusEl.style.color = '#666'
+		setButtonLoadingState(resetBtn, true, 'Resetting...')
+		if (launchBtn) launchBtn.disabled = true
 		const modalMessage =
 			'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab bioscript'
 		showOperationModal(modalMessage)
@@ -1566,17 +1845,26 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			})
 			projectEditorState.jupyter.running = !!result.status.running
 			projectEditorState.jupyter.port = result.status.port ?? null
+			projectEditorState.jupyter.url = result.status.url ?? null
+			projectEditorState.jupyter.token = result.status.token ?? null
 			updateJupyterControls()
 			statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
 			statusEl.style.color = '#28a745'
-			await refreshJupyterStatus(true)
+			await refreshJupyterStatus(false)
 		} catch (error) {
 			console.error('Failed to reset Jupyter:', error)
 			statusEl.textContent = `Error resetting Jupyter: ${error}`
 			statusEl.style.color = '#dc3545'
 		} finally {
+			setButtonLoadingState(resetBtn, false)
+			if (launchBtn) launchBtn.disabled = false
+			updateJupyterControls()
 			hideOperationModal()
 		}
+	}
+
+	function showCreatePipelineModal() {
+		alert('Pipeline creation wizard coming soon! For now, use the CLI:\n\nbv pipeline create')
 	}
 
 	return {
@@ -1584,6 +1872,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		importProject,
 		importProjectFromFolder,
 		showCreateProjectModal,
+		showCreatePipelineModal,
 		hideCreateProjectModal,
 		handleProjectNameInputChange,
 		chooseProjectDirectory,
@@ -1595,8 +1884,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		handleOpenProjectFolder,
 		handleLeaveProjectEditor,
 		handleReloadProjectSpec,
-		handleCreateWizardNext,
-		handleCreateWizardBack,
-		handleWizardStepClick,
+		handleCreateTabNext,
+		handleCreateTabBack,
 	}
 }

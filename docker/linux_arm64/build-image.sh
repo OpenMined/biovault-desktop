@@ -9,11 +9,47 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[docker] Building ${IMAGE_NAME} (platform linux/amd64)..."
-docker buildx build \
-  --platform linux/amd64 \
-  --load \
-  --tag "${IMAGE_NAME}" \
-  "${CONTEXT_DIR}"
+HOST_PLATFORM="linux/amd64"
+while (($#)); do
+  case "$1" in
+    --arm64)
+      HOST_PLATFORM="linux/arm64"
+      shift
+      ;;
+    --amd64)
+      HOST_PLATFORM="linux/amd64"
+      shift
+      ;;
+    --help|-h)
+      echo "Usage: $0 [--arm64|--amd64]" >&2
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Usage: $0 [--arm64|--amd64]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-${HOST_PLATFORM}}"
+BUILD_PLATFORM="${BUILD_PLATFORM:-${HOST_PLATFORM}}"
+BUILD_OUTPUT="${BUILD_OUTPUT:---load}"
+
+echo "[docker] Building ${IMAGE_NAME} (platform ${BUILD_PLATFORM})..."
+
+if [ "${BUILD_OUTPUT}" = "--load" ] && [ -z "${FORCE_BUILDX:-}" ]; then
+  DOCKER_BUILDKIT=0 docker build \
+    --platform "${BUILD_PLATFORM}" \
+    --tag "${IMAGE_NAME}" \
+    "${CONTEXT_DIR}"
+else
+  docker buildx build \
+    --platform "${BUILD_PLATFORM}" \
+    ${BUILD_OUTPUT} \
+    ${BUILD_CACHE:-} \
+    --tag "${IMAGE_NAME}" \
+    "${CONTEXT_DIR}"
+fi
 
 echo "[docker] Image ready: ${IMAGE_NAME}"

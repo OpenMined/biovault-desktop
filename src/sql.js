@@ -229,7 +229,10 @@ export function createSqlModule({ invoke, dialog }) {
 
 	function cacheElements() {
 		if (elements.editor) return true
-		elements.view = document.getElementById('sql-view')
+
+		// SQL content is now in the workbench panel
+		elements.view =
+			document.getElementById('workbench-sql-panel') || document.getElementById('sql-view')
 		elements.tableList = document.getElementById('sql-table-list')
 		elements.tableSchema = document.getElementById('sql-table-schema')
 		elements.refreshTablesBtn = document.getElementById('sql-refresh-tables-btn')
@@ -248,7 +251,14 @@ export function createSqlModule({ invoke, dialog }) {
 		elements.aiButton = document.getElementById('sql-ai-submit-btn')
 		elements.aiStatus = document.getElementById('sql-ai-status')
 		elements.aiHistory = document.getElementById('sql-ai-history')
-		return Boolean(elements.editor && elements.highlight)
+
+		const found = Boolean(elements.editor && elements.highlight && elements.tableList)
+		console.log('🔍 SQL elements cached:', {
+			found,
+			tableList: !!elements.tableList,
+			editor: !!elements.editor,
+		})
+		return found
 	}
 
 	function setStatus(message, tone = 'info') {
@@ -295,7 +305,9 @@ export function createSqlModule({ invoke, dialog }) {
 			renderTableList(tables)
 		} catch (error) {
 			console.error('Failed to load tables', error)
-			elements.tableList.innerHTML = `<li class="sql-list-placeholder sql-list-placeholder--error">Failed to load tables: ${error?.message || error}</li>`
+			elements.tableList.innerHTML = `<li class="sql-list-placeholder sql-list-placeholder--error">Failed to load tables: ${
+				error?.message || error
+			}</li>`
 		}
 	}
 
@@ -347,7 +359,9 @@ export function createSqlModule({ invoke, dialog }) {
 			displayTableSchema(schema)
 		} catch (error) {
 			console.error('Failed to load schema', error)
-			elements.tableSchema.innerHTML = `<div class="sql-schema-error">${error?.message || error}</div>`
+			elements.tableSchema.innerHTML = `<div class="sql-schema-error">${
+				error?.message || error
+			}</div>`
 		}
 	}
 

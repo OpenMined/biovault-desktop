@@ -37,10 +37,6 @@ export function setupEventHandlers({
 	// Projects
 	showCreateProjectModal,
 	hideCreateProjectModal,
-	createProjectFromModal,
-	handleCreateWizardNext,
-	handleCreateWizardBack,
-	handleWizardStepClick,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
 	resetProjectDirectory,
@@ -64,6 +60,7 @@ export function setupEventHandlers({
 	saveSettings,
 	checkDependenciesForPanel,
 	getDependencyResults,
+	checkUpdates,
 	invoke,
 	dialog,
 	// Data (unified participants + files)
@@ -286,6 +283,34 @@ export function setupEventHandlers({
 		})
 	}
 
+	// Settings - Display app version
+	const appVersionEl = document.getElementById('app-version')
+	if (appVersionEl) {
+		invoke('get_app_version')
+			.then((version) => {
+				appVersionEl.textContent = `v${version}`
+			})
+			.catch((err) => {
+				console.error('Failed to get app version:', err)
+				appVersionEl.textContent = 'Unknown'
+			})
+	}
+
+	// Settings - Check for updates
+	const checkUpdatesBtn = document.getElementById('check-updates-btn')
+	if (checkUpdatesBtn) {
+		checkUpdatesBtn.addEventListener('click', async () => {
+			checkUpdatesBtn.disabled = true
+			checkUpdatesBtn.textContent = 'Checking...'
+			try {
+				await checkUpdates(false) // Not silent - show dialog
+			} finally {
+				checkUpdatesBtn.disabled = false
+				checkUpdatesBtn.textContent = 'Check for Updates'
+			}
+		})
+	}
+
 	// Settings - Reset all data
 	const resetAllBtn = document.getElementById('reset-all-btn')
 	if (resetAllBtn) {
@@ -434,43 +459,31 @@ export function setupEventHandlers({
 	document.getElementById('create-project-btn').addEventListener('click', () => {
 		showCreateProjectModal()
 	})
-	document.getElementById('create-project-cancel').addEventListener('click', () => {
-		hideCreateProjectModal()
-	})
-	document.getElementById('create-project-back').addEventListener('click', () => {
-		handleCreateWizardBack()
-	})
-	document.getElementById('create-project-next').addEventListener('click', () => {
-		handleCreateWizardNext()
-	})
-	document.getElementById('create-project-confirm').addEventListener('click', () => {
-		createProjectFromModal()
-	})
-	// Allow clicking on wizard step indicators to navigate
-	document.querySelectorAll('.project-wizard-steps li').forEach((indicator) => {
-		indicator.addEventListener('click', () => {
-			handleWizardStepClick(Number(indicator.dataset.step))
+	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
+	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
+
+	// Preview tab switching
+	document.querySelectorAll('.preview-tab').forEach((tab) => {
+		tab.addEventListener('click', () => {
+			const targetTab = tab.dataset.previewTab
+
+			// Update tab buttons
+			document.querySelectorAll('.preview-tab').forEach((t) => t.classList.remove('active'))
+			tab.classList.add('active')
+
+			// Update content
+			document.querySelectorAll('.preview-tab-content').forEach((c) => c.classList.remove('active'))
+			const targetContent = document.querySelector(`[data-preview-content="${targetTab}"]`)
+			if (targetContent) targetContent.classList.add('active')
 		})
 	})
-	// Preview expand/collapse controls
-	const expandAllBtn = document.getElementById('preview-expand-all')
-	const collapseAllBtn = document.getElementById('preview-collapse-all')
-	if (expandAllBtn) {
-		expandAllBtn.addEventListener('click', () => {
-			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
-			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
-			if (yamlWrapper) yamlWrapper.open = true
-			if (templateWrapper) templateWrapper.open = true
-		})
+
+	// Top close button
+	const topCloseBtn = document.getElementById('create-project-cancel-top')
+	if (topCloseBtn) {
+		topCloseBtn.addEventListener('click', hideCreateProjectModal)
 	}
-	if (collapseAllBtn) {
-		collapseAllBtn.addEventListener('click', () => {
-			const yamlWrapper = document.getElementById('create-project-preview-yaml-wrapper')
-			const templateWrapper = document.getElementById('create-project-preview-template-wrapper')
-			if (yamlWrapper) yamlWrapper.open = false
-			if (templateWrapper) templateWrapper.open = false
-		})
-	}
+	// Preview expand/collapse controls removed - now using split view
 	document.getElementById('new-project-name').addEventListener('input', () => {
 		handleProjectNameInputChange()
 	})

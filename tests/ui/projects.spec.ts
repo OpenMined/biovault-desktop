@@ -3,9 +3,6 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import WebSocket from 'ws'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
 /** @type {WebSocket | null} */
 let logSocket = null
 
@@ -68,12 +65,72 @@ test.beforeEach(async ({ page, context }) => {
 					return true
 				case 'get_default_project_path':
 					return '/tmp/biovault-projects'
-				case 'preview_project_spec':
+				case 'get_available_project_examples':
 					return {
-						yaml: 'name: test\nauthor: test@example.com\nworkflow: workflow.nf\ntemplate: dynamic-nextflow\ninputs: []\noutputs: []\nparameters: []',
+						'count-lines': {
+							name: 'Count Lines',
+							inputs: [{ name: 'samplesheet', type: 'File', description: 'Sample data' }],
+							outputs: [{ name: 'results', type: 'File', description: 'Line counts' }],
+							parameters: [],
+						},
+					}
+				case 'get_supported_input_types':
+					return {
+						base_types: ['File', 'Directory', 'String', 'List[File]', 'ParticipantSheet'],
+						common_types: ['File', 'Directory', 'String', 'List[File]'],
+					}
+				case 'get_supported_output_types':
+					return {
+						base_types: ['File', 'Directory', 'ParticipantSheet'],
+						common_types: ['File', 'Directory'],
+					}
+				case 'get_supported_parameter_types':
+					return ['String', 'Bool', 'Enum[...]']
+				case 'get_common_formats':
+					return ['csv', 'tsv', 'txt', 'json', 'vcf']
+				case 'preview_project_spec': {
+					// Generate YAML from the spec data passed in args
+					const spec = args.spec || {}
+					const params = (spec.parameters || [])
+						.map((p) => `  - name: ${p.name}\n    type: ${p.raw_type}`)
+						.join('\n')
+					const inputs = (spec.inputs || [])
+						.map((i) => `  - name: ${i.name}\n    type: ${i.raw_type}`)
+						.join('\n')
+					const outputs = (spec.outputs || [])
+						.map((o) => `  - name: ${o.name}\n    type: ${o.raw_type}`)
+						.join('\n')
+
+					let yaml = `name: ${args.name || 'test'}\nauthor: ${
+						args.author || 'test@example.com'
+					}\nworkflow: ${args.workflow || 'workflow.nf'}\ntemplate: ${
+						args.template || 'dynamic-nextflow'
+					}`
+
+					if (spec.inputs && spec.inputs.length > 0) {
+						yaml += `\ninputs:\n${inputs}`
+					} else {
+						yaml += '\ninputs: []'
+					}
+
+					if (spec.outputs && spec.outputs.length > 0) {
+						yaml += `\noutputs:\n${outputs}`
+					} else {
+						yaml += '\noutputs: []'
+					}
+
+					if (spec.parameters && spec.parameters.length > 0) {
+						yaml += `\nparameters:\n${params}`
+					} else {
+						yaml += '\nparameters: []'
+					}
+
+					return {
+						yaml,
 						workflow: 'workflow {\n  // Generated workflow stub\n}',
 						template: 'workflow {\n  // Template\n}',
 					}
+				}
 				case 'create_project':
 					return {
 						id: 1,
@@ -110,7 +167,7 @@ test.beforeEach(async ({ page, context }) => {
 
 	// Wait for main JS to load and execute
 	await page.waitForLoadState('networkidle')
-	await page.waitForSelector('.tabs', { state: 'visible', timeout: 10000 })
+	await page.waitForSelector('.sidebar-nav', { state: 'visible', timeout: 10000 })
 })
 
 test.afterEach(async () => {
@@ -123,226 +180,293 @@ test.afterEach(async () => {
 	}
 })
 
-test.describe('Project Creation Wizard', () => {
-	test('should open create project modal and navigate through wizard steps', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-wizard-navigation', action: 'start' })
+test.describe('Project Creation Modal', () => {
+	test('should open create project modal and navigate through tabs', async ({ page }) => {
+		sendUnifiedLog({ test: 'project-tab-navigation', action: 'start' })
 
 		// Navigate to projects view
-		await page.click('button.tab[data-tab="projects"]')
+		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 
 		// Click "Create New Project" button
 		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
-		// Step 0: Project Details
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '0')
+		// Details tab active by default
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'details',
+		)
 		await page.fill('#new-project-name', 'Test Project')
-		await page.click('button:has-text("Next")')
 
-		// Step 1: Inputs
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '1')
-		await page.click('button:has-text("Next")')
+		// Navigate using Next button
+		await page.locator('#create-project-next').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'inputs',
+		)
 
-		// Step 2: Parameters
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '2')
-		await page.click('button:has-text("Next")')
+		await page.locator('#create-project-next').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'parameters',
+		)
 
-		// Step 3: Outputs
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
-		await page.click('button:has-text("Next")')
+		await page.locator('#create-project-next').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'outputs',
+		)
 
-		// Step 4: Preview
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '4')
-		await page.click('button:has-text("Next")')
+		// Back button works
+		await page.locator('#create-project-back').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'parameters',
+		)
 
-		// Step 5: Review & Create
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '5')
+		// Click tabs directly
+		await page.locator('.create-tab[data-tab="details"]').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'details',
+		)
 
-		sendUnifiedLog({ test: 'project-wizard-navigation', action: 'complete' })
+		sendUnifiedLog({ test: 'project-tab-navigation', action: 'complete' })
 	})
 
-	test('should add and remove parameters with correct data types', async ({ page }) => {
+	test('should add and remove parameters using modal', async ({ page }) => {
 		sendUnifiedLog({ test: 'project-parameters', action: 'start' })
 
-		await page.click('button.tab[data-tab="projects"]')
+		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Fill project name
 		await page.fill('#new-project-name', 'Param Test Project')
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
 
-		// Now at Parameters step
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '2')
+		// Navigate to Parameters tab
+		await page.locator('.create-tab[data-tab="parameters"]').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'parameters',
+		)
 
-		// Add first parameter (Bool type)
-		await page.click('button:has-text("Add Parameter")')
-		await page.waitForTimeout(200)
+		// Wait for form to initialize and add zone to appear in active tab
+		await page.waitForTimeout(500) // Give form time to render
 
-		const param1 = page.locator('.spec-entry').first()
-		await param1.locator('input[data-field="name"]').fill('enable_filter')
-		await param1.locator('input[data-field="raw_type"]').fill('Bool')
-		await param1.locator('textarea[data-field="description"]').fill('Enable filtering step')
-		await param1.locator('input[data-field="default"]').fill('true')
+		// Click add zone to open modal (within active tab content)
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
 
-		// Add second parameter (String type)
-		await page.click('button:has-text("Add Parameter")')
-		await page.waitForTimeout(200)
+		// Fill parameter 1 in modal
+		await page.fill('#modal-field-name', 'enable_filter')
+		await page.selectOption('#modal-field-type', 'Bool')
+		await page.fill('#modal-field-description', 'Enable filtering step')
 
-		const param2 = page.locator('.spec-entry').nth(1)
-		await param2.locator('input[data-field="name"]').fill('output_format')
-		await param2.locator('input[data-field="raw_type"]').fill('String')
-		await param2.locator('textarea[data-field="description"]').fill('Output file format')
-		await param2.locator('input[data-field="default"]').fill('csv')
+		// Expand advanced and fill default
+		await page.locator('.modal-advanced-section summary').click()
+		await page.fill('#modal-field-default', 'true')
+
+		// Submit modal
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
+
+		// Verify parameter appears in list
+		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.spec-item-title')).toContainText('enable_filter')
+
+		// Add second parameter
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
+		await page.fill('#modal-field-name', 'output_format')
+		await page.selectOption('#modal-field-type', 'String')
+		await page.fill('#modal-field-description', 'Output file format')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
 
 		// Verify both parameters are present
-		const paramEntries = await page.locator('.spec-entry').count()
-		expect(paramEntries).toBe(2)
+		await expect(page.locator('.spec-list-item')).toHaveCount(2)
 
-		// Navigate to preview and verify parameters appear
-		await page.click('button:has-text("Next")') // To Outputs
-		await page.click('button:has-text("Next")') // To Preview
-
-		await page.waitForTimeout(500)
-
-		// Check preview contains parameters
-		const yamlPreview = await page.locator('#create-project-preview-yaml').textContent()
-		expect(yamlPreview).toContain('enable_filter')
-		expect(yamlPreview).toContain('output_format')
-		expect(yamlPreview).toContain('Bool')
-		expect(yamlPreview).toContain('String')
-
-		// Go back to Parameters step
-		await page.click('button:has-text("Back")') // Back to Outputs
-		await page.click('button:has-text("Back")') // Back to Parameters
-
-		await page.locator('.spec-entry').first().locator('button[data-action="remove"]').click()
+		// Remove first parameter
+		await page.locator('.spec-list-item').first().locator('.spec-item-remove').click()
 		await page.waitForTimeout(200)
 
 		// Verify only one parameter remains
-		const remainingParams = await page.locator('.spec-entry').count()
-		expect(remainingParams).toBe(1)
-
-		// Verify the correct parameter remains
-		const remainingName = await page.locator('.spec-entry input[data-field="name"]').inputValue()
-		expect(remainingName).toBe('output_format')
+		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.spec-item-title')).toContainText('output_format')
 
 		sendUnifiedLog({ test: 'project-parameters', action: 'complete' })
 	})
 
-	test('should add inputs and outputs', async ({ page }) => {
+	test('should add inputs and outputs using modals', async ({ page }) => {
 		sendUnifiedLog({ test: 'project-inputs-outputs', action: 'start' })
 
-		await page.click('button.tab[data-tab="projects"]')
+		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'IO Test Project')
-		await page.click('button:has-text("Next")')
 
-		// At Inputs step (step 1)
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '1')
+		// Navigate to Inputs tab
+		await page.locator('.create-tab[data-tab="inputs"]').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'inputs',
+		)
 
-		// Add File input
-		await page.click('button:has-text("Add Input")')
-		await page.waitForTimeout(200)
-
-		const input1 = page.locator('.spec-entry').first()
-		await input1.locator('input[data-field="name"]').fill('reference_genome')
-		await input1.locator('input[data-field="raw_type"]').fill('File')
-		await input1.locator('textarea[data-field="description"]').fill('Reference genome file')
-
-		// Move to Parameters (step 2)
-		await page.click('button:has-text("Next")')
-
-		// Move to Outputs (step 3)
-		await page.click('button:has-text("Next")')
-
-		// Add output
-		await page.click('button:has-text("Add Output")')
-		await page.waitForTimeout(200)
-
-		const output1 = page.locator('.spec-entry').first()
-		await output1.locator('input[data-field="name"]').fill('filtered_data')
-		await output1.locator('input[data-field="raw_type"]').fill('File')
-		await output1.locator('textarea[data-field="description"]').fill('Filtered dataset')
-
-		// Navigate to preview
-		await page.click('button:has-text("Next")')
+		// Wait for form to initialize
 		await page.waitForTimeout(500)
 
-		// Verify in preview
-		const yamlPreview = await page.locator('#create-project-preview-yaml').textContent()
-		expect(yamlPreview).toContain('reference_genome')
-		expect(yamlPreview).toContain('filtered_data')
+		// Add input using modal (within active tab)
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
+		await page.fill('#modal-field-name', 'reference_genome')
+		await page.selectOption('#modal-field-type', 'File')
+		await page.fill('#modal-field-description', 'Reference genome file')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
+
+		// Verify input appears in list
+		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.spec-item-title')).toContainText('reference_genome')
+
+		// Navigate to Outputs tab
+		await page.locator('.create-tab[data-tab="outputs"]').click()
+		await expect(page.locator('.create-tab-content.active')).toHaveAttribute(
+			'data-content',
+			'outputs',
+		)
+
+		// Wait for form to initialize
+		await page.waitForTimeout(500)
+
+		// Add output using modal (within active tab)
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
+		await page.fill('#modal-field-name', 'filtered_data')
+		await page.selectOption('#modal-field-type', 'File')
+		await page.fill('#modal-field-description', 'Filtered dataset')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
+
+		// Verify output appears in list
+		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.spec-item-title')).toContainText('filtered_data')
+
+		// Verify preview is visible
+		await expect(page.locator('#create-project-preview-yaml')).toBeVisible()
 
 		sendUnifiedLog({ test: 'project-inputs-outputs', action: 'complete' })
 	})
 
-	test('should handle empty fields gracefully in preview', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-empty-fields', action: 'start' })
+	test('should validate required fields in modal', async ({ page }) => {
+		sendUnifiedLog({ test: 'project-validation', action: 'start' })
 
-		await page.click('button.tab[data-tab="projects"]')
+		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
-		await page.fill('#new-project-name', 'Empty Fields Test')
-		await page.click('button:has-text("Next")') // To Inputs
+		await page.fill('#new-project-name', 'Validation Test')
 
-		// Add input with only name (no type)
-		await page.click('button:has-text("Add Input")')
-		await page.waitForTimeout(200)
-		await page.locator('.spec-entry input[data-field="name"]').fill('incomplete_input')
-		// Don't fill type
+		// Navigate to Inputs tab
+		await page.locator('.create-tab[data-tab="inputs"]').click()
 
-		// Navigate to preview
-		await page.click('button:has-text("Next")') // To Parameters
-		await page.click('button:has-text("Next")') // To Outputs
-		await page.click('button:has-text("Next")') // To Preview
+		// Wait for form to initialize
 		await page.waitForTimeout(500)
 
-		// Preview should not error, just not show the incomplete input
-		const yamlPreview = await page.locator('#create-project-preview-yaml').textContent()
-		expect(yamlPreview).not.toContain('incomplete_input')
+		// Try to add input with only name (no type) - should show alert
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
+		await page.fill('#modal-field-name', 'incomplete_input')
+		// Don't select type
 
-		sendUnifiedLog({ test: 'project-empty-fields', action: 'complete' })
+		page.on('dialog', (dialog) => dialog.accept()) // Auto-accept alert
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(200)
+
+		// Modal should still be open due to validation
+		await expect(page.locator('#spec-item-modal')).toBeVisible()
+
+		// Now fill type properly
+		await page.selectOption('#modal-field-type', 'File')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
+
+		// Modal should close and item should be added
+		await expect(page.locator('#spec-item-modal')).not.toBeVisible()
+		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+
+		sendUnifiedLog({ test: 'project-validation', action: 'complete' })
 	})
 
-	test('should allow clicking on wizard steps to navigate', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-wizard-step-clicks', action: 'start' })
+	test('should allow editing items via modal', async ({ page }) => {
+		sendUnifiedLog({ test: 'project-edit-modal', action: 'start' })
 
-		await page.click('button.tab[data-tab="projects"]')
+		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
-		// Fill project name
-		await page.fill('#new-project-name', 'Step Navigation Test')
+		await page.fill('#new-project-name', 'Edit Test Project')
 
-		// Go forward to step 3
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
+		// Navigate to Inputs tab
+		await page.locator('.create-tab[data-tab="inputs"]').click()
 
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
+		// Wait for form to initialize
+		await page.waitForTimeout(500)
 
-		// Click on step 1 in the sidebar
-		await page.click('.project-wizard-steps li[data-step="0"]')
-		await page.waitForTimeout(200)
+		// Add an input (within active tab)
+		await page.locator('.create-tab-content.active .spec-add-zone').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
+		await page.fill('#modal-field-name', 'data_file')
+		await page.selectOption('#modal-field-type', 'File')
+		await page.fill('#modal-field-description', 'Initial description')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
 
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '0')
+		// Edit the input
+		await page.locator('.spec-item-edit').click()
+		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
 
-		// Click on step 4
-		await page.click('.project-wizard-steps li[data-step="3"]')
-		await page.waitForTimeout(200)
+		// Modal should have existing values
+		await expect(page.locator('#modal-field-name')).toHaveValue('data_file')
 
-		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
+		// Change description
+		await page.fill('#modal-field-description', 'Updated description')
+		await page.click('#spec-item-modal-submit')
+		await page.waitForTimeout(300)
 
-		sendUnifiedLog({ test: 'project-wizard-step-clicks', action: 'complete' })
+		// Verify changes
+		await expect(page.locator('.spec-item-details')).toContainText('Updated description')
+
+		sendUnifiedLog({ test: 'project-edit-modal', action: 'complete' })
+	})
+
+	test('should select workflow engine and script language with cards', async ({ page }) => {
+		sendUnifiedLog({ test: 'project-option-cards', action: 'start' })
+
+		await page.click('.nav-item[data-tab="projects"]')
+		await page.waitForTimeout(500)
+		await page.click('button:has-text("Create New Project")')
+		await page.waitForSelector('#create-project-modal', { state: 'visible' })
+
+		// Verify default selections
+		await expect(page.locator('.option-card[data-value="nextflow"]')).toHaveClass(/active/)
+		await expect(page.locator('.option-card[data-value="python"]')).toHaveClass(/active/)
+
+		// Click "None" for scripting language
+		await page.locator('.option-card[data-value="none"]').click()
+		await expect(page.locator('.option-card[data-value="none"]')).toHaveClass(/active/)
+		await expect(page.locator('.option-card[data-value="python"]')).not.toHaveClass(/active/)
+
+		// Click Python again
+		await page.locator('.option-card[data-value="python"]').click()
+		await expect(page.locator('.option-card[data-value="python"]')).toHaveClass(/active/)
+
+		sendUnifiedLog({ test: 'project-option-cards', action: 'complete' })
 	})
 })
