@@ -271,9 +271,11 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await page.fill('#new-project-name', projectName)
 
 		// Navigate through tabs to reach the final "Create Project" button
+		// Wizard now has four tabs (Details → Inputs → Parameters → Outputs) before create button appears
 		await page.locator('#create-project-next').click() // To Inputs
 		await page.locator('#create-project-next').click() // To Parameters
 		await page.locator('#create-project-next').click() // To Outputs
+		await expect(page.locator('#create-project-confirm')).toBeVisible()
 
 		await page.locator('#create-project-confirm').click()
 

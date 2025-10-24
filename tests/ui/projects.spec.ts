@@ -275,7 +275,9 @@ test.describe('Project Creation Modal', () => {
 
 		// Verify parameter appears in list (within active tab)
 		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText('enable_filter')
+		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText(
+			'enable_filter',
+		)
 
 		// Add second parameter
 		await page.locator('.create-tab-content.active .spec-add-zone').click()
@@ -290,12 +292,18 @@ test.describe('Project Creation Modal', () => {
 		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(2)
 
 		// Remove first parameter
-		await page.locator('.create-tab-content.active .spec-list-item').first().locator('.spec-item-remove').click()
+		await page
+			.locator('.create-tab-content.active .spec-list-item')
+			.first()
+			.locator('.spec-item-remove')
+			.click()
 		await page.waitForTimeout(200)
 
 		// Verify only one parameter remains
 		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText('output_format')
+		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText(
+			'output_format',
+		)
 
 		sendUnifiedLog({ test: 'project-parameters', action: 'complete' })
 	})
@@ -329,9 +337,11 @@ test.describe('Project Creation Modal', () => {
 		await page.click('#spec-item-modal-submit')
 		await page.waitForTimeout(300)
 
-		// Verify input appears in list (within active tab)
-		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText('reference_genome')
+		const inputsTabContent = page.locator('.create-tab-content[data-content="inputs"]')
+
+		// Verify input appears in list
+		await expect(inputsTabContent.locator('.spec-list-item')).toHaveCount(1)
+		await expect(inputsTabContent.locator('.spec-item-title')).toContainText('reference_genome')
 
 		// Navigate to Outputs tab
 		await page.locator('.create-tab[data-tab="outputs"]').click()
@@ -352,9 +362,11 @@ test.describe('Project Creation Modal', () => {
 		await page.click('#spec-item-modal-submit')
 		await page.waitForTimeout(300)
 
-		// Verify output appears in list (within active tab)
-		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText('filtered_data')
+		const outputsTabContent = page.locator('.create-tab-content[data-content="outputs"]')
+
+		// Verify output appears in list (scoped to outputs tab)
+		await expect(outputsTabContent.locator('.spec-list-item')).toHaveCount(1)
+		await expect(outputsTabContent.locator('.spec-item-title')).toContainText('filtered_data')
 
 		// Verify preview is visible
 		await expect(page.locator('#create-project-preview-yaml')).toBeVisible()
@@ -441,7 +453,9 @@ test.describe('Project Creation Modal', () => {
 		await page.waitForTimeout(300)
 
 		// Verify changes
-		await expect(page.locator('.create-tab-content.active .spec-item-details')).toContainText('Updated description')
+		await expect(page.locator('.create-tab-content.active .spec-item-details')).toContainText(
+			'Updated description',
+		)
 
 		sendUnifiedLog({ test: 'project-edit-modal', action: 'complete' })
 	})
