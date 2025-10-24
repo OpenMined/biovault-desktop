@@ -12,21 +12,24 @@
    ============================================================================ */
 
 .page-header {
-	padding: 12px 32px;
+	padding: 14px 32px;
 	border-bottom: 1px solid #e5e7eb;
 	background: #ffffff;
 	display: flex;
 	align-items: center;
-	justify-content: flex-start;
 	flex-shrink: 0;
+	width: 100%;
+	min-height: 52px;
+	gap: 24px;
 }
 
 .page-header-left {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	flex: 0;
 	text-align: left;
+	flex: 1;
+	min-width: 0;
 }
 
 .page-title {

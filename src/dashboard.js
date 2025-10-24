@@ -18,7 +18,7 @@ export function createDashboardShell({
 	stopMessagesAutoRefresh,
 	getWorkbench,
 }) {
-	let activeView = 'projects'
+	let activeView = 'run'
 	let lastImportView = 'import'
 	const importSubViews = ['import', 'import-review', 'import-results']
 	const workbenchViews = ['sql', 'logs'] // These open in workbench, not as full tabs
@@ -36,6 +36,11 @@ export function createDashboardShell({
 		}
 
 		let targetView = requestedView
+
+		// Redirect old 'projects' tab to 'run' (since they're now merged)
+		if (requestedView === 'projects') {
+			targetView = 'run'
+		}
 
 		if (requestedView === 'import' && lastImportView !== 'import') {
 			targetView = lastImportView
@@ -84,11 +89,9 @@ export function createDashboardShell({
 			case 'data':
 				loadParticipants?.() // loadParticipants is actually loadData now
 				break
-			case 'projects':
-				loadProjects?.()
-				break
 			case 'run':
-				prepareRunView?.()
+				// Load projects (which includes both pipelines and projects sections)
+				loadProjects?.()
 				break
 			case 'runs':
 				loadRuns?.()

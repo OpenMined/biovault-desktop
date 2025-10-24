@@ -189,7 +189,7 @@ export function createRunsModule({ invoke, listen }) {
 
 							// Hide log viewer if it's showing logs for the deleted run
 							if (currentLogRunId === runId) {
-								document.getElementById('log-viewer').style.display = 'none'
+								document.getElementById('log-viewer').classList.remove('active')
 								currentLogRunId = null
 								currentLogWorkDir = null
 							}
@@ -215,7 +215,7 @@ export function createRunsModule({ invoke, listen }) {
 		currentLogRunId = runId
 		currentLogWorkDir = workDir
 
-		logViewer.style.display = 'block'
+		logViewer.classList.add('active')
 		logContent.textContent = 'Loading logs...'
 		logRunName.textContent = `(${projectName})`
 
@@ -259,7 +259,7 @@ export function createRunsModule({ invoke, listen }) {
 			const logRunName = document.getElementById('log-run-name')
 			const shareBtn = document.getElementById('share-logs-btn')
 
-			logViewer.style.display = 'block'
+			logViewer.classList.add('active')
 			logContent.textContent = ''
 			logContent.dataset.runId = result.run_id
 			logRunName.textContent = ''

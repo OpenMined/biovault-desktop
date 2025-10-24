@@ -2,82 +2,29 @@
 	<!-- Page Header -->
 	<header class="page-header">
 		<div class="page-header-left">
-			<h1 class="page-title">Analysis Results</h1>
+			<h1 class="page-title">Results</h1>
 		</div>
 	</header>
 
 	<!-- Main Content -->
 	<div class="view-content">
-		<div
-			style="padding: 20px; overflow-y: auto; height: 100%; display: flex; flex-direction: column"
-		>
-			<h2 style="margin-bottom: 20px">Analysis Results</h2>
-			<div id="runs-list" style="flex: 1; overflow-y: auto"></div>
-			<div
-				id="log-viewer"
-				style="
-					display: none;
-					margin-top: 20px;
-					border-top: 2px solid #ddd;
-					padding-top: 20px;
-					flex-shrink: 0;
-				"
-			>
-				<div
-					style="
-						display: flex;
-						justify-content: space-between;
-						align-items: center;
-						margin-bottom: 10px;
-					"
-				>
-					<h3 style="margin: 0">
-						Live Logs <span id="log-run-name" style="font-size: 14px; color: #666"></span>
+		<div class="runs-content">
+			<div class="runs-list-wrapper">
+				<div id="runs-list" class="runs-list"></div>
+			</div>
+			<div id="log-viewer" class="log-viewer">
+				<div class="log-viewer-header">
+					<h3 class="log-viewer-title">
+						Live Logs <span id="log-run-name" class="log-run-name"></span>
 					</h3>
-					<div style="display: flex; gap: 10px">
-						<button
-							id="share-logs-btn"
-							style="
-								padding: 6px 12px;
-								background: #17a2b8;
-								color: white;
-								border: none;
-								border-radius: 4px;
-								cursor: pointer;
-								display: none;
-							"
-						>
+					<div class="log-viewer-actions">
+						<button id="share-logs-btn" class="log-share-btn" style="display: none">
 							Share Log File
 						</button>
-						<button
-							id="close-logs-btn"
-							style="
-								padding: 6px 12px;
-								background: #6c757d;
-								color: white;
-								border: none;
-								border-radius: 4px;
-								cursor: pointer;
-							"
-						>
-							Close
-						</button>
+						<button id="close-logs-btn" class="log-close-btn">Close</button>
 					</div>
 				</div>
-				<pre
-					id="log-content"
-					style="
-						background: #1e1e1e;
-						color: #d4d4d4;
-						padding: 15px;
-						border-radius: 4px;
-						overflow-y: auto;
-						height: 500px;
-						font-family: 'Courier New', monospace;
-						font-size: 12px;
-						margin: 0;
-					"
-				></pre>
+				<pre id="log-content" class="log-content"></pre>
 			</div>
 		</div>
 	</div>

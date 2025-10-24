@@ -239,7 +239,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	try {
 		await Promise.all([
 			templateLoader.loadAndInject('onboarding', 'onboarding-view'),
-			templateLoader.loadAndInject('projects', 'projects-view'),
+			// projects template is now merged into run template (Pipelines tab)
 			templateLoader.loadAndInject('project-edit', 'project-edit-view'),
 			templateLoader.loadAndInject('run', 'run-view'),
 			// import-review is now inside the import modal, no longer a separate view

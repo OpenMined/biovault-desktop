@@ -1,58 +1,461 @@
-<!-- Tab navigation -->
 <div class="view-container">
 	<!-- Page Header -->
 	<header class="page-header">
 		<div class="page-header-left">
-			<h1 class="page-title">Execute Pipelines</h1>
+			<h1 class="page-title">Pipelines</h1>
+			<div class="page-stats">
+				<div class="stat-badge">
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+					</svg>
+					<span id="pipelines-count">0</span> <span>Pipelines</span>
+				</div>
+				<div class="stat-badge">
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+					</svg>
+					<span id="projects-count">0</span> <span>Projects</span>
+				</div>
+			</div>
+		</div>
+		<div class="page-header-right">
+			<div class="page-header-actions">
+				<button id="create-pipeline-btn" class="btn-primary-small">+ New Pipeline</button>
+				<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
+			</div>
 		</div>
 	</header>
 
 	<!-- Main Content -->
 	<div class="view-content">
-		<!-- Tab navigation -->
-		<div class="run-tabs">
-			<button class="run-tab active" data-tab="pipelines">Pipelines</button>
-			<button class="run-tab" data-tab="execute">Execute Project</button>
-		</div>
-
-		<!-- Pipelines Tab (now first and active) -->
-		<div id="pipelines-view" class="run-tab-content">
-			<div class="pipelines-container">
-				<div class="pipelines-header">
-					<h2>Pipelines</h2>
-					<button id="create-pipeline-btn" class="primary-btn">+ Create New Pipeline</button>
+		<div class="pipelines-and-projects-container">
+			<!-- Pipelines Section -->
+			<div class="section-card pipelines-section">
+				<div class="section-header">
+					<div class="section-title">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="5" cy="12" r="3" />
+							<circle cx="19" cy="12" r="3" />
+							<line x1="8" y1="12" x2="16" y2="12" />
+						</svg>
+						<h3>Pipelines</h3>
+						<span class="section-count" id="pipelines-count">0</span>
+					</div>
 				</div>
-				<div id="pipelines-list" class="pipelines-list">
-					<p style="color: #666">No pipelines created yet.</p>
+				<div class="section-description">Multi-step workflows that chain projects together</div>
+				<div class="pipelines-list" id="pipelines-list">
+					<p style="color: #666; padding: 20px; text-align: center">
+						No pipelines yet. Create one to get started.
+					</p>
+				</div>
+			</div>
+
+			<!-- Projects Section -->
+			<div class="section-card projects-section">
+				<div class="section-header">
+					<div class="section-title">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+							<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+						</svg>
+						<h3>Projects</h3>
+						<span class="section-count" id="projects-count">0</span>
+					</div>
+					<div style="display: flex; gap: 8px">
+						<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
+						<button id="import-folder-btn" class="btn-secondary-small" title="Import from Folder">
+							📁 Import
+						</button>
+					</div>
+				</div>
+				<div class="section-description">Reusable computational components used in pipelines</div>
+				<div style="margin-top: 15px; margin-bottom: 15px">
+					<details class="import-details">
+						<summary>Import Project from URL</summary>
+						<div style="display: flex; gap: 10px; margin-top: 10px">
+							<input
+								type="text"
+								id="project-url-input"
+								placeholder="Paste GitHub URL to project.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/apol1-sheet/project.yaml)"
+								style="flex: 1"
+							/>
+							<button id="import-project-btn">Import</button>
+						</div>
+					</details>
+				</div>
+				<div class="projects-list" id="projects-list">
+					<p style="color: #666; padding: 20px; text-align: center">No projects imported yet.</p>
 				</div>
 			</div>
 		</div>
 
-		<!-- Execute Project Tab (now second) -->
-		<div id="execute-view" class="run-tab-content" style="display: none">
-			<div class="run-container">
-				<div class="selection-panel">
-					<div
-						style="
-							display: flex;
-							justify-content: space-between;
-							align-items: center;
-							margin-bottom: 15px;
-						"
-					>
-						<h3 style="margin: 0">Select Participants</h3>
-						<label style="cursor: pointer; font-size: 14px">
-							<input type="checkbox" id="select-all-participants" style="margin-right: 5px" />
-							Select All
-						</label>
+		<!-- Create Project Modal -->
+		<div id="create-project-modal" class="project-create-overlay" style="display: none">
+			<div class="project-create-container">
+				<!-- Simple Header -->
+				<header class="create-header">
+					<h2>Create New Project</h2>
+					<button id="create-project-cancel-top" class="close-btn" type="button">✕</button>
+				</header>
+
+				<!-- Split Layout: Form + Preview -->
+				<div class="create-split-layout">
+					<!-- Left Panel: Tabbed Form -->
+					<aside class="create-sidebar">
+						<nav class="create-tabs">
+							<button class="create-tab active" data-tab="details">
+								<svg
+									class="tab-icon"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+									<polyline points="14 2 14 8 20 8" />
+								</svg>
+								<span class="tab-label">Details</span>
+							</button>
+							<button class="create-tab" data-tab="inputs">
+								<svg
+									class="tab-icon"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="7 10 12 15 17 10" />
+									<line x1="12" y1="15" x2="12" y2="3" />
+								</svg>
+								<span class="tab-label">Inputs</span>
+								<span class="tab-count" data-count="inputs">0</span>
+							</button>
+							<button class="create-tab" data-tab="parameters">
+								<svg
+									class="tab-icon"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<circle cx="12" cy="12" r="3" />
+									<path
+										d="M12 1v6m0 6v6m6.36-15.36-4.24 4.24m-4.24 4.24-4.24 4.24m15.36 0-4.24-4.24m-4.24-4.24-4.24-4.24"
+									/>
+								</svg>
+								<span class="tab-label">Parameters</span>
+								<span class="tab-count" data-count="parameters">0</span>
+							</button>
+							<button class="create-tab" data-tab="outputs">
+								<svg
+									class="tab-icon"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="17 8 12 3 7 8" />
+									<line x1="12" y1="3" x2="12" y2="15" />
+								</svg>
+								<span class="tab-label">Outputs</span>
+								<span class="tab-count" data-count="outputs">0</span>
+							</button>
+						</nav>
+					</aside>
+
+					<!-- Main Form Area -->
+					<main class="create-form-area">
+						<!-- Details Tab -->
+						<section class="create-tab-content active" data-content="details">
+							<div class="form-section">
+								<label class="form-field full-width">
+									<span class="field-label">Project Name <span class="required">*</span></span>
+									<input
+										type="text"
+										id="new-project-name"
+										placeholder="my-analysis"
+										autocapitalize="none"
+										autocorrect="off"
+										spellcheck="false"
+									/>
+									<span
+										id="project-name-error"
+										class="validation-error"
+										style="display: none"
+									></span>
+								</label>
+
+								<label class="form-field full-width">
+									<span class="field-label">Template</span>
+									<select id="new-project-template">
+										<option value="">Blank Project</option>
+									</select>
+									<span class="field-hint">Start from scratch or use a pre-built example</span>
+								</label>
+							</div>
+
+							<!-- Blank Project Options -->
+							<div id="blank-project-options" class="blank-project-stack">
+								<div class="option-group">
+									<h4 class="option-group-title">Workflow Engine</h4>
+									<p class="option-group-hint">Choose your workflow orchestration system</p>
+									<div class="option-cards-grid">
+										<div class="option-card active" data-value="nextflow" data-type="engine">
+											<img src="assets/icons/nextflow.svg" class="option-card-svg" alt="Nextflow" />
+											<div class="option-card-label">Nextflow</div>
+											<div class="option-card-desc">workflow.nf</div>
+										</div>
+										<div class="option-card disabled" data-value="snakemake" data-type="engine">
+											<img src="assets/icons/snake.svg" class="option-card-svg" alt="Snakemake" />
+											<div class="option-card-label">Snakemake</div>
+											<div class="option-card-badge">Soon</div>
+										</div>
+									</div>
+								</div>
+
+								<div class="option-group">
+									<h4 class="option-group-title">Scripting Language</h4>
+									<p class="option-group-hint">Choose how you'll process data in your workflow</p>
+									<div class="option-cards-grid">
+										<div class="option-card active" data-value="python" data-type="script">
+											<img src="assets/icons/python.svg" class="option-card-svg" alt="Python" />
+											<div class="option-card-label">Python</div>
+											<div class="option-card-desc">process.py</div>
+										</div>
+										<div class="option-card disabled" data-value="r" data-type="script">
+											<img src="assets/icons/r.svg" class="option-card-svg" alt="R" />
+											<div class="option-card-label">R</div>
+											<div class="option-card-badge">Soon</div>
+										</div>
+										<div class="option-card disabled" data-value="julia" data-type="script">
+											<img src="assets/icons/julia.svg" class="option-card-svg" alt="Julia" />
+											<div class="option-card-label">Julia</div>
+											<div class="option-card-badge">Soon</div>
+										</div>
+										<div class="option-card" data-value="none" data-type="script">
+											<svg
+												class="option-card-svg"
+												width="24"
+												height="24"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2"
+											>
+												<circle cx="12" cy="12" r="10" />
+												<line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+											</svg>
+											<div class="option-card-label">None</div>
+											<div class="option-card-desc">Workflow only</div>
+										</div>
+									</div>
+								</div>
+							</div>
+
+							<!-- Advanced Settings -->
+							<details class="advanced-section">
+								<summary>Advanced Settings</summary>
+								<div class="advanced-content">
+									<label class="form-field">
+										<span class="field-label">Destination Folder</span>
+										<input type="text" id="new-project-path" readonly />
+										<div class="field-actions">
+											<button id="project-path-browse-btn" class="secondary-btn" type="button">
+												Browse…
+											</button>
+											<button id="project-path-reset-btn" class="secondary-btn" type="button">
+												Use Default
+											</button>
+										</div>
+										<span class="field-hint">
+											Defaults to BioVault projects folder. Choose custom location if needed.
+										</span>
+									</label>
+
+									<label class="form-field">
+										<span class="field-label">Contract Version</span>
+										<input
+											type="text"
+											id="new-project-version"
+											placeholder="1.0.0"
+											value="1.0.0"
+											autocapitalize="none"
+											autocorrect="off"
+											spellcheck="false"
+										/>
+									</label>
+								</div>
+							</details>
+						</section>
+
+						<!-- Inputs Tab -->
+						<section class="create-tab-content" data-content="inputs">
+							<div class="form-section">
+								<h3>Inputs</h3>
+								<p class="section-hint">
+									Define data files and directories your project will analyze
+								</p>
+							</div>
+							<div id="create-project-inputs"></div>
+						</section>
+
+						<!-- Parameters Tab -->
+						<section class="create-tab-content" data-content="parameters">
+							<div class="form-section">
+								<h3>Parameters</h3>
+								<p class="section-hint">Configuration options like thresholds and toggles</p>
+							</div>
+							<div id="create-project-parameters"></div>
+						</section>
+
+						<!-- Outputs Tab -->
+						<section class="create-tab-content" data-content="outputs">
+							<div class="form-section">
+								<h3>Outputs</h3>
+								<p class="section-hint">Files and directories this project will create</p>
+							</div>
+							<div id="create-project-outputs"></div>
+						</section>
+					</main>
+
+					<!-- Right Panel: Live Preview -->
+					<aside class="create-preview-panel">
+						<div class="preview-header">
+							<h3>Live Preview</h3>
+							<div class="preview-tabs">
+								<button class="preview-tab active" data-preview-tab="yaml">project.yaml</button>
+								<button class="preview-tab" data-preview-tab="workflow">workflow.nf</button>
+							</div>
+						</div>
+
+						<!-- Info Banner -->
+						<div class="preview-info-banner">
+							<svg class="info-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+								<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
+								<path
+									d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"
+								/>
+							</svg>
+							<div class="info-content">
+								<strong>Starter Template</strong>
+								<p>
+									The workflow.nf is a minimal starter. After creation, open the project editor to
+									add your custom processing logic.
+								</p>
+							</div>
+						</div>
+
+						<div class="preview-content">
+							<div class="preview-tab-content active" data-preview-content="yaml">
+								<pre class="code-block language-yaml" id="create-project-preview-yaml">
+Preview will appear as you fill in details...</pre
+								>
+							</div>
+							<div class="preview-tab-content" data-preview-content="workflow">
+								<pre class="code-block language-groovy" id="create-project-preview-template">
+Preview will appear as you fill in details...</pre
+								>
+							</div>
+						</div>
+					</aside>
+				</div>
+
+				<!-- Footer with Navigation -->
+				<footer class="create-footer">
+					<div class="footer-left">
+						<button id="create-project-cancel" class="link-button" type="button">Cancel</button>
 					</div>
-					<div class="selection-list" id="run-participants-list"></div>
+					<div class="footer-right">
+						<button id="create-project-back" class="secondary-btn" type="button">← Back</button>
+						<button id="create-project-next" class="primary-btn" type="button">
+							Next: Inputs →
+						</button>
+						<button
+							id="create-project-confirm"
+							class="primary-btn"
+							type="button"
+							style="display: none"
+						>
+							Create Project
+						</button>
+					</div>
+				</footer>
+			</div>
+		</div>
+
+		<!-- Spec Item Modal (for adding/editing inputs/parameters/outputs) -->
+		<div id="spec-item-modal" class="spec-item-modal-overlay" style="display: none">
+			<div class="spec-item-modal">
+				<div class="spec-item-modal-header">
+					<h3 id="spec-item-modal-title">Add Input</h3>
+					<button type="button" class="spec-item-modal-close" id="spec-item-modal-close">×</button>
 				</div>
-				<div class="selection-panel">
-					<h3>Select Project</h3>
-					<div class="selection-list" id="run-projects-list"></div>
-					<button class="run-btn" id="run-btn" disabled>Run Analysis</button>
+				<div class="spec-item-modal-body" id="spec-item-modal-body">
+					<!-- Content injected by JS -->
 				</div>
+				<div class="spec-item-modal-footer">
+					<button type="button" class="secondary-btn" id="spec-item-modal-cancel">Cancel</button>
+					<button type="button" class="primary-btn" id="spec-item-modal-submit">Add</button>
+				</div>
+			</div>
+		</div>
+
+		<div
+			id="operation-modal"
+			style="
+				display: none;
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				background: rgba(0, 0, 0, 0.55);
+				z-index: 12000;
+				align-items: center;
+				justify-content: center;
+			"
+		>
+			<div class="operation-modal-content">
+				<div class="spinner" style="width: 32px; height: 32px; margin-bottom: 16px"></div>
+				<p id="operation-modal-text" class="operation-modal-text">Working...</p>
 			</div>
 		</div>
 	</div>

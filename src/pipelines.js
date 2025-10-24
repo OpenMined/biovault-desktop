@@ -46,47 +46,57 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 			const pipelines = await invoke('get_pipelines')
 			const container = document.getElementById('pipelines-list')
 
+			if (!container) {
+				console.error('pipelines-list container not found')
+				return
+			}
+
 			if (!pipelines || pipelines.length === 0) {
-				container.innerHTML = '<p style="color: #666;">No pipelines created yet.</p>'
+				container.innerHTML =
+					'<p style="color: #666; padding: 20px; text-align: center">No pipelines yet. Create one to get started.</p>'
 				return
 			}
 
 			container.innerHTML = ''
 
 			pipelines.forEach((pipeline) => {
-				const card = document.createElement('div')
-				card.className = 'pipeline-card'
-
-				// Count steps if spec is available
 				const stepCount = pipeline.spec?.steps?.length || 0
 
+				const card = document.createElement('div')
+				card.className = 'project-item'
+				card.style.cursor = 'pointer'
+
+				const description =
+					pipeline.spec?.description ||
+					`Pipeline with ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
+
 				card.innerHTML = `
-					<div class="pipeline-info">
-						<h3>
-							${pipeline.name}
-							<span class="pipeline-steps-count">${stepCount} steps</span>
-						</h3>
-						<p><strong>Path:</strong> ${pipeline.pipeline_path}</p>
-						<p><strong>Created:</strong> ${pipeline.created_at}</p>
-						<p><strong>Updated:</strong> ${pipeline.updated_at}</p>
+					<div style="flex: 1;">
+						<div class="project-header">
+							<strong>${pipeline.name}</strong>
+						</div>
+						<div class="project-meta">
+							${description}
+						</div>
 					</div>
-					<div class="pipeline-actions">
-						<button class="secondary-btn" onclick="pipelineModule.editPipeline(${pipeline.id})">
-							Edit
-						</button>
-						<button class="primary-btn" onclick="pipelineModule.runPipeline(${pipeline.id})">
-							Run
-						</button>
-						<button class="open-folder-btn" onclick="pipelineModule.openPipelineFolder('${pipeline.pipeline_path}')">
-							Open Folder
-						</button>
-						<button class="delete-btn" onclick="pipelineModule.deletePipeline(${pipeline.id})">
-							Delete
-						</button>
+					<div class="project-actions" style="display: flex; gap: 8px;">
+						<button class="secondary-btn" onclick="event.stopPropagation(); pipelineModule.runPipeline(${pipeline.id})" title="Run Pipeline">▶ Run</button>
+						<button class="secondary-btn" onclick="event.stopPropagation(); pipelineModule.deletePipeline(${pipeline.id})" title="Delete">Delete</button>
 					</div>
 				`
 
+				card.addEventListener('click', () => {
+					// Open folder on click
+					pipelineModule.openPipelineFolder(pipeline.pipeline_path)
+				})
+
 				container.appendChild(card)
+			})
+
+			// Update pipeline count badges
+			const pipelineCountBadges = document.querySelectorAll('#pipelines-count')
+			pipelineCountBadges.forEach((badge) => {
+				badge.textContent = pipelines.length
 			})
 
 			pipelineState.pipelines = pipelines
@@ -95,79 +105,108 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		}
 	}
 
-	// Create pipeline wizard
+	// Create pipeline wizard - SIMPLIFIED
 	async function showCreatePipelineWizard() {
-		// Create modal HTML
 		const modalHtml = `
-			<div id="pipeline-wizard-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 800px; max-height: 80vh;">
+			<div id="simple-pipeline-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 400px;">
 					<div class="modal-header">
-						<h2>Create New Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closeWizard()">×</button>
+						<h2>New Pipeline</h2>
+						<button class="modal-close" onclick="pipelineModule.closeSimplePipelineModal()">×</button>
 					</div>
-					<div class="modal-body" style="overflow-y: auto;">
-						<!-- Step 1: Basic Info -->
-						<div class="wizard-step" id="step-0">
-							<h3>Pipeline Details</h3>
-							<label>
-								Pipeline Name *
-								<input type="text" id="pipeline-name" placeholder="my-analysis-pipeline" autocapitalize="off" autocomplete="off" autocorrect="off">
-							</label>
-						</div>
-
-						<!-- Step 2: Steps (moved before inputs) -->
-						<div class="wizard-step" id="step-1" style="display:none;">
-							<h3>Pipeline Steps</h3>
-							<p>Add projects to your pipeline. You'll define the pipeline inputs based on what these steps need.</p>
-							<div id="pipeline-steps-list"></div>
-							<button class="secondary-btn" onclick="pipelineModule.addPipelineStep()">
-								+ Add Step
-							</button>
-						</div>
-
-						<!-- Step 3: Inputs (moved after steps) -->
-						<div class="wizard-step" id="step-2" style="display:none;">
-							<h3>Pipeline Inputs (Optional)</h3>
-							<p>Define pipeline inputs now, or specify them later when running the pipeline.</p>
-							<p style="font-size: 12px; color: #666;">You can skip this step and provide inputs at runtime.</p>
-							<div id="pipeline-inputs-list"></div>
-							<button class="secondary-btn" onclick="pipelineModule.addPipelineInput()">
-								+ Add Input
-							</button>
-						</div>
-
-						<!-- Step 4: Review -->
-						<div class="wizard-step" id="step-3" style="display:none;">
-							<h3>Review Pipeline</h3>
-							<pre id="pipeline-preview" style="background: #f5f5f5; padding: 15px; border-radius: 4px;"></pre>
-						</div>
+					<div class="modal-body">
+						<label style="display: block; margin-bottom: 8px; font-weight: 600;">
+							Pipeline Name *
+						</label>
+						<input 
+							type="text" 
+							id="simple-pipeline-name" 
+							placeholder="my-analysis-pipeline"
+							autocapitalize="off"
+							autocomplete="off"
+							autocorrect="off"
+							style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+						>
+						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							A blank pipeline template will be created with this name.
+						</p>
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" id="wizard-back" onclick="pipelineModule.wizardBack()" disabled>
-							Back
-						</button>
-						<button class="primary-btn" id="wizard-next" onclick="pipelineModule.wizardNext()">
-							Next
-						</button>
-						<button class="primary-btn" id="wizard-create" onclick="pipelineModule.createPipeline()" style="display:none;">
-							Create Pipeline
-						</button>
+						<button class="secondary-btn" onclick="pipelineModule.closeSimplePipelineModal()">Cancel</button>
+						<button class="btn-primary" onclick="pipelineModule.createSimplePipeline()">Create Pipeline</button>
 					</div>
 				</div>
 			</div>
 		`
 
-		// Add modal to page
-		const modalContainer = document.createElement('div')
-		modalContainer.innerHTML = modalHtml
-		document.body.appendChild(modalContainer)
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
 
-		// Reset wizard state
-		pipelineState.wizardStep = 0
-		pipelineState.wizardData = {
-			name: '',
-			inputs: {},
-			steps: [],
+		// Focus on input
+		setTimeout(() => {
+			const input = document.getElementById('simple-pipeline-name')
+			if (input) {
+				input.focus()
+				input.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						pipelineModule.createSimplePipeline()
+					}
+				})
+			}
+		}, 100)
+	}
+
+	// Close simple pipeline modal
+	function closeSimplePipelineModal() {
+		const modal = document.getElementById('simple-pipeline-modal')
+		if (modal) modal.remove()
+	}
+
+	// Create simple pipeline with just a name
+	async function createSimplePipeline() {
+		const nameInput = document.getElementById('simple-pipeline-name')
+		if (!nameInput) return
+
+		const name = nameInput.value.trim()
+		if (!name) {
+			alert('Please enter a pipeline name')
+			return
+		}
+
+		try {
+			// Create pipeline spec matching CLI PipelineSpec structure exactly
+			// Corresponds to: pub struct PipelineSpec { pub name: String, context: Option, inputs: BTreeMap, steps: Vec }
+			const spec = {
+				name: name,
+				// context is optional, omit for blank pipeline
+				// inputs defaults to empty BTreeMap in CLI
+				inputs: {},
+				// steps defaults to empty Vec in CLI
+				steps: [],
+			}
+
+			// Invoke the create pipeline command - must match CLI behavior
+			const result = await invoke('create_pipeline', {
+				request: {
+					name: name,
+					directory: null,
+				},
+			})
+
+			// Save the pipeline spec
+			await invoke('save_pipeline_editor', {
+				pipelineId: result.id,
+				pipelinePath: result.pipeline_path,
+				spec: spec,
+			})
+
+			if (result) {
+				closeSimplePipelineModal()
+				// Reload pipelines to show the new one
+				await loadPipelines()
+			}
+		} catch (error) {
+			console.error('Error creating pipeline:', error)
+			alert('Failed to create pipeline: ' + error.message)
 		}
 	}
 
@@ -303,7 +342,12 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 								<span style="display: block; margin-bottom: 5px;">Select Project *</span>
 								<select id="project-select" style="width: 100%; margin-bottom: 10px;">
 									<option value="">-- Select from registered projects --</option>
-									${projects.map((p) => `<option value="${p.project_path}">${p.name} (${p.project_path})</option>`).join('')}
+									${projects
+										.map(
+											(p) =>
+												`<option value="${p.project_path}">${p.name} (${p.project_path})</option>`,
+										)
+										.join('')}
 									<option value="browse">-- Browse for project folder/yaml --</option>
 								</select>
 							</label>
@@ -748,8 +792,8 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 			}
 
 			await invoke('save_pipeline_editor', {
-				pipeline_id: result.id,
-				pipeline_path: result.pipeline_path,
+				pipelineId: result.id,
+				pipelinePath: result.pipeline_path,
 				spec: spec,
 			})
 
@@ -777,7 +821,7 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 
 			// Load pipeline to get inputs
 			const editorData = await invoke('load_pipeline_editor', {
-				pipeline_id: pipelineId,
+				pipelineId: pipelineId,
 			})
 
 			// Collect all required inputs from the pipeline
@@ -817,9 +861,9 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 
 			// Run the pipeline
 			const run = await invoke('run_pipeline', {
-				pipeline_id: pipelineId,
-				input_overrides: inputs,
-				results_dir: null,
+				pipelineId: pipelineId,
+				inputOverrides: inputs,
+				resultsDir: null,
 			})
 
 			alert(`Pipeline started! Run ID: ${run.id}`)
@@ -961,7 +1005,7 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		}
 
 		try {
-			await invoke('delete_pipeline', { pipeline_id: pipelineId })
+			await invoke('delete_pipeline', { pipelineId: pipelineId })
 			await loadPipelines()
 		} catch (error) {
 			alert('Error deleting pipeline: ' + error)
@@ -986,11 +1030,80 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		}
 	}
 
-	// Initialize module
-	function initialize() {
-		initTabNavigation()
+	// Show pipeline details view
+	function showPipelineDetails(pipelineId) {
+		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+		if (!pipeline) return
 
-		// Load pipelines immediately since we're the default tab now
+		const gridView = document.getElementById('pipelines-grid-view')
+		const detailsView = document.getElementById('pipeline-details-view')
+		const stepsListContainer = document.getElementById('pipeline-steps-list')
+
+		if (!gridView || !detailsView || !stepsListContainer) return
+
+		// Update details header
+		document.getElementById('pipeline-title').textContent = pipeline.name
+		document.getElementById('pipeline-description').textContent =
+			pipeline.spec?.description || `Pipeline with ${pipeline.spec?.steps?.length || 0} steps`
+
+		// Render steps
+		stepsListContainer.innerHTML = ''
+		const steps = pipeline.spec?.steps || []
+
+		if (steps.length === 0) {
+			stepsListContainer.innerHTML =
+				'<p style="color: #9ca3af; text-align: center; padding: 32px;">No steps in this pipeline</p>'
+		} else {
+			steps.forEach((step, index) => {
+				const stepEl = document.createElement('div')
+				stepEl.className = 'step-item'
+				stepEl.innerHTML = `
+					<div class="step-info">
+						<h4>Step ${index + 1}: ${step.project_path?.split('/').pop() || 'Step'}</h4>
+						<p>${step.project_path}</p>
+					</div>
+					<div class="step-actions">
+						<button class="pipeline-card-icon-btn" title="Edit">✎</button>
+						<button class="pipeline-card-icon-btn" title="Remove">×</button>
+					</div>
+				`
+				stepsListContainer.appendChild(stepEl)
+			})
+		}
+
+		// Show details view, hide grid
+		gridView.style.display = 'none'
+		detailsView.style.display = 'flex'
+	}
+
+	// Show pipeline menu (for ... button)
+	function showPipelineMenu(pipelineId, event) {
+		// TODO: Implement context menu for edit, delete, open folder options
+		console.log('Menu for pipeline:', pipelineId)
+	}
+
+	// Back to pipelines grid
+	function backToPipelinesGrid() {
+		const gridView = document.getElementById('pipelines-grid-view')
+		const detailsView = document.getElementById('pipeline-details-view')
+
+		if (gridView && detailsView) {
+			gridView.style.display = 'flex'
+			detailsView.style.display = 'none'
+		}
+	}
+
+	// Attach back button handler
+	function attachBackButton() {
+		const backBtn = document.getElementById('back-to-pipelines-btn')
+		if (backBtn) {
+			backBtn.addEventListener('click', backToPipelinesGrid)
+		}
+	}
+
+	// Initialization function
+	function initialize() {
+		// Load pipelines immediately
 		loadPipelines()
 
 		// Attach event handlers
@@ -998,6 +1111,15 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		if (createBtn) {
 			createBtn.addEventListener('click', showCreatePipelineWizard)
 		}
+
+		// Also attach to any other create pipeline buttons with different IDs
+		const runCreateBtn = document.getElementById('run-create-pipeline-btn')
+		if (runCreateBtn) {
+			runCreateBtn.addEventListener('click', showCreatePipelineWizard)
+		}
+
+		// Attach back button handler
+		attachBackButton()
 
 		// Make functions available globally for onclick handlers
 		window.pipelineModule = {
@@ -1020,6 +1142,12 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 			browseForProject,
 			closeAddStepModal,
 			confirmAddStep,
+			showPipelineDetails,
+			showPipelineMenu,
+			backToPipelinesGrid,
+			showCreatePipelineWizard,
+			closeSimplePipelineModal,
+			createSimplePipeline,
 		}
 	}
 
