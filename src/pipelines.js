@@ -1303,27 +1303,23 @@ export function createPipelinesModule({
 
 			console.log('💾 Saved pipeline')
 
-			// Reload the full pipeline spec (get_pipelines doesn't include spec!)
-			const reloadedPipeline = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-			})
-			console.log('🔄 Reloaded pipeline with spec:', reloadedPipeline.spec.steps.length, 'steps')
-
-			// Update the pipelines list cache
+			// Reload pipelines list (now includes spec from YAML files)
 			await loadPipelines()
+			console.log('🔄 Reloaded pipelines list')
 
-			// Find the pipeline in the cache and update it with the full spec
+			// Update current pipeline reference with fresh data
 			const updatedPipeline = pipelineState.pipelines.find(
 				(p) => p.id === pipelineState.currentPipeline.id,
 			)
 			if (updatedPipeline) {
-				// Merge the spec from load_pipeline_editor into the cached pipeline
-				updatedPipeline.spec = reloadedPipeline.spec
 				pipelineState.currentPipeline = updatedPipeline
-				console.log('✅ Updated current pipeline, steps count:', updatedPipeline.spec.steps.length)
+				console.log(
+					'✅ Updated current pipeline, steps count:',
+					updatedPipeline.spec?.steps?.length || 0,
+				)
 			}
 
-			// Now reload the steps with the fresh data
+			// Reload the steps display
 			await loadPipelineSteps(pipelineState.currentPipeline.id)
 			console.log('🎉 Refreshed step display')
 

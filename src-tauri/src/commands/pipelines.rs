@@ -13,6 +13,7 @@ pub struct Pipeline {
     pub pipeline_path: String,
     pub created_at: String,
     pub updated_at: String,
+    pub spec: Option<PipelineSpec>, // Include the parsed pipeline spec
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,13 +103,26 @@ pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipe
                 pipeline_path: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
+                spec: None, // Will be populated below
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    Ok(pipelines)
+    // Load spec from pipeline.yaml for each pipeline
+    let mut pipelines_with_spec = Vec::new();
+    for mut pipeline in pipelines {
+        let yaml_path = PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
+        if yaml_path.exists() {
+            if let Ok(content) = fs::read_to_string(&yaml_path) {
+                pipeline.spec = serde_yaml::from_str::<PipelineSpec>(&content).ok();
+            }
+        }
+        pipelines_with_spec.push(pipeline);
+    }
+
+    Ok(pipelines_with_spec)
 }
 
 #[tauri::command]
@@ -177,6 +191,7 @@ steps:
         pipeline_path: pipeline_dir.to_string_lossy().to_string(),
         created_at: chrono::Local::now().to_rfc3339(),
         updated_at: chrono::Local::now().to_rfc3339(),
+        spec: None, // Spec will be loaded when needed
     })
 }
 
@@ -281,6 +296,7 @@ pub async fn save_pipeline_editor(
                     pipeline_path: row.get(2)?,
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
+                    spec: None, // Spec will be loaded from YAML when needed
                 })
             },
         )
@@ -297,10 +313,11 @@ pub async fn save_pipeline_editor(
 
         Ok(Pipeline {
             id,
-            name: spec.name,
-            pipeline_path,
+            name: spec.name.clone(),
+            pipeline_path: pipeline_path.clone(),
             created_at: chrono::Local::now().to_rfc3339(),
             updated_at: chrono::Local::now().to_rfc3339(),
+            spec: Some(spec), // Return the spec that was just saved
         })
     }
 }
