@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
@@ -36,22 +36,6 @@
 					</div>
 				</div>
 				<nav class="sidebar-nav">
-					<button class="nav-item active" data-tab="home" title="Home">
-						<svg
-							width="20"
-							height="20"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-							<polyline points="9 22 9 12 15 12 15 22" />
-						</svg>
-						<span class="nav-label">Home</span>
-					</button>
 					<button class="nav-item" data-tab="data" title="Data">
 						<svg
 							width="20"
@@ -70,7 +54,7 @@
 						</svg>
 						<span class="nav-label">Data</span>
 					</button>
-					<button class="nav-item" data-tab="projects" title="Pipelines">
+					<button class="nav-item active" data-tab="projects" title="Pipelines">
 						<svg
 							width="20"
 							height="20"
@@ -167,8 +151,7 @@
 			<div class="app-main">
 				<!-- Content Views -->
 				<div class="app-content">
-					<div id="home-view" class="tab-content active"></div>
-					<div id="projects-view" class="tab-content"></div>
+					<div id="projects-view" class="tab-content active"></div>
 					<div id="project-edit-view" class="tab-content"></div>
 					<div id="run-view" class="tab-content"></div>
 					<div id="import-results-view" class="tab-content"></div>

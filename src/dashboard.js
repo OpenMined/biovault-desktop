@@ -18,7 +18,7 @@ export function createDashboardShell({
 	stopMessagesAutoRefresh,
 	getWorkbench,
 }) {
-	let activeView = 'home'
+	let activeView = 'projects'
 	let lastImportView = 'import'
 	const importSubViews = ['import', 'import-review', 'import-results']
 	const workbenchViews = ['sql', 'logs'] // These open in workbench, not as full tabs
@@ -115,13 +115,6 @@ export function createDashboardShell({
 
 	function registerNavigationHandlers() {
 		const doc = documentRef || document
-
-		// Home button clicks
-		doc.querySelectorAll('.home-btn').forEach((btn) => {
-			btn.addEventListener('click', () => {
-				navigateTo(btn.dataset.nav)
-			})
-		})
 
 		// Sidebar navigation items (includes both main nav and footer items)
 		doc.querySelectorAll('.nav-item').forEach((item) => {

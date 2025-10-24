@@ -165,7 +165,7 @@ export function setupEventHandlers({
 
 	// Done button
 	document.getElementById('done-btn').addEventListener('click', () => {
-		navigateTo('home')
+		navigateTo('data')
 	})
 
 	updateComposeVisibilityPublic(false)

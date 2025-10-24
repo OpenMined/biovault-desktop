@@ -168,9 +168,8 @@ test.describe('Onboarding flow', () => {
 			page.locator('#skip-syftbox-btn').click(),
 		])
 
-		await expect(page.locator('#home-view')).toBeVisible()
+		await expect(page.locator('#projects-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
-		await expect(page.getByRole('heading', { name: 'BioVault' })).toBeVisible()
 		const sessionFlag = await page.evaluate(
 			(key) => window.sessionStorage.getItem(key),
 			STORAGE_KEY,
@@ -216,7 +215,7 @@ test.describe('Onboarding flow', () => {
 			page.locator('#verify-code-btn').click(),
 		])
 
-		await expect(page.locator('#home-view')).toBeVisible()
+		await expect(page.locator('#projects-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
 		const sessionFlag = await page.evaluate(
 			(key) => window.sessionStorage.getItem(key),

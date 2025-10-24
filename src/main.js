@@ -126,7 +126,7 @@ const {
 } = projectsModule
 
 // Create messages module early with placeholder getActiveView
-let messagesGetActiveView = () => 'home'
+let messagesGetActiveView = () => 'projects'
 const messagesModule = createMessagesModule({
 	invoke,
 	getCurrentUserEmail,
@@ -239,7 +239,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 	try {
 		await Promise.all([
 			templateLoader.loadAndInject('onboarding', 'onboarding-view'),
-			templateLoader.loadAndInject('home', 'home-view'),
 			templateLoader.loadAndInject('projects', 'projects-view'),
 			templateLoader.loadAndInject('project-edit', 'project-edit-view'),
 			templateLoader.loadAndInject('run', 'run-view'),
