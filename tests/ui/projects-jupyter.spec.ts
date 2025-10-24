@@ -266,16 +266,14 @@ test.describe('Projects editor with Jupyter integration', () => {
 			await expect(page.locator('#projects-list')).toContainText('No projects imported yet.')
 		}
 
-		await page.locator('#create-project-btn').click()
+		await page.click('button:has-text("Create New Project")')
 		await expect(page.locator('#create-project-modal')).toBeVisible()
 		await page.fill('#new-project-name', projectName)
 
-		// Navigate through wizard steps to reach the final "Create Project" button
-		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Inputs
-		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Parameters
-		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Outputs
-		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Preview
-		await page.locator('#create-project-modal footer button:has-text("Next")').click() // Review & Create
+		// Navigate through tabs to reach the final "Create Project" button
+		await page.locator('#create-project-next').click() // To Inputs
+		await page.locator('#create-project-next').click() // To Parameters
+		await page.locator('#create-project-next').click() // To Outputs
 
 		await page.locator('#create-project-confirm').click()
 
