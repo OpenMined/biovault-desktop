@@ -15,7 +15,14 @@ let editorPreviewRequestId = 0
 let wizardPreviewScheduled = false
 let editorPreviewScheduled = false
 
-export function createProjectsModule({ invoke, dialog, open, shellApi, navigateTo }) {
+export function createProjectsModule({
+	invoke,
+	dialog,
+	open,
+	shellApi,
+	navigateTo,
+	addProjectAsPipelineStep = null,
+}) {
 	const projectEditorState = {
 		projectId: null,
 		projectPath: '',
@@ -760,20 +767,19 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	async function loadProjects() {
 		try {
 			const projects = await invoke('get_projects')
-			const projectsContainer = document.getElementById('projects-list')
+			const projectsContainer = document.getElementById('steps-list')
 
 			// Update counts
-			const projectsCount = document.getElementById('projects-count')
-			const pipelinesCount = document.getElementById('pipelines-count')
+			const stepsCountBadges = document.querySelectorAll('#steps-count, #steps-count-label')
+			stepsCountBadges.forEach((badge) => {
+				badge.textContent = projects?.length || 0
+			})
 
-			if (projectsCount) projectsCount.textContent = projects?.length || 0
-			if (pipelinesCount) pipelinesCount.textContent = 0 // TODO: Load actual pipelines
-
-			// Render projects
+			// Render steps (formerly projects)
 			if (!projects || projects.length === 0) {
 				if (projectsContainer) {
 					projectsContainer.innerHTML =
-						'<p style="color: #666; padding: 20px; text-align: center;">No projects imported yet.</p>'
+						'<p style="color: #666; padding: 20px; text-align: center;">No steps yet. Create or import one to get started.</p>'
 				}
 			} else {
 				if (projectsContainer) {
@@ -1285,7 +1291,24 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 			}
 			hideCreateProjectModal()
 			await loadProjects()
-			await openProjectEditor({ projectId: project.id })
+
+			// Check if we're adding this project as a step to a pipeline
+			if (window._addingStepToPipeline && addProjectAsPipelineStep) {
+				try {
+					await addProjectAsPipelineStep(project.project_path, projectName.trim())
+					// Clear the flag
+					delete window._addingStepToPipeline
+					// Don't open project editor, just reload pipelines
+					console.log('Project added as step to pipeline')
+				} catch (error) {
+					console.error('Failed to add project as pipeline step:', error)
+					// Still open the editor as fallback
+					await openProjectEditor({ projectId: project.id })
+				}
+			} else {
+				// Normal flow: open the project editor
+				await openProjectEditor({ projectId: project.id })
+			}
 		} catch (error) {
 			const errorStr = String(error)
 			console.error('Create project error:', errorStr)

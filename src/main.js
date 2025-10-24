@@ -84,26 +84,38 @@ const {
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
-// Create pipelines module
-const pipelinesModule = createPipelinesModule({
-	invoke,
-	dialog,
-	open,
-	navigateTo: (...args) => projectsNavigateTo(...args),
-})
-
 // Create workbench (will be initialized after templates load)
 let workbench = null
 
 // Create projects module early with placeholder navigateTo
 let projectsNavigateTo = () => console.warn('navigateTo not yet initialized')
+let pipelineModule_addProjectAsStep = null // Will be set after pipelines module is created
+
 const projectsModule = createProjectsModule({
 	invoke,
 	dialog,
 	open,
 	shellApi,
+	addProjectAsPipelineStep: (projectPath, projectName) => {
+		// Delegate to pipelines module
+		if (pipelineModule_addProjectAsStep) {
+			return pipelineModule_addProjectAsStep(projectPath, projectName)
+		}
+	},
 	navigateTo: (...args) => projectsNavigateTo(...args),
 })
+
+// Create pipelines module AFTER projects module so we can access showCreateProjectModal
+const pipelinesModule = createPipelinesModule({
+	invoke,
+	dialog,
+	open,
+	navigateTo: (...args) => projectsNavigateTo(...args),
+	showCreateProjectModal: projectsModule.showCreateProjectModal,
+})
+
+// Wire up the callback so projects can add steps to pipelines
+pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
 const {
 	loadProjects,
 	importProject,

@@ -473,13 +473,14 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Projects - Create project modal
+	// Projects - Create project modal (also used for "Create Step")
 	const createProjectBtn = document.getElementById('create-project-btn')
 	if (createProjectBtn) {
 		createProjectBtn.addEventListener('click', () => {
 			showCreateProjectModal()
 		})
 	}
+
 	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
 	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
 
@@ -539,6 +540,20 @@ export function setupEventHandlers({
 		importFolderBtn.addEventListener('click', () => {
 			console.log('Import from folder button clicked')
 			importProjectFromFolder()
+		})
+	}
+
+	// Wire up import step button to import project
+	const importStepBtn = document.getElementById('import-step-btn')
+	if (importStepBtn) {
+		importStepBtn.addEventListener('click', () => {
+			// Copy value from step input to project input
+			const stepUrlInput = document.getElementById('step-url-input')
+			const projectUrlInput = document.getElementById('project-url-input')
+			if (stepUrlInput && projectUrlInput) {
+				projectUrlInput.value = stepUrlInput.value
+				importProject()
+			}
 		})
 	}
 

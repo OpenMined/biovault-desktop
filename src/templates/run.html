@@ -1,55 +1,15 @@
 <div class="view-container">
-	<!-- Page Header -->
-	<header class="page-header">
-		<div class="page-header-left">
-			<h1 class="page-title">Pipelines</h1>
-			<div class="page-stats">
-				<div class="stat-badge">
-					<svg
-						width="16"
-						height="16"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-					</svg>
-					<span id="pipelines-count">0</span> <span>Pipelines</span>
-				</div>
-				<div class="stat-badge">
-					<svg
-						width="16"
-						height="16"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-					</svg>
-					<span id="projects-count">0</span> <span>Projects</span>
-				</div>
-			</div>
-		</div>
-		<div class="page-header-right">
-			<div class="page-header-actions">
-				<button id="create-pipeline-btn" class="btn-primary-small">+ New Pipeline</button>
-				<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
-			</div>
-		</div>
-	</header>
-
-	<!-- Main Content -->
-	<div class="view-content">
-		<div class="pipelines-and-projects-container">
-			<!-- Pipelines Section -->
-			<div class="section-card pipelines-section">
-				<div class="section-header">
-					<div class="section-title">
+	<!-- Pipelines List View (default) -->
+	<div id="pipelines-main-view">
+		<!-- Page Header -->
+		<header class="page-header">
+			<div class="page-header-left">
+				<h1 class="page-title">Pipelines</h1>
+				<div class="page-stats">
+					<div class="stat-badge">
 						<svg
-							width="20"
-							height="20"
+							width="16"
+							height="16"
 							viewBox="0 0 24 24"
 							fill="none"
 							stroke="currentColor"
@@ -59,63 +19,74 @@
 							<circle cx="19" cy="12" r="3" />
 							<line x1="8" y1="12" x2="16" y2="12" />
 						</svg>
-						<h3>Pipelines</h3>
-						<span class="section-count" id="pipelines-count">0</span>
+						<span id="pipelines-count">0</span> <span>Pipelines</span>
 					</div>
-				</div>
-				<div class="section-description">Multi-step workflows that chain projects together</div>
-				<div class="pipelines-list" id="pipelines-list">
-					<p style="color: #666; padding: 20px; text-align: center">
-						No pipelines yet. Create one to get started.
-					</p>
 				</div>
 			</div>
+			<div class="page-header-right">
+				<div class="page-header-actions">
+					<button id="create-pipeline-btn" class="btn-primary">+ New Pipeline</button>
+				</div>
+			</div>
+		</header>
 
-			<!-- Projects Section -->
-			<div class="section-card projects-section">
-				<div class="section-header">
-					<div class="section-title">
-						<svg
-							width="20"
-							height="20"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-							<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-						</svg>
-						<h3>Projects</h3>
-						<span class="section-count" id="projects-count">0</span>
-					</div>
-					<div style="display: flex; gap: 8px">
-						<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
-						<button id="import-folder-btn" class="btn-secondary-small" title="Import from Folder">
-							📁 Import
-						</button>
-					</div>
+		<!-- Main Content -->
+		<div class="view-content">
+			<div class="pipelines-grid-container">
+				<!-- Pipelines Grid -->
+				<div class="pipelines-grid" id="pipelines-grid">
+					<!-- Pipeline cards will be rendered here -->
 				</div>
-				<div class="section-description">Reusable computational components used in pipelines</div>
-				<div style="margin-top: 15px; margin-bottom: 15px">
-					<details class="import-details">
-						<summary>Import Project from URL</summary>
-						<div style="display: flex; gap: 10px; margin-top: 10px">
-							<input
-								type="text"
-								id="project-url-input"
-								placeholder="Paste GitHub URL to project.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/apol1-sheet/project.yaml)"
-								style="flex: 1"
-							/>
-							<button id="import-project-btn">Import</button>
-						</div>
-					</details>
-				</div>
-				<div class="projects-list" id="projects-list">
-					<p style="color: #666; padding: 20px; text-align: center">No projects imported yet.</p>
+				<!-- Empty State -->
+				<div id="pipelines-empty-state" class="pipelines-empty-state" style="display: none">
+					<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+						<circle cx="5" cy="12" r="3" />
+						<circle cx="19" cy="12" r="3" />
+						<line x1="8" y1="12" x2="16" y2="12" />
+					</svg>
+					<h3>No pipelines yet</h3>
+					<p>Create your first pipeline to get started</p>
+					<button id="empty-create-pipeline-btn" class="btn-primary">+ New Pipeline</button>
 				</div>
 			</div>
 		</div>
+	</div>
+
+	<!-- Pipeline Detail View (hidden by default) -->
+	<div id="pipeline-detail-view" style="display: none">
+		<header class="page-header">
+			<div class="page-header-left">
+				<button id="back-to-pipelines-btn" class="btn-secondary-small">← Back</button>
+				<div style="margin-left: 16px">
+					<h1 class="page-title" id="pipeline-detail-name">Pipeline Name</h1>
+					<p class="page-subtitle" id="pipeline-detail-description">Pipeline description</p>
+				</div>
+			</div>
+			<div class="page-header-right">
+				<div class="page-header-actions">
+					<button id="pipeline-detail-run" class="btn-primary-small">▶ Run Pipeline</button>
+					<button id="pipeline-detail-edit" class="btn-secondary-small">Edit</button>
+				</div>
+			</div>
+		</header>
+
+		<div class="view-content">
+			<div class="pipeline-detail-content">
+				<!-- Pipeline Steps Section -->
+				<div class="pipeline-steps-section">
+					<div class="section-header">
+						<h3>Pipeline Steps</h3>
+						<button id="add-step-to-pipeline" class="btn-primary-small">+ Add Step</button>
+					</div>
+					<div id="pipeline-steps-list" class="pipeline-steps-list">
+						<!-- Steps will be rendered here -->
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- All the modals remain below -->
 
 		<!-- Create Project Modal -->
 		<div id="create-project-modal" class="project-create-overlay" style="display: none">

@@ -1,293 +1,328 @@
-/* Pipeline Wizard Modal */
-.modal-overlay {
-	position: fixed;
-	top: 0;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	background: rgba(0, 0, 0, 0.5);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	z-index: 10000;
-}
+/* ============================================================================
+   PIPELINES VIEW LAYOUT
+   ============================================================================ */
 
-.modal-content {
-	background: white;
-	border-radius: 8px;
-	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-	max-width: 90%;
-	max-height: 90vh;
+#pipelines-main-view {
 	display: flex;
 	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
 }
 
-.modal-header {
-	padding: 20px;
-	border-bottom: 1px solid #e0e0e0;
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-}
-
-.modal-header h2 {
-	margin: 0;
-	font-size: 20px;
-}
-
-.modal-close {
-	background: none;
-	border: none;
-	font-size: 24px;
-	cursor: pointer;
-	color: #666;
-	padding: 0;
-	width: 30px;
-	height: 30px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.modal-close:hover {
-	color: #333;
-}
-
-.modal-body {
-	padding: 20px;
+#pipelines-main-view .view-content {
 	flex: 1;
 	overflow-y: auto;
+	background: #f8f9fa;
+	min-height: 0;
 }
 
-.modal-footer {
-	padding: 20px;
-	border-top: 1px solid #e0e0e0;
+/* ============================================================================
+   PIPELINES GRID CONTAINER
+   ============================================================================ */
+
+.pipelines-grid-container {
+	padding: 24px 32px 32px 32px;
+	background: #f8f9fa;
+}
+
+.pipelines-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+	gap: 20px;
+	margin-bottom: 24px;
+}
+
+/* Pipeline Card - Modern Design */
+.pipeline-card {
+	background: #ffffff;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 24px;
+	cursor: pointer;
+	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+	min-height: 180px;
+}
+
+.pipeline-card:hover {
+	border-color: #10b981;
+	box-shadow: 0 10px 24px rgba(16, 185, 129, 0.12);
+	transform: translateY(-2px);
+}
+
+.pipeline-card-header {
 	display: flex;
 	justify-content: space-between;
-	gap: 10px;
+	align-items: flex-start;
+	gap: 12px;
 }
 
-/* Wizard Steps */
-.wizard-step {
-	min-height: 300px;
-}
-
-.wizard-step h3 {
-	margin-top: 0;
-	margin-bottom: 20px;
+.pipeline-card-title {
+	margin: 0;
 	font-size: 18px;
-	color: #333;
+	font-weight: 600;
+	color: #1f2937;
+	flex: 1;
+	word-break: break-word;
 }
 
-.wizard-step label {
-	display: block;
-	margin-bottom: 15px;
+.pipeline-card-menu {
+	background: none;
+	border: none;
+	color: #9ca3af;
+	cursor: pointer;
+	padding: 4px 8px;
+	font-size: 20px;
+	transition: color 0.2s;
+	line-height: 1;
+}
+
+.pipeline-card-menu:hover {
+	color: #6b7280;
+	background: #f3f4f6;
+	border-radius: 4px;
+}
+
+.pipeline-card-description {
+	margin: 0;
+	font-size: 14px;
+	color: #6b7280;
+	line-height: 1.5;
+	flex-grow: 1;
+}
+
+.pipeline-card-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pipeline-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	background: #eff6ff;
+	border: 1px solid #dbeafe;
+	border-radius: 6px;
+	font-size: 12px;
+	color: #1e40af;
 	font-weight: 500;
 }
 
-.wizard-step input[type='text'],
-.wizard-step select {
-	width: 100%;
-	padding: 8px 12px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
+.pipeline-card-footer {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-top: 12px;
+	border-top: 1px solid #f3f4f6;
+}
+
+.pipeline-step-count {
+	font-size: 13px;
+	color: #6b7280;
+	font-weight: 500;
+}
+
+.pipeline-card-icons {
+	display: flex;
+	gap: 8px;
+}
+
+.pipeline-card-icon-btn {
+	width: 32px;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #f3f4f6;
+	border: none;
+	border-radius: 6px;
+	color: #6b7280;
+	cursor: pointer;
+	transition: all 0.2s;
 	font-size: 14px;
-	margin-top: 5px;
 }
 
-.wizard-step input[type='text']:focus,
-.wizard-step select:focus {
-	outline: none;
-	border-color: #007bff;
+.pipeline-card-icon-btn:hover {
+	background: #10b981;
+	color: #ffffff;
 }
 
-/* Pipeline Input/Step Lists */
-#pipeline-inputs-list,
-#pipeline-steps-list {
-	margin-bottom: 20px;
-	min-height: 100px;
+/* Empty State */
+.pipelines-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 16px;
+	padding: 80px 32px;
+	text-align: center;
+	color: #9ca3af;
 }
 
-/* Pipeline Step Card */
-.pipeline-step-card {
-	background: #f5f5f5;
-	padding: 15px;
-	margin-bottom: 10px;
-	border-radius: 4px;
-	position: relative;
+.pipelines-empty-state svg {
+	opacity: 0.3;
 }
 
-.pipeline-step-card strong {
-	display: block;
-	margin-bottom: 5px;
-	color: #333;
+.pipelines-empty-state h3 {
+	margin: 0;
+	font-size: 18px;
+	color: #6b7280;
+	font-weight: 600;
+}
+
+.pipelines-empty-state p {
+	margin: 0;
+	font-size: 14px;
+	color: #9ca3af;
+}
+
+/* ============================================================================
+   PIPELINE DETAIL VIEW
+   ============================================================================ */
+
+#pipeline-detail-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+#pipeline-detail-view .view-content {
+	flex: 1;
+	overflow-y: auto;
+	background: #f8f9fa;
+	min-height: 0; /* Fix flexbox scrolling */
+}
+
+.pipeline-detail-content {
+	padding: 32px;
+	background: #f8f9fa;
+}
+
+.pipeline-steps-section {
+	background: #ffffff;
+	border-radius: 12px;
+	padding: 24px;
+	border: 1px solid #e5e7eb;
+}
+
+.pipeline-steps-section .section-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 24px;
+}
+
+.pipeline-steps-section .section-header h3 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: #1f2937;
+}
+
+.pipeline-steps-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.pipeline-step-item {
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 16px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	transition: all 0.2s;
+}
+
+.pipeline-step-item:hover {
+	border-color: #10b981;
+	box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);
+}
+
+.pipeline-step-number {
+	width: 32px;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #10b981;
+	color: white;
+	border-radius: 50%;
+	font-weight: 600;
+	font-size: 14px;
+	flex-shrink: 0;
+}
+
+.pipeline-step-info {
+	flex: 1;
+}
+
+.pipeline-step-info h4 {
+	margin: 0 0 4px 0;
+	font-size: 15px;
+	font-weight: 600;
+	color: #1f2937;
+}
+
+.pipeline-step-info p {
+	margin: 0;
+	font-size: 13px;
+	color: #6b7280;
 }
 
 .pipeline-step-actions {
-	margin-top: 10px;
 	display: flex;
-	gap: 5px;
+	gap: 8px;
 }
 
-/* Store Configuration */
-.store-config {
-	margin-top: 15px;
-	padding: 15px;
-	background: #f9f9f9;
-	border-radius: 4px;
-	border: 1px solid #e0e0e0;
-}
-
-.store-config summary {
-	cursor: pointer;
-	font-weight: 500;
-	color: #333;
-	user-select: none;
-}
-
-.store-config label {
-	display: block;
-	margin-top: 10px;
+.pipeline-step-actions button {
+	padding: 6px 12px;
 	font-size: 13px;
 }
 
-.store-config input,
-.store-config select {
-	width: 100%;
-	padding: 6px 10px;
-	border: 1px solid #ddd;
-	border-radius: 3px;
-	font-size: 13px;
-	margin-top: 3px;
-}
-
-/* Run Pipeline Dialog */
-.pipeline-run-dialog {
-	background: white;
-	padding: 20px;
-	border-radius: 8px;
-	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-.pipeline-run-dialog h3 {
-	margin-top: 0;
-	margin-bottom: 20px;
-	font-size: 18px;
-}
-
-.pipeline-run-dialog .input-group {
-	margin-bottom: 20px;
-}
-
-.pipeline-run-dialog label {
-	display: block;
-	margin-bottom: 5px;
-	font-weight: 500;
-	font-size: 14px;
-}
-
-.pipeline-run-dialog .input-with-button {
+/* Drag handle for reordering */
+.pipeline-step-drag-handle {
+	cursor: move;
+	color: #9ca3af;
+	padding: 8px;
 	display: flex;
-	gap: 10px;
+	align-items: center;
 }
 
-.pipeline-run-dialog input[type='text'] {
-	flex: 1;
-	padding: 8px 12px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
-	font-size: 14px;
+.pipeline-step-drag-handle:hover {
+	color: #6b7280;
 }
 
-.browse-btn {
-	padding: 8px 16px;
-	background: #6c757d;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 14px;
+/* ============================================================================
+   RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 1024px) {
+	.pipelines-grid {
+		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+		gap: 16px;
+	}
 }
 
-.browse-btn:hover {
-	background: #5a6268;
-}
+@media (max-width: 768px) {
+	.pipelines-grid {
+		grid-template-columns: 1fr;
+		gap: 16px;
+	}
 
-/* Pipeline Preview */
-#pipeline-preview {
-	font-family: 'Courier New', monospace;
-	font-size: 13px;
-	line-height: 1.5;
-	white-space: pre;
-	overflow-x: auto;
-}
+	.pipelines-grid-container {
+		padding: 16px;
+	}
 
-/* Buttons */
-.primary-btn {
-	padding: 10px 20px;
-	background: #007bff;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	font-size: 14px;
-	font-weight: 500;
-	cursor: pointer;
-}
-
-.primary-btn:hover {
-	background: #0056b3;
-}
-
-.primary-btn:disabled {
-	background: #ccc;
-	cursor: not-allowed;
-}
-
-.secondary-btn {
-	padding: 10px 20px;
-	background: #6c757d;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	font-size: 14px;
-	font-weight: 500;
-	cursor: pointer;
-}
-
-.secondary-btn:hover {
-	background: #5a6268;
-}
-
-.secondary-btn:disabled {
-	background: #e0e0e0;
-	color: #999;
-	cursor: not-allowed;
-}
-
-.delete-btn {
-	padding: 8px 16px;
-	background: #dc3545;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	font-size: 14px;
-	cursor: pointer;
-}
-
-.delete-btn:hover {
-	background: #c82333;
-}
-
-.open-folder-btn {
-	padding: 8px 16px;
-	background: #17a2b8;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	font-size: 14px;
-	cursor: pointer;
-}
-
-.open-folder-btn:hover {
-	background: #138496;
+	.pipeline-card {
+		padding: 16px;
+	}
 }

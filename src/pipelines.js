@@ -1,4 +1,10 @@
-export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo }) {
+export function createPipelinesModule({
+	invoke,
+	dialog,
+	open: _open,
+	navigateTo,
+	showCreateProjectModal,
+}) {
 	// State management
 	const pipelineState = {
 		pipelines: [],
@@ -44,59 +50,83 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 	async function loadPipelines() {
 		try {
 			const pipelines = await invoke('get_pipelines')
-			const container = document.getElementById('pipelines-list')
+			const gridContainer = document.getElementById('pipelines-grid')
+			const emptyState = document.getElementById('pipelines-empty-state')
 
-			if (!container) {
-				console.error('pipelines-list container not found')
+			if (!gridContainer) {
+				console.error('pipelines-grid container not found')
 				return
 			}
-
-			if (!pipelines || pipelines.length === 0) {
-				container.innerHTML =
-					'<p style="color: #666; padding: 20px; text-align: center">No pipelines yet. Create one to get started.</p>'
-				return
-			}
-
-			container.innerHTML = ''
-
-			pipelines.forEach((pipeline) => {
-				const stepCount = pipeline.spec?.steps?.length || 0
-
-				const card = document.createElement('div')
-				card.className = 'project-item'
-				card.style.cursor = 'pointer'
-
-				const description =
-					pipeline.spec?.description ||
-					`Pipeline with ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
-
-				card.innerHTML = `
-					<div style="flex: 1;">
-						<div class="project-header">
-							<strong>${pipeline.name}</strong>
-						</div>
-						<div class="project-meta">
-							${description}
-						</div>
-					</div>
-					<div class="project-actions" style="display: flex; gap: 8px;">
-						<button class="secondary-btn" onclick="event.stopPropagation(); pipelineModule.runPipeline(${pipeline.id})" title="Run Pipeline">▶ Run</button>
-						<button class="secondary-btn" onclick="event.stopPropagation(); pipelineModule.deletePipeline(${pipeline.id})" title="Delete">Delete</button>
-					</div>
-				`
-
-				card.addEventListener('click', () => {
-					// Open folder on click
-					pipelineModule.openPipelineFolder(pipeline.pipeline_path)
-				})
-
-				container.appendChild(card)
-			})
 
 			// Update pipeline count badges
 			const pipelineCountBadges = document.querySelectorAll('#pipelines-count')
 			pipelineCountBadges.forEach((badge) => {
-				badge.textContent = pipelines.length
+				badge.textContent = pipelines?.length || 0
+			})
+
+			if (!pipelines || pipelines.length === 0) {
+				gridContainer.innerHTML = ''
+				if (emptyState) emptyState.style.display = 'flex'
+				pipelineState.pipelines = []
+				return
+			}
+
+			if (emptyState) emptyState.style.display = 'none'
+			gridContainer.innerHTML = ''
+
+			pipelines.forEach((pipeline) => {
+				const stepCount = pipeline.spec?.steps?.length || 0
+
+				// Extract tags from steps (show first 3 step names)
+				const tags =
+					pipeline.spec?.steps
+						?.map((step) => {
+							// Try to get a clean name from the step
+							return step.id || step.uses?.split('/').pop() || 'Step'
+						})
+						.slice(0, 3) || []
+
+				const card = document.createElement('div')
+				card.className = 'pipeline-card'
+
+				const description =
+					pipeline.spec?.description ||
+					`Workflow with ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
+
+				card.innerHTML = `
+					<div class="pipeline-card-header">
+						<h3 class="pipeline-card-title">${pipeline.name}</h3>
+						<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
+							pipeline.id
+						}, event)">⋯</button>
+					</div>
+					<p class="pipeline-card-description">${description}</p>
+					${
+						tags.length > 0
+							? `
+						<div class="pipeline-card-tags">
+							${tags.map((tag) => `<span class="pipeline-tag">${tag}</span>`).join('')}
+						</div>
+					`
+							: ''
+					}
+					<div class="pipeline-card-footer">
+						<span class="pipeline-step-count">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
+						<div class="pipeline-card-icons">
+							<button class="pipeline-card-icon-btn" title="View Details" onclick="event.stopPropagation(); pipelineModule.showPipelineDetails(${
+								pipeline.id
+							})">→</button>
+							<button class="pipeline-card-icon-btn" title="Run" onclick="event.stopPropagation(); pipelineModule.runPipeline(${
+								pipeline.id
+							})">▶</button>
+						</div>
+					</div>
+				`
+
+				card.addEventListener('click', () => {
+					showPipelineDetails(pipeline.id)
+				})
+				gridContainer.appendChild(card)
 			})
 
 			pipelineState.pipelines = pipelines
@@ -813,6 +843,98 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		}
 	}
 
+	// Show pipeline detail view
+	async function showPipelineDetails(pipelineId) {
+		try {
+			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+			if (!pipeline) {
+				console.error('Pipeline not found:', pipelineId)
+				return
+			}
+
+			pipelineState.currentPipeline = pipeline
+
+			// Hide main view, show detail view
+			const mainView = document.getElementById('pipelines-main-view')
+			const detailView = document.getElementById('pipeline-detail-view')
+
+			if (mainView) mainView.style.display = 'none'
+			if (detailView) detailView.style.display = 'flex'
+
+			// Update header
+			const nameEl = document.getElementById('pipeline-detail-name')
+			const descEl = document.getElementById('pipeline-detail-description')
+
+			if (nameEl) nameEl.textContent = pipeline.name
+			if (descEl) {
+				descEl.textContent =
+					pipeline.spec?.description || `Workflow with ${pipeline.spec?.steps?.length || 0} steps`
+			}
+
+			// Load and display steps
+			await loadPipelineSteps(pipelineId)
+		} catch (error) {
+			console.error('Error showing pipeline details:', error)
+		}
+	}
+
+	// Load pipeline steps for detail view
+	async function loadPipelineSteps(pipelineId) {
+		try {
+			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+			if (!pipeline) return
+
+			const stepsContainer = document.getElementById('pipeline-steps-list')
+			if (!stepsContainer) return
+
+			const steps = pipeline.spec?.steps || []
+
+			if (steps.length === 0) {
+				stepsContainer.innerHTML = `
+				<div style="text-align: center; padding: 40px; color: #9ca3af;">
+					<p>No steps in this pipeline yet.</p>
+					<p style="font-size: 13px; margin-top: 8px;">Click "+ Add Step" above to add your first step.</p>
+				</div>
+			`
+				return
+			}
+
+			stepsContainer.innerHTML = ''
+
+			steps.forEach((step, index) => {
+				const stepDiv = document.createElement('div')
+				stepDiv.className = 'pipeline-step-item'
+
+				const stepName = step.id || `step-${index + 1}`
+				const stepUses = step.uses || 'Unknown step'
+
+				stepDiv.innerHTML = `
+					<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
+					<div class="pipeline-step-number">${index + 1}</div>
+					<div class="pipeline-step-info">
+						<h4>${stepName}</h4>
+						<p>Uses: ${stepUses}</p>
+					</div>
+					<div class="pipeline-step-actions">
+						<button class="btn-secondary-small" onclick="pipelineModule.editPipelineStep(${index})">Edit</button>
+						<button class="btn-secondary-small" onclick="pipelineModule.removePipelineStep(${index})" style="color: #dc3545;">Remove</button>
+					</div>
+				`
+
+				stepsContainer.appendChild(stepDiv)
+			})
+		} catch (error) {
+			console.error('Error loading pipeline steps:', error)
+		}
+	}
+
+	// Go back to pipelines list
+	function backToPipelinesList() {
+		document.getElementById('pipeline-detail-view').style.display = 'none'
+		document.getElementById('pipelines-main-view').style.display = 'block'
+		pipelineState.currentPipeline = null
+	}
+
 	// Run pipeline with better dialog
 	async function runPipeline(pipelineId) {
 		try {
@@ -1030,98 +1152,58 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 		}
 	}
 
-	// Show pipeline details view
-	function showPipelineDetails(pipelineId) {
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-		if (!pipeline) return
-
-		const gridView = document.getElementById('pipelines-grid-view')
-		const detailsView = document.getElementById('pipeline-details-view')
-		const stepsListContainer = document.getElementById('pipeline-steps-list')
-
-		if (!gridView || !detailsView || !stepsListContainer) return
-
-		// Update details header
-		document.getElementById('pipeline-title').textContent = pipeline.name
-		document.getElementById('pipeline-description').textContent =
-			pipeline.spec?.description || `Pipeline with ${pipeline.spec?.steps?.length || 0} steps`
-
-		// Render steps
-		stepsListContainer.innerHTML = ''
-		const steps = pipeline.spec?.steps || []
-
-		if (steps.length === 0) {
-			stepsListContainer.innerHTML =
-				'<p style="color: #9ca3af; text-align: center; padding: 32px;">No steps in this pipeline</p>'
-		} else {
-			steps.forEach((step, index) => {
-				const stepEl = document.createElement('div')
-				stepEl.className = 'step-item'
-				stepEl.innerHTML = `
-					<div class="step-info">
-						<h4>Step ${index + 1}: ${step.project_path?.split('/').pop() || 'Step'}</h4>
-						<p>${step.project_path}</p>
-					</div>
-					<div class="step-actions">
-						<button class="pipeline-card-icon-btn" title="Edit">✎</button>
-						<button class="pipeline-card-icon-btn" title="Remove">×</button>
-					</div>
-				`
-				stepsListContainer.appendChild(stepEl)
-			})
-		}
-
-		// Show details view, hide grid
-		gridView.style.display = 'none'
-		detailsView.style.display = 'flex'
-	}
-
 	// Show pipeline menu (for ... button)
 	function showPipelineMenu(pipelineId, event) {
 		// TODO: Implement context menu for edit, delete, open folder options
 		console.log('Menu for pipeline:', pipelineId)
 	}
 
-	// Back to pipelines grid
-	function backToPipelinesGrid() {
-		const gridView = document.getElementById('pipelines-grid-view')
-		const detailsView = document.getElementById('pipeline-details-view')
-
-		if (gridView && detailsView) {
-			gridView.style.display = 'flex'
-			detailsView.style.display = 'none'
-		}
-	}
-
 	// Attach back button handler
 	function attachBackButton() {
 		const backBtn = document.getElementById('back-to-pipelines-btn')
 		if (backBtn) {
-			backBtn.addEventListener('click', backToPipelinesGrid)
+			backBtn.addEventListener('click', backToPipelinesList)
+		}
+	}
+
+	// Attach detail view button handlers
+	function attachDetailViewButtons() {
+		const runBtn = document.getElementById('pipeline-detail-run')
+		if (runBtn) {
+			runBtn.addEventListener('click', () => {
+				if (pipelineState.currentPipeline) {
+					runPipeline(pipelineState.currentPipeline.id)
+				}
+			})
+		}
+
+		const editBtn = document.getElementById('pipeline-detail-edit')
+		if (editBtn) {
+			editBtn.addEventListener('click', () => {
+				if (pipelineState.currentPipeline) {
+					editPipeline(pipelineState.currentPipeline.id)
+				}
+			})
+		}
+
+		const addStepBtn = document.getElementById('add-step-to-pipeline')
+		if (addStepBtn) {
+			addStepBtn.addEventListener('click', () => {
+				// Open project creation wizard in "add to pipeline" mode
+				if (pipelineState.currentPipeline && showCreateProjectModal) {
+					// Set a flag so we know to add this project as a step after creation
+					window._addingStepToPipeline = pipelineState.currentPipeline.id
+					showCreateProjectModal()
+				} else {
+					console.error('Cannot add step: no current pipeline or modal function not available')
+				}
+			})
 		}
 	}
 
 	// Initialization function
 	function initialize() {
-		// Load pipelines immediately
-		loadPipelines()
-
-		// Attach event handlers
-		const createBtn = document.getElementById('create-pipeline-btn')
-		if (createBtn) {
-			createBtn.addEventListener('click', showCreatePipelineWizard)
-		}
-
-		// Also attach to any other create pipeline buttons with different IDs
-		const runCreateBtn = document.getElementById('run-create-pipeline-btn')
-		if (runCreateBtn) {
-			runCreateBtn.addEventListener('click', showCreatePipelineWizard)
-		}
-
-		// Attach back button handler
-		attachBackButton()
-
-		// Make functions available globally for onclick handlers
+		// Make functions available globally FIRST (before loading pipelines)
 		window.pipelineModule = {
 			editPipeline,
 			runPipeline,
@@ -1144,15 +1226,119 @@ export function createPipelinesModule({ invoke, dialog, open: _open, navigateTo 
 			confirmAddStep,
 			showPipelineDetails,
 			showPipelineMenu,
-			backToPipelinesGrid,
+			backToPipelinesList,
 			showCreatePipelineWizard,
 			closeSimplePipelineModal,
 			createSimplePipeline,
+			loadPipelineSteps,
+		}
+
+		// Load pipelines after setting up global handlers
+		loadPipelines()
+
+		// Attach event handlers to all create pipeline buttons
+		const createBtn = document.getElementById('create-pipeline-btn')
+		if (createBtn) {
+			createBtn.addEventListener('click', showCreatePipelineWizard)
+		}
+
+		const emptyCreateBtn = document.getElementById('empty-create-pipeline-btn')
+		if (emptyCreateBtn) {
+			emptyCreateBtn.addEventListener('click', showCreatePipelineWizard)
+		}
+
+		const runCreateBtn = document.getElementById('run-create-pipeline-btn')
+		if (runCreateBtn) {
+			runCreateBtn.addEventListener('click', showCreatePipelineWizard)
+		}
+
+		// Attach back button handler
+		attachBackButton()
+
+		// Attach detail view button handlers
+		attachDetailViewButtons()
+	}
+
+	// Add a newly created project as a step to the current pipeline
+	async function addProjectAsStep(projectPath, projectName) {
+		if (!pipelineState.currentPipeline) {
+			console.error('No current pipeline to add step to')
+			return
+		}
+
+		try {
+			console.log('🔧 Adding step to pipeline:', pipelineState.currentPipeline.name)
+
+			// Load current pipeline spec
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			console.log('📄 Loaded pipeline spec:', editorData.spec)
+
+			// Create new step
+			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+			const newStep = {
+				id: stepId,
+				uses: projectPath,
+				with: {},
+			}
+
+			console.log('➕ New step:', newStep)
+
+			// Add step to pipeline
+			if (!editorData.spec.steps) {
+				editorData.spec.steps = []
+			}
+			editorData.spec.steps.push(newStep)
+
+			console.log('📝 Updated spec with', editorData.spec.steps.length, 'steps')
+
+			// Save updated pipeline
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			console.log('💾 Saved pipeline')
+
+			// Reload the full pipeline spec (get_pipelines doesn't include spec!)
+			const reloadedPipeline = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+			console.log('🔄 Reloaded pipeline with spec:', reloadedPipeline.spec.steps.length, 'steps')
+
+			// Update the pipelines list cache
+			await loadPipelines()
+
+			// Find the pipeline in the cache and update it with the full spec
+			const updatedPipeline = pipelineState.pipelines.find(
+				(p) => p.id === pipelineState.currentPipeline.id,
+			)
+			if (updatedPipeline) {
+				// Merge the spec from load_pipeline_editor into the cached pipeline
+				updatedPipeline.spec = reloadedPipeline.spec
+				pipelineState.currentPipeline = updatedPipeline
+				console.log('✅ Updated current pipeline, steps count:', updatedPipeline.spec.steps.length)
+			}
+
+			// Now reload the steps with the fresh data
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			console.log('🎉 Refreshed step display')
+
+			console.log(`✅ Added step "${stepId}" to pipeline "${pipelineState.currentPipeline.name}"`)
+		} catch (error) {
+			console.error('Error adding step to pipeline:', error)
+			alert('Failed to add step to pipeline: ' + error.message)
 		}
 	}
 
 	return {
 		initialize,
 		loadPipelines,
+		showPipelineDetails,
+		backToPipelinesList,
+		addProjectAsStep, // Expose for project creation to call
 	}
 }
