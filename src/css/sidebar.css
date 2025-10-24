@@ -29,7 +29,7 @@
 
 .sidebar-nav {
 	flex: 1 1 auto;
-	padding: 16px 0 12px;
+	/* padding: 16px 0 12px; */
 	overflow-y: auto;
 	overflow-x: auto;
 	display: flex;
@@ -161,6 +161,19 @@
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+}
+
+.view-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+.view-content {
+	flex: 1;
+	overflow-y: auto;
+	background: #f8f9fa;
 }
 
 /* ============================================================================
