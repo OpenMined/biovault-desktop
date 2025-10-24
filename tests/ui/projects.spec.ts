@@ -1,6 +1,4 @@
 import { expect, test } from '@playwright/test'
-import path from 'path'
-import { fileURLToPath } from 'url'
 import WebSocket from 'ws'
 
 /** @type {WebSocket | null} */
@@ -189,7 +187,7 @@ test.describe('Project Creation Modal', () => {
 		await page.waitForTimeout(500)
 
 		// Click "Create New Project" button
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Details tab active by default
@@ -240,7 +238,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Fill project name
@@ -313,7 +311,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'IO Test Project')
@@ -379,7 +377,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'Validation Test')
@@ -420,7 +418,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'Edit Test Project')
@@ -465,7 +463,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Verify default selections

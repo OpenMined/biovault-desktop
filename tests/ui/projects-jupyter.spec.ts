@@ -266,7 +266,7 @@ test.describe('Projects editor with Jupyter integration', () => {
 			await expect(page.locator('#projects-list')).toContainText('No projects imported yet.')
 		}
 
-		await page.click('button:has-text("Create New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await expect(page.locator('#create-project-modal')).toBeVisible()
 		await page.fill('#new-project-name', projectName)
 
