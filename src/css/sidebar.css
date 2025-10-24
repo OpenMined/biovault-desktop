@@ -1,12 +1,12 @@
 /* ============================================================================
-   MODERN VERTICAL SIDEBAR NAVIGATION - Stripe/Linear/Notion Style
+   PREMIUM VERTICAL SIDEBAR - Modern & Clean
    ============================================================================ */
 
 .app-layout {
 	display: flex;
 	height: 100vh;
 	overflow: hidden;
-	background: #fafbfc;
+	background: #f8f9fa;
 	position: relative;
 	z-index: 1;
 }
@@ -16,38 +16,45 @@
    ============================================================================ */
 
 .app-sidebar {
-	width: 240px;
-	min-width: 240px;
+	width: 80px;
+	min-width: 80px;
 	background: #ffffff;
-	border-right: 1px solid #e2e8f0;
+	border-right: 1px solid #e5e7eb;
 	display: flex;
 	flex-direction: column;
+	height: 100vh;
 	z-index: 100;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .sidebar-nav {
-	padding: 12px 8px;
+	flex: 1 1 auto;
+	padding: 16px 0 12px;
 	overflow-y: auto;
+	overflow-x: auto;
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
+	min-height: 0;
+	scrollbar-width: none;
 }
 
 .sidebar-footer {
-	padding: 8px;
+	flex: 0 0 auto;
+	padding: 12px 0 20px;
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
+	border-top: 1px solid #f3f4f6;
 }
 
 .sidebar-divider {
-	height: 1px;
-	background: #e2e8f0;
-	margin: 8px 0;
+	display: none;
 }
 
 .sidebar-nav::-webkit-scrollbar {
-	width: 6px;
+	width: 5px;
+	height: 5px;
 }
 
 .sidebar-nav::-webkit-scrollbar-track {
@@ -55,70 +62,69 @@
 }
 
 .sidebar-nav::-webkit-scrollbar-thumb {
-	background: #cbd5e1;
+	background: #d1d5db;
 	border-radius: 3px;
 }
 
 .sidebar-nav::-webkit-scrollbar-thumb:hover {
-	background: #94a3b8;
+	background: #9ca3af;
 }
 
 /* Navigation Items */
 .nav-item {
 	display: flex;
+	flex-direction: column;
 	align-items: center;
-	gap: 12px;
-	padding: 12px 14px;
+	justify-content: center;
+	gap: 6px;
+	padding: 14px 12px;
+	margin: 0 8px;
 	background: transparent;
 	border: none;
-	border-radius: 8px;
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-		sans-serif;
-	font-size: 14px;
+	border-radius: 12px;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+	font-size: 11px;
 	font-weight: 600;
-	color: #64748b;
+	color: #6b7280;
 	cursor: pointer;
-	transition: all 0.2s ease;
-	text-align: left;
-	width: 100%;
+	transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+	text-align: center;
+	width: auto;
 	position: relative;
 	user-select: none;
+	letter-spacing: 0;
 }
 
-.nav-item svg {
+.nav-item img {
 	flex-shrink: 0;
-	transition: all 0.2s ease;
-}
-
-.nav-item:hover {
-	background: #f8fafc;
-	color: #475569;
-}
-
-.nav-item.active {
-	background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-	color: #059669;
-}
-
-.nav-item.active::before {
-	content: '';
-	position: absolute;
-	left: 0;
-	top: 50%;
-	transform: translateY(-50%);
-	width: 3px;
+	width: 24px;
 	height: 24px;
-	background: #10b981;
-	border-radius: 0 2px 2px 0;
-}
-
-.nav-item.active svg {
-	color: #10b981;
+	transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+	opacity: 0.7;
 }
 
 .nav-label {
-	flex: 1;
-	white-space: nowrap;
+	display: none;
+}
+
+.nav-item:hover {
+	background: #f3f4f6;
+	color: #1f2937;
+}
+
+.nav-item:hover img {
+	opacity: 1;
+	transform: scale(1.08);
+}
+
+.nav-item.active {
+	background: #ecfdf5;
+	color: #10b981;
+}
+
+.nav-item.active img {
+	opacity: 1;
+	transform: scale(1);
 }
 
 /* ============================================================================
@@ -133,8 +139,6 @@
 	overflow: hidden;
 }
 
-/* Top bar removed - Messages and Settings moved to sidebar footer */
-
 /* ============================================================================
    CONTENT AREA
    ============================================================================ */
@@ -144,7 +148,7 @@
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
-	background: #fafbfc;
+	background: #f8f9fa;
 }
 
 .tab-content {
@@ -165,29 +169,40 @@
 
 @media (max-width: 1024px) {
 	.app-sidebar {
-		width: 200px;
-		min-width: 200px;
+		width: 76px;
+		min-width: 76px;
 	}
 
 	.nav-item {
-		padding: 10px 12px;
-		font-size: 13px;
+		padding: 12px 10px;
+		font-size: 10px;
+		gap: 5px;
+		margin: 0 6px;
+	}
+
+	.nav-item img {
+		width: 22px;
+		height: 22px;
 	}
 }
 
 @media (max-width: 768px) {
 	.app-sidebar {
-		width: 72px;
-		min-width: 72px;
+		width: 70px;
+		min-width: 70px;
 	}
 
 	.nav-item {
 		justify-content: center;
-		padding: 12px;
+		padding: 11px 9px;
+		font-size: 9px;
+		gap: 4px;
+		margin: 0 6px;
 	}
 
-	.nav-label {
-		display: none;
+	.nav-item img {
+		width: 20px;
+		height: 20px;
 	}
 
 	.app-topbar {
