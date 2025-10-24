@@ -209,8 +209,15 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let script_name: Option<String> = args
                 .get("scriptName")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let result = crate::create_project(state, name, example, directory, create_python_script, script_name)
-                .map_err(|e| e.to_string())?;
+            let result = crate::create_project(
+                state,
+                name,
+                example,
+                directory,
+                create_python_script,
+                script_name,
+            )
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "load_project_editor" => {

@@ -602,33 +602,36 @@ pub fn create_project(
         let assets_dir = project_path.join("assets");
         std::fs::create_dir_all(&assets_dir)
             .map_err(|e| format!("Failed to create assets directory: {}", e))?;
-        
+
         let filename = script_name.as_deref().unwrap_or("process.py");
         let script_path = assets_dir.join(filename);
         let script_content = biovault::project_spec::generate_python_script_template(filename);
-        
+
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write Python script: {}", e))?;
-        
+
         // Update project.yaml to include the asset
         let project_yaml_path = project_path.join("project.yaml");
         let yaml_content = std::fs::read_to_string(&project_yaml_path)
             .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
-        
+
         let mut spec: biovault::project_spec::ProjectSpec = serde_yaml::from_str(&yaml_content)
             .map_err(|e| format!("Failed to parse project.yaml: {}", e))?;
-        
+
         // Add asset if not already present
         if !spec.assets.contains(&filename.to_string()) {
             spec.assets.push(filename.to_string());
         }
-        
+
         let updated_yaml = serde_yaml::to_string(&spec)
             .map_err(|e| format!("Failed to serialize project.yaml: {}", e))?;
         std::fs::write(&project_yaml_path, updated_yaml)
             .map_err(|e| format!("Failed to update project.yaml: {}", e))?;
-        
-        eprintln!("✅ Created Python script: {} and updated assets", script_path.display());
+
+        eprintln!(
+            "✅ Created Python script: {} and updated assets",
+            script_path.display()
+        );
     }
 
     eprintln!(

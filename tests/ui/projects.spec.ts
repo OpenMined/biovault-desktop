@@ -327,9 +327,11 @@ test.describe('Project Creation Modal', () => {
 		await page.click('#spec-item-modal-submit')
 		await page.waitForTimeout(300)
 
+		const inputsTabContent = page.locator('.create-tab-content[data-content="inputs"]')
+
 		// Verify input appears in list
-		await expect(page.locator('.spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.spec-item-title')).toContainText('reference_genome')
+		await expect(inputsTabContent.locator('.spec-list-item')).toHaveCount(1)
+		await expect(inputsTabContent.locator('.spec-item-title')).toContainText('reference_genome')
 
 		// Navigate to Outputs tab
 		await page.locator('.create-tab[data-tab="outputs"]').click()
@@ -350,9 +352,11 @@ test.describe('Project Creation Modal', () => {
 		await page.click('#spec-item-modal-submit')
 		await page.waitForTimeout(300)
 
-		// Verify output appears in list
-		await expect(page.locator('.spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.spec-item-title')).toContainText('filtered_data')
+		const outputsTabContent = page.locator('.create-tab-content[data-content="outputs"]')
+
+		// Verify output appears in list (scoped to outputs tab)
+		await expect(outputsTabContent.locator('.spec-list-item')).toHaveCount(1)
+		await expect(outputsTabContent.locator('.spec-item-title')).toContainText('filtered_data')
 
 		// Verify preview is visible
 		await expect(page.locator('#create-project-preview-yaml')).toBeVisible()
