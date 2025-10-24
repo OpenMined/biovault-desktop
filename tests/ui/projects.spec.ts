@@ -186,8 +186,8 @@ test.describe('Project Creation Modal', () => {
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
 
-		// Click "New Project" button
-		await page.click('button:has-text("New Project")')
+		// Click "Create New Project" button
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Details tab active by default
@@ -238,7 +238,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Fill project name
@@ -271,9 +271,11 @@ test.describe('Project Creation Modal', () => {
 		await page.click('#spec-item-modal-submit')
 		await page.waitForTimeout(300)
 
-		// Verify parameter appears in list
-		await expect(page.locator('.spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.spec-item-title')).toContainText('enable_filter')
+		// Verify parameter appears in list (within active tab)
+		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText(
+			'enable_filter',
+		)
 
 		// Add second parameter
 		await page.locator('.create-tab-content.active .spec-add-zone').click()
@@ -285,15 +287,21 @@ test.describe('Project Creation Modal', () => {
 		await page.waitForTimeout(300)
 
 		// Verify both parameters are present
-		await expect(page.locator('.spec-list-item')).toHaveCount(2)
+		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(2)
 
 		// Remove first parameter
-		await page.locator('.spec-list-item').first().locator('.spec-item-remove').click()
+		await page
+			.locator('.create-tab-content.active .spec-list-item')
+			.first()
+			.locator('.spec-item-remove')
+			.click()
 		await page.waitForTimeout(200)
 
 		// Verify only one parameter remains
-		await expect(page.locator('.spec-list-item')).toHaveCount(1)
-		await expect(page.locator('.spec-item-title')).toContainText('output_format')
+		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.create-tab-content.active .spec-item-title')).toContainText(
+			'output_format',
+		)
 
 		sendUnifiedLog({ test: 'project-parameters', action: 'complete' })
 	})
@@ -303,7 +311,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'IO Test Project')
@@ -369,7 +377,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'Validation Test')
@@ -400,7 +408,7 @@ test.describe('Project Creation Modal', () => {
 
 		// Modal should close and item should be added
 		await expect(page.locator('#spec-item-modal')).not.toBeVisible()
-		await expect(page.locator('.spec-list-item')).toHaveCount(1)
+		await expect(page.locator('.create-tab-content.active .spec-list-item')).toHaveCount(1)
 
 		sendUnifiedLog({ test: 'project-validation', action: 'complete' })
 	})
@@ -410,7 +418,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'Edit Test Project')
@@ -431,7 +439,7 @@ test.describe('Project Creation Modal', () => {
 		await page.waitForTimeout(300)
 
 		// Edit the input
-		await page.locator('.spec-item-edit').click()
+		await page.locator('.create-tab-content.active .spec-item-edit').click()
 		await page.waitForSelector('#spec-item-modal', { state: 'visible' })
 
 		// Modal should have existing values
@@ -443,7 +451,9 @@ test.describe('Project Creation Modal', () => {
 		await page.waitForTimeout(300)
 
 		// Verify changes
-		await expect(page.locator('.spec-item-details')).toContainText('Updated description')
+		await expect(page.locator('.create-tab-content.active .spec-item-details')).toContainText(
+			'Updated description',
+		)
 
 		sendUnifiedLog({ test: 'project-edit-modal', action: 'complete' })
 	})
@@ -453,7 +463,7 @@ test.describe('Project Creation Modal', () => {
 
 		await page.click('.nav-item[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("+ New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Verify default selections

@@ -30,6 +30,7 @@ use commands::jupyter::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
 use commands::participants::*;
+use commands::pipelines::*;
 use commands::projects::*;
 use commands::runs::*;
 use commands::settings::*;
@@ -115,6 +116,32 @@ fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
             run_id INTEGER NOT NULL,
             participant_id INTEGER NOT NULL,
             FOREIGN KEY (run_id) REFERENCES runs(id)
+        )",
+        [],
+    )?;
+
+    // Pipeline tables
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pipelines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            pipeline_path TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pipeline_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            work_dir TEXT NOT NULL,
+            results_dir TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            FOREIGN KEY (pipeline_id) REFERENCES pipelines(id)
         )",
         [],
     )?;
@@ -451,6 +478,7 @@ pub fn run() {
             delete_message,
             // Projects commands
             import_project,
+            import_project_from_folder,
             get_projects,
             delete_project,
             delete_project_folder,
@@ -478,6 +506,17 @@ pub fn run() {
             get_run_logs_tail,
             get_run_logs_full,
             delete_run,
+            // Pipeline commands
+            get_pipelines,
+            create_pipeline,
+            load_pipeline_editor,
+            save_pipeline_editor,
+            delete_pipeline,
+            validate_pipeline,
+            run_pipeline,
+            get_pipeline_runs,
+            delete_pipeline_run,
+            preview_pipeline_spec,
             // SQL commands
             sql_list_tables,
             sql_get_table_schema,

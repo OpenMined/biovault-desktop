@@ -1,5 +1,5 @@
 use crate::types::{AppState, Project, ProjectEditorLoadResponse, ProjectListEntry};
-use biovault::data::{project_yaml_hash, ProjectMetadata};
+use biovault::data::{hash_file, ProjectMetadata};
 use biovault::project_spec::{self, InputSpec, OutputSpec, ParameterSpec, ProjectSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -420,6 +420,90 @@ pub fn import_project(
         template: imported.template,
         project_path: imported.project_path,
         created_at: imported.created_at,
+    })
+}
+
+#[tauri::command]
+pub fn import_project_from_folder(
+    state: tauri::State<AppState>,
+    folder_path: String,
+) -> Result<Project, String> {
+    eprintln!(
+        "📁 import_project_from_folder called with path: {}",
+        folder_path
+    );
+
+    let path = PathBuf::from(&folder_path);
+
+    // Check if the directory exists
+    if !path.exists() {
+        return Err(format!("Directory does not exist: {}", folder_path));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", folder_path));
+    }
+
+    // Check if project.yaml exists in the folder
+    let project_yaml_path = path.join("project.yaml");
+    if !project_yaml_path.exists() {
+        return Err(format!(
+            "No project.yaml found in directory: {}",
+            folder_path
+        ));
+    }
+
+    // Parse the project.yaml to get project metadata
+    let yaml_content = std::fs::read_to_string(&project_yaml_path)
+        .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+
+    let metadata: ProjectMetadata = serde_yaml::from_str(&yaml_content)
+        .map_err(|e| format!("Failed to parse project.yaml: {}", e))?;
+
+    // Register the project in the database
+    let db = state.biovault_db.lock().unwrap();
+
+    // Check if project with same path already exists
+    let existing_projects = db
+        .list_projects()
+        .map_err(|e| format!("Failed to list projects: {}", e))?;
+
+    for project in existing_projects {
+        if PathBuf::from(&project.project_path).canonicalize().ok() == path.canonicalize().ok() {
+            return Err(format!(
+                "Project already imported from this path: {}",
+                folder_path
+            ));
+        }
+    }
+
+    // Extract template with default value
+    let template = metadata.template.unwrap_or_else(|| "imported".to_string());
+
+    // Register the new project
+    let project_id = db
+        .register_project(
+            &metadata.name,
+            &metadata.author,
+            &metadata.workflow,
+            &template,
+            &path,
+        )
+        .map_err(|e| format!("Failed to register project: {}", e))?;
+
+    eprintln!(
+        "✅ Project imported from folder: {} (ID: {})",
+        metadata.name, project_id
+    );
+
+    Ok(Project {
+        id: project_id,
+        name: metadata.name,
+        author: metadata.author,
+        workflow: metadata.workflow,
+        template,
+        project_path: folder_path,
+        created_at: chrono::Utc::now().to_rfc3339(),
     })
 }
 
@@ -910,7 +994,15 @@ pub fn save_project_editor(
 #[tauri::command]
 pub fn get_project_spec_digest(project_path: String) -> Result<Option<String>, String> {
     let project_root = PathBuf::from(&project_path);
-    project_yaml_hash(&project_root).map_err(|e| format!("Failed to hash project.yaml: {}", e))
+    let yaml_path = project_root.join("project.yaml");
+
+    if !yaml_path.exists() {
+        return Ok(None);
+    }
+
+    hash_file(yaml_path.to_str().unwrap())
+        .map(Some)
+        .map_err(|e| format!("Failed to hash project.yaml: {}", e))
 }
 
 #[tauri::command]

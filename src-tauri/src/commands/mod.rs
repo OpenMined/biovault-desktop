@@ -4,6 +4,7 @@ pub mod jupyter;
 pub mod logs;
 pub mod messages;
 pub mod participants;
+pub mod pipelines;
 pub mod projects;
 pub mod runs;
 pub mod settings;

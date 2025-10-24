@@ -36,12 +36,12 @@ export function setupEventHandlers({
 	getSyftboxStatus,
 	// Projects
 	showCreateProjectModal,
-	showCreatePipelineModal,
 	hideCreateProjectModal,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
 	resetProjectDirectory,
 	importProject,
+	importProjectFromFolder,
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
@@ -459,9 +459,6 @@ export function setupEventHandlers({
 	document.getElementById('create-project-btn').addEventListener('click', () => {
 		showCreateProjectModal()
 	})
-	document.getElementById('create-pipeline-btn')?.addEventListener('click', () => {
-		showCreatePipelineModal()
-	})
 	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
 	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
 
@@ -499,6 +496,10 @@ export function setupEventHandlers({
 	document.getElementById('import-project-btn').addEventListener('click', () => {
 		console.log('Import project button clicked')
 		importProject()
+	})
+	document.getElementById('import-folder-btn').addEventListener('click', () => {
+		console.log('Import from folder button clicked')
+		importProjectFromFolder()
 	})
 
 	// Runs - Run analysis button
