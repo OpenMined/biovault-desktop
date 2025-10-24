@@ -1,24 +1,46 @@
-<div class="run-container">
-	<div class="selection-panel">
-		<div
-			style="
-				display: flex;
-				justify-content: space-between;
-				align-items: center;
-				margin-bottom: 15px;
-			"
-		>
-			<h3 style="margin: 0">Select Participants</h3>
-			<label style="cursor: pointer; font-size: 14px">
-				<input type="checkbox" id="select-all-participants" style="margin-right: 5px" />
-				Select All
-			</label>
+<!-- Tab navigation -->
+<div class="run-tabs">
+	<button class="run-tab active" data-tab="pipelines">Pipelines</button>
+	<button class="run-tab" data-tab="execute">Execute Project</button>
+</div>
+
+<!-- Pipelines Tab (now first and active) -->
+<div id="pipelines-view" class="run-tab-content">
+	<div class="pipelines-container">
+		<div class="pipelines-header">
+			<h2>Pipelines</h2>
+			<button id="create-pipeline-btn" class="primary-btn">+ Create New Pipeline</button>
 		</div>
-		<div class="selection-list" id="run-participants-list"></div>
+		<div id="pipelines-list" class="pipelines-list">
+			<p style="color: #666">No pipelines created yet.</p>
+		</div>
 	</div>
-	<div class="selection-panel">
-		<h3>Select Project</h3>
-		<div class="selection-list" id="run-projects-list"></div>
-		<button class="run-btn" id="run-btn" disabled>Run Analysis</button>
+</div>
+
+<!-- Execute Project Tab (now second) -->
+<div id="execute-view" class="run-tab-content" style="display: none">
+	<div class="run-container">
+		<div class="selection-panel">
+			<div
+				style="
+					display: flex;
+					justify-content: space-between;
+					align-items: center;
+					margin-bottom: 15px;
+				"
+			>
+				<h3 style="margin: 0">Select Participants</h3>
+				<label style="cursor: pointer; font-size: 14px">
+					<input type="checkbox" id="select-all-participants" style="margin-right: 5px" />
+					Select All
+				</label>
+			</div>
+			<div class="selection-list" id="run-participants-list"></div>
+		</div>
+		<div class="selection-panel">
+			<h3>Select Project</h3>
+			<div class="selection-list" id="run-projects-list"></div>
+			<button class="run-btn" id="run-btn" disabled>Run Analysis</button>
+		</div>
 	</div>
 </div>

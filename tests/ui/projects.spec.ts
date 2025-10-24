@@ -1,6 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { promises as fs } from 'fs'
-import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import WebSocket from 'ws'
@@ -133,29 +131,33 @@ test.describe('Project Creation Wizard', () => {
 		await page.click('button.tab[data-tab="projects"]')
 		await page.waitForTimeout(500)
 
-		// Click "New Project" button
-		await page.click('button:has-text("New Project")')
+		// Click "Create New Project" button
+		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
-		// Step 1: Project Name
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '0')
+		// Step 0: Project Details
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '0')
 		await page.fill('#new-project-name', 'Test Project')
 		await page.click('button:has-text("Next")')
 
-		// Step 2: Template
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '1')
+		// Step 1: Inputs
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '1')
 		await page.click('button:has-text("Next")')
 
-		// Step 3: Parameters
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '2')
+		// Step 2: Parameters
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '2')
 		await page.click('button:has-text("Next")')
 
-		// Step 4: Inputs
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '3')
+		// Step 3: Outputs
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
 		await page.click('button:has-text("Next")')
 
-		// Step 5: Outputs
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '4')
+		// Step 4: Preview
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '4')
+		await page.click('button:has-text("Next")')
+
+		// Step 5: Review & Create
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '5')
 
 		sendUnifiedLog({ test: 'project-wizard-navigation', action: 'complete' })
 	})
@@ -165,7 +167,7 @@ test.describe('Project Creation Wizard', () => {
 
 		await page.click('button.tab[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Fill project name
@@ -174,7 +176,7 @@ test.describe('Project Creation Wizard', () => {
 		await page.click('button:has-text("Next")')
 
 		// Now at Parameters step
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '2')
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '2')
 
 		// Add first parameter (Bool type)
 		await page.click('button:has-text("Add Parameter")')
@@ -201,9 +203,8 @@ test.describe('Project Creation Wizard', () => {
 		expect(paramEntries).toBe(2)
 
 		// Navigate to preview and verify parameters appear
-		await page.click('button:has-text("Next")') // Inputs
-		await page.click('button:has-text("Next")') // Outputs
-		await page.click('button:has-text("Next")') // Preview
+		await page.click('button:has-text("Next")') // To Outputs
+		await page.click('button:has-text("Next")') // To Preview
 
 		await page.waitForTimeout(500)
 
@@ -214,10 +215,9 @@ test.describe('Project Creation Wizard', () => {
 		expect(yamlPreview).toContain('Bool')
 		expect(yamlPreview).toContain('String')
 
-		// Go back and remove first parameter
-		await page.click('button:has-text("Back")')
-		await page.click('button:has-text("Back")')
-		await page.click('button:has-text("Back")')
+		// Go back to Parameters step
+		await page.click('button:has-text("Back")') // Back to Outputs
+		await page.click('button:has-text("Back")') // Back to Parameters
 
 		await page.locator('.spec-entry').first().locator('button[data-action="remove"]').click()
 		await page.waitForTimeout(200)
@@ -238,16 +238,14 @@ test.describe('Project Creation Wizard', () => {
 
 		await page.click('button.tab[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'IO Test Project')
 		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
 
-		// At Inputs step
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '3')
+		// At Inputs step (step 1)
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '1')
 
 		// Add File input
 		await page.click('button:has-text("Add Input")')
@@ -258,7 +256,10 @@ test.describe('Project Creation Wizard', () => {
 		await input1.locator('input[data-field="raw_type"]').fill('File')
 		await input1.locator('textarea[data-field="description"]').fill('Reference genome file')
 
-		// Move to outputs
+		// Move to Parameters (step 2)
+		await page.click('button:has-text("Next")')
+
+		// Move to Outputs (step 3)
 		await page.click('button:has-text("Next")')
 
 		// Add output
@@ -287,13 +288,11 @@ test.describe('Project Creation Wizard', () => {
 
 		await page.click('button.tab[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		await page.fill('#new-project-name', 'Empty Fields Test')
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
+		await page.click('button:has-text("Next")') // To Inputs
 
 		// Add input with only name (no type)
 		await page.click('button:has-text("Add Input")')
@@ -302,8 +301,9 @@ test.describe('Project Creation Wizard', () => {
 		// Don't fill type
 
 		// Navigate to preview
-		await page.click('button:has-text("Next")')
-		await page.click('button:has-text("Next")')
+		await page.click('button:has-text("Next")') // To Parameters
+		await page.click('button:has-text("Next")') // To Outputs
+		await page.click('button:has-text("Next")') // To Preview
 		await page.waitForTimeout(500)
 
 		// Preview should not error, just not show the incomplete input
@@ -318,7 +318,7 @@ test.describe('Project Creation Wizard', () => {
 
 		await page.click('button.tab[data-tab="projects"]')
 		await page.waitForTimeout(500)
-		await page.click('button:has-text("New Project")')
+		await page.click('button:has-text("Create New Project")')
 		await page.waitForSelector('#create-project-modal', { state: 'visible' })
 
 		// Fill project name
@@ -329,19 +329,19 @@ test.describe('Project Creation Wizard', () => {
 		await page.click('button:has-text("Next")')
 		await page.click('button:has-text("Next")')
 
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '3')
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
 
 		// Click on step 1 in the sidebar
 		await page.click('.project-wizard-steps li[data-step="0"]')
 		await page.waitForTimeout(200)
 
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '0')
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '0')
 
 		// Click on step 4
 		await page.click('.project-wizard-steps li[data-step="3"]')
 		await page.waitForTimeout(200)
 
-		await expect(page.locator('.wizard-step.active')).toHaveAttribute('data-step', '3')
+		await expect(page.locator('.project-wizard-step.active')).toHaveAttribute('data-step', '3')
 
 		sendUnifiedLog({ test: 'project-wizard-step-clicks', action: 'complete' })
 	})

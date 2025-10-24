@@ -45,6 +45,7 @@ export function setupEventHandlers({
 	chooseProjectDirectory,
 	resetProjectDirectory,
 	importProject,
+	importProjectFromFolder,
 	handleSaveProjectEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
@@ -482,6 +483,10 @@ export function setupEventHandlers({
 	document.getElementById('import-project-btn').addEventListener('click', () => {
 		console.log('Import project button clicked')
 		importProject()
+	})
+	document.getElementById('import-folder-btn').addEventListener('click', () => {
+		console.log('Import from folder button clicked')
+		importProjectFromFolder()
 	})
 
 	// Runs - Run analysis button

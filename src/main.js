@@ -5,6 +5,7 @@ import { createDataModule } from './data.js'
 import { createLogsModule } from './logs.js'
 import { createRunsModule } from './runs.js'
 import { createProjectsModule } from './projects.js'
+import { createPipelinesModule } from './pipelines.js'
 import { createMessagesModule } from './messages.js'
 import { createImportModule } from './import.js'
 import { createProgressUI } from './progress-ui.js'
@@ -79,6 +80,14 @@ const {
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
+// Create pipelines module
+const pipelinesModule = createPipelinesModule({
+	invoke,
+	dialog,
+	open,
+	navigateTo: (...args) => projectsNavigateTo(...args),
+})
+
 // Create projects module early with placeholder navigateTo
 let projectsNavigateTo = () => console.warn('navigateTo not yet initialized')
 const projectsModule = createProjectsModule({
@@ -91,6 +100,7 @@ const projectsModule = createProjectsModule({
 const {
 	loadProjects,
 	importProject,
+	importProjectFromFolder,
 	showCreateProjectModal,
 	hideCreateProjectModal,
 	handleProjectNameInputChange,
@@ -277,6 +287,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	initColumnResizers()
 	registerNavigationHandlers()
 	initializeDataTab()
+	pipelinesModule.initialize()
 
 	// Setup all event handlers
 	setupEventHandlers({
@@ -320,6 +331,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		chooseProjectDirectory,
 		resetProjectDirectory,
 		importProject,
+		importProjectFromFolder,
 		handleSaveProjectEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,

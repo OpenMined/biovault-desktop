@@ -862,6 +862,40 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 		}
 	}
 
+	async function importProjectFromFolder() {
+		const folderPath = await dialog.open({
+			directory: true,
+			multiple: false,
+			title: 'Select Project Folder',
+		})
+
+		if (!folderPath) {
+			return
+		}
+
+		console.log('Import from folder selected:', folderPath)
+
+		const btn = document.getElementById('import-folder-btn')
+		btn.disabled = true
+		btn.innerHTML = '⏳ Importing...'
+
+		try {
+			const result = await invoke('import_project_from_folder', {
+				folder_path: folderPath,
+			})
+			console.log('Import from folder successful:', result)
+			await loadProjects()
+			alert(`Project "${result.name}" imported successfully!`)
+		} catch (error) {
+			console.error('Error importing from folder:', error)
+			const errorStr = error.toString ? error.toString() : String(error)
+			alert(`Error importing project: ${errorStr}`)
+		} finally {
+			btn.disabled = false
+			btn.innerHTML = '📁 Import from Folder'
+		}
+	}
+
 	async function fetchDefaultProjectPath(name) {
 		const trimmed = name ? name.trim() : ''
 		try {
@@ -1548,6 +1582,7 @@ export function createProjectsModule({ invoke, dialog, open, shellApi, navigateT
 	return {
 		loadProjects,
 		importProject,
+		importProjectFromFolder,
 		showCreateProjectModal,
 		hideCreateProjectModal,
 		handleProjectNameInputChange,

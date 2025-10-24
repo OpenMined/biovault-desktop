@@ -52,3 +52,102 @@
 	background: #ccc;
 	cursor: not-allowed;
 }
+
+/* Tab Navigation */
+.run-tabs {
+	display: flex;
+	gap: 10px;
+	padding: 20px 20px 0 20px;
+	border-bottom: 2px solid #e0e0e0;
+	background: #f5f5f5;
+}
+
+.run-tab {
+	padding: 10px 20px;
+	background: transparent;
+	border: none;
+	border-bottom: 3px solid transparent;
+	color: #666;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.3s ease;
+}
+
+.run-tab:hover {
+	color: #333;
+}
+
+.run-tab.active {
+	color: #007bff;
+	border-bottom-color: #007bff;
+}
+
+.run-tab-content {
+	height: calc(100% - 50px);
+	overflow-y: auto;
+}
+
+/* Pipelines Styles */
+.pipelines-container {
+	padding: 20px;
+	height: 100%;
+	overflow-y: auto;
+}
+
+.pipelines-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
+}
+
+.pipelines-header h2 {
+	margin: 0;
+	font-size: 24px;
+}
+
+.pipelines-list {
+	display: grid;
+	gap: 15px;
+}
+
+.pipeline-card {
+	background: white;
+	border: 1px solid #ddd;
+	border-radius: 8px;
+	padding: 20px;
+	cursor: pointer;
+	transition: box-shadow 0.3s ease;
+}
+
+.pipeline-card:hover {
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.pipeline-info h3 {
+	margin: 0 0 10px 0;
+	font-size: 18px;
+}
+
+.pipeline-info p {
+	margin: 5px 0;
+	color: #666;
+	font-size: 13px;
+}
+
+.pipeline-actions {
+	display: flex;
+	gap: 10px;
+	margin-top: 15px;
+}
+
+.pipeline-steps-count {
+	display: inline-block;
+	background: #e9ecef;
+	color: #495057;
+	padding: 4px 12px;
+	border-radius: 12px;
+	font-size: 12px;
+	margin-left: 10px;
+}
