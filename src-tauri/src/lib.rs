@@ -80,7 +80,7 @@ fn log_desktop_event(message: &str) {
     }
 }
 
-fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
+fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
     // Desktop-specific DB is deprecated - keeping for backwards compat only
     // TODO: Remove this entirely and use only BioVaultDb

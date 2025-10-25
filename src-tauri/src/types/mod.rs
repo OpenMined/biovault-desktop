@@ -8,6 +8,7 @@ use biovault::data::BioVaultDb;
 
 // Application State
 pub struct AppState {
+    #[allow(dead_code)] // Deprecated - all tables now in biovault_db
     pub db: Mutex<Connection>,
     pub biovault_db: Arc<Mutex<BioVaultDb>>,
     pub queue_processor_paused: Arc<AtomicBool>,

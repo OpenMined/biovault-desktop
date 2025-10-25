@@ -5,9 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Emitter;
 
-// Use CLI library types
+ // Use CLI library types and functions
 pub use biovault::data::{Pipeline, PipelineRun};
 pub use biovault::pipeline_spec::PipelineSpec;
+use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineCreateRequest {
@@ -241,9 +242,9 @@ pub async fn delete_pipeline(
 
 #[tauri::command]
 pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidationResult, String> {
-    use std::process::Command;
+    use std::process::Command as ProcessCommand;
 
-    let output = Command::new("bv")
+    let output = ProcessCommand::new("bv")
         .args(["pipeline", "validate", "--diagram", &pipeline_path])
         .output()
         .map_err(|e| format!("Failed to run bv validate: {}", e))?;
@@ -289,7 +290,6 @@ pub async fn run_pipeline(
     results_dir: Option<String>,
 ) -> Result<PipelineRun, String> {
     use chrono::Local;
-    use std::process::Command;
 
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -321,75 +321,52 @@ pub async fn run_pipeline(
         &results_path.to_string_lossy(),
         Some(&results_path.to_string_lossy())
     ).map_err(|e| e.to_string())?;
-
-    // Prepare bv run command
-    // Note: Flags must come BEFORE positional args for clap
-    let mut cmd = Command::new("bv");
-    cmd.arg("run");
     
-    // Set results directory FIRST (before pipeline path)
-    cmd.arg("--results-dir").arg(&results_path);
-    
-    // Then the pipeline.yaml path
-    cmd.arg(yaml_path.to_string_lossy().to_string());
+    drop(biovault_db); // Release lock
 
-    // Then input overrides (trailing args)
+    // Build extra args from input overrides
+    let mut extra_args = Vec::new();
     for (key, value) in input_overrides {
-        cmd.arg("--set").arg(format!("inputs.{}={}", key, value));
+        extra_args.push("--set".to_string());
+        extra_args.push(format!("inputs.{}={}", key, value));
     }
 
-    // Spawn the process and stream output
-    // Update status using CLI library function after completion
+    let yaml_path_str = yaml_path.to_string_lossy().to_string();
+    let results_dir_str = results_path.to_string_lossy().to_string();
+
+    // Spawn async task to run pipeline (so we can return immediately)
     let window_clone = window.clone();
     let biovault_db_clone = state.biovault_db.clone();
     let run_id_clone = run_id;
-    std::thread::spawn(move || {
-        match cmd.output() {
-            Ok(output) => {
-                // Emit log lines
-                for line in String::from_utf8_lossy(&output.stdout).lines() {
-                    let _ = window_clone.emit("pipeline-log-line", line);
-                }
+    
+    tauri::async_runtime::spawn(async move {
+        // Call CLI library function directly
+        let result = cli_run_pipeline(
+            &yaml_path_str,
+            extra_args,
+            false, // dry_run
+            false, // resume
+            Some(results_dir_str),
+        ).await;
 
-                for line in String::from_utf8_lossy(&output.stderr).lines() {
-                    let _ = window_clone.emit("pipeline-log-line", line);
-                }
+        let status = if result.is_ok() { "success" } else { "failed" };
 
-                let status = if output.status.success() {
-                    "success"
-                } else {
-                    "failed"
-                };
-
-                // Update status using CLI library
-                if let Ok(biovault_db) = biovault_db_clone.lock() {
-                    let _ = biovault_db.update_pipeline_run_status(run_id_clone, status, true);
-                }
-
-                let _ = window_clone.emit("pipeline-complete", status);
-            }
-            Err(e) => {
-                let _ = window_clone.emit(
-                    "pipeline-log-line",
-                    format!("Error running pipeline: {}", e),
-                );
-                
-                // Update status to failed using CLI library
-                if let Ok(biovault_db) = biovault_db_clone.lock() {
-                    let _ = biovault_db.update_pipeline_run_status(run_id_clone, "failed", true);
-                }
-                
-                let _ = window_clone.emit("pipeline-complete", "failed");
-            }
+        // Update status using CLI library
+        if let Ok(biovault_db) = biovault_db_clone.lock() {
+            let _ = biovault_db.update_pipeline_run_status(run_id_clone, status, true);
         }
+
+        let _ = window_clone.emit("pipeline-complete", status);
     });
 
     Ok(PipelineRun {
         id: run_id,
-        pipeline_id,
+        pipeline_id: Some(pipeline_id),
+        step_id: None,
         status: "running".to_string(),
         work_dir: results_path.to_string_lossy().to_string(),
         results_dir: Some(results_path.to_string_lossy().to_string()),
+        participant_count: None,
         created_at: chrono::Local::now().to_rfc3339(),
         completed_at: None,
     })

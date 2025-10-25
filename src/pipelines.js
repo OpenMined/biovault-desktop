@@ -205,7 +205,8 @@ export function createPipelinesModule({
 			}
 		} catch (error) {
 			console.error('Error creating pipeline:', error)
-			alert('Failed to create pipeline: ' + error.message)
+			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
+			alert('Failed to create pipeline: ' + errorMsg)
 		}
 	}
 
