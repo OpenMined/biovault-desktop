@@ -6,8 +6,29 @@ export function createRunsModule({ invoke, listen }) {
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
 
-	// Listen for pipeline completion to refresh runs list
-	listen('pipeline-complete', async () => {
+	let currentPipelineLogRunId = null
+
+	// Listen for pipeline logs and completion
+	listen('pipeline-log-line', (event) => {
+		// Show in workbench logs panel
+		const logsContent = document.getElementById('logs-content')
+		if (logsContent) {
+			logsContent.textContent += event.payload + '\n'
+			logsContent.scrollTop = logsContent.scrollHeight
+		}
+	})
+
+	listen('pipeline-complete', async (event) => {
+		const status = event.payload
+		console.log('Pipeline completed with status:', status)
+
+		// Append completion message to logs
+		const logsContent = document.getElementById('logs-content')
+		if (logsContent) {
+			logsContent.textContent += `\n${status === 'success' ? '✅' : '❌'} Pipeline ${status}\n`
+		}
+
+		// Refresh runs list to show updated status
 		await loadRuns()
 	})
 

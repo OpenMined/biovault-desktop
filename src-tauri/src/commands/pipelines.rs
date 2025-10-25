@@ -327,16 +327,20 @@ pub async fn run_pipeline(
     ).map_err(|e| e.to_string())?;
 
     // Prepare bv run command
+    // Note: Flags must come BEFORE positional args for clap
     let mut cmd = Command::new("bv");
-    cmd.arg("run").arg(yaml_path.to_string_lossy().to_string());
+    cmd.arg("run");
+    
+    // Set results directory FIRST (before pipeline path)
+    cmd.arg("--results-dir").arg(&results_path);
+    
+    // Then the pipeline.yaml path
+    cmd.arg(yaml_path.to_string_lossy().to_string());
 
-    // Add input overrides
+    // Then input overrides (trailing args)
     for (key, value) in input_overrides {
         cmd.arg("--set").arg(format!("inputs.{}={}", key, value));
     }
-
-    // Set results directory
-    cmd.arg("--results-dir").arg(&results_path);
 
     // Spawn the process and stream output
     // Update status using CLI library function after completion
