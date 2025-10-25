@@ -4,6 +4,7 @@ export function createPipelinesModule({
 	open: _open,
 	navigateTo,
 	showCreateProjectModal,
+	openProjectEditor,
 }) {
 	// State management
 	const pipelineState = {
@@ -1231,6 +1232,8 @@ export function createPipelinesModule({
 			closeSimplePipelineModal,
 			createSimplePipeline,
 			loadPipelineSteps,
+			editPipelineStep,
+			removePipelineStep,
 		}
 
 		// Load pipelines after setting up global handlers
@@ -1257,6 +1260,73 @@ export function createPipelinesModule({
 
 		// Attach detail view button handlers
 		attachDetailViewButtons()
+	}
+
+	// Edit a pipeline step - opens the project editor for that step
+	async function editPipelineStep(stepIndex) {
+		if (!pipelineState.currentPipeline) {
+			console.error('No current pipeline')
+			return
+		}
+
+		const step = pipelineState.currentPipeline.spec?.steps?.[stepIndex]
+		if (!step) {
+			console.error('Step not found at index:', stepIndex)
+			return
+		}
+
+		// Open the project editor for this step's project
+		if (openProjectEditor && step.uses) {
+			await openProjectEditor({ projectPath: step.uses })
+		} else {
+			console.error('Cannot open project editor: missing function or project path')
+		}
+	}
+
+	// Remove a pipeline step
+	async function removePipelineStep(stepIndex) {
+		if (!pipelineState.currentPipeline) {
+			console.error('No current pipeline')
+			return
+		}
+
+		if (!confirm('Are you sure you want to remove this step from the pipeline?')) {
+			return
+		}
+
+		try {
+			// Load current pipeline spec
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			// Remove the step
+			editorData.spec.steps.splice(stepIndex, 1)
+
+			// Save updated pipeline
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			// Reload pipelines and steps
+			await loadPipelines()
+
+			const updatedPipeline = pipelineState.pipelines.find(
+				(p) => p.id === pipelineState.currentPipeline.id,
+			)
+			if (updatedPipeline) {
+				pipelineState.currentPipeline = updatedPipeline
+			}
+
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+
+			console.log('✅ Removed step from pipeline')
+		} catch (error) {
+			console.error('Error removing step:', error)
+			alert('Failed to remove step: ' + error.message)
+		}
 	}
 
 	// Add a newly created project as a step to the current pipeline

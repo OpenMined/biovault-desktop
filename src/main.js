@@ -105,22 +105,13 @@ const projectsModule = createProjectsModule({
 	navigateTo: (...args) => projectsNavigateTo(...args),
 })
 
-// Create pipelines module AFTER projects module so we can access showCreateProjectModal
-const pipelinesModule = createPipelinesModule({
-	invoke,
-	dialog,
-	open,
-	navigateTo: (...args) => projectsNavigateTo(...args),
-	showCreateProjectModal: projectsModule.showCreateProjectModal,
-})
-
-// Wire up the callback so projects can add steps to pipelines
-pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
+// Destructure projects module exports
 const {
 	loadProjects,
 	importProject,
 	importProjectFromFolder,
 	showCreateProjectModal,
+	openProjectEditor,
 	hideCreateProjectModal,
 	handleProjectNameInputChange,
 	chooseProjectDirectory,
@@ -136,6 +127,19 @@ const {
 	handleLeaveProjectEditor,
 	handleReloadProjectSpec,
 } = projectsModule
+
+// Create pipelines module AFTER destructuring projectsModule
+const pipelinesModule = createPipelinesModule({
+	invoke,
+	dialog,
+	open,
+	navigateTo: (...args) => projectsNavigateTo(...args),
+	showCreateProjectModal,
+	openProjectEditor,
+})
+
+// Wire up the callback so projects can add steps to pipelines
+pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
 
 // Create messages module early with placeholder getActiveView
 let messagesGetActiveView = () => 'projects'

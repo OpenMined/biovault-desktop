@@ -1909,5 +1909,6 @@ export function createProjectsModule({
 		handleReloadProjectSpec,
 		handleCreateTabNext,
 		handleCreateTabBack,
+		openProjectEditor, // Export for pipelines module
 	}
 }
