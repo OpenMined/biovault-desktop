@@ -81,48 +81,11 @@ fn log_desktop_event(message: &str) {
 }
 
 fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // NOTE: Files and Participants tables are managed by CLI via biovault.db
-    // Desktop only manages its own tables: projects, runs, run_participants
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            author TEXT NOT NULL,
-            workflow TEXT NOT NULL,
-            template TEXT NOT NULL,
-            project_path TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            work_dir TEXT NOT NULL,
-            participant_count INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (project_id) REFERENCES projects(id)
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS run_participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL,
-            participant_id INTEGER NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES runs(id)
-        )",
-        [],
-    )?;
-
-    // Note: Pipeline tables moved to CLI database (BioVaultDb)
-    // They are managed by biovault::data::pipelines module
-
+    // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
+    // Desktop-specific DB is deprecated - keeping for backwards compat only
+    // TODO: Remove this entirely and use only BioVaultDb
+    
+    // Temporary stub - all real tables are in CLI database now
     Ok(())
 }
 
