@@ -38,32 +38,40 @@
 	<!-- Pipeline Detail View (hidden by default) -->
 	<div id="pipeline-detail-view" style="display: none">
 		<header class="page-header">
-			<div class="page-header-left">
-				<button id="back-to-pipelines-btn" class="btn-secondary-small">← Back</button>
-				<div style="margin-left: 16px">
-					<h1 class="page-title" id="pipeline-detail-name">Pipeline Name</h1>
-					<p class="page-subtitle" id="pipeline-detail-description">Pipeline description</p>
-				</div>
+			<button id="back-to-pipelines-btn" class="back-button">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="15 18 9 12 15 6"></polyline>
+				</svg>
+				Back
+			</button>
+			<div class="pipeline-header-info">
+				<h1 class="pipeline-detail-title" id="pipeline-detail-name">Pipeline Name</h1>
+				<p class="pipeline-detail-subtitle" id="pipeline-detail-description">Pipeline description</p>
 			</div>
-			<div class="page-header-right">
-				<div class="page-header-actions">
-					<button id="pipeline-detail-run" class="btn-primary-small">▶ Run Pipeline</button>
-					<button id="pipeline-detail-edit" class="btn-secondary-small">Edit</button>
-				</div>
+			<div class="pipeline-header-actions">
+				<button id="pipeline-detail-run" class="btn-run">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<polygon points="5 3 19 12 5 21 5 3"></polygon>
+					</svg>
+					Run
+				</button>
 			</div>
 		</header>
 
 		<div class="view-content">
-			<div class="pipeline-detail-content">
-				<!-- Pipeline Steps Section -->
-				<div class="pipeline-steps-section">
-					<div class="section-header">
-						<h3>Pipeline Steps</h3>
-						<button id="add-step-to-pipeline" class="btn-primary-small">+ Add Step</button>
-					</div>
-					<div id="pipeline-steps-list" class="pipeline-steps-list">
-						<!-- Steps will be rendered here -->
-					</div>
+			<div class="pipeline-detail-container">
+				<div class="steps-header">
+					<h2>Steps</h2>
+					<button id="add-step-to-pipeline" class="btn-add-step">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						Add Step
+					</button>
+				</div>
+				<div id="pipeline-steps-list" class="steps-list">
+					<!-- Steps will be rendered here -->
 				</div>
 			</div>
 		</div>

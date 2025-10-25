@@ -837,7 +837,7 @@ export function createPipelinesModule({
 			if (nameEl) nameEl.textContent = pipeline.name
 			if (descEl) {
 				descEl.textContent =
-					pipeline.spec?.description || `Workflow with ${pipeline.spec?.steps?.length || 0} steps`
+					pipeline.spec?.description || `Pipeline with ${pipeline.spec?.steps?.length || 0} steps`
 			}
 
 			// Load and display steps
@@ -1158,13 +1158,10 @@ export function createPipelinesModule({
 		const addStepBtn = document.getElementById('add-step-to-pipeline')
 		if (addStepBtn) {
 			addStepBtn.addEventListener('click', () => {
-				// Open project creation wizard in "add to pipeline" mode
-				if (pipelineState.currentPipeline && showCreateProjectModal) {
-					// Set a flag so we know to add this project as a step after creation
-					window._addingStepToPipeline = pipelineState.currentPipeline.id
-					showCreateProjectModal()
+				if (pipelineState.currentPipeline) {
+					showStepPickerModal()
 				} else {
-					console.error('Cannot add step: no current pipeline or modal function not available')
+					console.error('Cannot add step: no current pipeline')
 				}
 			})
 		}
@@ -1202,6 +1199,9 @@ export function createPipelinesModule({
 			loadPipelineSteps,
 			editPipelineStep,
 			removePipelineStep,
+			closeStepPickerModal,
+			browseForStepFolder,
+			createNewStepProject,
 		}
 
 		// Load pipelines after setting up global handlers
@@ -1228,6 +1228,161 @@ export function createPipelinesModule({
 
 		// Attach detail view button handlers
 		attachDetailViewButtons()
+	}
+
+	// Show step picker modal (choose existing or create new)
+	async function showStepPickerModal() {
+		try {
+			const projects = await invoke('get_projects')
+
+			const modalHtml = `
+				<div id="step-picker-modal" class="modal-overlay" style="display: flex;">
+					<div class="modal-content" style="width: 600px; max-height: 80vh;">
+						<div class="modal-header">
+							<h2>Add Step to Pipeline</h2>
+							<button class="modal-close" onclick="pipelineModule.closeStepPickerModal()">×</button>
+						</div>
+						<div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+							<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Select Existing Project</h3>
+							${
+								projects.length > 0
+									? `
+								<div class="project-select-list">
+									${projects
+										.map(
+											(p) => `
+										<div class="project-select-item" data-path="${p.project_path}" data-name="${p.name}">
+											<div class="project-select-info">
+												<div class="project-select-name">${p.name}</div>
+												<div class="project-select-path">${p.project_path}</div>
+											</div>
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+												<polyline points="9 18 15 12 9 6"></polyline>
+											</svg>
+										</div>
+									`,
+										)
+										.join('')}
+								</div>
+							`
+									: '<p style="color: #9ca3af; padding: 20px; text-align: center;">No projects registered yet</p>'
+							}
+							
+							<div style="border-top: 1px solid #e5e7eb; margin: 20px 0; padding-top: 20px;">
+								<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Or Choose Action</h3>
+								<div style="display: flex; flex-direction: column; gap: 8px;">
+									<button class="action-btn" onclick="pipelineModule.browseForStepFolder()">
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+											<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+										</svg>
+										Browse for Existing Project Folder
+									</button>
+									<button class="action-btn" onclick="pipelineModule.createNewStepProject()">
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+											<line x1="12" y1="5" x2="12" y2="19"></line>
+											<line x1="5" y1="12" x2="19" y2="12"></line>
+										</svg>
+										Create New Project
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			`
+
+			document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+			// Add click handlers for project items
+			document.querySelectorAll('.project-select-item').forEach((item) => {
+				item.addEventListener('click', async () => {
+					const path = item.dataset.path
+					const name = item.dataset.name
+					await addStepFromPath(path, name)
+					closeStepPickerModal()
+				})
+			})
+		} catch (error) {
+			console.error('Error showing step picker:', error)
+			alert('Failed to show step picker: ' + error)
+		}
+	}
+
+	function closeStepPickerModal() {
+		const modal = document.getElementById('step-picker-modal')
+		if (modal) modal.remove()
+	}
+
+	async function browseForStepFolder() {
+		try {
+			const selected = await dialog.open({
+				directory: true,
+				multiple: false,
+			})
+
+			if (selected) {
+				// Extract name from path
+				const name = selected.split('/').pop() || selected.split('\\').pop() || 'step'
+				await addStepFromPath(selected, name)
+				closeStepPickerModal()
+			}
+		} catch (error) {
+			console.error('Error browsing for step:', error)
+		}
+	}
+
+	function createNewStepProject() {
+		closeStepPickerModal()
+		if (showCreateProjectModal) {
+			// Set flag so project gets added to pipeline after creation
+			window._addingStepToPipeline = pipelineState.currentPipeline.id
+			showCreateProjectModal()
+		}
+	}
+
+	async function addStepFromPath(projectPath, projectName) {
+		if (!pipelineState.currentPipeline) return
+
+		try {
+			// Load current pipeline
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			// Create step
+			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+			const newStep = {
+				id: stepId,
+				uses: projectPath,
+				with: {},
+			}
+
+			// Add step
+			if (!editorData.spec.steps) {
+				editorData.spec.steps = []
+			}
+			editorData.spec.steps.push(newStep)
+
+			// Save
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			// Refresh
+			await loadPipelines()
+			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			if (updated) {
+				pipelineState.currentPipeline = updated
+			}
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+
+			console.log('✅ Added step:', stepId)
+		} catch (error) {
+			console.error('Error adding step:', error)
+			alert('Failed to add step: ' + error)
+		}
 	}
 
 	// Edit a pipeline step - opens the project editor for that step
