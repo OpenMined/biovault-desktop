@@ -1323,6 +1323,14 @@ export function createPipelinesModule({
 			})
 
 			if (selected) {
+				// Import/register the project first so it appears in the list
+				try {
+					await invoke('import_project_from_folder', { folderPath: selected })
+				} catch (e) {
+					// Might already be registered, that's ok
+					console.log('Project may already be registered:', e)
+				}
+				
 				// Extract name from path
 				const name = selected.split('/').pop() || selected.split('\\').pop() || 'step'
 				await addStepFromPath(selected, name)
@@ -1346,16 +1354,44 @@ export function createPipelinesModule({
 		if (!pipelineState.currentPipeline) return
 
 		try {
-			// Load the project spec to get required inputs
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: projectPath,
+			// Load current pipeline
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
 			})
 
-			// Show binding configuration modal
-			await showBindingConfigModal(projectPath, projectName, projectSpec)
+			// Create step WITHOUT bindings (configure later)
+			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+			const newStep = {
+				id: stepId,
+				uses: projectPath,
+				with: {}, // Empty - configure later via button
+			}
+
+			// Add step
+			if (!editorData.spec.steps) {
+				editorData.spec.steps = []
+			}
+			editorData.spec.steps.push(newStep)
+
+			// Save
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			// Refresh
+			await loadPipelines()
+			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			if (updated) {
+				pipelineState.currentPipeline = updated
+			}
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+
+			console.log('✅ Added step (configure bindings later):', stepId)
 		} catch (error) {
-			console.error('Error loading project for step:', error)
-			alert('Failed to load project: ' + error)
+			console.error('Error adding step:', error)
+			alert('Failed to add step: ' + error)
 		}
 	}
 
