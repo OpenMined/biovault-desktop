@@ -59,12 +59,6 @@ export function createPipelinesModule({
 				return
 			}
 
-			// Update pipeline count badges
-			const pipelineCountBadges = document.querySelectorAll('#pipelines-count')
-			pipelineCountBadges.forEach((badge) => {
-				badge.textContent = pipelines?.length || 0
-			})
-
 			if (!pipelines || pipelines.length === 0) {
 				gridContainer.innerHTML = ''
 				if (emptyState) emptyState.style.display = 'flex'
@@ -77,52 +71,26 @@ export function createPipelinesModule({
 
 			pipelines.forEach((pipeline) => {
 				const stepCount = pipeline.spec?.steps?.length || 0
-
-				// Extract tags from steps (show first 3 step names)
-				const tags =
-					pipeline.spec?.steps
-						?.map((step) => {
-							// Try to get a clean name from the step
-							return step.id || step.uses?.split('/').pop() || 'Step'
-						})
-						.slice(0, 3) || []
+				const description = pipeline.spec?.description || 'Click to configure and manage steps'
 
 				const card = document.createElement('div')
 				card.className = 'pipeline-card'
 
-				const description =
-					pipeline.spec?.description ||
-					`Workflow with ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
-
 				card.innerHTML = `
-					<div class="pipeline-card-header">
-						<h3 class="pipeline-card-title">${pipeline.name}</h3>
-						<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
-							pipeline.id
-						}, event)">⋯</button>
-					</div>
-					<p class="pipeline-card-description">${description}</p>
-					${
-						tags.length > 0
-							? `
-						<div class="pipeline-card-tags">
-							${tags.map((tag) => `<span class="pipeline-tag">${tag}</span>`).join('')}
-						</div>
-					`
-							: ''
-					}
-					<div class="pipeline-card-footer">
-						<span class="pipeline-step-count">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
-						<div class="pipeline-card-icons">
-							<button class="pipeline-card-icon-btn" title="View Details" onclick="event.stopPropagation(); pipelineModule.showPipelineDetails(${
-								pipeline.id
-							})">→</button>
-							<button class="pipeline-card-icon-btn" title="Run" onclick="event.stopPropagation(); pipelineModule.runPipeline(${
-								pipeline.id
-							})">▶</button>
-						</div>
-					</div>
-				`
+				<div class="pipeline-card-header">
+					<h3 class="pipeline-card-title">${pipeline.name}</h3>
+					<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
+						pipeline.id
+					}, event)">⋯</button>
+				</div>
+				<p class="pipeline-card-description">${description}</p>
+				<div class="pipeline-card-footer">
+					<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
+					<button class="pipeline-run-btn" onclick="event.stopPropagation(); pipelineModule.runPipeline(${
+						pipeline.id
+					})">▶ Run</button>
+				</div>
+			`
 
 				card.addEventListener('click', () => {
 					showPipelineDetails(pipeline.id)

@@ -113,96 +113,154 @@ export function createRunsModule({ invoke, listen }) {
 
 	async function loadRuns() {
 		try {
-			const runs = await invoke('get_runs')
+			// Load only pipeline runs (steps are now called projects)
+			const pipelineRuns = await invoke('get_pipeline_runs')
+			const pipelines = await invoke('get_pipelines') // Get pipeline names
+
 			const container = document.getElementById('runs-list')
 
-			if (runs.length === 0) {
-				container.innerHTML = '<p style="color: #666;">No runs yet.</p>'
+			if (pipelineRuns.length === 0) {
+				container.innerHTML =
+					'<p style="color: #666;">No pipeline runs yet. Run a pipeline to see results here.</p>'
 				return
 			}
 
 			container.innerHTML = ''
-			runs.forEach((run) => {
-				const card = document.createElement('div')
-				card.className = `run-card ${run.status}`
-				card.style.cursor = 'pointer'
-				card.dataset.runId = run.id
-				card.dataset.projectName = run.project_name
 
-				let statusBadge
+			// Display pipeline runs
+			pipelineRuns.forEach((run) => {
+				// Find pipeline name
+				const pipeline = pipelines.find((p) => p.id === run.pipeline_id)
+				const pipelineName = pipeline ? pipeline.name : `Pipeline #${run.pipeline_id}`
+				const card = document.createElement('div')
+				card.className = 'pipeline-run-card'
+				card.dataset.runId = run.id
+				card.dataset.expanded = 'false'
+
+				let statusBadge, statusClass
 				if (run.status === 'success') {
-					statusBadge =
-						'<span style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Success</span>'
+					statusBadge = '<span class="status-badge status-success">✓ Success</span>'
+					statusClass = 'success'
 				} else if (run.status === 'failed') {
-					statusBadge =
-						'<span style="background: #dc3545; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Failed</span>'
+					statusBadge = '<span class="status-badge status-failed">✗ Failed</span>'
+					statusClass = 'failed'
 				} else {
-					statusBadge =
-						'<span style="background: #ffc107; color: black; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Running</span>'
+					statusBadge = '<span class="status-badge status-running">⋯ Running</span>'
+					statusClass = 'running'
 				}
 
+				const timeAgo = getTimeAgo(new Date(run.created_at))
+
 				card.innerHTML = `
-					<div style="display: flex; justify-content: space-between; align-items: start;">
-						<div class="run-info">
-							<h3>${run.project_name} ${statusBadge}</h3>
-							<p><strong>Participants:</strong> ${run.participant_count}</p>
-							<p><strong>Work Directory:</strong> ${run.work_dir}</p>
-							<p><strong>Created:</strong> ${run.created_at}</p>
-						</div>
-						<div style="display: flex; gap: 10px;">
-							<button class="open-folder-btn" data-path="${run.work_dir}">Open Folder</button>
-							<button class="delete-btn" data-run-id="${run.id}">Delete</button>
-						</div>
+				<div class="run-header" data-run-id="${run.id}">
+					<svg class="run-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<polyline points="9 18 15 12 9 6"></polyline>
+					</svg>
+					<div class="run-status-icon ${statusClass}">
+						${run.status === 'success' ? '✓' : run.status === 'failed' ? '✗' : '⋯'}
 					</div>
-				`
+					<div class="run-main-info">
+						<div class="run-title">${pipelineName}</div>
+						<div class="run-subtitle">Run #${run.id} • ${timeAgo}</div>
+					</div>
+					${statusBadge}
+					<button class="run-delete-btn" data-run-id="${run.id}" title="Delete run">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+						</svg>
+					</button>
+				</div>
+				<div class="run-details" style="display: none;">
+					<div class="loading-steps">Loading steps...</div>
+				</div>
+			`
 
-				// Make card clickable to show logs
-				card.addEventListener('click', async (e) => {
-					// Don't trigger if clicking buttons
-					if (e.target.tagName === 'BUTTON') return
-					await showRunLogs(run.id, run.project_name, run.work_dir)
-				})
+				// Handle expand/collapse
+				const header = card.querySelector('.run-header')
+				header.addEventListener('click', async (e) => {
+					if (e.target.closest('.run-delete-btn')) return
 
-				container.appendChild(card)
-			})
+					const isExpanded = card.dataset.expanded === 'true'
+					card.dataset.expanded = isExpanded ? 'false' : 'true'
 
-			document.querySelectorAll('.open-folder-btn').forEach((btn) => {
-				btn.addEventListener('click', async (e) => {
-					try {
-						await invoke('open_folder', { path: e.target.dataset.path })
-					} catch (error) {
-						alert(`Error opening folder: ${error}`)
+					const detailsContainer = card.querySelector('.run-details')
+					if (!isExpanded) {
+						detailsContainer.style.display = 'block'
+						await loadPipelineRunSteps(run, pipeline, detailsContainer, statusClass)
+					} else {
+						detailsContainer.style.display = 'none'
 					}
 				})
-			})
 
-			document.querySelectorAll('.run-card .delete-btn').forEach((btn) => {
-				btn.addEventListener('click', async (e) => {
-					const runId = parseInt(e.target.dataset.runId)
-					if (
-						confirm(
-							'Are you sure you want to delete this run? This will remove all files and the database entry.',
-						)
-					) {
+				// Handle delete
+				const deleteBtn = card.querySelector('.run-delete-btn')
+				deleteBtn.addEventListener('click', async (e) => {
+					e.stopPropagation()
+					if (confirm('Delete this pipeline run and all its results?')) {
 						try {
-							await invoke('delete_run', { runId })
-
-							// Hide log viewer if it's showing logs for the deleted run
-							if (currentLogRunId === runId) {
-								document.getElementById('log-viewer').classList.remove('active')
-								currentLogRunId = null
-								currentLogWorkDir = null
-							}
-
+							await invoke('delete_pipeline_run', { runId: run.id })
 							await loadRuns()
 						} catch (error) {
 							alert(`Error deleting run: ${error}`)
 						}
 					}
 				})
+
+				container.appendChild(card)
 			})
 		} catch (error) {
 			console.error('Error loading runs:', error)
+		}
+	}
+
+	// Helper function for relative time
+	function getTimeAgo(date) {
+		const seconds = Math.floor((new Date() - date) / 1000)
+		const minutes = Math.floor(seconds / 60)
+		const hours = Math.floor(minutes / 60)
+		const days = Math.floor(hours / 24)
+
+		if (days > 0) return `${days}d ago`
+		if (hours > 0) return `${hours}h ago`
+		if (minutes > 0) return `${minutes}m ago`
+		return 'Just now'
+	}
+
+	// Load steps for an expanded pipeline run
+	async function loadPipelineRunSteps(run, pipeline, container, statusClass) {
+		try {
+			const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
+
+			container.innerHTML = `
+				<div class="steps-container">
+					${steps
+						.map(
+							(step, index) => `
+						<div class="step-row">
+							<div class="step-icon ${statusClass}">
+								${run.status === 'success' ? '✓' : run.status === 'failed' ? '✗' : '⋯'}
+							</div>
+							<div class="step-content">
+								<div class="step-title">${step.id}</div>
+								<div class="step-path">${step.uses}</div>
+							</div>
+							<div class="step-actions">
+								<button class="step-btn" onclick="window.invoke('open_folder', { path: '${
+									run.results_dir || run.work_dir
+								}' })" title="Open results">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+									</svg>
+								</button>
+							</div>
+						</div>
+					`,
+						)
+						.join('')}
+				</div>
+			`
+		} catch (error) {
+			container.innerHTML = `<p class="error-message">Error loading steps: ${error}</p>`
 		}
 	}
 

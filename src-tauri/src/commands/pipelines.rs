@@ -461,6 +461,8 @@ pub async fn run_pipeline(
     cmd.arg("--results-dir").arg(&results_path);
 
     // Spawn the process and stream output
+    // Note: CLI doesn't track status - it just executes and exits
+    // Desktop app shows "running" status (CLI parity)
     let window_clone = window.clone();
     std::thread::spawn(move || {
         match cmd.output() {
@@ -474,15 +476,12 @@ pub async fn run_pipeline(
                     let _ = window_clone.emit("pipeline-log-line", line);
                 }
 
-                // Update status
                 let status = if output.status.success() {
                     "success"
                 } else {
                     "failed"
                 };
 
-                // Update database with final status
-                // Note: In production, we'd need to pass the db connection properly
                 let _ = window_clone.emit("pipeline-complete", status);
             }
             Err(e) => {
