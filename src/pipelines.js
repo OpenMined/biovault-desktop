@@ -877,18 +877,23 @@ export function createPipelinesModule({
 				const stepName = step.id || `step-${index + 1}`
 				const stepUses = step.uses || 'Unknown step'
 
-				stepDiv.innerHTML = `
-					<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
-					<div class="pipeline-step-number">${index + 1}</div>
-					<div class="pipeline-step-info">
-						<h4>${stepName}</h4>
-						<p>Uses: ${stepUses}</p>
-					</div>
-					<div class="pipeline-step-actions">
-						<button class="btn-secondary-small" onclick="pipelineModule.editPipelineStep(${index})">Edit</button>
-						<button class="btn-secondary-small" onclick="pipelineModule.removePipelineStep(${index})" style="color: #dc3545;">Remove</button>
-					</div>
-				`
+			const hasBindings = step.with && Object.keys(step.with).length > 0
+			const bindingCount = Object.keys(step.with || {}).length
+			
+			stepDiv.innerHTML = `
+				<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
+				<div class="pipeline-step-number">${index + 1}</div>
+				<div class="pipeline-step-info">
+					<h4>${stepName}</h4>
+					<p>Uses: ${stepUses}</p>
+					${!hasBindings ? '<span class="warning-badge">⚠️ Not configured</span>' : `<span class="success-badge">✓ ${bindingCount} binding${bindingCount === 1 ? '' : 's'}</span>`}
+				</div>
+				<div class="pipeline-step-actions">
+					<button class="btn-secondary-small" onclick="pipelineModule.configureStepBindings(${index})">Configure</button>
+					<button class="btn-secondary-small" onclick="pipelineModule.editPipelineStep(${index})">Edit Project</button>
+					<button class="btn-secondary-small" onclick="pipelineModule.removePipelineStep(${index})" style="color: #dc3545;">Remove</button>
+				</div>
+			`
 
 				stepsContainer.appendChild(stepDiv)
 			})
@@ -1204,6 +1209,8 @@ export function createPipelinesModule({
 			createNewStepProject,
 			closeBindingConfigModal,
 			saveStepWithBindings,
+			configureStepBindings,
+			updateStepBindings,
 		}
 
 		// Load pipelines after setting up global handlers
@@ -1512,6 +1519,132 @@ export function createPipelinesModule({
 		} catch (error) {
 			console.error('Error saving step:', error)
 			alert('Failed to save step: ' + error)
+		}
+	}
+
+	// Configure step bindings
+	async function configureStepBindings(stepIndex) {
+		if (!pipelineState.currentPipeline) return
+
+		const step = pipelineState.currentPipeline.spec?.steps?.[stepIndex]
+		if (!step) return
+
+		try {
+			// Load project spec to get inputs
+			const projectSpec = await invoke('load_project_editor', {
+				projectPath: step.uses,
+			})
+
+			// Show binding config with existing bindings
+			await showBindingConfigModalForEdit(step, stepIndex, projectSpec)
+		} catch (error) {
+			console.error('Error loading project for configuration:', error)
+			alert('Failed to load project: ' + error)
+		}
+	}
+
+	async function showBindingConfigModalForEdit(step, stepIndex, projectSpec) {
+		const inputs = projectSpec.metadata?.inputs || []
+		const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
+		
+		const modalHtml = `
+			<div id="binding-config-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 700px; max-height: 85vh;">
+					<div class="modal-header">
+						<h2>Configure Bindings: ${step.id}</h2>
+						<button class="modal-close" onclick="pipelineModule.closeBindingConfigModal()">×</button>
+					</div>
+					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
+						<p style="color: #6b7280; margin: 0 0 20px 0; font-size: 14px;">
+							Configure how this step receives its inputs
+						</p>
+						
+						${
+							inputs.length > 0
+								? `
+							<div class="bindings-list">
+								${inputs
+									.map((input) => {
+										// Use existing binding or smart default
+										const existingBinding = step.with?.[input.name] || ''
+										const defaultBinding = existingBinding || (pipelineInputs[input.name] ? `inputs.${input.name}` : '')
+
+										return `
+										<div class="binding-item">
+											<label class="binding-label">
+												<span class="binding-name">${input.name}</span>
+												<span class="binding-type">${input.type}</span>
+											</label>
+											<input 
+												type="text" 
+												class="binding-input"
+												data-input="${input.name}"
+												value="${defaultBinding}"
+												placeholder="e.g., inputs.${input.name} or step.filter.outputs.data"
+											/>
+											<p class="binding-hint">${input.description || ''}</p>
+										</div>
+									`
+									})
+									.join('')}
+							</div>
+						`
+								: '<p style="color: #9ca3af;">This step has no inputs to configure.</p>'
+						}
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closeBindingConfigModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.updateStepBindings(${stepIndex})">Save Bindings</button>
+					</div>
+				</div>
+			</div>
+		`
+		
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+	}
+
+	async function updateStepBindings(stepIndex) {
+		try {
+			// Collect bindings
+			const bindings = {}
+			document.querySelectorAll('.binding-input').forEach((input) => {
+				const inputName = input.dataset.input
+				const value = input.value.trim()
+				if (value) {
+					bindings[inputName] = value
+				}
+			})
+
+			// Load pipeline
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			// Update step bindings
+			if (editorData.spec.steps[stepIndex]) {
+				editorData.spec.steps[stepIndex].with = bindings
+			}
+
+			// Save
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			// Refresh
+			await loadPipelines()
+			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			if (updated) {
+				pipelineState.currentPipeline = updated
+			}
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+
+			closeBindingConfigModal()
+			console.log('✅ Updated bindings for step')
+		} catch (error) {
+			console.error('Error updating bindings:', error)
+			alert('Failed to update bindings: ' + error)
 		}
 	}
 
