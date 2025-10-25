@@ -877,16 +877,22 @@ export function createPipelinesModule({
 				const stepName = step.id || `step-${index + 1}`
 				const stepUses = step.uses || 'Unknown step'
 
-			const hasBindings = step.with && Object.keys(step.with).length > 0
-			const bindingCount = Object.keys(step.with || {}).length
-			
-			stepDiv.innerHTML = `
+				const hasBindings = step.with && Object.keys(step.with).length > 0
+				const bindingCount = Object.keys(step.with || {}).length
+
+				stepDiv.innerHTML = `
 				<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
 				<div class="pipeline-step-number">${index + 1}</div>
 				<div class="pipeline-step-info">
 					<h4>${stepName}</h4>
 					<p>Uses: ${stepUses}</p>
-					${!hasBindings ? '<span class="warning-badge">⚠️ Not configured</span>' : `<span class="success-badge">✓ ${bindingCount} binding${bindingCount === 1 ? '' : 's'}</span>`}
+					${
+						!hasBindings
+							? '<span class="warning-badge">⚠️ Not configured</span>'
+							: `<span class="success-badge">✓ ${bindingCount} binding${
+									bindingCount === 1 ? '' : 's'
+							  }</span>`
+					}
 				</div>
 				<div class="pipeline-step-actions">
 					<button class="btn-secondary-small" onclick="pipelineModule.configureStepBindings(${index})">Configure</button>
@@ -1337,7 +1343,7 @@ export function createPipelinesModule({
 					// Might already be registered, that's ok
 					console.log('Project may already be registered:', e)
 				}
-				
+
 				// Extract name from path
 				const name = selected.split('/').pop() || selected.split('\\').pop() || 'step'
 				await addStepFromPath(selected, name)
@@ -1546,7 +1552,7 @@ export function createPipelinesModule({
 	async function showBindingConfigModalForEdit(step, stepIndex, projectSpec) {
 		const inputs = projectSpec.metadata?.inputs || []
 		const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
-		
+
 		const modalHtml = `
 			<div id="binding-config-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 700px; max-height: 85vh;">
@@ -1567,7 +1573,8 @@ export function createPipelinesModule({
 									.map((input) => {
 										// Use existing binding or smart default
 										const existingBinding = step.with?.[input.name] || ''
-										const defaultBinding = existingBinding || (pipelineInputs[input.name] ? `inputs.${input.name}` : '')
+										const defaultBinding =
+											existingBinding || (pipelineInputs[input.name] ? `inputs.${input.name}` : '')
 
 										return `
 										<div class="binding-item">
@@ -1599,7 +1606,7 @@ export function createPipelinesModule({
 				</div>
 			</div>
 		`
-		
+
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
 	}
 

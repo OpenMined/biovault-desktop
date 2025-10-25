@@ -230,6 +230,48 @@
 	color: #6b7280;
 }
 
+.step-result-btn {
+	padding: 6px 14px;
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.step-result-btn:hover {
+	background: #059669;
+}
+
+.run-results-header {
+	margin-bottom: 12px;
+	display: flex;
+	justify-content: flex-end;
+}
+
+.view-results-btn {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 16px;
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	color: #374151;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.view-results-btn:hover {
+	background: #f9fafb;
+	border-color: #d1d5db;
+}
+
 .error-message {
 	color: #dc2626;
 	padding: 12px;

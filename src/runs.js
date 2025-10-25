@@ -256,9 +256,18 @@ export function createRunsModule({ invoke, listen }) {
 	async function loadPipelineRunSteps(run, pipeline, container, statusClass) {
 		try {
 			const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
+			const resultsDir = run.results_dir || run.work_dir
 
 			container.innerHTML = `
 				<div class="steps-container">
+					<div class="run-results-header">
+						<button class="view-results-btn" data-results-path="${resultsDir}">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+							</svg>
+							View All Results
+						</button>
+					</div>
 					${steps
 						.map(
 							(step, index) => `
@@ -271,12 +280,8 @@ export function createRunsModule({ invoke, listen }) {
 								<div class="step-path">${step.uses}</div>
 							</div>
 							<div class="step-actions">
-								<button class="step-btn" onclick="window.invoke('open_folder', { path: '${
-									run.results_dir || run.work_dir
-								}' })" title="Open results">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
-									</svg>
+								<button class="step-result-btn" data-step-path="${resultsDir}/${step.id}" title="View step results">
+									View Results
 								</button>
 							</div>
 						</div>
@@ -285,6 +290,28 @@ export function createRunsModule({ invoke, listen }) {
 						.join('')}
 				</div>
 			`
+
+			// Attach event listeners after innerHTML is set
+			const viewAllBtn = container.querySelector('.view-results-btn')
+			if (viewAllBtn) {
+				viewAllBtn.addEventListener('click', async () => {
+					try {
+						await invoke('open_folder', { path: viewAllBtn.dataset.resultsPath })
+					} catch (e) {
+						console.error('Error opening folder:', e)
+					}
+				})
+			}
+
+			container.querySelectorAll('.step-result-btn').forEach((btn) => {
+				btn.addEventListener('click', async () => {
+					try {
+						await invoke('open_folder', { path: btn.dataset.stepPath })
+					} catch (e) {
+						console.error('Error opening folder:', e)
+					}
+				})
+			})
 		} catch (error) {
 			container.innerHTML = `<p class="error-message">Error loading steps: ${error}</p>`
 		}
