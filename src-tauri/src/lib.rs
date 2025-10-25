@@ -120,31 +120,8 @@ fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
-    // Pipeline tables
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pipelines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            pipeline_path TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pipeline_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pipeline_id INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            work_dir TEXT NOT NULL,
-            results_dir TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            completed_at DATETIME,
-            FOREIGN KEY (pipeline_id) REFERENCES pipelines(id)
-        )",
-        [],
-    )?;
+    // Note: Pipeline tables moved to CLI database (BioVaultDb)
+    // They are managed by biovault::data::pipelines module
 
     Ok(())
 }

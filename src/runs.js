@@ -6,6 +6,11 @@ export function createRunsModule({ invoke, listen }) {
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
 
+	// Listen for pipeline completion to refresh runs list
+	listen('pipeline-complete', async () => {
+		await loadRuns()
+	})
+
 	async function loadRunParticipants() {
 		try {
 			const participants = await invoke('get_participants')

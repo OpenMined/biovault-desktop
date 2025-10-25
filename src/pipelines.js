@@ -614,8 +614,7 @@ export function createPipelinesModule({
 			id: stepId,
 			uses: pipelineState.tempStepProject,
 			with: {},
-			publish: null,
-			store: null,
+			// Don't include publish/store if they're empty (CLI parity)
 		}
 
 		// Collect bindings
@@ -1314,12 +1313,13 @@ export function createPipelinesModule({
 
 			console.log('📄 Loaded pipeline spec:', editorData.spec)
 
-			// Create new step
+			// Create new step (CLI parity - only include non-empty fields)
 			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 			const newStep = {
 				id: stepId,
 				uses: projectPath,
 				with: {},
+				// Don't include publish/store unless they have values (CLI parity)
 			}
 
 			console.log('➕ New step:', newStep)

@@ -1,56 +1,13 @@
 use crate::types::AppState;
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Emitter;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Pipeline {
-    pub id: i64,
-    pub name: String,
-    pub pipeline_path: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub spec: Option<PipelineSpec>, // Include the parsed pipeline spec
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineRun {
-    pub id: i64,
-    pub pipeline_id: i64,
-    pub status: String,
-    pub work_dir: String,
-    pub results_dir: Option<String>,
-    pub created_at: String,
-    pub completed_at: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineStep {
-    pub id: String,
-    pub uses: String,                             // Project path or ID
-    pub with: HashMap<String, String>,            // Input bindings
-    pub publish: Option<HashMap<String, String>>, // Published outputs
-    pub store: Option<PipelineStore>,             // Storage configuration
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineStore {
-    pub kind: String, // "sql" for now
-    pub destination: String,
-    pub source: String,
-    pub table_name: String,
-    pub key_column: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineSpec {
-    pub name: String,
-    pub inputs: HashMap<String, String>, // Input name -> type
-    pub steps: Vec<PipelineStep>,
-}
+// Use CLI library types
+pub use biovault::data::{Pipeline, PipelineRun};
+pub use biovault::pipeline_spec::PipelineSpec;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineCreateRequest {
@@ -89,40 +46,8 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
 
 #[tauri::command]
 pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipeline>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    let mut stmt = db
-        .prepare("SELECT id, name, pipeline_path, created_at, updated_at FROM pipelines ORDER BY created_at DESC")
-        .map_err(|e| e.to_string())?;
-
-    let pipelines = stmt
-        .query_map([], |row| {
-            Ok(Pipeline {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                pipeline_path: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                spec: None, // Will be populated below
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    // Load spec from pipeline.yaml for each pipeline
-    let mut pipelines_with_spec = Vec::new();
-    for mut pipeline in pipelines {
-        let yaml_path = PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
-        if yaml_path.exists() {
-            if let Ok(content) = fs::read_to_string(&yaml_path) {
-                pipeline.spec = serde_yaml::from_str::<PipelineSpec>(&content).ok();
-            }
-        }
-        pipelines_with_spec.push(pipeline);
-    }
-
-    Ok(pipelines_with_spec)
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    biovault_db.list_pipelines().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -174,16 +99,10 @@ steps:
     fs::write(&pipeline_yaml_path, default_spec)
         .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
 
-    // Add to database
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    db.execute(
-        "INSERT INTO pipelines (name, pipeline_path) VALUES (?1, ?2)",
-        params![request.name, pipeline_dir.to_string_lossy()],
-    )
-    .map_err(|e| format!("Failed to insert pipeline: {}", e))?;
-
-    let id = db.last_insert_rowid();
+    // Register in database using CLI library
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let id = biovault_db.register_pipeline(&request.name, &pipeline_dir.to_string_lossy())
+        .map_err(|e| e.to_string())?;
 
     Ok(Pipeline {
         id,
@@ -202,16 +121,11 @@ pub async fn load_pipeline_editor(
     pipeline_path: Option<String>,
 ) -> Result<PipelineEditorPayload, String> {
     let path = if let Some(id) = pipeline_id {
-        // Load from database
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        let path: String = db
-            .query_row(
-                "SELECT pipeline_path FROM pipelines WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|e| format!("Pipeline not found: {}", e))?;
-        PathBuf::from(path)
+        // Load from database using CLI library
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let pipeline = biovault_db.get_pipeline(id).map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Pipeline {} not found", id))?;
+        PathBuf::from(pipeline.pipeline_path)
     } else if let Some(p) = pipeline_path {
         PathBuf::from(p)
     } else {
@@ -274,42 +188,21 @@ pub async fn save_pipeline_editor(
     fs::write(&yaml_path, yaml_content)
         .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
 
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Update or insert into database
+    // Update or insert into database using CLI library
     if let Some(id) = pipeline_id {
-        // Update existing
-        db.execute(
-            "UPDATE pipelines SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![spec.name, id],
-        )
-        .map_err(|e| format!("Failed to update pipeline: {}", e))?;
+        // Update timestamp using CLI library
+        biovault_db.touch_pipeline(id).map_err(|e| e.to_string())?;
 
         // Get updated record
-        db.query_row(
-            "SELECT id, name, pipeline_path, created_at, updated_at FROM pipelines WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok(Pipeline {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    pipeline_path: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                    spec: None, // Spec will be loaded from YAML when needed
-                })
-            },
-        )
-        .map_err(|e| e.to_string())
+        biovault_db.get_pipeline(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Pipeline not found after update".to_string())
     } else {
-        // Insert new
-        db.execute(
-            "INSERT INTO pipelines (name, pipeline_path) VALUES (?1, ?2)",
-            params![spec.name, pipeline_path],
-        )
-        .map_err(|e| format!("Failed to insert pipeline: {}", e))?;
-
-        let id = db.last_insert_rowid();
+        // Register new pipeline
+        let id = biovault_db.register_pipeline(&spec.name, &pipeline_path)
+            .map_err(|e| e.to_string())?;
 
         Ok(Pipeline {
             id,
@@ -327,29 +220,24 @@ pub async fn delete_pipeline(
     state: tauri::State<'_, AppState>,
     pipeline_id: i64,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get pipeline path first
-    let path: String = db
-        .query_row(
-            "SELECT pipeline_path FROM pipelines WHERE id = ?1",
-            params![pipeline_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Pipeline not found: {}", e))?;
+    // Get pipeline before deleting
+    let pipeline = biovault_db.get_pipeline(pipeline_id).map_err(|e| e.to_string())?;
+    
+    if let Some(p) = pipeline {
+        // Delete from database using CLI library
+        biovault_db.delete_pipeline(pipeline_id).map_err(|e| e.to_string())?;
 
-    // Delete from database
-    db.execute("DELETE FROM pipelines WHERE id = ?1", params![pipeline_id])
-        .map_err(|e| format!("Failed to delete pipeline: {}", e))?;
+        // Delete directory if it exists and is in the pipelines folder
+        let pipelines_dir = get_pipelines_dir()?;
+        let path_buf = PathBuf::from(p.pipeline_path);
 
-    // Delete directory if it exists and is in the pipelines folder
-    let pipelines_dir = get_pipelines_dir()?;
-    let path_buf = PathBuf::from(path);
-
-    // Only delete if the path is within the pipelines directory
-    if path_buf.starts_with(&pipelines_dir) && path_buf.exists() {
-        fs::remove_dir_all(&path_buf)
-            .map_err(|e| format!("Failed to delete pipeline directory: {}", e))?;
+        // Only delete if the path is within the pipelines directory
+        if path_buf.starts_with(&pipelines_dir) && path_buf.exists() {
+            fs::remove_dir_all(&path_buf)
+                .map_err(|e| format!("Failed to delete pipeline directory: {}", e))?;
+        }
     }
 
     Ok(())
@@ -407,16 +295,13 @@ pub async fn run_pipeline(
     use chrono::Local;
     use std::process::Command;
 
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get pipeline path
-    let pipeline_path: String = db
-        .query_row(
-            "SELECT pipeline_path FROM pipelines WHERE id = ?1",
-            params![pipeline_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Pipeline not found: {}", e))?;
+    // Get pipeline using CLI library
+    let pipeline = biovault_db.get_pipeline(pipeline_id).map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Pipeline {} not found", pipeline_id))?;
+    
+    let pipeline_path = pipeline.pipeline_path;
 
     let yaml_path = PathBuf::from(&pipeline_path).join("pipeline.yaml");
 
@@ -434,19 +319,12 @@ pub async fn run_pipeline(
     fs::create_dir_all(&results_path)
         .map_err(|e| format!("Failed to create results directory: {}", e))?;
 
-    // Create pipeline run record
-    db.execute(
-        "INSERT INTO pipeline_runs (pipeline_id, status, work_dir, results_dir) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            pipeline_id,
-            "running",
-            results_path.to_string_lossy(),
-            results_path.to_string_lossy(),
-        ],
-    )
-    .map_err(|e| format!("Failed to create pipeline run: {}", e))?;
-
-    let run_id = db.last_insert_rowid();
+    // Create pipeline run record using CLI library
+    let run_id = biovault_db.create_pipeline_run(
+        pipeline_id,
+        &results_path.to_string_lossy(),
+        Some(&results_path.to_string_lossy())
+    ).map_err(|e| e.to_string())?;
 
     // Prepare bv run command
     let mut cmd = Command::new("bv");
@@ -461,9 +339,10 @@ pub async fn run_pipeline(
     cmd.arg("--results-dir").arg(&results_path);
 
     // Spawn the process and stream output
-    // Note: CLI doesn't track status - it just executes and exits
-    // Desktop app shows "running" status (CLI parity)
+    // Update status using CLI library function after completion
     let window_clone = window.clone();
+    let biovault_db_clone = state.biovault_db.clone();
+    let run_id_clone = run_id;
     std::thread::spawn(move || {
         match cmd.output() {
             Ok(output) => {
@@ -482,6 +361,11 @@ pub async fn run_pipeline(
                     "failed"
                 };
 
+                // Update status using CLI library
+                if let Ok(biovault_db) = biovault_db_clone.lock() {
+                    let _ = biovault_db.update_pipeline_run_status(run_id_clone, status, true);
+                }
+
                 let _ = window_clone.emit("pipeline-complete", status);
             }
             Err(e) => {
@@ -489,6 +373,12 @@ pub async fn run_pipeline(
                     "pipeline-log-line",
                     format!("Error running pipeline: {}", e),
                 );
+                
+                // Update status to failed using CLI library
+                if let Ok(biovault_db) = biovault_db_clone.lock() {
+                    let _ = biovault_db.update_pipeline_run_status(run_id_clone, "failed", true);
+                }
+                
                 let _ = window_clone.emit("pipeline-complete", "failed");
             }
         }
@@ -509,29 +399,8 @@ pub async fn run_pipeline(
 pub async fn get_pipeline_runs(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<PipelineRun>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    let mut stmt = db
-        .prepare("SELECT id, pipeline_id, status, work_dir, results_dir, created_at, completed_at FROM pipeline_runs ORDER BY created_at DESC")
-        .map_err(|e| e.to_string())?;
-
-    let runs = stmt
-        .query_map([], |row| {
-            Ok(PipelineRun {
-                id: row.get(0)?,
-                pipeline_id: row.get(1)?,
-                status: row.get(2)?,
-                work_dir: row.get(3)?,
-                results_dir: row.get(4)?,
-                created_at: row.get(5)?,
-                completed_at: row.get(6)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(runs)
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    biovault_db.list_pipeline_runs().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -539,24 +408,17 @@ pub async fn delete_pipeline_run(
     state: tauri::State<'_, AppState>,
     run_id: i64,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    // Get work directory first
-    let work_dir: Option<String> = db
-        .query_row(
-            "SELECT work_dir FROM pipeline_runs WHERE id = ?1",
-            params![run_id],
-            |row| row.get(0),
-        )
-        .ok();
-
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    
+    // Get work directory before deleting
+    let run = biovault_db.get_pipeline_run(run_id).map_err(|e| e.to_string())?;
+    
     // Delete from database
-    db.execute("DELETE FROM pipeline_runs WHERE id = ?1", params![run_id])
-        .map_err(|e| format!("Failed to delete pipeline run: {}", e))?;
+    biovault_db.delete_pipeline_run(run_id).map_err(|e| e.to_string())?;
 
     // Delete work directory if it exists
-    if let Some(dir) = work_dir {
-        let path = PathBuf::from(dir);
+    if let Some(r) = run {
+        let path = PathBuf::from(r.work_dir);
         if path.exists() {
             fs::remove_dir_all(&path).ok(); // Ignore errors here
         }
