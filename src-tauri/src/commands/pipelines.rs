@@ -144,23 +144,19 @@ pub async fn load_pipeline_editor(
         None
     };
 
-    // Get available projects from database
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = db
-        .prepare("SELECT id, name, project_path FROM projects ORDER BY name")
-        .map_err(|e| e.to_string())?;
-
-    let projects = stmt
-        .query_map([], |row| {
-            Ok(ProjectInfo {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-            })
+    // Get available projects from database using CLI library
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let projects_list = biovault_db.list_projects().map_err(|e| e.to_string())?;
+    drop(biovault_db); // Release lock
+    
+    let projects = projects_list
+        .iter()
+        .map(|p| ProjectInfo {
+            id: p.id,
+            name: p.name.clone(),
+            path: p.project_path.clone(),
         })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+        .collect::<Vec<_>>();
 
     Ok(PipelineEditorPayload {
         pipeline_id,

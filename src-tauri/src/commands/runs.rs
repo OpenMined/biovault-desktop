@@ -15,15 +15,12 @@ pub fn start_analysis(
 ) -> Result<RunStartResult, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let conn = state.db.lock().unwrap();
-
-    let project: (String, String) = conn
-        .query_row(
-            "SELECT name, project_path FROM projects WHERE id = ?1",
-            params![project_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
+    // Get project using CLI library
+    let biovault_db = state.biovault_db.lock().unwrap();
+    let project_obj = biovault_db.get_project(&project_id.to_string())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Project {} not found", project_id))?;
+    let project = (project_obj.name.clone(), project_obj.project_path.clone());
 
     // Use BIOVAULT_HOME environment variable or default to Desktop/BioVault
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
