@@ -424,6 +424,28 @@ pub fn import_project(
 }
 
 #[tauri::command]
+pub async fn import_pipeline_with_deps(
+    url: String,
+    name_override: Option<String>,
+    overwrite: bool,
+) -> Result<String, String> {
+    // Spawn blocking to avoid Send issues with BioVaultDb
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            biovault::cli::commands::project_management::import_pipeline_with_deps(
+                &url,
+                name_override,
+                overwrite,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn import_project_from_folder(
     state: tauri::State<AppState>,
     folder_path: String,

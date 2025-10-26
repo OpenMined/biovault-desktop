@@ -104,86 +104,67 @@ export function createPipelinesModule({
 		}
 	}
 
-	// Create pipeline wizard - SIMPLIFIED
+	// Show pipeline creation options (similar to step picker)
 	async function showCreatePipelineWizard() {
 		const modalHtml = `
-			<div id="simple-pipeline-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 400px;">
+			<div id="pipeline-picker-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 500px;">
 					<div class="modal-header">
 						<h2>New Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closeSimplePipelineModal()">×</button>
+						<button class="modal-close" onclick="pipelineModule.closePipelinePickerModal()">×</button>
 					</div>
 					<div class="modal-body">
-						<label style="display: block; margin-bottom: 8px; font-weight: 600;">
-							Pipeline Name *
-						</label>
-						<input 
-							type="text" 
-							id="simple-pipeline-name" 
-							placeholder="my-analysis-pipeline"
-							autocapitalize="off"
-							autocomplete="off"
-							autocorrect="off"
-							style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
-						>
-						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
-							A blank pipeline template will be created with this name.
-						</p>
-					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeSimplePipelineModal()">Cancel</button>
-						<button class="btn-primary" onclick="pipelineModule.createSimplePipeline()">Create Pipeline</button>
+						<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Choose an Option</h3>
+						<div style="display: flex; flex-direction: column; gap: 8px;">
+							<button class="action-btn" onclick="pipelineModule.importPipelineFromURL()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+								</svg>
+								Import from GitHub URL
+							</button>
+							<button class="action-btn" onclick="pipelineModule.importExistingPipeline()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+								</svg>
+								Browse Local Folder
+							</button>
+							<button class="action-btn" onclick="pipelineModule.createBlankPipeline()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								Create Blank Pipeline
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>
 		`
 
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
-
-		// Focus on input
-		setTimeout(() => {
-			const input = document.getElementById('simple-pipeline-name')
-			if (input) {
-				input.focus()
-				input.addEventListener('keypress', (e) => {
-					if (e.key === 'Enter') {
-						pipelineModule.createSimplePipeline()
-					}
-				})
-			}
-		}, 100)
 	}
 
-	// Close simple pipeline modal
-	function closeSimplePipelineModal() {
-		const modal = document.getElementById('simple-pipeline-modal')
+	function closePipelinePickerModal() {
+		const modal = document.getElementById('pipeline-picker-modal')
 		if (modal) modal.remove()
 	}
 
-	// Create simple pipeline with just a name
-	async function createSimplePipeline() {
-		const nameInput = document.getElementById('simple-pipeline-name')
-		if (!nameInput) return
+	async function createBlankPipeline() {
+		closePipelinePickerModal()
 
-		const name = nameInput.value.trim()
-		if (!name) {
-			alert('Please enter a pipeline name')
-			return
-		}
+		const name = prompt('Pipeline name:')
+		if (!name) return
 
 		try {
-			// Create pipeline spec matching CLI PipelineSpec structure exactly
-			// Corresponds to: pub struct PipelineSpec { pub name: String, context: Option, inputs: BTreeMap, steps: Vec }
+			// Create pipeline spec matching CLI PipelineSpec structure
 			const spec = {
 				name: name,
-				// context is optional, omit for blank pipeline
-				// inputs defaults to empty BTreeMap in CLI
 				inputs: {},
-				// steps defaults to empty Vec in CLI
 				steps: [],
 			}
 
-			// Invoke the create pipeline command - must match CLI behavior
+			// Invoke the create pipeline command
 			const result = await invoke('create_pipeline', {
 				request: {
 					name: name,
@@ -199,14 +180,83 @@ export function createPipelinesModule({
 			})
 
 			if (result) {
-				closeSimplePipelineModal()
-				// Reload pipelines to show the new one
 				await loadPipelines()
 			}
 		} catch (error) {
 			console.error('Error creating pipeline:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 			alert('Failed to create pipeline: ' + errorMsg)
+		}
+	}
+
+	async function importPipelineFromURL() {
+		console.log('📥 importPipelineFromURL called')
+		closePipelinePickerModal()
+
+		// Add a small delay to ensure modal closes before prompt
+		await new Promise((resolve) => setTimeout(resolve, 100))
+
+		const url = prompt(
+			'Paste GitHub URL to pipeline.yaml:\n\nExample:\nhttps://github.com/OpenMined/biovault/blob/main/pipeline_sql.yaml',
+		)
+
+		if (!url) {
+			console.log('No URL provided')
+			return
+		}
+
+		console.log('Importing from URL:', url)
+
+		try {
+			// Call CLI function that imports pipeline AND all its step dependencies!
+			const result = await invoke('import_pipeline_with_deps', {
+				url: url,
+				nameOverride: null,
+				overwrite: false,
+			})
+
+			await loadPipelines()
+
+			console.log('✅ Imported pipeline with all dependencies from URL:', url)
+			alert('Pipeline and all its steps imported successfully!')
+		} catch (error) {
+			console.error('Error importing pipeline from URL:', error)
+			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
+			alert('Failed to import pipeline: ' + errorMsg)
+		}
+	}
+
+	async function importExistingPipeline() {
+		try {
+			const selected = await dialog.open({
+				directory: true,
+				multiple: false,
+			})
+
+			if (selected) {
+				// Check if it has a pipeline.yaml
+				const pipelineYamlPath = selected + '/pipeline.yaml'
+
+				// Extract name from folder
+				const name = selected.split('/').pop() || selected.split('\\').pop() || 'imported-pipeline'
+
+				// Register in database
+				const result = await invoke('create_pipeline', {
+					request: {
+						name: name,
+						directory: selected,
+					},
+				})
+
+				closePipelinePickerModal()
+				await loadPipelines()
+
+				console.log('✅ Imported pipeline:', name)
+			}
+		} catch (error) {
+			console.error('Error importing pipeline:', error)
+			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
+			alert('Failed to import pipeline: ' + errorMsg)
 		}
 	}
 
@@ -1205,8 +1255,11 @@ export function createPipelinesModule({
 			showPipelineMenu,
 			backToPipelinesList,
 			showCreatePipelineWizard,
-			closeSimplePipelineModal,
-			createSimplePipeline,
+			closePipelinePickerModal,
+			createBlankPipeline,
+			importPipelineFromURL,
+			importExistingPipeline,
+			importStepFromURL,
 			loadPipelineSteps,
 			editPipelineStep,
 			removePipelineStep,
@@ -1286,19 +1339,26 @@ export function createPipelinesModule({
 							<div style="border-top: 1px solid #e5e7eb; margin: 20px 0; padding-top: 20px;">
 								<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Or Choose Action</h3>
 								<div style="display: flex; flex-direction: column; gap: 8px;">
-									<button class="action-btn" onclick="pipelineModule.browseForStepFolder()">
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-											<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
-										</svg>
-										Browse for Existing Project Folder
-									</button>
-									<button class="action-btn" onclick="pipelineModule.createNewStepProject()">
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-											<line x1="12" y1="5" x2="12" y2="19"></line>
-											<line x1="5" y1="12" x2="19" y2="12"></line>
-										</svg>
-										Create New Project
-									</button>
+							<button class="action-btn" onclick="pipelineModule.importStepFromURL()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+								</svg>
+								Import from GitHub URL
+							</button>
+							<button class="action-btn" onclick="pipelineModule.browseForStepFolder()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+								</svg>
+								Browse Local Folder
+							</button>
+							<button class="action-btn" onclick="pipelineModule.createNewStepProject()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								Create New Project
+							</button>
 								</div>
 							</div>
 						</div>
@@ -1326,6 +1386,33 @@ export function createPipelinesModule({
 	function closeStepPickerModal() {
 		const modal = document.getElementById('step-picker-modal')
 		if (modal) modal.remove()
+	}
+
+	async function importStepFromURL() {
+		closeStepPickerModal()
+
+		const url = prompt(
+			'Paste GitHub URL to project.yaml:\n(e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/count-lines/project.yaml)',
+		)
+		if (!url) return
+
+		try {
+			// Call CLI library to import from URL
+			const result = await invoke('import_project', {
+				source: url,
+				name: null,
+				overwrite: false,
+			})
+
+			// Add the imported project as a step
+			await addStepFromPath(result.project_path, result.name)
+
+			console.log('✅ Imported and added step from URL:', url)
+		} catch (error) {
+			console.error('Error importing from URL:', error)
+			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
+			alert('Failed to import from URL: ' + errorMsg)
+		}
 	}
 
 	async function browseForStepFolder() {

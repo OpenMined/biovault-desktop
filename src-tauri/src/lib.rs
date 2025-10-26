@@ -419,6 +419,7 @@ pub fn run() {
             // Projects commands
             import_project,
             import_project_from_folder,
+            import_pipeline_with_deps,
             get_projects,
             delete_project,
             delete_project_folder,
