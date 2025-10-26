@@ -27,25 +27,19 @@ export function createProjectsModule({
 		projectId: null,
 		projectPath: '',
 		metadata: null,
-		selectedAssets: new Set(),
-		treeNodes: new Map(),
+		files: [],
+		inputs: [],
+		outputs: [],
+		parameters: [],
 		jupyter: {
 			running: false,
 			port: null,
 			url: null,
 			token: null,
 		},
-		specForm: null,
-		specData: {
-			parameters: [],
-			inputs: [],
-			outputs: [],
-		},
-		specSummaryEl: null,
-		lastSpecDigest: null,
-		specDigestTimer: null,
-		skipNextDigestReload: false,
-		nameListenerBound: false,
+		editingItem: null,
+		editingType: null,
+		editingIndex: -1,
 	}
 
 	const projectCreateState = {
@@ -98,38 +92,21 @@ export function createProjectsModule({
 		return window.confirm(message)
 	}
 
-	function ensureEditorSpecForm() {
-		const container = document.getElementById('project-spec-editor')
-		if (!projectEditorState.specForm) {
-			if (container) {
-				projectEditorState.specForm = createProjectSpecForm({
-					container,
-					invoke,
-					onChange: (parameters, inputs, outputs) => {
-						projectEditorState.specData = { parameters, inputs, outputs }
-						updateEditorSpecSummary()
-					},
-				})
-			}
-		} else if (container) {
-			projectEditorState.specForm.mount(container)
-		}
-		if (projectEditorState.specForm) {
-			projectEditorState.specForm.configureSections(
-				['parameters', 'inputs', 'outputs'],
-				'parameters',
-			)
-		}
-		if (!projectEditorState.specSummaryEl) {
-			projectEditorState.specSummaryEl = document.getElementById('project-spec-summary')
-		}
-		if (!projectEditorState.nameListenerBound) {
-			const nameInput = document.getElementById('project-edit-name')
-			if (nameInput) {
-				nameInput.addEventListener('input', () => updateEditorSpecSummary())
-				projectEditorState.nameListenerBound = true
-			}
-		}
+	// Legacy functions - kept for compatibility but no longer used
+	function ensureEditorSpecForm(section = 'parameters') {
+		// No longer needed with new simple editor
+	}
+
+	function updateEditorCounts() {
+		// No longer needed with new simple editor
+	}
+
+	function updateEditorTitle() {
+		// No longer needed with new simple editor
+	}
+
+	function switchEditorTab(tabName) {
+		// No longer needed with new simple editor
 	}
 
 	function updateEditorSpecSummary() {
@@ -594,16 +571,12 @@ export function createProjectsModule({
 				projectId: projectEditorState.projectId,
 				projectPath: projectEditorState.projectPath,
 			})
-			projectEditorState.metadata = payload.metadata
-			projectEditorState.selectedAssets = new Set(
-				(payload.metadata.assets || []).map((asset) => asset.replace(/\\/g, '/')),
-			)
-			renderProjectEditor(payload)
+			renderSimpleProjectEditor(payload)
 			if (showMessage) {
-				const statusEl = document.getElementById('project-edit-status')
+				const statusEl = document.getElementById('step-status-message')
 				if (statusEl) {
 					statusEl.textContent = 'Detected external project.yaml changes. Editor reloaded.'
-					statusEl.style.color = '#28a745'
+					statusEl.style.color = '#10b981'
 				}
 			}
 		} catch (error) {
@@ -1343,24 +1316,8 @@ export function createProjectsModule({
 				projectPath,
 			})
 
-			projectEditorState.projectId = payload.project_id ?? null
-			projectEditorState.projectPath = payload.project_path
-			projectEditorState.metadata = payload.metadata
-			projectEditorState.selectedAssets = new Set(
-				(payload.metadata.assets || []).map((asset) => asset.replace(/\\/g, '/')),
-			)
-			projectEditorState.treeNodes = new Map()
-			projectEditorState.jupyter = {
-				running: false,
-				port: null,
-				url: null,
-				token: null,
-			}
-
-			renderProjectEditor(payload)
-			await refreshJupyterStatus(true)
-			await checkSpecDigest(true)
-			startSpecDigestPolling()
+			// Use new simple editor
+			renderSimpleProjectEditor(payload)
 			navigateTo('project-edit')
 		} catch (error) {
 			console.error('Failed to load project editor:', error)
@@ -1373,6 +1330,13 @@ export function createProjectsModule({
 		pathEl.textContent = data.project_path || ''
 		clearEditorPreview('Preview updates as you edit.')
 
+		// Update header title
+		const titleEl = document.getElementById('project-editor-title')
+		if (titleEl) {
+			titleEl.textContent = data.metadata.name || 'my-step'
+		}
+
+		// Populate form fields
 		document.getElementById('project-edit-name').value = data.metadata.name || ''
 		document.getElementById('project-edit-author').value = data.metadata.author || ''
 		document.getElementById('project-edit-workflow').value = data.metadata.workflow || ''
@@ -1393,23 +1357,32 @@ export function createProjectsModule({
 			}
 		})
 
-		ensureEditorSpecForm()
+		// Set up spec data
 		projectEditorState.specData = {
 			parameters: data.metadata.parameters || [],
 			inputs: data.metadata.inputs || [],
 			outputs: data.metadata.outputs || [],
 		}
+
+		// Initialize the spec form for the default tab (parameters)
+		ensureEditorSpecForm('parameters')
 		if (projectEditorState.specForm) {
 			projectEditorState.specForm.setSpec(projectEditorState.specData)
 		}
 
+		// Update counts
+		updateEditorCounts()
+
+		// Set up tab navigation
+		setupEditorTabHandlers()
+
+		// Render file tree
 		const treeContainer = document.getElementById('project-file-tree')
 		treeContainer.innerHTML = ''
 		projectEditorState.treeNodes.clear()
 
 		if (!data.file_tree || data.file_tree.length === 0) {
-			treeContainer.innerHTML =
-				'<p style="color: #666; font-size: 13px;">No files found in this folder.</p>'
+			treeContainer.innerHTML = '<p class="empty-state">No files found in this folder.</p>'
 		} else {
 			renderProjectTree(data.file_tree, treeContainer, null)
 			projectEditorState.selectedAssets.forEach((assetPath) => {
@@ -1431,6 +1404,81 @@ export function createProjectsModule({
 
 		updateJupyterControls()
 		updateEditorSpecSummary()
+	}
+
+	function setupEditorTabHandlers() {
+		// Set up tab click handlers
+		document.querySelectorAll('.editor-nav-tab').forEach((tab) => {
+			// Remove old listeners by cloning
+			const newTab = tab.cloneNode(true)
+			tab.parentNode.replaceChild(newTab, tab)
+
+			newTab.addEventListener('click', () => {
+				switchEditorTab(newTab.dataset.tab)
+			})
+		})
+
+		// Set up button handlers
+		const backBtn = document.getElementById('project-edit-back-btn')
+		const saveBtn = document.getElementById('project-edit-save-btn')
+		const launchJupyterBtn = document.getElementById('project-edit-launch-jupyter-btn')
+		const launchJupyterBtn2 = document.getElementById('project-edit-launch-jupyter-btn-2')
+		const resetJupyterBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const openFolderBtn = document.getElementById('project-edit-open-folder-btn')
+		const openVSCodeBtn = document.getElementById('project-edit-open-vscode-btn')
+		const openVSCodeBtn2 = document.getElementById('project-edit-open-vscode-btn-2')
+		const reloadBtn = document.getElementById('project-spec-reload-btn')
+
+		if (backBtn) {
+			backBtn.onclick = () => {
+				handleLeaveProjectEditor()
+				navigateTo('projects')
+			}
+		}
+		if (saveBtn) {
+			saveBtn.onclick = () => handleSaveProjectEditor()
+		}
+		if (launchJupyterBtn) {
+			launchJupyterBtn.onclick = () => handleLaunchJupyter()
+		}
+		if (launchJupyterBtn2) {
+			launchJupyterBtn2.onclick = () => handleLaunchJupyter()
+		}
+		if (resetJupyterBtn) {
+			resetJupyterBtn.onclick = () => handleResetJupyter()
+		}
+		if (openFolderBtn) {
+			openFolderBtn.onclick = () => handleOpenProjectFolder()
+		} else {
+			console.warn('project-edit-open-folder-btn not found - using new editor')
+		}
+		if (openVSCodeBtn) {
+			openVSCodeBtn.onclick = () => handleOpenVSCode()
+		}
+		if (openVSCodeBtn2) {
+			openVSCodeBtn2.onclick = () => handleOpenVSCode()
+		}
+		if (reloadBtn) {
+			reloadBtn.onclick = () => handleReloadProjectSpec()
+		}
+	}
+
+	async function handleOpenVSCode() {
+		if (!projectEditorState.projectPath) {
+			alert('Select a project first')
+			return
+		}
+
+		try {
+			await invoke('open_in_vscode', { path: projectEditorState.projectPath })
+		} catch (error) {
+			console.error('Failed to open VSCode:', error)
+			const statusEl = document.getElementById('project-edit-status')
+			if (statusEl) {
+				statusEl.textContent = `Unable to open VSCode. Make sure "code" command is available.`
+				statusEl.style.color = '#dc3545'
+			}
+		}
 	}
 
 	function renderProjectTree(nodes, container, parentPath) {
@@ -1564,12 +1612,24 @@ export function createProjectsModule({
 
 	function updateJupyterControls() {
 		const button = document.getElementById('project-edit-launch-jupyter-btn')
+		const button2 = document.getElementById('project-edit-launch-jupyter-btn-2')
 		const statusRow = document.getElementById('project-jupyter-status')
-		if (!button) return
 
-		const isLoading = button.dataset.loading === 'true'
-		if (!isLoading) {
-			button.textContent = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		const isLoading = button?.dataset.loading === 'true'
+		const buttonText = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+
+		if (button && !isLoading) {
+			button.innerHTML = `
+				<svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+					<circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="2"/>
+					<circle cx="10" cy="10" r="3" fill="currentColor"/>
+				</svg>
+				Jupyter
+			`
+		}
+
+		if (button2 && !isLoading) {
+			button2.textContent = buttonText
 		}
 
 		if (!statusRow) return
@@ -1590,9 +1650,7 @@ export function createProjectsModule({
 			if (linkUrl) {
 				statusRow.style.display = 'block'
 				statusRow.innerHTML = ''
-				statusRow.append('Running at ')
 				const linkButton = document.createElement('button')
-				linkButton.id = 'jupyter-open-link'
 				linkButton.className = 'link-button'
 				linkButton.type = 'button'
 				// Display URL without token for cleaner UI
@@ -1605,7 +1663,7 @@ export function createProjectsModule({
 				statusRow.appendChild(linkButton)
 			} else {
 				statusRow.style.display = 'block'
-				statusRow.textContent = 'Jupyter server is running.'
+				statusRow.textContent = 'Running'
 			}
 		} else {
 			statusRow.style.display = 'none'
@@ -1747,7 +1805,9 @@ export function createProjectsModule({
 	}
 
 	async function handleLaunchJupyter() {
-		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
+		const launchBtn = document.getElementById('step-edit-jupyter-btn')
+		const launchBtn2 = document.getElementById('project-edit-launch-jupyter-btn')
+		const launchBtn3 = document.getElementById('project-edit-launch-jupyter-btn-2')
 		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
 
 		if (!projectEditorState.projectPath) {
@@ -1755,15 +1815,19 @@ export function createProjectsModule({
 			return
 		}
 
-		const statusEl = document.getElementById('project-edit-status')
-		statusEl.style.color = '#666'
+		const statusEl =
+			document.getElementById('step-status-message') ||
+			document.getElementById('project-edit-status')
+		if (statusEl) statusEl.style.color = '#666'
 
 		if (projectEditorState.jupyter.running) {
 			const message = 'Stopping Jupyter server...\nCommand: uv run --python .venv jupyter lab stop'
 			showOperationModal(message)
 			setButtonLoadingState(launchBtn, true, 'Stopping...')
+			setButtonLoadingState(launchBtn2, true, 'Stopping...')
+			setButtonLoadingState(launchBtn3, true, 'Stopping...')
 			if (resetBtn) resetBtn.disabled = true
-			statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
+			if (statusEl) statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
 			try {
 				const result = await invoke('stop_jupyter', {
 					projectPath: projectEditorState.projectPath,
@@ -1773,15 +1837,21 @@ export function createProjectsModule({
 				projectEditorState.jupyter.url = result.url ?? null
 				projectEditorState.jupyter.token = result.token ?? null
 				updateJupyterControls()
-				statusEl.textContent = 'Jupyter server stopped.'
-				statusEl.style.color = '#666'
+				if (statusEl) {
+					statusEl.textContent = 'Jupyter server stopped.'
+					statusEl.style.color = '#666'
+				}
 				await refreshJupyterStatus(false)
 			} catch (error) {
 				console.error('Failed to stop Jupyter:', error)
-				statusEl.textContent = `Error stopping Jupyter: ${error}`
-				statusEl.style.color = '#dc3545'
+				if (statusEl) {
+					statusEl.textContent = `Error stopping Jupyter: ${error}`
+					statusEl.style.color = '#dc3545'
+				}
 			} finally {
 				setButtonLoadingState(launchBtn, false)
+				setButtonLoadingState(launchBtn2, false)
+				setButtonLoadingState(launchBtn3, false)
 				if (resetBtn) resetBtn.disabled = false
 				updateJupyterControls()
 				hideOperationModal()
@@ -1793,9 +1863,12 @@ export function createProjectsModule({
 			'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab bioscript\n- uv run --python .venv jupyter lab'
 		showOperationModal(launchMessage)
 		setButtonLoadingState(launchBtn, true, 'Starting...')
+		setButtonLoadingState(launchBtn2, true, 'Starting...')
+		setButtonLoadingState(launchBtn3, true, 'Starting...')
 		if (resetBtn) resetBtn.disabled = true
-		statusEl.textContent =
-			'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
+		if (statusEl)
+			statusEl.textContent =
+				'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
 
 		try {
 			const result = await invoke('launch_jupyter', {
@@ -1816,19 +1889,27 @@ export function createProjectsModule({
 			if (launchUrl) {
 				updateOperationModal('Opening browser...')
 				await openInExternalBrowser(launchUrl)
-				statusEl.textContent = `Jupyter running at ${launchUrl}`
-				statusEl.style.color = '#28a745'
+				if (statusEl) {
+					statusEl.textContent = `Jupyter running at ${launchUrl}`
+					statusEl.style.color = '#10b981'
+				}
 			} else {
-				statusEl.textContent = 'Jupyter server started.'
-				statusEl.style.color = '#28a745'
+				if (statusEl) {
+					statusEl.textContent = 'Jupyter server started.'
+					statusEl.style.color = '#10b981'
+				}
 			}
 			await refreshJupyterStatus(false)
 		} catch (error) {
 			console.error('Failed to launch Jupyter:', error)
-			statusEl.textContent = `Error launching Jupyter: ${error}`
-			statusEl.style.color = '#dc3545'
+			if (statusEl) {
+				statusEl.textContent = `Error launching Jupyter: ${error}`
+				statusEl.style.color = '#dc3545'
+			}
 		} finally {
 			setButtonLoadingState(launchBtn, false)
+			setButtonLoadingState(launchBtn2, false)
+			setButtonLoadingState(launchBtn3, false)
 			if (resetBtn) resetBtn.disabled = false
 			updateJupyterControls()
 			hideOperationModal()
@@ -1837,7 +1918,10 @@ export function createProjectsModule({
 
 	async function handleResetJupyter() {
 		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
-		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
+		const launchBtn = document.getElementById('step-edit-jupyter-btn')
+		const launchBtn2 = document.getElementById('project-edit-launch-jupyter-btn')
+		const launchBtn3 = document.getElementById('project-edit-launch-jupyter-btn-2')
+
 		if (!projectEditorState.projectPath) {
 			alert('Select a project first')
 			return
@@ -1852,11 +1936,17 @@ export function createProjectsModule({
 			return
 		}
 
-		const statusEl = document.getElementById('project-edit-status')
-		statusEl.textContent = 'Resetting Jupyter environment...'
-		statusEl.style.color = '#666'
+		const statusEl =
+			document.getElementById('step-status-message') ||
+			document.getElementById('project-edit-status')
+		if (statusEl) {
+			statusEl.textContent = 'Resetting Jupyter environment...'
+			statusEl.style.color = '#666'
+		}
 		setButtonLoadingState(resetBtn, true, 'Resetting...')
 		if (launchBtn) launchBtn.disabled = true
+		if (launchBtn2) launchBtn2.disabled = true
+		if (launchBtn3) launchBtn3.disabled = true
 		const modalMessage =
 			'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab bioscript'
 		showOperationModal(modalMessage)
@@ -1871,16 +1961,22 @@ export function createProjectsModule({
 			projectEditorState.jupyter.url = result.status.url ?? null
 			projectEditorState.jupyter.token = result.status.token ?? null
 			updateJupyterControls()
-			statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
-			statusEl.style.color = '#28a745'
+			if (statusEl) {
+				statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
+				statusEl.style.color = '#10b981'
+			}
 			await refreshJupyterStatus(false)
 		} catch (error) {
 			console.error('Failed to reset Jupyter:', error)
-			statusEl.textContent = `Error resetting Jupyter: ${error}`
-			statusEl.style.color = '#dc3545'
+			if (statusEl) {
+				statusEl.textContent = `Error resetting Jupyter: ${error}`
+				statusEl.style.color = '#dc3545'
+			}
 		} finally {
 			setButtonLoadingState(resetBtn, false)
 			if (launchBtn) launchBtn.disabled = false
+			if (launchBtn2) launchBtn2.disabled = false
+			if (launchBtn3) launchBtn3.disabled = false
 			updateJupyterControls()
 			hideOperationModal()
 		}
@@ -1888,6 +1984,478 @@ export function createProjectsModule({
 
 	function showCreatePipelineModal() {
 		alert('Pipeline creation wizard coming soon! For now, use the CLI:\n\nbv pipeline create')
+	}
+
+	// =============================================================================
+	// NEW SIMPLIFIED PROJECT EDITOR
+	// =============================================================================
+
+	function renderSimpleProjectEditor(data) {
+		// Populate basic info
+		document.getElementById('step-name-input').value = data.metadata.name || ''
+		document.getElementById('step-description-input').value = data.metadata.description || ''
+		document.getElementById('step-author-input').value = data.metadata.author || ''
+		document.getElementById('step-version-input').value = data.metadata.version || '1.0.0'
+		document.getElementById('step-workflow-input').value = data.metadata.workflow || 'workflow.nf'
+		document.getElementById('step-template-select').value =
+			data.metadata.template || 'dynamic-nextflow'
+		document.getElementById('step-path-display').textContent = data.project_path || ''
+
+		// Store state
+		projectEditorState.projectId = data.project_id
+		projectEditorState.projectPath = data.project_path
+		projectEditorState.metadata = data.metadata
+		projectEditorState.files = data.metadata.assets || []
+		projectEditorState.inputs = data.metadata.inputs || []
+		projectEditorState.outputs = data.metadata.outputs || []
+		projectEditorState.parameters = data.metadata.parameters || []
+
+		// Render lists
+		renderFilesList()
+		renderIOList('inputs')
+		renderIOList('outputs')
+		renderParametersList()
+
+		// Setup handlers
+		setupSimpleEditorHandlers()
+
+		// Update Jupyter status
+		refreshJupyterStatus(false)
+	}
+
+	function setupSimpleEditorHandlers() {
+		// Back button
+		const backBtn = document.getElementById('step-edit-back-btn')
+		if (backBtn) {
+			backBtn.onclick = () => {
+				navigateTo('projects')
+			}
+		}
+
+		// Save button
+		const saveBtn = document.getElementById('step-edit-save-btn')
+		if (saveBtn) {
+			saveBtn.onclick = () => saveSimpleProject()
+		}
+
+		// Jupyter button
+		const jupyterBtn = document.getElementById('step-edit-jupyter-btn')
+		if (jupyterBtn) {
+			jupyterBtn.onclick = () => handleLaunchJupyter()
+		}
+
+		// VSCode button
+		const vscodeBtn = document.getElementById('step-edit-vscode-btn')
+		if (vscodeBtn) {
+			vscodeBtn.onclick = () => handleOpenVSCode()
+		}
+
+		// Open folder button
+		const folderBtn = document.getElementById('open-folder-btn')
+		if (folderBtn) {
+			folderBtn.onclick = () => handleOpenProjectFolder()
+		}
+
+		// File drop zone
+		const dropZone = document.getElementById('file-drop-zone')
+		const fileInput = document.getElementById('file-input')
+
+		if (dropZone && fileInput) {
+			dropZone.onclick = () => fileInput.click()
+
+			dropZone.ondragover = (e) => {
+				e.preventDefault()
+				dropZone.classList.add('drag-over')
+			}
+
+			dropZone.ondragleave = () => {
+				dropZone.classList.remove('drag-over')
+			}
+
+			dropZone.ondrop = (e) => {
+				e.preventDefault()
+				dropZone.classList.remove('drag-over')
+				// TODO: Handle file drop
+				alert('File upload coming soon! For now, add files directly to the project folder.')
+			}
+
+			fileInput.onchange = () => {
+				alert('File upload coming soon! For now, add files directly to the project folder.')
+			}
+		}
+
+		// Add buttons
+		const addInputBtn = document.getElementById('add-input-btn')
+		if (addInputBtn) {
+			addInputBtn.onclick = () => showIOModal('input')
+		}
+
+		const addOutputBtn = document.getElementById('add-output-btn')
+		if (addOutputBtn) {
+			addOutputBtn.onclick = () => showIOModal('output')
+		}
+
+		const addParamBtn = document.getElementById('add-parameter-btn')
+		if (addParamBtn) {
+			addParamBtn.onclick = () => showParameterModal()
+		}
+
+		// Modal handlers
+		setupModalHandlers()
+	}
+
+	function setupModalHandlers() {
+		// I/O Modal
+		const ioModal = document.getElementById('io-modal')
+		const ioClose = document.getElementById('io-modal-close')
+		const ioCancel = document.getElementById('io-modal-cancel')
+		const ioSave = document.getElementById('io-modal-save')
+
+		if (ioClose) ioClose.onclick = () => hideIOModal()
+		if (ioCancel) ioCancel.onclick = () => hideIOModal()
+		if (ioSave) ioSave.onclick = () => saveIO()
+
+		// Parameter Modal
+		const paramModal = document.getElementById('param-modal')
+		const paramClose = document.getElementById('param-modal-close')
+		const paramCancel = document.getElementById('param-modal-cancel')
+		const paramSave = document.getElementById('param-modal-save')
+
+		if (paramClose) paramClose.onclick = () => hideParameterModal()
+		if (paramCancel) paramCancel.onclick = () => hideParameterModal()
+		if (paramSave) paramSave.onclick = () => saveParameter()
+	}
+
+	function renderFilesList() {
+		const container = document.getElementById('files-list')
+		if (!container) return
+
+		if (projectEditorState.files.length === 0) {
+			container.innerHTML =
+				'<p class="empty-state">No files yet. Add Python, R, or other scripts above.</p>'
+			return
+		}
+
+		container.innerHTML = projectEditorState.files
+			.map(
+				(file, index) => `
+			<div class="file-item">
+				<div class="file-item-info">
+					<svg class="file-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+						<path d="M4 2H10L12 4H16C17.1 4 18 4.9 18 6V16C18 17.1 17.1 18 16 18H4C2.9 18 2 17.1 2 16V4C2 2.9 2.9 2 4 2Z" stroke="currentColor" stroke-width="2"/>
+					</svg>
+					<span class="file-name">${escapeHtml(file)}</span>
+				</div>
+				<button class="file-remove-btn" onclick="window.projectEditor.removeFile(${index})">&times;</button>
+			</div>
+		`,
+			)
+			.join('')
+	}
+
+	function renderIOList(type) {
+		const container = document.getElementById(`${type}-list`)
+		if (!container) return
+
+		const items = projectEditorState[type]
+		const icon =
+			type === 'inputs'
+				? '<path d="M10 3L3 10L10 17M3 10H17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+				: '<path d="M10 3L17 10L10 17M17 10H3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+
+		if (items.length === 0) {
+			container.innerHTML = `<p class="empty-state">No ${type} defined yet.</p>`
+			return
+		}
+
+		container.innerHTML = items
+			.map(
+				(item, index) => `
+			<div class="io-item">
+				<div class="io-item-content">
+					<div class="io-item-header">
+						<svg class="io-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">${icon}</svg>
+						<span class="io-name">${escapeHtml(item.name)}</span>
+						${item.format ? `<span class="io-format">${escapeHtml(item.format)}</span>` : ''}
+					</div>
+					${item.description ? `<p class="io-description">${escapeHtml(item.description)}</p>` : ''}
+				</div>
+				<div class="io-item-actions">
+					<button class="io-edit-btn" onclick="window.projectEditor.editIO('${type}', ${index})">Edit</button>
+					<button class="io-remove-btn" onclick="window.projectEditor.removeIO('${type}', ${index})">Remove</button>
+				</div>
+			</div>
+		`,
+			)
+			.join('')
+	}
+
+	function renderParametersList() {
+		const container = document.getElementById('parameters-list')
+		const countBadge = document.getElementById('parameters-count')
+
+		if (!container) return
+
+		const items = projectEditorState.parameters
+
+		if (countBadge) {
+			countBadge.textContent = items.length
+		}
+
+		if (items.length === 0) {
+			container.innerHTML = '<p class="empty-state">No parameters defined yet.</p>'
+			return
+		}
+
+		container.innerHTML = items
+			.map(
+				(item, index) => `
+			<div class="io-item">
+				<div class="io-item-content">
+					<div class="io-item-header">
+						<svg class="io-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+							<circle cx="5" cy="10" r="2" stroke="currentColor" stroke-width="2"/>
+							<circle cx="15" cy="10" r="2" stroke="currentColor" stroke-width="2"/>
+							<path d="M7 10H13" stroke="currentColor" stroke-width="2"/>
+						</svg>
+						<span class="io-name">${escapeHtml(item.name)}</span>
+						<span class="io-format">${escapeHtml(item.raw_type || item.type || 'string')}</span>
+					</div>
+					${item.description ? `<p class="io-description">${escapeHtml(item.description)}</p>` : ''}
+					${
+						item.default
+							? `<p class="io-description">Default: <code>${escapeHtml(item.default)}</code></p>`
+							: ''
+					}
+				</div>
+				<div class="io-item-actions">
+					<button class="io-edit-btn" onclick="window.projectEditor.editParameter(${index})">Edit</button>
+					<button class="io-remove-btn" onclick="window.projectEditor.removeParameter(${index})">Remove</button>
+				</div>
+			</div>
+		`,
+			)
+			.join('')
+	}
+
+	function showIOModal(type, item = null, index = -1) {
+		const modal = document.getElementById('io-modal')
+		const title = document.getElementById('io-modal-title')
+
+		projectEditorState.editingType = type
+		projectEditorState.editingIndex = index
+		projectEditorState.editingItem = item
+
+		title.textContent = item
+			? `Edit ${type === 'input' ? 'Input' : 'Output'}`
+			: `Add ${type === 'input' ? 'Input' : 'Output'}`
+
+		// Populate fields
+		document.getElementById('io-name-input').value = item?.name || ''
+		document.getElementById('io-description-input').value = item?.description || ''
+		document.getElementById('io-format-input').value = item?.format || ''
+		document.getElementById('io-type-select').value = item?.raw_type || item?.type || 'File'
+		document.getElementById('io-path-input').value = item?.path || ''
+
+		modal.style.display = 'flex'
+	}
+
+	function hideIOModal() {
+		const modal = document.getElementById('io-modal')
+		modal.style.display = 'none'
+		projectEditorState.editingType = null
+		projectEditorState.editingIndex = -1
+		projectEditorState.editingItem = null
+	}
+
+	function saveIO() {
+		const name = document.getElementById('io-name-input').value.trim()
+		const description = document.getElementById('io-description-input').value.trim()
+		const format = document.getElementById('io-format-input').value.trim()
+		const type = document.getElementById('io-type-select').value
+		const path = document.getElementById('io-path-input').value.trim()
+
+		if (!name) {
+			alert('Name is required')
+			return
+		}
+
+		if (!format) {
+			alert('File format is required')
+			return
+		}
+
+		const item = {
+			name,
+			description: description || undefined,
+			format,
+			raw_type: type,
+			type: type,
+			path: path || undefined,
+		}
+
+		const listKey = projectEditorState.editingType + 's'
+
+		if (projectEditorState.editingIndex >= 0) {
+			// Edit existing
+			projectEditorState[listKey][projectEditorState.editingIndex] = item
+		} else {
+			// Add new
+			projectEditorState[listKey].push(item)
+		}
+
+		renderIOList(listKey)
+		hideIOModal()
+	}
+
+	function showParameterModal(item = null, index = -1) {
+		const modal = document.getElementById('param-modal')
+		const title = document.getElementById('param-modal-title')
+
+		projectEditorState.editingIndex = index
+		projectEditorState.editingItem = item
+
+		title.textContent = item ? 'Edit Parameter' : 'Add Parameter'
+
+		// Populate fields
+		document.getElementById('param-name-input').value = item?.name || ''
+		document.getElementById('param-description-input').value = item?.description || ''
+		document.getElementById('param-type-select').value = item?.raw_type || item?.type || 'String'
+		document.getElementById('param-default-input').value = item?.default || ''
+
+		modal.style.display = 'flex'
+	}
+
+	function hideParameterModal() {
+		const modal = document.getElementById('param-modal')
+		modal.style.display = 'none'
+		projectEditorState.editingIndex = -1
+		projectEditorState.editingItem = null
+	}
+
+	function saveParameter() {
+		const name = document.getElementById('param-name-input').value.trim()
+		const description = document.getElementById('param-description-input').value.trim()
+		const type = document.getElementById('param-type-select').value
+		const defaultValue = document.getElementById('param-default-input').value.trim()
+
+		if (!name) {
+			alert('Name is required')
+			return
+		}
+
+		const item = {
+			name,
+			description: description || undefined,
+			raw_type: type,
+			type: type,
+			default: defaultValue || undefined,
+		}
+
+		if (projectEditorState.editingIndex >= 0) {
+			// Edit existing
+			projectEditorState.parameters[projectEditorState.editingIndex] = item
+		} else {
+			// Add new
+			projectEditorState.parameters.push(item)
+		}
+
+		renderParametersList()
+		hideParameterModal()
+	}
+
+	async function saveSimpleProject() {
+		const statusEl = document.getElementById('step-status-message')
+
+		const name = document.getElementById('step-name-input').value.trim()
+		const description = document.getElementById('step-description-input').value.trim()
+		const author = document.getElementById('step-author-input').value.trim()
+		const version = document.getElementById('step-version-input').value.trim()
+		const workflow = document.getElementById('step-workflow-input').value.trim()
+		const template = document.getElementById('step-template-select').value
+
+		if (!name) {
+			alert('Step name is required')
+			return
+		}
+
+		if (!workflow) {
+			alert('Workflow file is required')
+			return
+		}
+
+		// Use the existing buildSpecSavePayload to properly format data for CLI
+		const payload = buildSpecSavePayload({
+			name,
+			author,
+			workflow,
+			template: template || null,
+			assets: projectEditorState.files,
+			version: version || '1.0.0',
+			spec: {
+				parameters: projectEditorState.parameters,
+				inputs: projectEditorState.inputs,
+				outputs: projectEditorState.outputs,
+			},
+		})
+
+		if (statusEl) {
+			statusEl.textContent = 'Saving...'
+			statusEl.style.color = '#586069'
+		}
+
+		try {
+			// Call the same backend command that the old editor used
+			await invoke('save_project_editor', {
+				projectId: projectEditorState.projectId,
+				projectPath: projectEditorState.projectPath,
+				payload,
+			})
+
+			if (statusEl) {
+				statusEl.textContent = '✓ Saved successfully'
+				statusEl.style.color = '#10b981'
+				setTimeout(() => {
+					statusEl.textContent = ''
+				}, 3000)
+			}
+
+			await loadProjects()
+		} catch (error) {
+			console.error('Failed to save project:', error)
+			if (statusEl) {
+				statusEl.textContent = `Error: ${error}`
+				statusEl.style.color = '#dc3545'
+			}
+		}
+	}
+
+	// Expose functions to window for onclick handlers
+	window.projectEditor = {
+		removeFile: (index) => {
+			projectEditorState.files.splice(index, 1)
+			renderFilesList()
+		},
+		editIO: (type, index) => {
+			const item = projectEditorState[type][index]
+			showIOModal(type.replace(/s$/, ''), item, index)
+		},
+		removeIO: (type, index) => {
+			if (confirm('Remove this item?')) {
+				projectEditorState[type].splice(index, 1)
+				renderIOList(type)
+			}
+		},
+		editParameter: (index) => {
+			const item = projectEditorState.parameters[index]
+			showParameterModal(item, index)
+		},
+		removeParameter: (index) => {
+			if (confirm('Remove this parameter?')) {
+				projectEditorState.parameters.splice(index, 1)
+				renderParametersList()
+			}
+		},
 	}
 
 	return {

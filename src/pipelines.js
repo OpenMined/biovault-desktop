@@ -6,6 +6,12 @@ export function createPipelinesModule({
 	showCreateProjectModal,
 	openProjectEditor,
 }) {
+	// Helper function
+	function escapeHtml(text) {
+		const div = document.createElement('div')
+		div.textContent = text
+		return div.innerHTML
+	}
 	// State management
 	const pipelineState = {
 		pipelines: [],
@@ -1775,6 +1781,15 @@ steps:${
 			closeAddStepModal,
 			confirmAddStep,
 			showPipelineDetails,
+			configureStepBindings,
+			editPipelineStep,
+			removePipelineStep,
+			editBinding,
+			removeBinding,
+			removePublishOutput,
+			removeSQLStore,
+			closeBindingConfigModal,
+			updateStepBindings,
 			showPipelineMenu,
 			backToPipelinesList,
 			showCreatePipelineWizard,
@@ -1797,6 +1812,8 @@ steps:${
 			closeProjectsListModal,
 			browseForStepFolder,
 			createNewStepProject,
+			closeBlankStepModal,
+			submitBlankStepName,
 			closeBindingConfigModal,
 			saveStepWithBindings,
 			configureStepBindings,
@@ -2092,10 +2109,91 @@ steps:${
 
 	function createNewStepProject() {
 		closeStepPickerModal()
-		if (showCreateProjectModal) {
-			// Set flag so project gets added to pipeline after creation
-			window._addingStepToPipeline = pipelineState.currentPipeline.id
-			showCreateProjectModal()
+
+		// Show simple name input (no wizard)
+		const modalHtml = `
+			<div id="blank-step-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 450px;">
+					<div class="modal-header">
+						<h2>Create Blank Step</h2>
+						<button class="modal-close" onclick="pipelineModule.closeBlankStepModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+							Step Name
+						</label>
+						<input 
+							type="text" 
+							id="blank-step-name" 
+							placeholder="my-analysis-step"
+							autocomplete="off"
+							autocorrect="off"
+							autocapitalize="off"
+							spellcheck="false"
+							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+						>
+						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							A blank step will be created. Configure inputs/outputs in the step editor.
+						</p>
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closeBlankStepModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.submitBlankStepName()">Create Step</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		setTimeout(() => {
+			const input = document.getElementById('blank-step-name')
+			if (input) {
+				input.focus()
+				input.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						pipelineModule.submitBlankStepName()
+					}
+				})
+			}
+		}, 100)
+	}
+
+	function closeBlankStepModal() {
+		const modal = document.getElementById('blank-step-modal')
+		if (modal) modal.remove()
+	}
+
+	async function submitBlankStepName() {
+		const input = document.getElementById('blank-step-name')
+		if (!input) return
+
+		const name = input.value.trim()
+		if (!name) {
+			alert('Please enter a step name')
+			return
+		}
+
+		try {
+			closeBlankStepModal()
+
+			// Create blank project
+			const result = await invoke('create_project', {
+				name: name,
+				example: null,
+				directory: null,
+				createPythonScript: false,
+				scriptName: null,
+			})
+
+			// Add to pipeline
+			await addStepFromPath(result.project_path, result.name)
+
+			console.log('✅ Created blank step:', name)
+		} catch (error) {
+			console.error('Error creating blank step:', error)
+			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
+			alert('Failed to create step: ' + errorMsg)
 		}
 	}
 
@@ -2213,6 +2311,8 @@ steps:${
 	function closeBindingConfigModal() {
 		const modal = document.getElementById('binding-config-modal')
 		if (modal) modal.remove()
+		// Also support new modal
+		hideConfigureStepModal()
 	}
 
 	async function saveStepWithBindings(projectPath, stepId) {
@@ -2268,6 +2368,20 @@ steps:${
 		}
 	}
 
+	// =============================================================================
+	// VISUAL STEP CONFIGURATION
+	// =============================================================================
+
+	let configureStepState = {
+		stepIndex: -1,
+		step: null,
+		projectSpec: null,
+		bindings: {},
+		publish: {},
+		store: {},
+		editingBindingInput: null,
+	}
+
 	// Configure step bindings
 	async function configureStepBindings(stepIndex) {
 		if (!pipelineState.currentPipeline) return
@@ -2281,99 +2395,168 @@ steps:${
 				projectPath: step.uses,
 			})
 
-			// Show binding config with existing bindings
-			await showBindingConfigModalForEdit(step, stepIndex, projectSpec)
+			// Show new visual config modal
+			await showVisualConfigModal(step, stepIndex, projectSpec)
 		} catch (error) {
 			console.error('Error loading project for configuration:', error)
 			alert('Failed to load project: ' + error)
 		}
 	}
 
-	async function showBindingConfigModalForEdit(step, stepIndex, projectSpec) {
-		const inputs = projectSpec.metadata?.inputs || []
-		const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
+	async function showVisualConfigModal(step, stepIndex, projectSpec) {
+		configureStepState.stepIndex = stepIndex
+		configureStepState.step = step
+		configureStepState.projectSpec = projectSpec
+		configureStepState.bindings = { ...(step.with || {}) }
+		configureStepState.publish = { ...(step.publish || {}) }
+		configureStepState.store = { ...(step.store || {}) }
 
-		const modalHtml = `
-			<div id="binding-config-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 700px; max-height: 85vh;">
-					<div class="modal-header">
-						<h2>Configure Bindings: ${step.id}</h2>
-						<button class="modal-close" onclick="pipelineModule.closeBindingConfigModal()">×</button>
-					</div>
-					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
-						<p style="color: #6b7280; margin: 0 0 20px 0; font-size: 14px;">
-							Configure how this step receives its inputs
-						</p>
-						
-						${
-							inputs.length > 0
-								? `
-							<div class="bindings-list">
-								${inputs
-									.map((input) => {
-										// Use existing binding or smart default
-										const existingBinding = step.with?.[input.name] || ''
-										const defaultBinding =
-											existingBinding || (pipelineInputs[input.name] ? `inputs.${input.name}` : '')
+		// Update modal title and info
+		document.getElementById('configure-step-name').textContent = step.id || 'Step'
+		document.getElementById('configure-step-uses').textContent = `Uses: ${step.uses || 'unknown'}`
 
-										return `
-										<div class="binding-item">
-											<label class="binding-label">
-												<span class="binding-name">${input.name}</span>
-												<span class="binding-type">${input.type}</span>
-											</label>
-											<input 
-												type="text" 
-												class="binding-input"
-												data-input="${input.name}"
-												value="${defaultBinding}"
-												placeholder="e.g., inputs.${input.name} or step.filter.outputs.data"
-												autocomplete="off"
-												autocorrect="off"
-												autocapitalize="off"
-												spellcheck="false"
-											/>
-											<p class="binding-hint">${input.description || ''}</p>
-										</div>
-									`
-									})
-									.join('')}
-							</div>
-						`
-								: '<p style="color: #9ca3af;">This step has no inputs to configure.</p>'
-						}
-					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeBindingConfigModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.updateStepBindings(${stepIndex})">Save Bindings</button>
-					</div>
-				</div>
-			</div>
-		`
+		// Render bindings list
+		renderStepBindingsList()
+		renderPublishList()
+		renderStoreList()
 
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
+		// Setup handlers
+		setupConfigureStepHandlers()
+
+		// Show modal
+		document.getElementById('configure-step-modal').style.display = 'flex'
 	}
 
-	async function updateStepBindings(stepIndex) {
-		try {
-			// Collect bindings
-			const bindings = {}
-			document.querySelectorAll('.binding-input').forEach((input) => {
-				const inputName = input.dataset.input
-				const value = input.value.trim()
-				if (value) {
-					bindings[inputName] = value
-				}
-			})
+	function renderStepBindingsList() {
+		const container = document.getElementById('step-bindings-list')
+		if (!container) return
 
-			// Load pipeline
+		const inputs = configureStepState.projectSpec.metadata?.inputs || []
+
+		if (inputs.length === 0) {
+			container.innerHTML = '<div class="empty-state">This step has no inputs to configure.</div>'
+			return
+		}
+
+		container.innerHTML = inputs
+			.map((input) => {
+				const binding = configureStepState.bindings[input.name]
+				const isBound = !!binding
+				const bindingText = binding || 'Not configured'
+
+				return `
+					<div class="binding-item ${isBound ? '' : 'unbound'}">
+						<div class="binding-info">
+							<div>
+								<span class="binding-input-name">${escapeHtml(input.name)}</span>
+								<span class="binding-type-badge">${escapeHtml(input.type || 'File')}</span>
+							</div>
+							<div class="binding-value">${isBound ? escapeHtml(bindingText) : '⚠️ ' + bindingText}</div>
+						</div>
+						<div class="binding-actions">
+							<button class="btn-bind" onclick="pipelineModule.editBinding('${escapeHtml(input.name)}')">
+								${isBound ? 'Change' : 'Set Binding'}
+							</button>
+							${
+								isBound
+									? `<button class="btn-unbind" onclick="pipelineModule.removeBinding('${escapeHtml(
+											input.name,
+									  )}')">Clear</button>`
+									: ''
+							}
+						</div>
+					</div>
+				`
+			})
+			.join('')
+	}
+
+	function setupConfigureStepHandlers() {
+		const closeBtn = document.getElementById('configure-step-close')
+		const cancelBtn = document.getElementById('configure-step-cancel')
+		const saveBtn = document.getElementById('configure-step-save')
+
+		if (closeBtn) closeBtn.onclick = () => hideConfigureStepModal()
+		if (cancelBtn) cancelBtn.onclick = () => hideConfigureStepModal()
+		if (saveBtn) saveBtn.onclick = () => saveStepConfiguration()
+
+		// Add buttons
+		const addPublishBtn = document.getElementById('add-publish-output-btn')
+		const addStoreBtn = document.getElementById('add-store-btn')
+
+		if (addPublishBtn) addPublishBtn.onclick = () => showPublishEditor()
+		if (addStoreBtn) addStoreBtn.onclick = () => showStoreEditor()
+
+		// Binding editor handlers
+		const bindingSourceType = document.getElementById('binding-source-type')
+		if (bindingSourceType) {
+			bindingSourceType.onchange = () => updateBindingSelectors()
+		}
+
+		const bindingStepSelect = document.getElementById('binding-step-select')
+		if (bindingStepSelect) {
+			bindingStepSelect.onchange = () => updateBindingOutputOptions()
+		}
+
+		// Setup all close buttons
+		const bindingClose = document.getElementById('binding-editor-close')
+		const bindingCancel = document.getElementById('binding-editor-cancel')
+		const bindingSave = document.getElementById('binding-editor-save')
+
+		if (bindingClose) bindingClose.onclick = () => hideBindingEditor()
+		if (bindingCancel) bindingCancel.onclick = () => hideBindingEditor()
+		if (bindingSave) bindingSave.onclick = () => saveBindingFromEditor()
+
+		// Publish editor handlers
+		const publishClose = document.getElementById('publish-editor-close')
+		const publishCancel = document.getElementById('publish-editor-cancel')
+		const publishSave = document.getElementById('publish-editor-save')
+
+		if (publishClose) publishClose.onclick = () => hidePublishEditor()
+		if (publishCancel) publishCancel.onclick = () => hidePublishEditor()
+		if (publishSave) publishSave.onclick = () => savePublishOutput()
+
+		// Store editor handlers
+		const storeClose = document.getElementById('store-editor-close')
+		const storeCancel = document.getElementById('store-editor-cancel')
+		const storeSave = document.getElementById('store-editor-save')
+
+		if (storeClose) storeClose.onclick = () => hideStoreEditor()
+		if (storeCancel) storeCancel.onclick = () => hideStoreEditor()
+		if (storeSave) storeSave.onclick = () => saveSQLStore()
+	}
+
+	function hideConfigureStepModal() {
+		document.getElementById('configure-step-modal').style.display = 'none'
+		configureStepState = {
+			stepIndex: -1,
+			step: null,
+			projectSpec: null,
+			bindings: {},
+			publish: {},
+			store: {},
+			editingBindingInput: null,
+		}
+	}
+
+	async function saveStepConfiguration() {
+		try {
+			// Load current pipeline
 			const editorData = await invoke('load_pipeline_editor', {
 				pipelineId: pipelineState.currentPipeline.id,
 			})
 
-			// Update step bindings
-			if (editorData.spec.steps[stepIndex]) {
-				editorData.spec.steps[stepIndex].with = bindings
+			// Update step
+			if (editorData.spec.steps[configureStepState.stepIndex]) {
+				editorData.spec.steps[configureStepState.stepIndex].with = configureStepState.bindings
+
+				// Add publish and store if they exist
+				if (Object.keys(configureStepState.publish).length > 0) {
+					editorData.spec.steps[configureStepState.stepIndex].publish = configureStepState.publish
+				}
+				if (Object.keys(configureStepState.store).length > 0) {
+					editorData.spec.steps[configureStepState.stepIndex].store = configureStepState.store
+				}
 			}
 
 			// Save
@@ -2391,12 +2574,398 @@ steps:${
 			}
 			await loadPipelineSteps(pipelineState.currentPipeline.id)
 
-			closeBindingConfigModal()
-			console.log('✅ Updated bindings for step')
+			hideConfigureStepModal()
 		} catch (error) {
-			console.error('Error updating bindings:', error)
-			alert('Failed to update bindings: ' + error)
+			console.error('Error saving step configuration:', error)
+			alert('Failed to save configuration: ' + error)
 		}
+	}
+
+	function editBinding(inputName) {
+		configureStepState.editingBindingInput = inputName
+		const currentBinding = configureStepState.bindings[inputName] || ''
+
+		// Set input name
+		document.getElementById('binding-input-name').value = inputName
+
+		// Parse current binding if it exists
+		if (currentBinding) {
+			parseAndPopulateBinding(currentBinding)
+		} else {
+			// Clear all selectors
+			document.getElementById('binding-source-type').value = ''
+			updateBindingSelectors()
+		}
+
+		// Show binding editor
+		document.getElementById('binding-editor-modal').style.display = 'flex'
+	}
+
+	function parseAndPopulateBinding(binding) {
+		const sourceTypeSelect = document.getElementById('binding-source-type')
+
+		if (binding.startsWith('inputs.')) {
+			// Pipeline input
+			sourceTypeSelect.value = 'pipeline-input'
+			updateBindingSelectors()
+			const inputName = binding.replace('inputs.', '')
+			document.getElementById('binding-pipeline-input-select').value = inputName
+		} else if (binding.startsWith('step.')) {
+			// Step output: step.stepId.outputs.outputName
+			sourceTypeSelect.value = 'step-output'
+			updateBindingSelectors()
+			const match = binding.match(/^step\.([^.]+)\.outputs\.(.+)$/)
+			if (match) {
+				document.getElementById('binding-step-select').value = match[1]
+				updateBindingOutputOptions()
+				document.getElementById('binding-output-select').value = match[2]
+			}
+		} else if (binding.startsWith('File(') || binding.startsWith('Directory(')) {
+			// Literal
+			const isFile = binding.startsWith('File(')
+			sourceTypeSelect.value = isFile ? 'literal-file' : 'literal-dir'
+			updateBindingSelectors()
+			const path = binding.match(/\(([^)]+)\)/)?.[1] || ''
+			document.getElementById('binding-literal-path').value = path
+		}
+
+		updateBindingPreview()
+	}
+
+	function updateBindingSelectors() {
+		const sourceType = document.getElementById('binding-source-type').value
+
+		// Hide all selectors
+		document.getElementById('binding-pipeline-input-selector').style.display = 'none'
+		document.getElementById('binding-step-output-selector').style.display = 'none'
+		document.getElementById('binding-literal-selector').style.display = 'none'
+		document.getElementById('binding-preview').style.display = 'none'
+
+		if (sourceType === 'pipeline-input') {
+			// Populate pipeline inputs
+			const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
+			const select = document.getElementById('binding-pipeline-input-select')
+			select.innerHTML =
+				'<option value="">-- Select Input --</option>' +
+				Object.keys(pipelineInputs)
+					.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`)
+					.join('')
+			document.getElementById('binding-pipeline-input-selector').style.display = 'block'
+			select.onchange = () => updateBindingPreview()
+		} else if (sourceType === 'step-output') {
+			// Populate previous steps
+			const steps = pipelineState.currentPipeline.spec?.steps || []
+			const currentIndex = configureStepState.stepIndex
+			const previousSteps = steps.slice(0, currentIndex)
+
+			const select = document.getElementById('binding-step-select')
+			select.innerHTML =
+				'<option value="">-- Select Step --</option>' +
+				previousSteps
+					.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.id)}</option>`)
+					.join('')
+			document.getElementById('binding-step-output-selector').style.display = 'block'
+			updateBindingOutputOptions()
+		} else if (sourceType === 'literal-file' || sourceType === 'literal-dir') {
+			document.getElementById('binding-literal-selector').style.display = 'block'
+			const pathInput = document.getElementById('binding-literal-path')
+			pathInput.oninput = () => updateBindingPreview()
+		}
+
+		updateBindingPreview()
+	}
+
+	async function updateBindingOutputOptions() {
+		const stepId = document.getElementById('binding-step-select').value
+		const outputSelect = document.getElementById('binding-output-select')
+
+		if (!stepId) {
+			outputSelect.innerHTML = '<option value="">-- First select a step --</option>'
+			return
+		}
+
+		// Find the step and load its project to get outputs
+		const step = pipelineState.currentPipeline.spec?.steps?.find((s) => s.id === stepId)
+		if (!step) return
+
+		try {
+			const projectSpec = await invoke('load_project_editor', {
+				projectPath: step.uses,
+			})
+
+			const outputs = projectSpec.metadata?.outputs || []
+			outputSelect.innerHTML =
+				'<option value="">-- Select Output --</option>' +
+				outputs
+					.map(
+						(output) =>
+							`<option value="${escapeHtml(output.name)}">${escapeHtml(output.name)}</option>`,
+					)
+					.join('')
+			outputSelect.onchange = () => updateBindingPreview()
+		} catch (error) {
+			console.error('Failed to load project outputs:', error)
+			outputSelect.innerHTML = '<option value="">-- Error loading outputs --</option>'
+		}
+	}
+
+	function updateBindingPreview() {
+		const sourceType = document.getElementById('binding-source-type').value
+		const previewDiv = document.getElementById('binding-preview')
+		const previewCode = document.getElementById('binding-preview-code')
+
+		let binding = ''
+
+		if (sourceType === 'pipeline-input') {
+			const inputName = document.getElementById('binding-pipeline-input-select').value
+			if (inputName) {
+				binding = `inputs.${inputName}`
+			}
+		} else if (sourceType === 'step-output') {
+			const stepId = document.getElementById('binding-step-select').value
+			const outputName = document.getElementById('binding-output-select').value
+			if (stepId && outputName) {
+				binding = `step.${stepId}.outputs.${outputName}`
+			}
+		} else if (sourceType === 'literal-file') {
+			const path = document.getElementById('binding-literal-path').value.trim()
+			if (path) {
+				binding = `File(${path})`
+			}
+		} else if (sourceType === 'literal-dir') {
+			const path = document.getElementById('binding-literal-path').value.trim()
+			if (path) {
+				binding = `Directory(${path})`
+			}
+		}
+
+		if (binding) {
+			previewDiv.style.display = 'block'
+			previewCode.textContent = binding
+		} else {
+			previewDiv.style.display = 'none'
+		}
+	}
+
+	function saveBindingFromEditor() {
+		const inputName = configureStepState.editingBindingInput
+		if (!inputName) return
+
+		const sourceType = document.getElementById('binding-source-type').value
+		let binding = ''
+
+		if (sourceType === 'pipeline-input') {
+			const pipelineInput = document.getElementById('binding-pipeline-input-select').value
+			if (!pipelineInput) {
+				alert('Please select a pipeline input')
+				return
+			}
+			binding = `inputs.${pipelineInput}`
+		} else if (sourceType === 'step-output') {
+			const stepId = document.getElementById('binding-step-select').value
+			const outputName = document.getElementById('binding-output-select').value
+			if (!stepId || !outputName) {
+				alert('Please select both a step and an output')
+				return
+			}
+			binding = `step.${stepId}.outputs.${outputName}`
+		} else if (sourceType === 'literal-file') {
+			const path = document.getElementById('binding-literal-path').value.trim()
+			if (!path) {
+				alert('Please enter a file path')
+				return
+			}
+			binding = `File(${path})`
+		} else if (sourceType === 'literal-dir') {
+			const path = document.getElementById('binding-literal-path').value.trim()
+			if (!path) {
+				alert('Please enter a directory path')
+				return
+			}
+			binding = `Directory(${path})`
+		} else {
+			alert('Please select a data source')
+			return
+		}
+
+		// Save binding
+		configureStepState.bindings[inputName] = binding
+		renderStepBindingsList()
+		hideBindingEditor()
+	}
+
+	function removeBinding(inputName) {
+		delete configureStepState.bindings[inputName]
+		renderStepBindingsList()
+	}
+
+	function hideBindingEditor() {
+		document.getElementById('binding-editor-modal').style.display = 'none'
+		configureStepState.editingBindingInput = null
+	}
+
+	// Publish Output Functions
+	function showPublishEditor() {
+		document.getElementById('publish-output-name').value = ''
+		document.getElementById('publish-output-type').value = 'File'
+		document.getElementById('publish-output-path').value = ''
+		document.getElementById('publish-editor-modal').style.display = 'flex'
+	}
+
+	function hidePublishEditor() {
+		document.getElementById('publish-editor-modal').style.display = 'none'
+	}
+
+	function savePublishOutput() {
+		const name = document.getElementById('publish-output-name').value.trim()
+		const type = document.getElementById('publish-output-type').value
+		const path = document.getElementById('publish-output-path').value.trim()
+
+		if (!name || !path) {
+			alert('Output name and path are required')
+			return
+		}
+
+		// Add to publish object: name: Type(path)
+		configureStepState.publish[name] = `${type}(${path})`
+		renderPublishList()
+		hidePublishEditor()
+	}
+
+	function renderPublishList() {
+		const container = document.getElementById('step-publish-list')
+		if (!container) return
+
+		const items = Object.entries(configureStepState.publish)
+
+		if (items.length === 0) {
+			container.innerHTML = '<div class="empty-state">No outputs published yet</div>'
+			return
+		}
+
+		container.innerHTML = items
+			.map(
+				([name, value]) => `
+			<div class="publish-item">
+				<div class="publish-item-info">
+					<div class="publish-item-name">${escapeHtml(name)}</div>
+					<div class="publish-item-value">${escapeHtml(value)}</div>
+				</div>
+				<button class="publish-item-remove" onclick="pipelineModule.removePublishOutput('${escapeHtml(
+					name,
+				)}')">&times;</button>
+			</div>
+		`,
+			)
+			.join('')
+	}
+
+	function removePublishOutput(name) {
+		delete configureStepState.publish[name]
+		renderPublishList()
+	}
+
+	// SQL Store Functions
+	function showStoreEditor() {
+		document.getElementById('store-name').value = ''
+		document.getElementById('store-table-name').value = ''
+		document.getElementById('store-key-column').value = ''
+
+		// Populate source select with available outputs
+		const sourceSelect = document.getElementById('store-source')
+		const outputs = configureStepState.projectSpec.metadata?.outputs || []
+		const publishedOutputs = Object.keys(configureStepState.publish)
+
+		const allOutputs = [...outputs.map((o) => o.name), ...publishedOutputs]
+
+		sourceSelect.innerHTML =
+			'<option value="">-- Select Output --</option>' +
+			allOutputs
+				.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+				.join('')
+
+		document.getElementById('store-editor-modal').style.display = 'flex'
+	}
+
+	function hideStoreEditor() {
+		document.getElementById('store-editor-modal').style.display = 'none'
+	}
+
+	function saveSQLStore() {
+		const storeName = document.getElementById('store-name').value.trim()
+		const source = document.getElementById('store-source').value
+		const tableName = document.getElementById('store-table-name').value.trim()
+		const keyColumn = document.getElementById('store-key-column').value.trim()
+
+		if (!storeName || !source) {
+			alert('Store name and source output are required')
+			return
+		}
+
+		// Create store config
+		const storeConfig = {
+			kind: 'sql',
+			destination: 'SQL()',
+			source: source,
+		}
+
+		if (tableName) {
+			storeConfig.table_name = tableName
+		}
+
+		if (keyColumn) {
+			storeConfig.key_column = keyColumn
+		}
+
+		configureStepState.store[storeName] = storeConfig
+		renderStoreList()
+		hideStoreEditor()
+	}
+
+	function renderStoreList() {
+		const container = document.getElementById('step-store-list')
+		if (!container) return
+
+		const items = Object.entries(configureStepState.store)
+
+		if (items.length === 0) {
+			container.innerHTML = '<div class="empty-state">No SQL stores configured</div>'
+			return
+		}
+
+		container.innerHTML = items
+			.map(([name, config]) => {
+				const details = [
+					`Source: ${config.source}`,
+					config.table_name ? `Table: ${config.table_name}` : null,
+					config.key_column ? `Key: ${config.key_column}` : null,
+				]
+					.filter(Boolean)
+					.join(' • ')
+
+				return `
+				<div class="store-item">
+					<div class="store-item-info">
+						<div class="store-item-name">${escapeHtml(name)}</div>
+						<div class="store-item-value">${escapeHtml(details)}</div>
+					</div>
+					<button class="store-item-remove" onclick="pipelineModule.removeSQLStore('${escapeHtml(
+						name,
+					)}')">&times;</button>
+				</div>
+			`
+			})
+			.join('')
+	}
+
+	function removeSQLStore(name) {
+		delete configureStepState.store[name]
+		renderStoreList()
+	}
+
+	async function updateStepBindings(stepIndex) {
+		// Legacy function - redirects to new implementation
+		await saveStepConfiguration()
 	}
 
 	// Edit a pipeline step - opens the project editor for that step

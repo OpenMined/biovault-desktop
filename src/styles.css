@@ -24,6 +24,8 @@
 /* 7. Page-specific styles */
 @import url('css/onboarding.css');
 @import url('css/projects.css');
+@import url('css/project-editor.css');
+@import url('css/configure-step.css');
 @import url('css/data.css');
 @import url('css/import.css');
 @import url('css/runs.css');
