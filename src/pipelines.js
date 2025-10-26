@@ -1393,8 +1393,32 @@ steps:${
 				const stepName = step.id || `step-${index + 1}`
 				const stepUses = step.uses || 'Unknown step'
 
-				const hasBindings = step.with && Object.keys(step.with).length > 0
+				// Count configuration details
 				const bindingCount = Object.keys(step.with || {}).length
+				const paramCount = Object.keys(step.parameters || {}).length
+				const publishCount = Object.keys(step.publish || {}).length
+				const hasSQL = step.store && Object.keys(step.store).length > 0
+
+				// Build status badges
+				const statusBadges = []
+				
+				if (bindingCount > 0) {
+					statusBadges.push(`<span class="success-badge">✓ ${bindingCount} input${bindingCount === 1 ? '' : 's'} bound</span>`)
+				} else {
+					statusBadges.push(`<span class="warning-badge">⚠️ No inputs bound</span>`)
+				}
+
+				if (paramCount > 0) {
+					statusBadges.push(`<span class="info-badge">⚙️ ${paramCount} param${paramCount === 1 ? '' : 's'} customized</span>`)
+				}
+
+				if (publishCount > 0) {
+					statusBadges.push(`<span class="info-badge">📤 ${publishCount} output${publishCount === 1 ? '' : 's'} published</span>`)
+				}
+
+				if (hasSQL) {
+					statusBadges.push(`<span class="info-badge">💾 SQL storage</span>`)
+				}
 
 				stepDiv.innerHTML = `
 				<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
@@ -1402,13 +1426,7 @@ steps:${
 				<div class="pipeline-step-info">
 					<h4>${stepName}</h4>
 					<p>Uses: ${stepUses}</p>
-					${
-						!hasBindings
-							? '<span class="warning-badge">⚠️ Not configured</span>'
-							: `<span class="success-badge">✓ ${bindingCount} binding${
-									bindingCount === 1 ? '' : 's'
-							  }</span>`
-					}
+					<div class="step-status-badges">${statusBadges.join('')}</div>
 				</div>
 				<div class="pipeline-step-actions">
 					<button class="btn-secondary-small" onclick="pipelineModule.configureStepBindings(${index})">Configure</button>
@@ -1824,6 +1842,8 @@ steps:${
 			openPipelineYAMLInVSCode,
 			launchJupyterForStep,
 			openVSCodeForStep,
+			editParameter,
+			resetParameter,
 		}
 
 		// Load pipelines after setting up global handlers
@@ -2375,6 +2395,7 @@ steps:${
 		step: null,
 		projectSpec: null,
 		bindings: {},
+		parameters: {},
 		publish: {},
 		store: {},
 		editingBindingInput: null,
@@ -2406,6 +2427,7 @@ steps:${
 		configureStepState.step = step
 		configureStepState.projectSpec = projectSpec
 		configureStepState.bindings = { ...(step.with || {}) }
+		configureStepState.parameters = { ...(step.parameters || {}) }
 		configureStepState.publish = { ...(step.publish || {}) }
 		configureStepState.store = { ...(step.store || {}) }
 
@@ -2413,8 +2435,9 @@ steps:${
 		document.getElementById('configure-step-name').textContent = step.id || 'Step'
 		document.getElementById('configure-step-uses').textContent = `Uses: ${step.uses || 'unknown'}`
 
-		// Render bindings list
+		// Render all sections
 		renderStepBindingsList()
+		renderParametersList()
 		renderPublishList()
 		renderStoreList()
 
@@ -2423,6 +2446,49 @@ steps:${
 
 		// Show modal
 		document.getElementById('configure-step-modal').style.display = 'flex'
+	}
+
+	function renderParametersList() {
+		const container = document.getElementById('step-parameters-list')
+		if (!container) return
+
+		const parameters = configureStepState.projectSpec.metadata?.parameters || []
+
+		if (parameters.length === 0) {
+			container.innerHTML = '<div class="empty-state">This step has no configurable parameters.</div>'
+			return
+		}
+
+		container.innerHTML = parameters
+			.map((param) => {
+				const override = configureStepState.parameters[param.name]
+				const currentValue = override !== undefined ? override : param.default || ''
+				const isOverridden = override !== undefined
+				
+				return `
+					<div class="parameter-item ${isOverridden ? 'overridden' : ''}">
+						<div class="parameter-info">
+							<div class="parameter-header">
+								<span class="parameter-name">${escapeHtml(param.name)}</span>
+								<span class="parameter-type-badge">${escapeHtml(param.type || 'String')}</span>
+								${isOverridden ? '<span class="override-badge">Customized</span>' : ''}
+							</div>
+							${param.description ? `<div class="parameter-description">${escapeHtml(param.description)}</div>` : ''}
+							<div class="parameter-value-display">
+								${param.default && !isOverridden ? `<span class="value-label">Default:</span> ` : ''}
+								<code>${escapeHtml(String(currentValue))}</code>
+							</div>
+						</div>
+						<div class="parameter-actions">
+							<button class="btn-edit-param" onclick="pipelineModule.editParameter('${escapeHtml(param.name)}')">
+								${isOverridden ? 'Change' : 'Override'}
+							</button>
+							${isOverridden ? `<button class="btn-reset-param" onclick="pipelineModule.resetParameter('${escapeHtml(param.name)}')">Reset</button>` : ''}
+						</div>
+					</div>
+				`
+			})
+			.join('')
 	}
 
 	function renderStepBindingsList() {
@@ -2531,6 +2597,27 @@ steps:${
 		if (storeSave) storeSave.onclick = () => saveSQLStore()
 	}
 
+	function editParameter(paramName) {
+		const param = configureStepState.projectSpec.metadata?.parameters?.find(p => p.name === paramName)
+		if (!param) return
+
+		const currentValue = configureStepState.parameters[paramName] !== undefined 
+			? configureStepState.parameters[paramName] 
+			: param.default || ''
+
+		const newValue = prompt(`Set value for ${paramName}:\n\nType: ${param.type}\nDefault: ${param.default || 'none'}\n${param.description ? '\n' + param.description : ''}`, currentValue)
+		
+		if (newValue !== null) {
+			configureStepState.parameters[paramName] = newValue
+			renderParametersList()
+		}
+	}
+
+	function resetParameter(paramName) {
+		delete configureStepState.parameters[paramName]
+		renderParametersList()
+	}
+
 	function hideConfigureStepModal() {
 		document.getElementById('configure-step-modal').style.display = 'none'
 		configureStepState = {
@@ -2538,6 +2625,7 @@ steps:${
 			step: null,
 			projectSpec: null,
 			bindings: {},
+			parameters: {},
 			publish: {},
 			store: {},
 			editingBindingInput: null,
@@ -2581,12 +2669,23 @@ steps:${
 			if (editorData.spec.steps[configureStepState.stepIndex]) {
 				editorData.spec.steps[configureStepState.stepIndex].with = configureStepState.bindings
 
+				// Add parameters if they exist
+				if (Object.keys(configureStepState.parameters).length > 0) {
+					editorData.spec.steps[configureStepState.stepIndex].parameters = configureStepState.parameters
+				} else {
+					delete editorData.spec.steps[configureStepState.stepIndex].parameters
+				}
+
 				// Add publish and store if they exist
 				if (Object.keys(configureStepState.publish).length > 0) {
 					editorData.spec.steps[configureStepState.stepIndex].publish = configureStepState.publish
+				} else {
+					delete editorData.spec.steps[configureStepState.stepIndex].publish
 				}
 				if (Object.keys(configureStepState.store).length > 0) {
 					editorData.spec.steps[configureStepState.stepIndex].store = configureStepState.store
+				} else {
+					delete editorData.spec.steps[configureStepState.stepIndex].store
 				}
 			}
 

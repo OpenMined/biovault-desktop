@@ -447,8 +447,152 @@ select.text-input:focus {
 	background: #f0fdf4;
 }
 
+/* Parameters List */
+.parameters-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.parameter-item {
+	background: white;
+	border: 1px solid #e1e4e8;
+	border-radius: 8px;
+	padding: 14px 16px;
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	transition: all 0.2s ease;
+}
+
+.parameter-item:hover {
+	border-color: #10b981;
+	box-shadow: 0 2px 4px rgba(16, 185, 129, 0.1);
+}
+
+.parameter-item.overridden {
+	border-color: #10b981;
+	background: #f0fdf4;
+}
+
+.parameter-info {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.parameter-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.parameter-name {
+	font-size: 14px;
+	font-weight: 600;
+	color: #24292e;
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.parameter-type-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	background: #dbeafe;
+	color: #1e40af;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.override-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	background: #d1fae5;
+	color: #065f46;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.parameter-description {
+	font-size: 12px;
+	color: #586069;
+	line-height: 1.4;
+}
+
+.parameter-value-display {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.value-label {
+	font-size: 12px;
+	color: #6a737d;
+	font-weight: 500;
+}
+
+.parameter-value-display code {
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+	font-size: 13px;
+	color: #10b981;
+	font-weight: 600;
+	background: #f0fdf4;
+	padding: 2px 6px;
+	border-radius: 4px;
+}
+
+.parameter-item.overridden .parameter-value-display code {
+	background: #dcfce7;
+}
+
+.parameter-actions {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
+	margin-top: 4px;
+}
+
+.btn-edit-param {
+	padding: 6px 12px;
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.btn-edit-param:hover {
+	background: #059669;
+}
+
+.btn-reset-param {
+	padding: 6px 12px;
+	background: transparent;
+	color: #6a737d;
+	border: 1px solid #d1d5da;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.btn-reset-param:hover {
+	background: #f6f8fa;
+	border-color: #586069;
+	color: #24292e;
+}
+
 /* Empty States */
 .bindings-list .empty-state,
+.parameters-list .empty-state,
 .publish-list .empty-state,
 .store-list .empty-state {
 	text-align: center;

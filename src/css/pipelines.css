@@ -518,6 +518,13 @@
 	color: #dc2626 !important;
 }
 
+.step-status-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
 .warning-badge {
 	display: inline-flex;
 	align-items: center;
@@ -528,7 +535,6 @@
 	border-radius: 4px;
 	font-size: 11px;
 	font-weight: 600;
-	margin-top: 6px;
 }
 
 .success-badge {
@@ -541,7 +547,18 @@
 	border-radius: 4px;
 	font-size: 11px;
 	font-weight: 600;
-	margin-top: 6px;
+}
+
+.info-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 8px;
+	background: #dbeafe;
+	color: #1e40af;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
 }
 
 /* Configure Step Modal Header */
