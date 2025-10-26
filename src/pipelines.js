@@ -1310,6 +1310,8 @@ export function createPipelinesModule({
 			submitPipelineURL,
 			importExistingPipeline,
 			importStepFromURL,
+			closeStepURLInputModal,
+			submitStepURL,
 			loadPipelineSteps,
 			editPipelineStep,
 			removePipelineStep,
@@ -1441,16 +1443,73 @@ export function createPipelinesModule({
 	async function importStepFromURL() {
 		closeStepPickerModal()
 
-		const url = prompt(
-			'Paste GitHub URL to project.yaml:\n(e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/count-lines/project.yaml)',
-		)
-		if (!url) return
+		// Show URL input modal
+		const modalHtml = `
+			<div id="step-url-input-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 650px;">
+					<div class="modal-header">
+						<h2>Import Step from GitHub</h2>
+						<button class="modal-close" onclick="pipelineModule.closeStepURLInputModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+							GitHub URL to project.yaml
+						</label>
+						<input 
+							type="text" 
+							id="step-url-input" 
+							placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/count-lines/project.yaml"
+							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
+						>
+						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							This will download the project (code, assets, etc.) and add it as a step to your pipeline.
+						</p>
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closeStepURLInputModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.submitStepURL()">Import & Add Step</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		// Focus on input
+		setTimeout(() => {
+			const input = document.getElementById('step-url-input')
+			if (input) {
+				input.focus()
+				input.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						pipelineModule.submitStepURL()
+					}
+				})
+			}
+		}, 100)
+	}
+
+	function closeStepURLInputModal() {
+		const modal = document.getElementById('step-url-input-modal')
+		if (modal) modal.remove()
+	}
+
+	async function submitStepURL() {
+		const input = document.getElementById('step-url-input')
+		if (!input) return
+
+		const url = input.value.trim()
+		if (!url) {
+			alert('Please enter a URL')
+			return
+		}
 
 		try {
+			closeStepURLInputModal()
+
 			// Call CLI library to import from URL
 			const result = await invoke('import_project', {
-				source: url,
-				name: null,
+				url: url,
 				overwrite: false,
 			})
 
@@ -1509,11 +1568,11 @@ export function createPipelinesModule({
 				pipelineId: pipelineState.currentPipeline.id,
 			})
 
-			// Create step WITHOUT bindings (configure later)
+			// Create step using project NAME (not path) for portability
 			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 			const newStep = {
 				id: stepId,
-				uses: projectPath,
+				uses: projectName, // Use name for database lookup (portable!)
 				with: {}, // Empty - configure later via button
 			}
 
