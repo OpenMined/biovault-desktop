@@ -486,6 +486,17 @@ option.incompatible {
 	background: #f0fdf4;
 }
 
+.parameter-item.parameter-info-only {
+	border-color: #e1e4e8;
+	background: #f6f8fa;
+	cursor: default;
+}
+
+.parameter-item.parameter-info-only:hover {
+	border-color: #e1e4e8;
+	box-shadow: none;
+}
+
 .parameter-info {
 	flex: 1;
 	display: flex;

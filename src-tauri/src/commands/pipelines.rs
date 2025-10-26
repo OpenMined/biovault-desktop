@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tauri::Emitter;
 
  // Use CLI library types and functions
-pub use biovault::data::{Pipeline, PipelineRun};
+pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
 pub use biovault::pipeline_spec::PipelineSpec;
 use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
 
@@ -325,10 +325,11 @@ pub async fn run_pipeline(
     drop(biovault_db); // Release lock
 
     // Build extra args from input overrides
+    // The keys can be either "inputs.name" or "stepId.paramName"
     let mut extra_args = Vec::new();
     for (key, value) in input_overrides {
         extra_args.push("--set".to_string());
-        extra_args.push(format!("inputs.{}={}", key, value));
+        extra_args.push(format!("{}={}", key, value));
     }
 
     let yaml_path_str = yaml_path.to_string_lossy().to_string();
@@ -408,4 +409,47 @@ pub async fn delete_pipeline_run(
 pub async fn preview_pipeline_spec(spec: PipelineSpec) -> Result<String, String> {
     // Convert spec to YAML for preview
     serde_yaml::to_string(&spec).map_err(|e| format!("Failed to generate pipeline preview: {}", e))
+}
+
+// ============================================================================
+// Run Configurations (using CLI library)
+// ============================================================================
+
+#[tauri::command]
+pub async fn save_run_config(
+    state: tauri::State<'_, AppState>,
+    pipeline_id: i64,
+    name: String,
+    config_data: serde_json::Value,
+) -> Result<i64, String> {
+    let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    db.save_run_config(pipeline_id, &name, &config_data)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_run_configs(
+    state: tauri::State<'_, AppState>,
+    pipeline_id: i64,
+) -> Result<Vec<RunConfig>, String> {
+    let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    db.list_run_configs(pipeline_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_run_config(
+    state: tauri::State<'_, AppState>,
+    config_id: i64,
+) -> Result<Option<RunConfig>, String> {
+    let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    db.get_run_config(config_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_run_config(
+    state: tauri::State<'_, AppState>,
+    config_id: i64,
+) -> Result<(), String> {
+    let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    db.delete_run_config(config_id).map_err(|e| e.to_string())
 }

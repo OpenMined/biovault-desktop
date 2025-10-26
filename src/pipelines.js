@@ -1416,7 +1416,6 @@ steps:${
 
 				// Count configuration details
 				const bindingCount = Object.keys(step.with || {}).length
-				const paramCount = Object.keys(step.parameters || {}).length
 				const publishCount = Object.keys(step.publish || {}).length
 				const hasSQL = step.store && Object.keys(step.store).length > 0
 
@@ -1431,14 +1430,6 @@ steps:${
 					)
 				} else {
 					statusBadges.push(`<span class="warning-badge">⚠️ No inputs bound</span>`)
-				}
-
-				if (paramCount > 0) {
-					statusBadges.push(
-						`<span class="info-badge">⚙️ ${paramCount} param${
-							paramCount === 1 ? '' : 's'
-						} customized</span>`,
-					)
 				}
 
 				if (publishCount > 0) {
@@ -1701,14 +1692,35 @@ steps:${
 				})
 			}
 
-			// Create a nice dialog for input selection
-			const inputs = await showPipelineInputDialog(pipeline.name, requiredInputs)
-			if (!inputs) return // User cancelled
+			// Create a nice dialog for input selection and parameter overrides
+			const result = await showPipelineInputDialog(
+				pipeline.name,
+				requiredInputs,
+				pipelineId,
+				editorData.spec,
+			)
+			if (!result) return // User cancelled
+
+			// Combine inputs and parameters into one override map
+			// Format: { "inputs.samplesheet": "/path", "filter.threshold": "0.01" }
+			const allOverrides = {}
+
+			// Add input overrides
+			for (const [name, value] of Object.entries(result.inputs || {})) {
+				allOverrides[`inputs.${name}`] = value
+			}
+
+			// Add parameter overrides (already in stepId.paramName format)
+			for (const [stepParam, value] of Object.entries(result.parameters || {})) {
+				allOverrides[stepParam] = value
+			}
+
+			console.log('🚀 Running pipeline with overrides:', allOverrides)
 
 			// Run the pipeline
 			const run = await invoke('run_pipeline', {
 				pipelineId: pipelineId,
-				inputOverrides: inputs,
+				inputOverrides: allOverrides,
 				resultsDir: null,
 			})
 
@@ -1723,10 +1735,40 @@ steps:${
 		}
 	}
 
-	// Show pipeline input dialog with file/folder pickers
-	async function showPipelineInputDialog(pipelineName, requiredInputs) {
-		// Load saved configurations
-		const savedConfigs = loadSavedRunConfigs(pipelineName)
+	// Show pipeline input dialog with file/folder pickers and parameter overrides
+	async function showPipelineInputDialog(pipelineName, requiredInputs, pipelineId, pipelineSpec) {
+		// Load saved configurations from CLI database
+		let savedConfigs = []
+		try {
+			savedConfigs = await invoke('list_run_configs', { pipelineId })
+		} catch (error) {
+			console.error('Failed to load saved configs:', error)
+		}
+
+		// Collect all parameters from all steps for override
+		const stepParameters = []
+		if (pipelineSpec && pipelineSpec.steps) {
+			for (const step of pipelineSpec.steps) {
+				try {
+					const projectSpec = await invoke('load_project_editor', {
+						projectPath: step.uses,
+					})
+					const params = projectSpec.metadata?.parameters || []
+					params.forEach((param) => {
+						stepParameters.push({
+							stepId: step.id,
+							paramName: param.name,
+							paramType: param.type || 'String',
+							default: param.default || '',
+							description: param.description || '',
+						})
+					})
+				} catch (e) {
+					console.error(`Failed to load parameters for step ${step.id}:`, e)
+				}
+			}
+		}
+
 		const configSelectHtml =
 			savedConfigs.length > 0
 				? `<div style="margin-bottom: 16px;">
@@ -1737,9 +1779,9 @@ steps:${
 						<option value="">-- Start Fresh --</option>
 						${savedConfigs
 							.map(
-								(config, idx) =>
-									`<option value="${idx}">${config.name} (${new Date(
-										config.timestamp,
+								(config) =>
+									`<option value="${config.id}">${config.name} (${new Date(
+										config.created_at,
 									).toLocaleString()})</option>`,
 							)
 							.join('')}
@@ -1747,23 +1789,41 @@ steps:${
 				</div>`
 				: ''
 
+		const parametersHtml =
+			stepParameters.length > 0
+				? `<div style="margin-top: 24px;">
+					<h3>Parameter Overrides (Optional)</h3>
+					<p style="font-size: 13px; color: #6b7280; margin-bottom: 12px;">Override default parameter values for this run</p>
+					<div id="pipeline-parameter-fields"></div>
+				</div>`
+				: ''
+
 		// Create modal HTML
 		const modalHtml = `
 			<div id="pipeline-run-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 600px;">
+				<div class="modal-content" style="width: 600px; max-height: 85vh;">
 					<div class="modal-header">
 						<h2>Run Pipeline: ${pipelineName}</h2>
 						<button class="modal-close" onclick="pipelineModule.closePipelineRunDialog()">×</button>
 					</div>
-					<div class="modal-body">
+					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
 						${configSelectHtml}
 						<h3>Configure Inputs</h3>
 						<div id="pipeline-input-fields"></div>
+						${parametersHtml}
 						<div style="margin-top: 16px;">
 							<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
 								<input type="checkbox" id="save-config-checkbox" style="width: auto;">
 								<span style="font-size: 14px; color: #6b7280;">Save this configuration for future runs</span>
 							</label>
+							<div id="save-config-name-field" style="display: none; margin-top: 8px;">
+								<input 
+									type="text" 
+									id="config-name-input" 
+									placeholder="Configuration name (e.g., 'Production Dataset')"
+									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px;"
+								>
+							</div>
 						</div>
 					</div>
 					<div class="modal-footer">
@@ -1820,27 +1880,88 @@ steps:${
 			container.innerHTML = '<p style="color: #666;">No inputs required for this pipeline.</p>'
 		}
 
-		// Handle load saved config change
+		// Create parameter override fields
+		const paramsContainer = document.getElementById('pipeline-parameter-fields')
+		if (paramsContainer && stepParameters.length > 0) {
+			stepParameters.forEach((param) => {
+				const fieldDiv = document.createElement('div')
+				fieldDiv.style.marginBottom = '12px'
+				fieldDiv.innerHTML = `
+					<label style="display: block; margin-bottom: 4px; font-size: 13px; color: #374151;">
+						<strong>${escapeHtml(param.stepId)}.${escapeHtml(param.paramName)}</strong>
+						<span style="color: #9ca3af;"> (${escapeHtml(param.paramType)})</span>
+					</label>
+					<input 
+						type="text" 
+						id="param-${param.stepId}-${param.paramName}" 
+						placeholder="${param.default ? 'Default: ' + escapeHtml(param.default) : 'No default'}"
+						value="${escapeHtml(param.default)}"
+						style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px;"
+						autocomplete="off"
+					>
+					${
+						param.description
+							? `<span style="font-size: 12px; color: #9ca3af; display: block; margin-top: 2px;">${escapeHtml(
+									param.description,
+							  )}</span>`
+							: ''
+					}
+				`
+				paramsContainer.appendChild(fieldDiv)
+			})
+		}
+
+		// Handle save config checkbox
+		const saveCheckbox = document.getElementById('save-config-checkbox')
+		const nameField = document.getElementById('save-config-name-field')
+		if (saveCheckbox && nameField) {
+			saveCheckbox.addEventListener('change', (e) => {
+				nameField.style.display = e.target.checked ? 'block' : 'none'
+				if (e.target.checked) {
+					document.getElementById('config-name-input')?.focus()
+				}
+			})
+		}
+
+		// Handle load saved config
 		const loadConfigSelect = document.getElementById('load-saved-config')
 		if (loadConfigSelect) {
-			loadConfigSelect.addEventListener('change', (e) => {
-				const configIndex = e.target.value
-				if (configIndex !== '') {
-					const config = savedConfigs[parseInt(configIndex)]
-					// Populate inputs from saved config
-					for (const [name, value] of Object.entries(config.inputs)) {
-						const inputEl = document.getElementById(`input-${name}`)
-						if (inputEl) {
-							inputEl.value = value
+			loadConfigSelect.addEventListener('change', async (e) => {
+				const configId = e.target.value
+				if (configId !== '') {
+					try {
+						const config = await invoke('get_run_config', { configId: parseInt(configId) })
+						if (config && config.config_data) {
+							// Populate inputs from saved config
+							if (config.config_data.inputs) {
+								for (const [name, value] of Object.entries(config.config_data.inputs)) {
+									const inputEl = document.getElementById(`input-${name}`)
+									if (inputEl) {
+										inputEl.value = value
+									}
+								}
+							}
+							// Populate parameters from saved config
+							if (config.config_data.parameters) {
+								for (const [stepParam, value] of Object.entries(config.config_data.parameters)) {
+									const paramEl = document.getElementById(`param-${stepParam}`)
+									if (paramEl) {
+										paramEl.value = value
+									}
+								}
+							}
 						}
+					} catch (error) {
+						console.error('Failed to load config:', error)
+						alert('Failed to load configuration: ' + error)
 					}
 				}
 			})
 		}
 
-		// Return a promise that resolves with the inputs
+		// Return a promise that resolves with the inputs AND parameter overrides
 		return new Promise((resolve) => {
-			window.pipelineModule.confirmPipelineRun = () => {
+			window.pipelineModule.confirmPipelineRun = async () => {
 				const inputs = {}
 				for (const name of Object.keys(requiredInputs)) {
 					const value = document.getElementById(`input-${name}`)?.value
@@ -1849,14 +1970,40 @@ steps:${
 					}
 				}
 
+				// Collect parameter overrides (stepId.paramName format)
+				const parameters = {}
+				stepParameters.forEach((param) => {
+					const value = document.getElementById(`param-${param.stepId}-${param.paramName}`)?.value
+					if (value && value !== param.default) {
+						// Only save if different from default
+						parameters[`${param.stepId}.${param.paramName}`] = value
+					}
+				})
+
 				// Save configuration if checkbox is checked
 				const saveCheckbox = document.getElementById('save-config-checkbox')
 				if (saveCheckbox?.checked) {
-					saveRunConfig(pipelineName, inputs)
+					const configName = document.getElementById('config-name-input')?.value?.trim()
+					if (!configName) {
+						alert('Please enter a name for this configuration')
+						return
+					}
+
+					try {
+						await invoke('save_run_config', {
+							pipelineId,
+							name: configName,
+							configData: { inputs, parameters },
+						})
+						console.log('✅ Saved run configuration:', configName)
+					} catch (error) {
+						console.error('Failed to save config:', error)
+						// Don't block the run if save fails
+					}
 				}
 
 				closePipelineRunDialog()
-				resolve(inputs)
+				resolve({ inputs, parameters })
 			}
 
 			window.pipelineModule.closePipelineRunDialog = () => {
@@ -1864,39 +2011,6 @@ steps:${
 				resolve(null)
 			}
 		})
-	}
-
-	// Save run configuration to localStorage
-	function saveRunConfig(pipelineName, inputs) {
-		try {
-			const key = `pipeline_run_configs_${pipelineName}`
-			const existing = JSON.parse(localStorage.getItem(key) || '[]')
-
-			const newConfig = {
-				name: pipelineName,
-				timestamp: Date.now(),
-				inputs: inputs,
-			}
-
-			existing.push(newConfig)
-
-			// Keep only last 10 configs
-			const trimmed = existing.slice(-10)
-			localStorage.setItem(key, JSON.stringify(trimmed))
-		} catch (error) {
-			console.error('Failed to save run configuration:', error)
-		}
-	}
-
-	// Load saved run configurations from localStorage
-	function loadSavedRunConfigs(pipelineName) {
-		try {
-			const key = `pipeline_run_configs_${pipelineName}`
-			return JSON.parse(localStorage.getItem(key) || '[]')
-		} catch (error) {
-			console.error('Failed to load run configurations:', error)
-			return []
-		}
 	}
 
 	function closePipelineRunDialog() {
@@ -2810,17 +2924,12 @@ steps:${
 
 		container.innerHTML = parameters
 			.map((param) => {
-				const override = configureStepState.parameters[param.name]
-				const currentValue = override !== undefined ? override : param.default || ''
-				const isOverridden = override !== undefined
-
 				return `
-					<div class="parameter-item ${isOverridden ? 'overridden' : ''}">
-						<div class="parameter-info">
+					<div class="parameter-item parameter-info-only">
+						<div class="parameter-info" style="width: 100%;">
 							<div class="parameter-header">
 								<span class="parameter-name">${escapeHtml(param.name)}</span>
 								<span class="parameter-type-badge">${escapeHtml(param.type || 'String')}</span>
-								${isOverridden ? '<span class="override-badge">Customized</span>' : ''}
 							</div>
 							${
 								param.description
@@ -2828,21 +2937,9 @@ steps:${
 									: ''
 							}
 							<div class="parameter-value-display">
-								${param.default && !isOverridden ? `<span class="value-label">Default:</span> ` : ''}
-								<code>${escapeHtml(String(currentValue))}</code>
+								<span class="value-label">Default:</span>
+								<code>${escapeHtml(String(param.default || 'none'))}</code>
 							</div>
-						</div>
-						<div class="parameter-actions">
-							<button class="btn-edit-param" onclick="pipelineModule.editParameter('${escapeHtml(param.name)}')">
-								${isOverridden ? 'Change' : 'Override'}
-							</button>
-							${
-								isOverridden
-									? `<button class="btn-reset-param" onclick="pipelineModule.resetParameter('${escapeHtml(
-											param.name,
-									  )}')">Reset</button>`
-									: ''
-							}
 						</div>
 					</div>
 				`
@@ -3052,13 +3149,9 @@ steps:${
 			if (editorData.spec.steps[configureStepState.stepIndex]) {
 				editorData.spec.steps[configureStepState.stepIndex].with = configureStepState.bindings
 
-				// Add parameters if they exist
-				if (Object.keys(configureStepState.parameters).length > 0) {
-					editorData.spec.steps[configureStepState.stepIndex].parameters =
-						configureStepState.parameters
-				} else {
-					delete editorData.spec.steps[configureStepState.stepIndex].parameters
-				}
+				// NOTE: Parameters are NOT saved to pipeline.yaml per spec
+				// They are runtime overrides only (--set step.param=value)
+				// We save them to run_configs for convenience
 
 				// Add publish and store if they exist
 				if (Object.keys(configureStepState.publish).length > 0) {
