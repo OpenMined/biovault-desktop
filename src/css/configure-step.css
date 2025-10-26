@@ -28,6 +28,7 @@
 	align-items: center;
 	padding: 20px 24px;
 	border-bottom: 1px solid #e1e4e8;
+	gap: 16px;
 }
 
 .modal-header h3 {
@@ -35,6 +36,13 @@
 	font-size: 18px;
 	font-weight: 600;
 	color: #24292e;
+	flex: 1;
+}
+
+.modal-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .modal-close-btn {

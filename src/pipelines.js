@@ -1047,7 +1047,7 @@ export function createPipelinesModule({
 
 		if (inputEntries.length === 0) {
 			inputsList.innerHTML =
-				'<p class="empty-message">No inputs defined yet. Add inputs to make your pipeline reusable.</p>'
+				'<p class="empty-message">No inputs defined. Click "Edit Pipeline" to add inputs in YAML.</p>'
 			return
 		}
 
@@ -1062,10 +1062,6 @@ export function createPipelinesModule({
 						<div class="input-name">${name}</div>
 						<div class="input-type-badge">${typeStr}</div>
 						${hasDefault ? `<div class="input-default">Default: ${spec.default}</div>` : ''}
-					</div>
-					<div class="input-actions">
-						<button class="btn-secondary-small" onclick="pipelineModule.editPipelineInput('${name}')">Edit</button>
-						<button class="btn-secondary-small" onclick="pipelineModule.removePipelineInput('${name}')" style="color: #dc2626;">Remove</button>
 					</div>
 				</div>
 			`
@@ -1325,6 +1321,18 @@ steps:${
 		}
 	}
 
+	async function openPipelineYAMLInVSCode() {
+		if (!pipelineState.currentPipeline) return
+
+		try {
+			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/pipeline.yaml'
+			await invoke('open_in_vscode', { path: yamlPath })
+		} catch (error) {
+			console.error('Error opening pipeline YAML in VSCode:', error)
+			alert('Failed to open in VSCode: ' + error.toString())
+		}
+	}
+
 	async function removePipelineInput(inputName) {
 		if (!confirm(`Remove input "${inputName}"?`)) return
 
@@ -1404,7 +1412,6 @@ steps:${
 				</div>
 				<div class="pipeline-step-actions">
 					<button class="btn-secondary-small" onclick="pipelineModule.configureStepBindings(${index})">Configure</button>
-					<button class="btn-secondary-small" onclick="pipelineModule.editPipelineStep(${index})">Edit Project</button>
 					<button class="btn-secondary-small" onclick="pipelineModule.removePipelineStep(${index})" style="color: #dc3545;">Remove</button>
 				</div>
 			`
@@ -1715,15 +1722,6 @@ steps:${
 			})
 		}
 
-		const viewYamlBtn = document.getElementById('pipeline-view-yaml-btn')
-		if (viewYamlBtn) {
-			viewYamlBtn.addEventListener('click', () => {
-				if (pipelineState.currentPipeline) {
-					showPipelineYAMLModal()
-				}
-			})
-		}
-
 		const editBtn = document.getElementById('pipeline-detail-edit')
 		if (editBtn) {
 			editBtn.addEventListener('click', () => {
@@ -1744,16 +1742,13 @@ steps:${
 			})
 		}
 
-		const addInputBtn = document.getElementById('add-pipeline-input-btn')
-		console.log('🔍 Looking for add-pipeline-input-btn:', addInputBtn)
-		if (addInputBtn) {
-			console.log('✅ Attaching click handler to add input button')
-			addInputBtn.addEventListener('click', () => {
-				console.log('🎯 Add input button clicked!')
-				showPipelineInputModal()
+		const editPipelineBtn = document.getElementById('edit-pipeline-yaml-btn')
+		if (editPipelineBtn) {
+			editPipelineBtn.addEventListener('click', () => {
+				if (pipelineState.currentPipeline) {
+					openPipelineYAMLInVSCode()
+				}
 			})
-		} else {
-			console.warn('⚠️ add-pipeline-input-btn not found in DOM')
 		}
 	}
 
@@ -1826,6 +1821,9 @@ steps:${
 			showPipelineYAMLModal,
 			closeYAMLViewerModal,
 			openYAMLInVSCode,
+			openPipelineYAMLInVSCode,
+			launchJupyterForStep,
+			openVSCodeForStep,
 		}
 
 		// Load pipelines after setting up global handlers
@@ -2480,6 +2478,13 @@ steps:${
 		if (cancelBtn) cancelBtn.onclick = () => hideConfigureStepModal()
 		if (saveBtn) saveBtn.onclick = () => saveStepConfiguration()
 
+		// Launch buttons
+		const jupyterBtn = document.getElementById('configure-step-jupyter')
+		const vscodeBtn = document.getElementById('configure-step-vscode')
+
+		if (jupyterBtn) jupyterBtn.onclick = () => launchJupyterForStep()
+		if (vscodeBtn) vscodeBtn.onclick = () => openVSCodeForStep()
+
 		// Add buttons
 		const addPublishBtn = document.getElementById('add-publish-output-btn')
 		const addStoreBtn = document.getElementById('add-store-btn')
@@ -2536,6 +2541,32 @@ steps:${
 			publish: {},
 			store: {},
 			editingBindingInput: null,
+		}
+	}
+
+	async function launchJupyterForStep() {
+		if (!configureStepState.step) return
+
+		try {
+			await invoke('launch_jupyter', {
+				projectPath: configureStepState.step.uses,
+			})
+		} catch (error) {
+			console.error('Error launching Jupyter:', error)
+			alert('Failed to launch Jupyter: ' + error.toString())
+		}
+	}
+
+	async function openVSCodeForStep() {
+		if (!configureStepState.step) return
+
+		try {
+			await invoke('open_in_vscode', {
+				path: configureStepState.step.uses,
+			})
+		} catch (error) {
+			console.error('Error opening VSCode:', error)
+			alert('Failed to open VSCode: ' + error.toString())
 		}
 	}
 
