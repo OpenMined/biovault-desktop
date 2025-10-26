@@ -124,7 +124,18 @@ export function createPipelinesModule({
 								</div>
 								<div class="action-btn-content">
 									<div class="action-btn-title">Import from GitHub</div>
-									<div class="action-btn-desc">Paste a GitHub URL to import a complete pipeline</div>
+									<div class="action-btn-desc">Download a pipeline and all its steps from GitHub</div>
+								</div>
+							</button>
+							<button class="action-btn-large" onclick="pipelineModule.importExistingPipeline()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Browse Local Folder</div>
+									<div class="action-btn-desc">Import an existing pipeline from your computer</div>
 								</div>
 							</button>
 							<button class="action-btn-large" onclick="pipelineModule.createBlankPipeline()">
@@ -1782,6 +1793,8 @@ steps:${
 			editPipelineStep,
 			removePipelineStep,
 			closeStepPickerModal,
+			showExistingProjectsList,
+			closeProjectsListModal,
 			browseForStepFolder,
 			createNewStepProject,
 			closeBindingConfigModal,
@@ -1824,20 +1837,93 @@ steps:${
 		attachDetailViewButtons()
 	}
 
-	// Show step picker modal (choose existing or create new)
+	// Show step picker modal with actions first
 	async function showStepPickerModal() {
+		const modalHtml = `
+			<div id="step-picker-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 550px;">
+					<div class="modal-header">
+						<h2>Add Step to Pipeline</h2>
+						<button class="modal-close" onclick="pipelineModule.closeStepPickerModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<div style="display: flex; flex-direction: column; gap: 10px;">
+							<button class="action-btn-large" onclick="pipelineModule.importStepFromURL()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+										<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Import from GitHub</div>
+									<div class="action-btn-desc">Download a step from a GitHub URL</div>
+								</div>
+							</button>
+							<button class="action-btn-large" onclick="pipelineModule.showExistingProjectsList()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<rect x="3" y="3" width="7" height="7"></rect>
+										<rect x="14" y="3" width="7" height="7"></rect>
+										<rect x="14" y="14" width="7" height="7"></rect>
+										<rect x="3" y="14" width="7" height="7"></rect>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Import Existing Project</div>
+									<div class="action-btn-desc">Select from your registered projects</div>
+								</div>
+							</button>
+							<button class="action-btn-large" onclick="pipelineModule.browseForStepFolder()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Browse Local Folder</div>
+									<div class="action-btn-desc">Select a project folder on your computer</div>
+								</div>
+							</button>
+							<button class="action-btn-large" onclick="pipelineModule.createNewStepProject()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<line x1="12" y1="5" x2="12" y2="19"></line>
+										<line x1="5" y1="12" x2="19" y2="12"></line>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Create New Project</div>
+									<div class="action-btn-desc">Build a new step from scratch</div>
+								</div>
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+	}
+
+	// Show existing projects list (called from step picker)
+	async function showExistingProjectsList() {
 		try {
 			const projects = await invoke('get_projects')
 
 			const modalHtml = `
-				<div id="step-picker-modal" class="modal-overlay" style="display: flex;">
+				<div id="projects-list-modal" class="modal-overlay" style="display: flex;">
 					<div class="modal-content" style="width: 600px; max-height: 80vh;">
 						<div class="modal-header">
-							<h2>Add Step to Pipeline</h2>
-							<button class="modal-close" onclick="pipelineModule.closeStepPickerModal()">×</button>
+							<button class="back-button-icon" onclick="pipelineModule.closeProjectsListModal(); pipelineModule.showStepPickerModal()">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<polyline points="15 18 9 12 15 6"></polyline>
+								</svg>
+							</button>
+							<h2 style="margin: 0;">Select Project</h2>
+							<button class="modal-close" onclick="pipelineModule.closeProjectsListModal()">×</button>
 						</div>
 						<div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
-							<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Select Existing Project</h3>
 							${
 								projects.length > 0
 									? `
@@ -1859,54 +1945,34 @@ steps:${
 										.join('')}
 								</div>
 							`
-									: '<p style="color: #9ca3af; padding: 20px; text-align: center;">No projects registered yet</p>'
+									: '<p style="color: #9ca3af; padding: 40px; text-align: center;">No projects registered yet. Import or create one!</p>'
 							}
-							
-							<div style="border-top: 1px solid #e5e7eb; margin: 20px 0; padding-top: 20px;">
-								<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Or Choose Action</h3>
-								<div style="display: flex; flex-direction: column; gap: 8px;">
-							<button class="action-btn" onclick="pipelineModule.importStepFromURL()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-								</svg>
-								Import from GitHub URL
-							</button>
-							<button class="action-btn" onclick="pipelineModule.browseForStepFolder()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
-								</svg>
-								Browse Local Folder
-							</button>
-							<button class="action-btn" onclick="pipelineModule.createNewStepProject()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<line x1="12" y1="5" x2="12" y2="19"></line>
-									<line x1="5" y1="12" x2="19" y2="12"></line>
-								</svg>
-								Create New Project
-							</button>
-								</div>
-							</div>
 						</div>
 					</div>
 				</div>
 			`
 
+			closeStepPickerModal()
 			document.body.insertAdjacentHTML('beforeend', modalHtml)
 
-			// Add click handlers for project items
+			// Add click handlers
 			document.querySelectorAll('.project-select-item').forEach((item) => {
 				item.addEventListener('click', async () => {
 					const path = item.dataset.path
 					const name = item.dataset.name
 					await addStepFromPath(path, name)
-					closeStepPickerModal()
+					closeProjectsListModal()
 				})
 			})
 		} catch (error) {
-			console.error('Error showing step picker:', error)
-			alert('Failed to show step picker: ' + error)
+			console.error('Error showing projects list:', error)
+			alert('Failed to show projects: ' + error)
 		}
+	}
+
+	function closeProjectsListModal() {
+		const modal = document.getElementById('projects-list-modal')
+		if (modal) modal.remove()
 	}
 
 	function closeStepPickerModal() {
