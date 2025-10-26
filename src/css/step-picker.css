@@ -148,35 +148,34 @@
 /* Large Action Buttons */
 .action-btn-large {
 	display: flex;
-	align-items: flex-start;
-	gap: 16px;
-	padding: 20px;
-	background: white;
-	border: 2px solid #e5e7eb;
-	border-radius: 10px;
+	align-items: center;
+	gap: 14px;
+	padding: 16px 18px;
+	background: white !important;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
 	cursor: pointer;
-	transition: all 0.2s;
+	transition: all 0.15s;
 	text-align: left;
 	width: 100%;
 }
 
 .action-btn-large:hover {
-	border-color: #10b981;
-	box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
-	transform: translateY(-2px);
+	border-color: #d1d5db;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .action-btn-icon {
 	flex-shrink: 0;
-	width: 48px;
-	height: 48px;
+	width: 40px;
+	height: 40px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: #f3f4f6;
-	border-radius: 10px;
-	color: #6b7280;
-	transition: all 0.2s;
+	background: #f9fafb;
+	border-radius: 8px;
+	color: #9ca3af;
+	transition: all 0.15s;
 }
 
 .action-btn-large:hover .action-btn-icon {
@@ -189,14 +188,14 @@
 }
 
 .action-btn-title {
-	font-size: 16px;
+	font-size: 15px;
 	font-weight: 600;
 	color: #111827;
-	margin-bottom: 4px;
+	margin-bottom: 2px;
 }
 
 .action-btn-desc {
 	font-size: 13px;
-	color: #6b7280;
-	line-height: 1.5;
+	color: #9ca3af;
+	line-height: 1.4;
 }

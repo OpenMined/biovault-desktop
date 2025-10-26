@@ -124,7 +124,7 @@ export function createPipelinesModule({
 								</div>
 								<div class="action-btn-content">
 									<div class="action-btn-title">Import from GitHub</div>
-									<div class="action-btn-desc">Paste a GitHub URL to import a complete pipeline with all its steps</div>
+									<div class="action-btn-desc">Paste a GitHub URL to import a complete pipeline</div>
 								</div>
 							</button>
 							<button class="action-btn-large" onclick="pipelineModule.createBlankPipeline()">
