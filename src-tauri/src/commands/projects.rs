@@ -971,6 +971,7 @@ pub fn save_project_editor(
     let project_record = {
         let db = state.biovault_db.lock().unwrap();
         if let Some(id) = project_id {
+            // Update existing project by ID
             db.update_project_by_id(
                 id,
                 &metadata.name,
@@ -985,20 +986,40 @@ pub fn save_project_editor(
                 .map_err(|e| format!("Failed to reload project {}: {}", id, e))?
                 .ok_or_else(|| format!("Project {} not found after update", id))?
         } else {
-            db.register_project(
-                &metadata.name,
-                &metadata.author,
-                &metadata.workflow,
-                &template_for_db,
-                &project_path_buf,
-            )
-            .map_err(|e| format!("Failed to register project: {}", e))?;
+            // No project_id provided - try to find existing project by name or register new one
+            match db.get_project(&metadata.name) {
+                Ok(Some(existing)) => {
+                    // Project exists - update it
+                    db.update_project_by_id(
+                        existing.id,
+                        &metadata.name,
+                        &metadata.author,
+                        &metadata.workflow,
+                        &template_for_db,
+                        &project_path_buf,
+                    )
+                    .map_err(|e| format!("Failed to update existing project: {}", e))?;
+                    
+                    existing
+                }
+                Ok(None) | Err(_) => {
+                    // Project doesn't exist - register new one
+                    db.register_project(
+                        &metadata.name,
+                        &metadata.author,
+                        &metadata.workflow,
+                        &template_for_db,
+                        &project_path_buf,
+                    )
+                    .map_err(|e| format!("Failed to register project: {}", e))?;
 
-            db.get_project(&metadata.name)
-                .map_err(|e| format!("Failed to load project '{}': {}", metadata.name, e))?
-                .ok_or_else(|| {
-                    format!("Project '{}' not found after registration", metadata.name)
-                })?
+                    db.get_project(&metadata.name)
+                        .map_err(|e| format!("Failed to load project '{}': {}", metadata.name, e))?
+                        .ok_or_else(|| {
+                            format!("Project '{}' not found after registration", metadata.name)
+                        })?
+                }
+            }
         }
     };
 

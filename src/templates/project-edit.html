@@ -16,7 +16,13 @@
 		<div class="header-actions">
 			<div id="auto-save-indicator" class="auto-save-indicator">
 				<svg width="14" height="14" viewBox="0 0 20 20" fill="none">
-					<path d="M16.5 5L7.5 14L3.5 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+					<path
+						d="M16.5 5L7.5 14L3.5 10"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
 				</svg>
 				<span>Saved</span>
 			</div>
@@ -44,25 +50,18 @@
 	<!-- Main Content -->
 	<div class="step-editor-content">
 		<div class="step-editor-inner">
-			<!-- Step Name & Description -->
+			<!-- Step Details -->
 			<div class="editor-section">
-				<input
-					id="step-name-input"
-					type="text"
-					class="step-name-input"
-					placeholder="Step Name (e.g. APOL1 Classification)"
-					spellcheck="false"
-				/>
-				<div class="step-name-underline"></div>
-
 				<label class="field-label">
-					<span>What does this step do?</span>
-					<textarea
-						id="step-description-input"
-						class="step-description-input"
-						placeholder="Briefly describe what this step does... (optional)"
-						rows="2"
-					></textarea>
+					<span class="big-label">Step Name <span class="required">*</span></span>
+					<input
+						id="step-name-input"
+						type="text"
+						class="step-name-input"
+						placeholder="e.g., apol1-classification"
+						spellcheck="false"
+					/>
+					<span class="field-hint">Internal identifier (use kebab-case, no spaces)</span>
 				</label>
 
 				<div class="field-row">

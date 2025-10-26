@@ -43,6 +43,34 @@
 .header-actions {
 	display: flex;
 	gap: 10px;
+	align-items: center;
+}
+
+.auto-save-indicator {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	color: #059669;
+	background: #f0fdf4;
+	transition: all 0.3s ease;
+	opacity: 0;
+}
+
+.auto-save-indicator.visible {
+	opacity: 1;
+}
+
+.auto-save-indicator.saving {
+	color: #f59e0b;
+	background: #fffbeb;
+}
+
+.auto-save-indicator svg {
+	flex-shrink: 0;
 }
 
 .header-actions .secondary-btn,
@@ -95,46 +123,35 @@
 	padding-top: 8px;
 }
 
-/* Step Name (Large) */
+/* Big Label */
+.big-label {
+	font-size: 15px !important;
+	font-weight: 600 !important;
+	color: #24292e !important;
+}
+
+/* Step Name Input */
 .step-name-input {
-	font-size: 32px;
+	font-size: 20px;
 	font-weight: 600;
 	color: #24292e;
-	border: none;
-	background: transparent;
-	padding: 8px 0;
+	padding: 12px;
 	width: 100%;
+	border: 1px solid #e1e4e8;
+	border-radius: 8px;
+	transition: all 0.2s ease;
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.step-name-input:focus {
 	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .step-name-input::placeholder {
 	color: #d1d5da;
-}
-
-.step-name-underline {
-	height: 3px;
-	background: linear-gradient(90deg, #10b981 0%, transparent 100%);
-	border-radius: 2px;
-	margin-bottom: 24px;
-}
-
-/* Description */
-.step-description-input {
-	width: 100%;
-	padding: 12px;
-	border: 1px solid #e1e4e8;
-	border-radius: 8px;
-	font-size: 15px;
-	font-family: inherit;
-	line-height: 1.5;
-	resize: vertical;
-	transition: all 0.2s ease;
-}
-
-.step-description-input:focus {
-	outline: none;
-	border-color: #10b981;
-	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+	font-weight: 400;
 }
 
 /* Field Labels & Inputs */

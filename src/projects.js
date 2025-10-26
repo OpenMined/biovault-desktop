@@ -1993,7 +1993,6 @@ export function createProjectsModule({
 	function renderSimpleProjectEditor(data) {
 		// Populate basic info
 		document.getElementById('step-name-input').value = data.metadata.name || ''
-		document.getElementById('step-description-input').value = data.metadata.description || ''
 		document.getElementById('step-author-input').value = data.metadata.author || ''
 		document.getElementById('step-version-input').value = data.metadata.version || '1.0.0'
 		document.getElementById('step-workflow-input').value = data.metadata.workflow || 'workflow.nf'
@@ -2001,14 +2000,20 @@ export function createProjectsModule({
 			data.metadata.template || 'dynamic-nextflow'
 		document.getElementById('step-path-display').textContent = data.project_path || ''
 
-		// Store state
-		projectEditorState.projectId = data.project_id
+		// Store state - use project_id from response (may be null for unregistered projects)
+		projectEditorState.projectId = data.project_id ?? null
 		projectEditorState.projectPath = data.project_path
 		projectEditorState.metadata = data.metadata
 		projectEditorState.files = data.metadata.assets || []
 		projectEditorState.inputs = data.metadata.inputs || []
 		projectEditorState.outputs = data.metadata.outputs || []
 		projectEditorState.parameters = data.metadata.parameters || []
+
+		console.log('[Editor] Loaded project:', {
+			id: projectEditorState.projectId,
+			path: projectEditorState.projectPath,
+			name: data.metadata.name,
+		})
 
 		// Render lists
 		renderFilesList()
@@ -2032,12 +2037,6 @@ export function createProjectsModule({
 			}
 		}
 
-		// Save button
-		const saveBtn = document.getElementById('step-edit-save-btn')
-		if (saveBtn) {
-			saveBtn.onclick = () => saveSimpleProject()
-		}
-
 		// Jupyter button
 		const jupyterBtn = document.getElementById('step-edit-jupyter-btn')
 		if (jupyterBtn) {
@@ -2054,6 +2053,28 @@ export function createProjectsModule({
 		const folderBtn = document.getElementById('open-folder-btn')
 		if (folderBtn) {
 			folderBtn.onclick = () => handleOpenProjectFolder()
+		}
+
+		// Auto-save on blur for text fields
+		const autoSaveFields = [
+			'step-name-input',
+			'step-author-input',
+			'step-version-input',
+			'step-workflow-input',
+		]
+
+		autoSaveFields.forEach((id) => {
+			const field = document.getElementById(id)
+			if (field) {
+				field.addEventListener('blur', () => debouncedAutoSave())
+				field.addEventListener('input', () => markUnsaved())
+			}
+		})
+
+		// Auto-save on template change
+		const templateSelect = document.getElementById('step-template-select')
+		if (templateSelect) {
+			templateSelect.addEventListener('change', () => debouncedAutoSave())
 		}
 
 		// File drop zone
@@ -2306,6 +2327,9 @@ export function createProjectsModule({
 
 		renderIOList(listKey)
 		hideIOModal()
+
+		// Auto-save after adding/editing I/O
+		debouncedAutoSave()
 	}
 
 	function showParameterModal(item = null, index = -1) {
@@ -2362,27 +2386,53 @@ export function createProjectsModule({
 
 		renderParametersList()
 		hideParameterModal()
+
+		// Auto-save after adding/editing parameter
+		debouncedAutoSave()
 	}
 
-	async function saveSimpleProject() {
-		const statusEl = document.getElementById('step-status-message')
+	let autoSaveTimeout = null
+	let isSaving = false
 
+	function markUnsaved() {
+		const indicator = document.getElementById('auto-save-indicator')
+		if (indicator && !isSaving) {
+			indicator.classList.remove('visible')
+		}
+	}
+
+	function debouncedAutoSave() {
+		if (autoSaveTimeout) {
+			clearTimeout(autoSaveTimeout)
+		}
+		autoSaveTimeout = setTimeout(() => {
+			autoSaveProject()
+		}, 800) // Save 800ms after user stops typing
+	}
+
+	async function autoSaveProject() {
+		if (isSaving) return
+		isSaving = true
+
+		const indicator = document.getElementById('auto-save-indicator')
 		const name = document.getElementById('step-name-input').value.trim()
-		const description = document.getElementById('step-description-input').value.trim()
+		const workflow = document.getElementById('step-workflow-input').value.trim()
+
+		// Don't save if required fields are empty
+		if (!name || !workflow) {
+			isSaving = false
+			return
+		}
+
+		// Show saving indicator
+		if (indicator) {
+			indicator.classList.add('visible', 'saving')
+			indicator.querySelector('span').textContent = 'Saving...'
+		}
+
 		const author = document.getElementById('step-author-input').value.trim()
 		const version = document.getElementById('step-version-input').value.trim()
-		const workflow = document.getElementById('step-workflow-input').value.trim()
 		const template = document.getElementById('step-template-select').value
-
-		if (!name) {
-			alert('Step name is required')
-			return
-		}
-
-		if (!workflow) {
-			alert('Workflow file is required')
-			return
-		}
 
 		// Use the existing buildSpecSavePayload to properly format data for CLI
 		const payload = buildSpecSavePayload({
@@ -2399,34 +2449,54 @@ export function createProjectsModule({
 			},
 		})
 
-		if (statusEl) {
-			statusEl.textContent = 'Saving...'
-			statusEl.style.color = '#586069'
-		}
-
 		try {
-			// Call the same backend command that the old editor used
-			await invoke('save_project_editor', {
+			console.log('[Auto-save] Saving:', {
+				projectId: projectEditorState.projectId,
+				projectPath: projectEditorState.projectPath,
+				name: payload.name,
+			})
+
+			// Call backend - it will update existing project, not create new one
+			const result = await invoke('save_project_editor', {
 				projectId: projectEditorState.projectId,
 				projectPath: projectEditorState.projectPath,
 				payload,
 			})
 
-			if (statusEl) {
-				statusEl.textContent = '✓ Saved successfully'
-				statusEl.style.color = '#10b981'
-				setTimeout(() => {
-					statusEl.textContent = ''
-				}, 3000)
+			// Update project ID if it was null before
+			if (!projectEditorState.projectId && result.id) {
+				projectEditorState.projectId = result.id
+				console.log('[Auto-save] Updated project ID:', result.id)
 			}
 
+			// Show saved indicator
+			if (indicator) {
+				indicator.classList.remove('saving')
+				indicator.querySelector('span').textContent = 'Saved'
+				setTimeout(() => {
+					indicator.classList.remove('visible')
+				}, 2000)
+			}
+
+			// Silently refresh project list
 			await loadProjects()
 		} catch (error) {
-			console.error('Failed to save project:', error)
-			if (statusEl) {
-				statusEl.textContent = `Error: ${error}`
-				statusEl.style.color = '#dc3545'
+			console.error('Auto-save failed:', error)
+
+			// Show error in indicator
+			if (indicator) {
+				indicator.classList.remove('saving')
+				indicator.style.color = '#dc3545'
+				indicator.style.background = '#fee'
+				indicator.querySelector('span').textContent = 'Save failed'
+				setTimeout(() => {
+					indicator.classList.remove('visible')
+					indicator.style.color = ''
+					indicator.style.background = ''
+				}, 3000)
 			}
+		} finally {
+			isSaving = false
 		}
 	}
 
@@ -2435,6 +2505,7 @@ export function createProjectsModule({
 		removeFile: (index) => {
 			projectEditorState.files.splice(index, 1)
 			renderFilesList()
+			debouncedAutoSave()
 		},
 		editIO: (type, index) => {
 			const item = projectEditorState[type][index]
@@ -2444,6 +2515,7 @@ export function createProjectsModule({
 			if (confirm('Remove this item?')) {
 				projectEditorState[type].splice(index, 1)
 				renderIOList(type)
+				debouncedAutoSave()
 			}
 		},
 		editParameter: (index) => {
@@ -2454,6 +2526,7 @@ export function createProjectsModule({
 			if (confirm('Remove this parameter?')) {
 				projectEditorState.parameters.splice(index, 1)
 				renderParametersList()
+				debouncedAutoSave()
 			}
 		},
 	}
