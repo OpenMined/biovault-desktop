@@ -425,6 +425,51 @@
 	margin-top: 6px;
 }
 
+/* Context Menu */
+.context-menu {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	padding: 6px;
+	z-index: 10000;
+	min-width: 180px;
+}
+
+.context-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 8px 12px;
+	background: none;
+	border: none;
+	border-radius: 4px;
+	color: #374151;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s;
+	text-align: left;
+}
+
+.context-menu-item:hover {
+	background: #f9fafb;
+}
+
+.context-menu-item.danger {
+	color: #dc2626;
+}
+
+.context-menu-item.danger:hover {
+	background: #fef2f2;
+}
+
+.context-menu-item svg {
+	color: inherit;
+	flex-shrink: 0;
+}
+
 /* ============================================================================
    RESPONSIVE
    ============================================================================ */

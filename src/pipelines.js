@@ -104,7 +104,7 @@ export function createPipelinesModule({
 		}
 	}
 
-	// Show pipeline creation options (similar to step picker)
+	// Show pipeline creation options
 	async function showCreatePipelineWizard() {
 		const modalHtml = `
 			<div id="pipeline-picker-modal" class="modal-overlay" style="display: flex;">
@@ -114,27 +114,30 @@ export function createPipelinesModule({
 						<button class="modal-close" onclick="pipelineModule.closePipelinePickerModal()">×</button>
 					</div>
 					<div class="modal-body">
-						<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 0 0 12px 0;">Choose an Option</h3>
-						<div style="display: flex; flex-direction: column; gap: 8px;">
-							<button class="action-btn" onclick="pipelineModule.importPipelineFromURL()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-								</svg>
-								Import from GitHub URL
+						<div style="display: flex; flex-direction: column; gap: 10px;">
+							<button class="action-btn-large" onclick="pipelineModule.importPipelineFromURL()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+										<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Import from GitHub</div>
+									<div class="action-btn-desc">Paste a GitHub URL to import a complete pipeline with all its steps</div>
+								</div>
 							</button>
-							<button class="action-btn" onclick="pipelineModule.importExistingPipeline()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
-								</svg>
-								Browse Local Folder
-							</button>
-							<button class="action-btn" onclick="pipelineModule.createBlankPipeline()">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<line x1="12" y1="5" x2="12" y2="19"></line>
-									<line x1="5" y1="12" x2="19" y2="12"></line>
-								</svg>
-								Create Blank Pipeline
+							<button class="action-btn-large" onclick="pipelineModule.createBlankPipeline()">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<line x1="12" y1="5" x2="12" y2="19"></line>
+										<line x1="5" y1="12" x2="19" y2="12"></line>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Create Blank Pipeline</div>
+									<div class="action-btn-desc">Start from scratch and add steps manually</div>
+								</div>
 							</button>
 						</div>
 					</div>
@@ -1232,8 +1235,58 @@ export function createPipelinesModule({
 
 	// Show pipeline menu (for ... button)
 	function showPipelineMenu(pipelineId, event) {
-		// TODO: Implement context menu for edit, delete, open folder options
-		console.log('Menu for pipeline:', pipelineId)
+		event.stopPropagation()
+
+		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+		if (!pipeline) return
+
+		// Create context menu
+		const menu = document.createElement('div')
+		menu.className = 'context-menu'
+		menu.style.position = 'fixed'
+		menu.style.left = event.clientX + 'px'
+		menu.style.top = event.clientY + 'px'
+
+		menu.innerHTML = `
+			<button class="context-menu-item" data-action="open">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+				</svg>
+				Open Folder
+			</button>
+			<button class="context-menu-item danger" data-action="delete">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="3 6 5 6 21 6"></polyline>
+					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+				</svg>
+				Delete Pipeline
+			</button>
+		`
+
+		document.body.appendChild(menu)
+
+		// Close on click outside
+		const closeMenu = (e) => {
+			if (!menu.contains(e.target)) {
+				menu.remove()
+				document.removeEventListener('click', closeMenu)
+			}
+		}
+		setTimeout(() => document.addEventListener('click', closeMenu), 0)
+
+		// Handle menu actions
+		menu.querySelectorAll('.context-menu-item').forEach((item) => {
+			item.addEventListener('click', async (e) => {
+				const action = e.currentTarget.dataset.action
+				menu.remove()
+
+				if (action === 'open') {
+					await openPipelineFolder(pipeline.pipeline_path)
+				} else if (action === 'delete') {
+					await deletePipeline(pipelineId)
+				}
+			})
+		})
 	}
 
 	// Attach back button handler
