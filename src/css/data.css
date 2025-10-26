@@ -226,9 +226,7 @@
 .view-mode-btn.active {
 	background: white;
 	color: #10b981;
-	box-shadow:
-		0 1px 3px rgba(0, 0, 0, 0.1),
-		0 1px 2px rgba(0, 0, 0, 0.06);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .view-mode-btn svg {
@@ -862,32 +860,7 @@
    BUTTONS (Shared from other styles)
    ============================================================================ */
 
-.btn-primary {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 11px 20px;
-	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-	color: white;
-	border: none;
-	border-radius: 8px;
-	font-size: 14px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: all 0.2s ease;
-	white-space: nowrap;
-	box-shadow: 0 1px 3px rgba(99, 102, 241, 0.2);
-}
-
-.btn-primary:hover {
-	background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-
-.btn-primary:active {
-	transform: translateY(0);
-}
+/* Button styles moved to buttons.css for global consistency */
 
 .btn-success {
 	display: flex;

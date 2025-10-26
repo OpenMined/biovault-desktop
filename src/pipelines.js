@@ -156,11 +156,71 @@ export function createPipelinesModule({
 	async function createBlankPipeline() {
 		closePipelinePickerModal()
 
-		const name = prompt('Pipeline name:')
-		if (!name) return
+		// Show name input modal
+		const modalHtml = `
+			<div id="pipeline-name-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 450px;">
+					<div class="modal-header">
+						<h2>Create Pipeline</h2>
+						<button class="modal-close" onclick="pipelineModule.closePipelineNameModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+							Pipeline Name
+						</label>
+						<input 
+							type="text" 
+							id="pipeline-name-input" 
+							placeholder="my-analysis-pipeline"
+							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+						>
+						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							A blank pipeline will be created. You can add steps after creation.
+						</p>
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closePipelineNameModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.submitPipelineName()">Create Pipeline</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		// Focus on input
+		setTimeout(() => {
+			const input = document.getElementById('pipeline-name-input')
+			if (input) {
+				input.focus()
+				input.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						pipelineModule.submitPipelineName()
+					}
+				})
+			}
+		}, 100)
+	}
+
+	function closePipelineNameModal() {
+		const modal = document.getElementById('pipeline-name-modal')
+		if (modal) modal.remove()
+	}
+
+	async function submitPipelineName() {
+		const input = document.getElementById('pipeline-name-input')
+		if (!input) return
+
+		const name = input.value.trim()
+		if (!name) {
+			alert('Please enter a pipeline name')
+			return
+		}
 
 		try {
-			// Create pipeline spec matching CLI PipelineSpec structure
+			closePipelineNameModal()
+
+			// Create pipeline spec
 			const spec = {
 				name: name,
 				inputs: {},
@@ -210,7 +270,7 @@ export function createPipelinesModule({
 						<input 
 							type="text" 
 							id="pipeline-url-input" 
-							placeholder="https://github.com/OpenMined/biovault/blob/main/pipeline_sql.yaml"
+							placeholder="https://github.com/OpenMined/biovault/examples/pipeline.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
@@ -1358,6 +1418,8 @@ export function createPipelinesModule({
 			showCreatePipelineWizard,
 			closePipelinePickerModal,
 			createBlankPipeline,
+			closePipelineNameModal,
+			submitPipelineName,
 			importPipelineFromURL,
 			closeURLInputModal,
 			submitPipelineURL,
@@ -1511,7 +1573,7 @@ export function createPipelinesModule({
 						<input 
 							type="text" 
 							id="step-url-input" 
-							placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/count-lines/project.yaml"
+							placeholder="https://github.com/OpenMined/biovault/examples/step.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">

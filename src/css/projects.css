@@ -1132,43 +1132,7 @@
 	font-weight: 500;
 }
 
-.create-footer .primary-btn,
-.create-footer .secondary-btn {
-	padding: 10px 20px;
-	font-size: 14px;
-	font-weight: 600;
-	border-radius: 8px;
-	cursor: pointer;
-	transition: all 0.2s ease;
-}
-
-.create-footer .primary-btn {
-	background: #5866d1;
-	color: white;
-	border: none;
-}
-
-.create-footer .primary-btn:hover:not(:disabled) {
-	background: #4854b8;
-	transform: translateY(-1px);
-}
-
-.create-footer .secondary-btn {
-	background: #f1f2ff;
-	color: #5866d1;
-	border: 1px solid #d0d5e8;
-}
-
-.create-footer .secondary-btn:hover:not(:disabled) {
-	background: #e5e8ff;
-	border-color: #5866d1;
-}
-
-.create-footer .primary-btn:disabled,
-.create-footer .secondary-btn:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
+/* Footer buttons use global styles from buttons.css */
 
 /* ============================================
    SIMPLE SPEC FORM - MODAL + LIST DESIGN
