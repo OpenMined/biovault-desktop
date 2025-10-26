@@ -190,24 +190,72 @@ export function createPipelinesModule({
 	}
 
 	async function importPipelineFromURL() {
-		console.log('📥 importPipelineFromURL called')
 		closePipelinePickerModal()
 
-		// Add a small delay to ensure modal closes before prompt
-		await new Promise((resolve) => setTimeout(resolve, 100))
+		// Show URL input modal instead of using prompt()
+		const modalHtml = `
+			<div id="url-input-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 600px;">
+					<div class="modal-header">
+						<h2>Import Pipeline from GitHub</h2>
+						<button class="modal-close" onclick="pipelineModule.closeURLInputModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+							GitHub URL to pipeline.yaml
+						</label>
+						<input 
+							type="text" 
+							id="pipeline-url-input" 
+							placeholder="https://github.com/OpenMined/biovault/blob/main/pipeline_sql.yaml"
+							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
+						>
+						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							This will import the pipeline and automatically download all referenced steps.
+						</p>
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closeURLInputModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.submitPipelineURL()">Import Pipeline</button>
+					</div>
+				</div>
+			</div>
+		`
 
-		const url = prompt(
-			'Paste GitHub URL to pipeline.yaml:\n\nExample:\nhttps://github.com/OpenMined/biovault/blob/main/pipeline_sql.yaml',
-		)
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
 
+		// Focus on input
+		setTimeout(() => {
+			const input = document.getElementById('pipeline-url-input')
+			if (input) {
+				input.focus()
+				input.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						pipelineModule.submitPipelineURL()
+					}
+				})
+			}
+		}, 100)
+	}
+
+	function closeURLInputModal() {
+		const modal = document.getElementById('url-input-modal')
+		if (modal) modal.remove()
+	}
+
+	async function submitPipelineURL() {
+		const input = document.getElementById('pipeline-url-input')
+		if (!input) return
+
+		const url = input.value.trim()
 		if (!url) {
-			console.log('No URL provided')
+			alert('Please enter a URL')
 			return
 		}
 
-		console.log('Importing from URL:', url)
-
 		try {
+			closeURLInputModal()
+
 			// Call CLI function that imports pipeline AND all its step dependencies!
 			const result = await invoke('import_pipeline_with_deps', {
 				url: url,
@@ -1258,6 +1306,8 @@ export function createPipelinesModule({
 			closePipelinePickerModal,
 			createBlankPipeline,
 			importPipelineFromURL,
+			closeURLInputModal,
+			submitPipelineURL,
 			importExistingPipeline,
 			importStepFromURL,
 			loadPipelineSteps,
