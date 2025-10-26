@@ -188,6 +188,18 @@ pub fn save_settings(settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_in_vscode(path: String) -> Result<(), String> {
+    use std::process::Command;
+    
+    Command::new("code")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open VSCode: {}. Make sure the 'code' command is installed.", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

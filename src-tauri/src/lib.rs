@@ -468,6 +468,7 @@ pub fn run() {
             save_settings,
             get_app_version,
             open_folder,
+            open_in_vscode,
             show_in_folder,
             get_config_path,
             check_is_onboarded,

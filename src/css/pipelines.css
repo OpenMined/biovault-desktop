@@ -179,12 +179,13 @@
 	background: white;
 }
 
-.back-button {
+.back-button,
+.btn-secondary {
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	padding: 6px 12px;
-	background: none;
+	background: white;
 	border: 1px solid #e5e7eb;
 	border-radius: 6px;
 	color: #6b7280;
@@ -194,7 +195,8 @@
 	transition: all 0.15s;
 }
 
-.back-button:hover {
+.back-button:hover,
+.btn-secondary:hover {
 	background: #f9fafb;
 	border-color: #d1d5db;
 	color: #374151;
@@ -259,18 +261,95 @@
 	padding: 24px;
 }
 
+.inputs-header,
 .steps-header {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
 	margin-bottom: 16px;
+	margin-top: 24px;
 }
 
+.inputs-header:first-child,
+.steps-header:first-child {
+	margin-top: 0;
+}
+
+.inputs-header h2,
 .steps-header h2 {
 	margin: 0;
 	font-size: 16px;
 	font-weight: 600;
 	color: #374151;
+}
+
+.inputs-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 32px;
+}
+
+.input-item {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 14px 16px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	transition: all 0.15s;
+}
+
+.input-item:hover {
+	border-color: #d1d5db;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.input-info {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.input-name {
+	font-size: 14px;
+	font-weight: 600;
+	color: #111827;
+}
+
+.input-type-badge {
+	padding: 3px 8px;
+	background: #eff6ff;
+	color: #1e40af;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.input-default {
+	font-size: 12px;
+	color: #9ca3af;
+	font-family: 'SF Mono', Monaco, monospace;
+}
+
+.input-actions {
+	display: flex;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.empty-message {
+	padding: 32px 20px;
+	text-align: center;
+	color: #9ca3af;
+	font-size: 14px;
+	background: #fafafa;
+	border: 1px dashed #e5e7eb;
+	border-radius: 8px;
 }
 
 .btn-add-step {

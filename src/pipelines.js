@@ -1003,12 +1003,324 @@ export function createPipelinesModule({
 
 			// Load and display steps
 			await loadPipelineSteps(pipelineId)
+			renderPipelineInputs()
 		} catch (error) {
 			console.error('Error showing pipeline details:', error)
 		}
 	}
 
 	// Load pipeline steps for detail view
+	// Render pipeline inputs
+	function renderPipelineInputs() {
+		const inputsList = document.getElementById('pipeline-inputs-list')
+		if (!inputsList || !pipelineState.currentPipeline) return
+
+		const inputs = pipelineState.currentPipeline.spec?.inputs || {}
+		const inputEntries = Object.entries(inputs)
+
+		if (inputEntries.length === 0) {
+			inputsList.innerHTML =
+				'<p class="empty-message">No inputs defined yet. Add inputs to make your pipeline reusable.</p>'
+			return
+		}
+
+		inputsList.innerHTML = inputEntries
+			.map(([name, spec]) => {
+				const typeStr = typeof spec === 'string' ? spec : spec.type || 'String'
+				const hasDefault = typeof spec === 'object' && spec.default
+
+				return `
+				<div class="input-item">
+					<div class="input-info">
+						<div class="input-name">${name}</div>
+						<div class="input-type-badge">${typeStr}</div>
+						${hasDefault ? `<div class="input-default">Default: ${spec.default}</div>` : ''}
+					</div>
+					<div class="input-actions">
+						<button class="btn-secondary-small" onclick="pipelineModule.editPipelineInput('${name}')">Edit</button>
+						<button class="btn-secondary-small" onclick="pipelineModule.removePipelineInput('${name}')" style="color: #dc2626;">Remove</button>
+					</div>
+				</div>
+			`
+			})
+			.join('')
+	}
+
+	// Show add/edit input modal
+	function showPipelineInputModal(existingName = null) {
+		const isEdit = existingName !== null
+		const existingInput = isEdit ? pipelineState.currentPipeline.spec?.inputs?.[existingName] : null
+		const inputType =
+			typeof existingInput === 'string' ? existingInput : existingInput?.type || 'File'
+		const inputDefault =
+			typeof existingInput === 'object' && existingInput?.default ? existingInput.default : ''
+
+		const modalHtml = `
+			<div id="pipeline-input-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 500px;">
+					<div class="modal-header">
+						<h2>${isEdit ? 'Edit' : 'Add'} Pipeline Input</h2>
+						<button class="modal-close" onclick="pipelineModule.closePipelineInputModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<div style="display: flex; flex-direction: column; gap: 16px;">
+							<div>
+								<label style="display: block; margin-bottom: 6px; font-weight: 600; color: #374151;">
+									Input Name
+								</label>
+								<input 
+									type="text" 
+									id="input-name-field" 
+									value="${existingName || ''}"
+									placeholder="samplesheet"
+									${isEdit ? 'readonly' : ''}
+									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; ${
+										isEdit ? 'background: #f9fafb; color: #9ca3af;' : ''
+									}"
+								>
+							</div>
+							<div>
+								<label style="display: block; margin-bottom: 6px; font-weight: 600; color: #374151;">
+									Type
+								</label>
+								<select 
+									id="input-type-field"
+									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px;"
+								>
+									<option value="File" ${inputType === 'File' ? 'selected' : ''}>File</option>
+									<option value="Directory" ${inputType === 'Directory' ? 'selected' : ''}>Directory</option>
+									<option value="String" ${inputType === 'String' ? 'selected' : ''}>String</option>
+									<option value="Bool" ${inputType === 'Bool' ? 'selected' : ''}>Bool</option>
+								</select>
+							</div>
+							<div>
+								<label style="display: block; margin-bottom: 6px; font-weight: 600; color: #374151;">
+									Default Value (optional)
+								</label>
+								<input 
+									type="text" 
+									id="input-default-field" 
+									value="${inputDefault || ''}"
+									placeholder="e.g., File(default.csv) or /path/to/file"
+									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace;"
+								>
+								<p style="font-size: 12px; color: #9ca3af; margin-top: 4px;">Leave empty for required inputs</p>
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closePipelineInputModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.savePipelineInput(${isEdit}, '${
+			existingName || ''
+		}')">${isEdit ? 'Update' : 'Add'} Input</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		setTimeout(() => {
+			const nameInput = document.getElementById('input-name-field')
+			if (nameInput && !isEdit) nameInput.focus()
+		}, 100)
+	}
+
+	function closePipelineInputModal() {
+		const modal = document.getElementById('pipeline-input-modal')
+		if (modal) modal.remove()
+	}
+
+	async function savePipelineInput(isEdit, oldName) {
+		const nameInput = document.getElementById('input-name-field')
+		const typeSelect = document.getElementById('input-type-field')
+		const defaultInput = document.getElementById('input-default-field')
+
+		const name = nameInput.value.trim()
+		const type = typeSelect.value
+		const defaultValue = defaultInput.value.trim()
+
+		if (!name) {
+			alert('Please enter an input name')
+			return
+		}
+
+		try {
+			// Load current pipeline
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			// Initialize inputs if needed
+			if (!editorData.spec.inputs) {
+				editorData.spec.inputs = {}
+			}
+
+			// Remove old name if editing
+			if (isEdit && oldName && oldName !== name) {
+				delete editorData.spec.inputs[oldName]
+			}
+
+			// Add/update input
+			if (defaultValue) {
+				editorData.spec.inputs[name] = {
+					type: type,
+					default: defaultValue,
+				}
+			} else {
+				editorData.spec.inputs[name] = type
+			}
+
+			// Save
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			// Refresh
+			await loadPipelines()
+			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			if (updated) {
+				pipelineState.currentPipeline = updated
+			}
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			renderPipelineInputs()
+
+			closePipelineInputModal()
+			console.log('✅ Saved pipeline input:', name)
+		} catch (error) {
+			console.error('Error saving input:', error)
+			alert('Failed to save input: ' + error)
+		}
+	}
+
+	function editPipelineInput(inputName) {
+		showPipelineInputModal(inputName)
+	}
+
+	// Show pipeline YAML viewer/editor
+	async function showPipelineYAMLModal() {
+		if (!pipelineState.currentPipeline) return
+
+		try {
+			// Get the current YAML
+			const spec = pipelineState.currentPipeline.spec
+			const yamlContent = `name: ${spec.name}
+inputs:${
+				Object.keys(spec.inputs || {}).length > 0
+					? '\n' +
+					  Object.entries(spec.inputs)
+							.map(([k, v]) => {
+								if (typeof v === 'string') {
+									return `  ${k}: ${v}`
+								} else {
+									return `  ${k}:\n    type: ${v.type}\n    default: ${v.default}`
+								}
+							})
+							.join('\n')
+					: ' {}'
+			}
+steps:${
+				(spec.steps || []).length > 0
+					? '\n' +
+					  spec.steps
+							.map((s) => {
+								let stepYaml = `- id: ${s.id}\n  uses: ${s.uses || ''}`
+								if (s.with && Object.keys(s.with).length > 0) {
+									stepYaml +=
+										'\n  with:\n' +
+										Object.entries(s.with)
+											.map(([k, v]) => `    ${k}: ${v}`)
+											.join('\n')
+								}
+								return stepYaml
+							})
+							.join('\n')
+					: ' []'
+			}`
+
+			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/pipeline.yaml'
+
+			const modalHtml = `
+				<div id="yaml-viewer-modal" class="modal-overlay" style="display: flex;">
+					<div class="modal-content" style="width: 800px; max-height: 85vh;">
+						<div class="modal-header">
+							<h2>Pipeline YAML</h2>
+							<button class="modal-close" onclick="pipelineModule.closeYAMLViewerModal()">×</button>
+						</div>
+						<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
+							<div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+								<button class="secondary-btn" onclick="pipelineModule.openYAMLInVSCode('${yamlPath}')">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+										<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+									</svg>
+									Edit in VSCode
+								</button>
+							</div>
+							<pre style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace; line-height: 1.6; overflow-x: auto; margin: 0;">${yamlContent}</pre>
+						</div>
+						<div class="modal-footer">
+							<button class="secondary-btn" onclick="pipelineModule.closeYAMLViewerModal()">Close</button>
+						</div>
+					</div>
+				</div>
+			`
+
+			document.body.insertAdjacentHTML('beforeend', modalHtml)
+		} catch (error) {
+			console.error('Error showing YAML:', error)
+			alert('Failed to show YAML: ' + error)
+		}
+	}
+
+	function closeYAMLViewerModal() {
+		const modal = document.getElementById('yaml-viewer-modal')
+		if (modal) modal.remove()
+	}
+
+	async function openYAMLInVSCode(yamlPath) {
+		try {
+			await invoke('open_in_vscode', { path: yamlPath })
+			closeYAMLViewerModal()
+		} catch (error) {
+			console.error('Error opening in VSCode:', error)
+			alert(error.toString())
+		}
+	}
+
+	async function removePipelineInput(inputName) {
+		if (!confirm(`Remove input "${inputName}"?`)) return
+
+		try {
+			const editorData = await invoke('load_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			delete editorData.spec.inputs[inputName]
+
+			await invoke('save_pipeline_editor', {
+				pipelineId: pipelineState.currentPipeline.id,
+				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+				spec: editorData.spec,
+			})
+
+			await loadPipelines()
+			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			if (updated) {
+				pipelineState.currentPipeline = updated
+			}
+			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			renderPipelineInputs()
+
+			console.log('✅ Removed input:', inputName)
+		} catch (error) {
+			console.error('Error removing input:', error)
+			alert('Failed to remove input: ' + error)
+		}
+	}
+
 	async function loadPipelineSteps(pipelineId) {
 		try {
 			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
@@ -1368,6 +1680,15 @@ export function createPipelinesModule({
 			})
 		}
 
+		const viewYamlBtn = document.getElementById('pipeline-view-yaml-btn')
+		if (viewYamlBtn) {
+			viewYamlBtn.addEventListener('click', () => {
+				if (pipelineState.currentPipeline) {
+					showPipelineYAMLModal()
+				}
+			})
+		}
+
 		const editBtn = document.getElementById('pipeline-detail-edit')
 		if (editBtn) {
 			editBtn.addEventListener('click', () => {
@@ -1386,6 +1707,18 @@ export function createPipelinesModule({
 					console.error('Cannot add step: no current pipeline')
 				}
 			})
+		}
+
+		const addInputBtn = document.getElementById('add-pipeline-input-btn')
+		console.log('🔍 Looking for add-pipeline-input-btn:', addInputBtn)
+		if (addInputBtn) {
+			console.log('✅ Attaching click handler to add input button')
+			addInputBtn.addEventListener('click', () => {
+				console.log('🎯 Add input button clicked!')
+				showPipelineInputModal()
+			})
+		} else {
+			console.warn('⚠️ add-pipeline-input-btn not found in DOM')
 		}
 	}
 
@@ -1437,6 +1770,14 @@ export function createPipelinesModule({
 			saveStepWithBindings,
 			configureStepBindings,
 			updateStepBindings,
+			showPipelineInputModal,
+			closePipelineInputModal,
+			savePipelineInput,
+			editPipelineInput,
+			removePipelineInput,
+			showPipelineYAMLModal,
+			closeYAMLViewerModal,
+			openYAMLInVSCode,
 		}
 
 		// Load pipelines after setting up global handlers
