@@ -287,10 +287,12 @@ export function createPipelinesModule({
 						<input 
 							type="text" 
 							id="pipeline-url-input" 
-							placeholder="https://github.com/OpenMined/biovault/examples/pipeline.yaml"
+							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/pipeline.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
+							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import pipelines.
+							<br>
 							This will import the pipeline and automatically download all referenced steps.
 						</p>
 					</div>
@@ -327,10 +329,17 @@ export function createPipelinesModule({
 		const input = document.getElementById('pipeline-url-input')
 		if (!input) return
 
-		const url = input.value.trim()
+		let url = input.value.trim()
 		if (!url) {
 			alert('Please enter a URL')
 			return
+		}
+
+		// Convert GitHub blob URLs to raw URLs
+		if (url.includes('github.com') && url.includes('/blob/')) {
+			const rawUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+			console.log('🔄 Converted GitHub blob URL to raw URL:', rawUrl)
+			url = rawUrl
 		}
 
 		try {
@@ -350,7 +359,19 @@ export function createPipelinesModule({
 		} catch (error) {
 			console.error('Error importing pipeline from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
-			alert('Failed to import pipeline: ' + errorMsg)
+
+			let userMessage = 'Failed to import pipeline:\n\n' + errorMsg
+
+			if (errorMsg.includes('not found') || errorMsg.includes('404')) {
+				userMessage += '\n\n💡 Tip: Make sure the URL points to a valid pipeline.yaml file.'
+			}
+
+			if (url.includes('github.com')) {
+				userMessage +=
+					'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
+			}
+
+			alert(userMessage)
 		}
 	}
 
@@ -1401,19 +1422,31 @@ steps:${
 
 				// Build status badges
 				const statusBadges = []
-				
+
 				if (bindingCount > 0) {
-					statusBadges.push(`<span class="success-badge">✓ ${bindingCount} input${bindingCount === 1 ? '' : 's'} bound</span>`)
+					statusBadges.push(
+						`<span class="success-badge">✓ ${bindingCount} input${
+							bindingCount === 1 ? '' : 's'
+						} bound</span>`,
+					)
 				} else {
 					statusBadges.push(`<span class="warning-badge">⚠️ No inputs bound</span>`)
 				}
 
 				if (paramCount > 0) {
-					statusBadges.push(`<span class="info-badge">⚙️ ${paramCount} param${paramCount === 1 ? '' : 's'} customized</span>`)
+					statusBadges.push(
+						`<span class="info-badge">⚙️ ${paramCount} param${
+							paramCount === 1 ? '' : 's'
+						} customized</span>`,
+					)
 				}
 
 				if (publishCount > 0) {
-					statusBadges.push(`<span class="info-badge">📤 ${publishCount} output${publishCount === 1 ? '' : 's'} published</span>`)
+					statusBadges.push(
+						`<span class="info-badge">📤 ${publishCount} output${
+							publishCount === 1 ? '' : 's'
+						} published</span>`,
+					)
 				}
 
 				if (hasSQL) {
@@ -1441,6 +1474,177 @@ steps:${
 		}
 	}
 
+	// Validate pipeline configuration
+	async function validatePipelineConfig(spec) {
+		const validation = {
+			isValid: true,
+			issues: [],
+			warnings: [],
+			steps: [],
+		}
+
+		const steps = spec.steps || []
+
+		for (let i = 0; i < steps.length; i++) {
+			const step = steps[i]
+			const stepValidation = {
+				stepId: step.id || `step-${i + 1}`,
+				status: 'ok',
+				issues: [],
+			}
+
+			// Check if step has bindings
+			const bindingCount = Object.keys(step.with || {}).length
+			if (bindingCount === 0) {
+				stepValidation.status = 'warning'
+				stepValidation.issues.push('No input bindings configured')
+				validation.warnings.push(`Step "${stepValidation.stepId}": No input bindings`)
+			}
+
+			// Try to load project spec to validate bindings
+			try {
+				const projectSpec = await invoke('load_project_editor', {
+					projectPath: step.uses,
+				})
+
+				const requiredInputs =
+					projectSpec.metadata?.inputs?.filter((i) => !i.type?.endsWith('?')) || []
+				const boundInputs = Object.keys(step.with || {})
+
+				// Check for missing required inputs
+				requiredInputs.forEach((input) => {
+					if (!boundInputs.includes(input.name)) {
+						stepValidation.status = 'error'
+						stepValidation.issues.push(`Missing required input: ${input.name}`)
+						validation.issues.push(
+							`Step "${stepValidation.stepId}": Missing required input "${input.name}"`,
+						)
+						validation.isValid = false
+					}
+				})
+
+				// Check for extra bindings
+				boundInputs.forEach((bindingName) => {
+					const inputExists = projectSpec.metadata?.inputs?.find((i) => i.name === bindingName)
+					if (!inputExists) {
+						stepValidation.status = stepValidation.status === 'error' ? 'error' : 'warning'
+						stepValidation.issues.push(`Unknown input: ${bindingName}`)
+						validation.warnings.push(
+							`Step "${stepValidation.stepId}": Unknown input "${bindingName}"`,
+						)
+					}
+				})
+			} catch (error) {
+				stepValidation.status = 'error'
+				stepValidation.issues.push(`Cannot load project: ${step.uses}`)
+				validation.issues.push(`Step "${stepValidation.stepId}": Cannot load project`)
+				validation.isValid = false
+			}
+
+			validation.steps.push(stepValidation)
+		}
+
+		return validation
+	}
+
+	// Show validation modal
+	async function showValidationModal(pipelineName, validation) {
+		const statusIcon = validation.isValid
+			? '<div style="width: 48px; height: 48px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px;">✓</div>'
+			: '<div style="width: 48px; height: 48px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px;">!</div>'
+
+		const statusText = validation.isValid
+			? '<h3 style="color: #065f46; margin: 0;">Ready to Run</h3><p style="color: #6b7280; margin: 4px 0 0 0; font-size: 14px;">All steps are properly configured</p>'
+			: '<h3 style="color: #dc2626; margin: 0;">Configuration Issues</h3><p style="color: #6b7280; margin: 4px 0 0 0; font-size: 14px;">Please fix these issues before running</p>'
+
+		const stepsHtml = validation.steps
+			.map((step) => {
+				const statusBadge =
+					step.status === 'ok'
+						? '<span class="success-badge">✓ Configured</span>'
+						: step.status === 'warning'
+						? '<span class="warning-badge">⚠️ Warnings</span>'
+						: '<span class="error-badge">❌ Issues</span>'
+
+				const issuesHtml =
+					step.issues.length > 0
+						? `<ul style="margin: 8px 0 0 20px; font-size: 13px; color: #6b7280;">${step.issues
+								.map((issue) => `<li>${escapeHtml(issue)}</li>`)
+								.join('')}</ul>`
+						: ''
+
+				return `
+				<div style="padding: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px;">
+					<div style="display: flex; justify-content: space-between; align-items: center;">
+						<strong style="font-size: 14px; color: #111827;">${escapeHtml(step.stepId)}</strong>
+						${statusBadge}
+					</div>
+					${issuesHtml}
+				</div>
+			`
+			})
+			.join('')
+
+		const modalHtml = `
+			<div id="validation-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 600px; max-height: 80vh;">
+					<div class="modal-header">
+						<h2>Pipeline Validation</h2>
+						<button class="modal-close" onclick="pipelineModule.closeValidationModal()">×</button>
+					</div>
+					<div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+						<div style="display: flex; align-items: center; gap: 16px; padding: 20px; background: #f9fafb; border-radius: 8px; margin-bottom: 20px;">
+							${statusIcon}
+							<div>${statusText}</div>
+						</div>
+
+						<h4 style="margin: 0 0 12px 0; font-size: 15px; color: #374151;">Step Configuration Status</h4>
+						${stepsHtml}
+
+						${
+							validation.warnings.length > 0
+								? `
+							<div style="margin-top: 16px; padding: 12px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px;">
+								<strong style="color: #92400e; font-size: 13px;">⚠️ Warnings:</strong>
+								<ul style="margin: 8px 0 0 20px; font-size: 13px; color: #92400e;">
+									${validation.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('')}
+								</ul>
+							</div>
+						`
+								: ''
+						}
+					</div>
+					<div class="modal-footer">
+						<button class="secondary-btn" onclick="pipelineModule.closeValidationModal()">Cancel</button>
+						<button class="primary-btn" onclick="pipelineModule.confirmValidationAndRun()" ${
+							!validation.isValid ? 'disabled' : ''
+						}>
+							${validation.isValid ? 'Continue to Run' : 'Fix Issues First'}
+						</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		return new Promise((resolve) => {
+			window.pipelineModule.confirmValidationAndRun = () => {
+				closeValidationModal()
+				resolve(true)
+			}
+			window.pipelineModule.closeValidationModal = () => {
+				closeValidationModal()
+				resolve(false)
+			}
+		})
+	}
+
+	function closeValidationModal() {
+		const modal = document.getElementById('validation-modal')
+		if (modal) modal.remove()
+	}
+
 	// Go back to pipelines list
 	function backToPipelinesList() {
 		document.getElementById('pipeline-detail-view').style.display = 'none'
@@ -1448,7 +1652,7 @@ steps:${
 		pipelineState.currentPipeline = null
 	}
 
-	// Run pipeline with better dialog
+	// Run pipeline with validation and better dialog
 	async function runPipeline(pipelineId) {
 		try {
 			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
@@ -1458,6 +1662,13 @@ steps:${
 			const editorData = await invoke('load_pipeline_editor', {
 				pipelineId: pipelineId,
 			})
+
+			// Validate pipeline configuration
+			const validation = await validatePipelineConfig(editorData.spec)
+
+			// Show validation results
+			const proceed = await showValidationModal(pipeline.name, validation)
+			if (!proceed) return // User cancelled due to issues
 
 			// Collect all required inputs from the pipeline
 			const requiredInputs = {}
@@ -1514,6 +1725,28 @@ steps:${
 
 	// Show pipeline input dialog with file/folder pickers
 	async function showPipelineInputDialog(pipelineName, requiredInputs) {
+		// Load saved configurations
+		const savedConfigs = loadSavedRunConfigs(pipelineName)
+		const configSelectHtml =
+			savedConfigs.length > 0
+				? `<div style="margin-bottom: 16px;">
+					<label style="display: block; margin-bottom: 6px; font-weight: 600; color: #374151;">
+						Load Saved Configuration
+					</label>
+					<select id="load-saved-config" class="text-input" style="width: 100%;">
+						<option value="">-- Start Fresh --</option>
+						${savedConfigs
+							.map(
+								(config, idx) =>
+									`<option value="${idx}">${config.name} (${new Date(
+										config.timestamp,
+									).toLocaleString()})</option>`,
+							)
+							.join('')}
+					</select>
+				</div>`
+				: ''
+
 		// Create modal HTML
 		const modalHtml = `
 			<div id="pipeline-run-modal" class="modal-overlay" style="display: flex;">
@@ -1523,8 +1756,15 @@ steps:${
 						<button class="modal-close" onclick="pipelineModule.closePipelineRunDialog()">×</button>
 					</div>
 					<div class="modal-body">
+						${configSelectHtml}
 						<h3>Configure Inputs</h3>
 						<div id="pipeline-input-fields"></div>
+						<div style="margin-top: 16px;">
+							<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+								<input type="checkbox" id="save-config-checkbox" style="width: auto;">
+								<span style="font-size: 14px; color: #6b7280;">Save this configuration for future runs</span>
+							</label>
+						</div>
 					</div>
 					<div class="modal-footer">
 						<button class="secondary-btn" onclick="pipelineModule.closePipelineRunDialog()">
@@ -1580,6 +1820,24 @@ steps:${
 			container.innerHTML = '<p style="color: #666;">No inputs required for this pipeline.</p>'
 		}
 
+		// Handle load saved config change
+		const loadConfigSelect = document.getElementById('load-saved-config')
+		if (loadConfigSelect) {
+			loadConfigSelect.addEventListener('change', (e) => {
+				const configIndex = e.target.value
+				if (configIndex !== '') {
+					const config = savedConfigs[parseInt(configIndex)]
+					// Populate inputs from saved config
+					for (const [name, value] of Object.entries(config.inputs)) {
+						const inputEl = document.getElementById(`input-${name}`)
+						if (inputEl) {
+							inputEl.value = value
+						}
+					}
+				}
+			})
+		}
+
 		// Return a promise that resolves with the inputs
 		return new Promise((resolve) => {
 			window.pipelineModule.confirmPipelineRun = () => {
@@ -1590,6 +1848,13 @@ steps:${
 						inputs[name] = value
 					}
 				}
+
+				// Save configuration if checkbox is checked
+				const saveCheckbox = document.getElementById('save-config-checkbox')
+				if (saveCheckbox?.checked) {
+					saveRunConfig(pipelineName, inputs)
+				}
+
 				closePipelineRunDialog()
 				resolve(inputs)
 			}
@@ -1599,6 +1864,39 @@ steps:${
 				resolve(null)
 			}
 		})
+	}
+
+	// Save run configuration to localStorage
+	function saveRunConfig(pipelineName, inputs) {
+		try {
+			const key = `pipeline_run_configs_${pipelineName}`
+			const existing = JSON.parse(localStorage.getItem(key) || '[]')
+
+			const newConfig = {
+				name: pipelineName,
+				timestamp: Date.now(),
+				inputs: inputs,
+			}
+
+			existing.push(newConfig)
+
+			// Keep only last 10 configs
+			const trimmed = existing.slice(-10)
+			localStorage.setItem(key, JSON.stringify(trimmed))
+		} catch (error) {
+			console.error('Failed to save run configuration:', error)
+		}
+	}
+
+	// Load saved run configurations from localStorage
+	function loadSavedRunConfigs(pipelineName) {
+		try {
+			const key = `pipeline_run_configs_${pipelineName}`
+			return JSON.parse(localStorage.getItem(key) || '[]')
+		} catch (error) {
+			console.error('Failed to load run configurations:', error)
+			return []
+		}
 	}
 
 	function closePipelineRunDialog() {
@@ -2033,11 +2331,13 @@ steps:${
 						<input 
 							type="text" 
 							id="step-url-input" 
-							placeholder="https://github.com/OpenMined/biovault/examples/step.yaml"
+							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/cli/examples/pipeline/count-lines/project.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
-							This will download the project (code, assets, etc.) and add it as a step to your pipeline.
+							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import projects.
+							<br>
+							This will download the project.yaml and assets, then add it as a step.
 						</p>
 					</div>
 					<div class="modal-footer">
@@ -2073,10 +2373,17 @@ steps:${
 		const input = document.getElementById('step-url-input')
 		if (!input) return
 
-		const url = input.value.trim()
+		let url = input.value.trim()
 		if (!url) {
 			alert('Please enter a URL')
 			return
+		}
+
+		// Convert GitHub blob URLs to raw URLs
+		if (url.includes('github.com') && url.includes('/blob/')) {
+			const rawUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+			console.log('🔄 Converted GitHub blob URL to raw URL:', rawUrl)
+			url = rawUrl
 		}
 
 		try {
@@ -2088,14 +2395,33 @@ steps:${
 				overwrite: false,
 			})
 
+			// Validate the result
+			if (!result.project_path) {
+				throw new Error('Import succeeded but no project path returned')
+			}
+
 			// Add the imported project as a step
 			await addStepFromPath(result.project_path, result.name)
 
 			console.log('✅ Imported and added step from URL:', url)
+			alert(`Successfully imported project: ${result.name}`)
 		} catch (error) {
 			console.error('Error importing from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
-			alert('Failed to import from URL: ' + errorMsg)
+
+			let userMessage = 'Failed to import project:\n\n' + errorMsg
+
+			if (errorMsg.includes('not found') || errorMsg.includes('404')) {
+				userMessage +=
+					'\n\n💡 Tip: Make sure the URL points to a valid project.yaml file or project directory.'
+			}
+
+			if (url.includes('github.com')) {
+				userMessage +=
+					'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
+			}
+
+			alert(userMessage)
 		}
 	}
 
@@ -2219,6 +2545,19 @@ steps:${
 		if (!pipelineState.currentPipeline) return
 
 		try {
+			console.log('➕ Adding step to pipeline:')
+			console.log('   Project Name:', projectName)
+			console.log('   Project Path:', projectPath)
+
+			// Ensure the project is registered in the database
+			try {
+				await invoke('import_project_from_folder', { folderPath: projectPath })
+				console.log('✅ Project registered in database:', projectName)
+			} catch (e) {
+				// Might already be registered, that's ok
+				console.log('ℹ️ Project may already be registered:', e.toString())
+			}
+
 			// Load current pipeline
 			const editorData = await invoke('load_pipeline_editor', {
 				pipelineId: pipelineState.currentPipeline.id,
@@ -2231,6 +2570,8 @@ steps:${
 				uses: projectName, // Use name for database lookup (portable!)
 				with: {}, // Empty - configure later via button
 			}
+
+			console.log('📝 Adding step to pipeline spec:', newStep)
 
 			// Add step
 			if (!editorData.spec.steps) {
@@ -2253,7 +2594,7 @@ steps:${
 			}
 			await loadPipelineSteps(pipelineState.currentPipeline.id)
 
-			console.log('✅ Added step (configure bindings later):', stepId)
+			console.log('✅ Successfully added step:', stepId)
 		} catch (error) {
 			console.error('Error adding step:', error)
 			alert('Failed to add step: ' + error)
@@ -2409,10 +2750,17 @@ steps:${
 		if (!step) return
 
 		try {
+			console.log('📋 Configuring step:', step.id, '- uses:', step.uses)
+
 			// Load project spec to get inputs
 			const projectSpec = await invoke('load_project_editor', {
 				projectPath: step.uses,
 			})
+
+			console.log('✅ Loaded project spec from path:', projectSpec.project_path)
+			console.log('   Inputs:', projectSpec.metadata?.inputs?.length || 0)
+			console.log('   Parameters:', projectSpec.metadata?.parameters?.length || 0)
+			console.log('   Outputs:', projectSpec.metadata?.outputs?.length || 0)
 
 			// Show new visual config modal
 			await showVisualConfigModal(step, stepIndex, projectSpec)
@@ -2455,7 +2803,8 @@ steps:${
 		const parameters = configureStepState.projectSpec.metadata?.parameters || []
 
 		if (parameters.length === 0) {
-			container.innerHTML = '<div class="empty-state">This step has no configurable parameters.</div>'
+			container.innerHTML =
+				'<div class="empty-state">This step has no configurable parameters.</div>'
 			return
 		}
 
@@ -2464,7 +2813,7 @@ steps:${
 				const override = configureStepState.parameters[param.name]
 				const currentValue = override !== undefined ? override : param.default || ''
 				const isOverridden = override !== undefined
-				
+
 				return `
 					<div class="parameter-item ${isOverridden ? 'overridden' : ''}">
 						<div class="parameter-info">
@@ -2473,7 +2822,11 @@ steps:${
 								<span class="parameter-type-badge">${escapeHtml(param.type || 'String')}</span>
 								${isOverridden ? '<span class="override-badge">Customized</span>' : ''}
 							</div>
-							${param.description ? `<div class="parameter-description">${escapeHtml(param.description)}</div>` : ''}
+							${
+								param.description
+									? `<div class="parameter-description">${escapeHtml(param.description)}</div>`
+									: ''
+							}
 							<div class="parameter-value-display">
 								${param.default && !isOverridden ? `<span class="value-label">Default:</span> ` : ''}
 								<code>${escapeHtml(String(currentValue))}</code>
@@ -2483,7 +2836,13 @@ steps:${
 							<button class="btn-edit-param" onclick="pipelineModule.editParameter('${escapeHtml(param.name)}')">
 								${isOverridden ? 'Change' : 'Override'}
 							</button>
-							${isOverridden ? `<button class="btn-reset-param" onclick="pipelineModule.resetParameter('${escapeHtml(param.name)}')">Reset</button>` : ''}
+							${
+								isOverridden
+									? `<button class="btn-reset-param" onclick="pipelineModule.resetParameter('${escapeHtml(
+											param.name,
+									  )}')">Reset</button>`
+									: ''
+							}
 						</div>
 					</div>
 				`
@@ -2598,15 +2957,23 @@ steps:${
 	}
 
 	function editParameter(paramName) {
-		const param = configureStepState.projectSpec.metadata?.parameters?.find(p => p.name === paramName)
+		const param = configureStepState.projectSpec.metadata?.parameters?.find(
+			(p) => p.name === paramName,
+		)
 		if (!param) return
 
-		const currentValue = configureStepState.parameters[paramName] !== undefined 
-			? configureStepState.parameters[paramName] 
-			: param.default || ''
+		const currentValue =
+			configureStepState.parameters[paramName] !== undefined
+				? configureStepState.parameters[paramName]
+				: param.default || ''
 
-		const newValue = prompt(`Set value for ${paramName}:\n\nType: ${param.type}\nDefault: ${param.default || 'none'}\n${param.description ? '\n' + param.description : ''}`, currentValue)
-		
+		const newValue = prompt(
+			`Set value for ${paramName}:\n\nType: ${param.type}\nDefault: ${param.default || 'none'}\n${
+				param.description ? '\n' + param.description : ''
+			}`,
+			currentValue,
+		)
+
 		if (newValue !== null) {
 			configureStepState.parameters[paramName] = newValue
 			renderParametersList()
@@ -2633,11 +3000,19 @@ steps:${
 	}
 
 	async function launchJupyterForStep() {
-		if (!configureStepState.step) return
+		if (!configureStepState.projectSpec) return
 
 		try {
+			// Use the resolved project path from projectSpec, not step.uses
+			const projectPath = configureStepState.projectSpec.project_path
+			if (!projectPath) {
+				throw new Error('Project path not available')
+			}
+
+			console.log('🚀 Launching Jupyter for project at:', projectPath)
+
 			await invoke('launch_jupyter', {
-				projectPath: configureStepState.step.uses,
+				projectPath: projectPath,
 			})
 		} catch (error) {
 			console.error('Error launching Jupyter:', error)
@@ -2646,11 +3021,19 @@ steps:${
 	}
 
 	async function openVSCodeForStep() {
-		if (!configureStepState.step) return
+		if (!configureStepState.projectSpec) return
 
 		try {
+			// Use the resolved project path from projectSpec, not step.uses
+			const projectPath = configureStepState.projectSpec.project_path
+			if (!projectPath) {
+				throw new Error('Project path not available')
+			}
+
+			console.log('📂 Opening VSCode for project at:', projectPath)
+
 			await invoke('open_in_vscode', {
-				path: configureStepState.step.uses,
+				path: projectPath,
 			})
 		} catch (error) {
 			console.error('Error opening VSCode:', error)
@@ -2671,7 +3054,8 @@ steps:${
 
 				// Add parameters if they exist
 				if (Object.keys(configureStepState.parameters).length > 0) {
-					editorData.spec.steps[configureStepState.stepIndex].parameters = configureStepState.parameters
+					editorData.spec.steps[configureStepState.stepIndex].parameters =
+						configureStepState.parameters
 				} else {
 					delete editorData.spec.steps[configureStepState.stepIndex].parameters
 				}
@@ -2715,8 +3099,12 @@ steps:${
 		configureStepState.editingBindingInput = inputName
 		const currentBinding = configureStepState.bindings[inputName] || ''
 
-		// Set input name
-		document.getElementById('binding-input-name').value = inputName
+		// Get input type for compatibility checking
+		const input = configureStepState.projectSpec.metadata?.inputs?.find((i) => i.name === inputName)
+		const expectedType = input?.type || 'File'
+
+		// Set input name and show expected type
+		document.getElementById('binding-input-name').value = `${inputName} (expects: ${expectedType})`
 
 		// Parse current binding if it exists
 		if (currentBinding) {
@@ -2772,13 +3160,36 @@ steps:${
 		document.getElementById('binding-preview').style.display = 'none'
 
 		if (sourceType === 'pipeline-input') {
-			// Populate pipeline inputs
+			// Populate pipeline inputs with type checking
 			const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
 			const select = document.getElementById('binding-pipeline-input-select')
+
+			// Get expected input type
+			const inputName = configureStepState.editingBindingInput
+			const input = configureStepState.projectSpec.metadata?.inputs?.find(
+				(i) => i.name === inputName,
+			)
+			const expectedType = input?.type?.replace('?', '') || 'File'
+
 			select.innerHTML =
 				'<option value="">-- Select Input --</option>' +
-				Object.keys(pipelineInputs)
-					.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`)
+				Object.entries(pipelineInputs)
+					.map(([key, spec]) => {
+						const pipelineInputType = typeof spec === 'string' ? spec : spec.type || 'File'
+						const cleanType = pipelineInputType.replace('?', '')
+						const isCompatible =
+							cleanType === expectedType ||
+							expectedType.startsWith('String') ||
+							cleanType.startsWith('String')
+						const indicator = isCompatible ? '✅' : '❌'
+						const className = isCompatible ? 'compatible' : 'incompatible'
+
+						return `<option value="${escapeHtml(
+							key,
+						)}" class="${className}">${indicator} ${escapeHtml(key)} (${escapeHtml(
+							cleanType,
+						)})</option>`
+					})
 					.join('')
 			document.getElementById('binding-pipeline-input-selector').style.display = 'block'
 			select.onchange = () => updateBindingPreview()
@@ -2819,6 +3230,13 @@ steps:${
 		if (!step) return
 
 		try {
+			// Get expected input type for compatibility checking
+			const inputName = configureStepState.editingBindingInput
+			const input = configureStepState.projectSpec.metadata?.inputs?.find(
+				(i) => i.name === inputName,
+			)
+			const expectedType = input?.type?.replace('?', '') || 'File' // Remove optional marker
+
 			const projectSpec = await invoke('load_project_editor', {
 				projectPath: step.uses,
 			})
@@ -2827,10 +3245,21 @@ steps:${
 			outputSelect.innerHTML =
 				'<option value="">-- Select Output --</option>' +
 				outputs
-					.map(
-						(output) =>
-							`<option value="${escapeHtml(output.name)}">${escapeHtml(output.name)}</option>`,
-					)
+					.map((output) => {
+						const outputType = output.type?.replace('?', '') || 'File'
+						const isCompatible =
+							outputType === expectedType ||
+							expectedType.startsWith('String') || // String can accept anything
+							outputType.startsWith('String')
+						const indicator = isCompatible ? '✅' : '❌'
+						const className = isCompatible ? 'compatible' : 'incompatible'
+
+						return `<option value="${escapeHtml(
+							output.name,
+						)}" class="${className}">${indicator} ${escapeHtml(output.name)} (${escapeHtml(
+							outputType,
+						)})</option>`
+					})
 					.join('')
 			outputSelect.onchange = () => updateBindingPreview()
 		} catch (error) {
