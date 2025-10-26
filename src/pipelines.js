@@ -993,12 +993,22 @@ export function createPipelinesModule({
 
 			// Update header
 			const nameEl = document.getElementById('pipeline-detail-name')
-			const descEl = document.getElementById('pipeline-detail-description')
+			if (nameEl) {
+				nameEl.textContent = pipeline.name
+			}
 
-			if (nameEl) nameEl.textContent = pipeline.name
-			if (descEl) {
-				descEl.textContent =
-					pipeline.spec?.description || `Pipeline with ${pipeline.spec?.steps?.length || 0} steps`
+			// Update metadata badges
+			const stepsCount = pipeline.spec?.steps?.length || 0
+			const inputsCount = Object.keys(pipeline.spec?.inputs || {}).length
+
+			const stepsCountEl = document.getElementById('pipeline-steps-count')
+			if (stepsCountEl) {
+				stepsCountEl.textContent = `${stepsCount} step${stepsCount === 1 ? '' : 's'}`
+			}
+
+			const inputsCountEl = document.getElementById('pipeline-inputs-count')
+			if (inputsCountEl) {
+				inputsCountEl.textContent = `${inputsCount} input${inputsCount === 1 ? '' : 's'}`
 			}
 
 			// Load and display steps
@@ -1074,6 +1084,10 @@ export function createPipelinesModule({
 									value="${existingName || ''}"
 									placeholder="samplesheet"
 									${isEdit ? 'readonly' : ''}
+									autocomplete="off"
+									autocorrect="off"
+									autocapitalize="off"
+									spellcheck="false"
 									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; ${
 										isEdit ? 'background: #f9fafb; color: #9ca3af;' : ''
 									}"
@@ -1102,6 +1116,10 @@ export function createPipelinesModule({
 									id="input-default-field" 
 									value="${inputDefault || ''}"
 									placeholder="e.g., File(default.csv) or /path/to/file"
+									autocomplete="off"
+									autocorrect="off"
+									autocapitalize="off"
+									spellcheck="false"
 									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace;"
 								>
 								<p style="font-size: 12px; color: #9ca3af; margin-top: 4px;">Leave empty for required inputs</p>
@@ -1498,7 +1516,7 @@ steps:${
 						${name} (${type}) *
 					</label>
 					<div style="display: flex; gap: 10px;">
-						<input type="text" id="input-${name}" style="flex: 1;" placeholder="Select ${type.toLowerCase()}..." readonly>
+						<input type="text" id="input-${name}" style="flex: 1;" placeholder="Select ${type.toLowerCase()}..." readonly autocomplete="off">
 						<button class="secondary-btn" onclick="pipelineModule.selectPath('${name}', '${type}')">
 							Browse...
 						</button>
@@ -1509,7 +1527,7 @@ steps:${
 					<label style="display: block; margin-bottom: 5px;">
 						${name} (${type})
 					</label>
-					<input type="text" id="input-${name}" style="width: 100%;" placeholder="Enter value...">
+					<input type="text" id="input-${name}" style="width: 100%;" placeholder="Enter value..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 				`
 			}
 
@@ -2100,6 +2118,10 @@ steps:${
 												data-input="${input.name}"
 												value="${defaultBinding}"
 												placeholder="e.g., inputs.${input.name} or step.filter.outputs.data"
+												autocomplete="off"
+												autocorrect="off"
+												autocapitalize="off"
+												spellcheck="false"
 											/>
 											<p class="binding-hint">${input.description || ''}</p>
 										</div>
@@ -2240,6 +2262,10 @@ steps:${
 												data-input="${input.name}"
 												value="${defaultBinding}"
 												placeholder="e.g., inputs.${input.name} or step.filter.outputs.data"
+												autocomplete="off"
+												autocorrect="off"
+												autocapitalize="off"
+												spellcheck="false"
 											/>
 											<p class="binding-hint">${input.description || ''}</p>
 										</div>
