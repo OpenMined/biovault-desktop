@@ -258,6 +258,51 @@ export function createRunsModule({ invoke, listen }) {
 			const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
 			const resultsDir = run.results_dir || run.work_dir
 
+			// Parse run metadata if available (stored when run was created)
+			const runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+			const inputOverrides = runMetadata.input_overrides || {}
+			const paramOverrides = runMetadata.parameter_overrides || {}
+
+			// Show input values used
+			const inputsHtml =
+				Object.keys(inputOverrides).length > 0
+					? `<div class="run-metadata-section">
+						<h4>Input Values</h4>
+						<div class="metadata-list">
+							${Object.entries(inputOverrides)
+								.map(
+									([key, value]) => `
+									<div class="metadata-item">
+										<span class="metadata-key">${escapeHtml(key)}:</span>
+										<span class="metadata-value">${escapeHtml(value)}</span>
+									</div>
+								`,
+								)
+								.join('')}
+						</div>
+					</div>`
+					: ''
+
+			// Show parameter overrides used
+			const paramsHtml =
+				Object.keys(paramOverrides).length > 0
+					? `<div class="run-metadata-section">
+						<h4>Parameter Overrides</h4>
+						<div class="metadata-list">
+							${Object.entries(paramOverrides)
+								.map(
+									([key, value]) => `
+									<div class="metadata-item">
+										<span class="metadata-key">${escapeHtml(key)}:</span>
+										<span class="metadata-value">${escapeHtml(value)}</span>
+									</div>
+								`,
+								)
+								.join('')}
+						</div>
+					</div>`
+					: ''
+
 			container.innerHTML = `
 				<div class="steps-container">
 					<div class="run-results-header">
@@ -267,17 +312,75 @@ export function createRunsModule({ invoke, listen }) {
 							</svg>
 							View All Results
 						</button>
+						<button class="rerun-btn" data-run-id="${run.id}" data-pipeline-id="${run.pipeline_id}">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<polyline points="23 4 23 10 17 10"></polyline>
+								<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+							</svg>
+							Re-run
+						</button>
 					</div>
+
+					${inputsHtml}
+					${paramsHtml}
+
+					<h4 style="margin: 20px 0 12px 0; font-size: 15px; color: #374151;">Pipeline Steps</h4>
 					${steps
 						.map(
 							(step, index) => `
-						<div class="step-row">
-							<div class="step-icon ${statusClass}">
-								${run.status === 'success' ? '✓' : run.status === 'failed' ? '✗' : '⋯'}
+						<div class="step-row-enhanced">
+							<div class="step-main">
+								<div class="step-icon ${statusClass}">
+									${run.status === 'success' ? '✓' : run.status === 'failed' ? '✗' : '⋯'}
+								</div>
+								<div class="step-content">
+									<div class="step-title">${step.id}</div>
+									<div class="step-path">${step.uses}</div>
+								</div>
 							</div>
-							<div class="step-content">
-								<div class="step-title">${step.id}</div>
-								<div class="step-path">${step.uses}</div>
+							<div class="step-outputs">
+								${
+									step.publish && Object.keys(step.publish).length > 0
+										? `<div class="outputs-section">
+											<strong>📤 Published Outputs:</strong>
+											${Object.entries(step.publish)
+												.map(
+													([name, spec]) => `
+													<div class="output-item">
+														<span class="output-name">${escapeHtml(name)}</span>
+														<button class="view-output-btn" data-output-path="${resultsDir}/${step.id}/${
+														spec.match(/\(([^)]+)\)/)?.[1] || name
+													}">
+															View
+														</button>
+													</div>
+												`,
+												)
+												.join('')}
+										</div>`
+										: ''
+								}
+								${
+									step.store && Object.keys(step.store).length > 0
+										? `<div class="sql-section">
+											<strong>💾 SQL Storage:</strong>
+											${Object.entries(step.store)
+												.map(([storeName, storeConfig]) => {
+													const tableName = storeConfig.table_name || `${storeName}_{run_id}`
+													const resolvedTableName = tableName.replace('{run_id}', run.id)
+													return `
+														<div class="sql-item">
+															<span class="sql-table-name">z_results_${escapeHtml(resolvedTableName)}</span>
+															<button class="query-sql-btn" data-table="z_results_${escapeHtml(resolvedTableName)}">
+																Query
+															</button>
+														</div>
+													`
+												})
+												.join('')}
+										</div>`
+										: ''
+								}
 							</div>
 							<div class="step-actions">
 								<button class="step-result-btn" data-step-path="${resultsDir}/${step.id}" title="View step results">
@@ -303,6 +406,34 @@ export function createRunsModule({ invoke, listen }) {
 				})
 			}
 
+			// Re-run button
+			const rerunBtn = container.querySelector('.rerun-btn')
+			if (rerunBtn) {
+				rerunBtn.addEventListener('click', async () => {
+					try {
+						const pipelineId = parseInt(rerunBtn.dataset.pipelineId)
+						// Reuse the saved configuration by creating a run config from this run
+						await invoke('save_run_config', {
+							pipelineId,
+							name: `Re-run of ${run.id}`,
+							configData: {
+								inputs: inputOverrides,
+								parameters: paramOverrides,
+							},
+						})
+						// Navigate to pipelines tab and trigger run
+						if (navigateTo) {
+							navigateTo('pipelines')
+						}
+						alert('Saved configuration from this run. Go to Pipelines tab to run it.')
+					} catch (e) {
+						console.error('Error preparing re-run:', e)
+						alert('Error: ' + e)
+					}
+				})
+			}
+
+			// Step results buttons
 			container.querySelectorAll('.step-result-btn').forEach((btn) => {
 				btn.addEventListener('click', async () => {
 					try {
@@ -312,9 +443,51 @@ export function createRunsModule({ invoke, listen }) {
 					}
 				})
 			})
+
+			// View output buttons
+			container.querySelectorAll('.view-output-btn').forEach((btn) => {
+				btn.addEventListener('click', async () => {
+					try {
+						await invoke('open_folder', { path: btn.dataset.outputPath })
+					} catch (e) {
+						console.error('Error opening output:', e)
+						alert('Output file may not exist yet or path is invalid')
+					}
+				})
+			})
+
+			// Query SQL buttons
+			container.querySelectorAll('.query-sql-btn').forEach((btn) => {
+				btn.addEventListener('click', async () => {
+					const tableName = btn.dataset.table
+					// Navigate to SQL tab and run query
+					if (navigateTo) {
+						navigateTo('sql')
+						// Set the query after a small delay to ensure tab is loaded
+						setTimeout(() => {
+							const sqlInput = document.getElementById('sql-query-input')
+							if (sqlInput) {
+								sqlInput.value = `SELECT * FROM ${tableName} LIMIT 100;`
+								// Trigger the query
+								const runQueryBtn = document.getElementById('run-query-btn')
+								if (runQueryBtn) {
+									runQueryBtn.click()
+								}
+							}
+						}, 300)
+					}
+				})
+			})
 		} catch (error) {
 			container.innerHTML = `<p class="error-message">Error loading steps: ${error}</p>`
 		}
+	}
+
+	// Helper function for escaping HTML
+	function escapeHtml(text) {
+		const div = document.createElement('div')
+		div.textContent = text
+		return div.innerHTML
 	}
 
 	async function showRunLogs(runId, projectName, workDir = null) {

@@ -315,11 +315,32 @@ pub async fn run_pipeline(
     fs::create_dir_all(&results_path)
         .map_err(|e| format!("Failed to create results directory: {}", e))?;
 
-    // Create pipeline run record using CLI library
-    let run_id = biovault_db.create_pipeline_run(
+    // Separate inputs from parameters for metadata storage
+    let mut inputs_map = HashMap::new();
+    let mut params_map = HashMap::new();
+    
+    for (key, value) in &input_overrides {
+        if key.starts_with("inputs.") {
+            inputs_map.insert(key.clone(), value.clone());
+        } else {
+            params_map.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Create metadata JSON
+    let metadata_json = serde_json::json!({
+        "input_overrides": inputs_map,
+        "parameter_overrides": params_map
+    });
+    let metadata_str = serde_json::to_string(&metadata_json)
+        .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+
+    // Create pipeline run record using CLI library with metadata
+    let run_id = biovault_db.create_pipeline_run_with_metadata(
         pipeline_id,
         &results_path.to_string_lossy(),
-        Some(&results_path.to_string_lossy())
+        Some(&results_path.to_string_lossy()),
+        Some(&metadata_str)
     ).map_err(|e| e.to_string())?;
     
     drop(biovault_db); // Release lock
@@ -368,6 +389,7 @@ pub async fn run_pipeline(
         work_dir: results_path.to_string_lossy().to_string(),
         results_dir: Some(results_path.to_string_lossy().to_string()),
         participant_count: None,
+        metadata: Some(metadata_str),
         created_at: chrono::Local::now().to_rfc3339(),
         completed_at: None,
     })

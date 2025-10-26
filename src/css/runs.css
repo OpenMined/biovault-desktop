@@ -535,6 +535,151 @@
 	gap: 8px;
 }
 
+/* Enhanced Step Row with Outputs */
+.step-row-enhanced {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 14px 16px;
+	margin-bottom: 10px;
+	transition: all 0.15s;
+}
+
+.step-row-enhanced:hover {
+	border-color: #d1d5db;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.step-main {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.step-outputs {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding-left: 30px;
+	margin-bottom: 8px;
+}
+
+.outputs-section,
+.sql-section {
+	padding: 10px 12px;
+	background: #f9fafb;
+	border-radius: 6px;
+	border: 1px solid #e5e7eb;
+}
+
+.outputs-section strong,
+.sql-section strong {
+	display: block;
+	font-size: 12px;
+	color: #6b7280;
+	margin-bottom: 8px;
+}
+
+.output-item,
+.sql-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 8px;
+	background: white;
+	border-radius: 4px;
+	margin-top: 6px;
+}
+
+.output-name,
+.sql-table-name {
+	font-size: 13px;
+	color: #374151;
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+	font-weight: 500;
+}
+
+.view-output-btn,
+.query-sql-btn {
+	padding: 4px 10px;
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 4px;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.view-output-btn:hover,
+.query-sql-btn:hover {
+	background: #059669;
+}
+
+/* Run Metadata Section */
+.run-metadata-section {
+	padding: 12px 14px;
+	background: #f0fdf4;
+	border: 1px solid #bbf7d0;
+	border-radius: 6px;
+	margin-bottom: 14px;
+}
+
+.run-metadata-section h4 {
+	margin: 0 0 10px 0;
+	font-size: 13px;
+	color: #065f46;
+	font-weight: 600;
+}
+
+.metadata-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.metadata-item {
+	display: flex;
+	gap: 8px;
+	font-size: 13px;
+}
+
+.metadata-key {
+	color: #047857;
+	font-weight: 600;
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.metadata-value {
+	color: #065f46;
+	font-family: 'JetBrains Mono', 'Fira Code', monospace;
+	word-break: break-all;
+}
+
+/* Re-run Button */
+.rerun-btn {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	background: white;
+	border: 1px solid #10b981;
+	color: #10b981;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.rerun-btn:hover {
+	background: #f0fdf4;
+	border-color: #059669;
+	color: #059669;
+}
+
 /* ============================================================================
    RESPONSIVE
    ============================================================================ */
