@@ -16,24 +16,13 @@ export function createDashboardShell({
 	getSyftboxStatus,
 	startMessagesAutoRefresh,
 	stopMessagesAutoRefresh,
-	getWorkbench,
 }) {
 	let activeView = 'run'
 	let lastImportView = 'import'
 	const importSubViews = ['import', 'import-review', 'import-results']
-	const workbenchViews = ['sql', 'logs'] // These open in workbench, not as full tabs
 
 	function navigateTo(requestedView) {
 		if (!requestedView) return
-
-		// Handle workbench views
-		if (workbenchViews.includes(requestedView)) {
-			const workbench = getWorkbench ? getWorkbench() : null
-			if (workbench) {
-				workbench.openPanel(requestedView)
-			}
-			return
-		}
 
 		let targetView = requestedView
 
@@ -95,6 +84,12 @@ export function createDashboardShell({
 				break
 			case 'runs':
 				loadRuns?.()
+				break
+			case 'logs':
+				_displayLogs?.()
+				break
+			case 'sql':
+				_loadSql?.()
 				break
 			case 'settings':
 				loadSettings?.()
