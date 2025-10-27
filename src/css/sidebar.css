@@ -29,7 +29,7 @@
 
 .sidebar-nav {
 	flex: 1 1 auto;
-	/* padding: 16px 0 12px; */
+	padding: 0; /* Flush to top */
 	overflow-y: auto;
 	overflow-x: auto;
 	display: flex;
@@ -94,6 +94,11 @@
 	position: relative;
 	user-select: none;
 	letter-spacing: 0;
+}
+
+/* First nav item gets top margin for window controls spacing */
+.sidebar-nav .nav-item:first-child {
+	margin-top: 8px;
 }
 
 .nav-item img {
