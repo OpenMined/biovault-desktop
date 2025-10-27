@@ -1051,43 +1051,515 @@ export function createPipelinesModule({
 
 			// Load and display steps
 			await loadPipelineSteps(pipelineId)
-			renderPipelineInputs()
+
+			// Populate left panel (configuration)
+			await loadSavedConfigs()
+			await renderConfigInputs()
+			await renderParameterOverrides()
+
+			// Setup event handlers for the sidebar
+			setupConfigSidebarHandlers()
 		} catch (error) {
 			console.error('Error showing pipeline details:', error)
 		}
 	}
 
-	// Load pipeline steps for detail view
-	// Render pipeline inputs
-	function renderPipelineInputs() {
-		const inputsList = document.getElementById('pipeline-inputs-list')
-		if (!inputsList || !pipelineState.currentPipeline) return
+	// Render configuration inputs in the left sidebar
+	async function renderConfigInputs() {
+		const configInputsList = document.getElementById('config-inputs-list')
+		if (!configInputsList || !pipelineState.currentPipeline) return
 
 		const inputs = pipelineState.currentPipeline.spec?.inputs || {}
 		const inputEntries = Object.entries(inputs)
 
 		if (inputEntries.length === 0) {
-			inputsList.innerHTML =
-				'<p class="empty-message">No inputs defined. Click "Edit Pipeline" to add inputs in YAML.</p>'
+			configInputsList.innerHTML = '<p class="config-hint">No inputs defined</p>'
 			return
 		}
 
-		inputsList.innerHTML = inputEntries
+		configInputsList.innerHTML = inputEntries
 			.map(([name, spec]) => {
 				const typeStr = typeof spec === 'string' ? spec : spec.type || 'String'
-				const hasDefault = typeof spec === 'object' && spec.default
+				const defaultValue = typeof spec === 'object' && spec.default ? spec.default : ''
+				const isFileOrDir = typeStr === 'File' || typeStr === 'Directory'
+				const isRequired = !defaultValue
 
 				return `
-				<div class="input-item">
-					<div class="input-info">
-						<div class="input-name">${name}</div>
-						<div class="input-type-badge">${typeStr}</div>
-						${hasDefault ? `<div class="input-default">Default: ${spec.default}</div>` : ''}
+				<div class="config-input-item" data-input-name="${name}">
+					<div class="config-input-label">
+						<span>${name}${isRequired ? '<span style="color: #dc2626; margin-left: 4px;">*</span>' : ''}</span>
+						<span class="config-input-type">${typeStr}</span>
+					</div>
+					<div class="config-input-field">
+						<input 
+							type="text" 
+							id="config-input-${name}"
+							placeholder="${defaultValue || (isFileOrDir ? 'Browse or enter path...' : 'Enter value...')}"
+							value=""
+							autocomplete="off"
+							${isRequired ? 'required' : ''}
+						/>
+						${
+							isFileOrDir
+								? `<button class="config-input-browse-btn" data-input-name="${name}" data-input-type="${typeStr}">Browse</button>`
+								: ''
+						}
 					</div>
 				</div>
 			`
 			})
 			.join('')
+
+		// Attach browse button handlers
+		document.querySelectorAll('.config-input-browse-btn').forEach((btn) => {
+			btn.addEventListener('click', async (e) => {
+				const inputName = e.target.getAttribute('data-input-name')
+				const inputType = e.target.getAttribute('data-input-type')
+				const inputField = document.getElementById(`config-input-${inputName}`)
+
+				try {
+					if (inputType === 'File') {
+						const filePaths = await dialog.open({ multiple: false, directory: false })
+						if (filePaths && !Array.isArray(filePaths)) {
+							inputField.value = filePaths
+							updateConfigValidationStatus()
+						}
+					} else if (inputType === 'Directory') {
+						const dirPath = await dialog.open({ multiple: false, directory: true })
+						if (dirPath && !Array.isArray(dirPath)) {
+							inputField.value = dirPath
+							updateConfigValidationStatus()
+						}
+					}
+				} catch (error) {
+					console.error('Error selecting path:', error)
+				}
+			})
+		})
+
+		// Attach input change handlers for validation
+		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
+			input.addEventListener('input', () => {
+				updateConfigValidationStatus()
+			})
+		})
+
+		// Initial validation status
+		updateConfigValidationStatus()
+	}
+
+	// Update validation status indicator
+	function updateConfigValidationStatus() {
+		const statusEl = document.getElementById('config-validation-status')
+		if (!statusEl || !pipelineState.currentPipeline) return
+
+		const inputs = pipelineState.currentPipeline.spec?.inputs || {}
+		const requiredInputs = []
+		const filledInputs = []
+
+		// Check each required input
+		for (const [name, spec] of Object.entries(inputs)) {
+			const hasDefault = typeof spec === 'object' && spec.default
+			if (!hasDefault) {
+				requiredInputs.push(name)
+				const inputField = document.getElementById(`config-input-${name}`)
+				if (inputField && inputField.value.trim()) {
+					filledInputs.push(name)
+				}
+			}
+		}
+
+		if (requiredInputs.length === 0) {
+			// No required inputs
+			statusEl.style.display = 'none'
+			return
+		}
+
+		statusEl.style.display = 'flex'
+
+		if (filledInputs.length === requiredInputs.length) {
+			// All required inputs filled
+			statusEl.className = 'config-validation-status ready'
+			statusEl.innerHTML = `
+				<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+					<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+				</svg>
+				<span>Ready to run</span>
+			`
+		} else {
+			// Some inputs missing
+			statusEl.className = 'config-validation-status incomplete'
+			statusEl.innerHTML = `
+				<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+					<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+				</svg>
+				<span>${filledInputs.length}/${requiredInputs.length} required inputs filled</span>
+			`
+		}
+	}
+
+	// Load and render saved configurations
+	async function loadSavedConfigs() {
+		const configSelect = document.getElementById('load-saved-config')
+		if (!configSelect || !pipelineState.currentPipeline) return
+
+		// Save current selection
+		const currentSelection = configSelect.value
+
+		try {
+			const savedConfigs = await invoke('list_run_configs', {
+				pipelineId: pipelineState.currentPipeline.id,
+			})
+
+			console.log('Loaded saved configs:', savedConfigs)
+
+			// Clear existing options except the first "Start Fresh"
+			configSelect.innerHTML = '<option value="">-- Start Fresh --</option>'
+
+			// Add saved configs
+			savedConfigs.forEach((config) => {
+				const option = document.createElement('option')
+				option.value = config.id
+				option.textContent = `${config.name} (${new Date(config.created_at).toLocaleString()})`
+				configSelect.appendChild(option)
+			})
+
+			// Restore selection if it still exists
+			if (currentSelection) {
+				const optionExists = Array.from(configSelect.options).some(
+					(opt) => opt.value === currentSelection,
+				)
+				if (optionExists) {
+					configSelect.value = currentSelection
+				}
+			}
+
+			// Store configs in state for later use
+			pipelineState.savedConfigs = savedConfigs
+		} catch (error) {
+			console.error('Failed to load saved configs:', error)
+		}
+	}
+
+	// Load and render parameter overrides
+	async function renderParameterOverrides() {
+		const paramsList = document.getElementById('config-parameters-list')
+		const paramCount = document.getElementById('param-override-count')
+		if (!paramsList || !pipelineState.currentPipeline) return
+
+		const pipelineSpec = pipelineState.currentPipeline.spec
+		const stepParameters = []
+
+		if (pipelineSpec && pipelineSpec.steps) {
+			for (const step of pipelineSpec.steps) {
+				try {
+					const projectSpec = await invoke('load_project_editor', {
+						projectPath: step.uses,
+					})
+					const params = projectSpec.metadata?.parameters || []
+					params.forEach((param) => {
+						stepParameters.push({
+							stepId: step.id,
+							paramName: param.name,
+							paramType: param.type || 'String',
+							default: param.default || '',
+							description: param.description || '',
+						})
+					})
+				} catch (e) {
+					console.error(`Failed to load parameters for step ${step.id}:`, e)
+				}
+			}
+		}
+
+		if (paramCount) {
+			paramCount.textContent = `(${stepParameters.length})`
+		}
+
+		if (stepParameters.length === 0) {
+			paramsList.innerHTML = '<p class="config-hint">No parameters available to override</p>'
+			return
+		}
+
+		paramsList.innerHTML = stepParameters
+			.map((param) => {
+				return `
+				<div class="config-parameter-item">
+					<div class="config-parameter-label">
+						<span>${param.paramName}</span>
+						<span class="config-parameter-step">${param.stepId}</span>
+					</div>
+					<input 
+						type="text" 
+						class="config-parameter-input"
+						id="config-param-${param.stepId}-${param.paramName}"
+						placeholder="${param.default || 'Override value...'}"
+						title="${param.description}"
+						value=""
+						autocomplete="off"
+					/>
+				</div>
+			`
+			})
+			.join('')
+	}
+
+	// Setup event handlers for the configuration sidebar
+	function setupConfigSidebarHandlers() {
+		console.log('Setting up config sidebar handlers')
+
+		// Handle saved config selection
+		const configSelect = document.getElementById('load-saved-config')
+		console.log('Config select element:', configSelect)
+		if (configSelect) {
+			// Remove old listener if exists (clone and replace)
+			const newConfigSelect = configSelect.cloneNode(true)
+			configSelect.parentNode.replaceChild(newConfigSelect, configSelect)
+
+			newConfigSelect.addEventListener('change', async (e) => {
+				const configId = e.target.value
+				console.log('Loading configuration, ID:', configId)
+
+				if (!configId) {
+					// Clear all fields
+					clearConfigFields()
+					return
+				}
+
+				// Load the selected config
+				const config = pipelineState.savedConfigs?.find((c) => c.id === parseInt(configId))
+				console.log('Found config:', config)
+
+				// Check both config_data (from backend) and configuration (legacy)
+				const rawConfig = config?.config_data || config?.configuration
+
+				if (rawConfig) {
+					// Parse JSON string if needed
+					const configData = typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig
+					console.log('Parsed config data:', configData)
+					loadConfigIntoFields(configData)
+				} else {
+					console.error('No configuration data found in config object')
+				}
+			})
+			console.log('Config select change handler attached')
+		} else {
+			console.error('Config select element not found!')
+		}
+
+		// Handle save configuration button
+		const saveConfigBtn = document.getElementById('save-current-config-btn')
+		console.log('Save button element:', saveConfigBtn)
+		if (saveConfigBtn) {
+			// Remove old listener if exists (clone and replace)
+			const newSaveBtn = saveConfigBtn.cloneNode(true)
+			saveConfigBtn.parentNode.replaceChild(newSaveBtn, saveConfigBtn)
+
+			newSaveBtn.addEventListener('click', async (e) => {
+				e.preventDefault()
+				e.stopPropagation()
+				console.log('Save configuration button clicked')
+				await saveCurrentConfiguration()
+			})
+			console.log('Save button click handler attached')
+		} else {
+			console.error('Save button element not found!')
+		}
+	}
+
+	// Clear all configuration fields
+	function clearConfigFields() {
+		// Clear input fields
+		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
+			input.value = ''
+		})
+
+		// Clear parameter fields
+		document.querySelectorAll('[id^="config-param-"]').forEach((input) => {
+			input.value = ''
+		})
+
+		// Update validation status after clearing
+		updateConfigValidationStatus()
+	}
+
+	// Load a configuration into the fields
+	function loadConfigIntoFields(config) {
+		console.log('Loading configuration into fields:', config)
+
+		// Load inputs
+		if (config.inputs) {
+			console.log('Loading inputs:', config.inputs)
+			Object.entries(config.inputs).forEach(([name, value]) => {
+				const input = document.getElementById(`config-input-${name}`)
+				if (input) {
+					input.value = value
+					console.log(`Set input ${name} = ${value}`)
+				} else {
+					console.warn(`Input field not found: config-input-${name}`)
+				}
+			})
+		}
+
+		// Load parameters
+		if (config.parameters) {
+			console.log('Loading parameters:', config.parameters)
+			Object.entries(config.parameters).forEach(([key, value]) => {
+				const input = document.getElementById(`config-param-${key}`)
+				if (input) {
+					input.value = value
+					console.log(`Set parameter ${key} = ${value}`)
+				} else {
+					console.warn(`Parameter field not found: config-param-${key}`)
+				}
+			})
+		}
+
+		// Update validation status after loading
+		updateConfigValidationStatus()
+	}
+
+	// Get current configuration from fields
+	function getCurrentConfiguration() {
+		const inputs = {}
+		const parameters = {}
+
+		// Collect input values
+		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
+			const inputName = input.id.replace('config-input-', '')
+			if (input.value.trim()) {
+				inputs[inputName] = input.value.trim()
+			}
+		})
+
+		// Collect parameter values
+		document.querySelectorAll('[id^="config-param-"]').forEach((input) => {
+			const paramKey = input.id.replace('config-param-', '')
+			if (input.value.trim()) {
+				parameters[paramKey] = input.value.trim()
+			}
+		})
+
+		return { inputs, parameters }
+	}
+
+	// Save current configuration
+	async function saveCurrentConfiguration() {
+		return new Promise((resolve) => {
+			try {
+				const config = getCurrentConfiguration()
+				console.log('Current configuration to save:', config)
+
+				// Create a modal for entering the configuration name
+				const modalHtml = `
+					<div id="save-config-modal" class="modal-overlay" style="display: flex; z-index: 10000;">
+						<div class="modal-dialog-small">
+							<div class="modal-header">
+								<h3>Save Configuration</h3>
+								<button id="save-config-modal-close" class="modal-close-btn">&times;</button>
+							</div>
+							<div class="modal-body">
+								<label class="field-label">
+									<span>Configuration Name <span class="required">*</span></span>
+									<input 
+										type="text" 
+										id="save-config-name-input" 
+										class="text-input" 
+										placeholder="e.g., My Analysis Config"
+										autocomplete="off"
+										style="width: 100%; margin-top: 6px;"
+									/>
+									<span class="field-hint" style="margin-top: 4px;">Give this configuration a descriptive name</span>
+								</label>
+							</div>
+							<div class="modal-footer">
+								<button id="save-config-modal-cancel" class="secondary-btn">Cancel</button>
+								<button id="save-config-modal-save" class="primary-btn">Save</button>
+							</div>
+						</div>
+					</div>
+				`
+
+				document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+				const modal = document.getElementById('save-config-modal')
+				const nameInput = document.getElementById('save-config-name-input')
+				const closeBtn = document.getElementById('save-config-modal-close')
+				const cancelBtn = document.getElementById('save-config-modal-cancel')
+				const saveBtn = document.getElementById('save-config-modal-save')
+
+				// Focus the input
+				setTimeout(() => nameInput?.focus(), 100)
+
+				// Handle enter key
+				nameInput?.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter' && nameInput.value.trim()) {
+						saveBtn.click()
+					}
+				})
+
+				const closeModal = () => {
+					modal?.remove()
+					resolve()
+				}
+
+				const saveConfig = async () => {
+					const name = nameInput.value.trim()
+					if (!name) {
+						alert('Please enter a configuration name')
+						nameInput.focus()
+						return
+					}
+
+					console.log('Saving config with name:', name)
+
+					try {
+						// Save via backend
+						const result = await invoke('save_run_config', {
+							pipelineId: pipelineState.currentPipeline.id,
+							name: name,
+							configData: JSON.stringify(config),
+						})
+
+						console.log('Save result:', result)
+						modal?.remove()
+						alert('Configuration saved successfully!')
+
+						// Reload saved configs and select the new one
+						await loadSavedConfigs()
+
+						// Select the newly saved config if we got an ID back
+						if (result && result.id) {
+							const configSelect = document.getElementById('load-saved-config')
+							if (configSelect) {
+								configSelect.value = result.id
+								console.log('Selected saved config in dropdown:', result.id)
+							}
+						}
+						resolve()
+					} catch (error) {
+						console.error('Error saving configuration:', error)
+						alert('Failed to save configuration: ' + error)
+						resolve()
+					}
+				}
+
+				closeBtn?.addEventListener('click', closeModal)
+				cancelBtn?.addEventListener('click', closeModal)
+				saveBtn?.addEventListener('click', saveConfig)
+
+				// Close on background click
+				modal?.addEventListener('click', (e) => {
+					if (e.target === modal) {
+						closeModal()
+					}
+				})
+			} catch (error) {
+				console.error('Error in saveCurrentConfiguration:', error)
+				alert('Failed to save configuration: ' + error)
+				resolve()
+			}
+		})
 	}
 
 	// Show add/edit input modal
@@ -1445,23 +1917,325 @@ steps:${
 				}
 
 				stepDiv.innerHTML = `
-				<div class="pipeline-step-drag-handle" title="Drag to reorder">⋮⋮</div>
-				<div class="pipeline-step-number">${index + 1}</div>
-				<div class="pipeline-step-info">
-					<h4>${stepName}</h4>
-					<p>Uses: ${stepUses}</p>
-					<div class="step-status-badges">${statusBadges.join('')}</div>
+				<div class="pipeline-step-header">
+					<div class="pipeline-step-number">${index + 1}</div>
+					<div class="pipeline-step-info">
+						<h4>${stepName}</h4>
+						<p>Uses: ${stepUses}</p>
+						<div class="step-status-badges">${statusBadges.join('')}</div>
+					</div>
+					<button class="pipeline-step-menu-btn" data-step-index="${index}">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+							<circle cx="12" cy="5" r="2"/>
+							<circle cx="12" cy="12" r="2"/>
+							<circle cx="12" cy="19" r="2"/>
+						</svg>
+					</button>
 				</div>
-				<div class="pipeline-step-actions">
-					<button class="btn-secondary-small" onclick="pipelineModule.configureStepBindings(${index})">Configure</button>
-					<button class="btn-secondary-small" onclick="pipelineModule.removePipelineStep(${index})" style="color: #dc3545;">Remove</button>
+				<div class="pipeline-step-config" id="step-config-${index}" style="display: none;">
+					<!-- Configuration will be loaded here when expanded -->
 				</div>
 			`
 
 				stepsContainer.appendChild(stepDiv)
+
+				// Add menu button click handler
+				const menuBtn = stepDiv.querySelector('.pipeline-step-menu-btn')
+				menuBtn?.addEventListener('click', (e) => {
+					e.stopPropagation()
+					showStepMenu(e, index, step)
+				})
+
+				// Add header click handler to toggle accordion
+				const header = stepDiv.querySelector('.pipeline-step-header')
+				header?.addEventListener('click', (e) => {
+					// Don't toggle if clicking the menu button
+					if (e.target.closest('.pipeline-step-menu-btn')) return
+					toggleStepConfig(index)
+				})
 			})
 		} catch (error) {
 			console.error('Error loading pipeline steps:', error)
+		}
+	}
+
+	// Show step context menu
+	function showStepMenu(event, stepIndex, step) {
+		// Remove any existing menu
+		const existingMenu = document.querySelector('.step-context-menu')
+		if (existingMenu) existingMenu.remove()
+
+		const menu = document.createElement('div')
+		menu.className = 'step-context-menu context-menu'
+		menu.style.position = 'fixed'
+		menu.style.left = `${event.clientX}px`
+		menu.style.top = `${event.clientY}px`
+
+		menu.innerHTML = `
+		<button class="context-menu-item danger" data-action="remove">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<polyline points="3 6 5 6 21 6"></polyline>
+				<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+			</svg>
+			Remove Step
+		</button>
+	`
+
+		document.body.appendChild(menu)
+
+		// Position menu to stay on screen
+		const rect = menu.getBoundingClientRect()
+		if (rect.right > window.innerWidth) {
+			menu.style.left = `${window.innerWidth - rect.width - 10}px`
+		}
+		if (rect.bottom > window.innerHeight) {
+			menu.style.top = `${window.innerHeight - rect.height - 10}px`
+		}
+
+		// Add action handlers
+		menu.querySelectorAll('.context-menu-item').forEach((item) => {
+			item.addEventListener('click', async () => {
+				const action = item.getAttribute('data-action')
+				menu.remove()
+
+				switch (action) {
+					case 'remove':
+						removePipelineStep(stepIndex)
+						break
+				}
+			})
+		})
+
+		// Close on click outside
+		setTimeout(() => {
+			document.addEventListener('click', () => menu.remove(), { once: true })
+		}, 0)
+	}
+
+	// Toggle step configuration accordion
+	async function toggleStepConfig(stepIndex) {
+		const configDiv = document.getElementById(`step-config-${stepIndex}`)
+		if (!configDiv) return
+
+		// Close all other configs
+		document.querySelectorAll('.pipeline-step-config').forEach((div, idx) => {
+			if (idx !== stepIndex && div.style.display !== 'none') {
+				div.style.display = 'none'
+				div.innerHTML = ''
+			}
+		})
+
+		// Toggle this one
+		if (configDiv.style.display === 'none') {
+			// Load and show config
+			await loadStepConfigInline(stepIndex, configDiv)
+			configDiv.style.display = 'block'
+		} else {
+			// Hide config
+			configDiv.style.display = 'none'
+			configDiv.innerHTML = ''
+		}
+	}
+
+	// Load step configuration inline
+	async function loadStepConfigInline(stepIndex, container) {
+		if (!pipelineState.currentPipeline || !pipelineState.currentPipeline.spec) return
+
+		const step = pipelineState.currentPipeline.spec.steps[stepIndex]
+		if (!step) return
+
+		// Show loading state
+		container.innerHTML = `
+			<div class="inline-config-content">
+				<div class="inline-config-loading">
+					<div class="spinner"></div>
+					<p>Loading configuration...</p>
+				</div>
+			</div>
+		`
+
+		try {
+			// Load the project spec
+			const projectSpec = await invoke('load_project_editor', {
+				projectPath: step.uses,
+			})
+
+			// Get inputs and parameters
+			const projectInputs = projectSpec.metadata?.inputs || []
+			const projectParams = projectSpec.metadata?.parameters || []
+
+			// Build bindings status
+			const bindingsHtml =
+				projectInputs.length > 0
+					? projectInputs
+							.map((input) => {
+								const binding = step.with?.[input.name] || ''
+								const isBound = !!binding
+								const statusClass = isBound ? 'bound' : 'unbound'
+								const statusText = isBound ? binding : 'Not configured'
+
+								return `
+						<div class="inline-binding-item ${statusClass}">
+							<div class="inline-binding-header">
+								<span class="inline-binding-name">${input.name}</span>
+								<span class="inline-binding-type">${input.type || 'String'}</span>
+							</div>
+							<div class="inline-binding-value">${statusText}</div>
+						</div>
+					`
+							})
+							.join('')
+					: '<p class="inline-empty">No inputs defined</p>'
+
+			// Build parameters display (read-only)
+			const paramsHtml =
+				projectParams.length > 0
+					? `
+					<details class="inline-params-section">
+						<summary class="inline-section-summary">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="3" />
+								<path d="M12 1v6m0 6v6m6.36-15.36-4.24 4.24m-4.24 4.24-4.24 4.24m15.36 0-4.24-4.24m-4.24-4.24-4.24-4.24" />
+							</svg>
+							<span>Parameters (${projectParams.length})</span>
+						</summary>
+						<div class="inline-params-list">
+							${projectParams
+								.map(
+									(param) => `
+								<div class="inline-param-item">
+									<span class="inline-param-name">${param.name}</span>
+									<span class="inline-param-default">${param.default || 'No default'}</span>
+								</div>
+							`,
+								)
+								.join('')}
+						</div>
+					</details>
+				`
+					: ''
+
+			// Build the inline UI
+			container.innerHTML = `
+				<div class="inline-config-content">
+					<!-- Quick Actions Bar -->
+					<div class="inline-actions-bar">
+						<button class="inline-action-btn" data-action="jupyter">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="10"/>
+								<circle cx="12" cy="12" r="4" fill="currentColor"/>
+							</svg>
+							Jupyter
+						</button>
+						<button class="inline-action-btn" data-action="vscode">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M18 3L6 12L18 21V3Z"/>
+							</svg>
+							VSCode
+						</button>
+						<button class="inline-action-btn primary" data-action="configure">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="3" />
+								<path d="M12 1v6m0 6v6" />
+							</svg>
+							Configure Bindings
+						</button>
+					</div>
+
+					<!-- Input Bindings -->
+					<div class="inline-section">
+						<div class="inline-section-header">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+								<polyline points="7 10 12 15 17 10" />
+								<line x1="12" y1="15" x2="12" y2="3" />
+							</svg>
+							<h4>Input Bindings</h4>
+						</div>
+						<div class="inline-bindings-list">
+							${bindingsHtml}
+						</div>
+					</div>
+
+					<!-- Parameters (collapsible) -->
+					${paramsHtml}
+				</div>
+			`
+
+			// Attach action handlers
+			container.querySelectorAll('.inline-action-btn').forEach((btn) => {
+				btn.addEventListener('click', async (e) => {
+					e.stopPropagation()
+					const action = btn.getAttribute('data-action')
+
+					switch (action) {
+						case 'jupyter':
+							await openStepInJupyter(step)
+							break
+						case 'vscode':
+							await openStepInVSCode(step)
+							break
+						case 'configure':
+							configureStepBindings(stepIndex)
+							break
+					}
+				})
+			})
+		} catch (error) {
+			console.error('Error loading step config:', error)
+			container.innerHTML = `
+				<div class="inline-config-content">
+					<p class="inline-error">
+						Failed to load configuration: ${error.message}
+					</p>
+				</div>
+			`
+		}
+	}
+
+	// Helper function to open step in Jupyter from menu
+	async function openStepInJupyter(step) {
+		try {
+			// Load the project spec to get the path
+			const projectSpec = await invoke('load_project_editor', {
+				projectPath: step.uses,
+			})
+
+			const projectPath = projectSpec.project_path
+			if (!projectPath) {
+				throw new Error('Project path not available')
+			}
+
+			console.log('🚀 Launching Jupyter for step at:', projectPath)
+
+			await invoke('launch_jupyter', {
+				projectPath: projectPath,
+			})
+		} catch (error) {
+			console.error('Error launching Jupyter:', error)
+			alert('Failed to launch Jupyter: ' + error.toString())
+		}
+	}
+
+	// Helper function to open step in VSCode from menu
+	async function openStepInVSCode(step) {
+		try {
+			// Load the project spec to get the path
+			const projectSpec = await invoke('load_project_editor', {
+				projectPath: step.uses,
+			})
+
+			const projectPath = projectSpec.project_path
+			if (!projectPath) {
+				throw new Error('Project path not available')
+			}
+
+			console.log('🚀 Opening VSCode for step at:', projectPath)
+
+			await _open(projectPath)
+		} catch (error) {
+			console.error('Error opening VSCode:', error)
+			alert('Failed to open VSCode: ' + error.toString())
 		}
 	}
 
@@ -1643,7 +2417,7 @@ steps:${
 		pipelineState.currentPipeline = null
 	}
 
-	// Run pipeline with validation and better dialog
+	// Run pipeline with validation - reads config from sidebar
 	async function runPipeline(pipelineId) {
 		try {
 			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
@@ -1661,57 +2435,59 @@ steps:${
 			const proceed = await showValidationModal(pipeline.name, validation)
 			if (!proceed) return // User cancelled due to issues
 
-			// Collect all required inputs from the pipeline
-			const requiredInputs = {}
+			// Get configuration from sidebar
+			const config = getCurrentConfiguration()
 
-			// First, check if pipeline has defined inputs
-			if (editorData.spec && editorData.spec.inputs) {
-				Object.assign(requiredInputs, editorData.spec.inputs)
+			// Validate required inputs are filled
+			const inputs = editorData.spec?.inputs || {}
+			const missingInputs = []
+
+			for (const [name, spec] of Object.entries(inputs)) {
+				// Check if input has a default value
+				const hasDefault = typeof spec === 'object' && spec.default
+
+				// If no default and not provided in config, it's missing
+				if (!hasDefault && !config.inputs[name]) {
+					missingInputs.push(name)
+				}
 			}
 
-			// Also scan steps for any inputs. references that aren't defined
-			if (editorData.spec && editorData.spec.steps) {
-				editorData.spec.steps.forEach((step) => {
-					if (step.with) {
-						Object.values(step.with).forEach((value) => {
-							if (typeof value === 'string' && value.startsWith('inputs.')) {
-								const inputName = value.replace('inputs.', '')
-								if (!requiredInputs[inputName]) {
-									// Guess the type based on the name
-									if (inputName.includes('dir') || inputName.includes('folder')) {
-										requiredInputs[inputName] = 'Directory'
-									} else if (inputName.includes('sheet') || inputName.includes('file')) {
-										requiredInputs[inputName] = 'File'
-									} else {
-										requiredInputs[inputName] = 'String'
-									}
-								}
-							}
-						})
+			if (missingInputs.length > 0) {
+				alert(
+					`Cannot run pipeline. Missing required inputs:\n\n${missingInputs
+						.map((name) => `• ${name}`)
+						.join('\n')}\n\nPlease fill in all required inputs in the configuration panel.`,
+				)
+
+				// Highlight missing inputs
+				missingInputs.forEach((name) => {
+					const input = document.getElementById(`config-input-${name}`)
+					if (input) {
+						input.style.borderColor = '#dc2626'
+						input.style.boxShadow = '0 0 0 3px rgba(220, 38, 38, 0.1)'
+
+						// Remove highlight after a few seconds
+						setTimeout(() => {
+							input.style.borderColor = ''
+							input.style.boxShadow = ''
+						}, 3000)
 					}
 				})
-			}
 
-			// Create a nice dialog for input selection and parameter overrides
-			const result = await showPipelineInputDialog(
-				pipeline.name,
-				requiredInputs,
-				pipelineId,
-				editorData.spec,
-			)
-			if (!result) return // User cancelled
+				return
+			}
 
 			// Combine inputs and parameters into one override map
 			// Format: { "inputs.samplesheet": "/path", "filter.threshold": "0.01" }
 			const allOverrides = {}
 
 			// Add input overrides
-			for (const [name, value] of Object.entries(result.inputs || {})) {
+			for (const [name, value] of Object.entries(config.inputs || {})) {
 				allOverrides[`inputs.${name}`] = value
 			}
 
 			// Add parameter overrides (already in stepId.paramName format)
-			for (const [stepParam, value] of Object.entries(result.parameters || {})) {
+			for (const [stepParam, value] of Object.entries(config.parameters || {})) {
 				allOverrides[stepParam] = value
 			}
 

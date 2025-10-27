@@ -49,46 +49,98 @@
 				</div>
 			</div>
 			<div class="pipeline-header-actions">
+				<button id="edit-pipeline-yaml-btn" class="btn-secondary">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+					</svg>
+					Edit Pipeline
+				</button>
 				<button id="pipeline-detail-run" class="btn-run">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 						<polygon points="5 3 19 12 5 21 5 3"></polygon>
 					</svg>
-					Run
+					Run Pipeline
 				</button>
 			</div>
 		</header>
 
 		<div class="view-content">
-			<div class="pipeline-detail-container">
-				<!-- Pipeline Inputs Section -->
-				<div class="inputs-header">
-					<h2>Pipeline Inputs</h2>
-					<button id="edit-pipeline-yaml-btn" class="btn-add-step">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-						</svg>
-						Edit Pipeline
-					</button>
-				</div>
-				<div id="pipeline-inputs-list" class="inputs-list">
-					<!-- Inputs will be rendered here -->
+			<div class="pipeline-detail-layout">
+			<!-- Left Sidebar: Run Configuration -->
+			<aside class="pipeline-config-sidebar">
+				<div class="config-sidebar-header">
+					<h2>Run Configuration</h2>
+					<div id="config-validation-status" class="config-validation-status" style="display: none;">
+						<!-- Populated by JS -->
+					</div>
 				</div>
 
-				<!-- Steps Section -->
-				<div class="steps-header">
-					<h2>Steps</h2>
-					<button id="add-step-to-pipeline" class="btn-add-step">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-							<line x1="12" y1="5" x2="12" y2="19"></line>
-							<line x1="5" y1="12" x2="19" y2="12"></line>
-						</svg>
-						Add Step
-					</button>
-				</div>
-				<div id="pipeline-steps-list" class="steps-list">
-					<!-- Steps will be rendered here -->
-				</div>
+				<!-- Saved Configs -->
+					<div class="config-section">
+						<label class="config-label">
+							<span>Load Saved Configuration</span>
+							<select id="load-saved-config" class="config-select">
+								<option value="">-- Start Fresh --</option>
+								<!-- Populated by JS -->
+							</select>
+						</label>
+						<button id="save-current-config-btn" class="btn-secondary-small" style="margin-top: 8px; width: 100%;">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+								<polyline points="17 21 17 13 7 13 7 21"></polyline>
+								<polyline points="7 3 7 8 15 8"></polyline>
+							</svg>
+							Save Configuration
+						</button>
+					</div>
+
+					<!-- Pipeline Inputs -->
+					<div class="config-section">
+						<h3 class="config-section-title">Pipeline Inputs</h3>
+						<div id="config-inputs-list" class="config-inputs-list">
+							<!-- Populated by JS -->
+						</div>
+					</div>
+
+					<!-- Parameter Overrides -->
+					<details class="config-section config-collapsible">
+						<summary class="config-collapsible-summary">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="3" />
+								<path d="M12 1v6m0 6v6m6.36-15.36-4.24 4.24m-4.24 4.24-4.24 4.24m15.36 0-4.24-4.24m-4.24-4.24-4.24-4.24" />
+							</svg>
+							<span>Parameter Overrides</span>
+							<span class="param-count" id="param-override-count">(0)</span>
+						</summary>
+						<div class="config-collapsible-content">
+							<p class="config-hint">Override default parameter values for this run</p>
+							<div id="config-parameters-list" class="config-parameters-list">
+								<!-- Populated by JS -->
+							</div>
+						</div>
+					</details>
+				</aside>
+
+				<!-- Right Main Area: Pipeline Structure -->
+				<main class="pipeline-structure-main">
+					<!-- Steps Section -->
+					<div class="structure-section">
+						<div class="structure-section-header">
+							<h2>Steps</h2>
+							<button id="add-step-to-pipeline" class="btn-secondary-small">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								Add Step
+							</button>
+						</div>
+						<div id="pipeline-steps-list" class="steps-list">
+							<!-- Steps will be rendered here -->
+						</div>
+					</div>
+				</main>
 			</div>
 		</div>
 	</div>
