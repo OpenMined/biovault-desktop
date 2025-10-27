@@ -1,9 +1,16 @@
-export function createRunsModule({ invoke, listen }) {
+export function createRunsModule({ invoke, listen, dialog }) {
 	let selectedParticipants = []
 	let selectedProject = null
 	let currentRunLogListeners = []
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
+
+	async function confirmWithDialog(message, options = {}) {
+		if (dialog?.confirm) {
+			return await dialog.confirm(message, options)
+		}
+		return window.confirm(message)
+	}
 
 	// Listen for pipeline logs and completion
 	listen('pipeline-log-line', (event) => {
@@ -219,7 +226,11 @@ export function createRunsModule({ invoke, listen }) {
 				const deleteBtn = card.querySelector('.run-delete-btn')
 				deleteBtn.addEventListener('click', async (e) => {
 					e.stopPropagation()
-					if (confirm('Delete this pipeline run and all its results?')) {
+					const confirmed = await confirmWithDialog(
+						'Delete this pipeline run and all its results?',
+						{ title: 'Delete Run', type: 'warning' },
+					)
+					if (confirmed) {
 						try {
 							await invoke('delete_pipeline_run', { runId: run.id })
 							await loadRuns()

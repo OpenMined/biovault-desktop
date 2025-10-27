@@ -862,7 +862,10 @@ export function createProjectsModule({
 			console.error('Import error:', error)
 			const errorStr = String(error)
 			if (errorStr.includes('already exists')) {
-				const shouldOverwrite = confirm(`${errorStr}\n\nDo you want to overwrite it?`)
+				const shouldOverwrite = await confirmWithDialog(
+					`${errorStr}\n\nDo you want to overwrite it?`,
+					{ title: 'Overwrite Project?', type: 'warning' },
+				)
 				if (shouldOverwrite) {
 					btn.disabled = false
 					btn.textContent = 'Import'
@@ -879,12 +882,14 @@ export function createProjectsModule({
 		}
 	}
 
-	async function importProjectFromFolder() {
-		const folderPath = await dialog.open({
-			directory: true,
-			multiple: false,
-			title: 'Select Project Folder',
-		})
+	async function importProjectFromFolder(overwrite = false, folderPath = null) {
+		if (!folderPath) {
+			folderPath = await dialog.open({
+				directory: true,
+				multiple: false,
+				title: 'Select Project Folder',
+			})
+		}
 
 		if (!folderPath) {
 			return
@@ -893,12 +898,15 @@ export function createProjectsModule({
 		console.log('Import from folder selected:', folderPath)
 
 		const btn = document.getElementById('import-folder-btn')
-		btn.disabled = true
-		btn.innerHTML = '⏳ Importing...'
+		if (btn) {
+			btn.disabled = true
+			btn.innerHTML = '⏳ Importing...'
+		}
 
 		try {
 			const result = await invoke('import_project_from_folder', {
 				folder_path: folderPath,
+				overwrite,
 			})
 			console.log('Import from folder successful:', result)
 			await loadProjects()
@@ -906,10 +914,27 @@ export function createProjectsModule({
 		} catch (error) {
 			console.error('Error importing from folder:', error)
 			const errorStr = error.toString ? error.toString() : String(error)
-			alert(`Error importing project: ${errorStr}`)
+			if (errorStr.includes('already exists')) {
+				const shouldOverwrite = await confirmWithDialog(
+					`${errorStr}\n\nDo you want to overwrite it?`,
+					{ title: 'Overwrite Project?', type: 'warning' },
+				)
+				if (shouldOverwrite) {
+					if (btn) {
+						btn.disabled = false
+						btn.innerHTML = '📁 Import from Folder'
+					}
+					await importProjectFromFolder(true, folderPath)
+					return
+				}
+			} else {
+				alert(`Error importing project: ${errorStr}`)
+			}
 		} finally {
-			btn.disabled = false
-			btn.innerHTML = '📁 Import from Folder'
+			if (btn) {
+				btn.disabled = false
+				btn.innerHTML = '📁 Import from Folder'
+			}
 		}
 	}
 
