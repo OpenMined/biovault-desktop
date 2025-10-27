@@ -248,7 +248,10 @@ test.describe('Pipeline Creation', () => {
 		// Since the architecture changed from projects to pipelines,
 		// and pipelines don't have the same input/output modal system,
 		// we need to skip this test for now
-		sendUnifiedLog({ test: 'project-inputs-outputs', action: 'skipped - needs pipeline-based implementation' })
+		sendUnifiedLog({
+			test: 'project-inputs-outputs',
+			action: 'skipped - needs pipeline-based implementation',
+		})
 
 		// TODO: Rewrite this test to work with the pipeline step creation flow
 		// Pipelines have steps, not direct inputs/outputs like projects had
