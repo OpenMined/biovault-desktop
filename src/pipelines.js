@@ -2250,8 +2250,16 @@ steps:${
 
 			// Try to load project spec to validate bindings
 			try {
+				// Resolve project path relative to pipeline directory if needed
+				let projectPath = step.uses
+				if (pipelineState.currentPipeline?.pipeline_path && !projectPath.startsWith('/')) {
+					// Relative path - resolve relative to pipeline directory
+					const pipelinePath = pipelineState.currentPipeline.pipeline_path
+					projectPath = `${pipelinePath}/${projectPath}`
+				}
+
 				const projectSpec = await invoke('load_project_editor', {
-					projectPath: step.uses,
+					projectPath: projectPath,
 				})
 
 				const requiredInputs =
