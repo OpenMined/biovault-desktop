@@ -5,7 +5,6 @@ export function createDashboardShell({
 	loadParticipants,
 	_loadFiles,
 	loadProjects,
-	prepareRunView: _prepareRunView,
 	loadRuns,
 	_displayLogs,
 	loadSettings,
