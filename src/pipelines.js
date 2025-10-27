@@ -284,12 +284,23 @@ export function createPipelinesModule({
 						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
 							GitHub URL to pipeline.yaml
 						</label>
-						<input 
-							type="text" 
-							id="pipeline-url-input" 
-							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/pipeline.yaml"
-							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
-						>
+						<div style="display: flex; gap: 8px; align-items: center;">
+							<input 
+								type="text" 
+								id="pipeline-url-input" 
+								placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/pipeline.yaml"
+								style="flex: 1; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
+							>
+							<button 
+								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/b1fff0611987f9a609a4ce68ef58afb2661c352b/pipeline_sql.yaml'"
+								style="padding: 10px 16px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; color: #374151; cursor: pointer; white-space: nowrap; transition: all 0.2s;"
+								onmouseover="this.style.background='#e5e7eb'"
+								onmouseout="this.style.background='#f3f4f6'"
+								title="Fill with example pipeline URL"
+							>
+								📋 Example
+							</button>
+						</div>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
 							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import pipelines.
 							<br>
