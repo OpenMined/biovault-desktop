@@ -80,72 +80,12 @@ fn log_desktop_event(message: &str) {
     }
 }
 
-fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // NOTE: Files and Participants tables are managed by CLI via biovault.db
-    // Desktop only manages its own tables: projects, runs, run_participants
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            author TEXT NOT NULL,
-            workflow TEXT NOT NULL,
-            template TEXT NOT NULL,
-            project_path TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            work_dir TEXT NOT NULL,
-            participant_count INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (project_id) REFERENCES projects(id)
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS run_participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL,
-            participant_id INTEGER NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES runs(id)
-        )",
-        [],
-    )?;
-
-    // Pipeline tables
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pipelines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            pipeline_path TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS pipeline_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pipeline_id INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            work_dir TEXT NOT NULL,
-            results_dir TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            completed_at DATETIME,
-            FOREIGN KEY (pipeline_id) REFERENCES pipelines(id)
-        )",
-        [],
-    )?;
-
+fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
+    // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
+    // Desktop-specific DB is deprecated - keeping for backwards compat only
+    // TODO: Remove this entirely and use only BioVaultDb
+    
+    // Temporary stub - all real tables are in CLI database now
     Ok(())
 }
 
@@ -479,6 +419,7 @@ pub fn run() {
             // Projects commands
             import_project,
             import_project_from_folder,
+            import_pipeline_with_deps,
             get_projects,
             delete_project,
             delete_project_folder,
@@ -513,6 +454,10 @@ pub fn run() {
             save_pipeline_editor,
             delete_pipeline,
             validate_pipeline,
+            save_run_config,
+            list_run_configs,
+            get_run_config,
+            delete_run_config,
             run_pipeline,
             get_pipeline_runs,
             delete_pipeline_run,
@@ -527,6 +472,7 @@ pub fn run() {
             save_settings,
             get_app_version,
             open_folder,
+            open_in_vscode,
             show_in_folder,
             get_config_path,
             check_is_onboarded,

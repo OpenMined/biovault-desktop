@@ -1,3 +1,75 @@
+/* ============================================================================
+   GLOBAL BUTTON SYSTEM - Consistent across entire app
+   ============================================================================ */
+
+/* Primary Button - Green, main actions */
+.primary-btn,
+.btn-primary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 10px 18px;
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	font-family: inherit;
+}
+
+.primary-btn:hover:not(:disabled),
+.btn-primary:hover:not(:disabled) {
+	background: #059669;
+	transform: translateY(-1px);
+	box-shadow: 0 3px 10px rgba(16, 185, 129, 0.25);
+}
+
+.primary-btn:active:not(:disabled),
+.btn-primary:active:not(:disabled) {
+	transform: translateY(0);
+}
+
+.primary-btn:disabled,
+.btn-primary:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Secondary Button - Gray, cancel/back actions */
+.secondary-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 10px 18px;
+	background: white;
+	color: #6b7280;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	font-family: inherit;
+}
+
+.secondary-btn:hover:not(:disabled) {
+	background: #f9fafb;
+	border-color: #d1d5db;
+	color: #374151;
+}
+
+.secondary-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
 @keyframes button-spin {
 	0% {
 		transform: rotate(0deg);
@@ -73,24 +145,7 @@
 	background: #218838;
 }
 
-button {
-	padding: 10px 20px;
-	background: #0066cc;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 14px;
-}
-
-button:hover {
-	background: #0052a3;
-}
-
-button:disabled {
-	opacity: 0.7;
-	cursor: not-allowed;
-}
+/* Generic button defaults removed - use specific classes instead */
 
 .onboarding-card button {
 	width: 100%;

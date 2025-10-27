@@ -7,7 +7,8 @@
 /* 2. Layout - grid, flex, containers, tabs */
 @import url('css/layout.css');
 @import url('css/sidebar.css');
-@import url('css/workbench.css');
+/* Workbench removed - logs and SQL are now direct tabs */
+/* @import url('css/workbench.css'); */
 
 /* 3. Forms - inputs, selects, labels */
 @import url('css/forms.css');
@@ -22,13 +23,15 @@
 @import url('css/modals.css');
 
 /* 7. Page-specific styles */
-@import url('css/home.css');
 @import url('css/onboarding.css');
 @import url('css/projects.css');
+@import url('css/project-editor.css');
+@import url('css/configure-step.css');
 @import url('css/data.css');
 @import url('css/import.css');
 @import url('css/runs.css');
 @import url('css/pipelines.css');
+@import url('css/step-picker.css');
 @import url('css/messages.css');
 @import url('css/logs.css');
 @import url('css/operations.css');

@@ -5,7 +5,7 @@ export function createDashboardShell({
 	loadParticipants,
 	_loadFiles,
 	loadProjects,
-	prepareRunView,
+	prepareRunView: _prepareRunView,
 	loadRuns,
 	_displayLogs,
 	loadSettings,
@@ -16,26 +16,20 @@ export function createDashboardShell({
 	getSyftboxStatus,
 	startMessagesAutoRefresh,
 	stopMessagesAutoRefresh,
-	getWorkbench,
 }) {
-	let activeView = 'home'
+	let activeView = 'run'
 	let lastImportView = 'import'
 	const importSubViews = ['import', 'import-review', 'import-results']
-	const workbenchViews = ['sql', 'logs'] // These open in workbench, not as full tabs
 
 	function navigateTo(requestedView) {
 		if (!requestedView) return
 
-		// Handle workbench views
-		if (workbenchViews.includes(requestedView)) {
-			const workbench = getWorkbench ? getWorkbench() : null
-			if (workbench) {
-				workbench.openPanel(requestedView)
-			}
-			return
-		}
-
 		let targetView = requestedView
+
+		// Redirect old 'projects' tab to 'run' (since they're now merged)
+		if (requestedView === 'projects') {
+			targetView = 'run'
+		}
 
 		if (requestedView === 'import' && lastImportView !== 'import') {
 			targetView = lastImportView
@@ -84,14 +78,18 @@ export function createDashboardShell({
 			case 'data':
 				loadParticipants?.() // loadParticipants is actually loadData now
 				break
-			case 'projects':
-				loadProjects?.()
-				break
 			case 'run':
-				prepareRunView?.()
+				// Load projects (which includes both pipelines and projects sections)
+				loadProjects?.()
 				break
 			case 'runs':
 				loadRuns?.()
+				break
+			case 'logs':
+				_displayLogs?.()
+				break
+			case 'sql':
+				_loadSql?.()
 				break
 			case 'settings':
 				loadSettings?.()
@@ -115,13 +113,6 @@ export function createDashboardShell({
 
 	function registerNavigationHandlers() {
 		const doc = documentRef || document
-
-		// Home button clicks
-		doc.querySelectorAll('.home-btn').forEach((btn) => {
-			btn.addEventListener('click', () => {
-				navigateTo(btn.dataset.nav)
-			})
-		})
 
 		// Sidebar navigation items (includes both main nav and footer items)
 		doc.querySelectorAll('.nav-item').forEach((item) => {

@@ -17,10 +17,78 @@
 	display: none;
 }
 
+/* Modal overlay - for programmatically created modals */
+.modal-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.5);
+	z-index: 10000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+}
+
 .modal-content {
 	background: white;
 	padding: 20px;
 	border-radius: 8px;
 	max-width: 500px;
 	width: 90%;
+	max-height: 90vh;
+	overflow-y: auto;
+}
+
+.modal-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
+	padding-bottom: 15px;
+	border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-header h2 {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+	color: #1f2937;
+}
+
+.modal-close {
+	background: none;
+	border: none;
+	font-size: 24px;
+	color: #9ca3af;
+	cursor: pointer;
+	padding: 0;
+	width: 32px;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 4px;
+	transition:
+		background 0.2s,
+		color 0.2s;
+}
+
+.modal-close:hover {
+	background: #f3f4f6;
+	color: #4b5563;
+}
+
+.modal-body {
+	margin-bottom: 20px;
+}
+
+.modal-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	padding-top: 15px;
+	border-top: 1px solid #e5e7eb;
 }

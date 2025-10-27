@@ -263,7 +263,22 @@ export function createSqlModule({ invoke, dialog }) {
 
 	function setStatus(message, tone = 'info') {
 		if (!elements.status) return
-		elements.status.textContent = message
+
+		// Update status text (handle both old and new structure)
+		const statusText = document.getElementById('sql-status-text')
+		if (statusText) {
+			statusText.textContent = message
+		} else {
+			elements.status.textContent = message
+		}
+
+		// Update visual tone
+		elements.status.className = 'sql-status'
+		if (tone === 'error') {
+			elements.status.classList.add('error')
+		} else if (tone === 'success') {
+			elements.status.classList.add('success')
+		}
 		elements.status.dataset.tone = tone
 	}
 
@@ -325,6 +340,12 @@ export function createSqlModule({ invoke, dialog }) {
 			li.innerHTML = `<button type="button" class="sql-table-btn" data-table="${table.name}">${table.name}</button>`
 			elements.tableList.appendChild(li)
 		})
+
+		// Update table count
+		const tableCount = document.getElementById('sql-table-count')
+		if (tableCount) {
+			tableCount.textContent = tables.length
+		}
 
 		elements.tableList.querySelectorAll('.sql-table-btn').forEach((btn) => {
 			btn.addEventListener('click', () => {

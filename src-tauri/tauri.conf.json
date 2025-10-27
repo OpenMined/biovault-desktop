@@ -11,10 +11,12 @@
 		"windows": [
 			{
 				"title": "BioVault",
-				"width": 1280,
-				"height": 800
+				"width": 1100,
+				"height": 700,
+				"hiddenTitle": true
 			}
 		],
+
 		"security": {
 			"csp": null,
 			"capabilities": [

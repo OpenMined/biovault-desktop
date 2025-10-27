@@ -1,30 +1,42 @@
-<div id="messages-syftbox-warning" class="messages-warning" style="display: none">
-	<div class="messages-warning-card">
-		<h3>SyftBox Authorization Required</h3>
-		<p>You need to authorize SyftBox before messaging is available.</p>
-		<button id="messages-auth-btn" class="message-cta">Authorize SyftBox</button>
-	</div>
-</div>
-<div class="messages-container">
-	<div class="message-sidebar">
-		<div class="message-sidebar-header">
-			<h3>Conversations</h3>
-			<button id="new-message-btn" class="message-cta">New Message</button>
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<h1 class="page-title">Messages</h1>
 		</div>
-		<div class="message-sidebar-status">
-			<div class="message-syftbox-status">
-				<span id="message-syftbox-indicator" class="status-offline">Offline</span>
-				<select id="message-syftbox-dropdown">
-					<option value="online">Go Online</option>
-					<option value="offline">Go Offline</option>
-				</select>
+	</header>
+
+	<!-- Main Content -->
+	<div class="view-content">
+		<div id="messages-syftbox-warning" class="messages-warning" style="display: none">
+			<div class="messages-warning-card">
+				<h3>SyftBox Authorization Required</h3>
+				<p>You need to authorize SyftBox before messaging is available.</p>
+				<button id="messages-auth-btn" class="message-cta">Authorize SyftBox</button>
 			</div>
 		</div>
-		<div class="message-filters">
-			<button class="message-filter active" data-filter="inbox">Inbox</button>
-			<button class="message-filter" data-filter="sent">Sent</button>
-			<button class="message-filter" data-filter="all">All</button>
-			<button id="refresh-messages-btn" class="message-secondary">Refresh</button>
+		<div class="messages-container">
+			<div class="message-sidebar">
+				<div class="message-sidebar-header">
+					<h3>Conversations</h3>
+					<button id="new-message-btn" class="message-cta">New Message</button>
+				</div>
+				<div class="message-sidebar-status">
+					<div class="message-syftbox-status">
+						<span id="message-syftbox-indicator" class="status-offline">Offline</span>
+						<select id="message-syftbox-dropdown">
+							<option value="online">Go Online</option>
+							<option value="offline">Go Offline</option>
+						</select>
+					</div>
+				</div>
+				<div class="message-filters">
+					<button class="message-filter active" data-filter="inbox">Inbox</button>
+					<button class="message-filter" data-filter="sent">Sent</button>
+					<button class="message-filter" data-filter="all">All</button>
+					<button id="refresh-messages-btn" class="message-secondary">Refresh</button>
+				</div>
+			</div>
 		</div>
 	</div>
 </div>

@@ -188,6 +188,33 @@ pub fn save_settings(settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_in_vscode(path: String) -> Result<(), String> {
+    use std::process::Command;
+    use std::path::Path;
+    
+    let path_buf = Path::new(&path);
+    
+    // If path is a file, open the parent directory instead
+    let target_path = if path_buf.is_file() {
+        path_buf.parent()
+            .ok_or_else(|| format!("Cannot determine parent directory for: {}", path))?
+            .to_str()
+            .ok_or_else(|| "Invalid path encoding".to_string())?
+    } else {
+        &path
+    };
+    
+    eprintln!("📂 Opening in VSCode: {}", target_path);
+    
+    Command::new("code")
+        .arg(target_path)
+        .spawn()
+        .map_err(|e| format!("Failed to open VSCode: {}. Make sure the 'code' command is installed.", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

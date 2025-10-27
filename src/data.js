@@ -516,10 +516,10 @@ export function createDataModule({ invoke, dialog }) {
 		const fileCount = selectedFileIds.length
 		if (fileCount > 0) {
 			runBtn.disabled = false
-			runText.textContent = `Run Workflow (${fileCount} ${fileCount === 1 ? 'file' : 'files'})`
+			runText.textContent = `Run Pipeline (${fileCount} ${fileCount === 1 ? 'file' : 'files'})`
 		} else {
 			runBtn.disabled = true
-			runText.textContent = 'Run Workflow'
+			runText.textContent = 'Run Pipeline'
 		}
 	}
 

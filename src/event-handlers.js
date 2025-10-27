@@ -133,7 +133,7 @@ export function setupEventHandlers({
 	// Messages - View project
 	const projectBtn = document.getElementById('message-view-project-btn')
 	if (projectBtn) {
-		projectBtn.addEventListener('click', () => navigateTo('projects'))
+		projectBtn.addEventListener('click', () => navigateTo('run'))
 	}
 
 	// Messages - Compose keyboard shortcut
@@ -163,20 +163,29 @@ export function setupEventHandlers({
 
 	setActiveMessageFilterButton(getMessageFilter())
 
-	// Done button
-	document.getElementById('done-btn').addEventListener('click', () => {
-		navigateTo('home')
-	})
+	// Done button (import results view)
+	const doneBtn = document.getElementById('done-btn')
+	if (doneBtn) {
+		doneBtn.addEventListener('click', () => {
+			navigateTo('data')
+		})
+	}
 
 	updateComposeVisibilityPublic(false)
 
-	// Logs - Close
-	document.getElementById('close-logs-btn').addEventListener('click', () => {
-		document.getElementById('log-viewer').style.display = 'none'
-	})
+	// Logs - Close (runs view)
+	const closeLogsBtn = document.getElementById('close-logs-btn')
+	if (closeLogsBtn) {
+		closeLogsBtn.addEventListener('click', () => {
+			document.getElementById('log-viewer').classList.remove('active')
+		})
+	}
 
-	// Logs - Share
-	document.getElementById('share-logs-btn').addEventListener('click', shareCurrentRunLogs)
+	// Logs - Share (runs view)
+	const shareLogsBtn = document.getElementById('share-logs-btn')
+	if (shareLogsBtn) {
+		shareLogsBtn.addEventListener('click', shareCurrentRunLogs)
+	}
 
 	// Settings - SyftBox auth
 	const syftboxAuthBtn = document.getElementById('syftbox-auth-btn')
@@ -341,9 +350,15 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Logs - Copy & Clear
-	document.getElementById('copy-logs-btn').addEventListener('click', copyLogs)
-	document.getElementById('clear-logs-btn').addEventListener('click', clearLogs)
+	// Logs - Copy & Clear (workbench)
+	const copyLogsBtn = document.getElementById('copy-logs-btn')
+	if (copyLogsBtn) {
+		copyLogsBtn.addEventListener('click', copyLogs)
+	}
+	const clearLogsBtn = document.getElementById('clear-logs-btn')
+	if (clearLogsBtn) {
+		clearLogsBtn.addEventListener('click', clearLogs)
+	}
 
 	// Data view event handlers are now initialized in data.js via initializeDataTab()
 
@@ -451,14 +466,21 @@ export function setupEventHandlers({
 		})
 	})
 
-	document.getElementById('select-all-files').addEventListener('change', (e) => {
-		handleSelectAllFiles(e.target.checked)
-	})
+	const selectAllFilesCheckbox = document.getElementById('select-all-files')
+	if (selectAllFilesCheckbox) {
+		selectAllFilesCheckbox.addEventListener('change', (e) => {
+			handleSelectAllFiles(e.target.checked)
+		})
+	}
 
-	// Projects - Create project modal
-	document.getElementById('create-project-btn').addEventListener('click', () => {
-		showCreateProjectModal()
-	})
+	// Projects - Create project modal (also used for "Create Step")
+	const createProjectBtn = document.getElementById('create-project-btn')
+	if (createProjectBtn) {
+		createProjectBtn.addEventListener('click', () => {
+			showCreateProjectModal()
+		})
+	}
+
 	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
 	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
 
@@ -484,26 +506,62 @@ export function setupEventHandlers({
 		topCloseBtn.addEventListener('click', hideCreateProjectModal)
 	}
 	// Preview expand/collapse controls removed - now using split view
-	document.getElementById('new-project-name').addEventListener('input', () => {
-		handleProjectNameInputChange()
-	})
-	document.getElementById('project-path-browse-btn').addEventListener('click', async () => {
-		await chooseProjectDirectory()
-	})
-	document.getElementById('project-path-reset-btn').addEventListener('click', async () => {
-		await resetProjectDirectory()
-	})
-	document.getElementById('import-project-btn').addEventListener('click', () => {
-		console.log('Import project button clicked')
-		importProject()
-	})
-	document.getElementById('import-folder-btn').addEventListener('click', () => {
-		console.log('Import from folder button clicked')
-		importProjectFromFolder()
-	})
+	const newProjectNameInput = document.getElementById('new-project-name')
+	if (newProjectNameInput) {
+		newProjectNameInput.addEventListener('input', () => {
+			handleProjectNameInputChange()
+		})
+	}
 
-	// Runs - Run analysis button
-	document.getElementById('run-btn').addEventListener('click', runAnalysis)
+	const projectPathBrowseBtn = document.getElementById('project-path-browse-btn')
+	if (projectPathBrowseBtn) {
+		projectPathBrowseBtn.addEventListener('click', async () => {
+			await chooseProjectDirectory()
+		})
+	}
+
+	const projectPathResetBtn = document.getElementById('project-path-reset-btn')
+	if (projectPathResetBtn) {
+		projectPathResetBtn.addEventListener('click', async () => {
+			await resetProjectDirectory()
+		})
+	}
+
+	const importProjectBtn = document.getElementById('import-project-btn')
+	if (importProjectBtn) {
+		importProjectBtn.addEventListener('click', () => {
+			console.log('Import project button clicked')
+			importProject()
+		})
+	}
+
+	const importFolderBtn = document.getElementById('import-folder-btn')
+	if (importFolderBtn) {
+		importFolderBtn.addEventListener('click', () => {
+			console.log('Import from folder button clicked')
+			importProjectFromFolder()
+		})
+	}
+
+	// Wire up import step button to import project
+	const importStepBtn = document.getElementById('import-step-btn')
+	if (importStepBtn) {
+		importStepBtn.addEventListener('click', () => {
+			// Copy value from step input to project input
+			const stepUrlInput = document.getElementById('step-url-input')
+			const projectUrlInput = document.getElementById('project-url-input')
+			if (stepUrlInput && projectUrlInput) {
+				projectUrlInput.value = stepUrlInput.value
+				importProject()
+			}
+		})
+	}
+
+	// Runs - Run analysis button (only exists if run analysis view is loaded)
+	const runBtn = document.getElementById('run-btn')
+	if (runBtn) {
+		runBtn.addEventListener('click', runAnalysis)
+	}
 
 	// Projects - Edit buttons
 	const projectEditSaveBtn = document.getElementById('project-edit-save-btn')
@@ -515,7 +573,7 @@ export function setupEventHandlers({
 	if (projectEditCancelBtn) {
 		projectEditCancelBtn.addEventListener('click', () => {
 			handleLeaveProjectEditor()
-			navigateTo('projects')
+			navigateTo('run')
 		})
 	}
 
@@ -523,7 +581,7 @@ export function setupEventHandlers({
 	if (projectEditBackBtn) {
 		projectEditBackBtn.addEventListener('click', () => {
 			handleLeaveProjectEditor()
-			navigateTo('projects')
+			navigateTo('run')
 		})
 	}
 	document
@@ -541,10 +599,13 @@ export function setupEventHandlers({
 		projectSpecReloadBtn.addEventListener('click', handleReloadProjectSpec)
 	}
 
-	// Runs - Select all participants
-	document.getElementById('select-all-participants').addEventListener('change', (e) => {
-		toggleSelectAllParticipants(e.target.checked)
-	})
+	// Runs - Select all participants (only exists if run analysis view is loaded)
+	const selectAllParticipantsCheckbox = document.getElementById('select-all-participants')
+	if (selectAllParticipantsCheckbox) {
+		selectAllParticipantsCheckbox.addEventListener('change', (e) => {
+			toggleSelectAllParticipants(e.target.checked)
+		})
+	}
 
 	// Import - File type & pattern controls
 	const customPattern = document.getElementById('custom-pattern')

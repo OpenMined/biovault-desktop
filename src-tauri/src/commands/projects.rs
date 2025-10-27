@@ -424,6 +424,28 @@ pub fn import_project(
 }
 
 #[tauri::command]
+pub async fn import_pipeline_with_deps(
+    url: String,
+    name_override: Option<String>,
+    overwrite: bool,
+) -> Result<String, String> {
+    // Spawn blocking to avoid Send issues with BioVaultDb
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            biovault::cli::commands::project_management::import_pipeline_with_deps(
+                &url,
+                name_override,
+                overwrite,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn import_project_from_folder(
     state: tauri::State<AppState>,
     folder_path: String,
@@ -830,14 +852,80 @@ pub fn load_project_editor(
                 .map_err(|e| format!("Failed to load project {}: {}", id, e))?
                 .ok_or_else(|| format!("Project {} not found", id))?
         };
-        (
-            PathBuf::from(&record.project_path),
-            Some(record.id),
-            Some(record.name),
-        )
+        
+        let mut proj_path = PathBuf::from(&record.project_path);
+        
+        // If the path points to a file (e.g., project.yaml), use its parent directory
+        if proj_path.is_file() {
+            eprintln!("⚠️ Project path is a file, using parent directory: {}", proj_path.display());
+            proj_path = proj_path.parent()
+                .ok_or_else(|| format!("Invalid project path (file with no parent): {}", record.project_path))?
+                .to_path_buf();
+        }
+        
+        // Validate the project directory exists
+        if !proj_path.exists() {
+            return Err(format!(
+                "Project directory not found: {}. The project may have been imported incorrectly or moved.",
+                proj_path.display()
+            ));
+        }
+        
+        if !proj_path.is_dir() {
+            return Err(format!(
+                "Project path is not a directory: {}",
+                proj_path.display()
+            ));
+        }
+        
+        (proj_path, Some(record.id), Some(record.name))
     } else {
         let raw_path = project_path.unwrap();
-        (PathBuf::from(&raw_path), None, None)
+        let mut proj_path = PathBuf::from(&raw_path);
+        
+        // Check if this might be a project NAME instead of a path
+        // (no slashes and not an absolute path)
+        if !raw_path.contains('/') && !raw_path.contains('\\') && !proj_path.is_absolute() {
+            eprintln!("🔍 '{}' looks like a project name, attempting database lookup", raw_path);
+            
+            // Try to find project by name in database
+            let db = state.biovault_db.lock().unwrap();
+            if let Ok(Some(record)) = db.get_project(&raw_path) {
+                eprintln!("✅ Found project '{}' in database at: {}", raw_path, record.project_path);
+                proj_path = PathBuf::from(&record.project_path);
+                
+                // Handle file paths in database
+                if proj_path.is_file() {
+                    proj_path = proj_path.parent()
+                        .ok_or_else(|| format!("Invalid project path (file with no parent): {}", record.project_path))?
+                        .to_path_buf();
+                }
+                
+                drop(db); // Release lock
+                (proj_path, Some(record.id), Some(record.name))
+            } else {
+                eprintln!("⚠️ Project name '{}' not found in database, treating as path", raw_path);
+                drop(db); // Release lock
+                
+                // Treat as path
+                if proj_path.is_file() {
+                    proj_path = proj_path.parent()
+                        .ok_or_else(|| format!("Invalid project path (file with no parent): {}", raw_path))?
+                        .to_path_buf();
+                }
+                
+                (proj_path, None, None)
+            }
+        } else {
+            // Definitely a path (has slashes or is absolute)
+            if proj_path.is_file() {
+                proj_path = proj_path.parent()
+                    .ok_or_else(|| format!("Invalid project path (file with no parent): {}", raw_path))?
+                    .to_path_buf();
+            }
+            
+            (proj_path, None, None)
+        }
     };
 
     let metadata_result = biovault::data::load_project_metadata(&path_buf)
@@ -949,6 +1037,7 @@ pub fn save_project_editor(
     let project_record = {
         let db = state.biovault_db.lock().unwrap();
         if let Some(id) = project_id {
+            // Update existing project by ID
             db.update_project_by_id(
                 id,
                 &metadata.name,
@@ -963,20 +1052,40 @@ pub fn save_project_editor(
                 .map_err(|e| format!("Failed to reload project {}: {}", id, e))?
                 .ok_or_else(|| format!("Project {} not found after update", id))?
         } else {
-            db.register_project(
-                &metadata.name,
-                &metadata.author,
-                &metadata.workflow,
-                &template_for_db,
-                &project_path_buf,
-            )
-            .map_err(|e| format!("Failed to register project: {}", e))?;
+            // No project_id provided - try to find existing project by name or register new one
+            match db.get_project(&metadata.name) {
+                Ok(Some(existing)) => {
+                    // Project exists - update it
+                    db.update_project_by_id(
+                        existing.id,
+                        &metadata.name,
+                        &metadata.author,
+                        &metadata.workflow,
+                        &template_for_db,
+                        &project_path_buf,
+                    )
+                    .map_err(|e| format!("Failed to update existing project: {}", e))?;
+                    
+                    existing
+                }
+                Ok(None) | Err(_) => {
+                    // Project doesn't exist - register new one
+                    db.register_project(
+                        &metadata.name,
+                        &metadata.author,
+                        &metadata.workflow,
+                        &template_for_db,
+                        &project_path_buf,
+                    )
+                    .map_err(|e| format!("Failed to register project: {}", e))?;
 
-            db.get_project(&metadata.name)
-                .map_err(|e| format!("Failed to load project '{}': {}", metadata.name, e))?
-                .ok_or_else(|| {
-                    format!("Project '{}' not found after registration", metadata.name)
-                })?
+                    db.get_project(&metadata.name)
+                        .map_err(|e| format!("Failed to load project '{}': {}", metadata.name, e))?
+                        .ok_or_else(|| {
+                            format!("Project '{}' not found after registration", metadata.name)
+                        })?
+                }
+            }
         }
     };
 
