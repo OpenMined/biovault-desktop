@@ -71,7 +71,9 @@
 	align-items: center;
 	justify-content: center;
 	border-radius: 4px;
-	transition: background 0.2s, color 0.2s;
+	transition:
+		background 0.2s,
+		color 0.2s;
 }
 
 .modal-close:hover {

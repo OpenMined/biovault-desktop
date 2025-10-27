@@ -2,11 +2,11 @@ export function createRunsModule({ invoke, listen }) {
 	let selectedParticipants = []
 	let selectedProject = null
 	let currentRunLogListeners = []
-	let currentLogRunId = null
+	let _currentLogRunId = null
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
 
-	let currentPipelineLogRunId = null
+	let _currentPipelineLogRunId = null
 
 	// Listen for pipeline logs and completion
 	listen('pipeline-log-line', (event) => {
@@ -327,7 +327,7 @@ export function createRunsModule({ invoke, listen }) {
 					<h4 style="margin: 20px 0 12px 0; font-size: 15px; color: #374151;">Pipeline Steps</h4>
 					${steps
 						.map(
-							(step, index) => `
+							(step, _index) => `
 						<div class="step-row-enhanced">
 							<div class="step-main">
 								<div class="step-icon ${statusClass}">
@@ -490,13 +490,13 @@ export function createRunsModule({ invoke, listen }) {
 		return div.innerHTML
 	}
 
-	async function showRunLogs(runId, projectName, workDir = null) {
+	async function _showRunLogs(runId, projectName, workDir = null) {
 		const logViewer = document.getElementById('log-viewer')
 		const logContent = document.getElementById('log-content')
 		const logRunName = document.getElementById('log-run-name')
 		const shareBtn = document.getElementById('share-logs-btn')
 
-		currentLogRunId = runId
+		_currentLogRunId = runId
 		currentLogWorkDir = workDir
 
 		logViewer.classList.add('active')
@@ -549,7 +549,7 @@ export function createRunsModule({ invoke, listen }) {
 			logRunName.textContent = ''
 			shareBtn.style.display = 'block'
 
-			currentLogRunId = result.run_id
+			_currentLogRunId = result.run_id
 			currentLogWorkDir = result.work_dir
 
 			// Load initial log content

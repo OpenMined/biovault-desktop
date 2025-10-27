@@ -3,7 +3,7 @@ export function createPipelinesModule({
 	dialog,
 	open: _open,
 	navigateTo,
-	showCreateProjectModal,
+	showCreateProjectModal: _showCreateProjectModal,
 	openProjectEditor,
 }) {
 	// Helper function
@@ -25,7 +25,7 @@ export function createPipelinesModule({
 	}
 
 	// Tab switching functionality
-	function initTabNavigation() {
+	function _initTabNavigation() {
 		const tabs = document.querySelectorAll('.run-tab')
 		const contents = document.querySelectorAll('.run-tab-content')
 
@@ -212,7 +212,7 @@ export function createPipelinesModule({
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitPipelineName()
+						submitPipelineName()
 					}
 				})
 			}
@@ -324,7 +324,7 @@ export function createPipelinesModule({
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitPipelineURL()
+						submitPipelineURL()
 					}
 				})
 			}
@@ -357,7 +357,7 @@ export function createPipelinesModule({
 			closeURLInputModal()
 
 			// Call CLI function that imports pipeline AND all its step dependencies!
-			const result = await invoke('import_pipeline_with_deps', {
+			await invoke('import_pipeline_with_deps', {
 				url: url,
 				nameOverride: null,
 				overwrite: false,
@@ -395,13 +395,13 @@ export function createPipelinesModule({
 
 			if (selected) {
 				// Check if it has a pipeline.yaml
-				const pipelineYamlPath = selected + '/pipeline.yaml'
+				// const _pipelineYamlPath = selected + '/pipeline.yaml' // Not used currently
 
 				// Extract name from folder
 				const name = selected.split('/').pop() || selected.split('\\').pop() || 'imported-pipeline'
 
 				// Register in database
-				const result = await invoke('create_pipeline', {
+				await invoke('create_pipeline', {
 					request: {
 						name: name,
 						directory: selected,
@@ -1720,7 +1720,7 @@ export function createPipelinesModule({
 				pipelineState.currentPipeline = updated
 			}
 			await loadPipelineSteps(pipelineState.currentPipeline.id)
-			renderPipelineInputs()
+			// renderPipelineInputs() // Function no longer exists
 
 			closePipelineInputModal()
 			console.log('✅ Saved pipeline input:', name)
@@ -1837,36 +1837,7 @@ steps:${
 		}
 	}
 
-	async function removePipelineInput(inputName) {
-		if (!confirm(`Remove input "${inputName}"?`)) return
-
-		try {
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-			})
-
-			delete editorData.spec.inputs[inputName]
-
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
-				spec: editorData.spec,
-			})
-
-			await loadPipelines()
-			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
-			if (updated) {
-				pipelineState.currentPipeline = updated
-			}
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
-			renderPipelineInputs()
-
-			console.log('✅ Removed input:', inputName)
-		} catch (error) {
-			console.error('Error removing input:', error)
-			alert('Failed to remove input: ' + error)
-		}
-	}
+	// Removed duplicate async removePipelineInput function - using simpler version at line ~526
 
 	async function loadPipelineSteps(pipelineId) {
 		try {
@@ -1971,7 +1942,7 @@ steps:${
 	}
 
 	// Show step context menu
-	function showStepMenu(event, stepIndex, step) {
+	function showStepMenu(event, stepIndex, _step) {
 		// Remove any existing menu
 		const existingMenu = document.querySelector('.step-context-menu')
 		if (existingMenu) existingMenu.remove()
@@ -2523,7 +2494,7 @@ steps:${
 	}
 
 	// Show pipeline input dialog with file/folder pickers and parameter overrides
-	async function showPipelineInputDialog(pipelineName, requiredInputs, pipelineId, pipelineSpec) {
+	async function _showPipelineInputDialog(pipelineName, requiredInputs, pipelineId, pipelineSpec) {
 		// Load saved configurations from CLI database
 		let savedConfigs = []
 		try {
@@ -3017,8 +2988,8 @@ steps:${
 			closeStepURLInputModal,
 			submitStepURL,
 			loadPipelineSteps,
-			editPipelineStep,
-			removePipelineStep,
+			// editPipelineStep, // duplicate - already defined above
+			// removePipelineStep, // duplicate - already defined above
 			closeStepPickerModal,
 			showExistingProjectsList,
 			closeProjectsListModal,
@@ -3026,15 +2997,15 @@ steps:${
 			createNewStepProject,
 			closeBlankStepModal,
 			submitBlankStepName,
-			closeBindingConfigModal,
+			// closeBindingConfigModal, // duplicate - already defined above
 			saveStepWithBindings,
-			configureStepBindings,
-			updateStepBindings,
+			// configureStepBindings, // duplicate - already defined above
+			// updateStepBindings, // duplicate - already defined above
 			showPipelineInputModal,
 			closePipelineInputModal,
 			savePipelineInput,
 			editPipelineInput,
-			removePipelineInput,
+			// removePipelineInput, // duplicate - already defined above
 			showPipelineYAMLModal,
 			closeYAMLViewerModal,
 			openYAMLInVSCode,
@@ -3258,7 +3229,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitStepURL()
+						submitStepURL()
 					}
 				})
 			}
@@ -3397,7 +3368,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitBlankStepName()
+						submitBlankStepName()
 					}
 				})
 			}
@@ -3502,10 +3473,10 @@ steps:${
 		}
 	}
 
-	async function showBindingConfigModal(projectPath, projectName, projectSpec) {
+	async function _showBindingConfigModal(projectPath, projectName, projectSpec) {
 		const inputs = projectSpec.metadata?.inputs || []
 		const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
-		const existingSteps = pipelineState.currentPipeline.spec?.steps || []
+		const _existingSteps = pipelineState.currentPipeline.spec?.steps || []
 
 		const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 
@@ -4402,7 +4373,7 @@ steps:${
 		renderStoreList()
 	}
 
-	async function updateStepBindings(stepIndex) {
+	async function updateStepBindings(_stepIndex) {
 		// Legacy function - redirects to new implementation
 		await saveStepConfiguration()
 	}

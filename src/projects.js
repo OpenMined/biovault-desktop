@@ -93,7 +93,7 @@ export function createProjectsModule({
 	}
 
 	// Legacy functions - kept for compatibility but no longer used
-	function ensureEditorSpecForm(section = 'parameters') {
+	function ensureEditorSpecForm(_section = 'parameters') {
 		// No longer needed with new simple editor
 	}
 
@@ -101,11 +101,11 @@ export function createProjectsModule({
 		// No longer needed with new simple editor
 	}
 
-	function updateEditorTitle() {
+	function _updateEditorTitle() {
 		// No longer needed with new simple editor
 	}
 
-	function switchEditorTab(tabName) {
+	function switchEditorTab(_tabName) {
 		// No longer needed with new simple editor
 	}
 
@@ -623,7 +623,7 @@ export function createProjectsModule({
 		}
 	}
 
-	function startSpecDigestPolling() {
+	function _startSpecDigestPolling() {
 		if (projectEditorState.specDigestTimer) {
 			clearInterval(projectEditorState.specDigestTimer)
 		}
@@ -1325,7 +1325,7 @@ export function createProjectsModule({
 		}
 	}
 
-	function renderProjectEditor(data) {
+	function _renderProjectEditor(data) {
 		const pathEl = document.getElementById('project-edit-path')
 		pathEl.textContent = data.project_path || ''
 		clearEditorPreview('Preview updates as you edit.')
@@ -2127,7 +2127,7 @@ export function createProjectsModule({
 
 	function setupModalHandlers() {
 		// I/O Modal
-		const ioModal = document.getElementById('io-modal')
+		const _ioModal = document.getElementById('io-modal')
 		const ioClose = document.getElementById('io-modal-close')
 		const ioCancel = document.getElementById('io-modal-cancel')
 		const ioSave = document.getElementById('io-modal-save')
@@ -2137,7 +2137,7 @@ export function createProjectsModule({
 		if (ioSave) ioSave.onclick = () => saveIO()
 
 		// Parameter Modal
-		const paramModal = document.getElementById('param-modal')
+		const _paramModal = document.getElementById('param-modal')
 		const paramClose = document.getElementById('param-modal-close')
 		const paramCancel = document.getElementById('param-modal-cancel')
 		const paramSave = document.getElementById('param-modal-save')
