@@ -12,6 +12,14 @@ export function createPipelinesModule({
 		div.textContent = text
 		return div.innerHTML
 	}
+
+	async function confirmWithDialog(message, options = {}) {
+		if (dialog?.confirm) {
+			return await dialog.confirm(message, options)
+		}
+		return window.confirm(message)
+	}
+
 	// State management
 	const pipelineState = {
 		pipelines: [],
@@ -305,14 +313,17 @@ export function createPipelinesModule({
 		if (modal) modal.remove()
 	}
 
-	async function submitPipelineURL() {
+	async function submitPipelineURL(overwrite = false, urlOverride = null) {
 		const input = document.getElementById('pipeline-url-input')
-		if (!input) return
 
-		let url = input.value.trim()
+		let url = urlOverride
 		if (!url) {
-			alert('Please enter a URL')
-			return
+			if (!input) return
+			url = input.value.trim()
+			if (!url) {
+				alert('Please enter a URL')
+				return
+			}
 		}
 
 		// Convert GitHub blob URLs to raw URLs
@@ -329,7 +340,7 @@ export function createPipelinesModule({
 			await invoke('import_pipeline_with_deps', {
 				url: url,
 				nameOverride: null,
-				overwrite: false,
+				overwrite: overwrite,
 			})
 
 			await loadPipelines()
@@ -340,27 +351,41 @@ export function createPipelinesModule({
 			console.error('Error importing pipeline from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
-			let userMessage = 'Failed to import pipeline:\n\n' + errorMsg
+			if (errorMsg.includes('already exists')) {
+				const shouldOverwrite = await confirmWithDialog(
+					`${errorMsg}\n\nDo you want to overwrite it?`,
+					{ title: 'Overwrite Pipeline?', type: 'warning' },
+				)
+				if (shouldOverwrite) {
+					await submitPipelineURL(true, url)
+					return
+				}
+			} else {
+				let userMessage = 'Failed to import pipeline:\n\n' + errorMsg
 
-			if (errorMsg.includes('not found') || errorMsg.includes('404')) {
-				userMessage += '\n\n💡 Tip: Make sure the URL points to a valid pipeline.yaml file.'
+				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
+					userMessage += '\n\n💡 Tip: Make sure the URL points to a valid pipeline.yaml file.'
+				}
+
+				if (url.includes('github.com')) {
+					userMessage +=
+						'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
+				}
+
+				alert(userMessage)
 			}
-
-			if (url.includes('github.com')) {
-				userMessage +=
-					'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
-			}
-
-			alert(userMessage)
 		}
 	}
 
-	async function importExistingPipeline() {
+	async function importExistingPipeline(overwrite = false, selectedPath = null) {
+		let selected = selectedPath
 		try {
-			const selected = await dialog.open({
-				directory: true,
-				multiple: false,
-			})
+			if (!selected) {
+				selected = await dialog.open({
+					directory: true,
+					multiple: false,
+				})
+			}
 
 			if (selected) {
 				// Extract name from folder
@@ -371,6 +396,7 @@ export function createPipelinesModule({
 					request: {
 						name: name,
 						directory: selected,
+						overwrite: overwrite,
 					},
 				})
 
@@ -382,7 +408,18 @@ export function createPipelinesModule({
 		} catch (error) {
 			console.error('Error importing pipeline:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
-			alert('Failed to import pipeline: ' + errorMsg)
+			if (errorMsg.includes('already exists')) {
+				const shouldOverwrite = await confirmWithDialog(
+					`${errorMsg}\n\nDo you want to overwrite it?`,
+					{ title: 'Overwrite Pipeline?', type: 'warning' },
+				)
+				if (shouldOverwrite) {
+					await importExistingPipeline(true, selected)
+					return
+				}
+			} else {
+				alert('Failed to import pipeline: ' + errorMsg)
+			}
 		}
 	}
 
@@ -2767,7 +2804,11 @@ steps:${
 
 	// Delete pipeline
 	async function deletePipeline(pipelineId) {
-		if (!confirm('Are you sure you want to delete this pipeline?')) {
+		const confirmed = await confirmWithDialog('Are you sure you want to delete this pipeline?', {
+			title: 'Delete Pipeline',
+			type: 'warning',
+		})
+		if (!confirmed) {
 			return
 		}
 
@@ -3197,14 +3238,17 @@ steps:${
 		if (modal) modal.remove()
 	}
 
-	async function submitStepURL() {
+	async function submitStepURL(overwrite = false, urlOverride = null) {
 		const input = document.getElementById('step-url-input')
-		if (!input) return
 
-		let url = input.value.trim()
+		let url = urlOverride
 		if (!url) {
-			alert('Please enter a URL')
-			return
+			if (!input) return
+			url = input.value.trim()
+			if (!url) {
+				alert('Please enter a URL')
+				return
+			}
 		}
 
 		// Convert GitHub blob URLs to raw URLs
@@ -3220,7 +3264,7 @@ steps:${
 			// Call CLI library to import from URL
 			const result = await invoke('import_project', {
 				url: url,
-				overwrite: false,
+				overwrite: overwrite,
 			})
 
 			// Validate the result
@@ -3237,35 +3281,66 @@ steps:${
 			console.error('Error importing from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
-			let userMessage = 'Failed to import project:\n\n' + errorMsg
+			if (errorMsg.includes('already exists')) {
+				const shouldOverwrite = await confirmWithDialog(
+					`${errorMsg}\n\nDo you want to overwrite it?`,
+					{ title: 'Overwrite Project?', type: 'warning' },
+				)
+				if (shouldOverwrite) {
+					await submitStepURL(true, url)
+					return
+				}
+			} else {
+				let userMessage = 'Failed to import project:\n\n' + errorMsg
 
-			if (errorMsg.includes('not found') || errorMsg.includes('404')) {
-				userMessage +=
-					'\n\n💡 Tip: Make sure the URL points to a valid project.yaml file or project directory.'
+				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
+					userMessage +=
+						'\n\n💡 Tip: Make sure the URL points to a valid project.yaml file or project directory.'
+				}
+
+				if (url.includes('github.com')) {
+					userMessage +=
+						'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
+				}
+
+				alert(userMessage)
 			}
-
-			if (url.includes('github.com')) {
-				userMessage +=
-					'\n\n📝 For GitHub URLs, use the raw content URL:\nhttps://raw.githubusercontent.com/...'
-			}
-
-			alert(userMessage)
 		}
 	}
 
-	async function browseForStepFolder() {
+	async function browseForStepFolder(overwrite = false, selectedPath = null) {
 		try {
-			const selected = await dialog.open({
-				directory: true,
-				multiple: false,
-			})
+			let selected = selectedPath
+			if (!selected) {
+				selected = await dialog.open({
+					directory: true,
+					multiple: false,
+				})
+			}
 
 			if (selected) {
 				// Import/register the project first so it appears in the list
 				try {
-					await invoke('import_project_from_folder', { folderPath: selected })
+					await invoke('import_project_from_folder', {
+						folderPath: selected,
+						overwrite: overwrite,
+					})
 				} catch (e) {
-					// Might already be registered, that's ok
+					const errorStr = e.toString ? e.toString() : String(e)
+					if (errorStr.includes('already exists')) {
+						const shouldOverwrite = await confirmWithDialog(
+							`${errorStr}\n\nDo you want to overwrite it?`,
+							{ title: 'Overwrite Project?', type: 'warning' },
+						)
+						if (shouldOverwrite) {
+							await browseForStepFolder(true, selected)
+							return
+						} else {
+							// User declined overwrite, don't proceed
+							return
+						}
+					}
+					// Might already be registered for other reasons, that's ok
 					console.log('Project may already be registered:', e)
 				}
 
@@ -3379,7 +3454,10 @@ steps:${
 
 			// Ensure the project is registered in the database
 			try {
-				await invoke('import_project_from_folder', { folderPath: projectPath })
+				await invoke('import_project_from_folder', {
+					folderPath: projectPath,
+					overwrite: false,
+				})
 				console.log('✅ Project registered in database:', projectName)
 			} catch (e) {
 				// Might already be registered, that's ok

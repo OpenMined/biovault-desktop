@@ -4,6 +4,7 @@ export function createMessagesModule({
 	getSyftboxStatus,
 	setSyftboxStatus,
 	getActiveView,
+	dialog,
 }) {
 	let messageThreads = []
 	let messageFilter = 'inbox'
@@ -14,6 +15,13 @@ export function createMessagesModule({
 	let messagesInitialized = false
 	let messagesRefreshInterval = null
 	let messagesRefreshInProgress = false
+
+	async function confirmWithDialog(message, options = {}) {
+		if (dialog?.confirm) {
+			return await dialog.confirm(message, options)
+		}
+		return window.confirm(message)
+	}
 
 	function escapeHtml(value) {
 		if (value === undefined || value === null) return ''
@@ -519,7 +527,10 @@ export function createMessagesModule({
 	async function deleteMessage(messageId) {
 		if (!messageId) return
 
-		const confirmed = confirm('Are you sure you want to delete this message?')
+		const confirmed = await confirmWithDialog('Are you sure you want to delete this message?', {
+			title: 'Delete Message',
+			type: 'warning',
+		})
 		if (!confirmed) return
 
 		try {
@@ -562,7 +573,11 @@ export function createMessagesModule({
 			alert('SyftBox must be authorized to manage messages.')
 			return
 		}
-		if (!confirm('Delete all messages in this thread?')) {
+		const confirmed = await confirmWithDialog('Delete all messages in this thread?', {
+			title: 'Delete Thread',
+			type: 'warning',
+		})
+		if (!confirmed) {
 			return
 		}
 		try {

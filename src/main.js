@@ -79,7 +79,7 @@ const {
 	toggleSelectAllParticipants,
 	shareCurrentRunLogs,
 	setNavigateTo: setRunNavigateTo,
-} = createRunsModule({ invoke, listen })
+} = createRunsModule({ invoke, listen, dialog })
 
 const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
 
@@ -145,6 +145,7 @@ const messagesModule = createMessagesModule({
 	getSyftboxStatus,
 	setSyftboxStatus,
 	getActiveView: () => messagesGetActiveView(),
+	dialog,
 })
 const {
 	initializeMessagesTab,
