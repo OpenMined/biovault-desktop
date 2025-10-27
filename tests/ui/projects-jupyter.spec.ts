@@ -243,17 +243,151 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await page.goto('/')
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
-		// Projects are now part of the run/pipelines view
+
+		// Navigate to run/pipelines view
+		await page.click('.nav-item[data-tab="run"]')
 		await expect(page.locator('#run-view.tab-content.active')).toBeVisible({ timeout: 2000 })
 
-		// For now, just verify that the pipeline creation button exists
-		// The entire project/pipeline architecture has changed
+		// Create a new pipeline
 		const createPipelineBtn = page
 			.locator('#create-pipeline-btn, #empty-create-pipeline-btn')
 			.first()
 		await expect(createPipelineBtn).toBeVisible()
+		await createPipelineBtn.click()
 
-		// Skip the rest of this test - it needs complete rewrite
-		sendUnifiedLog({ event: 'test-skipped', reason: 'Architecture changed' })
+		// Wait for pipeline picker modal
+		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
+
+		// Click "Create Blank Pipeline"
+		await page.click('button:has-text("Create Blank Pipeline")')
+
+		// Wait for pipeline name modal and fill in name
+		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
+		const pipelineName = useRealInvoke ? `Jupyter Test ${Date.now()}` : 'Jupyter Test Pipeline'
+		await page.fill('#pipeline-name-input', pipelineName)
+
+		// Set up dialog handler for any alerts
+		page.on('dialog', async (dialog) => {
+			console.log('Dialog:', dialog.message())
+			await dialog.accept()
+		})
+
+		// Create the pipeline
+		await page.click('#pipeline-name-modal button:has-text("Create Pipeline")')
+		await page.waitForTimeout(2000)
+
+		// After creation, we should see the pipeline in the list or editor
+		// Click on the pipeline to view its details
+		const pipelineCard = page.locator('.pipeline-card').filter({ hasText: pipelineName }).first()
+		const cardExists = (await pipelineCard.count()) > 0
+
+		if (cardExists) {
+			// Click to view pipeline details
+			await pipelineCard.click()
+			await page.waitForTimeout(1000)
+		}
+
+		// Now we need to add a step to the pipeline to access Jupyter functionality
+		// Look for "Add Step" button
+		const addStepBtn = page
+			.locator('button:has-text("Add Step"), button:has-text("+ Add Step")')
+			.first()
+		if (await addStepBtn.isVisible()) {
+			await addStepBtn.click()
+			await page.waitForTimeout(1000)
+
+			// In the add step modal, select or create a step
+			// This might open a project picker or creator
+			const modalVisible = await page.locator('#add-step-modal, #step-picker-modal').isVisible()
+
+			if (modalVisible) {
+				// Try to select an existing project or create new
+				const existingProject = page.locator('.project-item, .step-option').first()
+				if ((await existingProject.count()) > 0) {
+					await existingProject.click()
+				} else {
+					// Create new step/project
+					const createNewBtn = page.locator('button:has-text("Create New")').first()
+					if (await createNewBtn.isVisible()) {
+						await createNewBtn.click()
+					}
+				}
+
+				// Confirm adding the step
+				const confirmBtn = page
+					.locator('button:has-text("Add"), button:has-text("Confirm")')
+					.first()
+				if (await confirmBtn.isVisible()) {
+					await confirmBtn.click()
+					await page.waitForTimeout(1000)
+				}
+			}
+		}
+
+		// Now look for the step edit button to open the project editor
+		const editStepBtn = page.locator('button:has-text("Edit Step"), button.edit-step-btn').first()
+		if (await editStepBtn.isVisible()) {
+			await editStepBtn.click()
+			await page.waitForTimeout(1000)
+
+			// Should now be in project-edit-view
+			await expect(page.locator('#project-edit-view')).toBeVisible({ timeout: 5000 })
+
+			// Now test Jupyter functionality
+			const statusEl = page.locator('#project-edit-view #project-edit-status').first()
+			const statusRow = page.locator('#project-jupyter-status')
+			const launchBtn = page
+				.locator('#step-edit-jupyter-btn, #project-edit-launch-jupyter-btn')
+				.first()
+
+			// Launch Jupyter
+			if (await launchBtn.isVisible()) {
+				await launchBtn.click()
+
+				if (useRealInvoke) {
+					await expect(statusEl).toHaveText(/Jupyter running at http:\/\/localhost:/, {
+						timeout: 180_000,
+					})
+				} else if (_jupyterUrl) {
+					await expect(statusEl).toHaveText(`Jupyter running at ${_jupyterUrl}`, {
+						timeout: 10_000,
+					})
+				}
+
+				// Verify Jupyter status is shown
+				await expect(statusRow).toBeVisible()
+				await expect(statusRow).toContainText('Running at')
+
+				// Stop Jupyter
+				await launchBtn.click()
+				await expect(statusEl).toHaveText(/Jupyter server stopped/)
+				await expect(statusRow).toBeHidden()
+
+				// Test restart
+				await launchBtn.click()
+				if (useRealInvoke) {
+					await expect(statusEl).toHaveText(/Jupyter running at http:\/\/localhost:/)
+				} else if (_jupyterUrl) {
+					await expect(statusEl).toHaveText(`Jupyter running at ${_jupyterUrl}`)
+				}
+				await expect(statusRow).toContainText('Running at')
+
+				// Test reset if button exists
+				const resetBtn = page.locator('#project-edit-reset-jupyter-btn')
+				if (await resetBtn.isVisible()) {
+					const resetDialog = page.waitForEvent('dialog', { timeout: 5000 })
+					await resetBtn.click()
+					await (await resetDialog).accept()
+					await expect(statusEl).toHaveText(/Jupyter environment (reset|rebuilt)/)
+					await expect(statusRow).toBeHidden()
+				}
+
+				sendUnifiedLog({ event: 'jupyter-test-complete' })
+			} else {
+				sendUnifiedLog({ event: 'jupyter-button-not-found' })
+			}
+		} else {
+			sendUnifiedLog({ event: 'step-edit-not-available' })
+		}
 	})
 })
