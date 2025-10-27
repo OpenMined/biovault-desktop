@@ -35,10 +35,43 @@
 		</div>
 		<div class="page-header-right">
 			<div class="page-header-actions">
-				<button id="process-queue-btn" class="btn-primary-small">
+				<button id="process-queue-btn" class="btn-secondary-small">
 					<span id="queue-btn-icon">⏸</span>
 					<span id="queue-btn-text">Pause Queue</span>
 					<span id="queue-spinner" class="queue-spinner" style="display: none"></span>
+					<span class="queue-count">(<span id="pending-count">0</span>)</span>
+				</button>
+				<button id="run-analysis-btn" class="btn-success" title="Select files to run pipeline">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<polygon points="5 3 19 12 5 21 5 3" />
+					</svg>
+					<span id="run-analysis-text">Run Pipeline</span>
+				</button>
+				<button id="open-import-modal-btn" class="btn-primary-small">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+						<polyline points="7 10 12 15 17 10" />
+						<line x1="12" y1="15" x2="12" y2="3" />
+					</svg>
+					Import Data
 				</button>
 			</div>
 		</div>
@@ -47,92 +80,6 @@
 	<!-- Main Content -->
 	<div class="view-content">
 		<div class="data-container">
-			<!-- Header -->
-			<div class="data-header">
-				<div class="data-header-left">
-					<h2 class="data-title">Data Management</h2>
-					<div class="data-stats">
-						<span class="stat-pill">
-							<svg
-								width="14"
-								height="14"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							>
-								<circle cx="12" cy="8" r="5" />
-								<path d="M20 21a8 8 0 1 0-16 0" />
-							</svg>
-							<span id="participant-count">0</span>
-							Participants
-						</span>
-						<span class="stat-pill">
-							<svg
-								width="14"
-								height="14"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							>
-								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-								<polyline points="14 2 14 8 20 8" />
-								<line x1="16" y1="13" x2="8" y2="13" />
-								<line x1="16" y1="17" x2="8" y2="17" />
-								<polyline points="10 9 9 9 8 9" />
-							</svg>
-							<span id="file-count">0</span>
-							Files
-						</span>
-					</div>
-				</div>
-				<div class="data-header-right">
-					<button id="process-queue-btn" class="btn-queue">
-						<span id="queue-btn-icon">⏸</span>
-						<span id="queue-btn-text">Pause Queue</span>
-						<span id="queue-spinner" class="queue-spinner" style="display: none"></span>
-						<span class="queue-count">(<span id="pending-count">0</span>)</span>
-					</button>
-					<button id="run-analysis-btn" class="btn-success" title="Select files to run workflow">
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<polygon points="5 3 19 12 5 21 5 3" />
-						</svg>
-						<span id="run-analysis-text">Run Workflow</span>
-					</button>
-					<button id="open-import-modal-btn" class="btn-primary">
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-							<polyline points="7 10 12 15 17 10" />
-							<line x1="12" y1="15" x2="12" y2="3" />
-						</svg>
-						Import Data
-					</button>
-				</div>
-			</div>
-
 			<!-- Main Layout: Sidebar + File Panel -->
 			<div class="data-main-layout">
 				<!-- Participants Sidebar -->
