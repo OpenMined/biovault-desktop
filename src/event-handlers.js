@@ -334,11 +334,15 @@ export function setupEventHandlers({
 			}
 
 			try {
+				console.log('🗑️ Resetting all data...')
 				await invoke('reset_all_data')
+				console.log('✅ Data reset complete')
+
 				await dialog.message('All data has been reset. The app will now reload.', {
 					title: 'Reset Complete',
 				})
 
+				console.log('🔄 Reloading window...')
 				// Reload the window to restart fresh
 				window.location.reload()
 			} catch (error) {
@@ -584,15 +588,21 @@ export function setupEventHandlers({
 			navigateTo('run')
 		})
 	}
-	document
-		.getElementById('project-edit-open-folder-btn')
-		.addEventListener('click', handleOpenProjectFolder)
-	document
-		.getElementById('project-edit-launch-jupyter-btn')
-		.addEventListener('click', handleLaunchJupyter)
-	document
-		.getElementById('project-edit-reset-jupyter-btn')
-		.addEventListener('click', handleResetJupyter)
+	// Add event listeners only if elements exist (they won't during onboarding)
+	const openFolderBtn = document.getElementById('project-edit-open-folder-btn')
+	if (openFolderBtn) {
+		openFolderBtn.addEventListener('click', handleOpenProjectFolder)
+	}
+
+	const launchJupyterBtn = document.getElementById('project-edit-launch-jupyter-btn')
+	if (launchJupyterBtn) {
+		launchJupyterBtn.addEventListener('click', handleLaunchJupyter)
+	}
+
+	const resetJupyterBtn = document.getElementById('project-edit-reset-jupyter-btn')
+	if (resetJupyterBtn) {
+		resetJupyterBtn.addEventListener('click', handleResetJupyter)
+	}
 
 	const projectSpecReloadBtn = document.getElementById('project-spec-reload-btn')
 	if (projectSpecReloadBtn) {

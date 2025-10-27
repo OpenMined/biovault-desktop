@@ -5,10 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Emitter;
 
- // Use CLI library types and functions
+// Use CLI library types and functions
+use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
 pub use biovault::pipeline_spec::PipelineSpec;
-use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineCreateRequest {
@@ -102,7 +102,8 @@ steps:
 
     // Register in database using CLI library
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    let id = biovault_db.register_pipeline(&request.name, &pipeline_dir.to_string_lossy())
+    let id = biovault_db
+        .register_pipeline(&request.name, &pipeline_dir.to_string_lossy())
         .map_err(|e| e.to_string())?;
 
     Ok(Pipeline {
@@ -124,7 +125,9 @@ pub async fn load_pipeline_editor(
     let path = if let Some(id) = pipeline_id {
         // Load from database using CLI library
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-        let pipeline = biovault_db.get_pipeline(id).map_err(|e| e.to_string())?
+        let pipeline = biovault_db
+            .get_pipeline(id)
+            .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Pipeline {} not found", id))?;
         PathBuf::from(pipeline.pipeline_path)
     } else if let Some(p) = pipeline_path {
@@ -149,7 +152,7 @@ pub async fn load_pipeline_editor(
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let projects_list = biovault_db.list_projects().map_err(|e| e.to_string())?;
     drop(biovault_db); // Release lock
-    
+
     let projects = projects_list
         .iter()
         .map(|p| ProjectInfo {
@@ -193,12 +196,14 @@ pub async fn save_pipeline_editor(
         biovault_db.touch_pipeline(id).map_err(|e| e.to_string())?;
 
         // Get updated record
-        biovault_db.get_pipeline(id)
+        biovault_db
+            .get_pipeline(id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Pipeline not found after update".to_string())
     } else {
         // Register new pipeline
-        let id = biovault_db.register_pipeline(&spec.name, &pipeline_path)
+        let id = biovault_db
+            .register_pipeline(&spec.name, &pipeline_path)
             .map_err(|e| e.to_string())?;
 
         Ok(Pipeline {
@@ -220,11 +225,15 @@ pub async fn delete_pipeline(
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     // Get pipeline before deleting
-    let pipeline = biovault_db.get_pipeline(pipeline_id).map_err(|e| e.to_string())?;
-    
+    let pipeline = biovault_db
+        .get_pipeline(pipeline_id)
+        .map_err(|e| e.to_string())?;
+
     if let Some(p) = pipeline {
         // Delete from database using CLI library
-        biovault_db.delete_pipeline(pipeline_id).map_err(|e| e.to_string())?;
+        biovault_db
+            .delete_pipeline(pipeline_id)
+            .map_err(|e| e.to_string())?;
 
         // Delete directory if it exists and is in the pipelines folder
         let pipelines_dir = get_pipelines_dir()?;
@@ -294,9 +303,11 @@ pub async fn run_pipeline(
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     // Get pipeline using CLI library
-    let pipeline = biovault_db.get_pipeline(pipeline_id).map_err(|e| e.to_string())?
+    let pipeline = biovault_db
+        .get_pipeline(pipeline_id)
+        .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Pipeline {} not found", pipeline_id))?;
-    
+
     let pipeline_path = pipeline.pipeline_path;
 
     let yaml_path = PathBuf::from(&pipeline_path).join("pipeline.yaml");
@@ -318,7 +329,7 @@ pub async fn run_pipeline(
     // Separate inputs from parameters for metadata storage
     let mut inputs_map = HashMap::new();
     let mut params_map = HashMap::new();
-    
+
     for (key, value) in &input_overrides {
         if key.starts_with("inputs.") {
             inputs_map.insert(key.clone(), value.clone());
@@ -336,13 +347,15 @@ pub async fn run_pipeline(
         .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
 
     // Create pipeline run record using CLI library with metadata
-    let run_id = biovault_db.create_pipeline_run_with_metadata(
-        pipeline_id,
-        &results_path.to_string_lossy(),
-        Some(&results_path.to_string_lossy()),
-        Some(&metadata_str)
-    ).map_err(|e| e.to_string())?;
-    
+    let run_id = biovault_db
+        .create_pipeline_run_with_metadata(
+            pipeline_id,
+            &results_path.to_string_lossy(),
+            Some(&results_path.to_string_lossy()),
+            Some(&metadata_str),
+        )
+        .map_err(|e| e.to_string())?;
+
     drop(biovault_db); // Release lock
 
     // Build extra args from input overrides
@@ -360,7 +373,7 @@ pub async fn run_pipeline(
     let window_clone = window.clone();
     let biovault_db_clone = state.biovault_db.clone();
     let run_id_clone = run_id;
-    
+
     tauri::async_runtime::spawn(async move {
         // Call CLI library function directly
         let result = cli_run_pipeline(
@@ -369,7 +382,8 @@ pub async fn run_pipeline(
             false, // dry_run
             false, // resume
             Some(results_dir_str),
-        ).await;
+        )
+        .await;
 
         let status = if result.is_ok() { "success" } else { "failed" };
 
@@ -409,12 +423,16 @@ pub async fn delete_pipeline_run(
     run_id: i64,
 ) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    
+
     // Get work directory before deleting
-    let run = biovault_db.get_pipeline_run(run_id).map_err(|e| e.to_string())?;
-    
+    let run = biovault_db
+        .get_pipeline_run(run_id)
+        .map_err(|e| e.to_string())?;
+
     // Delete from database
-    biovault_db.delete_pipeline_run(run_id).map_err(|e| e.to_string())?;
+    biovault_db
+        .delete_pipeline_run(run_id)
+        .map_err(|e| e.to_string())?;
 
     // Delete work directory if it exists
     if let Some(r) = run {

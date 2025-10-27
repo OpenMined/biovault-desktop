@@ -12,9 +12,9 @@ const slowMo = Number.parseInt(process.env.PLAYWRIGHT_SLOWMO ?? '0', 10)
 
 export default defineConfig({
 	testDir: './tests/ui',
-	timeout: 60_000,
+	timeout: 10_000, // Reduced to 10s - tests should fail much faster
 	expect: {
-		timeout: 10_000,
+		timeout: 2_000, // Reduced to 2s for element expectations
 	},
 	use: {
 		headless: isHeadless,

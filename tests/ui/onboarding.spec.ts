@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import WebSocket from 'ws'
+import { waitForAppReady } from './test-helpers.js'
 
 const STORAGE_KEY = 'playwright:onboarded'
 
@@ -28,7 +29,9 @@ function sendUnifiedLog(payload) {
  */
 async function advanceToEmailStep(page) {
 	sendUnifiedLog({ event: 'onboarding-advance-start' })
-	await expect(page.locator('#onboarding-step-1')).toBeVisible()
+	// Wait for app to be ready first
+	await waitForAppReady(page, { timeout: 2000 })
+	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 2000 })
 	await page.locator('#onboarding-next-1').click()
 	await expect(page.locator('#onboarding-step-2')).toBeVisible()
 	page.once('dialog', (dialog) => dialog.accept())
@@ -168,7 +171,8 @@ test.describe('Onboarding flow', () => {
 			page.locator('#skip-syftbox-btn').click(),
 		])
 
-		await expect(page.locator('#projects-view')).toBeVisible()
+		// Should see the main app with run view (projects are part of pipelines now)
+		await expect(page.locator('#run-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
 		const sessionFlag = await page.evaluate(
 			(key) => window.sessionStorage.getItem(key),
@@ -215,7 +219,8 @@ test.describe('Onboarding flow', () => {
 			page.locator('#verify-code-btn').click(),
 		])
 
-		await expect(page.locator('#projects-view')).toBeVisible()
+		// Should see the main app with run view (projects are part of pipelines now)
+		await expect(page.locator('#run-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
 		const sessionFlag = await page.evaluate(
 			(key) => window.sessionStorage.getItem(key),

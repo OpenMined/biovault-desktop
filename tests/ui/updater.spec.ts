@@ -11,7 +11,7 @@ test.describe('Updater', () => {
 			}
 		})
 
-		await page.goto(`http://localhost:${process.env.UI_PORT || 8082}`)
+		await page.goto('/')
 		await page.waitForLoadState('networkidle')
 	})
 

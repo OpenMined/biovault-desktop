@@ -43,7 +43,12 @@ pub fn check_is_onboarded() -> Result<bool, String> {
     let biovault_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     let config_path = biovault_home.join("config.yaml");
-    Ok(config_path.exists())
+    let exists = config_path.exists();
+    eprintln!(
+        "🔍 Checking onboarding: config_path={:?}, exists={}",
+        config_path, exists
+    );
+    Ok(exists)
 }
 
 #[tauri::command]
@@ -58,6 +63,24 @@ pub fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
         fs::remove_dir_all(&biovault_path)
             .map_err(|e| format!("Failed to delete BIOVAULT_HOME: {}", e))?;
         eprintln!("   Deleted: {}", biovault_path.display());
+    }
+
+    // Also delete the pointer file that stores the BioVault home location
+    // This ensures a clean reset without lingering configuration
+    if let Some(config_dir) = dirs::config_dir() {
+        let pointer_path = config_dir.join("BioVault").join("home_path");
+        if pointer_path.exists() {
+            fs::remove_file(&pointer_path)
+                .map_err(|e| format!("Failed to delete pointer file: {}", e))?;
+            eprintln!("   Deleted pointer: {}", pointer_path.display());
+        }
+
+        // Try to remove the BioVault config directory if it's empty
+        let biovault_config_dir = config_dir.join("BioVault");
+        if biovault_config_dir.exists() {
+            // This will fail if directory is not empty, which is fine
+            let _ = fs::remove_dir(&biovault_config_dir);
+        }
     }
 
     eprintln!("✅ RESET: All data deleted successfully");
@@ -189,28 +212,31 @@ pub fn save_settings(settings: Settings) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_in_vscode(path: String) -> Result<(), String> {
-    use std::process::Command;
     use std::path::Path;
-    
+    use std::process::Command;
+
     let path_buf = Path::new(&path);
-    
+
     // If path is a file, open the parent directory instead
     let target_path = if path_buf.is_file() {
-        path_buf.parent()
+        path_buf
+            .parent()
             .ok_or_else(|| format!("Cannot determine parent directory for: {}", path))?
             .to_str()
             .ok_or_else(|| "Invalid path encoding".to_string())?
     } else {
         &path
     };
-    
+
     eprintln!("📂 Opening in VSCode: {}", target_path);
-    
-    Command::new("code")
-        .arg(target_path)
-        .spawn()
-        .map_err(|e| format!("Failed to open VSCode: {}. Make sure the 'code' command is installed.", e))?;
-    
+
+    Command::new("code").arg(target_path).spawn().map_err(|e| {
+        format!(
+            "Failed to open VSCode: {}. Make sure the 'code' command is installed.",
+            e
+        )
+    })?;
+
     Ok(())
 }
 

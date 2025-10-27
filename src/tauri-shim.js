@@ -46,7 +46,12 @@ class WsBridge {
 				}
 
 				this.ws.onerror = (_error) => {
-					console.log('🔌 WebSocket connection failed (no backend available)')
+					// Only log in real mode, not when using mocks
+					const isRealMode =
+						typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true'
+					if (isRealMode) {
+						console.log('🔌 WebSocket connection failed (no backend available)')
+					}
 					this.connecting = false
 					this.connectPromise = null
 					if (this.ws) {
@@ -132,14 +137,18 @@ async function wsInvoke(cmd, args = {}) {
 		console.log(`[WS] Successfully invoked ${cmd}`)
 		return result
 	} catch (error) {
-		console.error(`[WS] Failed to invoke ${cmd}:`, error)
 		if (preferReal) {
+			console.error(`[WS] Failed to invoke ${cmd}:`, error)
 			throw error
 		}
+		// In mock mode, silently fall back without error logging
 	}
 
 	// Fall back to mock when backend is unavailable
-	console.log(`[WS] Falling back to mock for ${cmd}`)
+	// Only log in verbose/debug mode
+	if (preferReal) {
+		console.log(`[WS] Falling back to mock for ${cmd}`)
+	}
 	return mockInvoke(cmd, args)
 }
 

@@ -26,6 +26,11 @@ pub async fn detect_file_types(
             biovault::data::GenotypeMetadata::default()
         });
 
+        eprintln!(
+            "📊 Detection for {}: data_type={:?}, source={:?}, grch={:?}",
+            file_path, metadata.data_type, metadata.source, metadata.grch_version
+        );
+
         results.insert(
             file_path.clone(),
             GenotypeMetadata {
