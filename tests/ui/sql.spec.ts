@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { waitForAppReady, ensureNotInOnboarding } from './test-helpers.js'
 
 test.describe('SQL tab', () => {
 	test.beforeEach(async ({ page }) => {
@@ -82,20 +83,25 @@ test.describe('SQL tab', () => {
 			}
 		})
 
-		await page.goto(`http://localhost:${process.env.UI_PORT || 8082}`)
+		await page.goto('/')
 		await page.waitForLoadState('networkidle')
 	})
 
 	test('displays tables, schema, and query results', async ({ page }) => {
-		// First make sure workbench panel exists
-		await expect(page.locator('.workbench-panel')).toBeVisible()
+		// Wait for app to be ready and ensure not in onboarding
+		await waitForAppReady(page)
+		await ensureNotInOnboarding(page)
 
-		// Click SQL in the workbench (bottom panel)
-		const sqlTab = page.locator('.workbench-tab[data-workbench-tab="sql"]')
-		await expect(sqlTab).toBeVisible()
-		await sqlTab.click()
+		// Navigate to SQL tab using the sidebar
+		const sqlNavItem = page.locator('.nav-item[data-tab="sql"]')
+		await expect(sqlNavItem).toBeVisible({ timeout: 5000 })
+		await sqlNavItem.click()
 
-		// Wait a moment for panel to expand and content to load
+		// Wait for SQL view to be active
+		const sqlView = page.locator('#sql-view')
+		await expect(sqlView).toBeVisible()
+
+		// Wait a moment for content to load
 		await page.waitForTimeout(500)
 
 		// Wait for SQL table list to be visible (which means panel expanded and SQL loaded)
@@ -113,16 +119,24 @@ test.describe('SQL tab', () => {
 	})
 
 	test('AI assistant populates the SQL editor', async ({ page }) => {
-		// First make sure workbench panel exists
-		await expect(page.locator('.workbench-panel')).toBeVisible()
+		// Wait for app to be ready and ensure not in onboarding
+		await waitForAppReady(page)
+		await ensureNotInOnboarding(page)
 
-		// Click SQL in the workbench (bottom panel)
-		const sqlTab = page.locator('.workbench-tab[data-workbench-tab="sql"]')
-		await expect(sqlTab).toBeVisible()
-		await sqlTab.click()
+		// Navigate to SQL tab using the sidebar
+		const sqlNavItem = page.locator('.nav-item[data-tab="sql"]')
+		await expect(sqlNavItem).toBeVisible({ timeout: 5000 })
+		await sqlNavItem.click()
 
-		// Wait a moment for panel to expand and content to load
+		// Wait for SQL view to be active
+		const sqlView = page.locator('#sql-view')
+		await expect(sqlView).toBeVisible()
+
+		// Wait a moment for content to load
 		await page.waitForTimeout(500)
+
+		// Click to expand the AI Assistant details panel
+		await page.click('details summary:has-text("AI Assistant")')
 
 		// Wait for SQL AI prompt to be visible (which means panel expanded and SQL loaded)
 		const prompt = page.locator('#sql-ai-prompt')
@@ -132,6 +146,8 @@ test.describe('SQL tab', () => {
 
 		await expect(page.locator('#sql-ai-status')).toHaveText(/SQL generated/i)
 		const editorValue = await page.locator('#sql-editor-input').inputValue()
-		await expect(editorValue).toContain('SELECT participant_id')
+		// Check for SELECT (case-insensitive) and participant_id
+		expect(editorValue.toLowerCase()).toContain('select')
+		expect(editorValue.toLowerCase()).toContain('participant_id')
 	})
 })

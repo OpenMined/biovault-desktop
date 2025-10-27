@@ -84,7 +84,7 @@ fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
     // Desktop-specific DB is deprecated - keeping for backwards compat only
     // TODO: Remove this entirely and use only BioVaultDb
-    
+
     // Temporary stub - all real tables are in CLI database now
     Ok(())
 }

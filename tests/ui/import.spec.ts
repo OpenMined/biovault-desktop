@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { waitForAppReady, ensureNotInOnboarding } from './test-helpers.js'
 import WebSocket from 'ws'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -65,7 +66,9 @@ test.describe('Import Data workflow', () => {
 		}
 	})
 
-	test('end-to-end import review and cleanup', async ({ page }) => {
+	test('end-to-end import review and cleanup', async ({ page }, testInfo) => {
+		// This is a complex test that needs more time
+		testInfo.setTimeout(30000)
 		await ensureLogSocket()
 		page.on('console', (msg) => {
 			sendUnifiedLog({ source: 'browser', type: msg.type(), text: msg.text() })
@@ -287,9 +290,9 @@ test.describe('Import Data workflow', () => {
 			w.__RESET_TEST_STATE__?.()
 		})
 
-		await page.waitForFunction(
-			() => window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
-		)
+		// Use new helper to wait for app
+		await waitForAppReady(page)
+		await ensureNotInOnboarding(page)
 
 		// Navigate to data view first
 		await page.locator('button.nav-item[data-tab="data"]').click()
@@ -516,6 +519,11 @@ test.describe('Import Data workflow', () => {
 
 		// Select folder again
 		await folderDropzone.click()
+		// Wait for the modal to be ready after folder selection
+		await page.waitForTimeout(500)
+		// Ensure checkboxes are stable before interacting
+		await txtCheckbox.waitFor({ state: 'attached' })
+		await csvCheckbox.waitFor({ state: 'attached' })
 		await txtCheckbox.check()
 		await csvCheckbox.check()
 
@@ -534,14 +542,29 @@ test.describe('Import Data workflow', () => {
 
 		// Delete all data (select all files and delete)
 		await page.locator('button.nav-item[data-tab="data"]').click()
+		// Wait for data view to be fully loaded
+		await expect(page.locator('#data-view.tab-content.active')).toBeVisible()
+		await page.waitForTimeout(500) // Give time for content to render
+
 		// Make sure we're showing all files by clicking the "All Files" view button
 		const viewAllBtn = page.locator('#view-all-btn')
+		await viewAllBtn.waitFor({ state: 'visible' })
 		if (!(await viewAllBtn.getAttribute('class'))?.includes('active')) {
 			await viewAllBtn.click()
 		}
-		await page.locator('#select-all-data-files').check()
-		page.once('dialog', (dialog) => dialog.accept())
+
+		// Wait for the select-all checkbox to be visible and check it
+		const selectAllCheckbox = page.locator('#select-all-data-files')
+		await selectAllCheckbox.waitFor({ state: 'visible' })
+		await selectAllCheckbox.check()
+		// Wait a moment for checkbox state to update
+		await page.waitForTimeout(500)
+
+		// Setup dialog handler before clicking
+		const dialogPromise = page.waitForEvent('dialog')
 		await page.locator('#delete-selected-btn').click()
+		const dialog = await dialogPromise
+		await dialog.accept()
 		await expect.poll(async () => page.locator('#files-table-body tr').count()).toBe(0)
 
 		const showCalls = await page.evaluate(() => {

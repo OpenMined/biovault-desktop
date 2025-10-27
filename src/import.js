@@ -1302,6 +1302,7 @@ export function createImportModule({
 			grchSelect.innerHTML = `
 				<option value="">-</option>
 				<option value="Unknown" ${metadata.grch_version === 'Unknown' ? 'selected' : ''}>Unknown</option>
+				<option value="GRCh36" ${metadata.grch_version === 'GRCh36' ? 'selected' : ''}>GRCh36</option>
 				<option value="GRCh37" ${metadata.grch_version === 'GRCh37' ? 'selected' : ''}>GRCh37</option>
 				<option value="GRCh38" ${metadata.grch_version === 'GRCh38' ? 'selected' : ''}>GRCh38</option>
 			`
@@ -1435,13 +1436,36 @@ export function createImportModule({
 				progressText.textContent = `Detecting file types... ${processed}/${totalFiles}`
 				progressBar.style.width = `${(processed / totalFiles) * 100}%`
 				const detections = await invoke('detect_file_types', { files: batch })
+				// Log the detection results to console for debugging
+				console.log('Detection results from backend:', detections)
 				// Update all metadata and UI for this batch
 				Object.keys(detections).forEach((filePath) => {
 					const detection = detections[filePath]
+					console.log(`Detection for ${filePath}:`, detection)
 					if (reviewFileMetadata[filePath] && detection) {
+						// Map the backend grch value to the expected dropdown format
+						let grchValue = detection.grch_version
+						if (grchValue === '36') {
+							grchValue = 'GRCh36'
+						} else if (grchValue === '37') {
+							grchValue = 'GRCh37'
+						} else if (grchValue === '38') {
+							grchValue = 'GRCh38'
+						} else if (grchValue && grchValue !== 'Unknown') {
+							// If it's some other value, try to add GRCh prefix if not already there
+							if (!grchValue.startsWith('GRCh')) {
+								grchValue = `GRCh${grchValue}`
+							}
+						}
+
+						console.log(`Updating metadata for ${filePath}:`, {
+							data_type: detection.data_type,
+							source: detection.source,
+							grch_version: grchValue,
+						})
 						reviewFileMetadata[filePath].data_type = detection.data_type
 						reviewFileMetadata[filePath].source = detection.source
-						reviewFileMetadata[filePath].grch_version = detection.grch_version
+						reviewFileMetadata[filePath].grch_version = grchValue
 						updateRowInPlace(filePath)
 					}
 				})
@@ -1487,8 +1511,16 @@ export function createImportModule({
 		}
 		// Update grch version dropdown
 		const grchSelect = targetRow.querySelector('td:nth-child(5) select')
+		console.log(`Updating grch for ${filePath}:`, {
+			grchSelect: grchSelect,
+			grch_version: metadata.grch_version,
+			selectOptions: grchSelect ? Array.from(grchSelect.options).map((o) => o.value) : [],
+		})
 		if (grchSelect && metadata.grch_version) {
 			grchSelect.value = metadata.grch_version
+			console.log(
+				`Set grch select value to: ${metadata.grch_version}, actual value: ${grchSelect.value}`,
+			)
 		}
 		// Note: Column 6 is detect button (header only), Column 7 is folder button
 		// Update row count (column 8 - hidden)

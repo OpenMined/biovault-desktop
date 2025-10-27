@@ -1873,10 +1873,10 @@ export function initOnboarding({
 							type: 'info',
 						})
 
-						// Show tabs navigation bar
-						const tabsBar = document.querySelector('.tabs')
-						if (tabsBar) {
-							tabsBar.style.display = 'flex'
+						// Show app layout (sidebar and main content)
+						const appLayout = document.querySelector('.app-layout')
+						if (appLayout) {
+							appLayout.style.display = 'flex'
 						}
 
 						// Hide onboarding and show settings
@@ -1887,9 +1887,12 @@ export function initOnboarding({
 						settingsView.classList.add('active')
 						settingsView.style.display = 'flex'
 
-						// Activate settings tab
-						document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'))
-						document.querySelector('.tab[data-tab="settings"]').classList.add('active')
+						// Activate settings nav item (new layout uses .nav-item instead of .tab)
+						document.querySelectorAll('.nav-item').forEach((tab) => tab.classList.remove('active'))
+						const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]')
+						if (settingsNavItem) {
+							settingsNavItem.classList.add('active')
+						}
 
 						// Refresh status
 						checkSyftBoxStatus()
@@ -1994,10 +1997,10 @@ export function initOnboarding({
 					sendLoginCodeBtn.textContent = 'Send Code'
 				}
 
-				// Show tabs navigation bar
-				const tabsBar = document.querySelector('.tabs')
-				if (tabsBar) {
-					tabsBar.style.display = 'flex'
+				// Show app layout (sidebar and main content)
+				const appLayout = document.querySelector('.app-layout')
+				if (appLayout) {
+					appLayout.style.display = 'flex'
 				}
 
 				// Hide onboarding and show settings
@@ -2008,9 +2011,12 @@ export function initOnboarding({
 				settingsView.classList.add('active')
 				settingsView.style.display = 'flex'
 
-				// Activate settings tab
-				document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'))
-				document.querySelector('.tab[data-tab="settings"]').classList.add('active')
+				// Activate settings nav item (new layout uses .nav-item instead of .tab)
+				document.querySelectorAll('.nav-item').forEach((tab) => tab.classList.remove('active'))
+				const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]')
+				if (settingsNavItem) {
+					settingsNavItem.classList.add('active')
+				}
 
 				// Refresh status
 				checkSyftBoxStatus()
@@ -2044,14 +2050,29 @@ export function initOnboarding({
 	async function checkOnboarding() {
 		try {
 			const isOnboarded = await invoke('check_is_onboarded')
-			if (!isOnboarded) {
+			console.log('🔍 Onboarding check - isOnboarded:', isOnboarded, 'type:', typeof isOnboarded)
+
+			// Show onboarding if user is NOT onboarded (isOnboarded === false)
+			if (isOnboarded === false || isOnboarded === 'false' || !isOnboarded) {
+				console.log('📋 User not onboarded (value:', isOnboarded, '), showing onboarding view')
+
 				// Show onboarding view
 				const onboardingView = document.getElementById('onboarding-view')
+				if (!onboardingView) {
+					console.error('❌ Onboarding view element not found!')
+					return
+				}
 				onboardingView.classList.add('active')
 				onboardingView.style.display = 'flex'
 
-				// Hide tabs
-				document.querySelector('.tabs').style.display = 'none'
+				// Hide sidebar (new layout uses .app-layout instead of .tabs)
+				const appLayout = document.querySelector('.app-layout')
+				if (appLayout) {
+					appLayout.style.display = 'none'
+					console.log('✅ App layout hidden')
+				} else {
+					console.warn('⚠️ App layout not found')
+				}
 
 				// Hide all other tab-content views
 				document.querySelectorAll('.tab-content:not(#onboarding-view)').forEach((view) => {
@@ -2059,11 +2080,23 @@ export function initOnboarding({
 					view.style.display = 'none'
 				})
 
+				// Make sure first onboarding step is visible
+				const firstStep = document.getElementById('onboarding-step-1')
+				if (firstStep) {
+					firstStep.style.display = 'block'
+					console.log('✅ First onboarding step shown')
+				} else {
+					console.error('❌ First onboarding step not found!')
+				}
+
 				// Update title
 				document.title = 'BioVault - Setup'
+				console.log('✅ Onboarding setup complete')
+			} else {
+				console.log('✅ User is already onboarded')
 			}
 		} catch (error) {
-			console.error('Error checking onboarding status:', error)
+			console.error('❌ Error checking onboarding status:', error)
 		}
 	}
 

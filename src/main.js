@@ -299,8 +299,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 	// Check onboarding status first - if not onboarded, skip loading data
 	const isOnboarded = await invoke('check_is_onboarded')
+	console.log('🎯 Main.js onboarding check:', isOnboarded, 'type:', typeof isOnboarded)
 
 	if (isOnboarded) {
+		console.log('📊 User is onboarded, loading data...')
 		// Load initial data only if user is onboarded
 		refreshExistingFilePaths()
 		loadData()
@@ -308,6 +310,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 		loadCommandLogs()
 		loadSettings()
 		updateSelectedFileCount()
+	} else {
+		console.log('🚀 User NOT onboarded, will show onboarding screen...')
 	}
 
 	// Initialize UI features

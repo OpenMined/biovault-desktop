@@ -1646,8 +1646,8 @@ export function createPipelinesModule({
 					<div class="modal-footer">
 						<button class="secondary-btn" onclick="pipelineModule.closePipelineInputModal()">Cancel</button>
 						<button class="primary-btn" onclick="pipelineModule.savePipelineInput(${isEdit}, '${
-			existingName || ''
-		}')">${isEdit ? 'Update' : 'Add'} Input</button>
+							existingName || ''
+						}')">${isEdit ? 'Update' : 'Add'} Input</button>
 					</div>
 				</div>
 			</div>
@@ -1745,7 +1745,7 @@ export function createPipelinesModule({
 inputs:${
 				Object.keys(spec.inputs || {}).length > 0
 					? '\n' +
-					  Object.entries(spec.inputs)
+						Object.entries(spec.inputs)
 							.map(([k, v]) => {
 								if (typeof v === 'string') {
 									return `  ${k}: ${v}`
@@ -1759,7 +1759,7 @@ inputs:${
 steps:${
 				(spec.steps || []).length > 0
 					? '\n' +
-					  spec.steps
+						spec.steps
 							.map((s) => {
 								let stepYaml = `- id: ${s.id}\n  uses: ${s.uses || ''}`
 								if (s.with && Object.keys(s.with).length > 0) {
@@ -2318,8 +2318,8 @@ steps:${
 					step.status === 'ok'
 						? '<span class="success-badge">✓ Configured</span>'
 						: step.status === 'warning'
-						? '<span class="warning-badge">⚠️ Warnings</span>'
-						: '<span class="error-badge">❌ Issues</span>'
+							? '<span class="warning-badge">⚠️ Warnings</span>'
+							: '<span class="error-badge">❌ Issues</span>'
 
 				const issuesHtml =
 					step.issues.length > 0
@@ -2669,7 +2669,7 @@ steps:${
 						param.description
 							? `<span style="font-size: 12px; color: #9ca3af; display: block; margin-top: 2px;">${escapeHtml(
 									param.description,
-							  )}</span>`
+								)}</span>`
 							: ''
 					}
 				`
@@ -3747,7 +3747,7 @@ steps:${
 								isBound
 									? `<button class="btn-unbind" onclick="pipelineModule.removeBinding('${escapeHtml(
 											input.name,
-									  )}')">Clear</button>`
+										)}')">Clear</button>`
 									: ''
 							}
 						</div>

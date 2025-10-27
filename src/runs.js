@@ -349,8 +349,8 @@ export function createRunsModule({ invoke, listen }) {
 													<div class="output-item">
 														<span class="output-name">${escapeHtml(name)}</span>
 														<button class="view-output-btn" data-output-path="${resultsDir}/${step.id}/${
-														spec.match(/\(([^)]+)\)/)?.[1] || name
-													}">
+															spec.match(/\(([^)]+)\)/)?.[1] || name
+														}">
 															View
 														</button>
 													</div>

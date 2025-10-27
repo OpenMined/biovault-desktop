@@ -123,16 +123,17 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 
 		document.getElementById('onboarding-email').value = email
 
-		const tabsBar = document.querySelector('.tabs')
-		if (tabsBar) {
-			tabsBar.style.display = 'none'
+		// Hide the app layout (sidebar and main content)
+		const appLayout = document.querySelector('.app-layout')
+		if (appLayout) {
+			appLayout.style.display = 'none'
 		}
 
 		document.querySelectorAll('.tab-content').forEach((content) => {
 			content.classList.remove('active')
 			content.style.display = 'none'
 		})
-		document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'))
+		document.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'))
 
 		const onboardingView = document.getElementById('onboarding-view')
 		onboardingView.classList.add('active')

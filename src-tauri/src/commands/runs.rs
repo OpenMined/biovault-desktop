@@ -17,7 +17,8 @@ pub fn start_analysis(
 
     // Get project from CLI database
     let biovault_db = state.biovault_db.lock().unwrap();
-    let project_obj = biovault_db.get_project(&project_id.to_string())
+    let project_obj = biovault_db
+        .get_project(&project_id.to_string())
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Project {} not found", project_id))?;
     let project = (project_obj.name.clone(), project_obj.project_path.clone());
@@ -132,22 +133,25 @@ pub fn start_analysis(
     writeln!(log_file, "=== Preparing analysis... ===").map_err(|e| e.to_string())?;
 
     // Create run using CLI library (unified runs table)
-    let run_id = biovault_db.create_step_run(
-        project_id,
-        run_dir.to_str().unwrap(),
-        participant_ids.len() as i32,
-    )
-    .map_err(|e| e.to_string())?;
+    let run_id = biovault_db
+        .create_step_run(
+            project_id,
+            run_dir.to_str().unwrap(),
+            participant_ids.len() as i32,
+        )
+        .map_err(|e| e.to_string())?;
 
     // Add run participants
     for participant_id in &participant_ids {
-        biovault_db.conn.execute(
-            "INSERT INTO run_participants (run_id, participant_id) VALUES (?1, ?2)",
-            params![run_id, participant_id],
-        )
-        .map_err(|e| e.to_string())?;
+        biovault_db
+            .conn
+            .execute(
+                "INSERT INTO run_participants (run_id, participant_id) VALUES (?1, ?2)",
+                params![run_id, participant_id],
+            )
+            .map_err(|e| e.to_string())?;
     }
-    
+
     drop(biovault_db);
 
     Ok(RunStartResult {
@@ -166,15 +170,17 @@ pub async fn execute_analysis(
 
     let (project_path, work_dir): (String, String) = {
         let biovault_db = state.biovault_db.lock().unwrap();
-        biovault_db.conn.query_row(
-            "SELECT p.project_path, r.work_dir
+        biovault_db
+            .conn
+            .query_row(
+                "SELECT p.project_path, r.work_dir
          FROM runs r
          JOIN projects p ON r.step_id = p.id
          WHERE r.id = ?1",
-            params![run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?
+                params![run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?
     };
 
     let run_dir_path = PathBuf::from(&work_dir);
@@ -260,7 +266,8 @@ pub async fn execute_analysis(
 
     {
         let biovault_db = state.biovault_db.lock().unwrap();
-        biovault_db.update_run_status(run_id, status_str, true)
+        biovault_db
+            .update_run_status(run_id, status_str, true)
             .map_err(|e| e.to_string())?;
     }
 
@@ -323,7 +330,8 @@ pub fn get_runs(state: tauri::State<AppState>) -> Result<Vec<Run>, String> {
 pub fn delete_run(state: tauri::State<AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().unwrap();
 
-    let work_dir: String = biovault_db.conn
+    let work_dir: String = biovault_db
+        .conn
         .query_row(
             "SELECT work_dir FROM runs WHERE id = ?1",
             params![run_id],
@@ -331,13 +339,17 @@ pub fn delete_run(state: tauri::State<AppState>, run_id: i64) -> Result<(), Stri
         )
         .map_err(|e| e.to_string())?;
 
-    biovault_db.conn.execute(
-        "DELETE FROM run_participants WHERE run_id = ?1",
-        params![run_id],
-    )
-    .map_err(|e| e.to_string())?;
+    biovault_db
+        .conn
+        .execute(
+            "DELETE FROM run_participants WHERE run_id = ?1",
+            params![run_id],
+        )
+        .map_err(|e| e.to_string())?;
 
-    biovault_db.conn.execute("DELETE FROM runs WHERE id = ?1", params![run_id])
+    biovault_db
+        .conn
+        .execute("DELETE FROM runs WHERE id = ?1", params![run_id])
         .map_err(|e| e.to_string())?;
 
     if Path::new(&work_dir).exists() {
@@ -361,7 +373,8 @@ pub fn get_run_logs_tail(
 ) -> Result<String, String> {
     let biovault_db = state.biovault_db.lock().unwrap();
 
-    let work_dir: String = biovault_db.conn
+    let work_dir: String = biovault_db
+        .conn
         .query_row(
             "SELECT work_dir FROM runs WHERE id = ?1",
             params![run_id],
@@ -396,7 +409,8 @@ pub fn get_run_logs_tail(
 pub fn get_run_logs_full(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
     let biovault_db = state.biovault_db.lock().unwrap();
 
-    let work_dir: String = biovault_db.conn
+    let work_dir: String = biovault_db
+        .conn
         .query_row(
             "SELECT work_dir FROM runs WHERE id = ?1",
             params![run_id],
