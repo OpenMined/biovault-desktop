@@ -93,11 +93,11 @@ export function createProjectsModule({
 	}
 
 	// Legacy functions - kept for compatibility but no longer used
-	function ensureEditorSpecForm(_section = 'parameters') {
+	function _ensureEditorSpecForm() {
 		// No longer needed with new simple editor
 	}
 
-	function updateEditorCounts() {
+	function _updateEditorCounts() {
 		// No longer needed with new simple editor
 	}
 
@@ -105,11 +105,11 @@ export function createProjectsModule({
 		// No longer needed with new simple editor
 	}
 
-	function switchEditorTab(_tabName) {
+	function _switchEditorTab() {
 		// No longer needed with new simple editor
 	}
 
-	function updateEditorSpecSummary() {
+	function _updateEditorSpecSummary() {
 		if (!projectEditorState.specSummaryEl) return
 		const nameInput = document.getElementById('project-edit-name')
 		const projectName = nameInput ? nameInput.value.trim() : projectEditorState.metadata?.name || ''
@@ -621,15 +621,6 @@ export function createProjectsModule({
 		} catch (error) {
 			console.error('Failed to compute project.yaml digest:', error)
 		}
-	}
-
-	function _startSpecDigestPolling() {
-		if (projectEditorState.specDigestTimer) {
-			clearInterval(projectEditorState.specDigestTimer)
-		}
-		projectEditorState.specDigestTimer = setInterval(() => {
-			checkSpecDigest(false)
-		}, 4000)
 	}
 
 	function stopSpecDigestPolling() {
@@ -1325,88 +1316,7 @@ export function createProjectsModule({
 		}
 	}
 
-	function _renderProjectEditor(data) {
-		const pathEl = document.getElementById('project-edit-path')
-		pathEl.textContent = data.project_path || ''
-		clearEditorPreview('Preview updates as you edit.')
-
-		// Update header title
-		const titleEl = document.getElementById('project-editor-title')
-		if (titleEl) {
-			titleEl.textContent = data.metadata.name || 'my-step'
-		}
-
-		// Populate form fields
-		document.getElementById('project-edit-name').value = data.metadata.name || ''
-		document.getElementById('project-edit-author').value = data.metadata.author || ''
-		document.getElementById('project-edit-workflow').value = data.metadata.workflow || ''
-		document.getElementById('project-edit-template').value = data.metadata.template || ''
-		document.getElementById('project-edit-version').value = data.metadata.version || ''
-
-		const previewFields = [
-			'project-edit-author',
-			'project-edit-workflow',
-			'project-edit-template',
-			'project-edit-version',
-		]
-		previewFields.forEach((id) => {
-			const el = document.getElementById(id)
-			if (el && !el.dataset.previewBound) {
-				el.addEventListener('input', () => scheduleEditorPreview())
-				el.dataset.previewBound = 'true'
-			}
-		})
-
-		// Set up spec data
-		projectEditorState.specData = {
-			parameters: data.metadata.parameters || [],
-			inputs: data.metadata.inputs || [],
-			outputs: data.metadata.outputs || [],
-		}
-
-		// Initialize the spec form for the default tab (parameters)
-		ensureEditorSpecForm('parameters')
-		if (projectEditorState.specForm) {
-			projectEditorState.specForm.setSpec(projectEditorState.specData)
-		}
-
-		// Update counts
-		updateEditorCounts()
-
-		// Set up tab navigation
-		setupEditorTabHandlers()
-
-		// Render file tree
-		const treeContainer = document.getElementById('project-file-tree')
-		treeContainer.innerHTML = ''
-		projectEditorState.treeNodes.clear()
-
-		if (!data.file_tree || data.file_tree.length === 0) {
-			treeContainer.innerHTML = '<p class="empty-state">No files found in this folder.</p>'
-		} else {
-			renderProjectTree(data.file_tree, treeContainer, null)
-			projectEditorState.selectedAssets.forEach((assetPath) => {
-				const info = projectEditorState.treeNodes.get(assetPath)
-				if (!info) return
-				setNodeAndChildren(assetPath, true)
-				updateAncestorStates(info.parent)
-			})
-		}
-
-		const statusEl = document.getElementById('project-edit-status')
-		if (data.has_project_yaml) {
-			statusEl.textContent = ''
-			statusEl.style.color = '#666'
-		} else {
-			statusEl.textContent = 'No project.yaml detected. Saving will create one automatically.'
-			statusEl.style.color = '#ff9800'
-		}
-
-		updateJupyterControls()
-		updateEditorSpecSummary()
-	}
-
-	function setupEditorTabHandlers() {
+	function _setupEditorTabHandlers() {
 		// Set up tab click handlers
 		document.querySelectorAll('.editor-nav-tab').forEach((tab) => {
 			// Remove old listeners by cloning
@@ -1414,7 +1324,7 @@ export function createProjectsModule({
 			tab.parentNode.replaceChild(newTab, tab)
 
 			newTab.addEventListener('click', () => {
-				switchEditorTab(newTab.dataset.tab)
+				_switchEditorTab(newTab.dataset.tab)
 			})
 		})
 
@@ -1481,7 +1391,7 @@ export function createProjectsModule({
 		}
 	}
 
-	function renderProjectTree(nodes, container, parentPath) {
+	function _renderProjectTree(nodes, container, parentPath) {
 		nodes.forEach((node) => {
 			const path = node.path
 			if (node.is_dir) {
@@ -1524,7 +1434,7 @@ export function createProjectsModule({
 					children: children.map((child) => child.path),
 				})
 
-				renderProjectTree(children, childrenContainer, path)
+				_renderProjectTree(children, childrenContainer, path)
 			} else {
 				const leaf = document.createElement('div')
 				leaf.className = 'tree-leaf'
@@ -2127,7 +2037,6 @@ export function createProjectsModule({
 
 	function setupModalHandlers() {
 		// I/O Modal
-		const _ioModal = document.getElementById('io-modal')
 		const ioClose = document.getElementById('io-modal-close')
 		const ioCancel = document.getElementById('io-modal-cancel')
 		const ioSave = document.getElementById('io-modal-save')
@@ -2137,7 +2046,6 @@ export function createProjectsModule({
 		if (ioSave) ioSave.onclick = () => saveIO()
 
 		// Parameter Modal
-		const _paramModal = document.getElementById('param-modal')
 		const paramClose = document.getElementById('param-modal-close')
 		const paramCancel = document.getElementById('param-modal-cancel')
 		const paramSave = document.getElementById('param-modal-save')

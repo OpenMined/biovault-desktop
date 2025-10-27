@@ -1,9 +1,9 @@
+/* global pipelineModule */
 export function createPipelinesModule({
 	invoke,
 	dialog,
 	open: _open,
 	navigateTo,
-	showCreateProjectModal: _showCreateProjectModal,
 	openProjectEditor,
 }) {
 	// Helper function
@@ -22,35 +22,6 @@ export function createPipelinesModule({
 			inputs: {},
 			steps: [],
 		},
-	}
-
-	// Tab switching functionality
-	function _initTabNavigation() {
-		const tabs = document.querySelectorAll('.run-tab')
-		const contents = document.querySelectorAll('.run-tab-content')
-
-		tabs.forEach((tab) => {
-			tab.addEventListener('click', () => {
-				const targetTab = tab.dataset.tab
-
-				// Update active tab
-				tabs.forEach((t) => t.classList.remove('active'))
-				tab.classList.add('active')
-
-				// Show corresponding content
-				contents.forEach((content) => {
-					if (content.id === `${targetTab}-view`) {
-						content.style.display = 'block'
-						// Load content when tab is activated
-						if (targetTab === 'pipelines') {
-							loadPipelines()
-						}
-					} else {
-						content.style.display = 'none'
-					}
-				})
-			})
-		})
 	}
 
 	// Load pipelines list
@@ -212,7 +183,7 @@ export function createPipelinesModule({
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						submitPipelineName()
+						pipelineModule.submitPipelineName()
 					}
 				})
 			}
@@ -259,9 +230,7 @@ export function createPipelinesModule({
 				spec: spec,
 			})
 
-			if (result) {
-				await loadPipelines()
-			}
+			await loadPipelines()
 		} catch (error) {
 			console.error('Error creating pipeline:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
@@ -324,7 +293,7 @@ export function createPipelinesModule({
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						submitPipelineURL()
+						pipelineModule.submitPipelineURL()
 					}
 				})
 			}
@@ -394,9 +363,6 @@ export function createPipelinesModule({
 			})
 
 			if (selected) {
-				// Check if it has a pipeline.yaml
-				// const _pipelineYamlPath = selected + '/pipeline.yaml' // Not used currently
-
 				// Extract name from folder
 				const name = selected.split('/').pop() || selected.split('\\').pop() || 'imported-pipeline'
 
@@ -1720,7 +1686,6 @@ export function createPipelinesModule({
 				pipelineState.currentPipeline = updated
 			}
 			await loadPipelineSteps(pipelineState.currentPipeline.id)
-			// renderPipelineInputs() // Function no longer exists
 
 			closePipelineInputModal()
 			console.log('✅ Saved pipeline input:', name)
@@ -1837,8 +1802,6 @@ steps:${
 		}
 	}
 
-	// Removed duplicate async removePipelineInput function - using simpler version at line ~526
-
 	async function loadPipelineSteps(pipelineId) {
 		try {
 			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
@@ -1942,7 +1905,7 @@ steps:${
 	}
 
 	// Show step context menu
-	function showStepMenu(event, stepIndex, _step) {
+	function showStepMenu(event, stepIndex) {
 		// Remove any existing menu
 		const existingMenu = document.querySelector('.step-context-menu')
 		if (existingMenu) existingMenu.remove()
@@ -2250,16 +2213,8 @@ steps:${
 
 			// Try to load project spec to validate bindings
 			try {
-				// Resolve project path relative to pipeline directory if needed
-				let projectPath = step.uses
-				if (pipelineState.currentPipeline?.pipeline_path && !projectPath.startsWith('/')) {
-					// Relative path - resolve relative to pipeline directory
-					const pipelinePath = pipelineState.currentPipeline.pipeline_path
-					projectPath = `${pipelinePath}/${projectPath}`
-				}
-
 				const projectSpec = await invoke('load_project_editor', {
-					projectPath: projectPath,
+					projectPath: step.uses,
 				})
 
 				const requiredInputs =
@@ -2501,284 +2456,6 @@ steps:${
 		}
 	}
 
-	// Show pipeline input dialog with file/folder pickers and parameter overrides
-	async function _showPipelineInputDialog(pipelineName, requiredInputs, pipelineId, pipelineSpec) {
-		// Load saved configurations from CLI database
-		let savedConfigs = []
-		try {
-			savedConfigs = await invoke('list_run_configs', { pipelineId })
-		} catch (error) {
-			console.error('Failed to load saved configs:', error)
-		}
-
-		// Collect all parameters from all steps for override
-		const stepParameters = []
-		if (pipelineSpec && pipelineSpec.steps) {
-			for (const step of pipelineSpec.steps) {
-				try {
-					const projectSpec = await invoke('load_project_editor', {
-						projectPath: step.uses,
-					})
-					const params = projectSpec.metadata?.parameters || []
-					params.forEach((param) => {
-						stepParameters.push({
-							stepId: step.id,
-							paramName: param.name,
-							paramType: param.type || 'String',
-							default: param.default || '',
-							description: param.description || '',
-						})
-					})
-				} catch (e) {
-					console.error(`Failed to load parameters for step ${step.id}:`, e)
-				}
-			}
-		}
-
-		const configSelectHtml =
-			savedConfigs.length > 0
-				? `<div style="margin-bottom: 16px;">
-					<label style="display: block; margin-bottom: 6px; font-weight: 600; color: #374151;">
-						Load Saved Configuration
-					</label>
-					<select id="load-saved-config" class="text-input" style="width: 100%;">
-						<option value="">-- Start Fresh --</option>
-						${savedConfigs
-							.map(
-								(config) =>
-									`<option value="${config.id}">${config.name} (${new Date(
-										config.created_at,
-									).toLocaleString()})</option>`,
-							)
-							.join('')}
-					</select>
-				</div>`
-				: ''
-
-		const parametersHtml =
-			stepParameters.length > 0
-				? `<div style="margin-top: 24px;">
-					<h3>Parameter Overrides (Optional)</h3>
-					<p style="font-size: 13px; color: #6b7280; margin-bottom: 12px;">Override default parameter values for this run</p>
-					<div id="pipeline-parameter-fields"></div>
-				</div>`
-				: ''
-
-		// Create modal HTML
-		const modalHtml = `
-			<div id="pipeline-run-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 600px; max-height: 85vh;">
-					<div class="modal-header">
-						<h2>Run Pipeline: ${pipelineName}</h2>
-						<button class="modal-close" onclick="pipelineModule.closePipelineRunDialog()">×</button>
-					</div>
-					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
-						${configSelectHtml}
-						<h3>Configure Inputs</h3>
-						<div id="pipeline-input-fields"></div>
-						${parametersHtml}
-						<div style="margin-top: 16px;">
-							<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-								<input type="checkbox" id="save-config-checkbox" style="width: auto;">
-								<span style="font-size: 14px; color: #6b7280;">Save this configuration for future runs</span>
-							</label>
-							<div id="save-config-name-field" style="display: none; margin-top: 8px;">
-								<input 
-									type="text" 
-									id="config-name-input" 
-									placeholder="Configuration name (e.g., 'Production Dataset')"
-									style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px;"
-								>
-							</div>
-						</div>
-					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closePipelineRunDialog()">
-							Cancel
-						</button>
-						<button class="primary-btn" onclick="pipelineModule.confirmPipelineRun()">
-							Run Pipeline
-						</button>
-					</div>
-				</div>
-			</div>
-		`
-
-		// Add modal to page
-		const modalContainer = document.createElement('div')
-		modalContainer.innerHTML = modalHtml
-		document.body.appendChild(modalContainer)
-
-		// Create input fields
-		const container = document.getElementById('pipeline-input-fields')
-		let hasInputs = false
-
-		for (const [name, type] of Object.entries(requiredInputs)) {
-			hasInputs = true
-			const fieldDiv = document.createElement('div')
-			fieldDiv.style.marginBottom = '15px'
-
-			if (type === 'File' || type === 'Directory') {
-				fieldDiv.innerHTML = `
-					<label style="display: block; margin-bottom: 5px;">
-						${name} (${type}) *
-					</label>
-					<div style="display: flex; gap: 10px;">
-						<input type="text" id="input-${name}" style="flex: 1;" placeholder="Select ${type.toLowerCase()}..." readonly autocomplete="off">
-						<button class="secondary-btn" onclick="pipelineModule.selectPath('${name}', '${type}')">
-							Browse...
-						</button>
-					</div>
-				`
-			} else {
-				fieldDiv.innerHTML = `
-					<label style="display: block; margin-bottom: 5px;">
-						${name} (${type})
-					</label>
-					<input type="text" id="input-${name}" style="width: 100%;" placeholder="Enter value..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-				`
-			}
-
-			container.appendChild(fieldDiv)
-		}
-
-		if (!hasInputs) {
-			container.innerHTML = '<p style="color: #666;">No inputs required for this pipeline.</p>'
-		}
-
-		// Create parameter override fields
-		const paramsContainer = document.getElementById('pipeline-parameter-fields')
-		if (paramsContainer && stepParameters.length > 0) {
-			stepParameters.forEach((param) => {
-				const fieldDiv = document.createElement('div')
-				fieldDiv.style.marginBottom = '12px'
-				fieldDiv.innerHTML = `
-					<label style="display: block; margin-bottom: 4px; font-size: 13px; color: #374151;">
-						<strong>${escapeHtml(param.stepId)}.${escapeHtml(param.paramName)}</strong>
-						<span style="color: #9ca3af;"> (${escapeHtml(param.paramType)})</span>
-					</label>
-					<input 
-						type="text" 
-						id="param-${param.stepId}-${param.paramName}" 
-						placeholder="${param.default ? 'Default: ' + escapeHtml(param.default) : 'No default'}"
-						value="${escapeHtml(param.default)}"
-						style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px;"
-						autocomplete="off"
-					>
-					${
-						param.description
-							? `<span style="font-size: 12px; color: #9ca3af; display: block; margin-top: 2px;">${escapeHtml(
-									param.description,
-							  )}</span>`
-							: ''
-					}
-				`
-				paramsContainer.appendChild(fieldDiv)
-			})
-		}
-
-		// Handle save config checkbox
-		const saveCheckbox = document.getElementById('save-config-checkbox')
-		const nameField = document.getElementById('save-config-name-field')
-		if (saveCheckbox && nameField) {
-			saveCheckbox.addEventListener('change', (e) => {
-				nameField.style.display = e.target.checked ? 'block' : 'none'
-				if (e.target.checked) {
-					document.getElementById('config-name-input')?.focus()
-				}
-			})
-		}
-
-		// Handle load saved config
-		const loadConfigSelect = document.getElementById('load-saved-config')
-		if (loadConfigSelect) {
-			loadConfigSelect.addEventListener('change', async (e) => {
-				const configId = e.target.value
-				if (configId !== '') {
-					try {
-						const config = await invoke('get_run_config', { configId: parseInt(configId) })
-						if (config && config.config_data) {
-							// Populate inputs from saved config
-							if (config.config_data.inputs) {
-								for (const [name, value] of Object.entries(config.config_data.inputs)) {
-									const inputEl = document.getElementById(`input-${name}`)
-									if (inputEl) {
-										inputEl.value = value
-									}
-								}
-							}
-							// Populate parameters from saved config
-							if (config.config_data.parameters) {
-								for (const [stepParam, value] of Object.entries(config.config_data.parameters)) {
-									const paramEl = document.getElementById(`param-${stepParam}`)
-									if (paramEl) {
-										paramEl.value = value
-									}
-								}
-							}
-						}
-					} catch (error) {
-						console.error('Failed to load config:', error)
-						alert('Failed to load configuration: ' + error)
-					}
-				}
-			})
-		}
-
-		// Return a promise that resolves with the inputs AND parameter overrides
-		return new Promise((resolve) => {
-			window.pipelineModule.confirmPipelineRun = async () => {
-				const inputs = {}
-				for (const name of Object.keys(requiredInputs)) {
-					const value = document.getElementById(`input-${name}`)?.value
-					if (value) {
-						inputs[name] = value
-					}
-				}
-
-				// Collect parameter overrides (stepId.paramName format)
-				const parameters = {}
-				stepParameters.forEach((param) => {
-					const value = document.getElementById(`param-${param.stepId}-${param.paramName}`)?.value
-					if (value && value !== param.default) {
-						// Only save if different from default
-						parameters[`${param.stepId}.${param.paramName}`] = value
-					}
-				})
-
-				// Save configuration if checkbox is checked
-				const saveCheckbox = document.getElementById('save-config-checkbox')
-				if (saveCheckbox?.checked) {
-					const configName = document.getElementById('config-name-input')?.value?.trim()
-					if (!configName) {
-						alert('Please enter a name for this configuration')
-						return
-					}
-
-					try {
-						await invoke('save_run_config', {
-							pipelineId,
-							name: configName,
-							configData: { inputs, parameters },
-						})
-						console.log('✅ Saved run configuration:', configName)
-					} catch (error) {
-						console.error('Failed to save config:', error)
-						// Don't block the run if save fails
-					}
-				}
-
-				closePipelineRunDialog()
-				resolve({ inputs, parameters })
-			}
-
-			window.pipelineModule.closePipelineRunDialog = () => {
-				closePipelineRunDialog()
-				resolve(null)
-			}
-		})
-	}
-
 	function closePipelineRunDialog() {
 		const modal = document.getElementById('pipeline-run-modal')
 		if (modal) {
@@ -2960,7 +2637,6 @@ steps:${
 			wizardNext,
 			wizardBack,
 			addPipelineInput,
-			removePipelineInput,
 			addPipelineStep,
 			removeStep,
 			moveStepUp,
@@ -2996,8 +2672,6 @@ steps:${
 			closeStepURLInputModal,
 			submitStepURL,
 			loadPipelineSteps,
-			// editPipelineStep, // duplicate - already defined above
-			// removePipelineStep, // duplicate - already defined above
 			closeStepPickerModal,
 			showExistingProjectsList,
 			closeProjectsListModal,
@@ -3005,15 +2679,12 @@ steps:${
 			createNewStepProject,
 			closeBlankStepModal,
 			submitBlankStepName,
-			// closeBindingConfigModal, // duplicate - already defined above
 			saveStepWithBindings,
-			// configureStepBindings, // duplicate - already defined above
-			// updateStepBindings, // duplicate - already defined above
 			showPipelineInputModal,
 			closePipelineInputModal,
 			savePipelineInput,
 			editPipelineInput,
-			// removePipelineInput, // duplicate - already defined above
+			removePipelineInput,
 			showPipelineYAMLModal,
 			closeYAMLViewerModal,
 			openYAMLInVSCode,
@@ -3237,7 +2908,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						submitStepURL()
+						pipelineModule.submitStepURL()
 					}
 				})
 			}
@@ -3376,7 +3047,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						submitBlankStepName()
+						pipelineModule.submitBlankStepName()
 					}
 				})
 			}
@@ -3479,72 +3150,6 @@ steps:${
 			console.error('Error adding step:', error)
 			alert('Failed to add step: ' + error)
 		}
-	}
-
-	async function _showBindingConfigModal(projectPath, projectName, projectSpec) {
-		const inputs = projectSpec.metadata?.inputs || []
-		const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
-		const _existingSteps = pipelineState.currentPipeline.spec?.steps || []
-
-		const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
-
-		const modalHtml = `
-			<div id="binding-config-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 700px; max-height: 85vh;">
-					<div class="modal-header">
-						<h2>Configure Step: ${projectName}</h2>
-						<button class="modal-close" onclick="pipelineModule.closeBindingConfigModal()">×</button>
-					</div>
-					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
-						<p style="color: #6b7280; margin: 0 0 20px 0; font-size: 14px;">
-							Configure how this step receives its inputs
-						</p>
-						
-						${
-							inputs.length > 0
-								? `
-							<div class="bindings-list">
-								${inputs
-									.map((input) => {
-										// Smart default: try to match pipeline input with same name
-										const defaultBinding = pipelineInputs[input.name] ? `inputs.${input.name}` : ''
-
-										return `
-										<div class="binding-item">
-											<label class="binding-label">
-												<span class="binding-name">${input.name}</span>
-												<span class="binding-type">${input.type}</span>
-											</label>
-											<input 
-												type="text" 
-												class="binding-input"
-												data-input="${input.name}"
-												value="${defaultBinding}"
-												placeholder="e.g., inputs.${input.name} or step.filter.outputs.data"
-												autocomplete="off"
-												autocorrect="off"
-												autocapitalize="off"
-												spellcheck="false"
-											/>
-											<p class="binding-hint">${input.description || ''}</p>
-										</div>
-									`
-									})
-									.join('')}
-							</div>
-						`
-								: '<p style="color: #9ca3af;">This step has no inputs to configure.</p>'
-						}
-					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeBindingConfigModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.saveStepWithBindings('${projectPath}', '${stepId}')">Add Step</button>
-					</div>
-				</div>
-			</div>
-		`
-
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
 	}
 
 	function closeBindingConfigModal() {

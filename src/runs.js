@@ -2,11 +2,8 @@ export function createRunsModule({ invoke, listen }) {
 	let selectedParticipants = []
 	let selectedProject = null
 	let currentRunLogListeners = []
-	let _currentLogRunId = null
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
-
-	let _currentPipelineLogRunId = null
 
 	// Listen for pipeline logs and completion
 	listen('pipeline-log-line', (event) => {
@@ -327,7 +324,7 @@ export function createRunsModule({ invoke, listen }) {
 					<h4 style="margin: 20px 0 12px 0; font-size: 15px; color: #374151;">Pipeline Steps</h4>
 					${steps
 						.map(
-							(step, _index) => `
+							(step) => `
 						<div class="step-row-enhanced">
 							<div class="step-main">
 								<div class="step-icon ${statusClass}">
@@ -490,35 +487,6 @@ export function createRunsModule({ invoke, listen }) {
 		return div.innerHTML
 	}
 
-	async function _showRunLogs(runId, projectName, workDir = null) {
-		const logViewer = document.getElementById('log-viewer')
-		const logContent = document.getElementById('log-content')
-		const logRunName = document.getElementById('log-run-name')
-		const shareBtn = document.getElementById('share-logs-btn')
-
-		_currentLogRunId = runId
-		currentLogWorkDir = workDir
-
-		logViewer.classList.add('active')
-		logContent.textContent = 'Loading logs...'
-		logRunName.textContent = `(${projectName})`
-
-		// Show share button if we have a work dir
-		if (workDir) {
-			shareBtn.style.display = 'block'
-		} else {
-			shareBtn.style.display = 'none'
-		}
-
-		try {
-			const logs = await invoke('get_run_logs', { runId })
-			logContent.textContent = logs
-			logContent.scrollTop = logContent.scrollHeight
-		} catch (error) {
-			logContent.textContent = `Error loading logs: ${error}`
-		}
-	}
-
 	async function runAnalysis() {
 		if (selectedParticipants.length === 0 || selectedProject === null) return
 
@@ -549,7 +517,6 @@ export function createRunsModule({ invoke, listen }) {
 			logRunName.textContent = ''
 			shareBtn.style.display = 'block'
 
-			_currentLogRunId = result.run_id
 			currentLogWorkDir = result.work_dir
 
 			// Load initial log content
