@@ -181,8 +181,8 @@ test.afterEach(async () => {
 })
 
 test.describe('Pipeline Creation', () => {
-	test('should create and view a pipeline', async ({ page }) => {
-		sendUnifiedLog({ test: 'pipeline-creation', action: 'start' })
+	test('should open create pipeline modal and navigate through wizard', async ({ page }) => {
+		sendUnifiedLog({ test: 'pipeline-wizard-navigation', action: 'start' })
 
 		// Wait for app to be ready and ensure not in onboarding
 		await waitForAppReady(page)
@@ -195,11 +195,61 @@ test.describe('Pipeline Creation', () => {
 		// Wait for run view to be visible
 		await expect(page.locator('#run-view')).toBeVisible()
 
-		// Check that pipeline creation button exists
+		// Click create pipeline button to open the wizard
 		const createBtn = page.locator('#create-pipeline-btn, #empty-create-pipeline-btn').first()
 		await expect(createBtn).toBeVisible()
+		await createBtn.click()
 
-		sendUnifiedLog({ test: 'pipeline-creation', action: 'complete' })
+		// Wait for pipeline picker modal
+		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
+
+		// The picker modal should have options
+		await expect(page.locator('#pipeline-picker-modal')).toContainText('Create Blank Pipeline')
+		await expect(page.locator('#pipeline-picker-modal')).toContainText('Import from GitHub')
+
+		// Click "Create Blank Pipeline" to open name modal
+		await page.click('button:has-text("Create Blank Pipeline")')
+
+		// Wait for pipeline name modal
+		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
+
+		// Verify the modal has proper elements
+		await expect(page.locator('#pipeline-name-input')).toBeVisible()
+		await expect(
+			page.locator('#pipeline-name-modal button:has-text("Create Pipeline")'),
+		).toBeVisible()
+		await expect(page.locator('#pipeline-name-modal button:has-text("Cancel")')).toBeVisible()
+
+		// Fill in a pipeline name
+		await page.fill('#pipeline-name-input', 'Test Navigation Pipeline')
+
+		// Set up dialog handler in case of any alerts
+		page.on('dialog', async (dialog) => {
+			console.log('Dialog:', dialog.message())
+			await dialog.accept()
+		})
+
+		// Create the pipeline
+		await page.click('#pipeline-name-modal button:has-text("Create Pipeline")')
+
+		// Wait for modal to close and pipeline to be created
+		await page.waitForTimeout(2000)
+
+		// After creation, we should be in the pipeline editor view
+		// Check if we're redirected to the pipeline editor or back to list
+		const pipelineEditorVisible = await page
+			.locator('#pipeline-editor')
+			.isVisible()
+			.catch(() => false)
+		const runViewVisible = await page
+			.locator('#run-view')
+			.isVisible()
+			.catch(() => false)
+
+		// Verify we're either in the editor or back in the run view
+		expect(pipelineEditorVisible || runViewVisible).toBeTruthy()
+
+		sendUnifiedLog({ test: 'pipeline-wizard-navigation', action: 'complete' })
 	})
 
 	// Skip the rest of the old project tests - they need complete rewrite for pipeline architecture
@@ -248,7 +298,10 @@ test.describe('Pipeline Creation', () => {
 		// Since the architecture changed from projects to pipelines,
 		// and pipelines don't have the same input/output modal system,
 		// we need to skip this test for now
-		sendUnifiedLog({ test: 'project-inputs-outputs', action: 'skipped - needs pipeline-based implementation' })
+		sendUnifiedLog({
+			test: 'project-inputs-outputs',
+			action: 'skipped - needs pipeline-based implementation',
+		})
 
 		// TODO: Rewrite this test to work with the pipeline step creation flow
 		// Pipelines have steps, not direct inputs/outputs like projects had
