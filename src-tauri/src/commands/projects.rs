@@ -415,6 +415,7 @@ pub fn import_project(
     Ok(Project {
         id: imported.id,
         name: imported.name,
+        version: imported.version,
         author: imported.author,
         workflow: imported.workflow,
         template: imported.template,
@@ -499,13 +500,15 @@ pub fn import_project_from_folder(
         }
     }
 
-    // Extract template with default value
+    // Extract template and version with default values
     let template = metadata.template.unwrap_or_else(|| "imported".to_string());
+    let version = metadata.version.unwrap_or_else(|| "1.0.0".to_string());
 
     // Register the new project
     let project_id = db
         .register_project(
             &metadata.name,
+            &version,
             &metadata.author,
             &metadata.workflow,
             &template,
@@ -521,6 +524,7 @@ pub fn import_project_from_folder(
     Ok(Project {
         id: project_id,
         name: metadata.name,
+        version,
         author: metadata.author,
         workflow: metadata.workflow,
         template,
@@ -553,6 +557,7 @@ pub fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntr
         entries.push(ProjectListEntry {
             id: Some(project.id),
             name: project.name,
+            version: Some(project.version),
             author: Some(project.author),
             workflow: Some(project.workflow),
             template: Some(project.template),
@@ -591,6 +596,7 @@ pub fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntr
                 entries.push(ProjectListEntry {
                     id: None,
                     name,
+                    version: None,
                     author: None,
                     workflow: None,
                     template: None,
@@ -748,6 +754,7 @@ pub fn create_project(
     Ok(Project {
         id: created.id,
         name: created.name,
+        version: created.version,
         author: created.author,
         workflow: created.workflow,
         template: created.template,
@@ -1063,6 +1070,10 @@ pub fn save_project_editor(
         .template
         .clone()
         .unwrap_or_else(|| "custom".to_string());
+    let version_for_db = metadata
+        .version
+        .clone()
+        .unwrap_or_else(|| "1.0.0".to_string());
 
     let project_record = {
         let db = state.biovault_db.lock().unwrap();
@@ -1071,6 +1082,7 @@ pub fn save_project_editor(
             db.update_project_by_id(
                 id,
                 &metadata.name,
+                &version_for_db,
                 &metadata.author,
                 &metadata.workflow,
                 &template_for_db,
@@ -1089,6 +1101,7 @@ pub fn save_project_editor(
                     db.update_project_by_id(
                         existing.id,
                         &metadata.name,
+                        &version_for_db,
                         &metadata.author,
                         &metadata.workflow,
                         &template_for_db,
@@ -1102,6 +1115,7 @@ pub fn save_project_editor(
                     // Project doesn't exist - register new one
                     db.register_project(
                         &metadata.name,
+                        &version_for_db,
                         &metadata.author,
                         &metadata.workflow,
                         &template_for_db,
@@ -1122,6 +1136,7 @@ pub fn save_project_editor(
     Ok(Project {
         id: project_record.id,
         name: project_record.name,
+        version: project_record.version,
         author: project_record.author,
         workflow: project_record.workflow,
         template: project_record.template,
