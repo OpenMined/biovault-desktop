@@ -1868,6 +1868,15 @@ steps:${
 				const stepName = step.id || `step-${index + 1}`
 				const stepUses = step.uses || 'Unknown step'
 
+				// Parse project name and version from uses field (supports name@version syntax)
+				let projectName = stepUses
+				let projectVersion = null
+				if (stepUses.includes('@')) {
+					const parts = stepUses.split('@')
+					projectName = parts[0]
+					projectVersion = parts[1]
+				}
+
 				// Count configuration details
 				const bindingCount = Object.keys(step.with || {}).length
 				const publishCount = Object.keys(step.publish || {}).length
@@ -1899,13 +1908,15 @@ steps:${
 				}
 
 				stepDiv.innerHTML = `
-				<div class="pipeline-step-header">
-					<div class="pipeline-step-number">${index + 1}</div>
-					<div class="pipeline-step-info">
-						<h4>${stepName}</h4>
-						<p>Uses: ${stepUses}</p>
-						<div class="step-status-badges">${statusBadges.join('')}</div>
-					</div>
+			<div class="pipeline-step-header">
+				<div class="pipeline-step-number">${index + 1}</div>
+				<div class="pipeline-step-info">
+					<h4>${stepName}</h4>
+					<p>Uses: ${projectName}${
+						projectVersion ? `<span class="version-tag">v${projectVersion}</span>` : ''
+					}</p>
+					<div class="step-status-badges">${statusBadges.join('')}</div>
+				</div>
 					<button class="pipeline-step-menu-btn" data-step-index="${index}">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
 							<circle cx="12" cy="5" r="2"/>

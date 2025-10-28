@@ -826,6 +826,20 @@
 	font-weight: 600;
 }
 
+.version-tag {
+	display: inline-flex;
+	align-items: center;
+	margin-left: 6px;
+	padding: 2px 6px;
+	background: #f3f4f6;
+	color: #6b7280;
+	border: 1px solid #e5e7eb;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 600;
+	font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+}
+
 .error-badge {
 	display: inline-flex;
 	align-items: center;

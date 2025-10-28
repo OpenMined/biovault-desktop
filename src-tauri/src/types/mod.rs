@@ -128,6 +128,7 @@ pub struct FileRecord {
 pub struct Project {
     pub id: i64,
     pub name: String,
+    pub version: String,
     pub author: String,
     pub workflow: String,
     pub template: String,
@@ -139,6 +140,7 @@ pub struct Project {
 pub struct ProjectListEntry {
     pub id: Option<i64>,
     pub name: String,
+    pub version: Option<String>,
     pub author: Option<String>,
     pub workflow: Option<String>,
     pub template: Option<String>,
