@@ -171,13 +171,15 @@ export function createDataModule({ invoke, dialog }) {
 			<td class="checkbox-cell">
 				<input type="checkbox" class="file-checkbox" data-id="${file.id}" ${isSelected ? 'checked' : ''} />
 			</td>
-			<td>${file.id}</td>
-			<td>${statusBadge}</td>
 			<td><strong>${participantDisplay}</strong></td>
+			<td>${statusBadge}</td>
 			<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
 			<td>
-				<span class="type-badge type-${(file.data_type || 'unknown').toLowerCase()}">
-					${file.data_type || 'Unknown'}
+				<span class="type-badge type-${(file.data_type && file.data_type !== 'Unknown'
+					? file.data_type
+					: 'unknown'
+				).toLowerCase()}">
+					${file.data_type && file.data_type !== 'Unknown' ? file.data_type : '-'}
 				</span>
 			</td>
 			<td>${file.source || '-'}</td>
@@ -190,11 +192,17 @@ export function createDataModule({ invoke, dialog }) {
 					: file.inferred_sex === 'Female'
 						? '#e83e8c'
 						: '#666'
-			}">${file.inferred_sex || '-'}</td>
+			}">${
+				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+					? file.inferred_sex
+					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+						? 'Unknown'
+						: '-'
+			}</td>
 			<td class="actions-cell">
-				<button class="btn-icon open-finder-btn" data-path="${
-					file.file_path
-				}" title="Show in folder">📁</button>
+				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
+					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
+				</button>
 			</td>
 		`
 
@@ -375,7 +383,7 @@ export function createDataModule({ invoke, dialog }) {
 		if (startIndex > 0) {
 			const spacerTop = document.createElement('tr')
 			spacerTop.style.height = `${startIndex * virtualScrollState.rowHeight}px`
-			spacerTop.innerHTML = '<td colspan="12"></td>'
+			spacerTop.innerHTML = '<td colspan="11"></td>'
 			tbody.appendChild(spacerTop)
 		}
 
@@ -390,7 +398,7 @@ export function createDataModule({ invoke, dialog }) {
 		if (endIndex < files.length) {
 			const spacerBottom = document.createElement('tr')
 			spacerBottom.style.height = `${(files.length - endIndex) * virtualScrollState.rowHeight}px`
-			spacerBottom.innerHTML = '<td colspan="12"></td>'
+			spacerBottom.innerHTML = '<td colspan="11"></td>'
 			tbody.appendChild(spacerBottom)
 		}
 
@@ -432,7 +440,14 @@ export function createDataModule({ invoke, dialog }) {
 			if (!indicator) return
 
 			if (header.dataset.sortField === sortField) {
-				indicator.textContent = sortDirection === 'asc' ? ' ▲' : ' ▼'
+				// For status, invert the indicator because priority 0 (pending) = worst (should be at bottom)
+				// So ascending (0->3) means worst to best, which should show ▼
+				// And descending (3->0) means best to worst, which should show ▲
+				if (sortField === 'status') {
+					indicator.textContent = sortDirection === 'asc' ? ' ▼' : ' ▲'
+				} else {
+					indicator.textContent = sortDirection === 'asc' ? ' ▲' : ' ▼'
+				}
 			} else {
 				indicator.textContent = ''
 			}

@@ -212,12 +212,6 @@ table {
 	justify-content: center;
 }
 
-.col-actions {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
 .col-participant {
 	padding: 0 !important;
 }

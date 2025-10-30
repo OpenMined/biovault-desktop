@@ -438,8 +438,8 @@
 	color: #374151;
 	background: white;
 	transition: all 0.2s ease;
-	min-width: 200px;
-	width: 200px;
+	min-width: 220px;
+	width: 220px;
 	flex-shrink: 0;
 }
 
@@ -564,6 +564,18 @@
 	border-collapse: collapse;
 	font-size: 13px;
 	background: white;
+	table-layout: auto;
+}
+
+.files-table th,
+.files-table td {
+	white-space: nowrap;
+}
+
+/* Allow some columns to wrap if needed */
+.files-table td.col-file {
+	white-space: normal;
+	max-width: 400px;
 }
 
 .files-table thead {
@@ -574,16 +586,18 @@
 }
 
 .files-table th {
-	padding: 14px 16px;
+	padding: 4px 16px;
 	text-align: left;
 	font-size: 12px;
 	font-weight: 700;
 	color: #475569;
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
-	border-bottom: 2px solid #e2e8f0;
+	border-bottom: 0px solid #e2e8f0;
 	white-space: nowrap;
 	user-select: none;
+	box-sizing: border-box;
+	line-height: 1.2;
 }
 
 .files-table th.sortable-header {
@@ -602,14 +616,26 @@
 }
 
 .files-table td {
-	padding: 14px 16px;
+	padding: 2px 16px !important;
 	border-bottom: 1px solid #f1f5f9;
 	color: #374151;
 	vertical-align: middle;
+	box-sizing: border-box;
+	line-height: 1.2;
+	height: 36px !important;
+	max-height: 36px !important;
+	min-height: 36px;
+	overflow: hidden;
 }
 
 .files-table tbody tr {
 	transition: background-color 0.15s ease;
+	height: 36px !important;
+	max-height: 36px !important;
+	min-height: 36px;
+	line-height: 1;
+	overflow: hidden;
+	display: table-row;
 }
 
 .files-table tbody tr:hover {
@@ -624,22 +650,27 @@
 	background: linear-gradient(135deg, #a7f3d0 0%, #6ee7b7 100%);
 }
 
-/* Column Widths */
+/* Column Widths - Auto-size to content */
 .col-checkbox {
-	width: 44px;
+	width: 50px;
+	min-width: 50px;
+	max-width: 50px;
 	text-align: center;
 }
 
 .col-id {
-	width: 70px;
+	width: max-content;
+	min-width: 70px;
 }
 
 .col-status {
-	width: 130px;
+	width: max-content;
+	min-width: 130px;
 }
 
 .col-participant {
-	width: 120px;
+	width: max-content;
+	min-width: 120px;
 }
 
 /* Participant Link */
@@ -658,65 +689,146 @@
 }
 
 .col-file {
+	width: max-content;
 	min-width: 200px;
 	max-width: 350px;
 }
 
 .col-type {
-	width: 110px;
+	width: max-content;
+	min-width: 110px;
 }
 
 .col-source {
-	width: 120px;
+	width: max-content;
+	min-width: 120px;
 }
 
 .col-grch {
-	width: 90px;
+	width: max-content;
+	min-width: 90px;
 }
 
 .col-rows {
-	width: 100px;
+	width: max-content;
+	min-width: 100px;
 	text-align: right;
 }
 
 .col-chr {
-	width: 70px;
+	width: max-content;
+	min-width: 70px;
 	text-align: center;
 }
 
 .col-sex {
-	width: 90px;
+	width: max-content;
+	min-width: 90px;
 	text-align: center;
 }
 
 .col-actions {
-	width: 80px;
+	width: max-content;
+	min-width: 80px;
 	text-align: center;
 }
 
 /* Checkbox */
 .checkbox-cell {
 	text-align: center;
+	vertical-align: middle;
+	padding: 12px !important;
+}
+
+.files-table th.col-checkbox {
+	text-align: center;
+	vertical-align: middle;
+	padding: 12px !important;
+	background: #f5f5f5 !important;
+	position: relative;
+}
+
+.files-table th.col-checkbox > input {
+	display: block;
+	margin: 0 auto;
+}
+
+.files-table td.checkbox-cell {
+	background: transparent !important;
+	padding: 12px !important;
+	text-align: center;
+	vertical-align: middle;
+}
+
+#select-all-data-files {
+	width: 18px;
+	height: 18px;
+	min-width: 18px;
+	min-height: 18px;
+	cursor: pointer;
+	accent-color: #3b82f6;
+	transition: transform 0.15s ease;
+	appearance: checkbox;
+	-webkit-appearance: checkbox;
+	-moz-appearance: checkbox;
+	outline: none;
+	box-shadow: none;
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+#select-all-data-files:hover {
+	transform: scale(1.1);
+}
+
+#select-all-data-files:checked {
+	accent-color: #2563eb;
+}
+
+#select-all-data-files:indeterminate {
+	accent-color: #3b82f6;
 }
 
 .file-checkbox {
 	width: 18px;
 	height: 18px;
+	min-width: 18px;
+	min-height: 18px;
 	margin: 0;
 	cursor: pointer;
-	accent-color: #10b981;
+	accent-color: #3b82f6;
+	transition: transform 0.15s ease;
+	appearance: checkbox;
+	-webkit-appearance: checkbox;
+	-moz-appearance: checkbox;
+	outline: none;
+	box-shadow: none;
+	vertical-align: middle;
+	display: inline-block;
+}
+
+.file-checkbox:hover {
+	transform: scale(1.1);
+}
+
+.file-checkbox:checked {
+	accent-color: #2563eb;
 }
 
 /* Status Badges */
 .status-badge {
 	display: inline-flex;
 	align-items: center;
-	padding: 5px 10px;
-	border-radius: 12px;
-	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 8px;
+	font-size: 10px;
 	font-weight: 700;
 	letter-spacing: 0.02em;
 	white-space: nowrap;
+	line-height: 1;
+	height: 20px;
+	max-height: 20px;
 }
 
 .status-badge.status-pending {
@@ -759,12 +871,15 @@
 .type-badge {
 	display: inline-flex;
 	align-items: center;
-	padding: 4px 10px;
-	border-radius: 10px;
-	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 8px;
+	font-size: 10px;
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 0.03em;
+	line-height: 1;
+	height: 20px;
+	max-height: 20px;
 }
 
 .type-badge.type-genotype {
@@ -782,7 +897,6 @@
 /* Sex Cell */
 .sex-cell {
 	font-weight: 600;
-	text-transform: uppercase;
 	font-size: 12px;
 	letter-spacing: 0.05em;
 }
@@ -793,11 +907,11 @@
 }
 
 .btn-icon {
-	padding: 6px 10px;
+	padding: 4px 8px;
 	background: white;
 	border: 1px solid #e2e8f0;
 	border-radius: 6px;
-	font-size: 14px;
+	font-size: 12px;
 	cursor: pointer;
 	transition: all 0.2s ease;
 }

@@ -2,6 +2,7 @@
 export function createImportModule({
 	invoke,
 	open,
+	dialog,
 	isFileAlreadyImported,
 	refreshExistingFilePaths,
 	loadParticipantsView,
@@ -19,8 +20,13 @@ export function createImportModule({
 	let isImportInProgress = false
 	let reviewFileMetadata = {}
 	let selectedReviewFiles = new Set()
+	let usingRandomIds = false // Track if random IDs are currently active
 	let reviewSortField = 'path'
+	let showOnlyMissingIds = false // Filter to show only files missing IDs
+	let filesMissingIds = [] // Track which files are missing IDs
 	let reviewSortDirection = 'asc'
+	let showOnlyIncompleteReview = false // Filter to show only files with incomplete configurations
+	let filesIncompleteReview = [] // Track which files have incomplete configurations
 	let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 	let patternInputDebounce = null
 
@@ -369,9 +375,7 @@ export function createImportModule({
 		return sorted
 	}
 	function updateSortIndicators() {
-		const headers = document.querySelectorAll(
-			'.file-table th[data-sort], .review-table th[data-sort]',
-		)
+		const headers = document.querySelectorAll('.file-table th[data-sort]')
 		headers.forEach((header) => {
 			const indicator = header.querySelector('.sort-indicator')
 			if (indicator && header.dataset.sort === sortField) {
@@ -495,188 +499,328 @@ export function createImportModule({
 			const tr = document.createElement('tr')
 			const td = document.createElement('td')
 			td.colSpan = 4
-			td.textContent = 'No files found'
 			td.style.textAlign = 'center'
-			td.style.padding = '20px'
-			td.style.color = '#94a3b8'
+			td.style.padding = '40px 20px'
+			td.innerHTML = `
+				<div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+					<svg width="48" height="48" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.3;">
+						<path d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.99 1.01 14 2.25 14h11.5c1.24 0 2.25-1.01 2.25-2.25v-6.5A1.75 1.75 0 0 0 14.25 3.5H7.5L6.29 2.29A1.75 1.75 0 0 0 5.06 1.75H1.75Z"/>
+					</svg>
+					<div style="color: #64748b; font-size: 15px; font-weight: 600;">No files found</div>
+					<div style="color: #94a3b8; font-size: 13px; max-width: 400px;">
+						${!selectedFolder ? 'Select a folder to see files' : 'Select file types above to filter files'}
+					</div>
+				</div>
+			`
 			tr.appendChild(td)
 			tbody.appendChild(tr)
 			return
 		}
+		// Separate already-imported files
+		const newFiles = currentFiles.filter((file) => !isFileAlreadyImported(file))
+		const alreadyImportedFiles = currentFiles.filter((file) => isFileAlreadyImported(file))
+
+		// Filter files if showing only missing IDs (only apply to new files)
+		let filesToRender = newFiles
+		if (showOnlyMissingIds) {
+			filesToRender = newFiles.filter((file) => {
+				const manual = fileParticipantIds[file]
+				const auto = autoParticipantIds[file]
+				const value = manual || auto
+				return !value || `${value}`.trim() === ''
+			})
+		}
 		// Sort files
-		const sortedFiles = sortFiles(currentFiles)
+		const sortedFiles = sortFiles(filesToRender)
+		const sortedAlreadyImported = sortFiles(alreadyImportedFiles)
 		const activePattern = currentPattern ? currentPattern.trim() : ''
+
 		sortedFiles.forEach((file) => {
-			const row = document.createElement('tr')
-			const alreadyImported = isFileAlreadyImported(file)
-			const manualId = fileParticipantIds[file] || ''
-			const autoId = autoParticipantIds[file] || ''
-			const effectiveId = manualId || autoId || ''
-			if (alreadyImported) {
-				row.classList.add('already-imported')
+			const row = createFileRow(file, activePattern)
+			if (row) {
+				tbody.appendChild(row)
 			}
-
-			// Make row clickable (except when clicking on inputs/buttons)
-			if (!alreadyImported) {
-				row.style.cursor = 'pointer'
-				row.addEventListener('click', (e) => {
-					// Don't toggle if clicking on input, button, or checkbox itself
-					if (
-						e.target.tagName === 'INPUT' ||
-						e.target.tagName === 'BUTTON' ||
-						e.target.closest('button')
-					) {
-						return
-					}
-					const checkbox = row.querySelector('input[type="checkbox"]')
-					if (checkbox && !checkbox.disabled) {
-						checkbox.checked = !checkbox.checked
-						if (checkbox.checked) {
-							selectedFiles.add(file)
-						} else {
-							selectedFiles.delete(file)
-						}
-						updateSelectAllCheckbox()
-						updateImportButton()
-						updateSelectedFileCount()
-						updateVisibleSections()
-					}
-				})
-			}
-
-			// Checkbox cell
-			const checkboxCell = document.createElement('td')
-			checkboxCell.style.textAlign = 'center'
-			checkboxCell.style.padding = '10px'
-			const checkbox = document.createElement('input')
-			checkbox.type = 'checkbox'
-			checkbox.checked = selectedFiles.has(file)
-			if (alreadyImported) {
-				checkbox.checked = false
-				checkbox.disabled = true
-				checkbox.title = 'File already imported'
-				selectedFiles.delete(file)
-			}
-			checkbox.addEventListener('change', (e) => {
-				e.stopPropagation() // Prevent row click from firing
-				if (e.target.checked) {
-					selectedFiles.add(file)
-				} else {
-					selectedFiles.delete(file)
-				}
-				updateSelectAllCheckbox()
-				updateImportButton()
-				updateSelectedFileCount()
-				updateVisibleSections()
-			})
-			checkboxCell.appendChild(checkbox)
-			row.appendChild(checkboxCell)
-			// File path cell - intelligently truncated
-			const pathCell = document.createElement('td')
-			const pathParts = file.split('/')
-			const filename = pathParts[pathParts.length - 1]
-			const parentFolder = pathParts[pathParts.length - 2] || ''
-
-			const pathWrapper = document.createElement('div')
-			pathWrapper.style.display = 'flex'
-			pathWrapper.style.alignItems = 'center'
-			pathWrapper.style.gap = '6px'
-
-			// Show parent folder in subdued color
-			if (parentFolder) {
-				const folderSpan = document.createElement('span')
-				folderSpan.textContent = `.../${parentFolder}/`
-				folderSpan.style.color = '#94a3b8'
-				folderSpan.style.fontSize = '12px'
-				pathWrapper.appendChild(folderSpan)
-			}
-
-			// Show filename with highlighting if ID is extracted
-			const filenameSpan = document.createElement('span')
-			filenameSpan.innerHTML = highlightPath(filename, activePattern, effectiveId)
-			filenameSpan.style.color = '#1e293b'
-			filenameSpan.style.fontWeight = '500'
-			pathWrapper.appendChild(filenameSpan)
-
-			if (alreadyImported) {
-				const badge = document.createElement('span')
-				badge.className = 'imported-badge'
-				badge.textContent = 'Imported'
-				pathWrapper.appendChild(badge)
-			}
-
-			pathCell.appendChild(pathWrapper)
-			pathCell.title = file // Full path on hover
-			row.appendChild(pathCell)
-			// Participant ID cell
-			const participantCell = document.createElement('td')
-			participantCell.style.padding = '10px'
-			const input = document.createElement('input')
-			input.type = 'text'
-			input.className = 'participant-id-input'
-			input.placeholder = 'Enter ID'
-			input.style.width = '100%'
-			// Extract ID if pattern exists
-			if (manualId) {
-				input.value = manualId
-				input.classList.add('manual')
-				input.classList.remove('extracted')
-			} else if (autoId) {
-				input.value = autoId
-				input.classList.add('extracted')
-				input.classList.remove('manual')
-			} else {
-				input.value = ''
-				input.classList.remove('manual')
-				input.classList.remove('extracted')
-			}
-			// Update map when user edits
-			input.addEventListener('input', (e) => {
-				const value = e.target.value.trim()
-				if (value) {
-					fileParticipantIds[file] = value
-					delete autoParticipantIds[file]
-					input.classList.remove('extracted')
-					input.classList.add('manual')
-				} else {
-					delete fileParticipantIds[file]
-					input.classList.remove('manual')
-					input.classList.remove('extracted')
-					if (currentPattern) {
-						void applyPattern(currentPattern)
-					}
-				}
-				updateImportButton()
-				updateVisibleSections()
-			})
-			participantCell.appendChild(input)
-			row.appendChild(participantCell)
-			// Folder button cell
-			const actionsCell = document.createElement('td')
-			actionsCell.style.textAlign = 'center'
-			actionsCell.style.padding = '10px'
-			const folderBtn = document.createElement('button')
-			folderBtn.className = 'show-in-folder-btn'
-			folderBtn.innerHTML =
-				'<img src="assets/icons/folder-open.svg" width="16" height="16" alt="" />'
-			folderBtn.title = 'Show in Finder'
-			folderBtn.addEventListener('click', async () => {
-				try {
-					await invoke('show_in_folder', { filePath: file })
-				} catch (error) {
-					console.error('Failed to show file in folder:', error)
-				}
-			})
-			actionsCell.appendChild(folderBtn)
-			row.appendChild(actionsCell)
-			tbody.appendChild(row)
 		})
 		// Update sort indicators
 		updateSortIndicators()
-		document.getElementById('file-count').textContent = currentFiles.length
+		document.getElementById('file-count').textContent = newFiles.length
 		updateSelectAllCheckbox()
 		updateSelectedFileCount()
 		updateImportButton()
+
+		// Add collapsible section for already-imported files if any exist
+		if (sortedAlreadyImported.length > 0) {
+			const alreadyImportedRow = document.createElement('tr')
+			alreadyImportedRow.className = 'already-imported-header'
+			alreadyImportedRow.dataset.collapsed = 'true'
+			const headerCell = document.createElement('td')
+			headerCell.colSpan = 4
+			headerCell.className = 'already-imported-header-cell'
+			headerCell.innerHTML = `
+				<div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+					<div style="display: flex; align-items: center; gap: 8px;">
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="collapse-icon" style="transition: transform 0.2s ease; transform: rotate(-90deg);">
+							<path d="M6 3.25L10.25 8 6 12.75v-1.5L8.5 8 6 4.75v-1.5z"/>
+						</svg>
+						<span style="font-weight: 600; color: #64748b; font-size: 13px;">
+							<strong style="color: #475569;">${sortedAlreadyImported.length}</strong> already imported file${
+								sortedAlreadyImported.length !== 1 ? 's' : ''
+							}
+						</span>
+					</div>
+					<span style="font-size: 11px; color: #94a3b8;">Click to show</span>
+				</div>
+			`
+			headerCell.addEventListener('click', () => {
+				const isCollapsed = alreadyImportedRow.dataset.collapsed === 'true'
+				alreadyImportedRow.dataset.collapsed = isCollapsed ? 'false' : 'true'
+				const icon = headerCell.querySelector('.collapse-icon')
+				if (icon) {
+					icon.style.transform = isCollapsed ? 'rotate(0deg)' : 'rotate(-90deg)'
+				}
+				const toggleText = headerCell.querySelector('span:last-child')
+				if (toggleText) {
+					toggleText.textContent = `Click to ${isCollapsed ? 'hide' : 'show'}`
+				}
+				sortedAlreadyImported.forEach((file) => {
+					const row = document.querySelector(`tr[data-file-path="${CSS.escape(file)}"]`)
+					if (row) {
+						row.style.display = isCollapsed ? 'table-row' : 'none'
+					}
+				})
+			})
+			alreadyImportedRow.appendChild(headerCell)
+			tbody.appendChild(alreadyImportedRow)
+
+			// Render already-imported files (collapsed by default)
+			sortedAlreadyImported.forEach((file) => {
+				const row = createFileRow(file, activePattern)
+				if (row) {
+					row.style.display = 'none' // Collapsed by default
+					tbody.appendChild(row)
+				}
+			})
+		}
+
+		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		updateActiveStates()
+	}
+	function createFileRow(file, activePattern) {
+		const row = document.createElement('tr')
+		const alreadyImported = isFileAlreadyImported(file)
+		const manualId = fileParticipantIds[file] || ''
+		const autoId = autoParticipantIds[file] || ''
+		const effectiveId = manualId || autoId || ''
+		const missingId = !effectiveId || effectiveId.trim() === ''
+		if (alreadyImported) {
+			row.classList.add('already-imported')
+		}
+		if (missingId && !alreadyImported) {
+			row.classList.add('missing-id')
+			row.dataset.filePath = file // Store file path for scrolling
+		}
+
+		// Make row clickable (except when clicking on inputs/buttons)
+		if (!alreadyImported) {
+			row.style.cursor = 'pointer'
+			row.addEventListener('click', (e) => {
+				// Don't toggle if clicking on input, button, or checkbox itself
+				if (
+					e.target.tagName === 'INPUT' ||
+					e.target.tagName === 'BUTTON' ||
+					e.target.closest('button')
+				) {
+					return
+				}
+				const checkbox = row.querySelector('input[type="checkbox"]')
+				if (checkbox && !checkbox.disabled) {
+					checkbox.checked = !checkbox.checked
+					if (checkbox.checked) {
+						selectedFiles.add(file)
+						row.classList.add('selected')
+					} else {
+						selectedFiles.delete(file)
+						row.classList.remove('selected')
+					}
+					updateSelectAllCheckbox()
+					updateImportButton()
+					updateSelectedFileCount()
+					updateVisibleSections()
+				}
+			})
+		}
+
+		// Checkbox cell
+		const checkboxCell = document.createElement('td')
+		checkboxCell.style.textAlign = 'center'
+		checkboxCell.style.padding = '4px'
+		const checkbox = document.createElement('input')
+		checkbox.type = 'checkbox'
+		checkbox.checked = selectedFiles.has(file)
+		checkbox.dataset.filePath = file // Store file path for easier lookup
+		if (alreadyImported) {
+			checkbox.checked = false
+			checkbox.disabled = true
+			checkbox.title = 'File already imported'
+			selectedFiles.delete(file)
+		}
+		// Add selected class to row if checked
+		if (checkbox.checked) {
+			row.classList.add('selected')
+		}
+		checkbox.addEventListener('change', (e) => {
+			e.stopPropagation() // Prevent row click from firing
+			if (e.target.checked) {
+				selectedFiles.add(file)
+				row.classList.add('selected')
+			} else {
+				selectedFiles.delete(file)
+				row.classList.remove('selected')
+			}
+			updateSelectAllCheckbox()
+			updateImportButton()
+			updateSelectedFileCount()
+			updateVisibleSections()
+		})
+		checkboxCell.appendChild(checkbox)
+		row.appendChild(checkboxCell)
+		// File path cell - intelligently truncated
+		const pathCell = document.createElement('td')
+		const pathParts = file.split('/')
+		const filename = pathParts[pathParts.length - 1]
+		const parentFolder = pathParts[pathParts.length - 2] || ''
+
+		const pathWrapper = document.createElement('div')
+		pathWrapper.style.display = 'flex'
+		pathWrapper.style.alignItems = 'center'
+		pathWrapper.style.gap = '6px'
+
+		// Show parent folder in subdued color
+		if (parentFolder) {
+			const folderSpan = document.createElement('span')
+			folderSpan.textContent = `.../${parentFolder}/`
+			folderSpan.style.color = '#94a3b8'
+			folderSpan.style.fontSize = '12px'
+			pathWrapper.appendChild(folderSpan)
+		}
+
+		// Show filename with highlighting if ID is extracted
+		const filenameSpan = document.createElement('span')
+		filenameSpan.innerHTML = highlightPath(filename, activePattern, effectiveId)
+		filenameSpan.style.color = '#1e293b'
+		filenameSpan.style.fontWeight = '500'
+		pathWrapper.appendChild(filenameSpan)
+
+		if (alreadyImported) {
+			const badge = document.createElement('span')
+			badge.className = 'imported-badge'
+			badge.textContent = 'Imported'
+			pathWrapper.appendChild(badge)
+		}
+
+		pathCell.appendChild(pathWrapper)
+		pathCell.title = file // Full path on hover
+		row.appendChild(pathCell)
+		// Participant ID cell
+		const participantCell = document.createElement('td')
+		participantCell.style.padding = '4px'
+		const input = document.createElement('input')
+		input.type = 'text'
+		input.className = 'participant-id-input'
+		input.placeholder = 'Enter ID'
+		input.style.width = '100%'
+		// Extract ID if pattern exists
+		if (manualId) {
+			input.value = manualId
+			input.classList.add('manual')
+			input.classList.remove('extracted')
+		} else if (autoId) {
+			input.value = autoId
+			input.classList.add('extracted')
+			input.classList.remove('manual')
+		} else {
+			input.value = ''
+			input.classList.remove('manual')
+			input.classList.remove('extracted')
+		}
+		// Update map when user edits
+		input.addEventListener('input', (e) => {
+			const value = e.target.value.trim()
+			if (value) {
+				// Check for duplicate IDs
+				const isDuplicate = Array.from(currentFiles).some((otherFile) => {
+					if (otherFile === file) return false
+					const otherManual = fileParticipantIds[otherFile]
+					const otherAuto = autoParticipantIds[otherFile]
+					const otherValue = otherManual || otherAuto
+					return otherValue && otherValue.trim() === value
+				})
+
+				if (isDuplicate) {
+					// Show warning but still allow the ID
+					input.style.borderColor = '#f59e0b'
+					input.style.boxShadow = '0 0 0 3px rgba(245, 158, 11, 0.1)'
+					input.title = 'Warning: This ID is already used by another file'
+					// Clear warning after 3 seconds
+					setTimeout(() => {
+						if (input.value.trim() === value) {
+							input.style.borderColor = ''
+							input.style.boxShadow = ''
+							input.title = ''
+						}
+					}, 3000)
+				} else {
+					input.style.borderColor = ''
+					input.style.boxShadow = ''
+					input.title = ''
+				}
+
+				fileParticipantIds[file] = value
+				delete autoParticipantIds[file]
+				input.classList.remove('extracted')
+				input.classList.add('manual')
+				// Remove missing-id class if ID was added
+				row.classList.remove('missing-id')
+				delete row.dataset.filePath
+			} else {
+				delete fileParticipantIds[file]
+				input.classList.remove('manual')
+				input.classList.remove('extracted')
+				input.style.borderColor = ''
+				input.style.boxShadow = ''
+				input.title = ''
+				// Add missing-id class if ID was removed
+				if (!alreadyImported) {
+					row.classList.add('missing-id')
+				}
+				if (currentPattern) {
+					void applyPattern(currentPattern)
+				}
+			}
+			updateImportButton()
+			updateVisibleSections()
+		})
+		participantCell.appendChild(input)
+		row.appendChild(participantCell)
+		// Folder button cell
+		const actionsCell = document.createElement('td')
+		actionsCell.style.textAlign = 'center'
+		actionsCell.style.padding = '4px'
+		const folderBtn = document.createElement('button')
+		folderBtn.className = 'show-in-folder-btn'
+		folderBtn.innerHTML = '<img src="assets/icons/folder-open.svg" width="16" height="16" alt="" />'
+		folderBtn.title = 'Show in Finder'
+		folderBtn.addEventListener('click', async () => {
+			try {
+				await invoke('show_in_folder', { filePath: file })
+			} catch (error) {
+				console.error('Failed to show file in folder:', error)
+			}
+		})
+		actionsCell.appendChild(folderBtn)
+		row.appendChild(actionsCell)
+		row.dataset.filePath = file
+		return row
 	}
 	function markActivePattern(pattern) {
 		const normalized = pattern ? pattern.trim() : ''
@@ -689,6 +833,30 @@ export function createImportModule({
 			row.classList.toggle('active', isActive)
 		})
 	}
+	function updateActiveStates() {
+		// Update Random IDs button active state
+		const randomIdsBtn = document.getElementById('random-ids-btn')
+		if (randomIdsBtn) {
+			randomIdsBtn.classList.toggle('active', usingRandomIds)
+		}
+		// Update custom pattern input active state
+		const customPatternInput = document.getElementById('custom-pattern')
+		if (customPatternInput) {
+			const hasCustomPattern = currentPattern && currentPattern.trim() !== '' && !usingRandomIds
+			customPatternInput.classList.toggle('active', hasCustomPattern)
+			// Clear random IDs flag if pattern is being used
+			if (hasCustomPattern) {
+				usingRandomIds = false
+				if (randomIdsBtn) {
+					randomIdsBtn.classList.remove('active')
+				}
+			}
+		}
+	}
+	function resetRandomIdsState() {
+		usingRandomIds = false
+		updateActiveStates()
+	}
 	async function applyPattern(pattern) {
 		const normalized = pattern ? pattern.trim() : ''
 		const patternInput = document.getElementById('custom-pattern')
@@ -696,7 +864,9 @@ export function createImportModule({
 			patternInput.value = normalized
 		}
 		currentPattern = normalized
+		usingRandomIds = false // Clear random IDs flag when applying pattern
 		markActivePattern(normalized)
+		updateActiveStates()
 		if (!normalized || currentFiles.length === 0) {
 			autoParticipantIds = {}
 			renderFiles()
@@ -709,9 +879,37 @@ export function createImportModule({
 				pattern: normalized,
 			})
 			autoParticipantIds = {}
+			// Clear manual IDs for files that will get pattern-extracted IDs
+			// This allows patterns to overwrite random IDs or previously manual IDs
+			const idUsage = new Map() // Map of ID -> array of files using it
+
+			// First pass: collect all extracted IDs
 			Object.entries(results || {}).forEach(([filePath, value]) => {
 				if (value !== null && value !== undefined && `${value}`.trim() !== '') {
-					autoParticipantIds[filePath] = `${value}`.trim()
+					const trimmedId = `${value}`.trim()
+					if (!idUsage.has(trimmedId)) {
+						idUsage.set(trimmedId, [])
+					}
+					idUsage.get(trimmedId).push(filePath)
+				}
+			})
+
+			// Second pass: assign unique IDs
+			Object.entries(results || {}).forEach(([filePath, value]) => {
+				if (value !== null && value !== undefined && `${value}`.trim() !== '') {
+					const trimmedId = `${value}`.trim()
+					const filesWithThisId = idUsage.get(trimmedId) || []
+
+					if (filesWithThisId.length > 1) {
+						// Multiple files have same ID - make them unique
+						const index = filesWithThisId.indexOf(filePath)
+						autoParticipantIds[filePath] = `${trimmedId}_${index + 1}`
+					} else {
+						// Unique ID
+						autoParticipantIds[filePath] = trimmedId
+					}
+					// Remove manual ID so pattern ID can take precedence
+					delete fileParticipantIds[filePath]
 				}
 			})
 		} catch (error) {
@@ -730,54 +928,87 @@ export function createImportModule({
 			throw error
 		}
 	}
+	// Generate random alphanumeric ID (similar to makeSlug but without prefix)
+	function generateRandomId(length = 12) {
+		const validChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+		const array = new Uint8Array(length)
+		crypto.getRandomValues(array)
+		let result = ''
+		for (let i = 0; i < length; i++) {
+			result += validChars[array[i] % validChars.length]
+		}
+		return result
+	}
+	function assignRandomIds() {
+		if (currentFiles.length === 0) return
+		// Get files to assign IDs to (all selected files, or all files if none selected)
+		// Allow overwriting existing IDs when user explicitly chooses this option
+		const filesToUpdate = Array.from(selectedFiles.size > 0 ? selectedFiles : currentFiles)
+		if (filesToUpdate.length === 0) return
+		// Generate unique IDs for each file (overwriting any existing IDs)
+		const usedIds = new Set()
+		filesToUpdate.forEach((file) => {
+			let randomId
+			do {
+				randomId = generateRandomId(12)
+			} while (usedIds.has(randomId))
+			usedIds.add(randomId)
+			// Assign as manual ID (overwrites any existing pattern-based ID)
+			fileParticipantIds[file] = randomId
+			delete autoParticipantIds[file]
+		})
+		// Mark random IDs as active
+		usingRandomIds = true
+		currentPattern = '' // Clear pattern when using random IDs
+		markActivePattern('')
+		updateActiveStates()
+		// Re-render files to show the new IDs
+		renderFiles()
+		updateImportButton()
+		updateVisibleSections()
+	}
 	async function updatePatternSuggestions() {
 		const container = document.getElementById('pattern-suggestions')
 		const detectionSection = document.getElementById('pattern-detection-section')
-		const feedback = document.getElementById('pattern-feedback')
 		if (!container || !detectionSection) return
-		const setFeedback = (message, variant = 'info') => {
-			if (!feedback) return
-			feedback.textContent = message
-			if (!message) {
-				feedback.removeAttribute('data-variant')
-			} else if (variant === 'error') {
-				feedback.dataset.variant = 'error'
-			} else {
-				feedback.removeAttribute('data-variant')
-			}
-		}
 		const clearSuggestions = () => {
 			container.innerHTML = ''
 			detectionSection.setAttribute('hidden', '')
 		}
 		if (currentFiles.length === 0) {
 			clearSuggestions()
-			setFeedback('')
 			markActivePattern('')
 			return
 		}
-		setFeedback('Analyzing filenames for patterns…')
 		clearSuggestions()
 		let suggestions = []
 		try {
 			suggestions = await invoke('suggest_patterns', { files: currentFiles })
 		} catch (error) {
 			console.error('Failed to fetch pattern suggestions:', error)
-			setFeedback(
-				'Unable to detect patterns. Try a different folder or check the console for details.',
-				'error',
-			)
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
 		if (!suggestions || suggestions.length === 0) {
-			setFeedback('No ID patterns detected.')
+			detectionSection.removeAttribute('hidden')
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
+		// Always show the detection section when we have files
 		detectionSection.removeAttribute('hidden')
-		setFeedback('')
 		container.innerHTML = ''
+
+		// Filter out the "Use parent directory names as participant IDs" pattern
+		suggestions = suggestions.filter(
+			(sugg) => sugg.description !== 'Use parent directory names as participant IDs',
+		)
+
+		// Auto-apply the first/best suggestion if it has high confidence
+		const bestSuggestion = suggestions[0]
+		const shouldAutoApply =
+			bestSuggestion &&
+			(bestSuggestion.count || currentFiles.length) >= currentFiles.length * 0.8 && // 80%+ match rate
+			currentFiles.length >= 2 // Only auto-apply if multiple files
 		suggestions.forEach((sugg) => {
 			const macroValue = (sugg.pattern || '').trim()
 			const regexValue = (sugg.regex_pattern || '').trim()
@@ -785,62 +1016,75 @@ export function createImportModule({
 			const exampleText = sample?.path ?? sugg.example ?? ''
 			const exampleId = sample?.participant_id ?? ''
 			const applyValue = macroValue || regexValue || ''
+			const description = sugg.description || 'Extract participant ID from file path'
+
 			const row = document.createElement('div')
 			row.className = 'pattern-suggestion'
 			row.dataset.macro = macroValue
 			row.dataset.regex = regexValue
+
 			const patternInfo = document.createElement('div')
 			patternInfo.className = 'pattern-info'
-			// Main pattern button
+
+			// Description text (human-readable)
+			const descEl = document.createElement('div')
+			descEl.className = 'pattern-description'
+			descEl.textContent = description
+			patternInfo.appendChild(descEl)
+
+			// Main pattern button - larger, more prominent
 			const patternBtn = document.createElement('button')
 			patternBtn.type = 'button'
 			patternBtn.className = 'pattern-btn'
-			patternBtn.innerHTML = `
-			<code class="pattern-text">${macroValue || regexValue || '(none)'}</code>
-			<span class="pattern-matches">${sugg.count || currentFiles.length} matches</span>
-		`
+
+			// Show example extraction prominently
+			let buttonContent = `<div class="pattern-btn-content">`
+			if (exampleText && exampleId) {
+				const fileName = exampleText.split('/').pop() || exampleText
+				buttonContent += `
+					<div class="pattern-example-preview">
+						<span class="pattern-example-file">${fileName}</span>
+						<span class="pattern-example-arrow">→</span>
+						<span class="pattern-example-id">${exampleId}</span>
+					</div>
+				`
+			}
+			buttonContent += `
+					<div class="pattern-meta">
+						<span class="pattern-matches">✓ ${sugg.count || currentFiles.length} file${
+							(sugg.count || currentFiles.length) !== 1 ? 's' : ''
+						}</span>
+					</div>
+				</div>
+			`
+			patternBtn.innerHTML = buttonContent
+
 			patternBtn.addEventListener('click', () => {
 				if (applyValue) {
 					void applyPattern(applyValue)
 				}
 			})
 			patternInfo.appendChild(patternBtn)
-			// Example if available
-			if (exampleText) {
-				const example = document.createElement('div')
-				example.className = 'pattern-example'
-				example.innerHTML = `<span class="pattern-example-label">Example:</span> ${highlightPath(
-					exampleText,
-					applyValue,
-					exampleId,
-				)}`
-				patternInfo.appendChild(example)
-			}
+
 			row.appendChild(patternInfo)
-			// Copy button
-			const copyBtn = document.createElement('button')
-			copyBtn.type = 'button'
-			copyBtn.className = 'pattern-copy-btn'
-			copyBtn.title = 'Copy pattern'
-			const copyIcon = document.createElement('img')
-			copyIcon.src = 'assets/icons/copy.svg'
-			copyIcon.width = 14
-			copyIcon.height = 14
-			copyBtn.appendChild(copyIcon)
-			copyBtn.addEventListener('click', async (e) => {
-				e.stopPropagation()
-				await copyToClipboard(applyValue)
-			})
-			row.appendChild(copyBtn)
 			container.appendChild(row)
+
+			// Auto-apply best suggestion
+			if (shouldAutoApply && sugg === bestSuggestion && applyValue) {
+				setTimeout(() => {
+					void applyPattern(applyValue)
+				}, 300)
+			}
 		})
 		markActivePattern(currentPattern ? currentPattern.trim() : '')
+		updateActiveStates()
 	}
 	async function searchFiles() {
 		if (!selectedFolder) return
 		const extensions = getFileExtensions()
 		if (extensions.length === 0) {
 			currentFiles = []
+			selectedFiles.clear()
 			renderFiles()
 			markActivePattern('')
 			autoParticipantIds = {}
@@ -856,8 +1100,16 @@ export function createImportModule({
 		if (patternInput) {
 			patternInput.value = ''
 		}
+		// Select all files by default (excluding already imported ones)
+		selectedFiles.clear()
+		currentFiles.forEach((file) => {
+			if (!isFileAlreadyImported(file)) {
+				selectedFiles.add(file)
+			}
+		})
 		renderFiles()
 		markActivePattern(currentPattern)
+		// Auto-detect patterns immediately when files are loaded
 		await updatePatternSuggestions()
 		updateVisibleSections()
 	}
@@ -866,12 +1118,18 @@ export function createImportModule({
 		const extensions = await invoke('get_extensions', { path: selectedFolder })
 		const list = document.getElementById('file-type-list')
 		list.innerHTML = ''
+		// Common file types to auto-select
+		const commonTypes = ['.txt', '.csv', '.vcf', '.fasta', '.fastq', '.tsv']
 		extensions.forEach((ext) => {
 			const label = document.createElement('label')
 			label.className = 'file-type-checkbox'
 			const checkbox = document.createElement('input')
 			checkbox.type = 'checkbox'
 			checkbox.value = ext.extension
+			// Auto-select common file types
+			if (commonTypes.includes(ext.extension)) {
+				checkbox.checked = true
+			}
 			checkbox.addEventListener('change', () => {
 				searchFiles()
 				updateVisibleSections()
@@ -882,7 +1140,12 @@ export function createImportModule({
 			label.appendChild(span)
 			list.appendChild(label)
 		})
-		// Don't auto-select - let user choose their file types
+		// Trigger search if any were auto-selected
+		const hasAutoSelected = extensions.some((ext) => commonTypes.includes(ext.extension))
+		if (hasAutoSelected) {
+			await searchFiles()
+			updateVisibleSections()
+		}
 	}
 	async function pickFolder() {
 		let selected = await open({
@@ -947,7 +1210,15 @@ export function createImportModule({
 		if (!hasSelection) {
 			btn.disabled = true
 			if (statusEl) {
-				statusEl.textContent = 'Select files to continue'
+				if (currentFiles.length === 0) {
+					statusEl.textContent = selectedFolder
+						? 'Select file types above to see files'
+						: 'Select a folder to begin'
+				} else {
+					statusEl.textContent = `Select ${
+						currentFiles.length === 1 ? 'the file' : 'at least 1 file'
+					} to continue`
+				}
 				statusEl.classList.remove('ready')
 			}
 			return
@@ -959,28 +1230,64 @@ export function createImportModule({
 			const value = manual || auto
 			return value !== undefined && value !== null && `${value}`.trim() !== ''
 		})
-		const missingIdCount = selectedFilesArray.filter((file) => {
+		const filesMissingIdsList = selectedFilesArray.filter((file) => {
 			const manual = fileParticipantIds[file]
 			const auto = autoParticipantIds[file]
 			const value = manual || auto
 			return !value || `${value}`.trim() === ''
-		}).length
+		})
+		const missingIdCount = filesMissingIdsList.length
+		filesMissingIds = filesMissingIdsList
+
+		// Update filter and jump buttons visibility
+		const filterBtn = document.getElementById('filter-missing-ids-btn')
+		const _jumpBtn = document.getElementById('jump-to-missing-btn')
+		const missingCountEl = document.getElementById('missing-ids-count')
+
+		const validationActions = document.getElementById('file-validation-actions')
+		if (missingIdCount > 0) {
+			if (validationActions) validationActions.style.display = 'flex'
+			if (filterBtn) {
+				filterBtn.classList.toggle('active', showOnlyMissingIds)
+			}
+			if (missingCountEl) missingCountEl.textContent = missingIdCount
+		} else {
+			if (validationActions) validationActions.style.display = 'none'
+			const wasFiltered = showOnlyMissingIds
+			showOnlyMissingIds = false // Reset filter if no missing IDs
+			// Re-render to show all files if filter was on
+			if (wasFiltered) {
+				renderFiles()
+			}
+		}
+
 		// Enable only if every selected file has an ID
 		if (allSelectedHaveIds) {
 			btn.disabled = false
 			if (statusEl) {
-				statusEl.textContent = `Ready to import ${selectedFiles.size} file${
+				statusEl.innerHTML = `Ready to import ${selectedFiles.size} file${
 					selectedFiles.size !== 1 ? 's' : ''
 				}`
 				statusEl.classList.add('ready')
+				statusEl.classList.remove('has-issues')
+				statusEl.style.cursor = 'default'
+				statusEl.onclick = null
 			}
 		} else {
 			btn.disabled = true
 			if (statusEl) {
-				statusEl.textContent = `${missingIdCount} file${
+				const hasPattern = currentPattern && currentPattern.trim() !== ''
+				const suggestion = hasPattern
+					? ' Click "Jump to missing" to find and fix them'
+					: ' Click "Jump to missing" to find them'
+				statusEl.innerHTML = `<span class="status-highlight">${missingIdCount} file${
 					missingIdCount !== 1 ? 's need' : ' needs'
-				} participant ID`
+				} participant ID${suggestion}</span>`
 				statusEl.classList.remove('ready')
+				statusEl.classList.add('has-issues')
+				// Make clickable to jump to first missing ID
+				statusEl.style.cursor = 'pointer'
+				statusEl.onclick = () => jumpToNextMissingId()
 			}
 		}
 		if (typeof window !== 'undefined') {
@@ -1017,6 +1324,7 @@ export function createImportModule({
 		if (dropzone) {
 			dropzone.classList.remove('has-folder')
 		}
+		resetRandomIdsState()
 		const selectAllFiles = document.getElementById('select-all-files')
 		if (selectAllFiles) {
 			selectAllFiles.checked = false
@@ -1037,11 +1345,6 @@ export function createImportModule({
 		const patternDetectionSection = document.getElementById('pattern-detection-section')
 		if (patternDetectionSection) {
 			patternDetectionSection.setAttribute('hidden', '')
-		}
-		const patternFeedback = document.getElementById('pattern-feedback')
-		if (patternFeedback) {
-			patternFeedback.textContent = ''
-			patternFeedback.removeAttribute('data-variant')
 		}
 		const customPatternInput = document.getElementById('custom-pattern')
 		if (customPatternInput) {
@@ -1109,10 +1412,37 @@ export function createImportModule({
 		// Reset visibility
 		updateVisibleSections()
 	}
-	function goToReviewStep() {
+	async function goToReviewStep() {
 		if (selectedFiles.size === 0) {
 			return
 		}
+
+		// Check for files with assigned IDs that aren't selected
+		const filesWithIdsButNotSelected = currentFiles.filter((file) => {
+			if (selectedFiles.has(file)) return false // Skip files that are selected
+			if (isFileAlreadyImported(file)) return false // Skip already imported files
+			// Check if file has an ID assigned (manual or auto)
+			const manualId = fileParticipantIds[file]
+			const autoId = autoParticipantIds[file]
+			return (manualId && manualId.trim() !== '') || (autoId && autoId.trim() !== '')
+		})
+
+		// Show confirmation if there are files with IDs that aren't selected
+		if (filesWithIdsButNotSelected.length > 0 && dialog) {
+			const fileCount = filesWithIdsButNotSelected.length
+			const fileText = fileCount === 1 ? 'file' : 'files'
+			const confirmed = await dialog.confirm(
+				`You have assigned participant IDs to ${fileCount} ${fileText} that ${
+					fileCount === 1 ? 'is' : 'are'
+				} not selected for import. Are you sure you want to continue?\n\nThese IDs will not be imported.`,
+				{ title: 'Unselected Files with IDs', type: 'warning' },
+			)
+
+			if (!confirmed) {
+				return
+			}
+		}
+
 		selectedFiles.forEach((file) => {
 			if (!fileParticipantIds[file] && autoParticipantIds[file]) {
 				fileParticipantIds[file] = autoParticipantIds[file]
@@ -1240,19 +1570,24 @@ export function createImportModule({
 			return
 		}
 		tbody.innerHTML = ''
-		const sortedFiles = sortReviewFiles(Object.keys(reviewFileMetadata))
+
+		// Filter files if showing only incomplete configurations
+		let filesToRender = Object.keys(reviewFileMetadata)
+		if (showOnlyIncompleteReview) {
+			filesToRender = filesToRender.filter((filePath) => {
+				const metadata = reviewFileMetadata[filePath]
+				return !isReviewMetadataComplete(metadata)
+			})
+		}
+
+		const sortedFiles = sortReviewFiles(filesToRender)
 		sortedFiles.forEach((filePath) => {
 			const metadata = reviewFileMetadata[filePath]
 			const row = document.createElement('tr')
-			row.style.borderBottom = '1px solid #eee'
-			row.style.height = 'auto'
-			row.style.display = 'table-row'
-			row.style.visibility = 'visible'
-			row.style.opacity = '1'
-			row.style.cursor = 'pointer'
 			row.dataset.filePath = filePath
 
-			// Make row clickable
+			// Make row clickable (except when clicking on inputs/buttons)
+			row.style.cursor = 'pointer'
 			row.addEventListener('click', (e) => {
 				// Don't toggle if clicking on input, select, button
 				if (
@@ -1268,32 +1603,42 @@ export function createImportModule({
 					checkbox.checked = !checkbox.checked
 					if (checkbox.checked) {
 						selectedReviewFiles.add(filePath)
+						row.classList.add('selected')
 					} else {
 						selectedReviewFiles.delete(filePath)
+						row.classList.remove('selected')
 					}
 					updateReviewSelectAllCheckbox()
 				}
 			})
 
-			// Checkbox cell
+			// Checkbox cell - match first step styling
 			const checkboxCell = document.createElement('td')
-			checkboxCell.style.padding = '10px'
 			checkboxCell.style.textAlign = 'center'
+			checkboxCell.style.padding = '4px'
 			const checkbox = document.createElement('input')
 			checkbox.type = 'checkbox'
 			checkbox.checked = selectedReviewFiles.has(filePath)
+			checkbox.dataset.filePath = filePath
+			// Add selected class to row if checked
+			if (checkbox.checked) {
+				row.classList.add('selected')
+			}
 			checkbox.addEventListener('change', (e) => {
 				e.stopPropagation() // Prevent row click
 				if (e.target.checked) {
 					selectedReviewFiles.add(filePath)
+					row.classList.add('selected')
 				} else {
 					selectedReviewFiles.delete(filePath)
+					row.classList.remove('selected')
 				}
 				updateReviewSelectAllCheckbox()
 			})
 			checkboxCell.appendChild(checkbox)
 			row.appendChild(checkboxCell)
-			// File path cell - intelligently truncated
+
+			// File path cell - match first step styling exactly
 			const pathCell = document.createElement('td')
 			const pathParts = filePath.split('/')
 			const filename = pathParts[pathParts.length - 1]
@@ -1323,37 +1668,44 @@ export function createImportModule({
 			pathCell.appendChild(pathWrapper)
 			pathCell.title = filePath // Full path on hover
 			row.appendChild(pathCell)
-			// Data type dropdown
+
+			// Data type dropdown - use same style as data page
 			const dataTypeCell = document.createElement('td')
 			const dataTypeSelect = document.createElement('select')
+			dataTypeSelect.className = 'data-type-select'
 			dataTypeSelect.innerHTML = `
 				<option value="Unknown" ${metadata.data_type === 'Unknown' ? 'selected' : ''}>Unknown</option>
 				<option value="Genotype" ${metadata.data_type === 'Genotype' ? 'selected' : ''}>Genotype</option>
+				<option value="Phenotype" ${metadata.data_type === 'Phenotype' ? 'selected' : ''}>Phenotype</option>
 			`
 			dataTypeSelect.addEventListener('change', (e) => {
 				e.stopPropagation() // Don't trigger row click
 				reviewFileMetadata[filePath].data_type = e.target.value
 				updateRowVisibility(row, e.target.value)
 				applyReviewRowState(row, reviewFileMetadata[filePath])
+				updateReviewStatus()
 			})
 			dataTypeCell.appendChild(dataTypeSelect)
 			row.appendChild(dataTypeCell)
+
 			// Source dropdown
 			const sourceCell = document.createElement('td')
-			sourceCell.className = 'genotype-field'
 			const sourceSelect = document.createElement('select')
+			sourceSelect.className = 'review-cell-select'
 			populateSourceSelect(sourceSelect, metadata.source, true)
 			sourceSelect.addEventListener('change', (e) => {
 				e.stopPropagation() // Don't trigger row click
 				reviewFileMetadata[filePath].source = e.target.value || null
 				applyReviewRowState(row, reviewFileMetadata[filePath])
+				updateReviewStatus()
 			})
 			sourceCell.appendChild(sourceSelect)
 			row.appendChild(sourceCell)
+
 			// GRCh version dropdown
 			const grchCell = document.createElement('td')
-			grchCell.className = 'genotype-field'
 			const grchSelect = document.createElement('select')
+			grchSelect.className = 'review-cell-select'
 			grchSelect.innerHTML = `
 				<option value="">-</option>
 				<option value="Unknown" ${metadata.grch_version === 'Unknown' ? 'selected' : ''}>Unknown</option>
@@ -1365,13 +1717,15 @@ export function createImportModule({
 				e.stopPropagation() // Don't trigger row click
 				reviewFileMetadata[filePath].grch_version = e.target.value || null
 				applyReviewRowState(row, reviewFileMetadata[filePath])
+				updateReviewStatus()
 			})
 			grchCell.appendChild(grchSelect)
 			row.appendChild(grchCell)
-			// Folder button cell
-			const folderCell = document.createElement('td')
-			folderCell.style.textAlign = 'center'
-			folderCell.style.padding = '10px'
+
+			// Actions cell - folder button (match first step styling)
+			const actionsCell = document.createElement('td')
+			actionsCell.style.textAlign = 'center'
+			actionsCell.style.padding = '4px'
 			const folderBtn = document.createElement('button')
 			folderBtn.className = 'show-in-folder-btn'
 			folderBtn.innerHTML =
@@ -1386,43 +1740,19 @@ export function createImportModule({
 					console.error('Failed to show file in folder:', error)
 				}
 			})
-			folderCell.appendChild(folderBtn)
-			row.appendChild(folderCell)
-			// Row count cell (hidden - not used during import)
-			const rowCountCell = document.createElement('td')
-			rowCountCell.style.display = 'none'
-			rowCountCell.style.padding = '10px'
-			rowCountCell.style.fontSize = '13px'
-			rowCountCell.style.color = '#666'
-			rowCountCell.textContent = metadata.row_count ? metadata.row_count.toLocaleString() : '-'
-			row.appendChild(rowCountCell)
-			// Chromosome count cell (hidden - not used during import)
-			const chromCountCell = document.createElement('td')
-			chromCountCell.style.display = 'none'
-			chromCountCell.style.padding = '10px'
-			chromCountCell.style.fontSize = '13px'
-			chromCountCell.style.color = '#666'
-			chromCountCell.textContent = metadata.chromosome_count || '-'
-			row.appendChild(chromCountCell)
-			// Inferred sex cell (hidden - not used during import)
-			const sexCell = document.createElement('td')
-			sexCell.style.display = 'none'
-			sexCell.style.padding = '10px'
-			sexCell.style.fontSize = '13px'
-			sexCell.style.color = '#666'
-			sexCell.style.fontWeight = metadata.inferred_sex ? '600' : 'normal'
-			sexCell.textContent = metadata.inferred_sex || '-'
-			row.appendChild(sexCell)
+			actionsCell.appendChild(folderBtn)
+			row.appendChild(actionsCell)
+
 			applyReviewRowState(row, metadata)
 			updateRowVisibility(row, metadata.data_type)
 			tbody.appendChild(row)
 		})
 		updateReviewSelectAllCheckbox()
+		updateReviewStatus()
 	}
 	function updateReviewSelectAllCheckbox() {
 		const selectAllCheckbox = document.getElementById('select-all-review')
 		const reviewSelectedCountEl = document.getElementById('review-selected-count')
-		const reviewStatusEl = document.getElementById('review-status')
 		const totalFiles = Object.keys(reviewFileMetadata).length
 		const selectedCount = selectedReviewFiles.size
 		if (selectAllCheckbox) {
@@ -1432,31 +1762,101 @@ export function createImportModule({
 		if (reviewSelectedCountEl) {
 			reviewSelectedCountEl.textContent = selectedCount
 		}
-		if (reviewStatusEl) {
-			if (totalFiles === 0) {
-				reviewStatusEl.textContent = 'No files to import'
-			} else if (selectedCount === 0) {
-				reviewStatusEl.textContent = 'Select files to import'
-			} else {
-				reviewStatusEl.textContent = `Ready to import ${selectedCount} file${
-					selectedCount !== 1 ? 's' : ''
-				}`
+		updateReviewStatus()
+	}
+	function updateReviewStatus() {
+		const reviewStatusEl = document.getElementById('review-status')
+		if (!reviewStatusEl) return
+
+		const totalFiles = Object.keys(reviewFileMetadata).length
+		const selectedCount = selectedReviewFiles.size
+
+		// Find incomplete configurations in selected files
+		const incompleteSelected = Array.from(selectedReviewFiles).filter((filePath) => {
+			const metadata = reviewFileMetadata[filePath]
+			return !isReviewMetadataComplete(metadata)
+		})
+		filesIncompleteReview = Array.from(selectedReviewFiles).filter((filePath) => {
+			const metadata = reviewFileMetadata[filePath]
+			return !isReviewMetadataComplete(metadata)
+		})
+
+		// Update filter and jump buttons visibility
+		const validationActions = document.getElementById('review-validation-actions')
+		const filterBtn = document.getElementById('filter-incomplete-review-btn')
+		const _jumpBtn = document.getElementById('jump-to-incomplete-review-btn')
+		const incompleteCountEl = document.getElementById('incomplete-review-count')
+
+		if (incompleteSelected.length > 0) {
+			if (validationActions) validationActions.style.display = 'flex'
+			if (filterBtn) {
+				filterBtn.classList.toggle('active', showOnlyIncompleteReview)
 			}
+			if (incompleteCountEl) incompleteCountEl.textContent = incompleteSelected.length
+		} else {
+			if (validationActions) validationActions.style.display = 'none'
+			showOnlyIncompleteReview = false // Reset filter if no incomplete
+			if (filterBtn) filterBtn.classList.remove('active')
+		}
+
+		// Update status message
+		if (totalFiles === 0) {
+			reviewStatusEl.innerHTML = 'No files to import'
+			reviewStatusEl.classList.remove('has-issues')
+			reviewStatusEl.style.cursor = 'default'
+			reviewStatusEl.onclick = null
+		} else if (selectedCount === 0) {
+			reviewStatusEl.innerHTML = 'Select files to import'
+			reviewStatusEl.classList.remove('has-issues')
+			reviewStatusEl.style.cursor = 'default'
+			reviewStatusEl.onclick = null
+		} else if (incompleteSelected.length > 0) {
+			reviewStatusEl.innerHTML = `<span class="status-highlight">${
+				incompleteSelected.length
+			} selected file${
+				incompleteSelected.length !== 1 ? 's need' : ' needs'
+			} configuration. Click "Jump to incomplete" to find them.</span>`
+			reviewStatusEl.classList.add('has-issues')
+			reviewStatusEl.style.cursor = 'pointer'
+			reviewStatusEl.onclick = () => jumpToNextIncompleteReview()
+		} else {
+			reviewStatusEl.innerHTML = `Ready to import ${selectedCount} file${
+				selectedCount !== 1 ? 's' : ''
+			}`
+			reviewStatusEl.classList.remove('has-issues')
+			reviewStatusEl.style.cursor = 'default'
+			reviewStatusEl.onclick = null
 		}
 	}
 	function isReviewMetadataComplete(metadata) {
 		if (!metadata) return false
-		const filledDataType = metadata.data_type && metadata.data_type !== 'Unknown'
-		const filledSource = metadata.source && metadata.source !== 'Unknown'
-		const filledGrch = metadata.grch_version && metadata.grch_version !== 'Unknown'
-		return filledDataType && filledSource && filledGrch
+		// Data type is required for all files
+		const hasDataType = metadata.data_type && metadata.data_type !== 'Unknown'
+		if (!hasDataType) return false
+
+		// For genotype files, source and GRCh are also required
+		if (metadata.data_type === 'Genotype') {
+			const hasSource = metadata.source && metadata.source !== 'Unknown' && metadata.source !== ''
+			const hasGrch =
+				metadata.grch_version && metadata.grch_version !== 'Unknown' && metadata.grch_version !== ''
+			return hasSource && hasGrch
+		}
+
+		// For phenotype files, only data type is required
+		return true
 	}
 	function applyReviewRowState(row, metadata) {
 		if (!row) return
 		if (isReviewMetadataComplete(metadata)) {
 			row.classList.add('review-row-complete')
+			row.classList.remove('review-row-incomplete')
 		} else {
+			row.classList.add('review-row-incomplete')
 			row.classList.remove('review-row-complete')
+			// Store file path for jumping
+			if (row.dataset.filePath) {
+				row.dataset.needsConfig = 'true'
+			}
 		}
 	}
 	function updateRowVisibility(_row, _dataType) {
@@ -1534,11 +1934,11 @@ export function createImportModule({
 		} finally {
 			btn.disabled = false
 			btn.innerHTML = '<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />'
-			// Hide progress bar after a short delay
+			// Hide progress bar after a short delay (reduced for less intrusion)
 			setTimeout(() => {
 				progressDiv.style.display = 'none'
 				progressBar.style.width = '0%'
-			}, 1500)
+			}, 800)
 		}
 	}
 	function updateRowInPlace(filePath) {
@@ -1553,6 +1953,7 @@ export function createImportModule({
 		}
 		if (!targetRow) return
 		const metadata = reviewFileMetadata[filePath]
+		// Column order: 1=checkbox, 2=file, 3=data type, 4=source, 5=grch, 6=folder button
 		// Update data type dropdown
 		const dataTypeSelect = targetRow.querySelector('td:nth-child(3) select')
 		if (dataTypeSelect) {
@@ -1566,33 +1967,8 @@ export function createImportModule({
 		}
 		// Update grch version dropdown
 		const grchSelect = targetRow.querySelector('td:nth-child(5) select')
-		console.log(`Updating grch for ${filePath}:`, {
-			grchSelect: grchSelect,
-			grch_version: metadata.grch_version,
-			selectOptions: grchSelect ? Array.from(grchSelect.options).map((o) => o.value) : [],
-		})
 		if (grchSelect && metadata.grch_version) {
 			grchSelect.value = metadata.grch_version
-			console.log(
-				`Set grch select value to: ${metadata.grch_version}, actual value: ${grchSelect.value}`,
-			)
-		}
-		// Note: Column 6 is detect button (header only), Column 7 is folder button
-		// Update row count (column 8 - hidden)
-		const rowCountCell = targetRow.querySelector('td:nth-child(8)')
-		if (rowCountCell) {
-			rowCountCell.textContent = metadata.row_count ? metadata.row_count.toLocaleString() : '-'
-		}
-		// Update chromosome count (column 9 - hidden)
-		const chromCountCell = targetRow.querySelector('td:nth-child(9)')
-		if (chromCountCell) {
-			chromCountCell.textContent = metadata.chromosome_count || '-'
-		}
-		// Update inferred sex (column 10 - hidden)
-		const sexCell = targetRow.querySelector('td:nth-child(10)')
-		if (sexCell) {
-			sexCell.textContent = metadata.inferred_sex || '-'
-			sexCell.style.fontWeight = metadata.inferred_sex ? '600' : 'normal'
 		}
 		applyReviewRowState(targetRow, metadata)
 	}
@@ -1701,6 +2077,8 @@ export function createImportModule({
 		}
 		renderFiles()
 		updateVisibleSections()
+		updateSelectedFileCount()
+		updateImportButton()
 	}
 	function handleSelectAllReview(checked) {
 		const allFiles = Object.keys(reviewFileMetadata)
@@ -1710,6 +2088,147 @@ export function createImportModule({
 			selectedReviewFiles.clear()
 		}
 		showReviewView()
+	}
+	function toggleMissingIdsFilter() {
+		showOnlyMissingIds = !showOnlyMissingIds
+		renderFiles()
+		updateVisibleSections()
+		updateSelectAllCheckbox()
+		updateSelectedFileCount()
+	}
+	function toggleIncompleteReviewFilter() {
+		showOnlyIncompleteReview = !showOnlyIncompleteReview
+		showReviewView()
+	}
+	function jumpToNextIncompleteReview() {
+		if (filesIncompleteReview.length === 0) {
+			// Recalculate from current state
+			filesIncompleteReview = Array.from(selectedReviewFiles).filter((filePath) => {
+				const metadata = reviewFileMetadata[filePath]
+				return !isReviewMetadataComplete(metadata)
+			})
+		}
+
+		if (filesIncompleteReview.length === 0) return
+
+		// Turn off filter if it was on
+		if (showOnlyIncompleteReview) {
+			showOnlyIncompleteReview = false
+			showReviewView()
+			setTimeout(() => jumpToNextIncompleteReview(), 100)
+			return
+		}
+
+		// Find first incomplete row
+		const firstIncompleteFile = filesIncompleteReview[0]
+		const rows = document.querySelectorAll('#review-files-table tr')
+		let targetRow = null
+
+		for (const row of rows) {
+			if (row.dataset.filePath === firstIncompleteFile || row.dataset.needsConfig === 'true') {
+				targetRow = row
+				break
+			}
+		}
+
+		// Fallback: find first row with incomplete class
+		if (!targetRow) {
+			const incompleteRows = document.querySelectorAll(
+				'#review-files-table tr.review-row-incomplete',
+			)
+			if (incompleteRows.length > 0) {
+				targetRow = incompleteRows[0]
+			}
+		}
+
+		if (targetRow) {
+			targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			const originalTransition = targetRow.style.transition
+			targetRow.style.transition = 'all 0.3s ease'
+			targetRow.style.boxShadow = '0 0 0 4px rgba(251, 191, 36, 0.3)'
+			const originalBg = targetRow.style.backgroundColor
+			targetRow.style.backgroundColor = '#fef3c7'
+			setTimeout(() => {
+				targetRow.style.boxShadow = ''
+				targetRow.style.backgroundColor = originalBg || ''
+				targetRow.style.transition = originalTransition || ''
+			}, 2500)
+			// Focus the first dropdown
+			const firstSelect = targetRow.querySelector('select')
+			if (firstSelect) {
+				setTimeout(() => {
+					firstSelect.focus()
+				}, 400)
+			}
+		}
+	}
+	function jumpToNextMissingId() {
+		// Recalculate missing IDs from current state if needed
+		if (filesMissingIds.length === 0) {
+			filesMissingIds = Array.from(selectedFiles).filter((file) => {
+				const manual = fileParticipantIds[file]
+				const auto = autoParticipantIds[file]
+				const value = manual || auto
+				return !value || `${value}`.trim() === ''
+			})
+		}
+
+		if (filesMissingIds.length === 0) return
+
+		// Turn off filter to show all files if it was on
+		if (showOnlyMissingIds) {
+			showOnlyMissingIds = false
+			renderFiles()
+			// Wait for render to complete
+			setTimeout(() => jumpToNextMissingId(), 100)
+			return
+		}
+
+		// Find first missing ID row in DOM by matching file path
+		const firstMissingFile = filesMissingIds[0]
+		const rows = document.querySelectorAll('#file-list tr')
+		let targetRow = null
+
+		for (const row of rows) {
+			// Check if this row corresponds to the missing file
+			const checkbox = row.querySelector('input[type="checkbox"][data-file-path]')
+			if (checkbox && checkbox.dataset.filePath === firstMissingFile) {
+				targetRow = row
+				break
+			}
+		}
+
+		// Fallback: find first row with missing-id class
+		if (!targetRow) {
+			const missingRows = document.querySelectorAll('#file-list tr.missing-id')
+			if (missingRows.length > 0) {
+				targetRow = missingRows[0]
+			}
+		}
+
+		if (targetRow) {
+			// Scroll to row
+			targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			// Highlight it briefly with a pulse animation
+			const originalTransition = targetRow.style.transition
+			targetRow.style.transition = 'all 0.3s ease'
+			targetRow.style.boxShadow = '0 0 0 4px rgba(251, 191, 36, 0.3)'
+			const originalBg = targetRow.style.backgroundColor
+			targetRow.style.backgroundColor = '#fef3c7'
+			setTimeout(() => {
+				targetRow.style.boxShadow = ''
+				targetRow.style.backgroundColor = originalBg || ''
+				targetRow.style.transition = originalTransition || ''
+			}, 2500)
+			// Focus the input
+			const input = targetRow.querySelector('.participant-id-input')
+			if (input) {
+				setTimeout(() => {
+					input.focus()
+					input.select()
+				}, 400)
+			}
+		}
 	}
 	function handleBulkDataTypeChange(value) {
 		if (!value) return
@@ -1748,10 +2267,27 @@ export function createImportModule({
 		if (patternInputDebounce) {
 			clearTimeout(patternInputDebounce)
 		}
-		patternInputDebounce = setTimeout(() => {
-			patternInputDebounce = null
-			applyPattern(value)
-		}, 300)
+		// Apply immediately if pattern looks valid (not empty, has at least one character)
+		const trimmed = value.trim()
+		if (trimmed.length > 0) {
+			// Debounce for typing, but apply if valid
+			patternInputDebounce = setTimeout(() => {
+				patternInputDebounce = null
+				// Try to apply, but catch errors silently for invalid patterns
+				applyPattern(trimmed).catch(() => {
+					// Pattern might be invalid, but don't show error - user is still typing
+				})
+			}, 300)
+		} else {
+			// Clear pattern if empty
+			currentPattern = ''
+			usingRandomIds = false
+			autoParticipantIds = {}
+			markActivePattern('')
+			updateActiveStates()
+			renderFiles()
+			updateImportButton()
+		}
 	}
 	function handleCustomPatternBlur(value) {
 		if (patternInputDebounce) {
@@ -1776,8 +2312,54 @@ export function createImportModule({
 			console.error('Failed to copy pattern:', error)
 		}
 	}
-	function updateStepIndicator(_step) {
-		// Step indicators removed - no longer needed
+	function updateStepIndicator(step) {
+		// Update step indicator for selection view
+		const indicator = document.getElementById('import-step-indicator')
+		if (!indicator) return
+
+		const dots = indicator.querySelectorAll('.step-dot')
+		const connectors = indicator.querySelectorAll('.step-connector')
+
+		dots.forEach((dot, index) => {
+			const stepNum = index + 1
+			dot.classList.remove('active', 'completed')
+			if (stepNum < step) {
+				dot.classList.add('completed')
+			} else if (stepNum === step) {
+				dot.classList.add('active')
+			}
+		})
+
+		connectors.forEach((connector, index) => {
+			connector.classList.remove('active')
+			if (index + 1 < step) {
+				connector.classList.add('active')
+			}
+		})
+
+		// Update review view indicator too
+		const reviewIndicator = document.getElementById('import-step-indicator-review')
+		if (reviewIndicator) {
+			const reviewDots = reviewIndicator.querySelectorAll('.step-dot')
+			const reviewConnectors = reviewIndicator.querySelectorAll('.step-connector')
+
+			reviewDots.forEach((dot, index) => {
+				const stepNum = index + 1
+				dot.classList.remove('active', 'completed')
+				if (stepNum < step) {
+					dot.classList.add('completed')
+				} else if (stepNum === step) {
+					dot.classList.add('active')
+				}
+			})
+
+			reviewConnectors.forEach((connector, index) => {
+				connector.classList.remove('active')
+				if (index + 1 < step) {
+					connector.classList.add('active')
+				}
+			})
+		}
 	}
 	async function handleFolderDrop(paths) {
 		if (!paths || paths.length === 0) return
@@ -1925,6 +2507,10 @@ export function createImportModule({
 		showReviewView,
 		detectFileTypes,
 		finalizeImport,
+		toggleMissingIdsFilter,
+		jumpToNextMissingId,
+		toggleIncompleteReviewFilter,
+		jumpToNextIncompleteReview,
 		setSortField,
 		initColumnResizers,
 		setReviewSortField,
@@ -1943,6 +2529,7 @@ export function createImportModule({
 		handleCustomPatternKeydown,
 		handleCopyPattern,
 		copyToClipboard,
+		assignRandomIds,
 		updateStepIndicator,
 		initFolderDropzone,
 		handleFolderDrop,

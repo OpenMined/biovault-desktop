@@ -329,18 +329,16 @@ test.describe('Import Data workflow', () => {
 		const fileList = page.locator('#file-list tr')
 		await expect(fileList).toHaveCount(preparedFiles.length)
 
-		// Open pattern section by clicking autofill button
-		const autofillBtn = page.locator('#autofill-ids-btn')
-		await expect(autofillBtn).toBeVisible()
-		await autofillBtn.click()
-
-		// Wait for pattern section to appear
-		const patternSection = page.locator('#pattern-section')
+		// Pattern detection section should be automatically visible when files are selected
+		const patternSection = page.locator('#pattern-detection-section')
 		await expect(patternSection).toBeVisible()
+
+		// Wait for pattern suggestions to appear
+		const patternSuggestions = page.locator('.pattern-suggestion')
+		await expect(patternSuggestions.first()).toBeVisible({ timeout: 5000 })
 
 		// Click on suggested pattern
 		const patternButton = page.locator('.pattern-suggestion').first()
-		await expect(patternButton).toBeVisible()
 		await patternButton.click()
 		sendUnifiedLog({ event: 'pattern-selected', value: '{parent:{id}}' })
 
@@ -404,7 +402,9 @@ test.describe('Import Data workflow', () => {
 		await folderDropzone.click()
 		await txtCheckbox.check()
 		await csvCheckbox.check()
-		await autofillBtn.click()
+		// Pattern section is now auto-shown, no button click needed
+		// Wait for pattern suggestions to appear
+		await expect(page.locator('.pattern-suggestion').first()).toBeVisible({ timeout: 5000 })
 		await page.locator('.pattern-suggestion').first().click()
 		await selectAllFiles.check()
 		await csvRow.locator('input[type="checkbox"]').check()
