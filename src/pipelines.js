@@ -39,7 +39,7 @@ export function createPipelinesModule({
 		try {
 			// Clear cached context to ensure fresh read from sessionStorage
 			pipelineState.pendingDataRun = null
-			
+
 			const pipelines = await invoke('get_pipelines')
 			const gridContainer = document.getElementById('pipelines-grid')
 			const emptyState = document.getElementById('pipelines-empty-state')
@@ -87,7 +87,8 @@ export function createPipelinesModule({
 		card.className = 'pipeline-card'
 		if (canRunWithData) {
 			card.classList.add('pipeline-card-has-data')
-			card.style.cssText = 'border: 2px solid rgba(29,78,216,0.4); box-shadow: 0 4px 12px rgba(29,78,216,0.15);'
+			card.style.cssText =
+				'border: 2px solid rgba(29,78,216,0.4); box-shadow: 0 4px 12px rgba(29,78,216,0.15);'
 		}
 
 		const dataBadge = canRunWithData
@@ -111,14 +112,15 @@ export function createPipelinesModule({
 			<p class="pipeline-card-description">${description}</p>
 			<div class="pipeline-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
 				<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
-				${canRunWithData
-					? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); transition: all 0.2s;">
+				${
+					canRunWithData
+						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); transition: all 0.2s;">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
 						Run with Selected Data
 					</button>`
-					: `<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>`
+						: `<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>`
 				}
 			</div>
 		`
@@ -176,7 +178,7 @@ export function createPipelinesModule({
 		// Always read fresh from sessionStorage - don't use cached state
 		// This ensures we see the latest selection state from Data tab
 		pipelineState.pendingDataRun = null
-		
+
 		if (typeof sessionStorage === 'undefined') {
 			return null
 		}
@@ -363,23 +365,26 @@ export function createPipelinesModule({
 						<strong style="color: #1e293b;">${fileCount}</strong> file${fileCount === 1 ? '' : 's'} selected
 						<span style="margin: 0 8px;">•</span>
 						<strong style="color: #1e293b;">${participantCount}</strong> participant${participantCount === 1 ? '' : 's'}
-						${eligiblePipelines.length > 0 
-							? `<span style="margin-left: 12px; padding: 4px 10px; background: rgba(34,197,94,0.1); color: #16a34a; border-radius: 4px; font-size: 13px; font-weight: 500;">
+						${
+							eligiblePipelines.length > 0
+								? `<span style="margin-left: 12px; padding: 4px 10px; background: rgba(34,197,94,0.1); color: #16a34a; border-radius: 4px; font-size: 13px; font-weight: 500;">
 								${eligiblePipelines.length} compatible pipeline${eligiblePipelines.length === 1 ? '' : 's'} available
 							</span>`
-							: ''
+								: ''
 						}
 					</div>
-					${eligiblePipelines.length > 1 
-						? `<div style="margin-left: 32px; font-size: 13px; color: #64748b; line-height: 1.5;">
+					${
+						eligiblePipelines.length > 1
+							? `<div style="margin-left: 32px; font-size: 13px; color: #64748b; line-height: 1.5;">
 							Select a pipeline below, or click "Choose Pipeline" to see all options.
 						</div>`
-						: ''
+							: ''
 					}
 				</div>
 				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex-shrink: 0;">
-					${eligiblePipelines.length > 1 
-						? `<button type="button" class="btn-primary" data-role="data-run-choose" style="font-size: 13px; padding: 10px 18px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; border: none; color: white; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
+					${
+						eligiblePipelines.length > 1
+							? `<button type="button" class="btn-primary" data-role="data-run-choose" style="font-size: 13px; padding: 10px 18px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; border: none; color: white; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<circle cx="5" cy="12" r="3" />
 								<circle cx="19" cy="12" r="3" />
@@ -387,7 +392,7 @@ export function createPipelinesModule({
 							</svg>
 							Choose Pipeline
 						</button>`
-						: ''
+							: ''
 					}
 					<button type="button" class="btn-secondary" data-role="data-run-back" style="font-size: 13px; padding: 10px 16px; border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -549,7 +554,7 @@ export function createPipelinesModule({
 			if (dialog && dialog.message) {
 				await dialog.message(
 					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
-					{ title: 'No Compatible Pipelines', type: 'warning' }
+					{ title: 'No Compatible Pipelines', type: 'warning' },
 				)
 			} else {
 				alert('No pipelines are available that accept a List[GenotypeRecord] input.')
@@ -586,10 +591,6 @@ export function createPipelinesModule({
 			const typeStr = describeInputType(inputSpec)
 			return typeof typeStr === 'string' && typeStr.toLowerCase() === 'list[genotyperecord]'
 		})
-	}
-
-	async function maybeShowDataRunModal(preselectedPipelineId = null) {
-		await startDataDrivenRun(preselectedPipelineId)
 	}
 
 	function closeDataRunModal(clearContext = false) {
@@ -686,8 +687,9 @@ export function createPipelinesModule({
 		modal.className = 'modal data-run-modal'
 		modal.setAttribute('role', 'dialog')
 		modal.setAttribute('aria-modal', 'true')
-		modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
-		
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
 		// Add CSS for backdrop animation if not exists
 		if (!document.getElementById('data-run-modal-styles')) {
 			const style = document.createElement('style')
@@ -836,8 +838,12 @@ export function createPipelinesModule({
 				} else {
 					const isPreferred = label.dataset.pipelineId === preselectedPipelineId?.toString()
 					label.style.borderColor = isPreferred ? '#2563eb' : '#e2e8f0'
-					label.style.background = isPreferred ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'
-					label.style.boxShadow = isPreferred ? '0 2px 8px rgba(37,99,235,0.1)' : '0 1px 3px rgba(0, 0, 0, 0.05)'
+					label.style.background = isPreferred
+						? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
+						: '#ffffff'
+					label.style.boxShadow = isPreferred
+						? '0 2px 8px rgba(37,99,235,0.1)'
+						: '0 1px 3px rgba(0, 0, 0, 0.05)'
 					label.style.transform = 'translateY(0)'
 				}
 			})
@@ -4076,54 +4082,60 @@ steps:${
 		// Set up listener to refresh banner when sessionStorage changes
 		// Use storage event (works across tabs) and also poll when Pipelines view is active
 		let bannerCheckInterval = null
-		
+
 		function refreshBannerIfNeeded() {
-			const isPipelinesViewActive = document.getElementById('run-view')?.classList.contains('active')
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
 			if (isPipelinesViewActive) {
 				// Clear cached context to force fresh read from sessionStorage
 				pipelineState.pendingDataRun = null
 				renderDataRunBanner()
 			}
 		}
-		
+
 		// Listen for storage events (works when Data tab updates sessionStorage)
 		window.addEventListener('storage', (e) => {
 			if (e.key === 'preselectedFileIds' || e.key === 'preselectedParticipants') {
 				refreshBannerIfNeeded()
 			}
 		})
-		
+
 		// Also poll when Pipelines view is active (since storage events don't fire in same window)
 		function startBannerPolling() {
 			if (bannerCheckInterval) return
 			bannerCheckInterval = setInterval(refreshBannerIfNeeded, 500)
 		}
-		
+
 		function stopBannerPolling() {
 			if (bannerCheckInterval) {
 				clearInterval(bannerCheckInterval)
 				bannerCheckInterval = null
 			}
 		}
-		
+
 		// Check view state periodically
 		setInterval(() => {
-			const isPipelinesViewActive = document.getElementById('run-view')?.classList.contains('active')
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
 			if (isPipelinesViewActive) {
 				startBannerPolling()
 			} else {
 				stopBannerPolling()
 			}
 		}, 1000)
-		
+
 		// Initial check
 		setTimeout(() => {
-			const isPipelinesViewActive = document.getElementById('run-view')?.classList.contains('active')
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
 			if (isPipelinesViewActive) {
 				startBannerPolling()
 			}
 		}, 100)
-		
+
 		// Make functions available globally FIRST (before loading pipelines)
 		window.pipelineModule = {
 			editPipeline,
@@ -5677,4 +5689,3 @@ steps:${
 		addProjectAsStep, // Expose for project creation to call
 	}
 }
-

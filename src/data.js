@@ -187,14 +187,18 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-		}">${
-			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-				? file.inferred_sex
-				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-				? 'Unknown'
-				: '-'
-		}</td>
+				file.inferred_sex === 'Male'
+					? '#007bff'
+					: file.inferred_sex === 'Female'
+						? '#e83e8c'
+						: '#666'
+			}">${
+				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+					? file.inferred_sex
+					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+						? 'Unknown'
+						: '-'
+			}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
