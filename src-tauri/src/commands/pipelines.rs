@@ -8,6 +8,9 @@ use tauri::Emitter;
 
 // Use CLI library types and functions
 use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
+use biovault::cli::commands::project_management::{
+    resolve_pipeline_dependencies, DependencyContext,
+};
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
 pub use biovault::pipeline_spec::PipelineSpec;
 
@@ -132,32 +135,82 @@ pub async fn create_pipeline(
     let mut pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
     let mut imported_spec: Option<PipelineSpec> = None;
 
+    // If importing from a file, always copy to managed directory (like GitHub imports)
     if let Some(pipeline_file_path) = pipeline_file {
-        pipeline_yaml_path = PathBuf::from(&pipeline_file_path);
-        if !pipeline_yaml_path.exists() {
+        let source_pipeline_yaml_path = PathBuf::from(&pipeline_file_path);
+        if !source_pipeline_yaml_path.exists() {
             return Err(format!(
                 "Selected pipeline.yaml does not exist at {}",
-                pipeline_yaml_path.display()
+                source_pipeline_yaml_path.display()
             ));
         }
 
-        let parent = pipeline_yaml_path.parent().ok_or_else(|| {
-            format!(
-                "Unable to determine parent directory for {}",
-                pipeline_yaml_path.display()
-            )
-        })?;
-        pipeline_dir = parent.to_path_buf();
-
-        // Ensure directory exists (no-op if it already does)
-        if !pipeline_dir.as_os_str().is_empty() {
-            fs::create_dir_all(&pipeline_dir)
-                .map_err(|e| format!("Failed to ensure pipeline directory: {}", e))?;
-        }
-
-        let spec = PipelineSpec::load(&pipeline_yaml_path)
+        // Load pipeline spec from source
+        let mut spec = PipelineSpec::load(&source_pipeline_yaml_path)
             .map_err(|e| format!("Failed to load pipeline.yaml: {}", e))?;
         name = spec.name.clone();
+
+        // Copy to managed directory (like GitHub imports do)
+        let source_parent = source_pipeline_yaml_path.parent().ok_or_else(|| {
+            format!(
+                "Unable to determine parent directory for {}",
+                source_pipeline_yaml_path.display()
+            )
+        })?;
+
+        // Create pipeline directory in managed location
+        let managed_pipeline_dir = pipelines_dir.join(&name);
+
+        if managed_pipeline_dir.exists() {
+            if overwrite {
+                fs::remove_dir_all(&managed_pipeline_dir)
+                    .map_err(|e| format!("Failed to remove existing pipeline directory: {}", e))?;
+            } else {
+                return Err(format!(
+                    "Pipeline '{}' already exists at {}. Use overwrite to replace.",
+                    name,
+                    managed_pipeline_dir.display()
+                ));
+            }
+        }
+
+        fs::create_dir_all(&managed_pipeline_dir)
+            .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+
+        pipeline_dir = managed_pipeline_dir.clone();
+        pipeline_yaml_path = managed_pipeline_dir.join("pipeline.yaml");
+
+        // Copy pipeline.yaml to managed location
+        fs::copy(&source_pipeline_yaml_path, &pipeline_yaml_path)
+            .map_err(|e| format!("Failed to copy pipeline.yaml: {}", e))?;
+
+        // Resolve and import dependencies
+        // Use spawn_blocking because BioVaultDb is not Send
+        // base_path is the directory containing pipeline.yaml (where project.yaml might also be)
+        let dependency_context = DependencyContext::Local {
+            base_path: source_parent.to_path_buf(), // This is already the directory containing pipeline.yaml
+        };
+        let pipeline_yaml_path_clone = pipeline_yaml_path.clone();
+
+        let spec_result = tauri::async_runtime::spawn_blocking(move || {
+            tauri::async_runtime::block_on(async {
+                resolve_pipeline_dependencies(
+                    &mut spec,
+                    &dependency_context,
+                    &pipeline_yaml_path_clone,
+                    overwrite,
+                    true, // quiet = true for Tauri (no console output)
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                // resolve_pipeline_dependencies saves the updated spec automatically
+                Ok::<PipelineSpec, String>(spec)
+            })
+        })
+        .await
+        .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
+
+        let spec = spec_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
         imported_spec = Some(spec);
     } else {
         fs::create_dir_all(&pipeline_dir)
