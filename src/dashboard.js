@@ -5,6 +5,7 @@ export function createDashboardShell({
 	loadParticipants,
 	_loadFiles,
 	loadProjects,
+	loadPipelines,
 	loadRuns,
 	_displayLogs,
 	loadSettings,
@@ -78,8 +79,9 @@ export function createDashboardShell({
 				loadParticipants?.() // loadParticipants is actually loadData now
 				break
 			case 'run':
-				// Load projects (which includes both pipelines and projects sections)
+				// Load projects and pipelines (which includes both pipelines and projects sections)
 				loadProjects?.()
+				loadPipelines?.()
 				break
 			case 'runs':
 				loadRuns?.()

@@ -37,6 +37,9 @@ export function createPipelinesModule({
 	// Load pipelines list
 	async function loadPipelines() {
 		try {
+			// Clear cached context to ensure fresh read from sessionStorage
+			pipelineState.pendingDataRun = null
+
 			const pipelines = await invoke('get_pipelines')
 			const gridContainer = document.getElementById('pipelines-grid')
 			const emptyState = document.getElementById('pipelines-empty-state')
@@ -50,6 +53,8 @@ export function createPipelinesModule({
 				gridContainer.innerHTML = ''
 				if (emptyState) emptyState.style.display = 'flex'
 				pipelineState.pipelines = []
+				// Still render banner (it will clear itself if no selection)
+				renderDataRunBanner()
 				return
 			}
 
@@ -57,55 +62,122 @@ export function createPipelinesModule({
 			gridContainer.innerHTML = ''
 
 			pipelines.forEach((pipeline) => {
-				const stepCount = pipeline.spec?.steps?.length || 0
-				const description = pipeline.spec?.description || 'Click to configure and manage steps'
-
-				const card = document.createElement('div')
-				card.className = 'pipeline-card'
-
-				card.innerHTML = `
-				<div class="pipeline-card-header">
-					<h3 class="pipeline-card-title">${pipeline.name}</h3>
-					<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
-						pipeline.id
-					}, event)">⋯</button>
-				</div>
-				<p class="pipeline-card-description">${description}</p>
-				<div class="pipeline-card-footer">
-					<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
-					<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>
-				</div>
-			`
-
-				card.addEventListener('click', () => {
-					showPipelineDetails(pipeline.id)
-				})
-				gridContainer.appendChild(card)
-
-				const runBtn = card.querySelector('.pipeline-run-btn')
-				if (runBtn) {
-					runBtn.addEventListener('click', async (event) => {
-						event.stopPropagation()
-						await handlePipelineRunClick(pipeline.id)
-					})
-				}
+				renderPipelineCard(pipeline, gridContainer)
 			})
 
 			pipelineState.pipelines = pipelines
 
 			renderDataRunBanner()
 
-			// Show data-driven pipeline modal if triggered from Data tab
-			maybeShowDataRunModal()
+			// Don't auto-open modal - let user choose from banner or pipeline cards
 		} catch (error) {
 			console.error('Error loading pipelines:', error)
 		}
 	}
 
-	function getPendingDataRunContext() {
-		if (pipelineState.pendingDataRun) {
-			return pipelineState.pendingDataRun
+	function renderPipelineCard(pipeline, container) {
+		const stepCount = pipeline.spec?.steps?.length || 0
+		const description = pipeline.spec?.description || 'Click to configure and manage steps'
+		const context = getPendingDataRunContext()
+		const hasDataSelected = context && context.fileIds && context.fileIds.length > 0
+		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
+		const canRunWithData = hasDataSelected && acceptsGenotype
+
+		const card = document.createElement('div')
+		card.className = 'pipeline-card'
+		if (canRunWithData) {
+			card.classList.add('pipeline-card-has-data')
+			card.style.cssText =
+				'border: 2px solid rgba(29,78,216,0.4); box-shadow: 0 4px 12px rgba(29,78,216,0.15);'
 		}
+
+		const dataBadge = canRunWithData
+			? `<div style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: rgba(29,78,216,0.1); border-radius: 6px; margin-bottom: 12px; font-size: 12px; color: #1e40af;">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M9 11l3 3L22 4"></path>
+						<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+					</svg>
+					<span style="font-weight: 600;">Ready to run with selected data</span>
+				</div>`
+			: ''
+
+		card.innerHTML = `
+			<div class="pipeline-card-header">
+				<h3 class="pipeline-card-title">${pipeline.name}</h3>
+				<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
+					pipeline.id
+				}, event)">⋯</button>
+			</div>
+			${dataBadge}
+			<p class="pipeline-card-description">${description}</p>
+			<div class="pipeline-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+				<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
+				${
+					canRunWithData
+						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); transition: all 0.2s;">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+							<polygon points="5 3 19 12 5 21 5 3"></polygon>
+						</svg>
+						Run with Selected Data
+					</button>`
+						: `<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>`
+				}
+			</div>
+		`
+
+		card.addEventListener('click', (e) => {
+			// Don't navigate if clicking on buttons
+			if (e.target.closest('button')) return
+			showPipelineDetails(pipeline.id)
+		})
+		container.appendChild(card)
+
+		if (canRunWithData) {
+			const runDataBtn = card.querySelector('.pipeline-run-data-btn')
+			if (runDataBtn) {
+				runDataBtn.addEventListener('click', async (event) => {
+					event.stopPropagation()
+					await startDataDrivenRun(pipeline.id)
+				})
+			}
+		} else {
+			const runBtn = card.querySelector('.pipeline-run-btn')
+			if (runBtn) {
+				runBtn.addEventListener('click', async (event) => {
+					event.stopPropagation()
+					await handlePipelineRunClick(pipeline.id)
+				})
+			}
+		}
+	}
+
+	function refreshPipelineCards() {
+		const gridContainer = document.getElementById('pipelines-grid')
+		if (!gridContainer || !pipelineState.pipelines) return
+
+		const existingCards = Array.from(gridContainer.querySelectorAll('.pipeline-card'))
+		if (existingCards.length === 0) return
+
+		// Re-render all cards with updated data selection state
+		const fragment = document.createDocumentFragment()
+		pipelineState.pipelines.forEach((pipeline) => {
+			const existingCard = existingCards.find((card) => {
+				const runBtn = card.querySelector('[data-pipeline-id]')
+				return runBtn && parseInt(runBtn.dataset.pipelineId) === pipeline.id
+			})
+			if (existingCard) {
+				existingCard.remove()
+			}
+			renderPipelineCard(pipeline, fragment)
+		})
+
+		gridContainer.appendChild(fragment)
+	}
+
+	function getPendingDataRunContext() {
+		// Always read fresh from sessionStorage - don't use cached state
+		// This ensures we see the latest selection state from Data tab
+		pipelineState.pendingDataRun = null
 
 		if (typeof sessionStorage === 'undefined') {
 			return null
@@ -113,6 +185,8 @@ export function createPipelinesModule({
 
 		const fileIdsRaw = sessionStorage.getItem('preselectedFileIds')
 		if (!fileIdsRaw) {
+			// Explicitly clear cache if no data
+			pipelineState.pendingDataRun = null
 			return null
 		}
 
@@ -137,7 +211,9 @@ export function createPipelinesModule({
 		)
 
 		if (uniqueFileIds.length === 0) {
+			// Clear sessionStorage and cache if no valid file IDs
 			sessionStorage.removeItem('preselectedFileIds')
+			pipelineState.pendingDataRun = null
 			return null
 		}
 
@@ -165,6 +241,7 @@ export function createPipelinesModule({
 			participantIds,
 		}
 
+		// Cache for performance, but will be cleared on next check if sessionStorage changed
 		pipelineState.pendingDataRun = context
 		return context
 	}
@@ -197,6 +274,8 @@ export function createPipelinesModule({
 				banner.remove()
 			}
 			renderDetailDataRunBanner(null)
+			// Refresh pipeline cards to remove data-specific UI
+			refreshPipelineCards()
 			return
 		}
 
@@ -204,21 +283,29 @@ export function createPipelinesModule({
 			if (!banner) {
 				banner = document.createElement('div')
 				banner.id = bannerId
+				banner.className = 'data-run-banner'
 				banner.style.cssText =
-					'margin-top: 12px; padding: 12px 16px; background: rgba(29,78,216,0.08); border: 1px solid rgba(29,78,216,0.35); border-radius: 6px; color: #0f172a;'
+					'margin: 16px 24px 0 24px; padding: 16px 20px; background: linear-gradient(135deg, rgba(29,78,216,0.12) 0%, rgba(59,130,246,0.08) 100%); border: 1.5px solid rgba(29,78,216,0.3); border-radius: 8px; color: #0f172a; box-shadow: 0 2px 8px rgba(29,78,216,0.1);'
 
-				const header = mainView.querySelector('.page-header')
-				if (header && header.parentNode) {
-					header.parentNode.insertBefore(banner, header.nextSibling)
+				const viewContent = mainView.querySelector('.view-content')
+				if (viewContent) {
+					viewContent.insertBefore(banner, viewContent.firstChild)
 				} else {
-					mainView.insertBefore(banner, mainView.firstChild)
+					const header = mainView.querySelector('.page-header')
+					if (header && header.parentNode) {
+						header.parentNode.insertBefore(banner, header.nextSibling)
+					} else {
+						mainView.insertBefore(banner, mainView.firstChild)
+					}
 				}
 			}
 
-			populateDataRunBanner(banner, context, null)
+			populateMainDataRunBanner(banner, context)
 		}
 
 		renderDetailDataRunBanner(context)
+		// Refresh pipeline cards to show data-specific UI
+		refreshPipelineCards()
 	}
 
 	function renderDetailDataRunBanner(context) {
@@ -251,6 +338,111 @@ export function createPipelinesModule({
 
 		const preselectedPipelineId = pipelineState.currentPipeline?.id ?? null
 		populateDataRunBanner(banner, context, preselectedPipelineId)
+	}
+
+	function populateMainDataRunBanner(banner, context) {
+		const fileCount = context.fileIds.length
+		const participantCount =
+			context.participantIds && context.participantIds.length > 0
+				? context.participantIds.length
+				: fileCount
+
+		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
+			pipelineAcceptsGenotypeInput(pipeline),
+		)
+
+		banner.innerHTML = `
+			<div style="display: flex; align-items: center; gap: 24px;">
+				<div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+					<div style="display: flex; align-items: center; gap: 12px;">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #2563eb; flex-shrink: 0;">
+							<path d="M9 11l3 3L22 4"></path>
+							<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+						</svg>
+						<strong style="font-size: 15px; color: #1e40af; line-height: 1.4;">Data Selected for Pipeline Run</strong>
+					</div>
+					<div style="font-size: 14px; color: #475569; line-height: 1.6; margin-left: 32px;">
+						<strong style="color: #1e293b;">${fileCount}</strong> file${fileCount === 1 ? '' : 's'} selected
+						<span style="margin: 0 8px;">•</span>
+						<strong style="color: #1e293b;">${participantCount}</strong> participant${participantCount === 1 ? '' : 's'}
+						${
+							eligiblePipelines.length > 0
+								? `<span style="margin-left: 12px; padding: 4px 10px; background: rgba(34,197,94,0.1); color: #16a34a; border-radius: 4px; font-size: 13px; font-weight: 500;">
+								${eligiblePipelines.length} compatible pipeline${eligiblePipelines.length === 1 ? '' : 's'} available
+							</span>`
+								: ''
+						}
+					</div>
+					${
+						eligiblePipelines.length > 1
+							? `<div style="margin-left: 32px; font-size: 13px; color: #64748b; line-height: 1.5;">
+							Select a pipeline below, or click "Choose Pipeline" to see all options.
+						</div>`
+							: ''
+					}
+				</div>
+				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex-shrink: 0;">
+					${
+						eligiblePipelines.length > 1
+							? `<button type="button" class="btn-primary" data-role="data-run-choose" style="font-size: 13px; padding: 10px 18px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; border: none; color: white; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="5" cy="12" r="3" />
+								<circle cx="19" cy="12" r="3" />
+								<line x1="8" y1="12" x2="16" y2="12" />
+							</svg>
+							Choose Pipeline
+						</button>`
+							: ''
+					}
+					<button type="button" class="btn-secondary" data-role="data-run-back" style="font-size: 13px; padding: 10px 16px; border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polyline points="15 18 9 12 15 6"></polyline>
+						</svg>
+						Back to Data
+					</button>
+					<button
+						type="button"
+						data-role="data-run-clear"
+						style="background: none; border: none; color: #64748b; text-decoration: none; cursor: pointer; font-size: 13px; padding: 10px 12px; line-height: 1.4; white-space: nowrap; font-weight: 500; transition: color 0.2s; text-underline-offset: 2px;"
+						title="Clear selection"
+						onmouseover="this.style.color='#1e293b'; this.style.textDecoration='underline'"
+						onmouseout="this.style.color='#64748b'; this.style.textDecoration='none'"
+					>
+						Clear
+					</button>
+				</div>
+			</div>
+		`
+
+		const backBtn = banner.querySelector('[data-role="data-run-back"]')
+		if (backBtn) {
+			backBtn.addEventListener('click', () => {
+				if (typeof navigateTo === 'function') {
+					navigateTo('data')
+				}
+			})
+		}
+
+		const chooseBtn = banner.querySelector('[data-role="data-run-choose"]')
+		if (chooseBtn) {
+			chooseBtn.addEventListener('click', async () => {
+				await startDataDrivenRun(null).catch((error) => {
+					console.error('Failed to open pipeline selection modal:', error)
+				})
+			})
+		}
+
+		const clearBtn = banner.querySelector('[data-role="data-run-clear"]')
+		if (clearBtn) {
+			clearBtn.addEventListener('click', () => {
+				// Clear selections in Data tab
+				if (typeof window.clearAllDataSelections === 'function') {
+					window.clearAllDataSelections()
+				}
+				// Clear the banner context
+				clearDataRunContext()
+			})
+		}
 	}
 
 	function populateDataRunBanner(banner, context, preselectedPipelineId = null) {
@@ -303,6 +495,11 @@ export function createPipelinesModule({
 		const clearBtn = banner.querySelector('[data-role="data-run-clear"]')
 		if (clearBtn) {
 			clearBtn.addEventListener('click', () => {
+				// Clear selections in Data tab
+				if (typeof window.clearAllDataSelections === 'function') {
+					window.clearAllDataSelections()
+				}
+				// Clear the banner context
 				clearDataRunContext()
 			})
 		}
@@ -318,6 +515,11 @@ export function createPipelinesModule({
 			return false
 		}
 
+		// Load pipelines if not already loaded
+		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
+			await loadPipelines()
+		}
+
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
 			pipelineAcceptsGenotypeInput(pipeline),
 		)
@@ -329,6 +531,39 @@ export function createPipelinesModule({
 		}
 
 		await showDataRunModal(context, eligiblePipelines, preselectedPipelineId)
+		return true
+	}
+
+	// Public function to show modal directly (called from Data tab)
+	async function showDataRunModalDirect() {
+		const context = getPendingDataRunContext()
+		if (!context || !context.fileIds || context.fileIds.length === 0) {
+			return false
+		}
+
+		// Load pipelines if not already loaded
+		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
+			await loadPipelines()
+		}
+
+		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
+			pipelineAcceptsGenotypeInput(pipeline),
+		)
+
+		if (eligiblePipelines.length === 0) {
+			if (dialog && dialog.message) {
+				await dialog.message(
+					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
+					{ title: 'No Compatible Pipelines', type: 'warning' },
+				)
+			} else {
+				alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+			}
+			clearDataRunContext()
+			return false
+		}
+
+		await showDataRunModal(context, eligiblePipelines, null)
 		return true
 	}
 
@@ -356,10 +591,6 @@ export function createPipelinesModule({
 			const typeStr = describeInputType(inputSpec)
 			return typeof typeStr === 'string' && typeStr.toLowerCase() === 'list[genotyperecord]'
 		})
-	}
-
-	async function maybeShowDataRunModal(preselectedPipelineId = null) {
-		await startDataDrivenRun(preselectedPipelineId)
 	}
 
 	function closeDataRunModal(clearContext = false) {
@@ -411,20 +642,39 @@ export function createPipelinesModule({
 					? `<div class="option-desc">${escapeHtml(pipeline.spec.description)}</div>`
 					: ''
 
+				const stepCount = pipeline.spec?.steps?.length || 0
 				return `
 					<label class="data-run-pipeline-option" data-pipeline-id="${
 						pipeline.id
-					}" style="display: flex; align-items: flex-start; gap: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; cursor: pointer; margin-bottom: 10px; background: #ffffff;">
+					}" style="display: flex; align-items: flex-start; gap: 16px; border: 2px solid ${isPreferred ? '#2563eb' : '#e2e8f0'}; border-radius: 12px; padding: 20px 24px; cursor: pointer; background: ${isPreferred ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'}; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); ${isPreferred ? 'box-shadow: 0 4px 12px rgba(37,99,235,0.15);' : 'box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);'};">
 						<input type="radio" name="data-run-pipeline" value="${
 							pipeline.id
-						}" ${isChecked} style="margin-top: 4px;">
-						<div class="option-details" style="flex: 1;">
-							<div class="option-title" style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">
-								${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
+						}" ${isChecked} style="margin-top: 4px; accent-color: #2563eb; width: 18px; height: 18px; cursor: pointer;">
+						<div class="option-details" style="flex: 1; min-width: 0;">
+							<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+								<div class="option-title" style="font-weight: 700; font-size: 16px; color: #0f172a; letter-spacing: -0.01em;">
+									${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
+								</div>
+								${isPreferred ? `<span style="padding: 4px 10px; background: rgba(37,99,235,0.15); color: #2563eb; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Recommended</span>` : ''}
 							</div>
-							${description}
-							<div class="option-meta" style="color: #555; font-size: 13px;">
-								Inputs: ${escapeHtml(inputSummary || '—')}
+							${description ? `<div class="option-desc" style="color: #64748b; font-size: 14px; margin-bottom: 12px; line-height: 1.6;">${description}</div>` : ''}
+							<div style="display: flex; gap: 16px; align-items: center; font-size: 13px; color: #64748b; flex-wrap: wrap;">
+								<span style="display: flex; align-items: center; gap: 6px; font-weight: 500;">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.7;">
+										<circle cx="5" cy="12" r="3" />
+										<circle cx="19" cy="12" r="3" />
+										<line x1="8" y1="12" x2="16" y2="12" />
+									</svg>
+									${stepCount} step${stepCount === 1 ? '' : 's'}
+								</span>
+								<span style="display: flex; align-items: center; gap: 6px; font-weight: 500;">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.7;">
+										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+										<polyline points="7 10 12 15 17 10" />
+										<line x1="12" y1="15" x2="12" y2="3" />
+									</svg>
+									Inputs: ${escapeHtml(inputSummary || 'None')}
+								</span>
 							</div>
 						</div>
 					</label>
@@ -434,63 +684,186 @@ export function createPipelinesModule({
 
 		const modal = document.createElement('div')
 		modal.id = 'data-run-modal'
-		modal.className = 'modal-overlay'
-		modal.style.display = 'flex'
+		modal.className = 'modal data-run-modal'
+		modal.setAttribute('role', 'dialog')
+		modal.setAttribute('aria-modal', 'true')
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		// Add CSS for backdrop animation if not exists
+		if (!document.getElementById('data-run-modal-styles')) {
+			const style = document.createElement('style')
+			style.id = 'data-run-modal-styles'
+			style.textContent = `
+				.data-run-modal .modal-backdrop {
+					position: absolute;
+					top: 0;
+					left: 0;
+					width: 100%;
+					height: 100%;
+					background: rgba(0, 0, 0, 0.4);
+					backdrop-filter: blur(8px);
+					animation: backdropFadeIn 0.2s ease-out;
+				}
+				@keyframes backdropFadeIn {
+					from { opacity: 0; backdrop-filter: blur(0px); }
+					to { opacity: 1; backdrop-filter: blur(8px); }
+				}
+				@keyframes slideUp {
+					from { opacity: 0; transform: translateY(24px) scale(0.96); }
+					to { opacity: 1; transform: translateY(0) scale(1); }
+				}
+				.data-run-modal .modal-close-btn:hover {
+					background: #f8fafc !important;
+					color: #0f172a !important;
+					transform: translateY(-1px);
+				}
+				.data-run-modal .modal-close-btn:active {
+					transform: translateY(0);
+				}
+				.data-run-modal .data-run-pipeline-option:hover {
+					border-color: #cbd5e1 !important;
+					box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+				}
+				.data-run-modal #data-run-run-btn:hover {
+					background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
+					box-shadow: 0 4px 12px rgba(37,99,235,0.4) !important;
+					transform: translateY(-1px);
+				}
+				.data-run-modal #data-run-run-btn:active {
+					transform: translateY(0);
+				}
+			`
+			document.head.appendChild(style)
+		}
+
 		modal.innerHTML = `
-			<div class="modal-content" style="width: 640px; max-width: 90vw;">
-				<div class="modal-header">
-					<h2>Run Pipeline with Selected Data</h2>
-					<button class="modal-close data-run-cancel" title="Close">×</button>
+			<div class="modal-backdrop data-run-backdrop" data-modal-close="data-run"></div>
+			<div class="data-run-modal-panel" style="position: relative; width: 800px; max-width: 95vw; height: 85vh; max-height: 800px; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden; animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);">
+				<div class="data-run-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="data-run-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+							<polygon points="5 3 19 12 5 21 5 3"></polygon>
+						</svg>
+						Run Pipeline with Selected Data
+					</h2>
+					<button type="button" class="modal-close-btn data-run-cancel" data-modal-close="data-run" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+						</svg>
+					</button>
 				</div>
-				<div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-					<div class="data-run-summary" style="margin-bottom: 16px; font-size: 14px; color: #374151;">
-						<div style="margin-bottom: 6px;">
-							Input: <strong>${fileCount}</strong> genotype file${fileCount === 1 ? '' : 's'} covering
-							<strong>${uniqueParticipantCount}</strong> participant${uniqueParticipantCount === 1 ? '' : 's'}.
+				<div class="data-run-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
+					<div class="data-run-summary" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1.5px solid #3b82f6; border-radius: 12px; padding: 20px 24px; margin-bottom: 28px;">
+						<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+								<path d="M9 11l3 3L22 4"></path>
+								<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+							</svg>
+							<strong style="font-size: 16px; font-weight: 700; color: #1e293b; letter-spacing: -0.01em;">Selected Data</strong>
 						</div>
-						<div style="font-size: 13px; color: #48566a;">
+						<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
+							<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${fileCount === 1 ? '' : 's'} 
+							covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${uniqueParticipantCount === 1 ? '' : 's'}
+						</div>
+						<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
 							We will generate a temporary samplesheet automatically for this run.
 						</div>
 					</div>
-					<div class="data-run-section" style="margin-bottom: 20px;">
-						<h3 style="margin-bottom: 10px; font-size: 16px;">Select a Pipeline</h3>
-						<div class="data-run-pipeline-list">
+					<div class="data-run-section" style="margin-bottom: 28px;">
+						<h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
+								<circle cx="5" cy="12" r="3" />
+								<circle cx="19" cy="12" r="3" />
+								<line x1="8" y1="12" x2="16" y2="12" />
+							</svg>
+							Select a Pipeline
+						</h3>
+						<div class="data-run-pipeline-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
 							${pipelineOptionsHtml}
 						</div>
 					</div>
-					<div class="data-run-section" style="margin-bottom: 10px;">
-						<h3 style="margin-bottom: 10px; font-size: 16px;">Results Directory (optional)</h3>
-						<p style="font-size: 13px; color: #555; margin-bottom: 8px;">
+					<div class="data-run-section" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px;">
+						<h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #475569; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #64748b;">
+								<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+							</svg>
+							Results Directory <span style="font-weight: 400; color: #94a3b8; font-size: 13px;">(optional)</span>
+						</h3>
+						<p style="font-size: 13px; color: #64748b; margin: 0 0 16px 0; line-height: 1.6;">
 							Leave blank to create a timestamped folder inside
-							${runsBaseDir ? `<code>${escapeHtml(runsBaseDir)}</code>` : 'the BioVault runs directory'}.
+							${runsBaseDir ? `<code style="background: #f1f5f9; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: 'SF Mono', Monaco, monospace; color: #475569;">${escapeHtml(runsBaseDir)}</code>` : 'the BioVault runs directory'}.
 						</p>
-						<div class="data-run-results-input" style="display: flex; gap: 8px;">
-							<input type="text" id="data-run-results-dir" placeholder="Defaults to BioVault runs folder" style="flex: 1;">
-							<button id="data-run-results-browse" class="secondary-btn" type="button">Browse…</button>
+						<div class="data-run-results-input" style="display: flex; gap: 10px;">
+							<input type="text" id="data-run-results-dir" placeholder="Defaults to BioVault runs folder" style="flex: 1; padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: #ffffff; color: #0f172a; transition: all 0.2s;">
+							<button id="data-run-results-browse" class="secondary-btn" type="button" style="padding: 12px 20px; white-space: nowrap; font-weight: 600; border-radius: 8px;">Browse…</button>
 						</div>
 					</div>
 				</div>
-				<div class="modal-footer" style="display: flex; gap: 8px; justify-content: flex-end;">
-					<button class="btn-secondary data-run-cancel" type="button">Cancel</button>
-					<button class="btn-primary" id="data-run-run-btn" type="button">Run Pipeline</button>
+				<div class="data-run-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
+					<div class="data-run-footer-status" style="font-size: 14px; color: #64748b;">Ready to run</div>
+					<div style="display: flex; gap: 10px;">
+						<button class="btn-secondary data-run-cancel" type="button" style="padding: 12px 24px; font-weight: 600; border-radius: 8px;">Cancel</button>
+						<button class="btn-primary" id="data-run-run-btn" type="button" style="padding: 12px 28px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<polygon points="5 3 19 12 5 21 5 3"></polygon>
+							</svg>
+							Run Pipeline
+						</button>
+					</div>
 				</div>
 			</div>
 		`
 
 		document.body.appendChild(modal)
 
+		// Add backdrop click handler
+		const backdrop = modal.querySelector('.data-run-backdrop')
+		if (backdrop) {
+			backdrop.addEventListener('click', () => {
+				closeDataRunModal()
+			})
+		}
+
+		// Add hover effects to pipeline options
 		const optionLabels = modal.querySelectorAll('.data-run-pipeline-option')
 		function refreshOptionStyles() {
 			optionLabels.forEach((label) => {
-				if (label.classList.contains('selected')) {
+				const radio = label.querySelector('input[type="radio"]')
+				if (radio && radio.checked) {
 					label.style.borderColor = '#2563eb'
-					label.style.background = '#eff6ff'
+					label.style.background = 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
+					label.style.boxShadow = '0 4px 12px rgba(37,99,235,0.2)'
+					label.style.transform = 'translateY(-1px)'
 				} else {
-					label.style.borderColor = '#e5e7eb'
-					label.style.background = '#ffffff'
+					const isPreferred = label.dataset.pipelineId === preselectedPipelineId?.toString()
+					label.style.borderColor = isPreferred ? '#2563eb' : '#e2e8f0'
+					label.style.background = isPreferred
+						? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
+						: '#ffffff'
+					label.style.boxShadow = isPreferred
+						? '0 2px 8px rgba(37,99,235,0.1)'
+						: '0 1px 3px rgba(0, 0, 0, 0.05)'
+					label.style.transform = 'translateY(0)'
 				}
 			})
 		}
+
+		// Add hover effects
+		optionLabels.forEach((label) => {
+			label.addEventListener('mouseenter', () => {
+				if (!label.querySelector('input[type="radio"]')?.checked) {
+					label.style.borderColor = '#cbd5e1'
+					label.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.08)'
+					label.style.transform = 'translateY(-1px)'
+				}
+			})
+			label.addEventListener('mouseleave', () => {
+				if (!label.querySelector('input[type="radio"]')?.checked) {
+					refreshOptionStyles()
+				}
+			})
+		})
 
 		optionLabels.forEach((label) => {
 			const radio = label.querySelector('input[type="radio"]')
@@ -520,8 +893,20 @@ export function createPipelinesModule({
 		})
 		refreshOptionStyles()
 
-		const browseBtn = modal.querySelector('#data-run-results-browse')
+		// Add input focus effects
 		const resultsInput = modal.querySelector('#data-run-results-dir')
+		if (resultsInput) {
+			resultsInput.addEventListener('focus', () => {
+				resultsInput.style.borderColor = '#2563eb'
+				resultsInput.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'
+			})
+			resultsInput.addEventListener('blur', () => {
+				resultsInput.style.borderColor = '#cbd5e1'
+				resultsInput.style.boxShadow = 'none'
+			})
+		}
+
+		const browseBtn = modal.querySelector('#data-run-results-browse')
 		if (browseBtn) {
 			browseBtn.addEventListener('click', async () => {
 				try {
@@ -3694,6 +4079,63 @@ steps:${
 
 	// Initialization function
 	function initialize() {
+		// Set up listener to refresh banner when sessionStorage changes
+		// Use storage event (works across tabs) and also poll when Pipelines view is active
+		let bannerCheckInterval = null
+
+		function refreshBannerIfNeeded() {
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
+			if (isPipelinesViewActive) {
+				// Clear cached context to force fresh read from sessionStorage
+				pipelineState.pendingDataRun = null
+				renderDataRunBanner()
+			}
+		}
+
+		// Listen for storage events (works when Data tab updates sessionStorage)
+		window.addEventListener('storage', (e) => {
+			if (e.key === 'preselectedFileIds' || e.key === 'preselectedParticipants') {
+				refreshBannerIfNeeded()
+			}
+		})
+
+		// Also poll when Pipelines view is active (since storage events don't fire in same window)
+		function startBannerPolling() {
+			if (bannerCheckInterval) return
+			bannerCheckInterval = setInterval(refreshBannerIfNeeded, 500)
+		}
+
+		function stopBannerPolling() {
+			if (bannerCheckInterval) {
+				clearInterval(bannerCheckInterval)
+				bannerCheckInterval = null
+			}
+		}
+
+		// Check view state periodically
+		setInterval(() => {
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
+			if (isPipelinesViewActive) {
+				startBannerPolling()
+			} else {
+				stopBannerPolling()
+			}
+		}, 1000)
+
+		// Initial check
+		setTimeout(() => {
+			const isPipelinesViewActive = document
+				.getElementById('run-view')
+				?.classList.contains('active')
+			if (isPipelinesViewActive) {
+				startBannerPolling()
+			}
+		}, 100)
+
 		// Make functions available globally FIRST (before loading pipelines)
 		window.pipelineModule = {
 			editPipeline,
@@ -3744,6 +4186,7 @@ steps:${
 			submitStepURL,
 			loadPipelineSteps,
 			closeStepPickerModal,
+			showDataRunModal: showDataRunModalDirect,
 			showExistingProjectsList,
 			closeProjectsListModal,
 			browseForStepFolder,
