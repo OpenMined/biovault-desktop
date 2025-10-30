@@ -1,5 +1,5 @@
 use crate::types::{AppState, Project, ProjectEditorLoadResponse, ProjectListEntry};
-use biovault::data::{hash_file, ProjectMetadata};
+use biovault::data::{hash_file, ProjectMetadata, UpdateProjectParams};
 use biovault::project_spec::{self, InputSpec, OutputSpec, ParameterSpec, ProjectSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1075,20 +1075,21 @@ pub fn save_project_editor(
         .clone()
         .unwrap_or_else(|| "1.0.0".to_string());
 
+    let make_update_params = || UpdateProjectParams {
+        name: metadata.name.as_str(),
+        version: version_for_db.as_str(),
+        author: metadata.author.as_str(),
+        workflow: metadata.workflow.as_str(),
+        template: template_for_db.as_str(),
+        project_path: project_path_buf.as_path(),
+    };
+
     let project_record = {
         let db = state.biovault_db.lock().unwrap();
         if let Some(id) = project_id {
             // Update existing project by ID
-            db.update_project_by_id(
-                id,
-                &metadata.name,
-                &version_for_db,
-                &metadata.author,
-                &metadata.workflow,
-                &template_for_db,
-                &project_path_buf,
-            )
-            .map_err(|e| format!("Failed to update project: {}", e))?;
+            db.update_project_by_id(id, make_update_params())
+                .map_err(|e| format!("Failed to update project: {}", e))?;
 
             db.get_project(&id.to_string())
                 .map_err(|e| format!("Failed to reload project {}: {}", id, e))?
@@ -1098,16 +1099,8 @@ pub fn save_project_editor(
             match db.get_project(&metadata.name) {
                 Ok(Some(existing)) => {
                     // Project exists - update it
-                    db.update_project_by_id(
-                        existing.id,
-                        &metadata.name,
-                        &version_for_db,
-                        &metadata.author,
-                        &metadata.workflow,
-                        &template_for_db,
-                        &project_path_buf,
-                    )
-                    .map_err(|e| format!("Failed to update existing project: {}", e))?;
+                    db.update_project_by_id(existing.id, make_update_params())
+                        .map_err(|e| format!("Failed to update existing project: {}", e))?;
 
                     existing
                 }

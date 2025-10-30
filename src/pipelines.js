@@ -30,6 +30,8 @@ export function createPipelinesModule({
 			inputs: {},
 			steps: [],
 		},
+		pendingDataRun: null,
+		dataRunModalOpen: false,
 	}
 
 	// Load pipelines list
@@ -71,9 +73,7 @@ export function createPipelinesModule({
 				<p class="pipeline-card-description">${description}</p>
 				<div class="pipeline-card-footer">
 					<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
-					<button class="pipeline-run-btn" onclick="event.stopPropagation(); pipelineModule.runPipeline(${
-						pipeline.id
-					})">▶ Run</button>
+					<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>
 				</div>
 			`
 
@@ -81,12 +81,516 @@ export function createPipelinesModule({
 					showPipelineDetails(pipeline.id)
 				})
 				gridContainer.appendChild(card)
+
+				const runBtn = card.querySelector('.pipeline-run-btn')
+				if (runBtn) {
+					runBtn.addEventListener('click', async (event) => {
+						event.stopPropagation()
+						await handlePipelineRunClick(pipeline.id)
+					})
+				}
 			})
 
 			pipelineState.pipelines = pipelines
+
+			renderDataRunBanner()
+
+			// Show data-driven pipeline modal if triggered from Data tab
+			maybeShowDataRunModal()
 		} catch (error) {
 			console.error('Error loading pipelines:', error)
 		}
+	}
+
+	function getPendingDataRunContext() {
+		if (pipelineState.pendingDataRun) {
+			return pipelineState.pendingDataRun
+		}
+
+		if (typeof sessionStorage === 'undefined') {
+			return null
+		}
+
+		const fileIdsRaw = sessionStorage.getItem('preselectedFileIds')
+		if (!fileIdsRaw) {
+			return null
+		}
+
+		let parsedFileIds
+		try {
+			parsedFileIds = JSON.parse(fileIdsRaw)
+		} catch (error) {
+			console.warn('Failed to parse preselectedFileIds:', error)
+			sessionStorage.removeItem('preselectedFileIds')
+			return null
+		}
+
+		if (!Array.isArray(parsedFileIds)) {
+			sessionStorage.removeItem('preselectedFileIds')
+			return null
+		}
+
+		const uniqueFileIds = Array.from(
+			new Set(
+				parsedFileIds.map((value) => parseInt(value, 10)).filter((value) => Number.isFinite(value)),
+			),
+		)
+
+		if (uniqueFileIds.length === 0) {
+			sessionStorage.removeItem('preselectedFileIds')
+			return null
+		}
+
+		let participantIds = []
+		const participantsRaw = sessionStorage.getItem('preselectedParticipants')
+		if (participantsRaw) {
+			try {
+				const parsedParticipants = JSON.parse(participantsRaw)
+				if (Array.isArray(parsedParticipants)) {
+					participantIds = Array.from(
+						new Set(
+							parsedParticipants
+								.map((value) => parseInt(value, 10))
+								.filter((value) => Number.isFinite(value)),
+						),
+					)
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedParticipants:', error)
+			}
+		}
+
+		const context = {
+			fileIds: uniqueFileIds,
+			participantIds,
+		}
+
+		pipelineState.pendingDataRun = context
+		return context
+	}
+
+	function clearDataRunContext() {
+		pipelineState.pendingDataRun = null
+
+		if (typeof sessionStorage === 'undefined') {
+			return
+		}
+
+		try {
+			sessionStorage.removeItem('preselectedFileIds')
+			sessionStorage.removeItem('preselectedParticipants')
+		} catch (error) {
+			console.warn('Failed to clear preselected session data:', error)
+		}
+
+		renderDataRunBanner()
+	}
+
+	function renderDataRunBanner() {
+		const context = getPendingDataRunContext()
+		const mainView = document.getElementById('pipelines-main-view')
+		const bannerId = 'pipelines-data-banner'
+		let banner = document.getElementById(bannerId)
+
+		if (!context || !context.fileIds || context.fileIds.length === 0) {
+			if (banner) {
+				banner.remove()
+			}
+			renderDetailDataRunBanner(null)
+			return
+		}
+
+		if (mainView) {
+			if (!banner) {
+				banner = document.createElement('div')
+				banner.id = bannerId
+				banner.style.cssText =
+					'margin-top: 12px; padding: 12px 16px; background: rgba(29,78,216,0.08); border: 1px solid rgba(29,78,216,0.35); border-radius: 6px; color: #0f172a;'
+
+				const header = mainView.querySelector('.page-header')
+				if (header && header.parentNode) {
+					header.parentNode.insertBefore(banner, header.nextSibling)
+				} else {
+					mainView.insertBefore(banner, mainView.firstChild)
+				}
+			}
+
+			populateDataRunBanner(banner, context, null)
+		}
+
+		renderDetailDataRunBanner(context)
+	}
+
+	function renderDetailDataRunBanner(context) {
+		const detailView = document.getElementById('pipeline-detail-view')
+		if (!detailView) return
+
+		const bannerId = 'pipeline-detail-data-banner'
+		let banner = document.getElementById(bannerId)
+
+		if (!context || !context.fileIds || context.fileIds.length === 0) {
+			if (banner) {
+				banner.remove()
+			}
+			return
+		}
+
+		if (!banner) {
+			banner = document.createElement('div')
+			banner.id = bannerId
+			banner.style.cssText =
+				'margin: 12px 0; padding: 12px 16px; background: rgba(29,78,216,0.08); border: 1px solid rgba(29,78,216,0.35); border-radius: 6px; color: #0f172a;'
+
+			const header = detailView.querySelector('.page-header')
+			if (header && header.parentNode) {
+				header.parentNode.insertBefore(banner, header.nextSibling)
+			} else {
+				detailView.insertBefore(banner, detailView.firstChild)
+			}
+		}
+
+		const preselectedPipelineId = pipelineState.currentPipeline?.id ?? null
+		populateDataRunBanner(banner, context, preselectedPipelineId)
+	}
+
+	function populateDataRunBanner(banner, context, preselectedPipelineId = null) {
+		const fileCount = context.fileIds.length
+		const participantCount =
+			context.participantIds && context.participantIds.length > 0
+				? context.participantIds.length
+				: fileCount
+
+		banner.innerHTML = `
+			<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+				<div style="font-size: 14px;">
+					<strong>${fileCount}</strong> file${fileCount === 1 ? '' : 's'} selected
+					<span style="color: #1e3a8a; margin-left: 12px;">
+						${participantCount} participant${participantCount === 1 ? '' : 's'}
+					</span>
+				</div>
+				<div style="display: flex; gap: 8px; align-items: center;">
+					<button type="button" class="btn-secondary" data-role="data-run-back">← Back to Data</button>
+					<button type="button" class="btn-primary" data-role="data-run-open">Select Pipeline</button>
+					<button
+						type="button"
+						data-role="data-run-clear"
+						style="background: none; border: none; color: #1e3a8a; text-decoration: underline; cursor: pointer; font-size: 13px; padding: 0 4px;"
+					>
+						Clear
+					</button>
+				</div>
+			</div>
+		`
+
+		const backBtn = banner.querySelector('[data-role="data-run-back"]')
+		if (backBtn) {
+			backBtn.addEventListener('click', () => {
+				if (typeof navigateTo === 'function') {
+					navigateTo('data')
+				}
+			})
+		}
+
+		const openBtn = banner.querySelector('[data-role="data-run-open"]')
+		if (openBtn) {
+			openBtn.addEventListener('click', () => {
+				startDataDrivenRun(preselectedPipelineId).catch((error) => {
+					console.error('Failed to open data-run modal:', error)
+				})
+			})
+		}
+
+		const clearBtn = banner.querySelector('[data-role="data-run-clear"]')
+		if (clearBtn) {
+			clearBtn.addEventListener('click', () => {
+				clearDataRunContext()
+			})
+		}
+	}
+
+	async function startDataDrivenRun(preselectedPipelineId = null) {
+		if (pipelineState.dataRunModalOpen) {
+			return true
+		}
+
+		const context = getPendingDataRunContext()
+		if (!context || !context.fileIds || context.fileIds.length === 0) {
+			return false
+		}
+
+		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
+			pipelineAcceptsGenotypeInput(pipeline),
+		)
+
+		if (eligiblePipelines.length === 0) {
+			alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+			clearDataRunContext()
+			return false
+		}
+
+		await showDataRunModal(context, eligiblePipelines, preselectedPipelineId)
+		return true
+	}
+
+	async function handlePipelineRunClick(pipelineId) {
+		const handled = await startDataDrivenRun(pipelineId)
+		if (!handled) {
+			await runPipeline(pipelineId)
+		}
+	}
+
+	function describeInputType(inputSpec) {
+		if (!inputSpec) return ''
+		if (typeof inputSpec === 'string') return inputSpec
+		if (typeof inputSpec === 'object') {
+			if (inputSpec.type) return inputSpec.type
+			if (inputSpec.raw_type) return inputSpec.raw_type
+			if (inputSpec.rawType) return inputSpec.rawType
+		}
+		return ''
+	}
+
+	function pipelineAcceptsGenotypeInput(pipeline) {
+		const inputs = pipeline?.spec?.inputs || {}
+		return Object.values(inputs).some((inputSpec) => {
+			const typeStr = describeInputType(inputSpec)
+			return typeof typeStr === 'string' && typeStr.toLowerCase() === 'list[genotyperecord]'
+		})
+	}
+
+	async function maybeShowDataRunModal(preselectedPipelineId = null) {
+		await startDataDrivenRun(preselectedPipelineId)
+	}
+
+	function closeDataRunModal(clearContext = false) {
+		const modal = document.getElementById('data-run-modal')
+		if (modal) {
+			modal.remove()
+		}
+		pipelineState.dataRunModalOpen = false
+
+		if (clearContext) {
+			clearDataRunContext()
+		}
+
+		renderDataRunBanner()
+	}
+
+	async function showDataRunModal(context, pipelines, preselectedPipelineId = null) {
+		if (!context || !pipelines || pipelines.length === 0) {
+			return
+		}
+
+		pipelineState.dataRunModalOpen = true
+
+		let runsBaseDir = ''
+		try {
+			runsBaseDir = await invoke('get_runs_base_dir')
+		} catch (error) {
+			console.warn('Failed to get runs base directory:', error)
+		}
+
+		const uniqueParticipantCount =
+			context.participantIds && context.participantIds.length > 0
+				? context.participantIds.length
+				: context.fileIds.length
+		const fileCount = context.fileIds.length
+
+		const pipelineOptionsHtml = pipelines
+			.map((pipeline, index) => {
+				const isPreferred = preselectedPipelineId !== null && pipeline.id === preselectedPipelineId
+				const isDefault = isPreferred || (preselectedPipelineId === null && index === 0)
+				const isChecked = isDefault ? 'checked' : ''
+				const inputs = pipeline?.spec?.inputs || {}
+
+				const inputSummary = Object.entries(inputs)
+					.map(([key, value]) => `${key}: ${describeInputType(value)}`)
+					.join(', ')
+
+				const description = pipeline?.spec?.description
+					? `<div class="option-desc">${escapeHtml(pipeline.spec.description)}</div>`
+					: ''
+
+				return `
+					<label class="data-run-pipeline-option" data-pipeline-id="${pipeline.id}" style="display: flex; align-items: flex-start; gap: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; cursor: pointer; margin-bottom: 10px; background: #ffffff;">
+						<input type="radio" name="data-run-pipeline" value="${pipeline.id}" ${isChecked} style="margin-top: 4px;">
+						<div class="option-details" style="flex: 1;">
+							<div class="option-title" style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">
+								${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
+							</div>
+							${description}
+							<div class="option-meta" style="color: #555; font-size: 13px;">
+								Inputs: ${escapeHtml(inputSummary || '—')}
+							</div>
+						</div>
+					</label>
+				`
+			})
+			.join('')
+
+		const modal = document.createElement('div')
+		modal.id = 'data-run-modal'
+		modal.className = 'modal-overlay'
+		modal.style.display = 'flex'
+		modal.innerHTML = `
+			<div class="modal-content" style="width: 640px; max-width: 90vw;">
+				<div class="modal-header">
+					<h2>Run Pipeline with Selected Data</h2>
+					<button class="modal-close data-run-cancel" title="Close">×</button>
+				</div>
+				<div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+					<div class="data-run-summary" style="margin-bottom: 16px; font-size: 14px; color: #374151;">
+						<div style="margin-bottom: 6px;">
+							Input: <strong>${fileCount}</strong> genotype file${fileCount === 1 ? '' : 's'} covering
+							<strong>${uniqueParticipantCount}</strong> participant${uniqueParticipantCount === 1 ? '' : 's'}.
+						</div>
+						<div style="font-size: 13px; color: #48566a;">
+							We will generate a temporary samplesheet automatically for this run.
+						</div>
+					</div>
+					<div class="data-run-section" style="margin-bottom: 20px;">
+						<h3 style="margin-bottom: 10px; font-size: 16px;">Select a Pipeline</h3>
+						<div class="data-run-pipeline-list">
+							${pipelineOptionsHtml}
+						</div>
+					</div>
+					<div class="data-run-section" style="margin-bottom: 10px;">
+						<h3 style="margin-bottom: 10px; font-size: 16px;">Results Directory (optional)</h3>
+						<p style="font-size: 13px; color: #555; margin-bottom: 8px;">
+							Leave blank to create a timestamped folder inside
+							${runsBaseDir ? `<code>${escapeHtml(runsBaseDir)}</code>` : 'the BioVault runs directory'}.
+						</p>
+						<div class="data-run-results-input" style="display: flex; gap: 8px;">
+							<input type="text" id="data-run-results-dir" placeholder="Defaults to BioVault runs folder" style="flex: 1;">
+							<button id="data-run-results-browse" class="secondary-btn" type="button">Browse…</button>
+						</div>
+					</div>
+				</div>
+				<div class="modal-footer" style="display: flex; gap: 8px; justify-content: flex-end;">
+					<button class="btn-secondary data-run-cancel" type="button">Cancel</button>
+					<button class="btn-primary" id="data-run-run-btn" type="button">Run Pipeline</button>
+				</div>
+			</div>
+		`
+
+		document.body.appendChild(modal)
+
+		const optionLabels = modal.querySelectorAll('.data-run-pipeline-option')
+		function refreshOptionStyles() {
+			optionLabels.forEach((label) => {
+				if (label.classList.contains('selected')) {
+					label.style.borderColor = '#2563eb'
+					label.style.background = '#eff6ff'
+				} else {
+					label.style.borderColor = '#e5e7eb'
+					label.style.background = '#ffffff'
+				}
+			})
+		}
+
+		optionLabels.forEach((label) => {
+			const radio = label.querySelector('input[type="radio"]')
+			const activate = () => {
+				optionLabels.forEach((other) => other.classList.remove('selected'))
+				label.classList.add('selected')
+				radio.checked = true
+				refreshOptionStyles()
+			}
+
+			label.addEventListener('click', (event) => {
+				if (event.target.tagName !== 'INPUT') {
+					event.preventDefault()
+					activate()
+				}
+			})
+
+			radio.addEventListener('change', () => {
+				if (radio.checked) {
+					activate()
+				}
+			})
+
+			if (radio.checked) {
+				label.classList.add('selected')
+			}
+		})
+		refreshOptionStyles()
+
+		const browseBtn = modal.querySelector('#data-run-results-browse')
+		const resultsInput = modal.querySelector('#data-run-results-dir')
+		if (browseBtn) {
+			browseBtn.addEventListener('click', async () => {
+				try {
+					const selected = await dialog.open({
+						directory: true,
+						multiple: false,
+					})
+					if (selected) {
+						if (Array.isArray(selected)) {
+							if (selected[0]) {
+								resultsInput.value = selected[0]
+							}
+						} else {
+							resultsInput.value = selected
+						}
+					}
+				} catch (error) {
+					console.error('Error selecting results directory:', error)
+				}
+			})
+		}
+
+		modal.querySelectorAll('.data-run-cancel').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				closeDataRunModal()
+			})
+		})
+
+		const runBtn = modal.querySelector('#data-run-run-btn')
+		runBtn.addEventListener('click', async () => {
+			const selectedRadio = modal.querySelector('input[name="data-run-pipeline"]:checked')
+			if (!selectedRadio) {
+				alert('Please select a pipeline to run.')
+				return
+			}
+
+			const pipelineId = parseInt(selectedRadio.value, 10)
+			if (!Number.isFinite(pipelineId)) {
+				alert('Invalid pipeline selection.')
+				return
+			}
+
+			const resultsDir = resultsInput.value.trim() || null
+			runBtn.disabled = true
+			runBtn.textContent = 'Starting…'
+
+			try {
+				const run = await invoke('run_pipeline', {
+					pipelineId,
+					inputOverrides: {},
+					resultsDir,
+					selection: {
+						fileIds: context.fileIds,
+						participantIds: context.participantIds,
+					},
+				})
+
+				clearDataRunContext()
+				closeDataRunModal()
+
+				alert(`Pipeline started! Run ID: ${run.id}`)
+
+				if (typeof navigateTo === 'function') {
+					navigateTo('runs')
+				}
+			} catch (error) {
+				console.error('Failed to start pipeline:', error)
+				alert('Failed to run pipeline: ' + error)
+			} finally {
+				runBtn.disabled = false
+				runBtn.textContent = 'Run Pipeline'
+			}
+		})
 	}
 
 	// Show pipeline creation options
@@ -382,29 +886,96 @@ export function createPipelinesModule({
 		try {
 			if (!selected) {
 				selected = await dialog.open({
-					directory: true,
 					multiple: false,
+					directory: false,
+					filters: [
+						{ name: 'Pipeline or Project YAML', extensions: ['yaml', 'yml'] },
+						{ name: 'All Files', extensions: ['*'] },
+					],
 				})
 			}
 
-			if (selected) {
-				// Extract name from folder
-				const name = selected.split('/').pop() || selected.split('\\').pop() || 'imported-pipeline'
-
-				// Register in database
-				await invoke('create_pipeline', {
-					request: {
-						name: name,
-						directory: selected,
-						overwrite: overwrite,
-					},
-				})
-
-				closePipelinePickerModal()
-				await loadPipelines()
-
-				console.log('✅ Imported pipeline:', name)
+			if (!selected) {
+				return
 			}
+
+			if (Array.isArray(selected)) {
+				selected = selected[0]
+			}
+
+			// Normalize path handling for cross-platform compatibility
+			const usesBackslash = selected.includes('\\')
+			const normalized = usesBackslash ? selected.replace(/\\/g, '/') : selected
+			const segments = normalized.split('/')
+			let fileName = segments.length > 0 ? segments[segments.length - 1] : ''
+			let parentSegments = segments.slice(0, -1)
+
+			if (!fileName && parentSegments.length > 0) {
+				fileName = parentSegments[parentSegments.length - 1] || ''
+				parentSegments = parentSegments.slice(0, -1)
+			}
+
+			const parentNormalized = parentSegments.join('/')
+			const parentPath = usesBackslash ? parentNormalized.replace(/\//g, '\\') : parentNormalized
+			const getLastNonEmptySegment = (arr) => {
+				for (let i = arr.length - 1; i >= 0; i--) {
+					if (arr[i]) {
+						return arr[i]
+					}
+				}
+				return ''
+			}
+			const lastParentName = getLastNonEmptySegment(parentSegments)
+
+			const lowerName = fileName.toLowerCase()
+			const isPipelineFile = lowerName === 'pipeline.yaml' || lowerName === 'pipeline.yml'
+			const isProjectFile = lowerName === 'project.yaml' || lowerName === 'project.yml'
+			const isYamlFile = lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')
+
+			let pipelineDir = selected
+			let pipelineFile = null
+			let inferredName = lastParentName || fileName || 'imported-pipeline'
+
+			if (isYamlFile) {
+				if (parentNormalized) {
+					pipelineDir = parentPath
+				}
+
+				if (isPipelineFile) {
+					pipelineFile = selected
+					// Prefer folder name if present, otherwise strip extension
+					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
+				} else if (isProjectFile) {
+					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
+				} else {
+					// Other YAML file – treat basename as pipeline name
+					inferredName = fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
+				}
+			} else if (!fileName) {
+				// If the selection ended with a slash, derive name from the last non-empty segment
+				inferredName = lastParentName || 'imported-pipeline'
+			}
+
+			if (!pipelineDir) {
+				pipelineDir = selected
+			}
+
+			const request = {
+				name: inferredName || 'imported-pipeline',
+				directory: pipelineDir,
+				overwrite: overwrite,
+			}
+
+			if (pipelineFile) {
+				request.pipeline_file = pipelineFile
+			}
+
+			await invoke('create_pipeline', { request })
+
+			closePipelinePickerModal()
+			await loadPipelines()
+
+			console.log('✅ Imported pipeline:', request.name)
 		} catch (error) {
 			console.error('Error importing pipeline:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
@@ -1042,6 +1613,8 @@ export function createPipelinesModule({
 
 			if (mainView) mainView.style.display = 'none'
 			if (detailView) detailView.style.display = 'flex'
+
+			renderDataRunBanner()
 
 			// Update header
 			const nameEl = document.getElementById('pipeline-detail-name')
@@ -2408,12 +2981,26 @@ steps:${
 		document.getElementById('pipeline-detail-view').style.display = 'none'
 		document.getElementById('pipelines-main-view').style.display = 'block'
 		pipelineState.currentPipeline = null
+		renderDataRunBanner()
 	}
 
 	// Run pipeline with validation - reads config from sidebar
 	async function runPipeline(pipelineId) {
+		const context = getPendingDataRunContext()
+		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+
+		if (
+			context &&
+			context.fileIds &&
+			context.fileIds.length > 0 &&
+			pipeline &&
+			pipelineAcceptsGenotypeInput(pipeline)
+		) {
+			await startDataDrivenRun(pipelineId)
+			return
+		}
+
 		try {
-			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
 			if (!pipeline) return
 
 			// Load pipeline to get inputs
@@ -2917,9 +3504,9 @@ steps:${
 	function attachDetailViewButtons() {
 		const runBtn = document.getElementById('pipeline-detail-run')
 		if (runBtn) {
-			runBtn.addEventListener('click', () => {
+			runBtn.addEventListener('click', async () => {
 				if (pipelineState.currentPipeline) {
-					runPipeline(pipelineState.currentPipeline.id)
+					await handlePipelineRunClick(pipelineState.currentPipeline.id)
 				}
 			})
 		}

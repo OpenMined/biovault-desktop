@@ -1,8 +1,11 @@
+use crate::init_db;
 use crate::types::{AppState, Settings};
 use biovault::cli::commands::init;
+use rusqlite::Connection;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use tauri_plugin_autostart::ManagerExt;
 
 // Helper function to save dependency states during onboarding
@@ -34,6 +37,16 @@ pub fn get_config_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn get_database_path() -> Result<String, String> {
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    Ok(biovault_home
+        .join("biovault.db")
+        .to_string_lossy()
+        .to_string())
+}
+
+#[tauri::command]
 pub fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -52,12 +65,46 @@ pub fn check_is_onboarded() -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
+pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
     eprintln!("🗑️ RESET: Deleting all BioVault data");
 
-    // Delete the active BioVault home directory (resolves env vars and persisted location)
     let biovault_path = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+
+    state.queue_processor_paused.store(true, Ordering::SeqCst);
+    struct PauseGuard<'a> {
+        flag: &'a std::sync::atomic::AtomicBool,
+    }
+    impl<'a> Drop for PauseGuard<'a> {
+        fn drop(&mut self) {
+            self.flag.store(false, Ordering::SeqCst);
+        }
+    }
+    let _pause_guard = PauseGuard {
+        flag: &state.queue_processor_paused,
+    };
+
+    // Close the legacy desktop connection (unused but kept for compatibility)
+    {
+        let placeholder = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
+        let mut desktop_conn = state
+            .db
+            .lock()
+            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
+        let _ = std::mem::replace(&mut *desktop_conn, placeholder);
+    }
+
+    // Close the shared BioVault database connection so we can delete the files
+    {
+        let placeholder = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
+        let mut shared_db = state
+            .biovault_db
+            .lock()
+            .map_err(|_| "Failed to lock BioVault database".to_string())?;
+        let _ = std::mem::replace(&mut shared_db.conn, placeholder);
+    }
 
     if biovault_path.exists() {
         fs::remove_dir_all(&biovault_path)
@@ -66,7 +113,6 @@ pub fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
     }
 
     // Also delete the pointer file that stores the BioVault home location
-    // This ensures a clean reset without lingering configuration
     if let Some(config_dir) = dirs::config_dir() {
         let pointer_path = config_dir.join("BioVault").join("home_path");
         if pointer_path.exists() {
@@ -75,12 +121,36 @@ pub fn reset_all_data(_state: tauri::State<AppState>) -> Result<(), String> {
             eprintln!("   Deleted pointer: {}", pointer_path.display());
         }
 
-        // Try to remove the BioVault config directory if it's empty
+        // Best-effort removal of the directory if now empty
         let biovault_config_dir = config_dir.join("BioVault");
         if biovault_config_dir.exists() {
-            // This will fail if directory is not empty, which is fine
             let _ = fs::remove_dir(&biovault_config_dir);
         }
+    }
+
+    // Recreate the BioVault home and connections so the running app sees a clean state
+    let new_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to recreate BioVault home: {}", e))?;
+
+    {
+        let mut desktop_conn = state
+            .db
+            .lock()
+            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
+        let new_conn = Connection::open(new_home.join("biovault.db"))
+            .map_err(|e| format!("Failed to open desktop database: {}", e))?;
+        init_db(&new_conn).map_err(|e| format!("Failed to initialize desktop database: {}", e))?;
+        *desktop_conn = new_conn;
+    }
+
+    {
+        let new_db = biovault::data::BioVaultDb::new()
+            .map_err(|e| format!("Failed to initialize BioVault database: {}", e))?;
+        let mut shared_db = state
+            .biovault_db
+            .lock()
+            .map_err(|_| "Failed to lock BioVault database".to_string())?;
+        *shared_db = new_db;
     }
 
     eprintln!("✅ RESET: All data deleted successfully");

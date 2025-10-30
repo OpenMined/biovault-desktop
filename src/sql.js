@@ -739,9 +739,7 @@ export function createSqlModule({ invoke, dialog }) {
 
 	async function activateSqlTab() {
 		await initializeSqlTab()
-		if (!state.tablesLoaded) {
-			await refreshTableList()
-		}
+		await refreshTableList(true)
 		if (elements.editor && !elements.editor.value) {
 			elements.editor.focus()
 		}

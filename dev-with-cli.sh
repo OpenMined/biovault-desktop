@@ -20,7 +20,7 @@ BV_PATH="$SCRIPT_DIR/biovault/bv"
 
 # Use custom config if provided, otherwise use default
 if [ -n "$BIOVAULT_CONFIG" ]; then
-    export BIOVAULT_HOME="$BIOVAULT_CONFIG/.biovault"
+    export BIOVAULT_HOME="$BIOVAULT_CONFIG"
     echo -e "${YELLOW}📁 Using config directory: ${BIOVAULT_CONFIG}${NC}"
 else
     export BIOVAULT_HOME="$HOME/.biovault"

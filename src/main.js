@@ -247,6 +247,13 @@ importSetLastImportView = setLastImportView
 window.addEventListener('DOMContentLoaded', async () => {
 	console.log('🔥 DOMContentLoaded fired')
 
+	try {
+		const dbPath = await invoke('get_database_path')
+		console.log('🗃️ BioVault database path:', dbPath)
+	} catch (error) {
+		console.warn('⚠️ Failed to fetch BioVault database path:', error)
+	}
+
 	// Load HTML templates for all views
 	try {
 		await Promise.all([

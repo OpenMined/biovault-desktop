@@ -80,7 +80,7 @@ fn log_desktop_event(message: &str) {
     }
 }
 
-fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
     // Desktop-specific DB is deprecated - keeping for backwards compat only
     // TODO: Remove this entirely and use only BioVaultDb
@@ -124,6 +124,10 @@ pub fn run() {
     let biovault_home_dir =
         biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
 
+    let home_display = biovault_home_dir.to_string_lossy().to_string();
+    eprintln!("📂 BioVault home resolved to: {}", home_display);
+    log_desktop_event(&format!("BioVault home resolved to {}", home_display));
+
     log_desktop_event(&format!(
         "Desktop logging initialised. Log file: {}",
         desktop_log_path().display()
@@ -134,6 +138,8 @@ pub fn run() {
 
     // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");
+    eprintln!("🗃️ BioVault DB path: {}", db_path.display());
+    log_desktop_event(&format!("BioVault DB path: {}", db_path.display()));
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
 
@@ -449,6 +455,7 @@ pub fn run() {
             delete_run,
             // Pipeline commands
             get_pipelines,
+            get_runs_base_dir,
             create_pipeline,
             load_pipeline_editor,
             save_pipeline_editor,
@@ -475,6 +482,7 @@ pub fn run() {
             open_in_vscode,
             show_in_folder,
             get_config_path,
+            get_database_path,
             check_is_onboarded,
             complete_onboarding,
             reset_all_data,
