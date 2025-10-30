@@ -12,24 +12,28 @@
    ============================================================================ */
 
 .page-header {
-	padding: 14px 32px;
+	padding: 16px 32px;
 	border-bottom: 1px solid #e5e7eb;
 	background: #ffffff;
 	display: flex;
 	align-items: center;
+	justify-content: space-between;
 	flex-shrink: 0;
 	width: 100%;
-	min-height: 52px;
+	min-height: 60px;
 	gap: 24px;
 }
 
 .page-header-left {
 	display: flex;
-	flex-direction: column;
-	gap: 8px;
+	flex-direction: row;
+	align-items: center;
+	gap: 16px;
 	text-align: left;
 	flex: 1;
 	min-width: 0;
+	flex-wrap: nowrap;
+	overflow: hidden;
 }
 
 .page-title {
@@ -83,9 +87,11 @@
 
 .page-header-right {
 	display: flex;
-	gap: 12px;
+	gap: 8px;
 	flex-shrink: 0;
 	align-items: center;
+	flex-wrap: nowrap;
+	overflow: visible;
 }
 
 .page-header-actions {

@@ -4,11 +4,7 @@ export function createDataModule({ invoke, dialog }) {
 	// State
 	let allParticipants = []
 	let allFiles = []
-	let selectedParticipantIds = [] // IDs of selected participants (for filtering view)
 	let selectedFileIds = [] // File IDs selected for workflows/operations
-	let showAllFiles = false // Toggle between "selected participants" and "all files"
-	let participantFilter = 'all' // Filter for participant sidebar
-	let participantSearchTerm = ''
 	let currentDataTypeFilter = 'All'
 	let fileSearchTerm = ''
 	let sortField = 'status'
@@ -20,20 +16,6 @@ export function createDataModule({ invoke, dialog }) {
 	// ============================================================================
 	// HELPERS
 	// ============================================================================
-
-	function getParticipantStatus(files) {
-		if (files.length === 0) return 'unknown'
-		const statuses = files.map((f) => f.status)
-		if (statuses.every((s) => s === 'complete')) return 'complete'
-		if (statuses.some((s) => s === 'pending')) return 'pending'
-		if (statuses.some((s) => s === 'processing')) return 'processing'
-		if (statuses.some((s) => s === 'error')) return 'error'
-		return 'mixed'
-	}
-
-	function getFilesForParticipant(participantId) {
-		return allFiles.filter((f) => f.participant_id === participantId)
-	}
 
 	function getFileSortValue(file, field) {
 		switch (field) {
@@ -113,32 +95,12 @@ export function createDataModule({ invoke, dialog }) {
 	// FILTERING
 	// ============================================================================
 
-	function matchesParticipantSearch(participant) {
-		if (!participantSearchTerm) return true
-		const term = participantSearchTerm.toLowerCase()
-		const values = [participant.id, participant.participant_id, participant.created_at]
-		return values.some((v) => v && v.toString().toLowerCase().includes(term))
-	}
-
-	function matchesParticipantFilter(participant) {
-		const files = getFilesForParticipant(participant.participant_id)
-
-		switch (participantFilter) {
-			case 'all':
-				return true
-			case 'genotype':
-				return files.some((f) => f.data_type === 'Genotype')
-			case 'incomplete':
-				return files.some((f) => f.status === 'pending' || f.status === 'error')
-			default:
-				return true
-		}
-	}
-
 	function matchesFileSearch(file) {
 		if (!fileSearchTerm) return true
 		const term = fileSearchTerm.toLowerCase()
-		const values = [
+
+		// Search in file fields
+		const fileValues = [
 			file.id,
 			file.status,
 			file.file_path,
@@ -148,7 +110,21 @@ export function createDataModule({ invoke, dialog }) {
 			file.participant_id,
 			file.inferred_sex,
 		]
-		return values.some((v) => v && v.toString().toLowerCase().includes(term))
+		const matchesFile = fileValues.some((v) => v && v.toString().toLowerCase().includes(term))
+
+		// Also check if search term matches any participant ID (for filtering by participant)
+		if (matchesFile) return true
+
+		// Check if search term matches any participant ID exactly or partially
+		const matchingParticipantIds = allParticipants
+			.filter((p) => p.participant_id && p.participant_id.toLowerCase().includes(term))
+			.map((p) => p.participant_id)
+
+		if (matchingParticipantIds.length > 0 && file.participant_id) {
+			return matchingParticipantIds.includes(file.participant_id)
+		}
+
+		return false
 	}
 
 	function matchesDataTypeFilter(file) {
@@ -174,144 +150,6 @@ export function createDataModule({ invoke, dialog }) {
 	}
 
 	// ============================================================================
-	// RENDERING - PARTICIPANTS SIDEBAR
-	// ============================================================================
-
-	function renderParticipantItem(participant) {
-		const files = getFilesForParticipant(participant.participant_id)
-		const status = getParticipantStatus(files)
-		const isSelected = selectedParticipantIds.includes(participant.id)
-
-		const item = document.createElement('div')
-		item.className = `participant-item ${isSelected ? 'selected' : ''}`
-		item.dataset.participantId = participant.id
-
-		const fileCountText = files.length === 1 ? '1 file' : `${files.length} files`
-
-		item.innerHTML = `
-			<div class="participant-checkbox">
-				<input type="checkbox" ${isSelected ? 'checked' : ''} />
-			</div>
-			<div class="participant-info">
-				<div class="participant-name">${participant.participant_id}</div>
-				<div class="participant-meta">
-					<span class="file-count">${fileCountText}</span>
-					<span class="status-dot status-${status}"></span>
-				</div>
-			</div>
-			<div class="participant-status">
-				${renderStatusBadge(status)}
-			</div>
-		`
-
-		// Click handler for entire item
-		item.addEventListener('click', (e) => {
-			// Don't toggle if clicking checkbox directly (it handles itself)
-			if (e.target.type === 'checkbox') return
-
-			const checkbox = item.querySelector('input[type="checkbox"]')
-			checkbox.checked = !checkbox.checked
-			checkbox.dispatchEvent(new Event('change'))
-		})
-
-		// Checkbox change handler - selects/deselects ALL FILES for this participant
-		const checkbox = item.querySelector('input[type="checkbox"]')
-		checkbox.addEventListener('change', (e) => {
-			e.stopPropagation()
-			const participantId = parseInt(participant.id)
-			const participantFiles = getFilesForParticipant(participant.participant_id)
-
-			if (e.target.checked) {
-				// Select all files for this participant
-				participantFiles.forEach((file) => {
-					if (!selectedFileIds.includes(file.id)) {
-						selectedFileIds.push(file.id)
-					}
-				})
-				if (!selectedParticipantIds.includes(participantId)) {
-					selectedParticipantIds.push(participantId)
-				}
-				// Auto-switch to "Selected" view when user selects a participant
-				if (showAllFiles) {
-					showAllFiles = false
-					updateShowAllFilesButton()
-				}
-			} else {
-				// Deselect all files for this participant
-				const fileIdsToRemove = participantFiles.map((f) => f.id)
-				selectedFileIds = selectedFileIds.filter((id) => !fileIdsToRemove.includes(id))
-				selectedParticipantIds = selectedParticipantIds.filter((id) => id !== participantId)
-			}
-
-			renderFilesPanel()
-			updateActionButtons()
-		})
-
-		return item
-	}
-
-	function renderParticipantsSidebar() {
-		const listContainer = document.getElementById('participants-list')
-		if (!listContainer) return
-
-		listContainer.innerHTML = ''
-
-		// Filter participants
-		const filtered = allParticipants
-			.filter(matchesParticipantSearch)
-			.filter(matchesParticipantFilter)
-
-		// Sort by participant_id
-		filtered.sort((a, b) => {
-			const idA = (a.participant_id || '').toLowerCase()
-			const idB = (b.participant_id || '').toLowerCase()
-			return idA.localeCompare(idB)
-		})
-
-		filtered.forEach((participant) => {
-			const item = renderParticipantItem(participant)
-			listContainer.appendChild(item)
-		})
-
-		// Update participant checkboxes based on file selections (only when in Selected view)
-		setTimeout(() => updateParticipantCheckboxes(), 0)
-
-		// Participant count is updated in loadData() - shows total, not filtered
-	}
-
-	function updateParticipantCheckboxes() {
-		// Only update participant checkboxes when in "Selected" view
-		// In "All Files" view, participant list is dimmed and shouldn't update
-		if (showAllFiles) return
-
-		allParticipants.forEach((participant) => {
-			const item = document.querySelector(
-				`.participant-item[data-participant-id="${participant.id}"]`,
-			)
-			if (!item) return
-
-			const checkbox = item.querySelector('input[type="checkbox"]')
-			if (!checkbox) return
-
-			const participantFiles = getFilesForParticipant(participant.participant_id)
-			const allFilesSelected =
-				participantFiles.length > 0 &&
-				participantFiles.every((file) => selectedFileIds.includes(file.id))
-			const someFilesSelected = participantFiles.some((file) => selectedFileIds.includes(file.id))
-
-			checkbox.checked = allFilesSelected
-			checkbox.indeterminate = someFilesSelected && !allFilesSelected
-
-			// Update selection state for visual feedback
-			if (allFilesSelected || someFilesSelected) {
-				item.classList.add('selected')
-			} else {
-				item.classList.remove('selected')
-			}
-		})
-	}
-
-	// ============================================================================
 	// RENDERING - FILES TABLE
 	// ============================================================================
 
@@ -324,6 +162,10 @@ export function createDataModule({ invoke, dialog }) {
 		if (isSelected) row.classList.add('selected')
 
 		const statusBadge = renderStatusBadge(file.status, file.processing_error)
+		const participantId = file.participant_id
+		const participantDisplay = participantId
+			? `<span class="participant-link" data-participant-id="${participantId}" title="Click to filter by ${participantId}">${participantId}</span>`
+			: '<span style="color: #9ca3af; font-style: italic;">Unassigned</span>'
 
 		row.innerHTML = `
 			<td class="checkbox-cell">
@@ -331,7 +173,7 @@ export function createDataModule({ invoke, dialog }) {
 			</td>
 			<td>${file.id}</td>
 			<td>${statusBadge}</td>
-			<td><strong>${file.participant_id || '-'}</strong></td>
+			<td><strong>${participantDisplay}</strong></td>
 			<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
 			<td>
 				<span class="type-badge type-${(file.data_type || 'unknown').toLowerCase()}">
@@ -343,12 +185,8 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-						? '#e83e8c'
-						: '#666'
-			}">${file.inferred_sex || '-'}</td>
+			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+		}">${file.inferred_sex || '-'}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${
 					file.file_path
@@ -357,13 +195,32 @@ export function createDataModule({ invoke, dialog }) {
 		`
 
 		// Open finder button
-		row.querySelector('.open-finder-btn').addEventListener('click', async () => {
+		row.querySelector('.open-finder-btn').addEventListener('click', async (e) => {
+			e.stopPropagation()
 			try {
 				await invoke('show_in_folder', { filePath: file.file_path })
 			} catch (error) {
 				alert(`Error opening folder: ${error}`)
 			}
 		})
+
+		// Participant link - click to search/filter by participant
+		const participantLink = row.querySelector('.participant-link')
+		if (participantLink) {
+			participantLink.addEventListener('click', (e) => {
+				e.stopPropagation()
+				const pid = e.target.dataset.participantId
+				if (pid) {
+					// Set search term to participant ID to filter files
+					const fileSearch = document.getElementById('file-search')
+					if (fileSearch) {
+						fileSearchTerm = pid.toLowerCase()
+						fileSearch.value = pid
+						renderFilesPanel()
+					}
+				}
+			})
+		}
 
 		// Checkbox handler
 		const checkbox = row.querySelector('.file-checkbox')
@@ -381,16 +238,16 @@ export function createDataModule({ invoke, dialog }) {
 			updateDeleteButton()
 			updateSelectAllCheckbox()
 			updateActionButtons()
-			updateParticipantCheckboxes()
 		})
 
-		// Make row clickable (except buttons and checkbox)
+		// Make row clickable (except buttons, checkbox, and participant links)
 		row.addEventListener('click', (e) => {
 			if (
 				e.target.tagName === 'INPUT' ||
 				e.target.tagName === 'BUTTON' ||
 				e.target.closest('.actions-cell') ||
-				e.target.closest('.checkbox-cell')
+				e.target.closest('.checkbox-cell') ||
+				e.target.closest('.participant-link')
 			) {
 				return
 			}
@@ -407,47 +264,20 @@ export function createDataModule({ invoke, dialog }) {
 		const tbody = document.getElementById('files-table-body')
 		const emptyState = document.getElementById('files-empty-state')
 		const tableWrapper = document.querySelector('.files-table-wrapper')
-		const panelTitle = document.getElementById('files-panel-title')
 
 		if (!tbody) return
 
 		tbody.innerHTML = ''
 
-		// Get files to display
-		let filesToDisplay = []
+		// Get files to display - apply all filters
+		let filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
 
-		if (showAllFiles) {
-			// Show all files
-			filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
-			panelTitle.textContent = `All Files (${filesToDisplay.length})`
-		} else {
-			// Show files for selected participants only
-			if (selectedParticipantIds.length === 0) {
-				// No participants selected - show empty state
-				tableWrapper.style.display = 'none'
-				emptyState.style.display = 'flex'
-				document.getElementById('empty-state-title').textContent = 'No participants selected'
-				document.getElementById('empty-state-message').textContent =
-					'Select participants from the sidebar to view their files, or click "Show All Files"'
-				// Don't reset file-count here - header should always show total files
-				return
-			}
-
-			const selectedParticipantStrings = selectedParticipantIds.map((id) => {
-				const p = allParticipants.find((p) => p.id === id)
-				return p ? p.participant_id : null
-			})
-
-			filesToDisplay = allFiles
-				.filter((f) => selectedParticipantStrings.includes(f.participant_id))
-				.filter(matchesDataTypeFilter)
-				.filter(matchesFileSearch)
-
-			const participantText =
-				selectedParticipantIds.length === 1
-					? '1 participant'
-					: `${selectedParticipantIds.length} participants`
-			panelTitle.textContent = `Files for ${participantText} (${filesToDisplay.length})`
+		// Update page title with file count (only in Data view)
+		const dataView = document.getElementById('data-view')
+		const pageTitle = dataView?.querySelector('.page-title')
+		if (pageTitle) {
+			const titleText = `${filesToDisplay.length} files`
+			pageTitle.innerHTML = `Data <span style="font-size: 14px; font-weight: 400; color: #6b7280; margin-left: 8px;">(${titleText})</span>`
 		}
 
 		// Clean up file selections (remove files that don't exist anymore)
@@ -456,7 +286,7 @@ export function createDataModule({ invoke, dialog }) {
 		// Sort files
 		sortFiles(filesToDisplay)
 
-		// Render files
+		// Render files with virtual scrolling for large datasets
 		if (filesToDisplay.length === 0) {
 			tableWrapper.style.display = 'none'
 			emptyState.style.display = 'flex'
@@ -467,17 +297,125 @@ export function createDataModule({ invoke, dialog }) {
 			tableWrapper.style.display = 'block'
 			emptyState.style.display = 'none'
 
-			filesToDisplay.forEach((file) => {
-				const row = renderFileRow(file)
-				tbody.appendChild(row)
-			})
+			// Use virtual scrolling for large datasets (>500 files)
+			if (filesToDisplay.length > 500) {
+				// Reset scroll handler attachment if table wrapper changed
+				const tableWrapper = document.querySelector('.files-table-wrapper')
+				if (tableWrapper && virtualScrollState.scrollHandlerAttached) {
+					// Check if handler is still attached
+					if (!tableWrapper.hasAttribute('data-vscroll-attached')) {
+						virtualScrollState.scrollHandlerAttached = false
+						tableWrapper.setAttribute('data-vscroll-attached', 'true')
+					}
+				}
+				renderFilesWithVirtualScrolling(tbody, filesToDisplay)
+			} else {
+				// Clear virtual scroll state for smaller datasets
+				virtualScrollState.allFiles = null
+				virtualScrollState.scrollHandlerAttached = false
+				// Render all files directly for smaller datasets
+				filesToDisplay.forEach((file) => {
+					const row = renderFileRow(file)
+					tbody.appendChild(row)
+				})
+			}
 		}
 
 		updateSortIndicators()
 		updateSelectAllCheckbox()
 		updateDeleteButton()
 		updateActionButtons()
-		updateParticipantCheckboxes()
+	}
+
+	// ============================================================================
+	// VIRTUAL SCROLLING (for large datasets)
+	// ============================================================================
+
+	let virtualScrollState = {
+		visibleStart: 0,
+		visibleEnd: 50,
+		rowHeight: 48, // Approximate row height in pixels
+		buffer: 10, // Extra rows to render outside viewport
+		allFiles: null,
+		scrollHandler: null,
+		scrollHandlerAttached: false,
+	}
+
+	function renderFilesWithVirtualScrolling(tbody, files) {
+		const tableWrapper = document.querySelector('.files-table-wrapper')
+		if (!tableWrapper) return
+
+		// Clear existing content
+		tbody.innerHTML = ''
+
+		// Store files for virtual scrolling
+		virtualScrollState.allFiles = files
+
+		// Calculate visible range
+		const scrollTop = tableWrapper.scrollTop || 0
+		const containerHeight = tableWrapper.clientHeight || 800
+		const startIndex = Math.max(
+			0,
+			Math.floor(scrollTop / virtualScrollState.rowHeight) - virtualScrollState.buffer,
+		)
+		const endIndex = Math.min(
+			files.length,
+			Math.ceil((scrollTop + containerHeight) / virtualScrollState.rowHeight) +
+				virtualScrollState.buffer,
+		)
+
+		virtualScrollState.visibleStart = startIndex
+		virtualScrollState.visibleEnd = endIndex
+
+		// Add spacer for rows before visible range
+		if (startIndex > 0) {
+			const spacerTop = document.createElement('tr')
+			spacerTop.style.height = `${startIndex * virtualScrollState.rowHeight}px`
+			spacerTop.innerHTML = '<td colspan="12"></td>'
+			tbody.appendChild(spacerTop)
+		}
+
+		// Render visible rows
+		for (let i = startIndex; i < endIndex && i < files.length; i++) {
+			const file = files[i]
+			const row = renderFileRow(file)
+			tbody.appendChild(row)
+		}
+
+		// Add spacer for rows after visible range
+		if (endIndex < files.length) {
+			const spacerBottom = document.createElement('tr')
+			spacerBottom.style.height = `${(files.length - endIndex) * virtualScrollState.rowHeight}px`
+			spacerBottom.innerHTML = '<td colspan="12"></td>'
+			tbody.appendChild(spacerBottom)
+		}
+
+		// Set up scroll handler (debounced) - only once per table wrapper
+		if (!virtualScrollState.scrollHandlerAttached) {
+			virtualScrollState.scrollHandler = debounce(() => {
+				if (tableWrapper && virtualScrollState.allFiles) {
+					renderFilesWithVirtualScrolling(tbody, virtualScrollState.allFiles)
+				}
+			}, 16) // ~60fps
+
+			tableWrapper.addEventListener('scroll', virtualScrollState.scrollHandler, { passive: true })
+			virtualScrollState.scrollHandlerAttached = true
+		}
+
+		// Update total height for proper scrolling
+		tableWrapper.style.overflowY = 'auto'
+	}
+
+	function debounce(func, wait) {
+		let timeout
+		return function executedFunction(...args) {
+			const later = () => {
+				clearTimeout(timeout)
+				func(...args)
+			}
+			clearTimeout(timeout)
+			timeout = setTimeout(later, wait)
+		}
 	}
 
 	// ============================================================================
@@ -503,7 +441,8 @@ export function createDataModule({ invoke, dialog }) {
 
 		if (selectedFileIds.length > 0) {
 			btn.style.display = 'flex'
-			btn.textContent = `Delete (${selectedFileIds.length})`
+			btn.textContent = 'Delete'
+			btn.title = `Delete ${selectedFileIds.length} file${selectedFileIds.length === 1 ? '' : 's'}`
 		} else {
 			btn.style.display = 'none'
 		}
@@ -512,19 +451,32 @@ export function createDataModule({ invoke, dialog }) {
 	function updateActionButtons() {
 		const runBtn = document.getElementById('run-analysis-btn')
 		const runText = document.getElementById('run-analysis-text')
+		const selectionCountEl = document.getElementById('selection-count')
+		const selectionActionsGroup = document.getElementById('selection-actions-group')
 
 		const fileCount = selectedFileIds.length
 		if (fileCount > 0) {
 			runBtn.disabled = false
-			runText.textContent = `Run Pipeline (${fileCount} ${fileCount === 1 ? 'file' : 'files'})`
+			runText.textContent = 'Run Pipeline'
+			runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
+			if (selectionCountEl && selectionActionsGroup) {
+				const countText =
+					selectionCountEl.querySelector('#selection-count-text') || selectionCountEl
+				countText.textContent = fileCount.toString()
+				selectionActionsGroup.style.display = 'flex'
+			}
 		} else {
 			runBtn.disabled = true
 			runText.textContent = 'Run Pipeline'
+			runBtn.title = 'Select files to run pipeline'
+			if (selectionActionsGroup) {
+				selectionActionsGroup.style.display = 'none'
+			}
 		}
 	}
 
 	function updateSelectAllCheckbox() {
-		const selectAllCheckbox = document.getElementById('select-all-files')
+		const selectAllCheckbox = document.getElementById('select-all-data-files')
 		if (!selectAllCheckbox) return
 
 		const visibleFileIds = Array.from(document.querySelectorAll('.file-checkbox')).map((cb) =>
@@ -573,30 +525,6 @@ export function createDataModule({ invoke, dialog }) {
 		}
 	}
 
-	function updateShowAllFilesButton() {
-		const selectedBtn = document.getElementById('view-selected-btn')
-		const allBtn = document.getElementById('view-all-btn')
-		const participantsList = document.getElementById('participants-list')
-
-		if (!selectedBtn || !allBtn) return
-
-		if (showAllFiles) {
-			selectedBtn.classList.remove('active')
-			allBtn.classList.add('active')
-			// Dim the participant list to show it's not affecting the current view
-			if (participantsList) {
-				participantsList.classList.add('dimmed')
-			}
-		} else {
-			selectedBtn.classList.add('active')
-			allBtn.classList.remove('active')
-			// Re-enable participant list
-			if (participantsList) {
-				participantsList.classList.remove('dimmed')
-			}
-		}
-	}
-
 	// ============================================================================
 	// MAIN DATA LOADING
 	// ============================================================================
@@ -611,17 +539,6 @@ export function createDataModule({ invoke, dialog }) {
 			allParticipants = participants
 			allFiles = files
 			existingFilePaths = new Set(files.map((f) => f.file_path))
-
-			// Update header counts - these should always show totals
-			const participantCountEl = document.getElementById('participant-count')
-			const fileCountEl = document.getElementById('file-count')
-
-			if (participantCountEl) {
-				participantCountEl.textContent = participants.length
-			}
-			if (fileCountEl) {
-				fileCountEl.textContent = files.length
-			}
 
 			console.log('📊 Data loaded:', { participants: participants.length, files: files.length })
 
@@ -645,10 +562,8 @@ export function createDataModule({ invoke, dialog }) {
 				globalEmptyState.style.display = 'none'
 			}
 
-			renderParticipantsSidebar()
 			renderFilesPanel()
 			updateActionButtons()
-			updateShowAllFilesButton()
 		} catch (error) {
 			console.error('Error loading data:', error)
 		}
@@ -659,47 +574,7 @@ export function createDataModule({ invoke, dialog }) {
 	// ============================================================================
 
 	function initializeDataTab() {
-		// Participant search
-		const participantSearch = document.getElementById('participant-search')
-		if (participantSearch) {
-			participantSearch.addEventListener('input', (e) => {
-				participantSearchTerm = e.target.value.trim().toLowerCase()
-				renderParticipantsSidebar()
-			})
-		}
-
-		// Participant filter dropdown
-		const participantFilterSelect = document.getElementById('participant-filter')
-		if (participantFilterSelect) {
-			participantFilterSelect.addEventListener('change', (e) => {
-				participantFilter = e.target.value
-				renderParticipantsSidebar()
-			})
-		}
-
-		// View mode segmented control
-		const viewSelectedBtn = document.getElementById('view-selected-btn')
-		const viewAllBtn = document.getElementById('view-all-btn')
-
-		if (viewSelectedBtn) {
-			viewSelectedBtn.addEventListener('click', () => {
-				if (!showAllFiles) return // Already in this mode
-				showAllFiles = false
-				updateShowAllFilesButton()
-				renderFilesPanel()
-			})
-		}
-
-		if (viewAllBtn) {
-			viewAllBtn.addEventListener('click', () => {
-				if (showAllFiles) return // Already in this mode
-				showAllFiles = true
-				updateShowAllFilesButton()
-				renderFilesPanel()
-			})
-		}
-
-		// File search
+		// File search (searches both files and participants)
 		const fileSearch = document.getElementById('file-search')
 		if (fileSearch) {
 			fileSearch.addEventListener('input', (e) => {
@@ -866,8 +741,16 @@ export function createDataModule({ invoke, dialog }) {
 		isFileAlreadyImported: (filePath) => existingFilePaths.has(filePath),
 		getExistingFilePaths: () => new Set(existingFilePaths),
 		getSelectedParticipants: () => {
-			return selectedParticipantIds
-				.map((id) => allParticipants.find((p) => p.id === id))
+			// Get unique participant IDs from selected files
+			const participantIds = new Set()
+			selectedFileIds.forEach((fileId) => {
+				const file = allFiles.find((f) => f.id === fileId)
+				if (file && file.participant_id) {
+					participantIds.add(file.participant_id)
+				}
+			})
+			return Array.from(participantIds)
+				.map((pid) => allParticipants.find((p) => p.participant_id === pid))
 				.filter(Boolean)
 		},
 	}

@@ -75,17 +75,18 @@
 .data-main-layout {
 	flex: 1;
 	display: flex;
+	flex-direction: column;
 	overflow: hidden;
 	gap: 0;
 }
 
 /* ============================================================================
-   PARTICIPANTS SIDEBAR
+   FILTER SIDEBAR
    ============================================================================ */
 
-.participants-sidebar {
-	width: 320px;
-	min-width: 320px;
+.filter-sidebar {
+	width: 280px;
+	min-width: 280px;
 	display: flex;
 	flex-direction: column;
 	background: white;
@@ -123,10 +124,9 @@
 	padding: 6px 28px 6px 10px;
 	border: 1px solid #d1d5db;
 	border-radius: 6px;
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-		sans-serif;
+	font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 	font-size: 12px;
-	font-weight: 500;
+	font-weight: 400;
 	color: #374151;
 	background: white;
 	cursor: pointer;
@@ -240,68 +240,44 @@
 	color: #10b981;
 }
 
-/* Participants List */
-.participants-list-wrapper {
+/* Filter List */
+.filter-list-wrapper {
 	flex: 1;
 	overflow: hidden;
 	position: relative;
 }
 
-.participants-list {
+.filter-list {
 	height: 100%;
 	overflow-y: auto;
 	padding: 8px;
-	transition: opacity 0.2s ease;
 }
 
-/* Dim participant list when in "All Files" mode to show it's not affecting the view */
-.participants-list.dimmed {
-	opacity: 0.4;
-	pointer-events: none;
-}
-
-.participants-list.dimmed::after {
-	content: '';
-	position: absolute;
-	top: 0;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	background: rgba(248, 250, 252, 0.6);
-	backdrop-filter: blur(1px);
-	pointer-events: none;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 13px;
-	font-weight: 600;
-	color: #64748b;
-}
-
-.participants-list::-webkit-scrollbar {
+.filter-list::-webkit-scrollbar {
 	width: 8px;
 }
 
-.participants-list::-webkit-scrollbar-track {
+.filter-list::-webkit-scrollbar-track {
 	background: #f8f9fa;
 }
 
-.participants-list::-webkit-scrollbar-thumb {
+.filter-list::-webkit-scrollbar-thumb {
 	background: #cbd5e1;
 	border-radius: 4px;
 }
 
-.participants-list::-webkit-scrollbar-thumb:hover {
+.filter-list::-webkit-scrollbar-thumb:hover {
 	background: #94a3b8;
 }
 
-/* Participant Item */
-.participant-item {
+/* Filter Item */
+.filter-item {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 12px;
-	margin-bottom: 6px;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 10px 14px;
+	margin-bottom: 4px;
 	border-radius: 8px;
 	border: 2px solid transparent;
 	background: white;
@@ -310,107 +286,47 @@
 	user-select: none;
 }
 
-.participant-item:hover {
+.filter-item:hover {
 	background: #f8fafc;
 	border-color: #e2e8f0;
 }
 
-.participant-item.selected {
-	background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-	border-color: #10b981;
+.filter-item.active {
+	background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+	border-color: #3b82f6;
 }
 
-.participant-item.selected:hover {
-	background: linear-gradient(135deg, #a7f3d0 0%, #6ee7b7 100%);
+.filter-item.active:hover {
+	background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%);
 }
 
-.participant-checkbox input[type='checkbox'] {
-	width: 18px;
-	height: 18px;
-	margin: 0;
-	cursor: pointer;
-	accent-color: #10b981;
-}
-
-.participant-info {
-	flex: 1;
-	min-width: 0;
-}
-
-.participant-name {
+.filter-name {
 	font-size: 14px;
-	font-weight: 700;
+	font-weight: 600;
 	color: #111827;
-	margin-bottom: 4px;
+	flex: 1;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
-.participant-item.selected .participant-name {
-	color: #047857;
+.filter-item.active .filter-name {
+	color: #1e40af;
 }
 
-.participant-meta {
-	display: flex;
-	align-items: center;
-	gap: 8px;
+.filter-count {
 	font-size: 12px;
+	font-weight: 600;
 	color: #64748b;
-}
-
-.file-count {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.status-dot {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
+	background: #f1f5f9;
+	padding: 2px 8px;
+	border-radius: 12px;
 	flex-shrink: 0;
 }
 
-.status-dot.status-complete {
-	background: #10b981;
-}
-
-.status-dot.status-pending {
-	background: #f59e0b;
-	animation: pulse 2s infinite;
-}
-
-.status-dot.status-processing {
+.filter-item.active .filter-count {
 	background: #3b82f6;
-	animation: pulse 1s infinite;
-}
-
-.status-dot.status-error {
-	background: #ef4444;
-}
-
-.status-dot.status-mixed {
-	background: linear-gradient(135deg, #10b981 0%, #f59e0b 50%, #ef4444 100%);
-}
-
-@keyframes pulse {
-	0%,
-	100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.5;
-	}
-}
-
-.participant-status {
-	flex-shrink: 0;
-}
-
-.participant-status .status-badge {
-	font-size: 9px;
-	padding: 3px 6px;
+	color: white;
 }
 
 /* ============================================================================
@@ -429,10 +345,11 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 20px 24px;
+	padding: 12px 24px;
 	border-bottom: 1px solid #e2e8f0;
 	background: #fafbfc;
 	gap: 16px;
+	min-height: 48px;
 }
 
 .panel-title-section {
@@ -447,8 +364,8 @@
 }
 
 .panel-title-section h3 {
-	font-size: 16px;
-	font-weight: 700;
+	font-size: 15px;
+	font-weight: 600;
 	color: #111827;
 	margin: 0;
 }
@@ -459,14 +376,94 @@
 	gap: 12px;
 }
 
+/* ============================================================================
+   HEADER FILTERS - Filters in main page header
+   ============================================================================ */
+
+.page-header-filters {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: 16px;
+	flex-wrap: nowrap;
+}
+
+.header-filter-select {
+	padding: 8px 32px 8px 12px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+	font-size: 13px;
+	font-weight: 400;
+	color: #374151;
+	background: white;
+	cursor: pointer;
+	transition: all 0.2s ease;
+	min-width: 140px;
+	appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%23374151' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 10px center;
+}
+
+.header-filter-select:hover {
+	border-color: #10b981;
+}
+
+.header-filter-select:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.header-search-container {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.header-search-container .search-icon {
+	position: absolute;
+	left: 10px;
+	color: #9ca3af;
+	pointer-events: none;
+	z-index: 1;
+}
+
+.header-search-input {
+	padding: 8px 12px 8px 32px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	font-size: 13px;
+	color: #374151;
+	background: white;
+	transition: all 0.2s ease;
+	min-width: 200px;
+	width: 200px;
+	flex-shrink: 0;
+}
+
+.header-search-input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.header-search-input::placeholder {
+	color: #9ca3af;
+}
+
+.header-action-btn {
+	margin-left: 10px;
+}
+
 .data-type-select {
 	padding: 10px 36px 10px 14px;
 	border: 1px solid #d1d5db;
 	border-radius: 8px;
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-		sans-serif;
+	font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 	font-size: 14px;
-	font-weight: 500;
+	font-weight: 400;
 	color: #374151;
 	background: white;
 	cursor: pointer;
@@ -526,17 +523,20 @@
 .btn-danger-small {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 10px 16px;
+	justify-content: center;
+	gap: 4px;
+	padding: 6px 10px;
 	background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
 	color: white;
 	border: none;
-	border-radius: 8px;
-	font-size: 13px;
+	border-radius: 6px;
+	font-size: 12px;
 	font-weight: 600;
 	cursor: pointer;
 	transition: all 0.2s ease;
 	white-space: nowrap;
+	min-width: 32px;
+	height: 32px;
 }
 
 .btn-danger-small:hover {
@@ -640,6 +640,21 @@
 
 .col-participant {
 	width: 120px;
+}
+
+/* Participant Link */
+.participant-link {
+	color: #3b82f6;
+	cursor: pointer;
+	text-decoration: none;
+	transition: all 0.2s ease;
+	border-bottom: 1px solid transparent;
+}
+
+.participant-link:hover {
+	color: #2563eb;
+	border-bottom-color: #3b82f6;
+	text-decoration: none;
 }
 
 .col-file {
@@ -859,6 +874,78 @@
 }
 
 /* ============================================================================
+   SELECTION COUNT BADGE
+   ============================================================================ */
+
+.header-selection-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-right: 8px;
+	border-right: 1px solid #e5e7eb;
+	margin-right: 8px;
+	flex-shrink: 0;
+}
+
+.selection-count-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 8px;
+	background: #3b82f6;
+	border-radius: 12px;
+	font-size: 11px;
+	font-weight: 700;
+	color: white;
+	animation: slideIn 0.2s ease;
+}
+
+@keyframes slideIn {
+	from {
+		opacity: 0;
+		transform: translateX(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+/* ============================================================================
+   FILTER EMPTY STATE
+   ============================================================================ */
+
+.filter-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 40px 20px;
+	text-align: center;
+	color: #9ca3af;
+}
+
+.filter-empty-state svg {
+	margin-bottom: 16px;
+	color: #cbd5e1;
+}
+
+.filter-empty-text {
+	font-size: 14px;
+	font-weight: 600;
+	color: #64748b;
+	margin: 0 0 6px 0;
+}
+
+.filter-empty-hint {
+	font-size: 12px;
+	color: #9ca3af;
+	margin: 0;
+}
+
+/* ============================================================================
    BUTTONS (Shared from other styles)
    ============================================================================ */
 
@@ -945,9 +1032,9 @@
    ============================================================================ */
 
 @media (max-width: 1200px) {
-	.participants-sidebar {
-		width: 280px;
-		min-width: 280px;
+	.filter-sidebar {
+		width: 240px;
+		min-width: 240px;
 	}
 
 	.files-table {
@@ -965,7 +1052,7 @@
 		flex-direction: column;
 	}
 
-	.participants-sidebar {
+	.filter-sidebar {
 		width: 100%;
 		max-height: 40%;
 		border-right: none;

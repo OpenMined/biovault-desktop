@@ -506,8 +506,10 @@ test.describe('Import Data workflow', () => {
 		await expect(importModal).toHaveAttribute('hidden', '', { timeout: 10000 })
 
 		// Should navigate to Data view automatically
-		// Click "All Files" view button to see all imported files
-		await page.locator('#view-all-btn').click()
+		// Wait for Data view to be visible and files to load
+		await expect(page.locator('#data-view.tab-content.active')).toBeVisible()
+		await page.waitForTimeout(500) // Give time for files to render
+		// All files are now shown by default (no filter button needed)
 		await expect(page.locator('#files-table-body tr')).toHaveCount(
 			preparedFiles.length - incompleteRows.length,
 		)
@@ -546,13 +548,7 @@ test.describe('Import Data workflow', () => {
 		await expect(page.locator('#data-view.tab-content.active')).toBeVisible()
 		await page.waitForTimeout(500) // Give time for content to render
 
-		// Make sure we're showing all files by clicking the "All Files" view button
-		const viewAllBtn = page.locator('#view-all-btn')
-		await viewAllBtn.waitFor({ state: 'visible' })
-		if (!(await viewAllBtn.getAttribute('class'))?.includes('active')) {
-			await viewAllBtn.click()
-		}
-
+		// All files are shown by default (participant filter was removed)
 		// Wait for the select-all checkbox to be visible and check it
 		const selectAllCheckbox = page.locator('#select-all-data-files')
 		await selectAllCheckbox.waitFor({ state: 'visible' })
