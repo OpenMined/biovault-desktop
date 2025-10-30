@@ -95,53 +95,16 @@
 
 		<div class="view-content">
 			<div class="pipeline-detail-layout">
-				<!-- Left Sidebar: Run Configuration -->
+				<!-- Left Sidebar: Pipeline Information -->
 				<aside class="pipeline-config-sidebar">
 					<div class="config-sidebar-header">
-						<h2>Run Configuration</h2>
-						<div
-							id="config-validation-status"
-							class="config-validation-status"
-							style="display: none"
-						>
-							<!-- Populated by JS -->
-						</div>
+						<h2>Pipeline Information</h2>
 					</div>
 
-					<!-- Saved Configs -->
+					<!-- Pipeline Metadata -->
 					<div class="config-section">
-						<label class="config-label">
-							<span>Load Saved Configuration</span>
-							<select id="load-saved-config" class="config-select">
-								<option value="">-- Start Fresh --</option>
-								<!-- Populated by JS -->
-							</select>
-						</label>
-						<button
-							id="save-current-config-btn"
-							class="btn-secondary-small"
-							style="margin-top: 8px; width: 100%"
-						>
-							<svg
-								width="14"
-								height="14"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-							>
-								<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-								<polyline points="17 21 17 13 7 13 7 21"></polyline>
-								<polyline points="7 3 7 8 15 8"></polyline>
-							</svg>
-							Save Configuration
-						</button>
-					</div>
-
-					<!-- Pipeline Inputs -->
-					<div class="config-section">
-						<h3 class="config-section-title">Pipeline Inputs</h3>
-						<div id="config-inputs-list" class="config-inputs-list">
+						<h3 class="config-section-title">Details</h3>
+						<div id="pipeline-metadata" class="pipeline-metadata">
 							<!-- Populated by JS -->
 						</div>
 					</div>
