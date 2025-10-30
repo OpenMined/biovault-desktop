@@ -255,11 +255,17 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await expect(createPipelineBtn).toBeVisible()
 		await createPipelineBtn.click()
 
-		// Wait for pipeline picker modal
+		// Wait for template picker modal (first screen)
 		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
 
+		// Click "Import Your Own" to show the import options modal
+		await page.click('button:has-text("Import Your Own")')
+
+		// Wait for import options modal (second screen)
+		await page.waitForSelector('#pipeline-import-options-modal', { state: 'visible', timeout: 5000 })
+
 		// Click "Create Blank Pipeline"
-		await page.click('button:has-text("Create Blank Pipeline")')
+		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
 
 		// Wait for pipeline name modal and fill in name
 		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
