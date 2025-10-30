@@ -805,6 +805,7 @@ export function createDataModule({ invoke, dialog }) {
 
 					// Store selected participant IDs and navigate to Run view
 					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+					sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 					const navigateTo =
 						window.navigateTo || ((_view) => console.warn('navigateTo not available'))
 					navigateTo('run')

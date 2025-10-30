@@ -1,8 +1,9 @@
 use crate::types::AppState;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 // Use CLI library types and functions
@@ -14,6 +15,18 @@ pub use biovault::pipeline_spec::PipelineSpec;
 pub struct PipelineCreateRequest {
     pub name: String,
     pub directory: Option<String>,
+    pub pipeline_file: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineRunSelection {
+    #[serde(default)]
+    pub file_ids: Vec<i64>,
+    #[serde(default)]
+    pub participant_ids: Vec<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,6 +58,31 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
     Ok(home.join("pipelines"))
 }
 
+fn append_pipeline_log(window: &tauri::Window, log_path: &Path, message: &str) {
+    if let Some(parent) = log_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "Failed to ensure pipeline log directory {:?}: {}",
+                parent, err
+            );
+        }
+    }
+
+    match OpenOptions::new().create(true).append(true).open(log_path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{}", message);
+        }
+        Err(err) => {
+            eprintln!(
+                "Failed to write pipeline log at {:?}: {} | message: {}",
+                log_path, err, message
+            );
+        }
+    }
+
+    let _ = window.emit("pipeline-log-line", message.to_string());
+}
+
 #[tauri::command]
 pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipeline>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
@@ -52,37 +90,88 @@ pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipe
 }
 
 #[tauri::command]
+pub async fn get_runs_base_dir() -> Result<String, String> {
+    let home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let runs_dir = home.join("runs");
+    fs::create_dir_all(&runs_dir).map_err(|e| format!("Failed to create runs directory: {}", e))?;
+    Ok(runs_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn create_pipeline(
     state: tauri::State<'_, AppState>,
     request: PipelineCreateRequest,
 ) -> Result<Pipeline, String> {
+    let PipelineCreateRequest {
+        mut name,
+        directory,
+        pipeline_file,
+        overwrite,
+    } = request;
+
     let pipelines_dir = get_pipelines_dir()?;
     fs::create_dir_all(&pipelines_dir)
         .map_err(|e| format!("Failed to create pipelines directory: {}", e))?;
 
-    let pipeline_dir = if let Some(dir) = request.directory {
+    let mut pipeline_dir = if let Some(dir) = directory {
         PathBuf::from(dir)
     } else {
-        pipelines_dir.join(&request.name)
+        pipelines_dir.join(&name)
     };
 
-    // Create pipeline directory
-    fs::create_dir_all(&pipeline_dir)
-        .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
-
-    let pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
-
-    // Check if pipeline.yaml already exists
-    if pipeline_yaml_path.exists() {
-        return Err(format!(
-            "pipeline.yaml already exists at {}",
-            pipeline_yaml_path.display()
-        ));
+    // If the provided directory points to a file, fall back to its parent directory
+    if let Ok(metadata) = fs::metadata(&pipeline_dir) {
+        if metadata.is_file() {
+            if let Some(parent) = pipeline_dir.parent() {
+                pipeline_dir = parent.to_path_buf();
+            }
+        }
     }
 
-    // Create minimal pipeline.yaml
-    let default_spec = format!(
-        r#"name: {}
+    let mut pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
+    let mut imported_spec: Option<PipelineSpec> = None;
+
+    if let Some(pipeline_file_path) = pipeline_file {
+        pipeline_yaml_path = PathBuf::from(&pipeline_file_path);
+        if !pipeline_yaml_path.exists() {
+            return Err(format!(
+                "Selected pipeline.yaml does not exist at {}",
+                pipeline_yaml_path.display()
+            ));
+        }
+
+        let parent = pipeline_yaml_path.parent().ok_or_else(|| {
+            format!(
+                "Unable to determine parent directory for {}",
+                pipeline_yaml_path.display()
+            )
+        })?;
+        pipeline_dir = parent.to_path_buf();
+
+        // Ensure directory exists (no-op if it already does)
+        if !pipeline_dir.as_os_str().is_empty() {
+            fs::create_dir_all(&pipeline_dir)
+                .map_err(|e| format!("Failed to ensure pipeline directory: {}", e))?;
+        }
+
+        let spec = PipelineSpec::load(&pipeline_yaml_path)
+            .map_err(|e| format!("Failed to load pipeline.yaml: {}", e))?;
+        name = spec.name.clone();
+        imported_spec = Some(spec);
+    } else {
+        fs::create_dir_all(&pipeline_dir)
+            .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+
+        if pipeline_yaml_path.exists() && !overwrite {
+            return Err(format!(
+                "pipeline.yaml already exists at {}",
+                pipeline_yaml_path.display()
+            ));
+        }
+
+        let default_spec = format!(
+            r#"name: {}
 inputs:
   # Define pipeline inputs here
   # example_input: File
@@ -94,25 +183,44 @@ steps:
   #   with:
   #     input_name: inputs.example_input
 "#,
-        request.name
-    );
+            name
+        );
 
-    fs::write(&pipeline_yaml_path, default_spec)
-        .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+        fs::write(&pipeline_yaml_path, default_spec)
+            .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+    }
+
+    let pipeline_dir_str = pipeline_dir.to_string_lossy().to_string();
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+    if overwrite {
+        let existing = biovault_db
+            .list_pipelines()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|p| p.name == name || p.pipeline_path == pipeline_dir_str);
+
+        if let Some(existing_pipeline) = existing {
+            biovault_db
+                .delete_pipeline(existing_pipeline.id)
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     // Register in database using CLI library
-    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let id = biovault_db
-        .register_pipeline(&request.name, &pipeline_dir.to_string_lossy())
+        .register_pipeline(&name, &pipeline_dir_str)
         .map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Local::now().to_rfc3339();
 
     Ok(Pipeline {
         id,
-        name: request.name,
-        pipeline_path: pipeline_dir.to_string_lossy().to_string(),
-        created_at: chrono::Local::now().to_rfc3339(),
-        updated_at: chrono::Local::now().to_rfc3339(),
-        spec: None, // Spec will be loaded when needed
+        name,
+        pipeline_path: pipeline_dir_str,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        spec: imported_spec,
     })
 }
 
@@ -295,10 +403,18 @@ pub async fn run_pipeline(
     state: tauri::State<'_, AppState>,
     window: tauri::Window,
     pipeline_id: i64,
-    input_overrides: HashMap<String, String>,
+    mut input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
+    selection: Option<PipelineRunSelection>,
 ) -> Result<PipelineRun, String> {
     use chrono::Local;
+
+    let home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+
+    let mut selection_metadata: Option<serde_json::Value> = None;
+    let mut selection_counts: Option<(usize, usize)> = None;
+    let mut generated_samplesheet_path: Option<String> = None;
 
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -308,23 +424,166 @@ pub async fn run_pipeline(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Pipeline {} not found", pipeline_id))?;
 
-    let pipeline_path = pipeline.pipeline_path;
+    let pipeline_name = pipeline.name.clone();
+    let pipeline_path = pipeline.pipeline_path.clone();
 
     let yaml_path = PathBuf::from(&pipeline_path).join("pipeline.yaml");
 
     // Generate results directory
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let results_path = if let Some(dir) = results_dir {
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let results_path = if let Some(dir) = &results_dir {
         PathBuf::from(dir)
     } else {
-        let home = biovault::config::get_biovault_home()
-            .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
         home.join("runs").join(format!("pipeline_{}", timestamp))
     };
 
     // Create results directory
     fs::create_dir_all(&results_path)
         .map_err(|e| format!("Failed to create results directory: {}", e))?;
+
+    let log_path = results_path.join("pipeline.log");
+    append_pipeline_log(
+        &window,
+        &log_path,
+        &format!("📦 Pipeline: {}", pipeline_name),
+    );
+    append_pipeline_log(
+        &window,
+        &log_path,
+        &format!("📂 Results directory: {}", results_path.display()),
+    );
+
+    if let Some(sel) = &selection {
+        append_pipeline_log(
+            &window,
+            &log_path,
+            &format!(
+                "🔍 Selection payload: files={} participants={}",
+                sel.file_ids.len(),
+                sel.participant_ids.len()
+            ),
+        );
+    } else {
+        append_pipeline_log(&window, &log_path, "🔍 Selection payload: none provided");
+    }
+
+    if let Some(sel) = selection {
+        if !sel.file_ids.is_empty() {
+            let mut seen_files = HashSet::new();
+            let mut unique_file_ids = Vec::new();
+            for id in sel.file_ids {
+                if seen_files.insert(id) {
+                    unique_file_ids.push(id);
+                }
+            }
+
+            if unique_file_ids.is_empty() {
+                return Err("No valid file IDs were provided for the pipeline run.".to_string());
+            }
+
+            let mut rows = Vec::new();
+            let mut participant_labels_set: HashSet<String> = HashSet::new();
+
+            for file_id in &unique_file_ids {
+                let record = biovault::data::get_file_by_id(&biovault_db, *file_id)
+                    .map_err(|e| format!("Failed to load file {}: {}", file_id, e))?
+                    .ok_or_else(|| format!("File {} not found in the BioVault catalog", file_id))?;
+
+                if record.file_path.trim().is_empty() {
+                    return Err(format!(
+                        "File {} does not have a recorded path in the catalog.",
+                        file_id
+                    ));
+                }
+
+                let participant = record
+                    .participant_id
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        Path::new(&record.file_path)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    });
+
+                participant_labels_set.insert(participant.clone());
+                rows.push((participant, record.file_path));
+            }
+
+            let mut dedup_participant_ids = Vec::new();
+            if !sel.participant_ids.is_empty() {
+                let mut seen = HashSet::new();
+                dedup_participant_ids = sel
+                    .participant_ids
+                    .into_iter()
+                    .filter(|id| seen.insert(*id))
+                    .collect::<Vec<_>>();
+            }
+
+            let inputs_dir = results_path.join("inputs");
+            fs::create_dir_all(&inputs_dir).map_err(|e| {
+                format!("Failed to prepare inputs directory for samplesheet: {}", e)
+            })?;
+            let sheet_path = inputs_dir.join("selected_participants.csv");
+
+            let mut writer = csv::Writer::from_path(&sheet_path)
+                .map_err(|e| format!("Failed to create samplesheet: {}", e))?;
+            writer
+                .write_record(["participant_id", "genotype_file"])
+                .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
+
+            for (participant, file_path) in &rows {
+                writer
+                    .write_record([participant, file_path])
+                    .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
+            }
+            writer
+                .flush()
+                .map_err(|e| format!("Failed to finalize samplesheet: {}", e))?;
+
+            let mut participant_labels: Vec<String> = participant_labels_set.into_iter().collect();
+            participant_labels.sort();
+
+            let participant_total = participant_labels.len();
+            selection_counts = Some((unique_file_ids.len(), participant_total));
+
+            input_overrides.insert(
+                "inputs.samplesheet".to_string(),
+                sheet_path.to_string_lossy().to_string(),
+            );
+
+            generated_samplesheet_path = Some(sheet_path.to_string_lossy().to_string());
+
+            let participant_count = participant_labels.len();
+            selection_metadata = Some(serde_json::json!({
+                "file_ids": unique_file_ids,
+                "participant_ids": dedup_participant_ids,
+                "participant_labels": participant_labels,
+                "samplesheet_path": sheet_path.to_string_lossy(),
+                "participant_count": participant_count,
+            }));
+        }
+    }
+
+    if let Some((file_count, participant_count)) = selection_counts {
+        append_pipeline_log(
+            &window,
+            &log_path,
+            &format!(
+                "📥 Inputs: {} file(s), {} participant(s)",
+                file_count, participant_count
+            ),
+        );
+    }
+
+    if let Some(path) = &generated_samplesheet_path {
+        append_pipeline_log(
+            &window,
+            &log_path,
+            &format!("📝 Generated samplesheet: {}", path),
+        );
+    }
 
     // Separate inputs from parameters for metadata storage
     let mut inputs_map = HashMap::new();
@@ -339,12 +598,57 @@ pub async fn run_pipeline(
     }
 
     // Create metadata JSON
-    let metadata_json = serde_json::json!({
-        "input_overrides": inputs_map,
-        "parameter_overrides": params_map
-    });
-    let metadata_str = serde_json::to_string(&metadata_json)
+    let mut metadata_root = serde_json::Map::new();
+    metadata_root.insert("input_overrides".to_string(), serde_json::json!(inputs_map));
+    metadata_root.insert(
+        "parameter_overrides".to_string(),
+        serde_json::json!(params_map),
+    );
+    if let Some(selection_json) = selection_metadata {
+        metadata_root.insert("data_selection".to_string(), selection_json);
+    }
+    let metadata_value = serde_json::Value::Object(metadata_root);
+    let metadata_str = serde_json::to_string(&metadata_value)
         .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+
+    let mut extra_args = Vec::new();
+    for (key, value) in input_overrides {
+        extra_args.push("--set".to_string());
+        extra_args.push(format!("{}={}", key, value));
+    }
+
+    let yaml_path_str = yaml_path.to_string_lossy().to_string();
+    let results_dir_str = results_path.to_string_lossy().to_string();
+
+    // Build command preview for logging
+    let quote_arg = |arg: &str| -> String {
+        if arg.is_empty() {
+            "\"\"".to_string()
+        } else if arg
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+        {
+            let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("\"{}\"", escaped)
+        } else {
+            arg.to_string()
+        }
+    };
+
+    let mut command_preview = format!("bv pipeline run {}", quote_arg(&yaml_path_str));
+    for arg in &extra_args {
+        command_preview.push(' ');
+        command_preview.push_str(&quote_arg(arg));
+    }
+    command_preview.push(' ');
+    command_preview.push_str("--results-dir ");
+    command_preview.push_str(&quote_arg(&results_dir_str));
+
+    append_pipeline_log(
+        &window,
+        &log_path,
+        &format!("▶️  Command: {}", command_preview),
+    );
 
     // Create pipeline run record using CLI library with metadata
     let run_id = biovault_db
@@ -358,34 +662,48 @@ pub async fn run_pipeline(
 
     drop(biovault_db); // Release lock
 
-    // Build extra args from input overrides
-    // The keys can be either "inputs.name" or "stepId.paramName"
-    let mut extra_args = Vec::new();
-    for (key, value) in input_overrides {
-        extra_args.push("--set".to_string());
-        extra_args.push(format!("{}={}", key, value));
-    }
-
-    let yaml_path_str = yaml_path.to_string_lossy().to_string();
-    let results_dir_str = results_path.to_string_lossy().to_string();
-
     // Spawn async task to run pipeline (so we can return immediately)
     let window_clone = window.clone();
     let biovault_db_clone = state.biovault_db.clone();
     let run_id_clone = run_id;
+    let log_path_clone = log_path.clone();
+    let pipeline_name_clone = pipeline_name.clone();
+    let yaml_path_spawn = yaml_path_str.clone();
+    let results_dir_spawn = results_dir_str.clone();
+    let extra_args_spawn = extra_args.clone();
 
     tauri::async_runtime::spawn(async move {
+        append_pipeline_log(
+            &window_clone,
+            &log_path_clone,
+            &format!("🚀 Starting pipeline run: {}", pipeline_name_clone),
+        );
+
         // Call CLI library function directly
         let result = cli_run_pipeline(
-            &yaml_path_str,
-            extra_args,
+            &yaml_path_spawn,
+            extra_args_spawn,
             false, // dry_run
             false, // resume
-            Some(results_dir_str),
+            Some(results_dir_spawn),
         )
         .await;
 
-        let status = if result.is_ok() { "success" } else { "failed" };
+        let status = if let Err(ref err) = result {
+            append_pipeline_log(
+                &window_clone,
+                &log_path_clone,
+                &format!("❌ Pipeline run failed: {}", err),
+            );
+            "failed"
+        } else {
+            append_pipeline_log(
+                &window_clone,
+                &log_path_clone,
+                "✅ Pipeline run completed successfully",
+            );
+            "success"
+        };
 
         // Update status using CLI library
         if let Ok(biovault_db) = biovault_db_clone.lock() {

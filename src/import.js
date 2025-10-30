@@ -23,6 +23,66 @@ export function createImportModule({
 	let reviewSortDirection = 'asc'
 	let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
 	let patternInputDebounce = null
+
+	const GENOTYPE_SOURCE_OPTIONS = [
+		'23andMe',
+		'AncestryDNA',
+		'Genes for Good',
+		'Dynamic DNA',
+		'Living DNA',
+		'MyHeritage',
+		'FamilyTreeDNA',
+		'deCODEme',
+		'Dante Labs',
+		'Unknown',
+	]
+
+	function populateSourceSelect(select, selectedValue = null, includePlaceholder = false) {
+		if (!select) return
+		const value = selectedValue || ''
+		select.innerHTML = ''
+		if (includePlaceholder) {
+			const placeholder = document.createElement('option')
+			placeholder.value = ''
+			placeholder.textContent = '-'
+			if (!value) {
+				placeholder.selected = true
+			}
+			select.appendChild(placeholder)
+		}
+		let matched = false
+		GENOTYPE_SOURCE_OPTIONS.forEach((source) => {
+			const option = document.createElement('option')
+			option.value = source
+			option.textContent = source
+			if (source === value) {
+				option.selected = true
+				matched = true
+			}
+			select.appendChild(option)
+		})
+		if (value && !matched) {
+			const fallback = document.createElement('option')
+			fallback.value = value
+			fallback.textContent = value
+			fallback.selected = true
+			select.appendChild(fallback)
+		}
+	}
+
+	function setSelectValue(select, value) {
+		if (!select) return
+		const normalized = value || ''
+		const hasOption = Array.from(select.options).some((opt) => opt.value === normalized)
+		if (!hasOption && normalized) {
+			const option = document.createElement('option')
+			option.value = normalized
+			option.textContent = normalized
+			select.appendChild(option)
+		}
+		select.value = normalized
+	}
+
 	// Modal management
 	function openImportModal() {
 		const modal = document.getElementById('import-modal')
@@ -1169,6 +1229,10 @@ export function createImportModule({
 	function showReviewView() {
 		const reviewCountEl = document.getElementById('review-file-count')
 		const tbody = document.getElementById('review-files-table')
+		const bulkSourceSelect = document.getElementById('set-all-source')
+		if (bulkSourceSelect) {
+			populateSourceSelect(bulkSourceSelect, null, true)
+		}
 		if (reviewCountEl) {
 			reviewCountEl.textContent = Object.keys(reviewFileMetadata).length
 		}
@@ -1278,16 +1342,7 @@ export function createImportModule({
 			const sourceCell = document.createElement('td')
 			sourceCell.className = 'genotype-field'
 			const sourceSelect = document.createElement('select')
-			sourceSelect.innerHTML = `
-				<option value="">-</option>
-				<option value="Unknown" ${metadata.source === 'Unknown' ? 'selected' : ''}>Unknown</option>
-				<option value="23andMe" ${metadata.source === '23andMe' ? 'selected' : ''}>23andMe</option>
-				<option value="AncestryDNA" ${
-					metadata.source === 'AncestryDNA' ? 'selected' : ''
-				}>AncestryDNA</option>
-				<option value="MyHeritage" ${metadata.source === 'MyHeritage' ? 'selected' : ''}>MyHeritage</option>
-				<option value="Dante Labs" ${metadata.source === 'Dante Labs' ? 'selected' : ''}>Dante Labs</option>
-			`
+			populateSourceSelect(sourceSelect, metadata.source, true)
 			sourceSelect.addEventListener('change', (e) => {
 				e.stopPropagation() // Don't trigger row click
 				reviewFileMetadata[filePath].source = e.target.value || null
@@ -1437,11 +1492,11 @@ export function createImportModule({
 				progressBar.style.width = `${(processed / totalFiles) * 100}%`
 				const detections = await invoke('detect_file_types', { files: batch })
 				// Log the detection results to console for debugging
-				console.log('Detection results from backend:', detections)
+				console.log('🧬 detect_file_types batch result:', detections)
 				// Update all metadata and UI for this batch
 				Object.keys(detections).forEach((filePath) => {
 					const detection = detections[filePath]
-					console.log(`Detection for ${filePath}:`, detection)
+					console.log(`🧪 Detected metadata for ${filePath}:`, detection)
 					if (reviewFileMetadata[filePath] && detection) {
 						// Map the backend grch value to the expected dropdown format
 						let grchValue = detection.grch_version
@@ -1506,8 +1561,8 @@ export function createImportModule({
 		}
 		// Update source dropdown
 		const sourceSelect = targetRow.querySelector('td:nth-child(4) select')
-		if (sourceSelect && metadata.source) {
-			sourceSelect.value = metadata.source
+		if (sourceSelect) {
+			setSelectValue(sourceSelect, metadata.source)
 		}
 		// Update grch version dropdown
 		const grchSelect = targetRow.querySelector('td:nth-child(5) select')
