@@ -523,3 +523,49 @@ jobs:
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
           git commit -m "chore: release ${RELEASE_TAG}"
           git push origin HEAD:${{ github.ref_name }}
+
+      - name: Bump to next version
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          current = "${{ env.RELEASE_VERSION }}"
+          parts = current.split('.')
+          parts[-1] = str(int(parts[-1]) + 1)
+          next_version = '.'.join(parts)
+
+          def replace_line(path: Path, pattern: str):
+              text = path.read_text()
+              new_text, count = re.subn(pattern, f"\\1\"{next_version}\"", text, count=1, flags=re.MULTILINE)
+              if count == 0:
+                  raise SystemExit(f'Failed to update version in {path}')
+              path.write_text(new_text)
+
+          replace_line(Path('package.json'), r'(\"version\"\s*:\s*)\"[^\"]+\"')
+          replace_line(Path('src-tauri/tauri.conf.json'), r'(\"version\"\s*:\s*)\"[^\"]+\"')
+          replace_line(Path('src-tauri/Cargo.toml'), r'(version\s*=\s*)\"[^\"]+\"')
+
+          package_lock = Path('package-lock.json')
+          if package_lock.exists():
+              data = json.loads(package_lock.read_text())
+              data['version'] = next_version
+              if 'packages' in data and '' in data['packages']:
+                  data['packages']['']['version'] = next_version
+              package_lock.write_text(json.dumps(data, indent=2) + '\n')
+
+          lock_path = Path('src-tauri/Cargo.lock')
+          if lock_path.exists():
+              content = lock_path.read_text()
+              content, count = re.subn(r'(name = \"bv-desktop\"\nversion = )\"[^\"]+\"', rf'\1"{next_version}"', content, count=1)
+              if count == 0:
+                  raise SystemExit('Failed to update version in src-tauri/Cargo.lock for bv-desktop')
+              lock_path.write_text(content)
+
+          print(f"Bumped version from {current} to {next_version}")
+          PY
+
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+          git commit -m "chore: bump version to $(python -c 'v="${RELEASE_VERSION}"; p=v.split("."); p[-1]=str(int(p[-1])+1); print(".".join(p))')"
+          git push origin HEAD:${{ github.ref_name }}
