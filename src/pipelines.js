@@ -412,8 +412,12 @@ export function createPipelinesModule({
 					: ''
 
 				return `
-					<label class="data-run-pipeline-option" data-pipeline-id="${pipeline.id}" style="display: flex; align-items: flex-start; gap: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; cursor: pointer; margin-bottom: 10px; background: #ffffff;">
-						<input type="radio" name="data-run-pipeline" value="${pipeline.id}" ${isChecked} style="margin-top: 4px;">
+					<label class="data-run-pipeline-option" data-pipeline-id="${
+						pipeline.id
+					}" style="display: flex; align-items: flex-start; gap: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; cursor: pointer; margin-bottom: 10px; background: #ffffff;">
+						<input type="radio" name="data-run-pipeline" value="${
+							pipeline.id
+						}" ${isChecked} style="margin-top: 4px;">
 						<div class="option-details" style="flex: 1;">
 							<div class="option-title" style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">
 								${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
@@ -595,12 +599,92 @@ export function createPipelinesModule({
 
 	// Show pipeline creation options
 	async function showCreatePipelineWizard() {
+		showTemplatePipelinePicker()
+	}
+
+	async function showTemplatePipelinePicker() {
 		const modalHtml = `
 			<div id="pipeline-picker-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 500px;">
+				<div class="modal-content" style="width: 600px;">
 					<div class="modal-header">
 						<h2>New Pipeline</h2>
 						<button class="modal-close" onclick="pipelineModule.closePipelinePickerModal()">×</button>
+					</div>
+					<div class="modal-body">
+						<p style="font-size: 14px; color: #6b7280; margin-bottom: 20px;">
+							Choose a template to get started, or import your own pipeline.
+						</p>
+						<div class="template-pipelines-grid">
+							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('apol1')">
+								<div class="template-pipeline-icon">
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<circle cx="12" cy="12" r="10"></circle>
+										<path d="M12 6v6l4 2"></path>
+									</svg>
+								</div>
+								<div class="template-pipeline-content">
+									<div class="template-pipeline-name">APOL1 Classifier</div>
+									<div class="template-pipeline-subtitle">Genetic variant analysis</div>
+								</div>
+							</button>
+							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('brca')">
+								<div class="template-pipeline-icon">
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+										<circle cx="12" cy="7" r="4"></circle>
+									</svg>
+								</div>
+								<div class="template-pipeline-content">
+									<div class="template-pipeline-name">BRCA Classifier</div>
+									<div class="template-pipeline-subtitle">Cancer risk assessment</div>
+								</div>
+							</button>
+							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('herc2')">
+								<div class="template-pipeline-icon">
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+										<path d="M2 17l10 5 10-5"></path>
+										<path d="M2 12l10 5 10-5"></path>
+									</svg>
+								</div>
+								<div class="template-pipeline-content">
+									<div class="template-pipeline-name">HERC2 Classifier</div>
+									<div class="template-pipeline-subtitle">Pigmentation analysis</div>
+								</div>
+							</button>
+						</div>
+						<div style="border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 8px;">
+							<button class="action-btn-large" onclick="pipelineModule.showImportOptions()" style="width: 100%;">
+								<div class="action-btn-icon">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+										<polyline points="17 8 12 3 7 8"></polyline>
+										<line x1="12" y1="3" x2="12" y2="15"></line>
+									</svg>
+								</div>
+								<div class="action-btn-content">
+									<div class="action-btn-title">Import Your Own</div>
+									<div class="action-btn-desc">Import from GitHub, local folder, or create a blank pipeline</div>
+								</div>
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+	}
+
+	async function showImportOptions() {
+		closePipelinePickerModal()
+
+		const modalHtml = `
+			<div id="pipeline-import-options-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 500px;">
+					<div class="modal-header">
+						<h2>Import Pipeline</h2>
+						<button class="modal-close" onclick="pipelineModule.closeImportOptionsModal()">×</button>
 					</div>
 					<div class="modal-body">
 						<div style="display: flex; flex-direction: column; gap: 10px;">
@@ -648,6 +732,68 @@ export function createPipelinesModule({
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
 	}
 
+	function closeImportOptionsModal() {
+		const modal = document.getElementById('pipeline-import-options-modal')
+		if (modal) modal.remove()
+	}
+
+	async function importTemplatePipeline(templateName) {
+		closePipelinePickerModal()
+
+		const templateUrls = {
+			apol1:
+				'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/pipeline.yaml',
+			brca: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/pipeline.yaml',
+			herc2:
+				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/pipeline.yaml',
+		}
+
+		const url = templateUrls[templateName]
+		if (!url) {
+			alert('Invalid template selected')
+			return
+		}
+
+		// Show loading state
+		const loadingHtml = `
+			<div id="pipeline-loading-modal" class="modal-overlay" style="display: flex;">
+				<div class="modal-content" style="width: 400px; text-align: center;">
+					<div class="modal-body" style="padding: 40px 20px;">
+						<div style="margin-bottom: 16px;">
+							<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #10b981; animation: spin 1s linear infinite;">
+								<circle cx="12" cy="12" r="10" opacity="0.25"></circle>
+								<path d="M12 2a10 10 0 0 1 10 10" opacity="0.75"></path>
+							</svg>
+						</div>
+						<h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #111827;">
+							Importing ${templateName.toUpperCase()} Pipeline...
+						</h3>
+						<p style="margin: 0; font-size: 14px; color: #6b7280;">
+							Downloading pipeline and all dependencies
+						</p>
+					</div>
+				</div>
+			</div>
+			<style>
+				@keyframes spin {
+					from { transform: rotate(0deg); }
+					to { transform: rotate(360deg); }
+				}
+			</style>
+		`
+		document.body.insertAdjacentHTML('beforeend', loadingHtml)
+
+		try {
+			await submitPipelineURL(false, url)
+			const loadingModal = document.getElementById('pipeline-loading-modal')
+			if (loadingModal) loadingModal.remove()
+		} catch (error) {
+			const loadingModal = document.getElementById('pipeline-loading-modal')
+			if (loadingModal) loadingModal.remove()
+			throw error
+		}
+	}
+
 	function closePipelinePickerModal() {
 		const modal = document.getElementById('pipeline-picker-modal')
 		if (modal) modal.remove()
@@ -655,6 +801,7 @@ export function createPipelinesModule({
 
 	async function createBlankPipeline() {
 		closePipelinePickerModal()
+		closeImportOptionsModal()
 
 		// Show name input modal
 		const modalHtml = `
@@ -752,6 +899,7 @@ export function createPipelinesModule({
 
 	async function importPipelineFromURL() {
 		closePipelinePickerModal()
+		closeImportOptionsModal()
 
 		// Show URL input modal instead of using prompt()
 		const modalHtml = `
@@ -882,6 +1030,9 @@ export function createPipelinesModule({
 	}
 
 	async function importExistingPipeline(overwrite = false, selectedPath = null) {
+		closePipelinePickerModal()
+		closeImportOptionsModal()
+
 		let selected = selectedPath
 		try {
 			if (!selected) {
@@ -3576,6 +3727,10 @@ steps:${
 			showPipelineMenu,
 			backToPipelinesList,
 			showCreatePipelineWizard,
+			showTemplatePipelinePicker,
+			showImportOptions,
+			closeImportOptionsModal,
+			importTemplatePipeline,
 			closePipelinePickerModal,
 			createBlankPipeline,
 			closePipelineNameModal,
