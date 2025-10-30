@@ -364,7 +364,8 @@ test.describe('Pipeline Creation', () => {
 		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
 
 		// Try to submit without entering a name (should trigger validation alert)
-		const submitBtn = page.locator('#pipeline-name-modal button.primary-btn')
+		// The new modal uses inline styles, so we'll select by button text "Create Pipeline"
+		const submitBtn = page.locator('#pipeline-name-modal button:has-text("Create Pipeline")')
 		await submitBtn.click()
 
 		// Wait a bit for the validation to occur

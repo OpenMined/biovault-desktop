@@ -364,11 +364,15 @@ export function createPipelinesModule({
 					<div style="font-size: 14px; color: #475569; line-height: 1.6; margin-left: 32px;">
 						<strong style="color: #1e293b;">${fileCount}</strong> file${fileCount === 1 ? '' : 's'} selected
 						<span style="margin: 0 8px;">•</span>
-						<strong style="color: #1e293b;">${participantCount}</strong> participant${participantCount === 1 ? '' : 's'}
+						<strong style="color: #1e293b;">${participantCount}</strong> participant${
+							participantCount === 1 ? '' : 's'
+						}
 						${
 							eligiblePipelines.length > 0
 								? `<span style="margin-left: 12px; padding: 4px 10px; background: rgba(34,197,94,0.1); color: #16a34a; border-radius: 4px; font-size: 13px; font-weight: 500;">
-								${eligiblePipelines.length} compatible pipeline${eligiblePipelines.length === 1 ? '' : 's'} available
+								${eligiblePipelines.length} compatible pipeline${
+									eligiblePipelines.length === 1 ? '' : 's'
+								} available
 							</span>`
 								: ''
 						}
@@ -646,7 +650,15 @@ export function createPipelinesModule({
 				return `
 					<label class="data-run-pipeline-option" data-pipeline-id="${
 						pipeline.id
-					}" style="display: flex; align-items: flex-start; gap: 16px; border: 2px solid ${isPreferred ? '#2563eb' : '#e2e8f0'}; border-radius: 12px; padding: 20px 24px; cursor: pointer; background: ${isPreferred ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'}; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); ${isPreferred ? 'box-shadow: 0 4px 12px rgba(37,99,235,0.15);' : 'box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);'};">
+					}" style="display: flex; align-items: flex-start; gap: 16px; border: 2px solid ${
+						isPreferred ? '#2563eb' : '#e2e8f0'
+					}; border-radius: 12px; padding: 20px 24px; cursor: pointer; background: ${
+						isPreferred ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'
+					}; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); ${
+						isPreferred
+							? 'box-shadow: 0 4px 12px rgba(37,99,235,0.15);'
+							: 'box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);'
+					};">
 						<input type="radio" name="data-run-pipeline" value="${
 							pipeline.id
 						}" ${isChecked} style="margin-top: 4px; accent-color: #2563eb; width: 18px; height: 18px; cursor: pointer;">
@@ -655,9 +667,17 @@ export function createPipelinesModule({
 								<div class="option-title" style="font-weight: 700; font-size: 16px; color: #0f172a; letter-spacing: -0.01em;">
 									${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
 								</div>
-								${isPreferred ? `<span style="padding: 4px 10px; background: rgba(37,99,235,0.15); color: #2563eb; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Recommended</span>` : ''}
+								${
+									isPreferred
+										? `<span style="padding: 4px 10px; background: rgba(37,99,235,0.15); color: #2563eb; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Recommended</span>`
+										: ''
+								}
 							</div>
-							${description ? `<div class="option-desc" style="color: #64748b; font-size: 14px; margin-bottom: 12px; line-height: 1.6;">${description}</div>` : ''}
+							${
+								description
+									? `<div class="option-desc" style="color: #64748b; font-size: 14px; margin-bottom: 12px; line-height: 1.6;">${description}</div>`
+									: ''
+							}
 							<div style="display: flex; gap: 16px; align-items: center; font-size: 13px; color: #64748b; flex-wrap: wrap;">
 								<span style="display: flex; align-items: center; gap: 6px; font-weight: 500;">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.7;">
@@ -763,8 +783,12 @@ export function createPipelinesModule({
 							<strong style="font-size: 16px; font-weight: 700; color: #1e293b; letter-spacing: -0.01em;">Selected Data</strong>
 						</div>
 						<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
-							<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${fileCount === 1 ? '' : 's'} 
-							covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${uniqueParticipantCount === 1 ? '' : 's'}
+							<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${
+								fileCount === 1 ? '' : 's'
+							} 
+							covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${
+								uniqueParticipantCount === 1 ? '' : 's'
+							}
 						</div>
 						<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
 							We will generate a temporary samplesheet automatically for this run.
@@ -792,7 +816,13 @@ export function createPipelinesModule({
 						</h3>
 						<p style="font-size: 13px; color: #64748b; margin: 0 0 16px 0; line-height: 1.6;">
 							Leave blank to create a timestamped folder inside
-							${runsBaseDir ? `<code style="background: #f1f5f9; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: 'SF Mono', Monaco, monospace; color: #475569;">${escapeHtml(runsBaseDir)}</code>` : 'the BioVault runs directory'}.
+							${
+								runsBaseDir
+									? `<code style="background: #f1f5f9; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: 'SF Mono', Monaco, monospace; color: #475569;">${escapeHtml(
+											runsBaseDir,
+										)}</code>`
+									: 'the BioVault runs directory'
+							}.
 						</p>
 						<div class="data-run-results-input" style="display: flex; gap: 10px;">
 							<input type="text" id="data-run-results-dir" placeholder="Defaults to BioVault runs folder" style="flex: 1; padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: #ffffff; color: #0f172a; transition: all 0.2s;">
@@ -988,69 +1018,166 @@ export function createPipelinesModule({
 	}
 
 	async function showTemplatePipelinePicker() {
-		const modalHtml = `
-			<div id="pipeline-picker-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 600px;">
-					<div class="modal-header">
-						<h2>New Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closePipelinePickerModal()">×</button>
-					</div>
-					<div class="modal-body">
-						<p style="font-size: 14px; color: #6b7280; margin-bottom: 20px;">
-							Choose a template to get started, or import your own pipeline.
+		// Add CSS for the new pipeline modal if not exists
+		if (!document.getElementById('new-pipeline-modal-styles')) {
+			const style = document.createElement('style')
+			style.id = 'new-pipeline-modal-styles'
+			style.textContent = `
+				.new-pipeline-modal .modal-backdrop {
+					position: absolute;
+					top: 0;
+					left: 0;
+					width: 100%;
+					height: 100%;
+					background: rgba(0, 0, 0, 0.4);
+					backdrop-filter: blur(8px);
+					animation: backdropFadeIn 0.2s ease-out;
+				}
+				@keyframes backdropFadeIn {
+					from { opacity: 0; backdrop-filter: blur(0px); }
+					to { opacity: 1; backdrop-filter: blur(8px); }
+				}
+				@keyframes slideUp {
+					from { opacity: 0; transform: translateY(24px) scale(0.96); }
+					to { opacity: 1; transform: translateY(0) scale(1); }
+				}
+				.new-pipeline-modal .new-pipeline-modal-panel {
+					animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+				}
+				.new-pipeline-template-card {
+					transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+				}
+				.new-pipeline-template-card:hover {
+					transform: translateY(-2px);
+					box-shadow: 0 8px 24px rgba(37,99,235,0.15) !important;
+					border-color: #3b82f6 !important;
+				}
+				.new-pipeline-template-card:active {
+					transform: translateY(0);
+				}
+				.new-pipeline-option-card {
+					transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+				}
+				.new-pipeline-option-card:hover {
+					transform: translateY(-2px);
+					box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+					border-color: #cbd5e1 !important;
+				}
+				.new-pipeline-option-card:active {
+					transform: translateY(0);
+				}
+				.new-pipeline-modal .modal-close-btn:hover {
+					background: #f8fafc !important;
+					color: #0f172a !important;
+					transform: translateY(-1px);
+				}
+			`
+			document.head.appendChild(style)
+		}
+
+		const modal = document.createElement('div')
+		modal.id = 'pipeline-picker-modal'
+		modal.className = 'modal new-pipeline-modal'
+		modal.setAttribute('role', 'dialog')
+		modal.setAttribute('aria-modal', 'true')
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		modal.innerHTML = `
+			<div class="modal-backdrop" data-modal-close="new-pipeline"></div>
+			<div class="new-pipeline-modal-panel" style="position: relative; width: 900px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						Create New Pipeline
+					</h2>
+					<button type="button" class="modal-close-btn" data-modal-close="new-pipeline" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+						</svg>
+					</button>
+				</div>
+				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
+					<div style="margin-bottom: 24px;">
+						<p style="font-size: 15px; color: #475569; line-height: 1.6; margin: 0;">
+							Choose a template to get started quickly, or import your own pipeline from GitHub or a local folder.
 						</p>
-						<div class="template-pipelines-grid">
-							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('apol1')">
-								<div class="template-pipeline-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<circle cx="12" cy="12" r="10"></circle>
-										<path d="M12 6v6l4 2"></path>
-									</svg>
-								</div>
-								<div class="template-pipeline-content">
-									<div class="template-pipeline-name">APOL1 Classifier</div>
-									<div class="template-pipeline-subtitle">Genetic variant analysis</div>
-								</div>
-							</button>
-							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('brca')">
-								<div class="template-pipeline-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-										<circle cx="12" cy="7" r="4"></circle>
-									</svg>
-								</div>
-								<div class="template-pipeline-content">
-									<div class="template-pipeline-name">BRCA Classifier</div>
-									<div class="template-pipeline-subtitle">Cancer risk assessment</div>
+					</div>
+					
+					<div style="margin-bottom: 32px;">
+						<h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
+								<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+								<line x1="3" y1="9" x2="21" y2="9"></line>
+								<line x1="9" y1="21" x2="9" y2="9"></line>
+							</svg>
+							Template Pipelines
+						</h3>
+						<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
+							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('apol1')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">APOL1 Classifier</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Genetic variant analysis</div>
+									</div>
 								</div>
 							</button>
-							<button class="template-pipeline-card" onclick="pipelineModule.importTemplatePipeline('herc2')">
-								<div class="template-pipeline-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-										<path d="M2 17l10 5 10-5"></path>
-										<path d="M2 12l10 5 10-5"></path>
-									</svg>
+							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('brca')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/user-round.svg" alt="User icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">BRCA Classifier</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Cancer risk assessment</div>
+									</div>
 								</div>
-								<div class="template-pipeline-content">
-									<div class="template-pipeline-name">HERC2 Classifier</div>
-									<div class="template-pipeline-subtitle">Pigmentation analysis</div>
+							</button>
+							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('herc2')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/scan-eye.svg" alt="Scan eye icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">HERC2 Classifier</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Pigmentation analysis</div>
+									</div>
 								</div>
 							</button>
 						</div>
-						<div style="border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 8px;">
-							<button class="action-btn-large" onclick="pipelineModule.showImportOptions()" style="width: 100%;">
-								<div class="action-btn-icon">
-									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					</div>
+
+					<div style="border-top: 1.5px solid #e2e8f0; padding-top: 24px;">
+						<h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
+								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+								<polyline points="17 8 12 3 7 8"></polyline>
+								<line x1="12" y1="3" x2="12" y2="15"></line>
+							</svg>
+							Other Options
+						</h3>
+						<div style="display: flex; flex-direction: column; gap: 12px;">
+							<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.showImportOptions()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+									<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
 										<polyline points="17 8 12 3 7 8"></polyline>
 										<line x1="12" y1="3" x2="12" y2="15"></line>
 									</svg>
 								</div>
-								<div class="action-btn-content">
-									<div class="action-btn-title">Import Your Own</div>
-									<div class="action-btn-desc">Import from GitHub, local folder, or create a blank pipeline</div>
+								<div style="flex: 1; min-width: 0;">
+									<div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Import Your Own</div>
+									<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import from GitHub, local folder, or create a blank pipeline</div>
 								</div>
+								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
+									<polyline points="9 18 15 12 9 6"></polyline>
+								</svg>
 							</button>
 						</div>
 					</div>
@@ -1058,63 +1185,128 @@ export function createPipelinesModule({
 			</div>
 		`
 
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
+		document.body.appendChild(modal)
+
+		// Handle backdrop click and escape key
+		const backdrop = modal.querySelector('.modal-backdrop')
+		const closeBtn = modal.querySelector('.modal-close-btn')
+		const closeModal = () => closePipelinePickerModal()
+
+		if (backdrop) {
+			backdrop.addEventListener('click', closeModal)
+		}
+		if (closeBtn) {
+			closeBtn.addEventListener('click', closeModal)
+		}
+
+		document.addEventListener('keydown', function escapeHandler(e) {
+			if (e.key === 'Escape' && document.getElementById('pipeline-picker-modal')) {
+				closeModal()
+				document.removeEventListener('keydown', escapeHandler)
+			}
+		})
 	}
 
 	async function showImportOptions() {
 		closePipelinePickerModal()
 
-		const modalHtml = `
-			<div id="pipeline-import-options-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 500px;">
-					<div class="modal-header">
-						<h2>Import Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closeImportOptionsModal()">×</button>
-					</div>
-					<div class="modal-body">
-						<div style="display: flex; flex-direction: column; gap: 10px;">
-							<button class="action-btn-large" onclick="pipelineModule.importPipelineFromURL()">
-								<div class="action-btn-icon">
-									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-										<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-									</svg>
-								</div>
-								<div class="action-btn-content">
-									<div class="action-btn-title">Import from GitHub</div>
-									<div class="action-btn-desc">Download a pipeline and all its steps from GitHub</div>
-								</div>
-							</button>
-							<button class="action-btn-large" onclick="pipelineModule.importExistingPipeline()">
-								<div class="action-btn-icon">
-									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
-									</svg>
-								</div>
-								<div class="action-btn-content">
-									<div class="action-btn-title">Browse Local Folder</div>
-									<div class="action-btn-desc">Import an existing pipeline from your computer</div>
-								</div>
-							</button>
-							<button class="action-btn-large" onclick="pipelineModule.createBlankPipeline()">
-								<div class="action-btn-icon">
-									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-										<line x1="12" y1="5" x2="12" y2="19"></line>
-										<line x1="5" y1="12" x2="19" y2="12"></line>
-									</svg>
-								</div>
-								<div class="action-btn-content">
-									<div class="action-btn-title">Create Blank Pipeline</div>
-									<div class="action-btn-desc">Start from scratch and add steps manually</div>
-								</div>
-							</button>
-						</div>
+		const modal = document.createElement('div')
+		modal.id = 'pipeline-import-options-modal'
+		modal.className = 'modal new-pipeline-modal'
+		modal.setAttribute('role', 'dialog')
+		modal.setAttribute('aria-modal', 'true')
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		modal.innerHTML = `
+			<div class="modal-backdrop" data-modal-close="import-options"></div>
+			<div class="new-pipeline-modal-panel" style="position: relative; width: 700px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+							<polyline points="17 8 12 3 7 8"></polyline>
+							<line x1="12" y1="3" x2="12" y2="15"></line>
+						</svg>
+						Import Pipeline
+					</h2>
+					<button type="button" class="modal-close-btn" data-modal-close="import-options" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+						</svg>
+					</button>
+				</div>
+				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
+					<div style="display: flex; flex-direction: column; gap: 14px;">
+						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.importPipelineFromURL()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #bfdbfe;">
+								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #2563eb;">
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+								</svg>
+							</div>
+							<div style="flex: 1; min-width: 0;">
+								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Import from GitHub</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Download a pipeline and all its steps from a GitHub repository URL</div>
+							</div>
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
+								<polyline points="9 18 15 12 9 6"></polyline>
+							</svg>
+						</button>
+						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.importExistingPipeline()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #bbf7d0;">
+								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #16a34a;">
+									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+								</svg>
+							</div>
+							<div style="flex: 1; min-width: 0;">
+								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Browse Local Folder</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import an existing pipeline from your computer</div>
+							</div>
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
+								<polyline points="9 18 15 12 9 6"></polyline>
+							</svg>
+						</button>
+						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.createBlankPipeline()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #fcd34d;">
+								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #d97706;">
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+							</div>
+							<div style="flex: 1; min-width: 0;">
+								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Create Blank Pipeline</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Start from scratch and add steps manually</div>
+							</div>
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
+								<polyline points="9 18 15 12 9 6"></polyline>
+							</svg>
+						</button>
 					</div>
 				</div>
 			</div>
 		`
 
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
+		document.body.appendChild(modal)
+
+		// Handle backdrop click and escape key
+		const backdrop = modal.querySelector('.modal-backdrop')
+		const closeBtn = modal.querySelector('.modal-close-btn')
+		const closeModal = () => closeImportOptionsModal()
+
+		if (backdrop) {
+			backdrop.addEventListener('click', closeModal)
+		}
+		if (closeBtn) {
+			closeBtn.addEventListener('click', closeModal)
+		}
+
+		document.addEventListener('keydown', function escapeHandler(e) {
+			if (e.key === 'Escape' && document.getElementById('pipeline-import-options-modal')) {
+				closeModal()
+				document.removeEventListener('keydown', escapeHandler)
+			}
+		})
 	}
 
 	function closeImportOptionsModal() {
@@ -1188,37 +1380,84 @@ export function createPipelinesModule({
 		closePipelinePickerModal()
 		closeImportOptionsModal()
 
-		// Show name input modal
-		const modalHtml = `
-			<div id="pipeline-name-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 450px;">
-					<div class="modal-header">
-						<h2>Create Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closePipelineNameModal()">×</button>
-					</div>
-					<div class="modal-body">
-						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+		const modal = document.createElement('div')
+		modal.id = 'pipeline-name-modal'
+		modal.className = 'modal new-pipeline-modal'
+		modal.setAttribute('role', 'dialog')
+		modal.setAttribute('aria-modal', 'true')
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		modal.innerHTML = `
+			<div class="modal-backdrop" data-modal-close="pipeline-name"></div>
+			<div class="new-pipeline-modal-panel" style="position: relative; width: 540px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						Create Blank Pipeline
+					</h2>
+					<button type="button" class="modal-close-btn" data-modal-close="pipeline-name" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+						</svg>
+					</button>
+				</div>
+				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; margin-bottom: 10px; font-weight: 700; color: #0f172a; font-size: 14px; letter-spacing: -0.01em;">
 							Pipeline Name
 						</label>
 						<input 
 							type="text" 
 							id="pipeline-name-input" 
 							placeholder="my-analysis-pipeline"
-							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+							style="width: 100%; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; box-sizing: border-box; background: #ffffff; color: #0f172a; font-family: 'SF Mono', Monaco, monospace; transition: all 0.2s;"
+							onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'"
+							onblur="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none'"
 						>
-						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
-							A blank pipeline will be created. You can add steps after creation.
+						<p style="font-size: 13px; color: #64748b; margin-top: 10px; line-height: 1.5;">
+							A blank pipeline will be created. You can add steps and configure it after creation.
 						</p>
 					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closePipelineNameModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.submitPipelineName()">Create Pipeline</button>
-					</div>
+				</div>
+				<div class="new-pipeline-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
+					<button type="button" onclick="pipelineModule.closePipelineNameModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
+						Cancel
+					</button>
+					<button type="button" onclick="pipelineModule.submitPipelineName()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						Create Pipeline
+					</button>
 				</div>
 			</div>
 		`
 
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
+		document.body.appendChild(modal)
+
+		// Handle backdrop click and escape key
+		const backdrop = modal.querySelector('.modal-backdrop')
+		const closeBtn = modal.querySelector('.modal-close-btn')
+		const closeModal = () => closePipelineNameModal()
+
+		if (backdrop) {
+			backdrop.addEventListener('click', closeModal)
+		}
+		if (closeBtn) {
+			closeBtn.addEventListener('click', closeModal)
+		}
+
+		document.addEventListener('keydown', function escapeHandler(e) {
+			if (e.key === 'Escape' && document.getElementById('pipeline-name-modal')) {
+				closeModal()
+				document.removeEventListener('keydown', escapeHandler)
+			}
+		})
 
 		// Focus on input
 		setTimeout(() => {
@@ -1286,50 +1525,109 @@ export function createPipelinesModule({
 		closePipelinePickerModal()
 		closeImportOptionsModal()
 
-		// Show URL input modal instead of using prompt()
-		const modalHtml = `
-			<div id="url-input-modal" class="modal-overlay" style="display: flex;">
-				<div class="modal-content" style="width: 600px;">
-					<div class="modal-header">
-						<h2>Import Pipeline from GitHub</h2>
-						<button class="modal-close" onclick="pipelineModule.closeURLInputModal()">×</button>
-					</div>
-					<div class="modal-body">
-						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+		const modal = document.createElement('div')
+		modal.id = 'url-input-modal'
+		modal.className = 'modal new-pipeline-modal'
+		modal.setAttribute('role', 'dialog')
+		modal.setAttribute('aria-modal', 'true')
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		modal.innerHTML = `
+			<div class="modal-backdrop" data-modal-close="url-input"></div>
+			<div class="new-pipeline-modal-panel" style="position: relative; width: 640px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
+							<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+							<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+						</svg>
+						Import Pipeline from GitHub
+					</h2>
+					<button type="button" class="modal-close-btn" data-modal-close="url-input" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
+						</svg>
+					</button>
+				</div>
+				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; margin-bottom: 10px; font-weight: 700; color: #0f172a; font-size: 14px; letter-spacing: -0.01em;">
 							GitHub URL to pipeline.yaml
 						</label>
-						<div style="display: flex; gap: 8px; align-items: center;">
+						<div style="display: flex; gap: 10px; align-items: center;">
 							<input 
 								type="text" 
 								id="pipeline-url-input" 
-								placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/pipeline.yaml"
-								style="flex: 1; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
+								placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/pipeline.yaml"
+								style="flex: 1; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace; background: #ffffff; color: #0f172a; transition: all 0.2s;"
+								onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'"
+								onblur="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none'"
 							>
 							<button 
-								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/b1fff0611987f9a609a4ce68ef58afb2661c352b/pipeline_sql.yaml'"
-								style="padding: 10px 16px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; color: #374151; cursor: pointer; white-space: nowrap; transition: all 0.2s;"
-								onmouseover="this.style.background='#e5e7eb'"
-								onmouseout="this.style.background='#f3f4f6'"
+								type="button"
+								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/pipeline.yaml'"
+								style="padding: 12px 18px; background: white; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; white-space: nowrap; transition: all 0.2s;"
+								onmouseover="this.style.background='#f8fafc'; this.style.borderColor='#94a3b8'"
+								onmouseout="this.style.background='white'; this.style.borderColor='#cbd5e1'"
 								title="Fill with example pipeline URL"
 							>
-								📋 Example
+								Example
 							</button>
 						</div>
-						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
-							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import pipelines.
-							<br>
-							This will import the pipeline and automatically download all referenced steps.
-						</p>
+						<div style="margin-top: 14px; padding: 14px 16px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe; border-radius: 8px;">
+							<div style="display: flex; align-items: start; gap: 10px;">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #2563eb; flex-shrink: 0; margin-top: 2px;">
+									<path d="M12 16v-4"></path>
+									<path d="M12 8h.01"></path>
+									<circle cx="12" cy="12" r="10"></circle>
+								</svg>
+								<div style="flex: 1;">
+									<div style="font-size: 13px; color: #1e40af; font-weight: 600; margin-bottom: 4px;">Tip</div>
+									<div style="font-size: 12px; color: #1e3a8a; line-height: 1.5;">
+										Use GitHub raw URLs (<code style="background: rgba(30,58,138,0.1); padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace;">raw.githubusercontent.com</code>) to import pipelines. This will automatically download the pipeline and all referenced steps.
+									</div>
+								</div>
+							</div>
+						</div>
 					</div>
-					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeURLInputModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.submitPipelineURL()">Import Pipeline</button>
-					</div>
+				</div>
+				<div class="new-pipeline-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
+					<button type="button" onclick="pipelineModule.closeURLInputModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
+						Cancel
+					</button>
+					<button type="button" onclick="pipelineModule.submitPipelineURL()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+							<polyline points="17 8 12 3 7 8"></polyline>
+							<line x1="12" y1="3" x2="12" y2="15"></line>
+						</svg>
+						Import Pipeline
+					</button>
 				</div>
 			</div>
 		`
 
-		document.body.insertAdjacentHTML('beforeend', modalHtml)
+		document.body.appendChild(modal)
+
+		// Handle backdrop click and escape key
+		const backdrop = modal.querySelector('.modal-backdrop')
+		const closeBtn = modal.querySelector('.modal-close-btn')
+		const closeModal = () => closeURLInputModal()
+
+		if (backdrop) {
+			backdrop.addEventListener('click', closeModal)
+		}
+		if (closeBtn) {
+			closeBtn.addEventListener('click', closeModal)
+		}
+
+		document.addEventListener('keydown', function escapeHandler(e) {
+			if (e.key === 'Escape' && document.getElementById('url-input-modal')) {
+				closeModal()
+				document.removeEventListener('keydown', escapeHandler)
+			}
+		})
 
 		// Focus on input
 		setTimeout(() => {
