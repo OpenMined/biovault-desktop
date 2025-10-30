@@ -200,15 +200,30 @@ test.describe('Pipeline Creation', () => {
 		await expect(createBtn).toBeVisible()
 		await createBtn.click()
 
-		// Wait for pipeline picker modal
+		// Wait for template picker modal (first screen)
 		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
 
-		// The picker modal should have options
-		await expect(page.locator('#pipeline-picker-modal')).toContainText('Create Blank Pipeline')
-		await expect(page.locator('#pipeline-picker-modal')).toContainText('Import from GitHub')
+		// The template picker modal should have template options and "Import Your Own" button
+		await expect(page.locator('#pipeline-picker-modal')).toContainText('APOL1 Classifier')
+		await expect(page.locator('#pipeline-picker-modal')).toContainText('Import Your Own')
+
+		// Click "Import Your Own" to show the import options modal
+		await page.click('button:has-text("Import Your Own")')
+
+		// Wait for import options modal (second screen)
+		await page.waitForSelector('#pipeline-import-options-modal', {
+			state: 'visible',
+			timeout: 5000,
+		})
+
+		// The import options modal should have options
+		await expect(page.locator('#pipeline-import-options-modal')).toContainText(
+			'Create Blank Pipeline',
+		)
+		await expect(page.locator('#pipeline-import-options-modal')).toContainText('Import from GitHub')
 
 		// Click "Create Blank Pipeline" to open name modal
-		await page.click('button:has-text("Create Blank Pipeline")')
+		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
 
 		// Wait for pipeline name modal
 		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
@@ -330,11 +345,20 @@ test.describe('Pipeline Creation', () => {
 		await expect(createBtn).toBeVisible()
 		await createBtn.click()
 
-		// Wait for pipeline picker modal
+		// Wait for template picker modal (first screen)
 		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
 
+		// Click "Import Your Own" to show the import options modal
+		await page.click('button:has-text("Import Your Own")')
+
+		// Wait for import options modal (second screen)
+		await page.waitForSelector('#pipeline-import-options-modal', {
+			state: 'visible',
+			timeout: 5000,
+		})
+
 		// Click "Create Blank Pipeline" option
-		await page.click('button:has-text("Create Blank Pipeline")')
+		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
 
 		// Wait for pipeline name modal
 		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
