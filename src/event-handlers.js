@@ -23,7 +23,12 @@ export function setupEventHandlers({
 	handleCustomPatternInput,
 	handleCustomPatternBlur,
 	handleCustomPatternKeydown,
-	updatePatternSuggestions,
+	updatePatternSuggestions: _updatePatternSuggestions, // eslint-disable-line no-unused-vars
+	assignRandomIds,
+	toggleMissingIdsFilter,
+	jumpToNextMissingId,
+	toggleIncompleteReviewFilter,
+	jumpToNextIncompleteReview,
 	// Messages
 	loadMessageThreads,
 	sendCurrentMessage,
@@ -401,26 +406,37 @@ export function setupEventHandlers({
 			goToReviewStep()
 		}
 
-		// Toggle pattern section
-		if (e.target.closest('#autofill-ids-btn')) {
-			const patternSection = document.getElementById('pattern-section')
-			if (patternSection) {
-				if (patternSection.style.display === 'none') {
-					patternSection.style.display = 'block'
-					// Auto-detect patterns when opening
-					updatePatternSuggestions()
-				} else {
-					patternSection.style.display = 'none'
-				}
-			}
+		// Assign random IDs
+		if (e.target.closest('#random-ids-btn')) {
+			assignRandomIds()
 		}
 
-		// Close pattern section
-		if (e.target.closest('#pattern-close-btn')) {
-			const patternSection = document.getElementById('pattern-section')
-			if (patternSection) {
-				patternSection.style.display = 'none'
-			}
+		// Filter missing IDs
+		if (e.target.closest('#filter-missing-ids-btn')) {
+			e.preventDefault()
+			e.stopPropagation()
+			toggleMissingIdsFilter()
+		}
+
+		// Jump to missing ID
+		if (e.target.closest('#jump-to-missing-btn')) {
+			e.preventDefault()
+			e.stopPropagation()
+			jumpToNextMissingId()
+		}
+
+		// Filter incomplete review
+		if (e.target.closest('#filter-incomplete-review-btn')) {
+			e.preventDefault()
+			e.stopPropagation()
+			toggleIncompleteReviewFilter()
+		}
+
+		// Jump to incomplete review
+		if (e.target.closest('#jump-to-incomplete-review-btn')) {
+			e.preventDefault()
+			e.stopPropagation()
+			jumpToNextIncompleteReview()
 		}
 
 		// Detect file types
@@ -445,15 +461,15 @@ export function setupEventHandlers({
 		// Bulk actions in review step
 		if (e.target.id === 'set-all-datatype') {
 			handleBulkDataTypeChange(e.target.value)
-			e.target.value = '' // Reset to placeholder
+			// Keep the selected value visible so user can see what was applied
 		}
 		if (e.target.id === 'set-all-source') {
 			handleBulkSourceChange(e.target.value)
-			e.target.value = '' // Reset to placeholder
+			// Keep the selected value visible so user can see what was applied
 		}
 		if (e.target.id === 'set-all-grch-version') {
 			handleBulkGrchVersionChange(e.target.value)
-			e.target.value = '' // Reset to placeholder
+			// Keep the selected value visible so user can see what was applied
 		}
 
 		// Select all checkboxes

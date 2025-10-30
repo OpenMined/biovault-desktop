@@ -172,6 +172,7 @@ let importSetLastImportView = () => console.warn('setLastImportView not yet init
 const importModule = createImportModule({
 	invoke,
 	open,
+	dialog,
 	isFileAlreadyImported,
 	refreshExistingFilePaths,
 	loadParticipantsView: loadData,
@@ -202,6 +203,12 @@ const {
 	handleCustomPatternBlur,
 	handleCustomPatternKeydown,
 	copyToClipboard,
+	assignRandomIds,
+	updatePatternSuggestions,
+	toggleMissingIdsFilter,
+	jumpToNextMissingId,
+	toggleIncompleteReviewFilter,
+	jumpToNextIncompleteReview,
 	getIsImportInProgress,
 } = importModule
 
@@ -352,6 +359,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 		handleCustomPatternInput,
 		handleCustomPatternBlur,
 		handleCustomPatternKeydown,
+		updatePatternSuggestions,
+		assignRandomIds,
+		toggleMissingIdsFilter,
+		jumpToNextMissingId,
+		toggleIncompleteReviewFilter,
+		jumpToNextIncompleteReview,
 		loadMessageThreads,
 		sendCurrentMessage,
 		setActiveMessageFilterButton,

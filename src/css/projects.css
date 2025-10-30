@@ -59,6 +59,10 @@
 }
 
 .btn-primary-small {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
 	background: #5866d1;
 	color: white;
 	border: none;
@@ -68,6 +72,11 @@
 	font-weight: 600;
 	cursor: pointer;
 	transition: background 0.2s ease;
+}
+
+.btn-primary-small svg {
+	flex-shrink: 0;
+	display: block;
 }
 
 .btn-primary-small:hover {

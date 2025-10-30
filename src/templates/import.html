@@ -65,68 +65,105 @@
 
 				<!-- File List -->
 				<div class="import-files-section" id="files-panel" style="display: none">
-					<!-- Pattern Section (collapsible) -->
-					<div id="pattern-section" class="pattern-section" style="display: none">
-						<div class="pattern-header">
-							<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
-							<span class="pattern-header-title">Auto-fill Participant IDs</span>
-							<button type="button" class="pattern-close-btn" id="pattern-close-btn" title="Close">
-								<img src="assets/icons/x.svg" width="14" height="14" alt="" />
-							</button>
+					<!-- Pattern Suggestions (auto-shown, always visible when files loaded) -->
+					<div id="pattern-detection-section" class="pattern-detection-banner" hidden>
+						<div class="pattern-detection-header">
+							<div class="pattern-detection-title">
+								<img src="assets/icons/wand-sparkles.svg" width="18" height="18" alt="" />
+								<span>How should we extract participant IDs?</span>
+							</div>
+							<div class="pattern-header-actions">
+								<button
+									type="button"
+									class="pattern-action-btn"
+									id="random-ids-btn"
+									title="Assign random IDs"
+								>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+										<path
+											d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM1.5 8a6.5 6.5 0 1 1 13 0 6.5 6.5 0 0 1-13 0z"
+										/>
+										<path d="M8 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z" />
+									</svg>
+									Random IDs
+								</button>
+								<div class="pattern-custom-inline">
+									<input
+										type="text"
+										id="custom-pattern"
+										class="pattern-input-inline"
+										placeholder="Custom pattern (e.g., {parent})"
+									/>
+									<button
+										type="button"
+										class="pattern-info-btn-inline"
+										id="pattern-info-btn"
+										title="Pattern help"
+									>
+										<img src="assets/icons/info.svg" width="14" height="14" alt="" />
+									</button>
+								</div>
+							</div>
 						</div>
-						<div class="pattern-body">
-							<input
-								type="text"
-								id="custom-pattern"
-								class="pattern-input"
-								placeholder="e.g., {parent:hu{id}} or {stem:{id}_*}"
-							/>
-							<button
-								type="button"
-								class="pattern-info-btn-inline"
-								id="pattern-info-btn"
-								title="Pattern help"
-							>
-								<img src="assets/icons/info.svg" width="14" height="14" alt="" />
-								Help
-							</button>
-						</div>
-						<div id="pattern-detection-section" class="pattern-suggestions-compact" hidden>
-							<div class="pattern-suggestions" id="pattern-suggestions"></div>
-						</div>
-						<div class="pattern-feedback" id="pattern-feedback"></div>
+						<div class="pattern-suggestions-grid" id="pattern-suggestions"></div>
 					</div>
 
 					<div class="file-table-wrapper">
 						<table class="file-table">
 							<thead>
 								<tr>
-									<th style="width: 40px">
-										<input type="checkbox" id="select-all-files" />
+									<th>
+										<input type="checkbox" id="select-all-files" title="Select all files" />
 									</th>
 									<th data-sort="path">
 										<div class="file-header-with-count">
-											<span>File <span class="sort-indicator"></span></span>
-											<span class="file-count-badge"
-												><strong id="file-count">0</strong> files |
-												<strong id="selected-count">0</strong> selected</span
-											>
+											<span class="file-header-title"
+												>File <span class="sort-indicator"></span
+											></span>
+											<div class="file-header-right">
+												<span class="file-count-badge"
+													><strong id="file-count">0</strong> files |
+													<strong id="selected-count">0</strong> selected</span
+												>
+												<div
+													class="file-validation-actions"
+													id="file-validation-actions"
+													style="display: none"
+												>
+													<button
+														type="button"
+														class="filter-missing-ids-btn"
+														id="filter-missing-ids-btn"
+														title="Show only files missing participant IDs"
+													>
+														<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+															<path
+																d="M1.5 3a.5.5 0 0 1 .5-.5h12a.5.5 0 0 1 0 1H2a.5.5 0 0 1-.5-.5zM3 6.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z"
+															/>
+														</svg>
+														<span id="missing-ids-count">0</span>
+													</button>
+													<button
+														type="button"
+														class="jump-to-missing-btn"
+														id="jump-to-missing-btn"
+														title="Jump to next file missing participant ID"
+													>
+														<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+															<path
+																d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm6.5-4a.75.75 0 0 0-.75.75v2.5h-2.5a.75.75 0 0 0 0 1.5h2.5v2.5a.75.75 0 0 0 1.5 0v-2.5h2.5a.75.75 0 0 0 0-1.5h-2.5v-2.5A.75.75 0 0 0 8 4Z"
+															/>
+														</svg>
+														Jump to missing
+													</button>
+												</div>
+											</div>
 										</div>
 									</th>
-									<th style="width: 220px">
-										<div class="participant-header">
-											<span data-sort="participant"
-												>Participant ID <span class="sort-indicator"></span
-											></span>
-											<button
-												type="button"
-												class="autofill-btn"
-												id="autofill-ids-btn"
-												title="Auto-fill IDs from pattern"
-											>
-												<img src="assets/icons/wand-sparkles.svg" width="14" height="14" alt="" />
-											</button>
-										</div>
+									<th style="width: 240px">
+										<span data-sort="participant"
+											>Participant ID <span class="sort-indicator"></span
+										></span>
 									</th>
 									<th style="width: 60px" aria-label="Actions"></th>
 								</tr>
@@ -177,81 +214,108 @@
 					<div class="progress-text" id="progress-text"></div>
 				</div>
 
-				<div class="review-file-list-wrapper">
-					<div class="review-table-wrapper">
-						<table class="review-table">
-							<thead>
-								<tr>
-									<th style="width: 40px">
-										<input type="checkbox" id="select-all-review" />
-									</th>
-									<th>
-										<div class="file-header-with-count">
-											<span>File</span>
+				<div class="file-table-wrapper">
+					<table class="file-table">
+						<thead>
+							<tr>
+								<th>
+									<input type="checkbox" id="select-all-review" title="Select all files" />
+								</th>
+								<th>
+									<div class="file-header-with-count">
+										<span class="file-header-title">File</span>
+										<div class="file-header-right">
 											<span class="file-count-badge"
 												><strong id="review-file-count">0</strong> files |
 												<strong id="review-selected-count">0</strong> selected</span
 											>
-										</div>
-									</th>
-									<th style="width: 160px">
-										<div class="review-column-header">
-											<span>Data Type</span>
-											<select
-												id="set-all-datatype"
-												class="bulk-select-inline"
-												title="Set for selected"
+											<div
+												class="file-validation-actions"
+												id="review-validation-actions"
+												style="display: none"
 											>
-												<option value="">-</option>
-												<option value="Unknown">Unknown</option>
-												<option value="Genotype">Genotype</option>
-												<option value="Phenotype">Phenotype</option>
-											</select>
+												<button
+													type="button"
+													class="filter-missing-ids-btn"
+													id="filter-incomplete-review-btn"
+													title="Show only files with incomplete configuration"
+												>
+													<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+														<path
+															d="M1.5 3a.5.5 0 0 1 .5-.5h12a.5.5 0 0 1 0 1H2a.5.5 0 0 1-.5-.5zM3 6.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z"
+														/>
+													</svg>
+													<span id="incomplete-review-count">0</span>
+												</button>
+												<button
+													type="button"
+													class="jump-to-missing-btn"
+													id="jump-to-incomplete-review-btn"
+													title="Jump to next file with incomplete configuration"
+												>
+													<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+														<path
+															d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm6.5-4a.75.75 0 0 0-.75.75v2.5h-2.5a.75.75 0 0 0 0 1.5h2.5v2.5a.75.75 0 0 0 1.5 0v-2.5h2.5a.75.75 0 0 0 0-1.5h-2.5v-2.5A.75.75 0 0 0 8 4Z"
+														/>
+													</svg>
+													Jump to incomplete
+												</button>
+											</div>
 										</div>
-									</th>
-									<th style="width: 160px">
-										<div class="review-column-header">
-											<span>Source</span>
-											<select
-												id="set-all-source"
-												class="bulk-select-inline"
-												title="Set for selected"
-											>
-												<option value="">-</option>
-												<option value="23andMe">23andMe</option>
-												<option value="AncestryDNA">AncestryDNA</option>
-												<option value="MyHeritage">MyHeritage</option>
-												<option value="Dante Labs">Dante Labs</option>
-												<option value="Unknown">Unknown</option>
-											</select>
-										</div>
-									</th>
-									<th style="width: 120px">
-										<div class="review-column-header">
-											<span>GRCh</span>
-											<select
-												id="set-all-grch-version"
-												class="bulk-select-inline"
-												title="Set for selected"
-											>
-												<option value="">-</option>
-												<option value="Unknown">Unknown</option>
-												<option value="GRCh37">37</option>
-												<option value="GRCh38">38</option>
-											</select>
-										</div>
-									</th>
-									<th style="width: 60px">
-										<button id="detect-types-btn" class="detect-btn-icon" title="Detect file types">
-											<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
-										</button>
-									</th>
-									<th style="width: 60px" aria-label="Actions"></th>
-								</tr>
-							</thead>
-							<tbody id="review-files-table"></tbody>
-						</table>
-					</div>
+									</div>
+								</th>
+								<th style="width: 160px">
+									<div class="review-column-header-compact">
+										<span class="review-column-label">Data Type</span>
+										<select
+											id="set-all-datatype"
+											class="bulk-select-inline"
+											title="Set for selected"
+										>
+											<option value="">-</option>
+											<option value="Unknown">Unknown</option>
+											<option value="Genotype">Genotype</option>
+											<option value="Phenotype">Phenotype</option>
+										</select>
+									</div>
+								</th>
+								<th style="width: 160px">
+									<div class="review-column-header-compact">
+										<span class="review-column-label">Source</span>
+										<select id="set-all-source" class="bulk-select-inline" title="Set for selected">
+											<option value="">-</option>
+											<option value="23andMe">23andMe</option>
+											<option value="AncestryDNA">AncestryDNA</option>
+											<option value="MyHeritage">MyHeritage</option>
+											<option value="Dante Labs">Dante Labs</option>
+											<option value="Unknown">Unknown</option>
+										</select>
+									</div>
+								</th>
+								<th style="width: 120px">
+									<div class="review-column-header-compact">
+										<span class="review-column-label">GRCh</span>
+										<select
+											id="set-all-grch-version"
+											class="bulk-select-inline"
+											title="Set for selected"
+										>
+											<option value="">-</option>
+											<option value="Unknown">Unknown</option>
+											<option value="GRCh37">37</option>
+											<option value="GRCh38">38</option>
+										</select>
+									</div>
+								</th>
+								<th style="width: 60px">
+									<button id="detect-types-btn" class="detect-btn-icon" title="Detect file types">
+										<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />
+									</button>
+								</th>
+							</tr>
+						</thead>
+						<tbody id="review-files-table"></tbody>
+					</table>
 				</div>
 			</div>
 
@@ -274,17 +338,40 @@
 >
 	<div class="modal-backdrop" data-modal-close></div>
 	<div class="modal-panel">
-		<h2 id="pattern-info-title">ID Pattern Tips</h2>
-		<p>
-			Use macros like <code>{parent:hu{id}}</code> to pull IDs from folders, or supply a regex with
-			a named <code>id</code> capture.
+		<h2 id="pattern-info-title">Extracting Participant IDs</h2>
+		<p style="margin-bottom: 16px">
+			Simple patterns to extract participant IDs from your file paths:
 		</p>
-		<ul>
-			<li><code>{parent:hu{id}}</code> - Extract ID from parent folder name</li>
-			<li><code>{stem:hu{id}_*}</code> - Extract ID from filename before extension</li>
-			<li><code>{filename}</code> - Use entire filename as ID</li>
+		<ul style="list-style: none; padding: 0">
+			<li style="margin-bottom: 12px">
+				<strong style="display: block; margin-bottom: 4px">Use folder name:</strong>
+				<code>{parent}</code> - Takes the folder name as the participant ID
+				<br />
+				<small style="color: #64748b"
+					>Example: <code>12345/file.txt</code> → ID: <code>12345</code></small
+				>
+			</li>
+			<li style="margin-bottom: 12px">
+				<strong style="display: block; margin-bottom: 4px">Use filename:</strong>
+				<code>{filename}</code> - Takes the entire filename (without extension) as ID
+				<br />
+				<small style="color: #64748b"
+					>Example: <code>participant_12345.txt</code> → ID: <code>participant_12345</code></small
+				>
+			</li>
+			<li style="margin-bottom: 12px">
+				<strong style="display: block; margin-bottom: 4px">Use filename stem:</strong>
+				<code>{stem}</code> - Same as filename (name without extension)
+				<br />
+				<small style="color: #64748b"
+					>Example: <code>sample_ABC.txt</code> → ID: <code>sample_ABC</code></small
+				>
+			</li>
 		</ul>
-		<p>IDs update in real-time as you type!</p>
+		<p style="margin-top: 16px; font-size: 13px; color: #64748b">
+			💡 <strong>Tip:</strong> Click the suggested patterns above for the easiest way to extract
+			IDs!
+		</p>
 		<div class="modal-alert-actions">
 			<button type="button" class="primary-btn" data-modal-close>Got it</button>
 		</div>
