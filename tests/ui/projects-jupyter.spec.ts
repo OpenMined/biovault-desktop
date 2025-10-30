@@ -262,7 +262,10 @@ test.describe('Projects editor with Jupyter integration', () => {
 		await page.click('button:has-text("Import Your Own")')
 
 		// Wait for import options modal (second screen)
-		await page.waitForSelector('#pipeline-import-options-modal', { state: 'visible', timeout: 5000 })
+		await page.waitForSelector('#pipeline-import-options-modal', {
+			state: 'visible',
+			timeout: 5000,
+		})
 
 		// Click "Create Blank Pipeline"
 		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
