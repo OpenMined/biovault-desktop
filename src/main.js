@@ -70,6 +70,7 @@ const {
 	refreshExistingFilePaths,
 	isFileAlreadyImported,
 	getSelectedParticipants,
+	clearAllSelections,
 } = createDataModule({ invoke, dialog })
 
 const {
@@ -223,6 +224,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		loadParticipants: loadData,
 		loadFiles: loadData,
 		loadProjects,
+		loadPipelines: pipelinesModule.loadPipelines,
 		prepareRunView,
 		loadRuns,
 		displayLogs,
@@ -240,6 +242,8 @@ setRunNavigateTo(navigateTo)
 
 // Make navigateTo available globally for data module
 window.navigateTo = navigateTo
+// Expose clearAllSelections globally for pipelines module
+window.clearAllDataSelections = clearAllSelections
 
 // Expose readiness markers for automated tests
 window.__NAV_HANDLERS_READY__ = false

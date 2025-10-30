@@ -187,18 +187,14 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-						? '#e83e8c'
-						: '#666'
-			}">${
-				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-					? file.inferred_sex
-					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-						? 'Unknown'
-						: '-'
-			}</td>
+			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+		}">${
+			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+				? file.inferred_sex
+				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+				? 'Unknown'
+				: '-'
+		}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
@@ -250,6 +246,7 @@ export function createDataModule({ invoke, dialog }) {
 			updateDeleteButton()
 			updateSelectAllCheckbox()
 			updateActionButtons()
+			syncSelectionToSessionStorage()
 		})
 
 		// Make row clickable (except buttons, checkbox, and participant links)
@@ -510,6 +507,27 @@ export function createDataModule({ invoke, dialog }) {
 		selectAllCheckbox.indeterminate = someSelected && !allSelected
 	}
 
+	// Clear all file selections
+	function clearAllSelections() {
+		selectedFileIds = []
+
+		// Remove selected class from all rows
+		document.querySelectorAll('.file-row.selected').forEach((row) => {
+			row.classList.remove('selected')
+		})
+
+		// Uncheck all file checkboxes
+		document.querySelectorAll('.file-checkbox').forEach((checkbox) => {
+			checkbox.checked = false
+		})
+
+		// Update UI
+		updateSelectAllCheckbox()
+		updateDeleteButton()
+		updateActionButtons()
+		syncSelectionToSessionStorage()
+	}
+
 	async function updateQueueButton() {
 		try {
 			const isRunning = await invoke('get_queue_processor_status')
@@ -583,6 +601,9 @@ export function createDataModule({ invoke, dialog }) {
 
 			renderFilesPanel()
 			updateActionButtons()
+
+			// Sync current selection state to sessionStorage
+			syncSelectionToSessionStorage()
 		} catch (error) {
 			console.error('Error loading data:', error)
 		}
@@ -647,6 +668,7 @@ export function createDataModule({ invoke, dialog }) {
 				}
 
 				renderFilesPanel()
+				syncSelectionToSessionStorage()
 			})
 		}
 
@@ -665,6 +687,7 @@ export function createDataModule({ invoke, dialog }) {
 					try {
 						await invoke('delete_files_bulk', { fileIds: selectedFileIds })
 						selectedFileIds = []
+						syncSelectionToSessionStorage()
 						await loadData()
 					} catch (error) {
 						await dialog.message(`Error deleting files: ${error}`, {
@@ -679,7 +702,7 @@ export function createDataModule({ invoke, dialog }) {
 		// Run Analysis button
 		const runAnalysisBtn = document.getElementById('run-analysis-btn')
 		if (runAnalysisBtn) {
-			runAnalysisBtn.addEventListener('click', () => {
+			runAnalysisBtn.addEventListener('click', async () => {
 				if (selectedFileIds.length > 0) {
 					// Get unique participant IDs from selected files
 					const participantIds = [
@@ -697,12 +720,22 @@ export function createDataModule({ invoke, dialog }) {
 						),
 					]
 
-					// Store selected participant IDs and navigate to Run view
+					// Store selected participant IDs and file IDs
 					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
 					sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
-					const navigateTo =
-						window.navigateTo || ((_view) => console.warn('navigateTo not available'))
-					navigateTo('run')
+
+					// Trigger pipeline run modal via global pipeline module
+					if (
+						window.pipelineModule &&
+						typeof window.pipelineModule.showDataRunModal === 'function'
+					) {
+						await window.pipelineModule.showDataRunModal()
+					} else {
+						// Fallback: navigate if module not available
+						const navigateTo =
+							window.navigateTo || ((_view) => console.warn('navigateTo not available'))
+						navigateTo('run')
+					}
 				}
 			})
 		}
@@ -752,6 +785,34 @@ export function createDataModule({ invoke, dialog }) {
 		existingFilePaths = new Set(allFiles.map((f) => f.file_path))
 	}
 
+	function syncSelectionToSessionStorage() {
+		if (selectedFileIds.length > 0) {
+			// Get unique participant IDs from selected files
+			const participantIds = [
+				...new Set(
+					selectedFileIds
+						.map((fileId) => {
+							const file = allFiles.find((f) => f.id === fileId)
+							if (!file) return null
+							const participant = allParticipants.find(
+								(p) => p.participant_id === file.participant_id,
+							)
+							return participant ? participant.id : null
+						})
+						.filter(Boolean),
+				),
+			]
+
+			// Sync to sessionStorage so pipelines view can detect it
+			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
+			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+		} else {
+			// Clear if nothing selected
+			sessionStorage.removeItem('preselectedFileIds')
+			sessionStorage.removeItem('preselectedParticipants')
+		}
+	}
+
 	return {
 		loadData,
 		renderDataTable: renderFilesPanel, // Alias for compatibility
@@ -759,6 +820,7 @@ export function createDataModule({ invoke, dialog }) {
 		refreshExistingFilePaths,
 		isFileAlreadyImported: (filePath) => existingFilePaths.has(filePath),
 		getExistingFilePaths: () => new Set(existingFilePaths),
+		getSelectedFileIds: () => [...selectedFileIds],
 		getSelectedParticipants: () => {
 			// Get unique participant IDs from selected files
 			const participantIds = new Set()
@@ -772,5 +834,7 @@ export function createDataModule({ invoke, dialog }) {
 				.map((pid) => allParticipants.find((p) => p.participant_id === pid))
 				.filter(Boolean)
 		},
+		syncSelectionToSessionStorage,
+		clearAllSelections,
 	}
 }
