@@ -572,9 +572,47 @@ export function createPipelinesModule({
 	}
 
 	async function handlePipelineRunClick(pipelineId) {
+		// Always use the new data-driven flow
 		const handled = await startDataDrivenRun(pipelineId)
 		if (!handled) {
-			await runPipeline(pipelineId)
+			// Check why it wasn't handled
+			const context = getPendingDataRunContext()
+			const hasData = context && context.fileIds && context.fileIds.length > 0
+
+			if (!hasData) {
+				// No data selected - prompt user to select data first
+				if (dialog && dialog.confirm) {
+					const shouldNavigate = await dialog.confirm(
+						'No data selected. Would you like to go to the Data tab to select files before running this pipeline?',
+						{ title: 'Select Data First', type: 'info' },
+					)
+					if (shouldNavigate && navigateTo) {
+						navigateTo('data')
+					}
+				} else {
+					const shouldNavigate = confirm(
+						'No data selected. Would you like to go to the Data tab to select files before running this pipeline?',
+					)
+					if (shouldNavigate && navigateTo) {
+						navigateTo('data')
+					}
+				}
+			} else {
+				// Data is selected but pipeline might not be compatible
+				const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+				if (pipeline && !pipelineAcceptsGenotypeInput(pipeline)) {
+					if (dialog && dialog.message) {
+						await dialog.message(
+							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+							{ title: 'Incompatible Pipeline', type: 'warning' },
+						)
+					} else {
+						alert(
+							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+						)
+					}
+				}
+			}
 		}
 	}
 
@@ -2478,193 +2516,35 @@ export function createPipelinesModule({
 			// Load and display steps
 			await loadPipelineSteps(pipelineId)
 
-			// Populate left panel (configuration)
-			await loadSavedConfigs()
-			await renderConfigInputs()
+			// Populate left panel (information and parameters)
+			await renderPipelineMetadata()
 			await renderParameterOverrides()
-
-			// Setup event handlers for the sidebar
-			setupConfigSidebarHandlers()
 		} catch (error) {
 			console.error('Error showing pipeline details:', error)
 		}
 	}
 
-	// Render configuration inputs in the left sidebar
-	async function renderConfigInputs() {
-		const configInputsList = document.getElementById('config-inputs-list')
-		if (!configInputsList || !pipelineState.currentPipeline) return
+	// Render pipeline metadata in the left sidebar
+	function renderPipelineMetadata() {
+		const metadataContainer = document.getElementById('pipeline-metadata')
+		if (!metadataContainer || !pipelineState.currentPipeline) return
 
-		const inputs = pipelineState.currentPipeline.spec?.inputs || {}
-		const inputEntries = Object.entries(inputs)
+		const pipeline = pipelineState.currentPipeline
+		const stepsCount = pipeline.spec?.steps?.length || 0
+		const inputsCount = Object.keys(pipeline.spec?.inputs || {}).length
 
-		if (inputEntries.length === 0) {
-			configInputsList.innerHTML = '<p class="config-hint">No inputs defined</p>'
-			return
-		}
-
-		configInputsList.innerHTML = inputEntries
-			.map(([name, spec]) => {
-				const typeStr = typeof spec === 'string' ? spec : spec.type || 'String'
-				const defaultValue = typeof spec === 'object' && spec.default ? spec.default : ''
-				const isFileOrDir = typeStr === 'File' || typeStr === 'Directory'
-				const isRequired = !defaultValue
-
-				return `
-				<div class="config-input-item" data-input-name="${name}">
-					<div class="config-input-label">
-						<span>${name}${isRequired ? '<span style="color: #dc2626; margin-left: 4px;">*</span>' : ''}</span>
-						<span class="config-input-type">${typeStr}</span>
-					</div>
-					<div class="config-input-field">
-						<input 
-							type="text" 
-							id="config-input-${name}"
-							placeholder="${defaultValue || (isFileOrDir ? 'Browse or enter path...' : 'Enter value...')}"
-							value=""
-							autocomplete="off"
-							${isRequired ? 'required' : ''}
-						/>
-						${
-							isFileOrDir
-								? `<button class="config-input-browse-btn" data-input-name="${name}" data-input-type="${typeStr}">Browse</button>`
-								: ''
-						}
-					</div>
+		metadataContainer.innerHTML = `
+			<div style="display: flex; flex-direction: column; gap: 12px;">
+				<div style="display: flex; justify-content: space-between; align-items: center;">
+					<span style="font-size: 13px; color: #6b7280;">Steps</span>
+					<span style="font-size: 13px; font-weight: 600; color: #111827;">${stepsCount}</span>
 				</div>
-			`
-			})
-			.join('')
-
-		// Attach browse button handlers
-		document.querySelectorAll('.config-input-browse-btn').forEach((btn) => {
-			btn.addEventListener('click', async (e) => {
-				const inputName = e.target.getAttribute('data-input-name')
-				const inputType = e.target.getAttribute('data-input-type')
-				const inputField = document.getElementById(`config-input-${inputName}`)
-
-				try {
-					if (inputType === 'File') {
-						const filePaths = await dialog.open({ multiple: false, directory: false })
-						if (filePaths && !Array.isArray(filePaths)) {
-							inputField.value = filePaths
-							updateConfigValidationStatus()
-						}
-					} else if (inputType === 'Directory') {
-						const dirPath = await dialog.open({ multiple: false, directory: true })
-						if (dirPath && !Array.isArray(dirPath)) {
-							inputField.value = dirPath
-							updateConfigValidationStatus()
-						}
-					}
-				} catch (error) {
-					console.error('Error selecting path:', error)
-				}
-			})
-		})
-
-		// Attach input change handlers for validation
-		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
-			input.addEventListener('input', () => {
-				updateConfigValidationStatus()
-			})
-		})
-
-		// Initial validation status
-		updateConfigValidationStatus()
-	}
-
-	// Update validation status indicator
-	function updateConfigValidationStatus() {
-		const statusEl = document.getElementById('config-validation-status')
-		if (!statusEl || !pipelineState.currentPipeline) return
-
-		const inputs = pipelineState.currentPipeline.spec?.inputs || {}
-		const requiredInputs = []
-		const filledInputs = []
-
-		// Check each required input
-		for (const [name, spec] of Object.entries(inputs)) {
-			const hasDefault = typeof spec === 'object' && spec.default
-			if (!hasDefault) {
-				requiredInputs.push(name)
-				const inputField = document.getElementById(`config-input-${name}`)
-				if (inputField && inputField.value.trim()) {
-					filledInputs.push(name)
-				}
-			}
-		}
-
-		if (requiredInputs.length === 0) {
-			// No required inputs
-			statusEl.style.display = 'none'
-			return
-		}
-
-		statusEl.style.display = 'flex'
-
-		if (filledInputs.length === requiredInputs.length) {
-			// All required inputs filled
-			statusEl.className = 'config-validation-status ready'
-			statusEl.innerHTML = `
-				<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
-					<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-				</svg>
-				<span>Ready to run</span>
-			`
-		} else {
-			// Some inputs missing
-			statusEl.className = 'config-validation-status incomplete'
-			statusEl.innerHTML = `
-				<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
-					<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-				</svg>
-				<span>${filledInputs.length}/${requiredInputs.length} required inputs filled</span>
-			`
-		}
-	}
-
-	// Load and render saved configurations
-	async function loadSavedConfigs() {
-		const configSelect = document.getElementById('load-saved-config')
-		if (!configSelect || !pipelineState.currentPipeline) return
-
-		// Save current selection
-		const currentSelection = configSelect.value
-
-		try {
-			const savedConfigs = await invoke('list_run_configs', {
-				pipelineId: pipelineState.currentPipeline.id,
-			})
-
-			console.log('Loaded saved configs:', savedConfigs)
-
-			// Clear existing options except the first "Start Fresh"
-			configSelect.innerHTML = '<option value="">-- Start Fresh --</option>'
-
-			// Add saved configs
-			savedConfigs.forEach((config) => {
-				const option = document.createElement('option')
-				option.value = config.id
-				option.textContent = `${config.name} (${new Date(config.created_at).toLocaleString()})`
-				configSelect.appendChild(option)
-			})
-
-			// Restore selection if it still exists
-			if (currentSelection) {
-				const optionExists = Array.from(configSelect.options).some(
-					(opt) => opt.value === currentSelection,
-				)
-				if (optionExists) {
-					configSelect.value = currentSelection
-				}
-			}
-
-			// Store configs in state for later use
-			pipelineState.savedConfigs = savedConfigs
-		} catch (error) {
-			console.error('Failed to load saved configs:', error)
-		}
+				<div style="display: flex; justify-content: space-between; align-items: center;">
+					<span style="font-size: 13px; color: #6b7280;">Inputs</span>
+					<span style="font-size: 13px; font-weight: 600; color: #111827;">${inputsCount}</span>
+				</div>
+			</div>
+		`
 	}
 
 	// Load and render parameter overrides
@@ -2728,264 +2608,6 @@ export function createPipelinesModule({
 			`
 			})
 			.join('')
-	}
-
-	// Setup event handlers for the configuration sidebar
-	function setupConfigSidebarHandlers() {
-		console.log('Setting up config sidebar handlers')
-
-		// Handle saved config selection
-		const configSelect = document.getElementById('load-saved-config')
-		console.log('Config select element:', configSelect)
-		if (configSelect) {
-			// Remove old listener if exists (clone and replace)
-			const newConfigSelect = configSelect.cloneNode(true)
-			configSelect.parentNode.replaceChild(newConfigSelect, configSelect)
-
-			newConfigSelect.addEventListener('change', async (e) => {
-				const configId = e.target.value
-				console.log('Loading configuration, ID:', configId)
-
-				if (!configId) {
-					// Clear all fields
-					clearConfigFields()
-					return
-				}
-
-				// Load the selected config
-				const config = pipelineState.savedConfigs?.find((c) => c.id === parseInt(configId))
-				console.log('Found config:', config)
-
-				// Check both config_data (from backend) and configuration (legacy)
-				const rawConfig = config?.config_data || config?.configuration
-
-				if (rawConfig) {
-					// Parse JSON string if needed
-					const configData = typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig
-					console.log('Parsed config data:', configData)
-					loadConfigIntoFields(configData)
-				} else {
-					console.error('No configuration data found in config object')
-				}
-			})
-			console.log('Config select change handler attached')
-		} else {
-			console.error('Config select element not found!')
-		}
-
-		// Handle save configuration button
-		const saveConfigBtn = document.getElementById('save-current-config-btn')
-		console.log('Save button element:', saveConfigBtn)
-		if (saveConfigBtn) {
-			// Remove old listener if exists (clone and replace)
-			const newSaveBtn = saveConfigBtn.cloneNode(true)
-			saveConfigBtn.parentNode.replaceChild(newSaveBtn, saveConfigBtn)
-
-			newSaveBtn.addEventListener('click', async (e) => {
-				e.preventDefault()
-				e.stopPropagation()
-				console.log('Save configuration button clicked')
-				await saveCurrentConfiguration()
-			})
-			console.log('Save button click handler attached')
-		} else {
-			console.error('Save button element not found!')
-		}
-	}
-
-	// Clear all configuration fields
-	function clearConfigFields() {
-		// Clear input fields
-		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
-			input.value = ''
-		})
-
-		// Clear parameter fields
-		document.querySelectorAll('[id^="config-param-"]').forEach((input) => {
-			input.value = ''
-		})
-
-		// Update validation status after clearing
-		updateConfigValidationStatus()
-	}
-
-	// Load a configuration into the fields
-	function loadConfigIntoFields(config) {
-		console.log('Loading configuration into fields:', config)
-
-		// Load inputs
-		if (config.inputs) {
-			console.log('Loading inputs:', config.inputs)
-			Object.entries(config.inputs).forEach(([name, value]) => {
-				const input = document.getElementById(`config-input-${name}`)
-				if (input) {
-					input.value = value
-					console.log(`Set input ${name} = ${value}`)
-				} else {
-					console.warn(`Input field not found: config-input-${name}`)
-				}
-			})
-		}
-
-		// Load parameters
-		if (config.parameters) {
-			console.log('Loading parameters:', config.parameters)
-			Object.entries(config.parameters).forEach(([key, value]) => {
-				const input = document.getElementById(`config-param-${key}`)
-				if (input) {
-					input.value = value
-					console.log(`Set parameter ${key} = ${value}`)
-				} else {
-					console.warn(`Parameter field not found: config-param-${key}`)
-				}
-			})
-		}
-
-		// Update validation status after loading
-		updateConfigValidationStatus()
-	}
-
-	// Get current configuration from fields
-	function getCurrentConfiguration() {
-		const inputs = {}
-		const parameters = {}
-
-		// Collect input values
-		document.querySelectorAll('[id^="config-input-"]').forEach((input) => {
-			const inputName = input.id.replace('config-input-', '')
-			if (input.value.trim()) {
-				inputs[inputName] = input.value.trim()
-			}
-		})
-
-		// Collect parameter values
-		document.querySelectorAll('[id^="config-param-"]').forEach((input) => {
-			const paramKey = input.id.replace('config-param-', '')
-			if (input.value.trim()) {
-				parameters[paramKey] = input.value.trim()
-			}
-		})
-
-		return { inputs, parameters }
-	}
-
-	// Save current configuration
-	async function saveCurrentConfiguration() {
-		return new Promise((resolve) => {
-			try {
-				const config = getCurrentConfiguration()
-				console.log('Current configuration to save:', config)
-
-				// Create a modal for entering the configuration name
-				const modalHtml = `
-					<div id="save-config-modal" class="modal-overlay" style="display: flex; z-index: 10000;">
-						<div class="modal-dialog-small">
-							<div class="modal-header">
-								<h3>Save Configuration</h3>
-								<button id="save-config-modal-close" class="modal-close-btn">&times;</button>
-							</div>
-							<div class="modal-body">
-								<label class="field-label">
-									<span>Configuration Name <span class="required">*</span></span>
-									<input 
-										type="text" 
-										id="save-config-name-input" 
-										class="text-input" 
-										placeholder="e.g., My Analysis Config"
-										autocomplete="off"
-										style="width: 100%; margin-top: 6px;"
-									/>
-									<span class="field-hint" style="margin-top: 4px;">Give this configuration a descriptive name</span>
-								</label>
-							</div>
-							<div class="modal-footer">
-								<button id="save-config-modal-cancel" class="secondary-btn">Cancel</button>
-								<button id="save-config-modal-save" class="primary-btn">Save</button>
-							</div>
-						</div>
-					</div>
-				`
-
-				document.body.insertAdjacentHTML('beforeend', modalHtml)
-
-				const modal = document.getElementById('save-config-modal')
-				const nameInput = document.getElementById('save-config-name-input')
-				const closeBtn = document.getElementById('save-config-modal-close')
-				const cancelBtn = document.getElementById('save-config-modal-cancel')
-				const saveBtn = document.getElementById('save-config-modal-save')
-
-				// Focus the input
-				setTimeout(() => nameInput?.focus(), 100)
-
-				// Handle enter key
-				nameInput?.addEventListener('keypress', (e) => {
-					if (e.key === 'Enter' && nameInput.value.trim()) {
-						saveBtn.click()
-					}
-				})
-
-				const closeModal = () => {
-					modal?.remove()
-					resolve()
-				}
-
-				const saveConfig = async () => {
-					const name = nameInput.value.trim()
-					if (!name) {
-						alert('Please enter a configuration name')
-						nameInput.focus()
-						return
-					}
-
-					console.log('Saving config with name:', name)
-
-					try {
-						// Save via backend
-						const result = await invoke('save_run_config', {
-							pipelineId: pipelineState.currentPipeline.id,
-							name: name,
-							configData: JSON.stringify(config),
-						})
-
-						console.log('Save result:', result)
-						modal?.remove()
-						alert('Configuration saved successfully!')
-
-						// Reload saved configs and select the new one
-						await loadSavedConfigs()
-
-						// Select the newly saved config if we got an ID back
-						if (result && result.id) {
-							const configSelect = document.getElementById('load-saved-config')
-							if (configSelect) {
-								configSelect.value = result.id
-								console.log('Selected saved config in dropdown:', result.id)
-							}
-						}
-						resolve()
-					} catch (error) {
-						console.error('Error saving configuration:', error)
-						alert('Failed to save configuration: ' + error)
-						resolve()
-					}
-				}
-
-				closeBtn?.addEventListener('click', closeModal)
-				cancelBtn?.addEventListener('click', closeModal)
-				saveBtn?.addEventListener('click', saveConfig)
-
-				// Close on background click
-				modal?.addEventListener('click', (e) => {
-					if (e.target === modal) {
-						closeModal()
-					}
-				})
-			} catch (error) {
-				console.error('Error in saveCurrentConfiguration:', error)
-				alert('Failed to save configuration: ' + error)
-				resolve()
-			}
-		})
 	}
 
 	// Show add/edit input modal
@@ -3854,8 +3476,10 @@ steps:${
 			const proceed = await showValidationModal(pipeline.name, validation)
 			if (!proceed) return // User cancelled due to issues
 
-			// Get configuration from sidebar
-			const config = getCurrentConfiguration()
+			// Configuration is now data-driven (no sidebar config)
+			// If we reach here, it means data-driven flow couldn't be used
+			// Return empty config - this path should rarely be reached
+			const config = { inputs: {}, parameters: {} }
 
 			// Validate required inputs are filled
 			const inputs = editorData.spec?.inputs || {}
