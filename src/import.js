@@ -734,7 +734,7 @@ export function createImportModule({
 		const container = document.getElementById('pattern-suggestions')
 		const detectionSection = document.getElementById('pattern-detection-section')
 		const feedback = document.getElementById('pattern-feedback')
-		if (!container) return
+		if (!container || !detectionSection) return
 		const setFeedback = (message, variant = 'info') => {
 			if (!feedback) return
 			feedback.textContent = message
@@ -748,7 +748,7 @@ export function createImportModule({
 		}
 		const clearSuggestions = () => {
 			container.innerHTML = ''
-			detectionSection?.setAttribute('hidden', '')
+			detectionSection.setAttribute('hidden', '')
 		}
 		if (currentFiles.length === 0) {
 			clearSuggestions()
@@ -775,7 +775,7 @@ export function createImportModule({
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
-		detectionSection?.removeAttribute('hidden')
+		detectionSection.removeAttribute('hidden')
 		setFeedback('')
 		container.innerHTML = ''
 		suggestions.forEach((sugg) => {
@@ -1043,7 +1043,7 @@ export function createImportModule({
 			patternFeedback.textContent = ''
 			patternFeedback.removeAttribute('data-variant')
 		}
-		const customPatternInput = document.getElementById('pattern-pattern')
+		const customPatternInput = document.getElementById('custom-pattern')
 		if (customPatternInput) {
 			customPatternInput.value = ''
 		}
