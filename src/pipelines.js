@@ -997,6 +997,11 @@ export function createPipelinesModule({
 				clearDataRunContext()
 				closeDataRunModal()
 
+				// Store run ID in sessionStorage for auto-expansion on runs page
+				if (typeof sessionStorage !== 'undefined') {
+					sessionStorage.setItem('autoExpandRunId', run.id.toString())
+				}
+
 				alert(`Pipeline started! Run ID: ${run.id}`)
 
 				if (typeof navigateTo === 'function') {
@@ -3913,6 +3918,11 @@ steps:${
 				inputOverrides: allOverrides,
 				resultsDir: null,
 			})
+
+			// Store run ID in sessionStorage for auto-expansion on runs page
+			if (typeof sessionStorage !== 'undefined') {
+				sessionStorage.setItem('autoExpandRunId', run.id.toString())
+			}
 
 			alert(`Pipeline started! Run ID: ${run.id}`)
 

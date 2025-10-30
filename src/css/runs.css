@@ -717,8 +717,9 @@
 	flex-direction: column;
 	height: 100%;
 	overflow: hidden;
-	padding: 32px;
-	gap: 24px;
+	padding: 24px 32px;
+	gap: 20px;
+	background: #fafbfc;
 }
 
 .runs-list-wrapper {
