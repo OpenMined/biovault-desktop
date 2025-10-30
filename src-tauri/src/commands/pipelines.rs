@@ -8,7 +8,9 @@ use tauri::Emitter;
 
 // Use CLI library types and functions
 use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
-use biovault::cli::commands::project_management::{resolve_pipeline_dependencies, DependencyContext};
+use biovault::cli::commands::project_management::{
+    resolve_pipeline_dependencies, DependencyContext,
+};
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
 pub use biovault::pipeline_spec::PipelineSpec;
 
@@ -155,10 +157,10 @@ pub async fn create_pipeline(
                 source_pipeline_yaml_path.display()
             )
         })?;
-        
+
         // Create pipeline directory in managed location
         let managed_pipeline_dir = pipelines_dir.join(&name);
-        
+
         if managed_pipeline_dir.exists() {
             if overwrite {
                 fs::remove_dir_all(&managed_pipeline_dir)
@@ -171,17 +173,17 @@ pub async fn create_pipeline(
                 ));
             }
         }
-        
+
         fs::create_dir_all(&managed_pipeline_dir)
             .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
-        
+
         pipeline_dir = managed_pipeline_dir.clone();
         pipeline_yaml_path = managed_pipeline_dir.join("pipeline.yaml");
-        
+
         // Copy pipeline.yaml to managed location
         fs::copy(&source_pipeline_yaml_path, &pipeline_yaml_path)
             .map_err(|e| format!("Failed to copy pipeline.yaml: {}", e))?;
-        
+
         // Resolve and import dependencies
         // Use spawn_blocking because BioVaultDb is not Send
         // base_path is the directory containing pipeline.yaml (where project.yaml might also be)
@@ -189,7 +191,7 @@ pub async fn create_pipeline(
             base_path: source_parent.to_path_buf(), // This is already the directory containing pipeline.yaml
         };
         let pipeline_yaml_path_clone = pipeline_yaml_path.clone();
-        
+
         let spec_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
                 resolve_pipeline_dependencies(
@@ -207,7 +209,7 @@ pub async fn create_pipeline(
         })
         .await
         .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
-        
+
         let spec = spec_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
         imported_spec = Some(spec);
     } else {
