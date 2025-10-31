@@ -1,6 +1,8 @@
 use crate::types::{AppState, FileRecord, Participant, Run, RunStartResult};
 use biovault::cli::commands::run::{execute as run_execute, RunParams};
+use biovault::config::Config;
 use rusqlite::params;
+use std::collections::BTreeSet;
 use std::env;
 use std::fs::{self};
 use std::io::{BufRead, BufReader, Write};
@@ -242,6 +244,49 @@ pub async fn execute_analysis(
     // Set BIOVAULT_HOME environment variable
     env::set_var("BIOVAULT_HOME", biovault_home.to_string_lossy().to_string());
 
+    // Setup PATH for pipeline execution
+    // Desktop app doesn't inherit shell PATH, so we need to augment it with configured binary paths
+    // Config already knows where binaries are from 'bv check' command
+
+    // Log original PATH from desktop app
+    if let Some(original_path) = env::var_os("PATH") {
+        crate::desktop_log!(
+            "[Desktop] Original PATH: {}",
+            original_path.to_string_lossy()
+        );
+    } else {
+        crate::desktop_log!("[Desktop] WARNING: No PATH environment variable!");
+    }
+
+    if let Ok(config) = biovault::config::get_config() {
+        // Log what binary paths are configured
+        crate::desktop_log!("[Desktop] Configured binaries in config:");
+        for binary in ["nextflow", "java", "docker"] {
+            if let Some(path) = config.get_binary_path(binary) {
+                crate::desktop_log!("  {} = {}", binary, path);
+            } else {
+                crate::desktop_log!("  {} = <not configured>", binary);
+            }
+        }
+
+        if let Some(augmented_path) = build_augmented_path(&config) {
+            crate::desktop_log!("[Desktop] Setting augmented PATH: {}", augmented_path);
+            env::set_var("PATH", augmented_path);
+
+            // Verify it was set
+            if let Some(verify_path) = env::var_os("PATH") {
+                crate::desktop_log!(
+                    "[Desktop] PATH after setting: {}",
+                    verify_path.to_string_lossy()
+                );
+            }
+        } else {
+            crate::desktop_log!("[Desktop] WARNING: Could not build augmented PATH");
+        }
+    } else {
+        crate::desktop_log!("[Desktop] WARNING: Could not load config, using system PATH");
+    }
+
     // Create RunParams struct to call the execute function directly
     let params = RunParams {
         project_folder: project_path.clone(),
@@ -433,4 +478,34 @@ pub fn get_run_logs_full(state: tauri::State<AppState>, run_id: i64) -> Result<S
         fs::read_to_string(&log_path).map_err(|e| format!("Failed to read log file: {}", e))?;
 
     Ok(log_content)
+}
+
+/// Build augmented PATH from configured binary paths
+fn build_augmented_path(cfg: &Config) -> Option<String> {
+    let mut entries = BTreeSet::new();
+
+    // Extract parent directories from configured binary paths
+    for key in ["nextflow", "java", "docker"] {
+        if let Some(bin_path) = cfg.get_binary_path(key) {
+            if !bin_path.is_empty() {
+                if let Some(parent) = Path::new(&bin_path).parent() {
+                    entries.insert(parent.to_path_buf());
+                }
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    // Prepend configured binary directories to existing PATH
+    let mut paths: Vec<PathBuf> = entries.into_iter().collect();
+    if let Some(existing) = env::var_os("PATH") {
+        paths.extend(env::split_paths(&existing));
+    }
+
+    env::join_paths(paths)
+        .ok()
+        .and_then(|joined| joined.into_string().ok())
 }
