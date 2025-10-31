@@ -611,6 +611,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "walkdir",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
