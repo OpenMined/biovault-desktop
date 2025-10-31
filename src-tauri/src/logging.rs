@@ -1,22 +1,13 @@
 use chrono::Local;
+#[cfg(unix)]
 use libc::{STDERR_FILENO, STDOUT_FILENO};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-#[cfg(windows)]
-use std::os::fd::RawFd;
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, RawFd};
-#[cfg(windows)]
-use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::path::PathBuf;
 use std::sync::Once;
 use std::thread;
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::HANDLE;
-#[cfg(windows)]
-use windows_sys::Win32::System::Threading::{
-    DuplicateHandle, GetCurrentProcess, DUPLICATE_SAME_ACCESS,
-};
 
 /// Represents the type of log event being recorded.
 #[derive(Clone, Copy)]
@@ -67,6 +58,7 @@ pub fn log_desktop_event(level: LogLevel, message: &str) {
     let _ = write_log_line(level, message);
 }
 
+#[cfg(unix)]
 fn pipe_wrap() -> io::Result<(RawFd, RawFd)> {
     let mut fds = [0; 2];
     let res = unsafe { libc::pipe(fds.as_mut_ptr()) };
@@ -77,6 +69,7 @@ fn pipe_wrap() -> io::Result<(RawFd, RawFd)> {
     }
 }
 
+#[cfg(unix)]
 fn dup_wrap(fd: RawFd) -> io::Result<RawFd> {
     let res = unsafe { libc::dup(fd) };
     if res == -1 {
@@ -86,6 +79,7 @@ fn dup_wrap(fd: RawFd) -> io::Result<RawFd> {
     }
 }
 
+#[cfg(unix)]
 fn dup2_wrap(src: RawFd, dst: RawFd) -> io::Result<()> {
     let res = unsafe { libc::dup2(src, dst) };
     if res == -1 {
@@ -95,6 +89,7 @@ fn dup2_wrap(src: RawFd, dst: RawFd) -> io::Result<()> {
     }
 }
 
+#[cfg(unix)]
 fn close_wrap(fd: RawFd) -> io::Result<()> {
     let res = unsafe { libc::close(fd) };
     if res == -1 {
@@ -104,6 +99,7 @@ fn close_wrap(fd: RawFd) -> io::Result<()> {
     }
 }
 
+#[cfg(unix)]
 fn redirect_stream_to_log(fd: RawFd, level: LogLevel, label: &'static str) -> io::Result<()> {
     let (read_fd, write_fd) = pipe_wrap()?;
     let original_fd = dup_wrap(fd)?;
@@ -178,6 +174,7 @@ fn redirect_stream_to_log(fd: RawFd, level: LogLevel, label: &'static str) -> io
 }
 
 /// Initialise stdout/stderr redirection so bundled apps still capture logs.
+#[cfg(unix)]
 pub fn init_stdio_forwarding() {
     static INIT: Once = Once::new();
 
@@ -216,31 +213,8 @@ unsafe fn file_from_descriptor(fd: RawFd) -> io::Result<File> {
     Ok(File::from_raw_fd(fd))
 }
 
-#[cfg(windows)]
-unsafe fn file_from_descriptor(fd: RawFd) -> io::Result<File> {
-    let handle = libc::_get_osfhandle(fd);
-    if handle == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    let process = unsafe { GetCurrentProcess() };
-    let mut duplicated: HANDLE = 0;
-    let success = unsafe {
-        DuplicateHandle(
-            process,
-            handle as HANDLE,
-            process,
-            &mut duplicated,
-            0,
-            0,
-            DUPLICATE_SAME_ACCESS,
-        )
-    };
-    if success == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let _ = close_wrap(fd);
-    Ok(File::from_raw_handle(duplicated as RawHandle))
-}
+#[cfg(not(unix))]
+pub fn init_stdio_forwarding() {}
 
 #[macro_export]
 macro_rules! desktop_log {
