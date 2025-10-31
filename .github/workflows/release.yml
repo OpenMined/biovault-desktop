@@ -13,6 +13,31 @@ on:
         required: false
         default: false
         type: boolean
+      build_macos_arm64:
+        description: "Build macOS (Apple Silicon)"
+        required: false
+        default: true
+        type: boolean
+      build_macos_x64:
+        description: "Build macOS (Intel)"
+        required: false
+        default: true
+        type: boolean
+      build_windows_x64:
+        description: "Build Windows (x86_64)"
+        required: false
+        default: true
+        type: boolean
+      build_linux_x64:
+        description: "Build Linux (x86_64)"
+        required: false
+        default: true
+        type: boolean
+      build_linux_arm64:
+        description: "Build Linux (arm64 via Docker)"
+        required: false
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       version:
@@ -21,6 +46,27 @@ on:
       dry_run:
         required: false
         type: boolean
+        default: false
+      build_macos_arm64:
+        required: false
+        type: boolean
+        default: true
+      build_macos_x64:
+        required: false
+        type: boolean
+        default: true
+      build_windows_x64:
+        required: false
+        type: boolean
+        default: true
+      build_linux_x64:
+        required: false
+        type: boolean
+        default: true
+      build_linux_arm64:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   prepare-version:
@@ -80,19 +126,25 @@ jobs:
           - runs-on: macos-latest
             args: "aarch64-apple-darwin"
             build_kind: tauri
+            enabled: ${{ inputs.build_macos_arm64 }}
           - runs-on: macos-latest
             args: "x86_64-apple-darwin"
             build_kind: tauri
+            enabled: ${{ inputs.build_macos_x64 }}
           - runs-on: windows-latest
             args: "x86_64-pc-windows-msvc"
             build_kind: tauri
+            enabled: ${{ inputs.build_windows_x64 }}
           - runs-on: ubuntu-22.04
             args: "x86_64-unknown-linux-gnu"
             build_kind: tauri
+            enabled: ${{ inputs.build_linux_x64 }}
           - runs-on: ubuntu-22.04-arm
             args: "aarch64-unknown-linux-gnu"
             build_kind: docker
+            enabled: ${{ inputs.build_linux_arm64 }}
     runs-on: ${{ matrix.runs-on }}
+    if: ${{ matrix.enabled }}
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
