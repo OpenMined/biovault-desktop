@@ -66,9 +66,10 @@ cd "$ROOT_DIR"
 # Set up BioVault configuration
 BV_PATH="$ROOT_DIR/biovault/bv"
 if [ -n "${BIOVAULT_CONFIG:-}" ]; then
-    export BIOVAULT_HOME="$BIOVAULT_CONFIG/.biovault"
+    export BIOVAULT_HOME="$BIOVAULT_CONFIG"
 else
-    export BIOVAULT_HOME="$HOME/.biovault"
+    # Default to Desktop/BioVault for desktop app consistency
+    export BIOVAULT_HOME="$HOME/Desktop/BioVault"
 fi
 mkdir -p "$BIOVAULT_HOME"
 export BIOVAULT_PATH="$BV_PATH"

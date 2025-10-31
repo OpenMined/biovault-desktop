@@ -18,12 +18,13 @@ echo -e "${GREEN}✓ Cleaned biovault package cache${NC}"
 
 BV_PATH="$SCRIPT_DIR/biovault/bv"
 
-# Use custom config if provided, otherwise use default
+# Use custom config if provided, otherwise use default Desktop/BioVault
 if [ -n "$BIOVAULT_CONFIG" ]; then
     export BIOVAULT_HOME="$BIOVAULT_CONFIG"
     echo -e "${YELLOW}📁 Using config directory: ${BIOVAULT_CONFIG}${NC}"
 else
-    export BIOVAULT_HOME="$HOME/.biovault"
+    # Default to Desktop/BioVault for desktop app consistency
+    export BIOVAULT_HOME="$HOME/Desktop/BioVault"
 fi
 
 mkdir -p "$BIOVAULT_HOME"

@@ -6,7 +6,7 @@
 	"scripts": {
 		"tauri": "dotenv -- tauri",
 		"dev": "tauri dev",
-		"dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG}/.biovault tauri dev",
+		"dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG} tauri dev",
 		"build": "dotenv -- tauri build",
 		"test:ui": "playwright test"
 	},
