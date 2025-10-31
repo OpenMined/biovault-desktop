@@ -566,6 +566,9 @@ jobs:
           print(f"Bumped version from {current} to {next_version}")
           PY
 
+          NEXT_VERSION=$(python -c "import os; parts = os.environ['RELEASE_VERSION'].split('.'); parts[-1] = str(int(parts[-1]) + 1); print('.'.join(parts))")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
-          git commit -m "chore: bump version to $(python -c 'v="${RELEASE_VERSION}"; p=v.split("."); p[-1]=str(int(p[-1])+1); print(".".join(p))')"
+          git commit -m "chore: bump version to ${NEXT_VERSION}"
           git push origin HEAD:${{ github.ref_name }}
