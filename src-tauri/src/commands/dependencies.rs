@@ -1,50 +1,8 @@
 use biovault::cli::commands::check::DependencyCheckResult;
-use chrono::Local;
 use std::collections::HashSet;
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-
-fn resolve_biovault_home_path() -> PathBuf {
-    if let Ok(home) = biovault::config::get_biovault_home() {
-        return home;
-    }
-
-    env::var("BIOVAULT_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            dirs::desktop_dir()
-                .unwrap_or_else(|| home_dir.join("Desktop"))
-                .join("BioVault")
-        })
-}
-
-fn desktop_log_path() -> PathBuf {
-    let base = resolve_biovault_home_path();
-    base.join("logs").join("desktop.log")
-}
-
-fn log_desktop_event(message: &str) {
-    let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
-    let log_line = format!("[{}] {}\n", timestamp, message);
-
-    if let Err(err) = (|| -> std::io::Result<()> {
-        let log_path = desktop_log_path();
-        if let Some(parent) = log_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
-        file.write_all(log_line.as_bytes())?;
-        Ok(())
-    })() {
-        eprintln!("Failed to write desktop log: {}", err);
-    }
-}
 
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
 pub fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
@@ -60,13 +18,13 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
     fs::write(&states_path, json)
         .map_err(|e| format!("Failed to write dependency states: {}", e))?;
 
-    eprintln!("💾 Saved dependency states to: {}", states_path.display());
+    crate::desktop_log!("💾 Saved dependency states to: {}", states_path.display());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn check_dependencies() -> Result<DependencyCheckResult, String> {
-    eprintln!("🔍 check_dependencies called");
+    crate::desktop_log!("🔍 check_dependencies called");
 
     // Call the library function directly
     biovault::cli::commands::check::check_dependencies_result()
@@ -78,9 +36,10 @@ pub async fn check_single_dependency(
     name: String,
     path: Option<String>,
 ) -> Result<biovault::cli::commands::check::DependencyResult, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 check_single_dependency called: {} (path: {:?})",
-        name, path
+        name,
+        path
     );
 
     // Call the library function to check just this one dependency
@@ -90,7 +49,7 @@ pub async fn check_single_dependency(
 
 #[tauri::command]
 pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
-    eprintln!("📋 Getting saved dependency states from file");
+    crate::desktop_log!("📋 Getting saved dependency states from file");
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
@@ -105,7 +64,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
     // Try to load saved states first
     if states_path.exists() {
-        eprintln!("  Loading from: {}", states_path.display());
+        crate::desktop_log!("  Loading from: {}", states_path.display());
         let json_str = fs::read_to_string(&states_path)
             .map_err(|e| format!("Failed to read dependency states: {}", e))?;
 
@@ -120,7 +79,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
             }
         }
 
-        eprintln!(
+        crate::desktop_log!(
             "  Loaded {} saved dependencies",
             saved_result.dependencies.len()
         );
@@ -128,11 +87,11 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     }
 
     // If no saved states, check with current config paths
-    eprintln!("  No saved states found, checking with current config");
+    crate::desktop_log!("  No saved states found, checking with current config");
     let config_path = biovault_path.join("config.yaml");
 
     if !config_path.exists() {
-        eprintln!("  Config doesn't exist, returning empty dependencies");
+        crate::desktop_log!("  Config doesn't exist, returning empty dependencies");
         return Ok(DependencyCheckResult {
             dependencies: vec![],
             all_satisfied: false,
@@ -167,7 +126,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     // Save these states for next time
     if let Ok(json) = serde_json::to_string_pretty(&result) {
         let _ = fs::write(&states_path, json);
-        eprintln!("  Saved current states to: {}", states_path.display());
+        crate::desktop_log!("  Saved current states to: {}", states_path.display());
     }
 
     Ok(result)
@@ -175,7 +134,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
 #[tauri::command]
 pub async fn save_custom_path(name: String, path: String) -> Result<(), String> {
-    eprintln!("💾 save_custom_path called: {} -> {}", name, path);
+    crate::desktop_log!("💾 save_custom_path called: {} -> {}", name, path);
 
     let sanitized = if path.trim().is_empty() {
         None
@@ -189,7 +148,7 @@ pub async fn save_custom_path(name: String, path: String) -> Result<(), String> 
     // Also update saved dependency states
     update_saved_dependency_states()?;
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Saved custom path for {}: {}",
         name,
         sanitized
@@ -202,7 +161,7 @@ pub async fn save_custom_path(name: String, path: String) -> Result<(), String> 
 
 #[tauri::command]
 pub fn update_saved_dependency_states() -> Result<(), String> {
-    eprintln!("🔄 Updating saved dependency states");
+    crate::desktop_log!("🔄 Updating saved dependency states");
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
@@ -220,35 +179,35 @@ pub fn update_saved_dependency_states() -> Result<(), String> {
 
 #[tauri::command]
 pub fn check_brew_installed() -> Result<bool, String> {
-    eprintln!("🍺 Checking if Homebrew is installed (using library)");
-    log_desktop_event("Checking Homebrew installation status");
+    crate::desktop_log!("🍺 Checking if Homebrew is installed (using library)");
+    crate::desktop_log!("Checking Homebrew installation status");
 
     // Call the library function
     let result = biovault::cli::commands::check::check_brew_installed()
         .map_err(|e| format!("Failed to check brew: {}", e))?;
 
-    log_desktop_event(&format!("Homebrew present: {}", result));
+    crate::desktop_log!("Homebrew present: {}", result);
     Ok(result)
 }
 
 #[tauri::command]
 pub async fn install_brew() -> Result<String, String> {
-    eprintln!("🍺 Installing Homebrew (using library)");
-    log_desktop_event("Homebrew installation requested from desktop app");
+    crate::desktop_log!("🍺 Installing Homebrew (using library)");
+    crate::desktop_log!("Homebrew installation requested from desktop app");
 
     // Call the library function
     match biovault::cli::commands::check::install_brew() {
         Ok(path) => {
-            log_desktop_event(&format!(
+            crate::desktop_log!(
                 "Homebrew installation completed successfully. Detected brew at: {}",
                 path
-            ));
+            );
             Ok(path)
         }
         Err(err) => {
-            eprintln!("🍺 Homebrew installation error: {:#?}", err);
-            log_desktop_event(&format!("Homebrew installation debug: {:#?}", err));
-            log_desktop_event(&format!("Homebrew installation failed: {}", err));
+            crate::desktop_log!("🍺 Homebrew installation error: {:#?}", err);
+            crate::desktop_log!("Homebrew installation debug: {:#?}", err);
+            crate::desktop_error!("Homebrew installation failed: {}", err);
             Err(format!("Failed to install brew: {}", err))
         }
     }
@@ -277,8 +236,8 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
     use serde_json::json;
     use tauri::Emitter;
 
-    eprintln!("📦 install_dependency called: {}", name);
-    log_desktop_event(&format!("Desktop requested installation of {}", name));
+    crate::desktop_log!("📦 install_dependency called: {}", name);
+    crate::desktop_log!("Desktop requested installation of {}", name);
 
     // Emit start event
     let _ = window.emit(
@@ -293,10 +252,10 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
         .await
         .map(|maybe_path| {
             if let Some(path) = maybe_path {
-                eprintln!("✅ Installed {} at: {}", name, path);
+                crate::desktop_log!("✅ Installed {} at: {}", name, path);
                 path
             } else {
-                eprintln!(
+                crate::desktop_log!(
                     "✅ Installed {} (path not detected - may not be in PATH)",
                     name
                 );
@@ -324,7 +283,7 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
 
 #[tauri::command]
 pub async fn install_dependencies(names: Vec<String>) -> Result<(), String> {
-    eprintln!("📦 install_dependencies called: {:?}", names);
+    crate::desktop_log!("📦 install_dependencies called: {:?}", names);
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for name in names {

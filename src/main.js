@@ -73,6 +73,10 @@ const {
 	clearAllSelections,
 } = createDataModule({ invoke, dialog })
 
+const { refreshLogs, displayLogs, clearLogs, copyLogs, openLogsFolder } = createLogsModule({
+	invoke,
+})
+
 const {
 	prepareRunView,
 	loadRuns,
@@ -80,9 +84,7 @@ const {
 	toggleSelectAllParticipants,
 	shareCurrentRunLogs,
 	setNavigateTo: setRunNavigateTo,
-} = createRunsModule({ invoke, listen, dialog })
-
-const { loadCommandLogs, displayLogs, clearLogs, copyLogs } = createLogsModule({ invoke })
+} = createRunsModule({ invoke, listen, dialog, refreshLogs })
 
 // Create projects module early with placeholder navigateTo
 let projectsNavigateTo = () => console.warn('navigateTo not yet initialized')
@@ -227,7 +229,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		loadPipelines: pipelinesModule.loadPipelines,
 		prepareRunView,
 		loadRuns,
-		displayLogs,
+		refreshLogs,
 		loadSettings,
 		initializeMessagesTab,
 		getMessagesInitialized,
@@ -326,7 +328,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		refreshExistingFilePaths()
 		loadData()
 		loadProjects()
-		loadCommandLogs()
+		refreshLogs({ force: true })
 		loadSettings()
 		updateSelectedFileCount()
 	} else {
@@ -400,6 +402,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		toggleSelectAllParticipants,
 		copyLogs,
 		clearLogs,
+		openLogsFolder,
 		handleSyftBoxAuthentication,
 		saveSettings,
 		checkDependenciesForPanel,

@@ -13,7 +13,7 @@ pub async fn detect_file_types(
         return Ok(HashMap::new());
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "🔍 Detecting file types for {} files (using library)",
         files.len()
     );
@@ -22,13 +22,16 @@ pub async fn detect_file_types(
 
     for file_path in files {
         let metadata = biovault::data::detect_genotype_metadata(&file_path).unwrap_or_else(|e| {
-            eprintln!("⚠️  Failed to detect {}: {}", file_path, e);
+            crate::desktop_log!("⚠️  Failed to detect {}: {}", file_path, e);
             biovault::data::GenotypeMetadata::default()
         });
 
-        eprintln!(
+        crate::desktop_log!(
             "📊 Detection for {}: data_type={:?}, source={:?}, grch={:?}",
-            file_path, metadata.data_type, metadata.source, metadata.grch_version
+            file_path,
+            metadata.data_type,
+            metadata.source,
+            metadata.grch_version
         );
 
         results.insert(
@@ -44,7 +47,7 @@ pub async fn detect_file_types(
         );
     }
 
-    eprintln!("✅ Detected {} file types", results.len());
+    crate::desktop_log!("✅ Detected {} file types", results.len());
     Ok(results)
 }
 
@@ -57,7 +60,7 @@ pub async fn analyze_file_types(
         return Ok(HashMap::new());
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "🔬 Analyzing files for row count, chromosomes, and sex: {} files (using library)",
         files.len()
     );
@@ -66,7 +69,7 @@ pub async fn analyze_file_types(
 
     for file_path in files {
         let metadata = biovault::data::analyze_genotype_file(&file_path).unwrap_or_else(|e| {
-            eprintln!("⚠️  Failed to analyze {}: {}", file_path, e);
+            crate::desktop_log!("⚠️  Failed to analyze {}: {}", file_path, e);
             biovault::data::GenotypeMetadata::default()
         });
 
@@ -83,6 +86,6 @@ pub async fn analyze_file_types(
         );
     }
 
-    eprintln!("✅ Analyzed {} files", results.len());
+    crate::desktop_log!("✅ Analyzed {} files", results.len());
     Ok(results)
 }

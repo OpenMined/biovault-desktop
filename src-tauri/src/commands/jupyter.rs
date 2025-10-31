@@ -76,8 +76,8 @@ pub async fn reset_jupyter(
     .await
     {
         Ok(Ok(_)) => {}
-        Ok(Err(err)) => eprintln!("Warning: Failed to stop Jupyter after reset: {}", err),
-        Err(join_err) => eprintln!(
+        Ok(Err(err)) => crate::desktop_log!("Warning: Failed to stop Jupyter after reset: {}", err),
+        Err(join_err) => crate::desktop_log!(
             "Warning: Failed to stop Jupyter after reset (task join): {}",
             join_err
         ),

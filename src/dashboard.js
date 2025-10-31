@@ -7,9 +7,9 @@ export function createDashboardShell({
 	loadProjects,
 	loadPipelines,
 	loadRuns,
-	_displayLogs,
+	displayLogs,
 	loadSettings,
-	_loadSql,
+	loadSql,
 	initializeMessagesTab,
 	getMessagesInitialized,
 	getMessagesAuthorized,
@@ -87,10 +87,10 @@ export function createDashboardShell({
 				loadRuns?.()
 				break
 			case 'logs':
-				_displayLogs?.()
+				displayLogs?.({ force: true })
 				break
 			case 'sql':
-				_loadSql?.()
+				loadSql?.()
 				break
 			case 'settings':
 				loadSettings?.()

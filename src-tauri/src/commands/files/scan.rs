@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[tauri::command]
 pub fn get_extensions(path: String) -> Result<Vec<ExtensionCount>, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 get_extensions called for path: {} (using library)",
         path
     );
@@ -21,13 +21,13 @@ pub fn get_extensions(path: String) -> Result<Vec<ExtensionCount>, String> {
         })
         .collect();
 
-    eprintln!("✅ Found {} extensions", extensions.len());
+    crate::desktop_log!("✅ Found {} extensions", extensions.len());
     Ok(extensions)
 }
 
 #[tauri::command]
 pub fn search_txt_files(path: String, extensions: Vec<String>) -> Result<Vec<String>, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 search_txt_files called for path: {} with {} extensions (using library)",
         path,
         extensions.len()
@@ -68,7 +68,7 @@ pub fn search_txt_files(path: String, extensions: Vec<String>) -> Result<Vec<Str
         .map(|file| file.path)
         .collect();
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Found {} files matching extensions",
         filtered_files.len()
     );
@@ -77,7 +77,7 @@ pub fn search_txt_files(path: String, extensions: Vec<String>) -> Result<Vec<Str
 
 #[tauri::command]
 pub fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 suggest_patterns called with {} files (using library)",
         files.len()
     );
@@ -114,7 +114,7 @@ pub fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, St
         None
     };
 
-    eprintln!(
+    crate::desktop_log!(
         "📂 Analyzing directory: {}{}",
         dir,
         extension_filter
@@ -125,18 +125,18 @@ pub fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, St
     let result = biovault::data::suggest_patterns(dir, extension_filter, true)
         .map_err(|e| format!("Failed to suggest patterns: {}", e))?;
 
-    eprintln!("\n=== PATTERN SUGGESTIONS ===");
+    crate::desktop_log!("\n=== PATTERN SUGGESTIONS ===");
     for (idx, suggestion) in result.suggestions.iter().enumerate() {
-        eprintln!("\n📋 Suggestion #{}", idx + 1);
-        eprintln!("   Pattern: {}", suggestion.pattern);
-        eprintln!("   Description: {}", suggestion.description);
-        eprintln!("   Example: {}", suggestion.example);
-        eprintln!("   Sample extractions:");
+        crate::desktop_log!("\n📋 Suggestion #{}", idx + 1);
+        crate::desktop_log!("   Pattern: {}", suggestion.pattern);
+        crate::desktop_log!("   Description: {}", suggestion.description);
+        crate::desktop_log!("   Example: {}", suggestion.example);
+        crate::desktop_log!("   Sample extractions:");
         for (filename, extracted_id) in &suggestion.sample_extractions {
-            eprintln!("      {} → {}", filename, extracted_id);
+            crate::desktop_log!("      {} → {}", filename, extracted_id);
         }
     }
-    eprintln!("\n=== END SUGGESTIONS ===\n");
+    crate::desktop_log!("\n=== END SUGGESTIONS ===\n");
 
     let suggestions: Vec<PatternSuggestion> = result
         .suggestions
@@ -157,7 +157,7 @@ pub fn suggest_patterns(files: Vec<String>) -> Result<Vec<PatternSuggestion>, St
         })
         .collect();
 
-    eprintln!("✅ Found {} pattern suggestions", suggestions.len());
+    crate::desktop_log!("✅ Found {} pattern suggestions", suggestions.len());
     Ok(suggestions)
 }
 

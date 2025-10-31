@@ -399,7 +399,7 @@ pub fn import_project(
     url: String,
     overwrite: bool,
 ) -> Result<Project, String> {
-    eprintln!("🔍 import_project called with URL: {}", url);
+    crate::desktop_log!("🔍 import_project called with URL: {}", url);
 
     let imported = tauri::async_runtime::block_on(
         biovault::cli::commands::project_management::import_project_record(
@@ -410,7 +410,7 @@ pub fn import_project(
     )
     .map_err(|e| format!("Failed to import project: {}", e))?;
 
-    eprintln!("✅ Project imported via library: {}", imported.name);
+    crate::desktop_log!("✅ Project imported via library: {}", imported.name);
 
     Ok(Project {
         id: imported.id,
@@ -451,7 +451,7 @@ pub fn import_project_from_folder(
     state: tauri::State<AppState>,
     folder_path: String,
 ) -> Result<Project, String> {
-    eprintln!(
+    crate::desktop_log!(
         "📁 import_project_from_folder called with path: {}",
         folder_path
     );
@@ -516,9 +516,10 @@ pub fn import_project_from_folder(
         )
         .map_err(|e| format!("Failed to register project: {}", e))?;
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Project imported from folder: {} (ID: {})",
-        metadata.name, project_id
+        metadata.name,
+        project_id
     );
 
     Ok(Project {
@@ -537,7 +538,7 @@ pub fn import_project_from_folder(
 pub fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntry>, String> {
     use std::collections::HashSet;
 
-    eprintln!("🔍 get_projects called (using library)");
+    crate::desktop_log!("🔍 get_projects called (using library)");
 
     let db_guard = state.biovault_db.lock().unwrap();
     let cli_projects = db_guard
@@ -619,13 +620,13 @@ pub fn get_projects(state: tauri::State<AppState>) -> Result<Vec<ProjectListEntr
         }
     });
 
-    eprintln!("✅ Returning {} project entry(ies)", entries.len());
+    crate::desktop_log!("✅ Returning {} project entry(ies)", entries.len());
     Ok(entries)
 }
 
 #[tauri::command]
 pub fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<(), String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 delete_project called with ID: {} (using library)",
         project_id
     );
@@ -646,7 +647,7 @@ pub fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<
 
     let path_buf = PathBuf::from(&project_path);
     if path_buf.exists() {
-        eprintln!("🗑️  Removing project directory: {}", path_buf.display());
+        crate::desktop_log!("🗑️  Removing project directory: {}", path_buf.display());
         if let Err(err) = fs::remove_dir_all(&path_buf) {
             use std::io::ErrorKind;
             if err.kind() != ErrorKind::NotFound {
@@ -660,7 +661,7 @@ pub fn delete_project(state: tauri::State<AppState>, project_id: i64) -> Result<
         }
     }
 
-    eprintln!("✅ Project '{}' deleted", project_name);
+    crate::desktop_log!("✅ Project '{}' deleted", project_name);
     Ok(())
 }
 
@@ -669,7 +670,7 @@ pub fn delete_project_folder(project_path: String) -> Result<(), String> {
     let path = PathBuf::from(&project_path);
 
     if !path.exists() {
-        eprintln!(
+        crate::desktop_log!(
             "ℹ️  Project folder already missing, considered deleted: {}",
             project_path
         );
@@ -681,7 +682,7 @@ pub fn delete_project_folder(project_path: String) -> Result<(), String> {
     fs::remove_dir_all(&path)
         .map_err(|e| format!("Failed to delete project folder {}: {}", path.display(), e))?;
 
-    eprintln!("✅ Deleted project folder {}", path.display());
+    crate::desktop_log!("✅ Deleted project folder {}", path.display());
     Ok(())
 }
 
@@ -694,9 +695,11 @@ pub fn create_project(
     create_python_script: Option<bool>,
     script_name: Option<String>,
 ) -> Result<Project, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 create_project called with name: {} example: {:?} python_script: {:?}",
-        name, example, create_python_script
+        name,
+        example,
+        create_python_script
     );
 
     let target_dir = directory.map(PathBuf::from);
@@ -740,13 +743,13 @@ pub fn create_project(
         std::fs::write(&project_yaml_path, updated_yaml)
             .map_err(|e| format!("Failed to update project.yaml: {}", e))?;
 
-        eprintln!(
+        crate::desktop_log!(
             "✅ Created Python script: {} and updated assets",
             script_path.display()
         );
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Project '{}' created successfully via library",
         created.name
     );
@@ -864,7 +867,7 @@ pub fn load_project_editor(
 
         // If the path points to a file (e.g., project.yaml), use its parent directory
         if proj_path.is_file() {
-            eprintln!(
+            crate::desktop_log!(
                 "⚠️ Project path is a file, using parent directory: {}",
                 proj_path.display()
             );
@@ -902,7 +905,7 @@ pub fn load_project_editor(
         // Check if this might be a project NAME instead of a path
         // (no slashes and not an absolute path)
         if !raw_path.contains('/') && !raw_path.contains('\\') && !proj_path.is_absolute() {
-            eprintln!(
+            crate::desktop_log!(
                 "🔍 '{}' looks like a project name, attempting database lookup",
                 raw_path
             );
@@ -910,9 +913,10 @@ pub fn load_project_editor(
             // Try to find project by name in database
             let db = state.biovault_db.lock().unwrap();
             if let Ok(Some(record)) = db.get_project(&raw_path) {
-                eprintln!(
+                crate::desktop_log!(
                     "✅ Found project '{}' in database at: {}",
-                    raw_path, record.project_path
+                    raw_path,
+                    record.project_path
                 );
                 proj_path = PathBuf::from(&record.project_path);
 
@@ -932,7 +936,7 @@ pub fn load_project_editor(
                 drop(db); // Release lock
                 (proj_path, Some(record.id), Some(record.name))
             } else {
-                eprintln!(
+                crate::desktop_log!(
                     "⚠️ Project name '{}' not found in database, treating as path",
                     raw_path
                 );

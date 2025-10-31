@@ -1,4 +1,4 @@
-export function createRunsModule({ invoke, listen, dialog }) {
+export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {} }) {
 	let selectedParticipants = []
 	let selectedProject = null
 	let currentRunLogListeners = []
@@ -15,24 +15,15 @@ export function createRunsModule({ invoke, listen, dialog }) {
 	}
 
 	// Listen for pipeline logs and completion
-	listen('pipeline-log-line', (event) => {
-		// Show in workbench logs panel
-		const logsContent = document.getElementById('logs-content')
-		if (logsContent) {
-			logsContent.textContent += event.payload + '\n'
-			logsContent.scrollTop = logsContent.scrollHeight
-		}
+	listen('pipeline-log-line', () => {
+		refreshLogs()
 	})
 
 	listen('pipeline-complete', async (event) => {
 		const status = event.payload
 		console.log('Pipeline completed with status:', status)
 
-		// Append completion message to logs
-		const logsContent = document.getElementById('logs-content')
-		if (logsContent) {
-			logsContent.textContent += `\n${status === 'success' ? '✅' : '❌'} Pipeline ${status}\n`
-		}
+		refreshLogs({ force: true })
 
 		// Refresh runs list to show updated status
 		await loadRuns()

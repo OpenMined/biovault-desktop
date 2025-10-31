@@ -31,12 +31,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     let addr = stream
         .peer_addr()
         .expect("connected streams should have a peer address");
-    eprintln!("🔌 WebSocket connection from: {}", addr);
+    crate::desktop_log!("🔌 WebSocket connection from: {}", addr);
 
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
-            eprintln!("❌ WebSocket handshake error: {}", e);
+            crate::desktop_log!("❌ WebSocket handshake error: {}", e);
             return;
         }
     };
@@ -47,7 +47,7 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
         let msg = match msg {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("❌ WebSocket read error: {}", e);
+                crate::desktop_log!("❌ WebSocket read error: {}", e);
                 break;
             }
         };
@@ -60,12 +60,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
         let request: WsRequest = match serde_json::from_str(text) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("❌ Failed to parse request: {}", e);
+                crate::desktop_log!("❌ Failed to parse request: {}", e);
                 continue;
             }
         };
 
-        eprintln!("📨 WS Request: {} (id: {})", request.cmd, request.id);
+        crate::desktop_log!("📨 WS Request: {} (id: {})", request.cmd, request.id);
 
         // Execute the Tauri command
         let response = execute_command(&app, &request.cmd, request.args).await;
@@ -85,12 +85,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
 
         let response_text = serde_json::to_string(&ws_response).unwrap();
         if let Err(e) = write.send(Message::Text(response_text)).await {
-            eprintln!("❌ WebSocket write error: {}", e);
+            crate::desktop_log!("❌ WebSocket write error: {}", e);
             break;
         }
     }
 
-    eprintln!("🔌 WebSocket connection closed: {}", addr);
+    crate::desktop_log!("🔌 WebSocket connection closed: {}", addr);
 }
 
 async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Value, String> {
@@ -302,7 +302,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             Ok(serde_json::to_value(result).unwrap())
         }
         _ => {
-            eprintln!("⚠️  Unhandled command: {}", cmd);
+            crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))
         }
     }
@@ -312,8 +312,8 @@ pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn st
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let listener = TcpListener::bind(&addr).await?;
 
-    eprintln!("🚀 WebSocket server listening on ws://{}", addr);
-    eprintln!("📝 Browser mode: Commands will be proxied via WebSocket");
+    crate::desktop_log!("🚀 WebSocket server listening on ws://{}", addr);
+    crate::desktop_log!("📝 Browser mode: Commands will be proxied via WebSocket");
 
     let app = Arc::new(app);
 

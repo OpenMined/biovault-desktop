@@ -1,8 +1,5 @@
-use chrono::Local;
 use rusqlite::Connection;
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +15,7 @@ mod ws_bridge;
 
 // Module declarations
 mod commands;
+mod logging;
 mod types;
 
 // Import types from types module
@@ -40,7 +38,7 @@ use commands::syftbox::*;
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
 
-fn resolve_biovault_home_path() -> PathBuf {
+pub(crate) fn resolve_biovault_home_path() -> PathBuf {
     if let Ok(home) = biovault::config::get_biovault_home() {
         return home;
     }
@@ -53,31 +51,6 @@ fn resolve_biovault_home_path() -> PathBuf {
                 .unwrap_or_else(|| home_dir.join("Desktop"))
                 .join("BioVault")
         })
-}
-
-fn desktop_log_path() -> PathBuf {
-    let base = resolve_biovault_home_path();
-    base.join("logs").join("desktop.log")
-}
-
-fn log_desktop_event(message: &str) {
-    let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
-    let log_line = format!("[{}] {}\n", timestamp, message);
-
-    if let Err(err) = (|| -> std::io::Result<()> {
-        let log_path = desktop_log_path();
-        if let Some(parent) = log_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
-        file.write_all(log_line.as_bytes())?;
-        Ok(())
-    })() {
-        eprintln!("Failed to write desktop log: {}", err);
-    }
 }
 
 pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -116,6 +89,14 @@ pub fn run() {
         }
     }
 
+    let desktop_log_path_buf = logging::desktop_log_path();
+    std::env::set_var(
+        "BIOVAULT_DESKTOP_LOG_FILE",
+        desktop_log_path_buf.to_string_lossy().to_string(),
+    );
+
+    logging::init_stdio_forwarding();
+
     // Initialize shared BioVaultDb (handles files/participants)
     // This automatically creates the directory via get_biovault_home() if needed
     let biovault_db = BioVaultDb::new().expect("Failed to initialize BioVault database");
@@ -125,21 +106,18 @@ pub fn run() {
         biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
 
     let home_display = biovault_home_dir.to_string_lossy().to_string();
-    eprintln!("📂 BioVault home resolved to: {}", home_display);
-    log_desktop_event(&format!("BioVault home resolved to {}", home_display));
-
-    log_desktop_event(&format!(
+    crate::desktop_log!("📂 BioVault home resolved to {}", home_display);
+    crate::desktop_log!(
         "Desktop logging initialised. Log file: {}",
-        desktop_log_path().display()
-    ));
+        desktop_log_path_buf.display()
+    );
 
     let email = load_biovault_email(&Some(biovault_home_dir.clone()));
     let window_title = format!("BioVault - {}", email);
 
     // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");
-    eprintln!("🗃️ BioVault DB path: {}", db_path.display());
-    log_desktop_event(&format!("BioVault DB path: {}", db_path.display()));
+    crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
 
@@ -264,9 +242,10 @@ pub fn run() {
 
                         // Only log if files were actually processed
                         if processed > 0 {
-                            eprintln!(
+                            crate::desktop_log!(
                                 "✅ Queue processor: processed {} files ({} errors)",
-                                processed, errors
+                                processed,
+                                errors
                             );
                         }
                     }
@@ -292,7 +271,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 biovault::cli::commands::check::set_homebrew_install_logger(|message| {
-                    log_desktop_event(message);
+                    crate::desktop_log!("{}", message);
                 });
             }
 
@@ -322,8 +301,10 @@ pub fn run() {
                 .build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
+            let devtools = MenuItemBuilder::with_id("devtools", "Open DevTools").build(app)?;
+
             let menu = MenuBuilder::new(app)
-                .items(&[&show, &autostart_item, &quit])
+                .items(&[&show, &devtools, &autostart_item, &quit])
                 .build()?;
 
             // Clone the autostart item for use in the event handler
@@ -349,6 +330,13 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
+                        "devtools" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                crate::desktop_log!("Opening developer tools from tray menu");
+                                window.open_devtools();
+                                let _ = window.set_focus();
+                            }
+                        }
                         "autostart" => {
                             use tauri_plugin_autostart::ManagerExt;
                             let autolaunch = app.autolaunch();
@@ -360,7 +348,7 @@ pub fn run() {
                                         autolaunch.enable()
                                     };
                                     if let Err(e) = result {
-                                        eprintln!("Failed to toggle autostart: {}", e);
+                                        crate::desktop_log!("Failed to toggle autostart: {}", e);
                                     } else {
                                         // Update the menu item checkbox
                                         let _ = autostart_item_clone.set_checked(!enabled);
@@ -368,7 +356,9 @@ pub fn run() {
                                     // Emit event to update UI
                                     let _ = app.emit("autostart-changed", ());
                                 }
-                                Err(e) => eprintln!("Failed to check autostart status: {}", e),
+                                Err(e) => {
+                                    crate::desktop_log!("Failed to check autostart status: {}", e)
+                                }
                             }
                         }
                         "quit" => {
@@ -384,7 +374,7 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = ws_bridge::start_ws_server(app_handle, 3333).await {
-                        eprintln!("❌ Failed to start WebSocket server: {}", e);
+                        crate::desktop_log!("❌ Failed to start WebSocket server: {}", e);
                     }
                 });
             }
@@ -491,6 +481,10 @@ pub fn run() {
             // Logs commands
             get_command_logs,
             clear_command_logs,
+            log_frontend_message,
+            get_desktop_log_text,
+            clear_desktop_log,
+            get_desktop_log_dir,
             // Dependencies commands
             check_dependencies,
             check_single_dependency,

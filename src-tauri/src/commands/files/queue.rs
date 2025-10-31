@@ -6,7 +6,7 @@ pub async fn process_queue(
     state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<serde_json::Value, String> {
-    eprintln!(
+    crate::desktop_log!(
         "⚙️ process_queue called with limit: {} (using library)",
         limit
     );
@@ -18,7 +18,7 @@ pub async fn process_queue(
         .map_err(|e| format!("Failed to get pending files: {}", e))?;
 
     if pending_files.is_empty() {
-        eprintln!("No pending files in queue");
+        crate::desktop_log!("No pending files in queue");
         return Ok(serde_json::json!({
             "success": true,
             "data": {
@@ -29,17 +29,17 @@ pub async fn process_queue(
         }));
     }
 
-    eprintln!("📦 Processing {} pending files...", pending_files.len());
+    crate::desktop_log!("📦 Processing {} pending files...", pending_files.len());
 
     let mut processed = 0;
     let mut errors = 0;
 
     for file in pending_files.iter() {
-        eprintln!("  Processing: {}", file.file_path);
+        crate::desktop_log!("  Processing: {}", file.file_path);
 
         // Mark as processing
         if let Err(e) = biovault::data::update_file_status(&db, file.id, "processing", None) {
-            eprintln!("⚠️  Failed to update status for {}: {}", file.file_path, e);
+            crate::desktop_log!("⚠️  Failed to update status for {}: {}", file.file_path, e);
             continue;
         }
 
@@ -47,28 +47,33 @@ pub async fn process_queue(
         match process_single_file_sync(&db, file) {
             Ok(_) => {
                 if let Err(e) = biovault::data::update_file_status(&db, file.id, "complete", None) {
-                    eprintln!("⚠️  Failed to mark complete for {}: {}", file.file_path, e);
+                    crate::desktop_log!(
+                        "⚠️  Failed to mark complete for {}: {}",
+                        file.file_path,
+                        e
+                    );
                 }
                 processed += 1;
-                eprintln!("    ✓ Complete");
+                crate::desktop_log!("    ✓ Complete");
             }
             Err(e) => {
                 let error_msg = e.to_string();
                 if let Err(e) =
                     biovault::data::update_file_status(&db, file.id, "error", Some(&error_msg))
                 {
-                    eprintln!(
+                    crate::desktop_log!(
                         "⚠️  Failed to update error status for {}: {}",
-                        file.file_path, e
+                        file.file_path,
+                        e
                     );
                 }
                 errors += 1;
-                eprintln!("    ✗ Error: {}", error_msg);
+                crate::desktop_log!("    ✗ Error: {}", error_msg);
             }
         }
     }
 
-    eprintln!("✅ Processed {} files, {} errors", processed, errors);
+    crate::desktop_log!("✅ Processed {} files, {} errors", processed, errors);
 
     Ok(serde_json::json!({
         "success": true,
@@ -129,7 +134,7 @@ fn process_single_file_sync(
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Warning: Failed to analyze {}: {}", file.file_path, e);
+                    crate::desktop_log!("⚠️  Warning: Failed to analyze {}: {}", file.file_path, e);
                     // Continue with basic metadata
                 }
             }

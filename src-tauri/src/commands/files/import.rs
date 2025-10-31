@@ -10,7 +10,7 @@ pub async fn import_files_with_metadata(
     state: tauri::State<'_, AppState>,
     file_metadata: std::collections::HashMap<String, FileMetadata>,
 ) -> Result<ImportResult, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 import_files_with_metadata called with {} files (using library)",
         file_metadata.len()
     );
@@ -39,14 +39,15 @@ pub async fn import_files_with_metadata(
     let lib_result = biovault::data::import_from_csv(&db, csv_imports, true)
         .map_err(|e| format!("Failed to import files: {}", e))?;
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Imported {} files, skipped {} (using library)",
-        lib_result.imported, lib_result.skipped
+        lib_result.imported,
+        lib_result.skipped
     );
 
     // Log any errors
     for error in &lib_result.errors {
-        eprintln!("⚠️  Import error: {}", error);
+        crate::desktop_log!("⚠️  Import error: {}", error);
     }
 
     // Convert library FileRecords to desktop FileRecords
@@ -90,7 +91,7 @@ pub async fn import_files_pending(
     state: tauri::State<'_, AppState>,
     file_metadata: std::collections::HashMap<String, FileMetadata>,
 ) -> Result<ImportResult, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🚀 import_files_pending called with {} files (fast import using library)",
         file_metadata.len()
     );
@@ -119,14 +120,15 @@ pub async fn import_files_pending(
     let lib_result = biovault::data::import_files_as_pending(&db, csv_imports)
         .map_err(|e| format!("Failed to import files as pending: {}", e))?;
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Added {} files to queue, skipped {} (using library)",
-        lib_result.imported, lib_result.skipped
+        lib_result.imported,
+        lib_result.skipped
     );
 
     // Log any errors
     for error in &lib_result.errors {
-        eprintln!("⚠️  Import error: {}", error);
+        crate::desktop_log!("⚠️  Import error: {}", error);
     }
 
     Ok(ImportResult {
@@ -147,7 +149,7 @@ pub async fn import_files(
     pattern: String,
     file_id_map: std::collections::HashMap<String, String>,
 ) -> Result<ImportResult, String> {
-    eprintln!(
+    crate::desktop_log!(
         "🔍 import_files called with {} files, pattern: {} (using library)",
         files.len(),
         pattern
@@ -173,21 +175,21 @@ pub async fn import_files(
         return Err("No file extensions found".to_string());
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "📥 Importing from common root: {} with {} extension(s), {} total files",
         common_root.display(),
         extensions.len(),
         files.len()
     );
 
-    eprintln!("🎯 Using pattern: '{}'", pattern);
-    eprintln!("\n=== PARTICIPANT ID EXTRACTION ===");
+    crate::desktop_log!("🎯 Using pattern: '{}'", pattern);
+    crate::desktop_log!("\n=== PARTICIPANT ID EXTRACTION ===");
 
     // First scan for files
     let mut all_csv_imports = Vec::new();
 
     for ext in &extensions {
-        eprintln!("\n📂 Scanning files with extension: {}", ext);
+        crate::desktop_log!("\n📂 Scanning files with extension: {}", ext);
 
         // Scan directory
         let scan_result = biovault::data::scan(
@@ -213,17 +215,19 @@ pub async fn import_files(
             } else {
                 match biovault::data::extract_id_from_pattern(&file_info.path, &pattern) {
                     Ok(Some(id)) => {
-                        eprintln!("   ✓ {} → participant: {}", filename, id);
+                        crate::desktop_log!("   ✓ {} → participant: {}", filename, id);
                         Some(id)
                     }
                     Ok(None) => {
-                        eprintln!("   ✗ {} → no match", filename);
+                        crate::desktop_log!("   ✗ {} → no match", filename);
                         None
                     }
                     Err(err) => {
-                        eprintln!(
+                        crate::desktop_log!(
                             "   ⚠️ {} → failed to extract using pattern '{}': {}",
-                            filename, pattern, err
+                            filename,
+                            pattern,
+                            err
                         );
                         None
                     }
@@ -242,24 +246,25 @@ pub async fn import_files(
             });
         }
 
-        eprintln!("✅ Found {} files with extension {}", file_count, ext);
+        crate::desktop_log!("✅ Found {} files with extension {}", file_count, ext);
     }
 
-    eprintln!("\n=== END EXTRACTION ===\n");
+    crate::desktop_log!("\n=== END EXTRACTION ===\n");
 
     // Fast import to pending queue (no hashing/analysis)
     let db = state.biovault_db.lock().unwrap();
     let lib_result = biovault::data::import_files_as_pending(&db, all_csv_imports)
         .map_err(|e| format!("Failed to import files: {}", e))?;
 
-    eprintln!(
+    crate::desktop_log!(
         "✅ Added {} files to queue, skipped {} (background processing will complete)",
-        lib_result.imported, lib_result.skipped
+        lib_result.imported,
+        lib_result.skipped
     );
 
     // Link files to participants in bulk if needed
     if !file_id_map.is_empty() {
-        eprintln!(
+        crate::desktop_log!(
             "🔗 Bulk linking {} files to participants",
             file_id_map.len()
         );
@@ -268,7 +273,7 @@ pub async fn import_files(
         let linked_count = biovault::data::link_files_bulk(&db, &file_id_map)
             .map_err(|e| format!("Failed to link files: {}", e))?;
 
-        eprintln!("✅ Bulk linked {} file(s)", linked_count);
+        crate::desktop_log!("✅ Bulk linked {} file(s)", linked_count);
     }
 
     // Fetch files to get updated participant links using library
@@ -305,7 +310,7 @@ pub async fn import_files(
         .filter(|f| files.contains(&f.file_path))
         .collect();
 
-    eprintln!("✅ Imported {} files successfully", imported_files.len());
+    crate::desktop_log!("✅ Imported {} files successfully", imported_files.len());
 
     Ok(ImportResult {
         success: true,

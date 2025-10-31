@@ -3,6 +3,59 @@
 
 const isTauri = typeof window !== 'undefined' && window.__TAURI__
 
+const originalConsole = {
+	log: console.log.bind(console),
+	warn: console.warn.bind(console),
+	error: console.error.bind(console),
+	info: console.info ? console.info.bind(console) : console.log.bind(console),
+}
+
+function formatConsoleArg(arg) {
+	if (typeof arg === 'string') {
+		return arg
+	}
+
+	try {
+		return JSON.stringify(arg)
+	} catch (_err) {
+		return String(arg)
+	}
+}
+
+function forwardConsoleToDesktop(level, args) {
+	if (!isTauri || !window.__TAURI__?.core?.invoke) {
+		return
+	}
+
+	const message = args.map(formatConsoleArg).join(' ')
+	if (!message) {
+		return
+	}
+
+	window.__TAURI__.core.invoke('log_frontend_message', { level, message }).catch(() => {
+		// Ignore logging transport errors so console output remains unaffected
+	})
+}
+
+console.log = (...args) => {
+	forwardConsoleToDesktop('info', args)
+	originalConsole.log(...args)
+}
+console.warn = (...args) => {
+	forwardConsoleToDesktop('warn', args)
+	originalConsole.warn(...args)
+}
+console.error = (...args) => {
+	forwardConsoleToDesktop('error', args)
+	originalConsole.error(...args)
+}
+if (console.info) {
+	console.info = (...args) => {
+		forwardConsoleToDesktop('info', args)
+		originalConsole.info(...args)
+	}
+}
+
 // WebSocket connection manager for browser mode
 class WsBridge {
 	constructor(url = 'ws://localhost:3333') {
@@ -175,6 +228,12 @@ async function mockInvoke(cmd, args = {}) {
 			return []
 		case 'get_command_logs':
 			return []
+		case 'get_desktop_log_text':
+			return ''
+		case 'get_desktop_log_dir':
+			return '/tmp'
+		case 'clear_desktop_log':
+			return null
 		case 'get_settings':
 			return {
 				docker_path: '/usr/local/bin/docker',

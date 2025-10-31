@@ -47,6 +47,12 @@ test.beforeEach(async ({ page, context }) => {
 					return []
 				case 'get_command_logs':
 					return []
+				case 'get_desktop_log_text':
+					return ''
+				case 'clear_desktop_log':
+					return null
+				case 'get_desktop_log_dir':
+					return '/tmp'
 				case 'get_settings':
 					return {
 						docker_path: '/usr/local/bin/docker',

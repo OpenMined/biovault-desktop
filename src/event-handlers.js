@@ -60,6 +60,7 @@ export function setupEventHandlers({
 	// Logs
 	copyLogs,
 	clearLogs,
+	openLogsFolder,
 	// Settings
 	handleSyftBoxAuthentication,
 	saveSettings,
@@ -367,6 +368,10 @@ export function setupEventHandlers({
 	const clearLogsBtn = document.getElementById('clear-logs-btn')
 	if (clearLogsBtn) {
 		clearLogsBtn.addEventListener('click', clearLogs)
+	}
+	const openLogsFolderBtn = document.getElementById('open-logs-folder-btn')
+	if (openLogsFolderBtn) {
+		openLogsFolderBtn.addEventListener('click', openLogsFolder)
 	}
 
 	// Data view event handlers are now initialized in data.js via initializeDataTab()

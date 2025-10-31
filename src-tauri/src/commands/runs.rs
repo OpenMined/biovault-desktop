@@ -211,19 +211,17 @@ pub async fn execute_analysis(
         .unwrap()
         .as_secs();
 
-    writeln!(
-        log_file,
-        "\n=== Run {} started at {} ===",
-        run_id, timestamp
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(
-        log_file,
+    let start_line = format!("=== Run {} started at {} ===", run_id, timestamp);
+    writeln!(log_file, "\n{}", start_line).map_err(|e| e.to_string())?;
+    crate::desktop_log!("{}", start_line);
+
+    let details_line = format!(
         "Calling biovault::run directly with project: {} and samplesheet: {}",
         project_path,
         samplesheet_path.display()
-    )
-    .map_err(|e| e.to_string())?;
+    );
+    writeln!(log_file, "{}", details_line).map_err(|e| e.to_string())?;
+    crate::desktop_log!("{}", details_line);
     writeln!(log_file).map_err(|e| e.to_string())?;
 
     // Emit initial log lines to UI
@@ -274,9 +272,13 @@ pub async fn execute_analysis(
     // Write final status to log
     let mut log_file = fs::OpenOptions::new().append(true).open(&log_path).ok();
     if let Some(ref mut file) = log_file {
-        let _ = writeln!(file, "\n=== Analysis {} ===", status_str);
+        let summary_line = format!("=== Analysis {} ===", status_str);
+        let _ = writeln!(file, "\n{}", summary_line);
+        crate::desktop_log!("{}", summary_line);
         if let Err(ref e) = result {
-            let _ = writeln!(file, "Error: {}", e);
+            let error_line = format!("Error: {}", e);
+            let _ = writeln!(file, "{}", error_line);
+            crate::desktop_error!("{}", error_line);
         }
     }
 

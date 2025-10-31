@@ -128,9 +128,14 @@ test.describe('Onboarding flow', () => {
 						case 'get_files':
 						case 'get_projects':
 						case 'get_runs':
+						case 'get_desktop_log_text':
+							return ''
+						case 'clear_desktop_log':
 						case 'get_command_logs':
 						case 'get_settings':
 							return null
+						case 'get_desktop_log_dir':
+							return '/tmp'
 						case 'syftbox_request_otp':
 							state.requestCount += 1
 							state.otp = state.requestCount === 1 ? '12345678' : '87654321'
