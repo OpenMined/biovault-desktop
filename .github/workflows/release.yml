@@ -117,34 +117,89 @@ jobs:
               fh.write(f"tag={tag}\n")
           PY
 
+  configure-build-matrix:
+    name: Determine build targets
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-targets: ${{ steps.set-matrix.outputs.has-targets }}
+    steps:
+      - name: Build matrix
+        id: set-matrix
+        env:
+          BUILD_MACOS_ARM64: ${{ inputs.build_macos_arm64 }}
+          BUILD_MACOS_X64: ${{ inputs.build_macos_x64 }}
+          BUILD_WINDOWS_X64: ${{ inputs.build_windows_x64 }}
+          BUILD_LINUX_X64: ${{ inputs.build_linux_x64 }}
+          BUILD_LINUX_ARM64: ${{ inputs.build_linux_arm64 }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          def is_enabled(key: str) -> bool:
+              value = os.environ.get(key, '').strip().lower()
+              return value in {'1', 'true', 'yes', 'on'}
+
+          entries = []
+
+          if is_enabled('BUILD_MACOS_ARM64'):
+              entries.append({
+                  'runs-on': 'macos-latest',
+                  'args': 'aarch64-apple-darwin',
+                  'build_kind': 'tauri',
+                  'target': 'macos-arm64',
+              })
+
+          if is_enabled('BUILD_MACOS_X64'):
+              entries.append({
+                  'runs-on': 'macos-latest',
+                  'args': 'x86_64-apple-darwin',
+                  'build_kind': 'tauri',
+                  'target': 'macos-x64',
+              })
+
+          if is_enabled('BUILD_WINDOWS_X64'):
+              entries.append({
+                  'runs-on': 'windows-latest',
+                  'args': 'x86_64-pc-windows-msvc',
+                  'build_kind': 'tauri',
+                  'target': 'windows-x64',
+              })
+
+          if is_enabled('BUILD_LINUX_X64'):
+              entries.append({
+                  'runs-on': 'ubuntu-22.04',
+                  'args': 'x86_64-unknown-linux-gnu',
+                  'build_kind': 'tauri',
+                  'target': 'linux-x64',
+              })
+
+          if is_enabled('BUILD_LINUX_ARM64'):
+              entries.append({
+                  'runs-on': 'ubuntu-22.04-arm',
+                  'args': 'aarch64-unknown-linux-gnu',
+                  'build_kind': 'docker',
+                  'target': 'linux-arm64',
+              })
+
+          matrix = {'include': entries}
+          has_targets = 'true' if entries else 'false'
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"matrix={json.dumps(matrix)}\n")
+              fh.write(f"has-targets={has_targets}\n")
+          PY
+
   build:
     name: Build app bundle
-    needs: prepare-version
+    needs:
+      - prepare-version
+      - configure-build-matrix
+    if: ${{ needs.configure-build-matrix.outputs.has-targets == 'true' }}
     strategy:
-      matrix:
-        include:
-          - runs-on: macos-latest
-            args: "aarch64-apple-darwin"
-            build_kind: tauri
-            enabled: ${{ inputs.build_macos_arm64 }}
-          - runs-on: macos-latest
-            args: "x86_64-apple-darwin"
-            build_kind: tauri
-            enabled: ${{ inputs.build_macos_x64 }}
-          - runs-on: windows-latest
-            args: "x86_64-pc-windows-msvc"
-            build_kind: tauri
-            enabled: ${{ inputs.build_windows_x64 }}
-          - runs-on: ubuntu-22.04
-            args: "x86_64-unknown-linux-gnu"
-            build_kind: tauri
-            enabled: ${{ inputs.build_linux_x64 }}
-          - runs-on: ubuntu-22.04-arm
-            args: "aarch64-unknown-linux-gnu"
-            build_kind: docker
-            enabled: ${{ inputs.build_linux_arm64 }}
+      matrix: ${{ fromJSON(needs.configure-build-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.runs-on }}
-    if: ${{ matrix.enabled }}
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
