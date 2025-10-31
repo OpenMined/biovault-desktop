@@ -1,7 +1,14 @@
 #!/bin/bash
 
 # Install the app from DMG to Applications folder
-DMG_PATH="src-tauri/target/release/bundle/dmg/BioVault_0.1.0_aarch64.dmg"
+DMG_DIR="src-tauri/target/release/bundle/dmg"
+DMG_PATH=$(ls -t "${DMG_DIR}"/BioVault_*.dmg 2>/dev/null | head -n 1)
+if [[ -z "${DMG_PATH}" ]]; then
+  echo "❌ Error: No BioVault DMG found in ${DMG_DIR}"
+  echo "Please run 'npm run build' first"
+  exit 1
+fi
+echo "ℹ️ Using DMG: ${DMG_PATH}"
 APP_NAME="BioVault.app"
 MOUNT_POINT="/Volumes/BioVault"
 
