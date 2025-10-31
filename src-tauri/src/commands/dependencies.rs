@@ -5,10 +5,65 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
-pub fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
+pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckResult, String> {
+    eprintln!("DEBUG: save_dependency_states() CALLED");
+    eprintln!("DEBUG: biovault_path = {:?}", biovault_path);
+
     // Check current dependency states
-    let check_result = biovault::cli::commands::check::check_dependencies_result()
-        .map_err(|e| format!("Failed to check dependencies: {}", e))?;
+    eprintln!("DEBUG: About to call check_dependencies_result()");
+    let check_result = match biovault::cli::commands::check::check_dependencies_result() {
+        Ok(result) => {
+            eprintln!(
+                "DEBUG: check_dependencies_result() returned OK with {} deps",
+                result.dependencies.len()
+            );
+            result
+        }
+        Err(e) => {
+            eprintln!("DEBUG: check_dependencies_result() FAILED: {}", e);
+            return Err(format!("Failed to check dependencies: {}", e));
+        }
+    };
+
+    eprintln!(
+        "DEBUG: Processing {} dependencies",
+        check_result.dependencies.len()
+    );
+
+    // Save binary paths to config.yaml for any found dependencies
+    for (idx, dep) in check_result.dependencies.iter().enumerate() {
+        eprintln!(
+            "DEBUG: [{}/{}] Processing {}: found={}, path={:?}",
+            idx + 1,
+            check_result.dependencies.len(),
+            dep.name,
+            dep.found,
+            dep.path
+        );
+
+        if dep.found && dep.path.is_some() {
+            let path = dep.path.clone().unwrap();
+            eprintln!("DEBUG:   Calling save_binary_path({}, {})", dep.name, path);
+
+            match biovault::config::Config::save_binary_path(&dep.name, Some(path.clone())) {
+                Ok(_) => {
+                    eprintln!("DEBUG:   ✅ SAVED {} = {}", dep.name, path);
+                }
+                Err(e) => {
+                    eprintln!("DEBUG:   ❌ FAILED to save {}: {}", dep.name, e);
+                }
+            }
+        } else {
+            eprintln!(
+                "DEBUG:   SKIPPING {} (found={}, has_path={})",
+                dep.name,
+                dep.found,
+                dep.path.is_some()
+            );
+        }
+    }
+
+    eprintln!("DEBUG: Finished processing all dependencies");
 
     // Save as JSON for easy retrieval
     let states_path = biovault_path.join("dependency_states.json");
@@ -18,8 +73,34 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
     fs::write(&states_path, json)
         .map_err(|e| format!("Failed to write dependency states: {}", e))?;
 
-    crate::desktop_log!("💾 Saved dependency states to: {}", states_path.display());
-    Ok(())
+    eprintln!(
+        "DEBUG: Saved dependency_states.json to: {}",
+        states_path.display()
+    );
+
+    // Verify config was updated by reading it back
+    eprintln!("DEBUG: Verifying config.yaml contents...");
+    match biovault::config::Config::load() {
+        Ok(config) => {
+            eprintln!("DEBUG: Config loaded successfully, checking binary_paths:");
+            for binary in ["java", "docker", "nextflow", "syftbox", "uv"] {
+                match config.get_binary_path(binary) {
+                    Some(path) => {
+                        eprintln!("DEBUG:   ✅ {} = {}", binary, path);
+                    }
+                    None => {
+                        eprintln!("DEBUG:   ❌ {} = <NOT SET>", binary);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("DEBUG: ⚠️ FAILED to load config for verification: {}", e);
+        }
+    }
+
+    eprintln!("DEBUG: save_dependency_states() COMPLETE");
+    Ok(check_result)
 }
 
 #[tauri::command]
@@ -173,7 +254,7 @@ pub fn update_saved_dependency_states() -> Result<(), String> {
     });
     let biovault_path = PathBuf::from(&biovault_home);
 
-    save_dependency_states(&biovault_path)?;
+    let _ = save_dependency_states(&biovault_path)?;
     Ok(())
 }
 
@@ -253,6 +334,16 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
         .map(|maybe_path| {
             if let Some(path) = maybe_path {
                 crate::desktop_log!("✅ Installed {} at: {}", name, path);
+
+                // Save the binary path to config
+                if let Err(e) =
+                    biovault::config::Config::save_binary_path(&name, Some(path.clone()))
+                {
+                    crate::desktop_log!("⚠️  Failed to save binary path to config: {}", e);
+                } else {
+                    crate::desktop_log!("💾 Saved {} binary path to config: {}", name, path);
+                }
+
                 path
             } else {
                 crate::desktop_log!(

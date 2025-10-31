@@ -1,0 +1,2 @@
+
+bun run tauri build

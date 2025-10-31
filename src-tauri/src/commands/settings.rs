@@ -4,27 +4,9 @@ use biovault::cli::commands::init;
 use rusqlite::Connection;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tauri_plugin_autostart::ManagerExt;
-
-// Helper function to save dependency states during onboarding
-fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
-    // Check current dependency states
-    let check_result = biovault::cli::commands::check::check_dependencies_result()
-        .map_err(|e| format!("Failed to check dependencies: {}", e))?;
-
-    // Save as JSON for easy retrieval
-    let states_path = biovault_path.join("dependency_states.json");
-    let json = serde_json::to_string_pretty(&check_result)
-        .map_err(|e| format!("Failed to serialize dependency states: {}", e))?;
-
-    fs::write(&states_path, json)
-        .map_err(|e| format!("Failed to write dependency states: {}", e))?;
-
-    crate::desktop_log!("💾 Saved dependency states to: {}", states_path.display());
-    Ok(())
-}
 
 #[tauri::command]
 pub fn get_config_path() -> Result<String, String> {
@@ -172,14 +154,50 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     let biovault_path = PathBuf::from(&biovault_home);
 
     // Call bv init to set up templates and directory structure
+    eprintln!("DEBUG: About to call init::execute()");
     crate::desktop_log!("🚀 Initializing BioVault with email: {}", email);
     init::execute(Some(&email), true)
         .await
         .map_err(|e| format!("Failed to initialize BioVault: {}", e))?;
 
-    // Also save the current dependency states for later retrieval
-    save_dependency_states(&biovault_path)?;
+    eprintln!("DEBUG: init::execute() complete, calling save_dependency_states()");
+    crate::desktop_log!("✅ Init complete, now saving dependency states...");
 
+    // Also save the current dependency states for later retrieval
+    match super::dependencies::save_dependency_states(&biovault_path) {
+        Ok(_) => {
+            eprintln!("DEBUG: save_dependency_states() returned OK");
+            crate::desktop_log!("✅ Dependency states saved successfully");
+            match biovault::config::Config::load() {
+                Ok(config) => {
+                    println!("✓ Dependency binaries detected and saved:");
+                    for binary in ["java", "docker", "nextflow", "syftbox", "uv"] {
+                        match config.get_binary_path(binary) {
+                            Some(path) => {
+                                println!("  - {}: {}", binary, path);
+                                crate::desktop_log!("  {} binary path: {}", binary, path);
+                            }
+                            None => {
+                                println!("  - {}: <not found>", binary);
+                                crate::desktop_log!("  {} binary path not set", binary);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    println!("⚠️  Failed to read saved dependency paths: {}", err);
+                    crate::desktop_log!("⚠️  Failed to read saved dependency paths: {}", err);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("DEBUG: save_dependency_states() returned ERROR: {}", e);
+            crate::desktop_log!("⚠️  ERROR saving dependency states: {}", e);
+            return Err(format!("Failed to save dependency states: {}", e));
+        }
+    }
+
+    eprintln!("DEBUG: Onboarding complete");
     crate::desktop_log!("✅ Onboarding complete for: {}", email);
     Ok(())
 }
