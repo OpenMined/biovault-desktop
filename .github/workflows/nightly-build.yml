@@ -1,0 +1,19 @@
+name: Nightly Build
+
+on:
+  schedule:
+    # Run every day at 05:00 UTC
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-build
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: Nightly dry-run release build
+    uses: ./.github/workflows/release.yml
+    with:
+      dry_run: true
+    secrets: inherit
