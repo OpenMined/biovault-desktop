@@ -2,10 +2,21 @@ use chrono::Local;
 use libc::{STDERR_FILENO, STDOUT_FILENO};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+#[cfg(windows)]
+use std::os::fd::RawFd;
+#[cfg(unix)]
 use std::os::fd::{FromRawFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::path::PathBuf;
 use std::sync::Once;
 use std::thread;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+    DuplicateHandle, GetCurrentProcess, DUPLICATE_SAME_ACCESS,
+};
 
 /// Represents the type of log event being recorded.
 #[derive(Clone, Copy)]
@@ -101,8 +112,27 @@ fn redirect_stream_to_log(fd: RawFd, level: LogLevel, label: &'static str) -> io
     close_wrap(write_fd)?;
 
     thread::spawn(move || {
-        let mut reader = unsafe { File::from_raw_fd(read_fd) };
-        let mut original = unsafe { File::from_raw_fd(original_fd) };
+        let mut reader = match unsafe { file_from_descriptor(read_fd) } {
+            Ok(file) => file,
+            Err(err) => {
+                let _ = write_log_line(
+                    LogLevel::Error,
+                    &format!("Failed to open pipe reader for {}: {}", label, err),
+                );
+                return;
+            }
+        };
+
+        let mut original = match unsafe { file_from_descriptor(original_fd) } {
+            Ok(file) => file,
+            Err(err) => {
+                let _ = write_log_line(
+                    LogLevel::Error,
+                    &format!("Failed to open duplicated stream for {}: {}", label, err),
+                );
+                return;
+            }
+        };
         let mut buffer = [0u8; 4096];
         let mut pending: Vec<u8> = Vec::new();
 
@@ -179,6 +209,37 @@ pub fn init_stdio_forwarding() {
             previous_hook(info);
         }));
     });
+}
+
+#[cfg(unix)]
+unsafe fn file_from_descriptor(fd: RawFd) -> io::Result<File> {
+    Ok(File::from_raw_fd(fd))
+}
+
+#[cfg(windows)]
+unsafe fn file_from_descriptor(fd: RawFd) -> io::Result<File> {
+    let handle = libc::_get_osfhandle(fd);
+    if handle == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let process = unsafe { GetCurrentProcess() };
+    let mut duplicated: HANDLE = 0;
+    let success = unsafe {
+        DuplicateHandle(
+            process,
+            handle as HANDLE,
+            process,
+            &mut duplicated,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if success == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let _ = close_wrap(fd);
+    Ok(File::from_raw_handle(duplicated as RawHandle))
 }
 
 #[macro_export]

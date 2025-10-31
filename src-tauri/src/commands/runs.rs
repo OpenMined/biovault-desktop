@@ -9,6 +9,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
+const DEPENDENCY_BINARIES: [&str; 5] = ["nextflow", "java", "docker", "syftbox", "uv"];
+
 #[tauri::command]
 pub fn start_analysis(
     state: tauri::State<AppState>,
@@ -244,48 +246,130 @@ pub async fn execute_analysis(
     // Set BIOVAULT_HOME environment variable
     env::set_var("BIOVAULT_HOME", biovault_home.to_string_lossy().to_string());
 
-    // Setup PATH for pipeline execution
-    // Desktop app doesn't inherit shell PATH, so we need to augment it with configured binary paths
-    // Config already knows where binaries are from 'bv check' command
+    // Capture original environment for logging
+    let original_path = env::var("PATH").unwrap_or_default();
+    let original_java_home = env::var("JAVA_HOME").ok();
 
-    // Log original PATH from desktop app
-    if let Some(original_path) = env::var_os("PATH") {
-        crate::desktop_log!(
-            "[Desktop] Original PATH: {}",
-            original_path.to_string_lossy()
-        );
-    } else {
-        crate::desktop_log!("[Desktop] WARNING: No PATH environment variable!");
-    }
-
-    if let Ok(config) = biovault::config::get_config() {
-        // Log what binary paths are configured
-        crate::desktop_log!("[Desktop] Configured binaries in config:");
-        for binary in ["nextflow", "java", "docker"] {
-            if let Some(path) = config.get_binary_path(binary) {
-                crate::desktop_log!("  {} = {}", binary, path);
+    let mut env_lines = vec![
+        "=== Nextflow environment ===".to_string(),
+        format!("  BIOVAULT_HOME = {}", biovault_home.display()),
+        format!("  Run directory = {}", run_dir_path.display()),
+        format!("  Work directory = {}", work_subdir.display()),
+        format!("  Results directory = {}", results_subdir.display()),
+        format!("  Samplesheet = {}", samplesheet_path.display()),
+        format!(
+            "  PATH (original) = {}",
+            if original_path.is_empty() {
+                "<unset>".to_string()
             } else {
-                crate::desktop_log!("  {} = <not configured>", binary);
+                original_path.clone()
+            }
+        ),
+        format!(
+            "  JAVA_HOME (original) = {}",
+            original_java_home
+                .clone()
+                .unwrap_or_else(|| "<unset>".to_string())
+        ),
+    ];
+
+    let config = match biovault::config::get_config() {
+        Ok(cfg) => Some(cfg),
+        Err(err) => {
+            env_lines.push(format!(
+                "  WARNING: Failed to load BioVault config: {}",
+                err
+            ));
+            None
+        }
+    };
+
+    let nextflow_bin_display = config
+        .as_ref()
+        .and_then(|cfg| cfg.get_binary_path("nextflow"))
+        .unwrap_or_else(|| "nextflow".to_string());
+    env_lines.push(format!(
+        "  Nextflow binary preference = {}",
+        nextflow_bin_display
+    ));
+
+    if let Some(ref cfg) = config {
+        env_lines.push("  Configured binary paths:".to_string());
+        for binary in DEPENDENCY_BINARIES {
+            match cfg.get_binary_path(binary) {
+                Some(path) => env_lines.push(format!("    {} = {}", binary, path)),
+                None => env_lines.push(format!("    {} = <not configured>", binary)),
             }
         }
 
-        if let Some(augmented_path) = build_augmented_path(&config) {
-            crate::desktop_log!("[Desktop] Setting augmented PATH: {}", augmented_path);
-            env::set_var("PATH", augmented_path);
-
-            // Verify it was set
-            if let Some(verify_path) = env::var_os("PATH") {
-                crate::desktop_log!(
-                    "[Desktop] PATH after setting: {}",
-                    verify_path.to_string_lossy()
-                );
-            }
+        if let Some(augmented_path) = build_augmented_path(cfg) {
+            env::set_var("PATH", &augmented_path);
+            env_lines.push(format!("  PATH (augmented) = {}", augmented_path));
         } else {
-            crate::desktop_log!("[Desktop] WARNING: Could not build augmented PATH");
+            env_lines.push("  PATH (augmented) = <unchanged>".to_string());
         }
-    } else {
-        crate::desktop_log!("[Desktop] WARNING: Could not load config, using system PATH");
+
+        let mut java_home_set = false;
+        if let Some(java_bin) = cfg.get_binary_path("java") {
+            env_lines.push(format!("  java binary = {}", java_bin));
+            if let Some(java_home) = derive_java_home(&java_bin) {
+                env::set_var("JAVA_HOME", &java_home);
+                env_lines.push(format!(
+                    "  JAVA_HOME derived from java binary = {}",
+                    java_home
+                ));
+                java_home_set = true;
+            } else {
+                env_lines.push(format!(
+                    "  WARNING: Could not derive JAVA_HOME from java binary: {}",
+                    java_bin
+                ));
+            }
+        }
+
+        if !java_home_set {
+            if let Some(ref existing) = original_java_home {
+                env_lines.push(format!(
+                    "  JAVA_HOME retained (pre-existing) = {}",
+                    existing
+                ));
+            }
+        }
+    } else if let Some(existing) = original_java_home.clone() {
+        env_lines.push(format!(
+            "  JAVA_HOME retained (pre-existing) = {}",
+            existing
+        ));
     }
+
+    let nxf_home_path = biovault_home.join("data").join("nextflow");
+    match fs::create_dir_all(&nxf_home_path) {
+        Ok(_) => {
+            env::set_var("NXF_HOME", &nxf_home_path);
+            env_lines.push(format!("  NXF_HOME = {}", nxf_home_path.to_string_lossy()));
+        }
+        Err(err) => env_lines.push(format!(
+            "  WARNING: Failed to prepare NXF_HOME at {}: {}",
+            nxf_home_path.to_string_lossy(),
+            err
+        )),
+    }
+
+    env_lines.push(format!(
+        "  PATH (effective) = {}",
+        env::var("PATH").unwrap_or_else(|_| "<unset>".to_string())
+    ));
+    env_lines.push(format!(
+        "  JAVA_HOME (effective) = {}",
+        env::var("JAVA_HOME").unwrap_or_else(|_| "<unset>".to_string())
+    ));
+    env_lines.push(format!(
+        "  NXF_HOME (effective) = {}",
+        env::var("NXF_HOME").unwrap_or_else(|_| "<unset>".to_string())
+    ));
+    env_lines.push(String::new());
+
+    append_run_log_lines(&mut log_file, &window, &env_lines)?;
 
     // Create RunParams struct to call the execute function directly
     let params = RunParams {
@@ -485,7 +569,7 @@ fn build_augmented_path(cfg: &Config) -> Option<String> {
     let mut entries = BTreeSet::new();
 
     // Extract parent directories from configured binary paths
-    for key in ["nextflow", "java", "docker"] {
+    for key in DEPENDENCY_BINARIES {
         if let Some(bin_path) = cfg.get_binary_path(key) {
             if !bin_path.is_empty() {
                 if let Some(parent) = Path::new(&bin_path).parent() {
@@ -508,4 +592,48 @@ fn build_augmented_path(cfg: &Config) -> Option<String> {
     env::join_paths(paths)
         .ok()
         .and_then(|joined| joined.into_string().ok())
+}
+
+fn derive_java_home(java_bin: &str) -> Option<String> {
+    let path = Path::new(java_bin);
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let bin_dir = resolved.parent()?;
+
+    if bin_dir
+        .file_name()
+        .map(|name| name == "bin")
+        .unwrap_or(false)
+    {
+        return bin_dir
+            .parent()
+            .map(|home| home.to_string_lossy().into_owned());
+    }
+
+    // Some macOS installs resolve to .../Contents/Home/bin/java
+    if bin_dir.to_string_lossy().ends_with("Contents/Home/bin") {
+        return bin_dir
+            .parent()
+            .map(|home| home.to_string_lossy().into_owned());
+    }
+
+    None
+}
+
+fn append_run_log_lines(
+    log_file: &mut fs::File,
+    window: &tauri::Window,
+    lines: &[String],
+) -> Result<(), String> {
+    for line in lines {
+        writeln!(log_file, "{}", line)
+            .map_err(|e| format!("Failed to write to log file: {}", e))?;
+        crate::desktop_log!("{}", line);
+        let _ = window.emit("log-line", line.clone());
+        if line.is_empty() {
+            println!();
+        } else {
+            println!("{}", line);
+        }
+    }
+    Ok(())
 }
