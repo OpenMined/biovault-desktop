@@ -2,7 +2,7 @@ use crate::types::{AppState, Participant};
 
 #[tauri::command]
 pub fn get_participants(state: tauri::State<AppState>) -> Result<Vec<Participant>, String> {
-    eprintln!("🔍 get_participants called (using library)");
+    crate::desktop_log!("🔍 get_participants called (using library)");
 
     let db = state.biovault_db.lock().unwrap();
     let cli_participants = biovault::data::list_participants(&db)
@@ -19,7 +19,7 @@ pub fn get_participants(state: tauri::State<AppState>) -> Result<Vec<Participant
         })
         .collect();
 
-    eprintln!("✅ Returning {} participants", participants.len());
+    crate::desktop_log!("✅ Returning {} participants", participants.len());
     Ok(participants)
 }
 
@@ -28,7 +28,7 @@ pub fn delete_participant(
     state: tauri::State<AppState>,
     participant_id: i64,
 ) -> Result<(), String> {
-    eprintln!("🗑️ delete_participant called (using library)");
+    crate::desktop_log!("🗑️ delete_participant called (using library)");
 
     let db = state.biovault_db.lock().unwrap();
     biovault::data::delete_participant(&db, participant_id)
@@ -46,7 +46,7 @@ pub fn delete_participants_bulk(
         return Ok(0);
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "🗑️ Deleting {} participants in bulk (using library)",
         participant_ids.len()
     );
@@ -55,6 +55,6 @@ pub fn delete_participants_bulk(
     let deleted = biovault::data::delete_participants_bulk(&db, &participant_ids)
         .map_err(|e| format!("Failed to delete participants: {}", e))?;
 
-    eprintln!("✅ Deleted {} participants", deleted);
+    crate::desktop_log!("✅ Deleted {} participants", deleted);
     Ok(deleted)
 }

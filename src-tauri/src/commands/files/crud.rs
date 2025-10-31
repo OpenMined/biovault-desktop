@@ -2,7 +2,7 @@ use crate::types::{AppState, FileRecord};
 
 #[tauri::command]
 pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
-    eprintln!("🔍 get_files called (using library)");
+    crate::desktop_log!("🔍 get_files called (using library)");
 
     let db = state.biovault_db.lock().unwrap();
     let cli_files = biovault::data::list_files(&db, None, None, false, None)
@@ -32,13 +32,13 @@ pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, Strin
         })
         .collect();
 
-    eprintln!("✅ Returning {} files", files.len());
+    crate::desktop_log!("✅ Returning {} files", files.len());
     Ok(files)
 }
 
 #[tauri::command]
 pub fn delete_file(state: tauri::State<AppState>, file_id: i64) -> Result<(), String> {
-    eprintln!("🗑️ delete_file called (using library)");
+    crate::desktop_log!("🗑️ delete_file called (using library)");
 
     let db = state.biovault_db.lock().unwrap();
     biovault::data::delete_file(&db, file_id)
@@ -56,7 +56,7 @@ pub fn delete_files_bulk(
         return Ok(0);
     }
 
-    eprintln!(
+    crate::desktop_log!(
         "🗑️ Deleting {} files in bulk (using library)",
         file_ids.len()
     );
@@ -65,6 +65,6 @@ pub fn delete_files_bulk(
     let deleted = biovault::data::delete_files_bulk(&db, &file_ids)
         .map_err(|e| format!("Failed to delete files: {}", e))?;
 
-    eprintln!("✅ Deleted {} files", deleted);
+    crate::desktop_log!("✅ Deleted {} files", deleted);
     Ok(deleted)
 }

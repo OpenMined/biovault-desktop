@@ -44,6 +44,12 @@ test.describe('SQL tab', () => {
 						return []
 					case 'get_command_logs':
 						return []
+					case 'get_desktop_log_text':
+						return ''
+					case 'clear_desktop_log':
+						return null
+					case 'get_desktop_log_dir':
+						return '/tmp'
 					case 'get_saved_dependency_states':
 						return { dependencies: [] }
 					case 'get_syftbox_state':

@@ -22,7 +22,7 @@ fn save_dependency_states(biovault_path: &Path) -> Result<(), String> {
     fs::write(&states_path, json)
         .map_err(|e| format!("Failed to write dependency states: {}", e))?;
 
-    eprintln!("💾 Saved dependency states to: {}", states_path.display());
+    crate::desktop_log!("💾 Saved dependency states to: {}", states_path.display());
     Ok(())
 }
 
@@ -57,16 +57,17 @@ pub fn check_is_onboarded() -> Result<bool, String> {
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     let config_path = biovault_home.join("config.yaml");
     let exists = config_path.exists();
-    eprintln!(
+    crate::desktop_log!(
         "🔍 Checking onboarding: config_path={:?}, exists={}",
-        config_path, exists
+        config_path,
+        exists
     );
     Ok(exists)
 }
 
 #[tauri::command]
 pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
-    eprintln!("🗑️ RESET: Deleting all BioVault data");
+    crate::desktop_log!("🗑️ RESET: Deleting all BioVault data");
 
     let biovault_path = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
@@ -109,7 +110,7 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
     if biovault_path.exists() {
         fs::remove_dir_all(&biovault_path)
             .map_err(|e| format!("Failed to delete BIOVAULT_HOME: {}", e))?;
-        eprintln!("   Deleted: {}", biovault_path.display());
+        crate::desktop_log!("   Deleted: {}", biovault_path.display());
     }
 
     // Also delete the pointer file that stores the BioVault home location
@@ -118,7 +119,7 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
         if pointer_path.exists() {
             fs::remove_file(&pointer_path)
                 .map_err(|e| format!("Failed to delete pointer file: {}", e))?;
-            eprintln!("   Deleted pointer: {}", pointer_path.display());
+            crate::desktop_log!("   Deleted pointer: {}", pointer_path.display());
         }
 
         // Best-effort removal of the directory if now empty
@@ -153,7 +154,7 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
         *shared_db = new_db;
     }
 
-    eprintln!("✅ RESET: All data deleted successfully");
+    crate::desktop_log!("✅ RESET: All data deleted successfully");
     Ok(())
 }
 
@@ -171,7 +172,7 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     let biovault_path = PathBuf::from(&biovault_home);
 
     // Call bv init to set up templates and directory structure
-    eprintln!("🚀 Initializing BioVault with email: {}", email);
+    crate::desktop_log!("🚀 Initializing BioVault with email: {}", email);
     init::execute(Some(&email), true)
         .await
         .map_err(|e| format!("Failed to initialize BioVault: {}", e))?;
@@ -179,7 +180,7 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     // Also save the current dependency states for later retrieval
     save_dependency_states(&biovault_path)?;
 
-    eprintln!("✅ Onboarding complete for: {}", email);
+    crate::desktop_log!("✅ Onboarding complete for: {}", email);
     Ok(())
 }
 
@@ -298,7 +299,7 @@ pub fn open_in_vscode(path: String) -> Result<(), String> {
         &path
     };
 
-    eprintln!("📂 Opening in VSCode: {}", target_path);
+    crate::desktop_log!("📂 Opening in VSCode: {}", target_path);
 
     Command::new("code").arg(target_path).spawn().map_err(|e| {
         format!(
@@ -341,11 +342,11 @@ pub fn open_folder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn show_in_folder(file_path: String) -> Result<(), String> {
-    eprintln!("📁 show_in_folder called with: {}", file_path);
+    crate::desktop_log!("📁 show_in_folder called with: {}", file_path);
 
     #[cfg(target_os = "macos")]
     {
-        eprintln!("🍎 Opening in Finder (macOS)...");
+        crate::desktop_log!("🍎 Opening in Finder (macOS)...");
         let result = std::process::Command::new("open")
             .arg("-R")
             .arg(&file_path)
@@ -353,9 +354,9 @@ pub fn show_in_folder(file_path: String) -> Result<(), String> {
             .map_err(|e| e.to_string());
 
         if let Err(ref e) = result {
-            eprintln!("❌ Failed to open Finder: {}", e);
+            crate::desktop_log!("❌ Failed to open Finder: {}", e);
         } else {
-            eprintln!("✅ Finder command executed");
+            crate::desktop_log!("✅ Finder command executed");
         }
 
         result?;

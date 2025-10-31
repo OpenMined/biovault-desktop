@@ -64,9 +64,10 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
 fn append_pipeline_log(window: &tauri::Window, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
-            eprintln!(
+            crate::desktop_log!(
                 "Failed to ensure pipeline log directory {:?}: {}",
-                parent, err
+                parent,
+                err
             );
         }
     }
@@ -76,9 +77,11 @@ fn append_pipeline_log(window: &tauri::Window, log_path: &Path, message: &str) {
             let _ = writeln!(file, "{}", message);
         }
         Err(err) => {
-            eprintln!(
+            crate::desktop_log!(
                 "Failed to write pipeline log at {:?}: {} | message: {}",
-                log_path, err, message
+                log_path,
+                err,
+                message
             );
         }
     }

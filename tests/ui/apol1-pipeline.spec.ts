@@ -154,6 +154,12 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 						case 'get_projects':
 						case 'get_command_logs':
 							return []
+						case 'get_desktop_log_text':
+							return ''
+						case 'clear_desktop_log':
+							return null
+						case 'get_desktop_log_dir':
+							return '/tmp'
 						case 'get_pipelines':
 							return state.pipelines.map((p) => ({ ...p }))
 						case 'get_runs':

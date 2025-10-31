@@ -5,7 +5,7 @@ static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
-    eprintln!("🌐 Opening URL: {}", url);
+    crate::desktop_log!("🌐 Opening URL: {}", url);
 
     // Use webbrowser crate or OS-specific command to open URL
     #[cfg(target_os = "macos")]
@@ -37,31 +37,31 @@ pub fn open_url(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn syftbox_request_otp(email: String) -> Result<(), String> {
-    eprintln!("📧 syftbox_request_otp called for: {}", email);
+    crate::desktop_log!("📧 syftbox_request_otp called for: {}", email);
 
     biovault::cli::commands::syftbox::request_otp(Some(email), None, None)
         .await
         .map_err(|e| format!("{}", e))?;
 
-    eprintln!("✅ OTP request sent successfully");
+    crate::desktop_log!("✅ OTP request sent successfully");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn syftbox_submit_otp(code: String, email: String) -> Result<(), String> {
-    eprintln!("🔐 syftbox_submit_otp called");
+    crate::desktop_log!("🔐 syftbox_submit_otp called");
 
     biovault::cli::commands::syftbox::submit_otp(&code, Some(email), None, None, None, None)
         .await
         .map_err(|e| format!("{}", e))?;
 
-    eprintln!("✅ OTP verified and credentials stored");
+    crate::desktop_log!("✅ OTP verified and credentials stored");
     Ok(())
 }
 
 #[tauri::command]
 pub fn check_syftbox_auth() -> Result<bool, String> {
-    eprintln!("🔍 check_syftbox_auth called");
+    crate::desktop_log!("🔍 check_syftbox_auth called");
 
     // Load BioVault config to check if syftbox_credentials exist
     let config = match biovault::config::Config::load() {
@@ -76,13 +76,13 @@ pub fn check_syftbox_auth() -> Result<bool, String> {
         false
     };
 
-    eprintln!("  Authentication status: {}", is_authenticated);
+    crate::desktop_log!("  Authentication status: {}", is_authenticated);
     Ok(is_authenticated)
 }
 
 #[tauri::command]
 pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
-    eprintln!("🔍 get_syftbox_config_info called");
+    crate::desktop_log!("🔍 get_syftbox_config_info called");
 
     // Get the syftbox config path
     let config = biovault::config::Config::load().ok();
@@ -116,10 +116,10 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
 
     let is_authenticated = has_access_token && has_refresh_token;
 
-    eprintln!("  Config path: {}", config_path);
-    eprintln!("  Has access token: {}", has_access_token);
-    eprintln!("  Has refresh token: {}", has_refresh_token);
-    eprintln!("  Is authenticated: {}", is_authenticated);
+    crate::desktop_log!("  Config path: {}", config_path);
+    crate::desktop_log!("  Has access token: {}", has_access_token);
+    crate::desktop_log!("  Has refresh token: {}", has_refresh_token);
+    crate::desktop_log!("  Is authenticated: {}", is_authenticated);
 
     Ok(SyftBoxConfigInfo {
         is_authenticated,

@@ -160,6 +160,12 @@ test.describe('Import Data workflow', () => {
 						case 'get_projects':
 						case 'get_command_logs':
 							return []
+						case 'get_desktop_log_text':
+							return ''
+						case 'clear_desktop_log':
+							return null
+						case 'get_desktop_log_dir':
+							return '/tmp'
 						case 'get_config_path':
 							return `${state.folderPath}/config.yaml`
 						case 'get_queue_processor_status':
