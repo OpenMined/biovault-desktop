@@ -696,9 +696,9 @@ export function setupEventHandlers({
 	// File type checkboxes are handled in import.js updateFileTypeDropdown()
 
 	if (customPattern) {
-	customPattern.addEventListener('input', (e) => {
-		handleCustomPatternInput(e.target.value)
-	})
+		customPattern.addEventListener('input', (e) => {
+			handleCustomPatternInput(e.target.value)
+		})
 
 		if (handleCustomPatternFocus) {
 			customPattern.addEventListener('focus', (e) => {
@@ -706,14 +706,14 @@ export function setupEventHandlers({
 			})
 		}
 
-	customPattern.addEventListener('blur', (e) => {
-		handleCustomPatternBlur(e.target.value)
-	})
+		customPattern.addEventListener('blur', (e) => {
+			handleCustomPatternBlur(e.target.value)
+		})
 
-	customPattern.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter') {
-			handleCustomPatternKeydown(e.key, e.target.value)
-		}
-	})
+		customPattern.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				handleCustomPatternKeydown(e.key, e.target.value)
+			}
+		})
 	}
 }

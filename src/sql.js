@@ -739,18 +739,18 @@ export function createSqlModule({ invoke, dialog }) {
 
 	async function activateSqlTab() {
 		await initializeSqlTab()
-		
+
 		// Save current active table before refreshing
 		const previouslyActiveTable = state.activeTable
-		
+
 		// Refresh table list to get latest tables
 		await refreshTableList(true)
-		
+
 		// Restore active table selection if it still exists
 		if (previouslyActiveTable) {
 			// Check if the table still exists in the list
 			const tableBtn = elements.tableList?.querySelector(
-				`.sql-table-btn[data-table="${previouslyActiveTable}"]`
+				`.sql-table-btn[data-table="${previouslyActiveTable}"]`,
 			)
 			if (tableBtn) {
 				// Table still exists, restore selection and refresh schema
@@ -761,11 +761,11 @@ export function createSqlModule({ invoke, dialog }) {
 				state.activeTable = null
 			}
 		}
-		
+
 		// Clear old query results to avoid showing stale data
 		renderEmptyResults()
 		setStatus('Ready to run SQL queries.', 'info')
-		
+
 		if (elements.editor && !elements.editor.value) {
 			elements.editor.focus()
 		}
