@@ -33,8 +33,6 @@ export function createDataModule({ invoke, dialog }) {
 				return (file.grch_version || '').toLowerCase()
 			case 'row_count':
 				return file.row_count ?? null
-			case 'chromosome_count':
-				return file.chromosome_count ?? null
 			case 'inferred_sex':
 				return (file.inferred_sex || '').toLowerCase()
 			case 'participant_id':
@@ -86,7 +84,7 @@ export function createDataModule({ invoke, dialog }) {
 
 	function getDefaultSortDirection(field) {
 		if (field === 'created_at' || field === 'updated_at') return 'desc'
-		if (field === 'row_count' || field === 'chromosome_count' || field === 'id') return 'desc'
+		if (field === 'row_count' || field === 'id') return 'desc'
 		if (field === 'status') return 'asc'
 		return 'asc'
 	}
@@ -173,7 +171,12 @@ export function createDataModule({ invoke, dialog }) {
 			</td>
 			<td><strong>${participantDisplay}</strong></td>
 			<td>${statusBadge}</td>
-			<td title="${file.file_path}">${file.file_path.split('/').pop()}</td>
+			<td class="col-file" title="${file.file_path}">
+				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''}</span>
+					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
+				</span>
+			</td>
 			<td>
 				<span class="type-badge type-${(file.data_type && file.data_type !== 'Unknown'
 					? file.data_type
@@ -185,7 +188,6 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.source || '-'}</td>
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
-			<td>${file.chromosome_count || '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
 				file.inferred_sex === 'Male'
 					? '#007bff'

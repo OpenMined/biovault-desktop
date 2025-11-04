@@ -1,6 +1,9 @@
-export function createParticipantsModule({ invoke }) {
+export function createParticipantsModule({ invoke, dialog }) {
 	if (!invoke) {
 		throw new Error('initParticipantsModule requires invoke')
+	}
+	if (!dialog) {
+		throw new Error('createParticipantsModule requires dialog')
 	}
 
 	let allParticipants = []
@@ -97,6 +100,9 @@ export function createParticipantsModule({ invoke }) {
 		}
 
 		updateDeleteParticipantsButton()
+
+		// Set up delete button handler (only once)
+		initializeDeleteButton()
 	}
 
 	async function loadParticipants() {
@@ -129,6 +135,42 @@ export function createParticipantsModule({ invoke }) {
 		}
 		renderParticipantsTable()
 	}
+
+	// Initialize delete button handler (only set up once to avoid duplicate listeners)
+	let deleteHandlerSetup = false
+	function initializeDeleteButton() {
+		const deleteBtn = document.getElementById('delete-selected-participants-btn')
+		if (deleteBtn && !deleteHandlerSetup) {
+			deleteBtn.addEventListener('click', async () => {
+				if (selectedParticipantsForDelete.length === 0) return
+
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to delete ${selectedParticipantsForDelete.length} participant(s)? This will also delete all associated files. This cannot be undone!`,
+					{ title: 'Delete Participants', type: 'warning' },
+				)
+
+				if (!confirmed) {
+					return
+				}
+
+				try {
+					await invoke('delete_participants_bulk', {
+						participantIds: selectedParticipantsForDelete,
+					})
+					selectedParticipantsForDelete = []
+					await loadParticipants()
+				} catch (error) {
+					await dialog.message(`Error deleting participants: ${error}`, {
+						title: 'Error',
+						type: 'error',
+					})
+				}
+			})
+			deleteHandlerSetup = true
+		}
+	}
+
+	// Initialize delete button handler when module is created (button might not exist yet, but will be set up when renderParticipantsTable is called)
 
 	return {
 		loadParticipants,

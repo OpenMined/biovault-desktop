@@ -12,16 +12,17 @@
    ============================================================================ */
 
 .page-header {
-	padding: 16px 32px;
+	padding: 20px 32px;
 	border-bottom: 1px solid #e5e7eb;
-	background: #ffffff;
+	background: linear-gradient(to bottom, #ffffff 0%, #fafbfc 100%);
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	flex-shrink: 0;
 	width: 100%;
-	min-height: 60px;
+	min-height: 72px;
 	gap: 24px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .page-header-left {

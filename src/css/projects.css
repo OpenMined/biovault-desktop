@@ -63,7 +63,7 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	background: #5866d1;
+	background: #5866d1 !important;
 	color: white;
 	border: none;
 	padding: 8px 16px;
@@ -71,7 +71,8 @@
 	font-size: 13px;
 	font-weight: 600;
 	cursor: pointer;
-	transition: background 0.2s ease;
+	transition: background-color 0.15s ease;
+	transform: none !important;
 }
 
 .btn-primary-small svg {
@@ -80,7 +81,13 @@
 }
 
 .btn-primary-small:hover {
-	background: #4854b8;
+	background: #4854b8 !important;
+	transform: none !important;
+}
+
+.btn-primary-small:active {
+	background: #3d47a0 !important;
+	transform: none !important;
 }
 
 .import-details {

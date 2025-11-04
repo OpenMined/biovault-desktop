@@ -82,18 +82,17 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		try {
 			const configInfo = await invoke('get_syftbox_config_info')
 
+			// Remove all status classes
+			statusBadge.classList.remove('connected', 'disconnected', 'checking')
+
 			if (configInfo.is_authenticated) {
 				statusBadge.innerHTML = `✓ Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
-				statusBadge.style.background = '#d4edda'
-				statusBadge.style.color = '#155724'
-				statusBadge.style.border = '1px solid #c3e6cb'
+				statusBadge.classList.add('connected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Reauthenticate'
 			} else {
 				statusBadge.innerHTML = `✗ Not Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
-				statusBadge.style.background = '#f8d7da'
-				statusBadge.style.color = '#721c24'
-				statusBadge.style.border = '1px solid #f5c6cb'
+				statusBadge.classList.add('disconnected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Authenticate'
 			}
@@ -101,9 +100,8 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			authBtn.disabled = false
 		} catch (error) {
 			statusBadge.innerHTML = '? Status Unknown'
-			statusBadge.style.background = '#fff3cd'
-			statusBadge.style.color = '#856404'
-			statusBadge.style.border = '1px solid #ffeaa7'
+			statusBadge.classList.remove('connected', 'disconnected', 'checking')
+			statusBadge.classList.add('checking')
 			authBtn.disabled = false
 			authBtn.textContent = 'Authenticate'
 			console.error('Error checking SyftBox status:', error)

@@ -102,10 +102,10 @@ export function createImportModule({
 		const modal = document.getElementById('import-modal')
 		if (modal) {
 			modal.setAttribute('hidden', '')
-			// Reset to selection view for next time
+			// Fully reset state when modal closes for a fresh start next time
 			setTimeout(() => {
-				backToSelection()
-			}, 300)
+				resetImportState()
+			}, 300) // Wait for animation to complete
 		}
 	}
 	// Progressive disclosure - show/hide sections based on state
@@ -117,15 +117,19 @@ export function createImportModule({
 		if (fileTypesSection) {
 			fileTypesSection.style.display = selectedFolder ? 'block' : 'none'
 		}
-		// Pattern section is now toggled manually via autofill button - don't auto-show
+		// Show pattern section when files are loaded (always visible)
+		const patternSection = document.getElementById('pattern-detection-section')
+		if (patternSection) {
+			patternSection.style.display = currentFiles.length > 0 ? 'block' : 'none'
+		}
 
 		// Show file list if files are found
 		if (filesPanel) {
 			filesPanel.style.display = currentFiles.length > 0 ? 'block' : 'none'
 		}
-		// Show footer if files are found
+		// Footer is always visible now, just update its content
 		if (importFooter) {
-			importFooter.style.display = currentFiles.length > 0 ? 'flex' : 'none'
+			importFooter.style.display = 'flex'
 		}
 	}
 	function getFileExtensions() {
@@ -375,13 +379,30 @@ export function createImportModule({
 		return sorted
 	}
 	function updateSortIndicators() {
-		const headers = document.querySelectorAll('.file-table th[data-sort]')
+		const headers = document.querySelectorAll(
+			'.file-table th[data-sort], .review-table th[data-sort]',
+		)
 		headers.forEach((header) => {
 			const indicator = header.querySelector('.sort-indicator')
-			if (indicator && header.dataset.sort === sortField) {
-				indicator.textContent = sortDirection === 'asc' ? '▲' : '▼'
-			} else if (indicator) {
-				indicator.textContent = ''
+			if (!indicator) return
+
+			// Ensure icon exists
+			let icon = indicator.querySelector('img')
+			if (!icon) {
+				icon = document.createElement('img')
+				icon.src = 'assets/icons/chevron-down.svg'
+				icon.alt = ''
+				indicator.appendChild(icon)
+			}
+
+			if (header.dataset.sort === sortField || header.dataset.sort === reviewSortField) {
+				const isActive = header.dataset.sort === sortField
+				const direction = isActive ? sortDirection : reviewSortDirection
+				indicator.classList.add('active')
+				indicator.classList.remove('asc', 'desc')
+				indicator.classList.add(direction)
+			} else {
+				indicator.classList.remove('active', 'asc', 'desc')
 			}
 		})
 	}
@@ -564,8 +585,8 @@ export function createImportModule({
 						</svg>
 						<span style="font-weight: 600; color: #64748b; font-size: 13px;">
 							<strong style="color: #475569;">${sortedAlreadyImported.length}</strong> already imported file${
-								sortedAlreadyImported.length !== 1 ? 's' : ''
-							}
+				sortedAlreadyImported.length !== 1 ? 's' : ''
+			}
 						</span>
 					</div>
 					<span style="font-size: 11px; color: #94a3b8;">Click to show</span>
@@ -973,30 +994,31 @@ export function createImportModule({
 		if (!container || !detectionSection) return
 		const clearSuggestions = () => {
 			container.innerHTML = ''
-			detectionSection.setAttribute('hidden', '')
+			detectionSection.style.display = 'none'
 		}
 		if (currentFiles.length === 0) {
 			clearSuggestions()
 			markActivePattern('')
 			return
 		}
-		clearSuggestions()
+		// Show the section first (always visible when files are loaded)
+		detectionSection.style.display = 'block'
+		container.innerHTML = ''
 		let suggestions = []
 		try {
+			console.log('🔍 Requesting pattern suggestions for', currentFiles.length, 'files')
 			suggestions = await invoke('suggest_patterns', { files: currentFiles })
+			console.log('📋 Received', suggestions?.length || 0, 'pattern suggestions', suggestions)
 		} catch (error) {
-			console.error('Failed to fetch pattern suggestions:', error)
+			console.error('❌ Failed to fetch pattern suggestions:', error)
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
 		if (!suggestions || suggestions.length === 0) {
-			detectionSection.removeAttribute('hidden')
+			console.log('⚠️ No pattern suggestions found')
 			markActivePattern(currentPattern ? currentPattern.trim() : '')
 			return
 		}
-		// Always show the detection section when we have files
-		detectionSection.removeAttribute('hidden')
-		container.innerHTML = ''
 
 		// Filter out the "Use parent directory names as participant IDs" pattern
 		suggestions = suggestions.filter(
@@ -1026,11 +1048,20 @@ export function createImportModule({
 			const patternInfo = document.createElement('div')
 			patternInfo.className = 'pattern-info'
 
-			// Description text (human-readable)
+			// Description header with file count badge
+			const descHeader = document.createElement('div')
+			descHeader.className = 'pattern-description-header'
 			const descEl = document.createElement('div')
 			descEl.className = 'pattern-description'
 			descEl.textContent = description
-			patternInfo.appendChild(descEl)
+			descHeader.appendChild(descEl)
+			const matchesBadge = document.createElement('span')
+			matchesBadge.className = 'pattern-matches'
+			matchesBadge.textContent = `✓ ${sugg.count || currentFiles.length} file${
+				(sugg.count || currentFiles.length) !== 1 ? 's' : ''
+			}`
+			descHeader.appendChild(matchesBadge)
+			patternInfo.appendChild(descHeader)
 
 			// Main pattern button - larger, more prominent
 			const patternBtn = document.createElement('button')
@@ -1049,14 +1080,7 @@ export function createImportModule({
 					</div>
 				`
 			}
-			buttonContent += `
-					<div class="pattern-meta">
-						<span class="pattern-matches">✓ ${sugg.count || currentFiles.length} file${
-							(sugg.count || currentFiles.length) !== 1 ? 's' : ''
-						}</span>
-					</div>
-				</div>
-			`
+			buttonContent += `</div>`
 			patternBtn.innerHTML = buttonContent
 
 			patternBtn.addEventListener('click', () => {
@@ -1172,6 +1196,7 @@ export function createImportModule({
 			// Update folder display
 			const folderDisplay = document.getElementById('folder-display')
 			const dropzone = document.getElementById('folder-dropzone')
+			const clearBtn = document.getElementById('dropzone-clear-btn')
 			if (folderDisplay) {
 				const folderName = selected.split('/').pop() || selected
 				folderDisplay.textContent = folderName
@@ -1179,6 +1204,9 @@ export function createImportModule({
 			}
 			if (dropzone) {
 				dropzone.classList.add('has-folder')
+			}
+			if (clearBtn) {
+				clearBtn.style.display = 'flex'
 			}
 			await updateFileTypeDropdown()
 			updateVisibleSections()
@@ -1202,18 +1230,17 @@ export function createImportModule({
 	function updateImportButton() {
 		const btn = document.getElementById('import-continue-btn')
 		const statusEl = document.getElementById('import-status')
-		if (!btn) return
+		const reviewBtn = document.getElementById('review-import-btn')
+		if (!btn && !reviewBtn) return
 		// Check prerequisites
 		const selectedFilesArray = Array.from(selectedFiles)
 		const hasSelection = selectedFilesArray.length > 0
 		// If no files selected
 		if (!hasSelection) {
-			btn.disabled = true
+			if (btn) btn.disabled = true
 			if (statusEl) {
 				if (currentFiles.length === 0) {
-					statusEl.textContent = selectedFolder
-						? 'Select file types above to see files'
-						: 'Select a folder to begin'
+					statusEl.textContent = ''
 				} else {
 					statusEl.textContent = `Select ${
 						currentFiles.length === 1 ? 'the file' : 'at least 1 file'
@@ -1263,7 +1290,7 @@ export function createImportModule({
 
 		// Enable only if every selected file has an ID
 		if (allSelectedHaveIds) {
-			btn.disabled = false
+			if (btn) btn.disabled = false
 			if (statusEl) {
 				statusEl.innerHTML = `Ready to import ${selectedFiles.size} file${
 					selectedFiles.size !== 1 ? 's' : ''
@@ -1274,7 +1301,7 @@ export function createImportModule({
 				statusEl.onclick = null
 			}
 		} else {
-			btn.disabled = true
+			if (btn) btn.disabled = true
 			if (statusEl) {
 				const hasPattern = currentPattern && currentPattern.trim() !== ''
 				const suggestion = hasPattern
@@ -1318,11 +1345,15 @@ export function createImportModule({
 		// Reset folder display
 		const folderDisplay = document.getElementById('folder-display')
 		const dropzone = document.getElementById('folder-dropzone')
+		const clearBtn = document.getElementById('dropzone-clear-btn')
 		if (folderDisplay) {
 			folderDisplay.textContent = 'Drop folder here or click to browse'
 		}
 		if (dropzone) {
 			dropzone.classList.remove('has-folder')
+		}
+		if (clearBtn) {
+			clearBtn.style.display = 'none'
 		}
 		resetRandomIdsState()
 		const selectAllFiles = document.getElementById('select-all-files')
@@ -1344,7 +1375,7 @@ export function createImportModule({
 		}
 		const patternDetectionSection = document.getElementById('pattern-detection-section')
 		if (patternDetectionSection) {
-			patternDetectionSection.setAttribute('hidden', '')
+			patternDetectionSection.style.display = 'none'
 		}
 		const customPatternInput = document.getElementById('custom-pattern')
 		if (customPatternInput) {
@@ -1381,34 +1412,25 @@ export function createImportModule({
 		if (reviewImportBtn) {
 			reviewImportBtn.disabled = false
 			reviewImportBtn.innerHTML = 'Import Files →'
+			reviewImportBtn.style.display = 'none'
 		}
 		const detectBtn = document.getElementById('detect-types-btn')
 		if (detectBtn) {
 			detectBtn.disabled = false
-			detectBtn.innerHTML =
-				'<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />'
 		}
-		const analyzeBtn = document.getElementById('analyze-types-btn')
-		if (analyzeBtn) {
-			analyzeBtn.disabled = false
-			analyzeBtn.innerHTML = '🧬 Analyze Files'
-		}
-		const progressDiv = document.getElementById('detection-progress')
-		const progressBar = document.getElementById('progress-bar')
+		const progressBar = document.getElementById('import-progress-bar')
+		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
-		if (progressDiv && progressBar && progressText) {
-			progressDiv.style.display = 'none'
-			progressBar.style.width = '0%'
+		if (progressBar && progressBarFill && progressText) {
+			progressBar.classList.add('hidden')
+			progressBarFill.style.width = '0%'
 			progressText.textContent = ''
 		}
 		updateSelectAllCheckbox()
 		updateImportButton()
 		updateReviewSelectAllCheckbox()
-		// Reset modal views to selection view
-		const selectionView = document.getElementById('import-selection-view')
-		const reviewView = document.getElementById('import-modal-review')
-		if (selectionView) selectionView.style.display = 'flex'
-		if (reviewView) reviewView.style.display = 'none'
+		// Reset to step 1
+		backToSelection()
 		// Reset visibility
 		updateVisibleSections()
 	}
@@ -1470,15 +1492,19 @@ export function createImportModule({
 		showReviewViewInModal()
 	}
 	function showReviewViewInModal() {
-		// Hide selection view, show review view
-		const selectionView = document.getElementById('import-selection-view')
-		const reviewView = document.getElementById('import-modal-review')
-		if (selectionView) {
-			selectionView.style.display = 'none'
-		}
-		if (reviewView) {
-			reviewView.style.display = 'flex'
-		}
+		// Show step 2, hide step 1
+		const step1 = document.getElementById('import-step-1')
+		const step2 = document.getElementById('import-step-2')
+		const backBtn = document.getElementById('import-back-btn')
+		const continueBtn = document.getElementById('import-continue-btn')
+		const importBtn = document.getElementById('review-import-btn')
+
+		if (step1) step1.style.display = 'none'
+		if (step2) step2.style.display = 'block'
+		if (backBtn) backBtn.style.display = 'block'
+		if (continueBtn) continueBtn.style.display = 'none'
+		if (importBtn) importBtn.style.display = 'block'
+
 		// Update step indicator
 		updateStepIndicator(2)
 		// Render review table
@@ -1489,15 +1515,19 @@ export function createImportModule({
 		}, 100)
 	}
 	function backToSelection() {
-		// Show selection view, hide review view
-		const selectionView = document.getElementById('import-selection-view')
-		const reviewView = document.getElementById('import-modal-review')
-		if (selectionView) {
-			selectionView.style.display = 'flex'
-		}
-		if (reviewView) {
-			reviewView.style.display = 'none'
-		}
+		// Show step 1, hide step 2
+		const step1 = document.getElementById('import-step-1')
+		const step2 = document.getElementById('import-step-2')
+		const backBtn = document.getElementById('import-back-btn')
+		const continueBtn = document.getElementById('import-continue-btn')
+		const importBtn = document.getElementById('review-import-btn')
+
+		if (step1) step1.style.display = 'block'
+		if (step2) step2.style.display = 'none'
+		if (backBtn) backBtn.style.display = 'none'
+		if (continueBtn) continueBtn.style.display = 'block'
+		if (importBtn) importBtn.style.display = 'none'
+
 		// Update step indicator
 		updateStepIndicator(1)
 	}
@@ -1552,6 +1582,7 @@ export function createImportModule({
 			reviewSortDirection = 'asc'
 		}
 		showReviewView()
+		updateSortIndicators()
 	}
 	function _updateReviewSortIndicators() {
 		// Not used in modal - keeping for compatibility
@@ -1749,6 +1780,7 @@ export function createImportModule({
 		})
 		updateReviewSelectAllCheckbox()
 		updateReviewStatus()
+		updateSortIndicators()
 	}
 	function updateReviewSelectAllCheckbox() {
 		const selectAllCheckbox = document.getElementById('select-all-review')
@@ -1766,7 +1798,9 @@ export function createImportModule({
 	}
 	function updateReviewStatus() {
 		const reviewStatusEl = document.getElementById('review-status')
-		if (!reviewStatusEl) return
+		const importStatusEl = document.getElementById('import-status') // Unified status
+		const statusEl = reviewStatusEl || importStatusEl
+		if (!statusEl) return
 
 		const totalFiles = Object.keys(reviewFileMetadata).length
 		const selectedCount = selectedReviewFiles.size
@@ -1774,12 +1808,10 @@ export function createImportModule({
 		// Find incomplete configurations in selected files
 		const incompleteSelected = Array.from(selectedReviewFiles).filter((filePath) => {
 			const metadata = reviewFileMetadata[filePath]
+			if (!metadata) return false
 			return !isReviewMetadataComplete(metadata)
 		})
-		filesIncompleteReview = Array.from(selectedReviewFiles).filter((filePath) => {
-			const metadata = reviewFileMetadata[filePath]
-			return !isReviewMetadataComplete(metadata)
-		})
+		filesIncompleteReview = incompleteSelected
 
 		// Update filter and jump buttons visibility
 		const validationActions = document.getElementById('review-validation-actions')
@@ -1799,33 +1831,33 @@ export function createImportModule({
 			if (filterBtn) filterBtn.classList.remove('active')
 		}
 
-		// Update status message
+		// Update status message (use unified status element)
 		if (totalFiles === 0) {
-			reviewStatusEl.innerHTML = 'No files to import'
-			reviewStatusEl.classList.remove('has-issues')
-			reviewStatusEl.style.cursor = 'default'
-			reviewStatusEl.onclick = null
+			statusEl.innerHTML = 'No files to import'
+			statusEl.classList.remove('has-issues', 'ready')
+			statusEl.style.cursor = 'default'
+			statusEl.onclick = null
 		} else if (selectedCount === 0) {
-			reviewStatusEl.innerHTML = 'Select files to import'
-			reviewStatusEl.classList.remove('has-issues')
-			reviewStatusEl.style.cursor = 'default'
-			reviewStatusEl.onclick = null
+			statusEl.innerHTML = 'Select files to import'
+			statusEl.classList.remove('has-issues', 'ready')
+			statusEl.style.cursor = 'default'
+			statusEl.onclick = null
 		} else if (incompleteSelected.length > 0) {
-			reviewStatusEl.innerHTML = `<span class="status-highlight">${
+			statusEl.innerHTML = `<span class="status-highlight">${
 				incompleteSelected.length
 			} selected file${
 				incompleteSelected.length !== 1 ? 's need' : ' needs'
-			} configuration. Click "Jump to incomplete" to find them.</span>`
-			reviewStatusEl.classList.add('has-issues')
-			reviewStatusEl.style.cursor = 'pointer'
-			reviewStatusEl.onclick = () => jumpToNextIncompleteReview()
+			} configuration. Click to fix.</span>`
+			statusEl.classList.add('has-issues')
+			statusEl.classList.remove('ready')
+			statusEl.style.cursor = 'pointer'
+			statusEl.onclick = () => jumpToNextIncompleteReview()
 		} else {
-			reviewStatusEl.innerHTML = `Ready to import ${selectedCount} file${
-				selectedCount !== 1 ? 's' : ''
-			}`
-			reviewStatusEl.classList.remove('has-issues')
-			reviewStatusEl.style.cursor = 'default'
-			reviewStatusEl.onclick = null
+			statusEl.innerHTML = `Ready to import ${selectedCount} file${selectedCount !== 1 ? 's' : ''}`
+			statusEl.classList.add('ready')
+			statusEl.classList.remove('has-issues')
+			statusEl.style.cursor = 'default'
+			statusEl.onclick = null
 		}
 	}
 	function isReviewMetadataComplete(metadata) {
@@ -1869,15 +1901,17 @@ export function createImportModule({
 			return
 		}
 		const btn = document.getElementById('detect-types-btn')
-		const progressDiv = document.getElementById('detection-progress')
-		const progressBar = document.getElementById('progress-bar')
+		const progressBar = document.getElementById('import-progress-bar')
+		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
 		// Show progress UI IMMEDIATELY before any work
 		btn.disabled = true
-		btn.innerHTML = '<span class="spinner"></span>'
-		progressDiv.style.display = 'flex'
-		progressBar.style.width = '0%'
-		progressText.textContent = 'Detecting file types...'
+		btn.innerHTML = '<span class="spinner"></span> Auto-detecting...'
+		if (progressBar && progressBarFill && progressText) {
+			progressBar.classList.remove('hidden')
+			progressBarFill.style.width = '0%'
+			progressText.textContent = 'Detecting file types...'
+		}
 		// Force UI update before CLI calls
 		await new Promise((resolve) => setTimeout(resolve, 10))
 		try {
@@ -1888,8 +1922,9 @@ export function createImportModule({
 			// Process in batches to show progress
 			for (let i = 0; i < selectedFilesArray.length; i += batchSize) {
 				const batch = selectedFilesArray.slice(i, i + batchSize)
-				progressText.textContent = `Detecting file types... ${processed}/${totalFiles}`
-				progressBar.style.width = `${(processed / totalFiles) * 100}%`
+				if (progressText)
+					progressText.textContent = `Detecting file types... ${processed}/${totalFiles}`
+				if (progressBarFill) progressBarFill.style.width = `${(processed / totalFiles) * 100}%`
 				const detections = await invoke('detect_file_types', { files: batch })
 				// Log the detection results to console for debugging
 				console.log('🧬 detect_file_types batch result:', detections)
@@ -1926,18 +1961,21 @@ export function createImportModule({
 				})
 				processed += batch.length
 			}
-			progressText.textContent = `Complete! Detected ${totalFiles} file types`
-			progressBar.style.width = '100%'
+			if (progressText) progressText.textContent = `Complete! Detected ${totalFiles} file types`
+			if (progressBarFill) progressBarFill.style.width = '100%'
 		} catch (error) {
 			alert(`Error detecting file types: ${error}`)
 			console.error('Detection error:', error)
 		} finally {
 			btn.disabled = false
-			btn.innerHTML = '<img src="assets/icons/wand-sparkles.svg" width="16" height="16" alt="" />'
-			// Hide progress bar after a short delay (reduced for less intrusion)
+			btn.innerHTML =
+				'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM5.354 4.646L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 1 1 .708-.708z"/></svg> Auto-detect'
+			// Hide progress bar after a short delay
 			setTimeout(() => {
-				progressDiv.style.display = 'none'
-				progressBar.style.width = '0%'
+				const progressBar = document.getElementById('import-progress-bar')
+				const progressBarFill = document.getElementById('progress-bar-fill')
+				if (progressBar) progressBar.classList.add('hidden')
+				if (progressBarFill) progressBarFill.style.width = '0%'
 			}, 800)
 		}
 	}
@@ -1974,17 +2012,19 @@ export function createImportModule({
 	}
 	async function finalizeImport() {
 		const btn = document.getElementById('review-import-btn')
-		const progressDiv = document.getElementById('detection-progress')
-		const progressBar = document.getElementById('progress-bar')
+		const progressBar = document.getElementById('import-progress-bar')
+		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
 		// Mark import as in progress
 		isImportInProgress = true
 		// Show progress UI IMMEDIATELY before any work
 		btn.disabled = true
-		btn.innerHTML = '<span class="spinner"></span>Importing...'
-		progressDiv.style.display = 'flex'
-		progressBar.style.width = '0%'
-		progressText.textContent = 'Preparing import...'
+		btn.innerHTML = '<span class="spinner"></span> Importing...'
+		if (progressBar && progressBarFill && progressText) {
+			progressBar.classList.remove('hidden')
+			progressBarFill.style.width = '0%'
+			progressText.textContent = 'Preparing import...'
+		}
 		// Force UI update before CLI calls
 		await new Promise((resolve) => setTimeout(resolve, 10))
 		try {
@@ -2008,14 +2048,14 @@ export function createImportModule({
 					grch_version: meta.grch_version,
 				}
 			})
-			progressText.textContent = `Adding files to queue...`
-			progressBar.style.width = '50%'
+			if (progressText) progressText.textContent = `Adding files to queue...`
+			if (progressBarFill) progressBarFill.style.width = '50%'
 			// Fast import - add all files to queue instantly (no hashing)
 			const result = await invoke('import_files_pending', {
 				fileMetadata: fileMetadata,
 			})
-			progressText.textContent = `Complete! Added ${totalFiles} files to queue`
-			progressBar.style.width = '100%'
+			if (progressText) progressText.textContent = `Complete! Added ${totalFiles} files to queue`
+			if (progressBarFill) progressBarFill.style.width = '100%'
 			// Update results
 			if (result.success) {
 				allResults.imported = totalFiles
@@ -2032,8 +2072,10 @@ export function createImportModule({
 				setTimeout(() => {
 					resetImportState()
 					isImportInProgress = false
-					progressDiv.style.display = 'none'
-					progressBar.style.width = '0%'
+					const progressBar = document.getElementById('import-progress-bar')
+					const progressBarFill = document.getElementById('progress-bar-fill')
+					if (progressBar) progressBar.classList.add('hidden')
+					if (progressBarFill) progressBarFill.style.width = '0%'
 					closeImportModal()
 				}, 1000)
 			} else {
@@ -2048,8 +2090,10 @@ export function createImportModule({
 				btn.disabled = false
 				btn.innerHTML = 'Import Files →'
 				setTimeout(() => {
-					progressDiv.style.display = 'none'
-					progressBar.style.width = '0%'
+					const progressBar = document.getElementById('import-progress-bar')
+					const progressBarFill = document.getElementById('progress-bar-fill')
+					if (progressBar) progressBar.classList.add('hidden')
+					if (progressBarFill) progressBarFill.style.width = '0%'
 				}, 2000)
 			}
 		} catch (error) {
@@ -2060,8 +2104,10 @@ export function createImportModule({
 			btn.disabled = false
 			btn.innerHTML = 'Import Files →'
 			setTimeout(() => {
-				progressDiv.style.display = 'none'
-				progressBar.style.width = '0%'
+				const progressBar = document.getElementById('import-progress-bar')
+				const progressBarFill = document.getElementById('progress-bar-fill')
+				if (progressBar) progressBar.style.display = 'none'
+				if (progressBarFill) progressBarFill.style.width = '0%'
 			}, 2000)
 		}
 	}
@@ -2267,17 +2313,17 @@ export function createImportModule({
 		if (patternInputDebounce) {
 			clearTimeout(patternInputDebounce)
 		}
-		// Apply immediately if pattern looks valid (not empty, has at least one character)
+		// Apply immediately while typing with minimal debounce for performance
 		const trimmed = value.trim()
 		if (trimmed.length > 0) {
-			// Debounce for typing, but apply if valid
+			// Very short debounce (100ms) to avoid excessive calls while typing
 			patternInputDebounce = setTimeout(() => {
 				patternInputDebounce = null
 				// Try to apply, but catch errors silently for invalid patterns
 				applyPattern(trimmed).catch(() => {
 					// Pattern might be invalid, but don't show error - user is still typing
 				})
-			}, 300)
+			}, 100)
 		} else {
 			// Clear pattern if empty
 			currentPattern = ''
@@ -2287,6 +2333,19 @@ export function createImportModule({
 			updateActiveStates()
 			renderFiles()
 			updateImportButton()
+		}
+	}
+	function handleCustomPatternFocus(value) {
+		// Apply immediately when input is focused/clicked
+		if (patternInputDebounce) {
+			clearTimeout(patternInputDebounce)
+			patternInputDebounce = null
+		}
+		const trimmed = value.trim()
+		if (trimmed.length > 0) {
+			applyPattern(trimmed).catch(() => {
+				// Pattern might be invalid, but don't show error
+			})
 		}
 	}
 	function handleCustomPatternBlur(value) {
@@ -2312,54 +2371,8 @@ export function createImportModule({
 			console.error('Failed to copy pattern:', error)
 		}
 	}
-	function updateStepIndicator(step) {
-		// Update step indicator for selection view
-		const indicator = document.getElementById('import-step-indicator')
-		if (!indicator) return
-
-		const dots = indicator.querySelectorAll('.step-dot')
-		const connectors = indicator.querySelectorAll('.step-connector')
-
-		dots.forEach((dot, index) => {
-			const stepNum = index + 1
-			dot.classList.remove('active', 'completed')
-			if (stepNum < step) {
-				dot.classList.add('completed')
-			} else if (stepNum === step) {
-				dot.classList.add('active')
-			}
-		})
-
-		connectors.forEach((connector, index) => {
-			connector.classList.remove('active')
-			if (index + 1 < step) {
-				connector.classList.add('active')
-			}
-		})
-
-		// Update review view indicator too
-		const reviewIndicator = document.getElementById('import-step-indicator-review')
-		if (reviewIndicator) {
-			const reviewDots = reviewIndicator.querySelectorAll('.step-dot')
-			const reviewConnectors = reviewIndicator.querySelectorAll('.step-connector')
-
-			reviewDots.forEach((dot, index) => {
-				const stepNum = index + 1
-				dot.classList.remove('active', 'completed')
-				if (stepNum < step) {
-					dot.classList.add('completed')
-				} else if (stepNum === step) {
-					dot.classList.add('active')
-				}
-			})
-
-			reviewConnectors.forEach((connector, index) => {
-				connector.classList.remove('active')
-				if (index + 1 < step) {
-					connector.classList.add('active')
-				}
-			})
-		}
+	function updateStepIndicator(_step) {
+		// Step indicators removed - function kept for compatibility but does nothing
 	}
 	async function handleFolderDrop(paths) {
 		if (!paths || paths.length === 0) return
@@ -2379,6 +2392,7 @@ export function createImportModule({
 				// Update UI
 				const folderDisplay = document.getElementById('folder-display')
 				const dropzone = document.getElementById('folder-dropzone')
+				const clearBtn = document.getElementById('dropzone-clear-btn')
 				if (folderDisplay) {
 					const folderName = droppedPath.split('/').pop() || droppedPath
 					folderDisplay.textContent = folderName
@@ -2386,6 +2400,9 @@ export function createImportModule({
 				}
 				if (dropzone) {
 					dropzone.classList.add('has-folder')
+				}
+				if (clearBtn) {
+					clearBtn.style.display = 'flex'
 				}
 
 				await updateFileTypeDropdown()
@@ -2404,6 +2421,7 @@ export function createImportModule({
 				// Update UI
 				const folderDisplay = document.getElementById('folder-display')
 				const dropzone = document.getElementById('folder-dropzone')
+				const clearBtn = document.getElementById('dropzone-clear-btn')
 				if (folderDisplay) {
 					const folderName = folderPath.split('/').pop() || folderPath
 					folderDisplay.textContent = folderName
@@ -2411,6 +2429,9 @@ export function createImportModule({
 				}
 				if (dropzone) {
 					dropzone.classList.add('has-folder')
+				}
+				if (clearBtn) {
+					clearBtn.style.display = 'flex'
 				}
 
 				await updateFileTypeDropdown()
@@ -2527,6 +2548,7 @@ export function createImportModule({
 		handleCustomPatternInput,
 		handleCustomPatternBlur,
 		handleCustomPatternKeydown,
+		handleCustomPatternFocus,
 		handleCopyPattern,
 		copyToClipboard,
 		assignRandomIds,

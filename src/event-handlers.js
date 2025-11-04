@@ -23,6 +23,7 @@ export function setupEventHandlers({
 	handleCustomPatternInput,
 	handleCustomPatternBlur,
 	handleCustomPatternKeydown,
+	handleCustomPatternFocus,
 	updatePatternSuggestions: _updatePatternSuggestions, // eslint-disable-line no-unused-vars
 	assignRandomIds,
 	toggleMissingIdsFilter,
@@ -449,8 +450,8 @@ export function setupEventHandlers({
 			detectFileTypes()
 		}
 
-		// Back to selection
-		if (e.target.closest('#review-back-btn')) {
+		// Back to selection (supports both old and new button IDs)
+		if (e.target.closest('#review-back-btn') || e.target.closest('#import-back-btn')) {
 			console.log('Back button clicked - returning to file selection')
 			backToSelection()
 		}
@@ -694,9 +695,16 @@ export function setupEventHandlers({
 
 	// File type checkboxes are handled in import.js updateFileTypeDropdown()
 
+	if (customPattern) {
 	customPattern.addEventListener('input', (e) => {
 		handleCustomPatternInput(e.target.value)
 	})
+
+		if (handleCustomPatternFocus) {
+			customPattern.addEventListener('focus', (e) => {
+				handleCustomPatternFocus(e.target.value)
+			})
+		}
 
 	customPattern.addEventListener('blur', (e) => {
 		handleCustomPatternBlur(e.target.value)
@@ -707,4 +715,5 @@ export function setupEventHandlers({
 			handleCustomPatternKeydown(e.key, e.target.value)
 		}
 	})
+	}
 }

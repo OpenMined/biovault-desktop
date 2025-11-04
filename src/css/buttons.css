@@ -17,21 +17,22 @@
 	font-size: 14px;
 	font-weight: 600;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition: background-color 0.15s ease;
 	white-space: nowrap;
 	font-family: inherit;
+	transform: none !important;
 }
 
 .primary-btn:hover:not(:disabled),
 .btn-primary:hover:not(:disabled) {
 	background: #059669;
-	transform: translateY(-1px);
-	box-shadow: 0 3px 10px rgba(16, 185, 129, 0.25);
+	transform: none !important;
 }
 
 .primary-btn:active:not(:disabled),
 .btn-primary:active:not(:disabled) {
-	transform: translateY(0);
+	background: #047857;
+	transform: none !important;
 }
 
 .primary-btn:disabled,

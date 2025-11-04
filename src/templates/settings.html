@@ -8,116 +8,71 @@
 
 	<!-- Main Content -->
 	<div class="view-content">
-		<div style="padding: 40px; max-width: 800px; margin: 0 auto; overflow-y: auto; height: 100%">
-			<h2 style="margin-bottom: 30px">Settings</h2>
-
-			<div style="display: flex; flex-direction: column; gap: 25px">
-				<div
-					class="setting-item"
-					style="
-						background: #f0f8ff;
-						padding: 15px;
-						border-radius: 4px;
-						border-left: 4px solid #0066cc;
-					"
-				>
-					<label style="display: block; font-weight: 600; margin-bottom: 8px; color: #0066cc"
-						>BioVault Config Path</label
-					>
-					<div
-						id="config-path-display"
-						style="font-family: monospace; font-size: 13px; color: #333; word-break: break-all"
-					>
-						Loading...
-					</div>
-					<p style="color: #666; font-size: 12px; margin-top: 5px">
-						Current configuration directory
-					</p>
+		<div class="settings-container">
+			<div class="settings-section">
+				<!-- Config Path -->
+				<div class="setting-item config-path-display">
+					<label>BioVault Config Path</label>
+					<div id="config-path-display">Loading...</div>
+					<p>Current configuration directory</p>
 				</div>
 
-				<!-- Dependencies section with two-panel layout -->
+				<!-- Dependencies section -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 15px"
-						>System Dependencies</label
-					>
+					<label>System Dependencies</label>
 
 					<!-- Two-panel layout -->
-					<div style="display: flex; gap: 15px; margin-bottom: 20px; height: 350px">
+					<div class="dependencies-panels">
 						<!-- Left panel: Dependencies list -->
-						<div
-							id="settings-deps-list"
-							style="
-								flex: 0 0 220px;
-								background: #f8f9fa;
-								padding: 15px;
-								border-radius: 8px;
-								overflow-y: auto;
-							"
-						>
+						<div id="settings-deps-list" class="dependencies-list">
 							<!-- Dependencies will be populated here -->
-							<div style="text-align: center; color: #999; padding: 20px">
+							<div style="text-align: center; color: #9ca3af; padding: 20px">
 								<div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 15px"></div>
 								<p>Checking...</p>
 							</div>
 						</div>
 
 						<!-- Right panel: Dependency details -->
-						<div
-							id="settings-dep-details-panel"
-							style="
-								flex: 1;
-								background: #fff;
-								border: 2px solid #0066cc;
-								border-radius: 8px;
-								padding: 20px;
-								overflow-y: auto;
-							"
-						>
-							<div style="text-align: center; color: #999; padding: 40px 20px">
+						<div id="settings-dep-details-panel" class="dependency-details">
+							<div class="dependency-details-placeholder">
 								<p>← Click on a dependency to view details</p>
 							</div>
 						</div>
 					</div>
 
 					<!-- Buttons for checking and installing -->
-					<div style="display: flex; gap: 10px">
-						<button id="settings-check-again-btn" style="background: #17a2b8; padding: 10px 20px">
+					<div class="dependencies-actions">
+						<button id="settings-check-again-btn" class="settings-btn settings-btn-secondary">
 							Check Again
 						</button>
 						<button
 							id="settings-install-missing-deps-btn"
+							class="settings-btn settings-btn-success"
 							disabled
-							style="background: #28a745; padding: 10px 20px; white-space: nowrap"
 						>
 							Install Missing
 						</button>
 					</div>
 				</div>
 
+				<!-- Email -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 8px">Email</label>
+					<label>Email</label>
 					<input
 						type="email"
 						id="setting-email"
+						class="setting-input"
 						placeholder="user@example.com"
-						style="
-							width: 100%;
-							padding: 10px;
-							border: 1px solid #ddd;
-							border-radius: 4px;
-							font-size: 14px;
-						"
 					/>
-					<p style="color: #666; font-size: 12px; margin-top: 5px">Your email address</p>
+					<p>Your email address</p>
 				</div>
 
+				<!-- AI SQL Assistant -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 8px"
-						>AI SQL Assistant</label
-					>
-					<p style="color: #666; font-size: 12px; margin: 0 0 12px">
+					<label>AI SQL Assistant</label>
+					<p>
 						Configure the OpenRouter-compatible endpoint used by the SQL assistant. These settings
-						power the “Generate SQL” button in the SQL tab.
+						power the "Generate SQL" button in the SQL tab.
 					</p>
 					<div class="settings-ai-grid">
 						<div class="settings-ai-field">
@@ -143,102 +98,45 @@
 						</div>
 					</div>
 					<div class="settings-ai-actions">
-						<button
-							id="settings-save-btn"
-							style="
-								padding: 10px 18px;
-								border: none;
-								border-radius: 6px;
-								background: #4f46e5;
-								color: white;
-								font-weight: 600;
-								cursor: pointer;
-							"
-						>
+						<button id="settings-save-btn" class="settings-btn settings-btn-primary">
 							Save Settings
 						</button>
 						<span id="settings-save-status" class="settings-save-status" data-tone="info"></span>
 					</div>
 				</div>
 
+				<!-- SyftBox Integration -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 15px"
-						>SyftBox Integration</label
-					>
-					<div
-						style="
-							display: flex;
-							align-items: center;
-							justify-content: space-between;
-							padding: 15px;
-							background: #f8f9fa;
-							border-radius: 4px;
-							border: 1px solid #ddd;
-						"
-					>
-						<div>
-							<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px">
-								<span style="font-weight: 500; font-size: 14px">Status:</span>
-								<span
-									id="syftbox-status-badge"
-									style="
-										display: inline-flex;
-										align-items: center;
-										gap: 5px;
-										padding: 4px 12px;
-										border-radius: 12px;
-										font-size: 13px;
-										font-weight: 500;
-									"
-								>
+					<label>SyftBox Integration</label>
+					<div class="status-card">
+						<div class="status-card-content">
+							<div class="status-card-title">
+								<span>Status:</span>
+								<span id="syftbox-status-badge" class="status-badge checking">
 									<span class="spinner" style="width: 12px; height: 12px; margin: 0"></span>
 									Checking...
 								</span>
 							</div>
-							<p style="color: #666; font-size: 12px; margin: 0">
-								Connect to SyftBox for secure data sharing
-							</p>
+							<p class="status-card-description">Connect to SyftBox for secure data sharing</p>
 						</div>
-						<button
-							id="syftbox-auth-btn"
-							disabled
-							style="
-								padding: 10px 20px;
-								background: #667eea;
-								color: white;
-								border: none;
-								border-radius: 4px;
-								cursor: pointer;
-								font-size: 14px;
-								font-weight: 500;
-							"
-						>
+						<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
 							Authenticate
 						</button>
 					</div>
 				</div>
 
+				<!-- Updates -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 15px">Updates</label>
-					<div
-						style="
-							display: flex;
-							align-items: center;
-							justify-content: space-between;
-							padding: 15px;
-							background: #f8f9fa;
-							border-radius: 4px;
-							border: 1px solid #ddd;
-						"
-					>
-						<div>
-							<div style="margin-bottom: 5px">
+					<label>Updates</label>
+					<div class="status-card">
+						<div class="status-card-content">
+							<div style="margin-bottom: 8px">
 								<span style="font-weight: 500; font-size: 14px">Version:</span>
-								<span id="app-version" style="font-family: monospace; margin-left: 8px"
+								<span id="app-version" style="font-family: 'SF Mono', 'Monaco', monospace; margin-left: 8px"
 									>Loading...</span
 								>
 							</div>
-							<p style="color: #666; font-size: 12px; margin: 0 0 8px 0">
+							<p class="status-card-description">
 								Check for new updates to get the latest features and fixes
 							</p>
 							<a
@@ -251,52 +149,28 @@
 									display: inline-flex;
 									align-items: center;
 									gap: 4px;
+									margin-top: 4px;
 								"
 							>
 								<span>🔗</span>
 								<span>View all releases</span>
 							</a>
 						</div>
-						<button
-							id="check-updates-btn"
-							style="
-								padding: 10px 20px;
-								background: #6366f1;
-								color: white;
-								border: none;
-								border-radius: 4px;
-								cursor: pointer;
-								font-size: 14px;
-								font-weight: 500;
-							"
-						>
+						<button id="check-updates-btn" class="settings-btn settings-btn-primary">
 							Check for Updates
 						</button>
 					</div>
 				</div>
 
+				<!-- Application Settings -->
 				<div class="setting-item">
-					<label style="display: block; font-weight: 600; margin-bottom: 15px"
-						>Application Settings</label
-					>
-					<div
-						style="
-							display: flex;
-							align-items: center;
-							justify-content: space-between;
-							padding: 15px;
-							background: #f8f9fa;
-							border-radius: 4px;
-							border: 1px solid #ddd;
-						"
-					>
-						<div>
-							<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px">
-								<span style="font-weight: 500; font-size: 14px">Start on Startup</span>
+					<label>Application Settings</label>
+					<div class="status-card">
+						<div class="status-card-content">
+							<div class="status-card-title">
+								<span>Start on Startup</span>
 							</div>
-							<p style="color: #666; font-size: 12px; margin: 0">
-								Automatically launch BioVault when you log in
-							</p>
+							<p class="status-card-description">Automatically launch BioVault when you log in</p>
 						</div>
 						<label class="toggle-switch">
 							<input type="checkbox" id="autostart-toggle" />
@@ -305,27 +179,14 @@
 					</div>
 				</div>
 
+				<!-- Danger Zone -->
 				<div class="danger-zone">
 					<h3>⚠️ Danger Zone</h3>
 					<p>
 						This will delete ALL BioVault data including participants, files, projects, and runs.
 						This cannot be undone!
 					</p>
-					<button
-						id="reset-all-btn"
-						class="danger-btn"
-						style="
-							padding: 12px 24px;
-							border: none;
-							border-radius: 4px;
-							cursor: pointer;
-							font-size: 14px;
-							font-weight: 500;
-							color: white;
-						"
-					>
-						Reset All Data
-					</button>
+					<button id="reset-all-btn" class="danger-btn">Reset All Data</button>
 				</div>
 			</div>
 		</div>

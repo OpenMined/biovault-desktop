@@ -77,7 +77,7 @@ export function createPipelinesModule({
 
 	function renderPipelineCard(pipeline, container) {
 		const stepCount = pipeline.spec?.steps?.length || 0
-		const description = pipeline.spec?.description || 'Click to configure and manage steps'
+		const description = pipeline.spec?.description || ''
 		const context = getPendingDataRunContext()
 		const hasDataSelected = context && context.fileIds && context.fileIds.length > 0
 		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
@@ -114,7 +114,7 @@ export function createPipelinesModule({
 				<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
 				${
 					canRunWithData
-						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); transition: all 0.2s;">
+						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3);">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
@@ -125,11 +125,7 @@ export function createPipelinesModule({
 			</div>
 		`
 
-		card.addEventListener('click', (e) => {
-			// Don't navigate if clicking on buttons
-			if (e.target.closest('button')) return
-			showPipelineDetails(pipeline.id)
-		})
+		// Card click handler removed - cards are not clickable
 		container.appendChild(card)
 
 		if (canRunWithData) {
@@ -137,7 +133,15 @@ export function createPipelinesModule({
 			if (runDataBtn) {
 				runDataBtn.addEventListener('click', async (event) => {
 					event.stopPropagation()
-					await startDataDrivenRun(pipeline.id)
+					// Show alert that pipeline editing is coming soon
+					if (dialog && dialog.message) {
+						await dialog.message('Pipeline editing in UI coming soon', {
+							title: 'Coming Soon',
+							type: 'info',
+						})
+					} else {
+						alert('Pipeline editing in UI coming soon')
+					}
 				})
 			}
 		} else {
