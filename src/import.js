@@ -585,8 +585,8 @@ export function createImportModule({
 						</svg>
 						<span style="font-weight: 600; color: #64748b; font-size: 13px;">
 							<strong style="color: #475569;">${sortedAlreadyImported.length}</strong> already imported file${
-				sortedAlreadyImported.length !== 1 ? 's' : ''
-			}
+								sortedAlreadyImported.length !== 1 ? 's' : ''
+							}
 						</span>
 					</div>
 					<span style="font-size: 11px; color: #94a3b8;">Click to show</span>
