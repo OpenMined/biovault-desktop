@@ -543,7 +543,7 @@ test.describe('Import Data workflow', () => {
 
 		// Close the modal before navigating to other tabs
 		const closeModalBtn = page
-			.locator('#import-selection-view button.modal-close-btn[data-modal-close="import"]')
+			.locator('#import-modal button.modal-close-btn[data-modal-close="import"]')
 			.first()
 		await closeModalBtn.click()
 		await expect(importModal).toHaveAttribute('hidden', '')

@@ -585,8 +585,8 @@ export function createImportModule({
 						</svg>
 						<span style="font-weight: 600; color: #64748b; font-size: 13px;">
 							<strong style="color: #475569;">${sortedAlreadyImported.length}</strong> already imported file${
-								sortedAlreadyImported.length !== 1 ? 's' : ''
-							}
+				sortedAlreadyImported.length !== 1 ? 's' : ''
+			}
 						</span>
 					</div>
 					<span style="font-size: 11px; color: #94a3b8;">Click to show</span>
@@ -1418,7 +1418,7 @@ export function createImportModule({
 		if (detectBtn) {
 			detectBtn.disabled = false
 		}
-		const progressBar = document.getElementById('import-progress-bar')
+		const progressBar = document.getElementById('detection-progress')
 		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
 		if (progressBar && progressBarFill && progressText) {
@@ -1493,7 +1493,7 @@ export function createImportModule({
 	}
 	function showReviewViewInModal() {
 		// Show step 2, hide step 1
-		const step1 = document.getElementById('import-step-1')
+		const step1 = document.getElementById('import-selection-view')
 		const step2 = document.getElementById('import-step-2')
 		const backBtn = document.getElementById('import-back-btn')
 		const continueBtn = document.getElementById('import-continue-btn')
@@ -1516,7 +1516,7 @@ export function createImportModule({
 	}
 	function backToSelection() {
 		// Show step 1, hide step 2
-		const step1 = document.getElementById('import-step-1')
+		const step1 = document.getElementById('import-selection-view')
 		const step2 = document.getElementById('import-step-2')
 		const backBtn = document.getElementById('import-back-btn')
 		const continueBtn = document.getElementById('import-continue-btn')
@@ -1901,7 +1901,7 @@ export function createImportModule({
 			return
 		}
 		const btn = document.getElementById('detect-types-btn')
-		const progressBar = document.getElementById('import-progress-bar')
+		const progressBar = document.getElementById('detection-progress')
 		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
 		// Show progress UI IMMEDIATELY before any work
@@ -1972,7 +1972,7 @@ export function createImportModule({
 				'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM5.354 4.646L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 1 1 .708-.708z"/></svg> Auto-detect'
 			// Hide progress bar after a short delay
 			setTimeout(() => {
-				const progressBar = document.getElementById('import-progress-bar')
+				const progressBar = document.getElementById('detection-progress')
 				const progressBarFill = document.getElementById('progress-bar-fill')
 				if (progressBar) progressBar.classList.add('hidden')
 				if (progressBarFill) progressBarFill.style.width = '0%'
@@ -2012,7 +2012,7 @@ export function createImportModule({
 	}
 	async function finalizeImport() {
 		const btn = document.getElementById('review-import-btn')
-		const progressBar = document.getElementById('import-progress-bar')
+		const progressBar = document.getElementById('detection-progress')
 		const progressBarFill = document.getElementById('progress-bar-fill')
 		const progressText = document.getElementById('progress-text')
 		// Mark import as in progress
@@ -2072,7 +2072,7 @@ export function createImportModule({
 				setTimeout(() => {
 					resetImportState()
 					isImportInProgress = false
-					const progressBar = document.getElementById('import-progress-bar')
+					const progressBar = document.getElementById('detection-progress')
 					const progressBarFill = document.getElementById('progress-bar-fill')
 					if (progressBar) progressBar.classList.add('hidden')
 					if (progressBarFill) progressBarFill.style.width = '0%'
@@ -2090,7 +2090,7 @@ export function createImportModule({
 				btn.disabled = false
 				btn.innerHTML = 'Import Files →'
 				setTimeout(() => {
-					const progressBar = document.getElementById('import-progress-bar')
+					const progressBar = document.getElementById('detection-progress')
 					const progressBarFill = document.getElementById('progress-bar-fill')
 					if (progressBar) progressBar.classList.add('hidden')
 					if (progressBarFill) progressBarFill.style.width = '0%'
@@ -2104,7 +2104,7 @@ export function createImportModule({
 			btn.disabled = false
 			btn.innerHTML = 'Import Files →'
 			setTimeout(() => {
-				const progressBar = document.getElementById('import-progress-bar')
+				const progressBar = document.getElementById('detection-progress')
 				const progressBarFill = document.getElementById('progress-bar-fill')
 				if (progressBar) progressBar.style.display = 'none'
 				if (progressBarFill) progressBarFill.style.width = '0%'
