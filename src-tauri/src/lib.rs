@@ -153,15 +153,29 @@ pub fn run() {
 
                         for file in &files {
                             // Lock briefly to mark as processing
+                            // Also check if file still exists (might have been deleted by clear queue)
                             let marked = {
                                 match biovault_db_for_processor.lock() {
-                                    Ok(db) => biovault::data::update_file_status(
-                                        &db,
-                                        file.id,
-                                        "processing",
-                                        None,
-                                    )
-                                    .is_ok(),
+                                    Ok(db) => {
+                                        // Check if file still exists first
+                                        let file_exists: Result<bool, _> = db.connection().query_row(
+                                            "SELECT COUNT(*) FROM files WHERE id = ?1 AND status = 'pending'",
+                                            [file.id],
+                                            |row| Ok(row.get::<_, i64>(0)? > 0),
+                                        );
+
+                                        if let Ok(true) = file_exists {
+                                            biovault::data::update_file_status(
+                                                &db,
+                                                file.id,
+                                                "processing",
+                                                None,
+                                            )
+                                            .is_ok()
+                                        } else {
+                                            false // File doesn't exist or not pending anymore
+                                        }
+                                    }
                                     Err(_) => false,
                                 }
                             };
@@ -205,37 +219,61 @@ pub fn run() {
                                     };
 
                                     // Lock briefly to update DB with results
+                                    // First check if file still exists (might have been deleted by clear queue)
                                     match biovault_db_for_processor.lock() {
                                         Ok(db) => {
-                                            if biovault::data::update_file_from_queue(
-                                                &db,
-                                                file.id,
-                                                &hash,
-                                                metadata.as_ref(),
-                                            )
-                                            .is_ok()
-                                            {
-                                                let _ = biovault::data::update_file_status(
-                                                    &db, file.id, "complete", None,
-                                                );
-                                                processed += 1;
+                                            // Check if file still exists before updating
+                                            let file_exists: Result<bool, _> = db.connection().query_row(
+                                                "SELECT COUNT(*) FROM files WHERE id = ?1",
+                                                [file.id],
+                                                |row| Ok(row.get::<_, i64>(0)? > 0),
+                                            );
+
+                                            if let Ok(true) = file_exists {
+                                                if biovault::data::update_file_from_queue(
+                                                    &db,
+                                                    file.id,
+                                                    &hash,
+                                                    metadata.as_ref(),
+                                                )
+                                                .is_ok()
+                                                {
+                                                    let _ = biovault::data::update_file_status(
+                                                        &db, file.id, "complete", None,
+                                                    );
+                                                    processed += 1;
+                                                }
                                             }
+                                            // If file doesn't exist anymore, it was deleted (e.g., by clear queue)
+                                            // Just skip it - no error needed
                                         }
                                         Err(_) => continue,
                                     }
                                 }
                                 Err(e) => {
                                     // Lock briefly to mark error
+                                    // First check if file still exists (might have been deleted by clear queue)
                                     let error_msg = format!("{}", e);
                                     if let Ok(db) = biovault_db_for_processor.lock() {
-                                        let _ = biovault::data::update_file_status(
-                                            &db,
-                                            file.id,
-                                            "error",
-                                            Some(&error_msg),
+                                        // Check if file still exists before updating
+                                        let file_exists: Result<bool, _> = db.connection().query_row(
+                                            "SELECT COUNT(*) FROM files WHERE id = ?1",
+                                            [file.id],
+                                            |row| Ok(row.get::<_, i64>(0)? > 0),
                                         );
+
+                                        if let Ok(true) = file_exists {
+                                            let _ = biovault::data::update_file_status(
+                                                &db,
+                                                file.id,
+                                                "error",
+                                                Some(&error_msg),
+                                            );
+                                            errors += 1;
+                                        }
+                                        // If file doesn't exist anymore, it was deleted (e.g., by clear queue)
+                                        // Just skip it - no error needed
                                     }
-                                    errors += 1;
                                 }
                             }
                         }
@@ -395,6 +433,8 @@ pub fn run() {
             pause_queue_processor,
             resume_queue_processor,
             get_queue_processor_status,
+            get_queue_info,
+            clear_pending_queue,
             get_files,
             delete_file,
             delete_files_bulk,

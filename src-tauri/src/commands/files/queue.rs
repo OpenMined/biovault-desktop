@@ -164,3 +164,65 @@ pub fn resume_queue_processor(state: tauri::State<AppState>) -> Result<bool, Str
 pub fn get_queue_processor_status(state: tauri::State<AppState>) -> Result<bool, String> {
     Ok(!state.queue_processor_paused.load(Ordering::SeqCst))
 }
+
+#[tauri::command]
+pub fn clear_pending_queue(state: tauri::State<AppState>) -> Result<usize, String> {
+    crate::desktop_log!("🗑️ clear_pending_queue called (using library)");
+
+    // Pause the queue processor first to prevent race conditions
+    state.queue_processor_paused.store(true, Ordering::SeqCst);
+    crate::desktop_log!("   Paused queue processor");
+
+    // Small delay to let any in-flight operations complete
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let db = state.biovault_db.lock().unwrap();
+
+    // Use CLI library function to clear pending and processing queue
+    let deleted = biovault::data::clear_pending_queue(&db)
+        .map_err(|e| format!("Failed to clear pending queue: {}", e))?;
+
+    crate::desktop_log!("✅ Cleared {} files (pending + processing) from queue", deleted);
+    Ok(deleted)
+}
+
+#[derive(serde::Serialize)]
+pub struct QueueInfo {
+    pub total_pending: usize,
+    pub processing_count: usize,
+    pub queue_position: Option<usize>, // Position of specific file if file_id provided
+    pub is_processor_running: bool,
+    pub currently_processing: Option<QueueFileInfo>,
+}
+
+#[derive(serde::Serialize)]
+pub struct QueueFileInfo {
+    pub id: i64,
+    pub file_path: String,
+}
+
+#[tauri::command]
+pub fn get_queue_info(
+    state: tauri::State<AppState>,
+    file_id: Option<i64>,
+) -> Result<QueueInfo, String> {
+    let db = state.biovault_db.lock().unwrap();
+
+    // Use CLI library function to get queue info
+    let cli_queue_info = biovault::data::get_queue_info(&db, file_id)
+        .map_err(|e| format!("Failed to get queue info: {}", e))?;
+
+    let is_processor_running = !state.queue_processor_paused.load(Ordering::SeqCst);
+
+    // Convert CLI QueueInfo to desktop QueueInfo
+    Ok(QueueInfo {
+        total_pending: cli_queue_info.total_pending,
+        processing_count: cli_queue_info.processing_count,
+        queue_position: cli_queue_info.queue_position,
+        is_processor_running,
+        currently_processing: cli_queue_info.currently_processing.map(|f| QueueFileInfo {
+            id: f.id,
+            file_path: f.file_path,
+        }),
+    })
+}
