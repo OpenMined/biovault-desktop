@@ -12,6 +12,7 @@ export function createDataModule({ invoke, dialog }) {
 	let queueProcessorRunning = false
 	let queueIntervalId = null
 	let existingFilePaths = new Set()
+	let filesToDisplay = [] // Filtered files currently displayed
 
 	// ============================================================================
 	// HELPERS
@@ -284,8 +285,8 @@ export function createDataModule({ invoke, dialog }) {
 
 		tbody.innerHTML = ''
 
-		// Get files to display - apply all filters
-		let filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
+		// Get files to display - apply all filters and store at module level
+		filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
 
 		// Update page title with file count (only in Data view)
 		const dataView = document.getElementById('data-view')
@@ -312,28 +313,11 @@ export function createDataModule({ invoke, dialog }) {
 			tableWrapper.style.display = 'block'
 			emptyState.style.display = 'none'
 
-			// Use virtual scrolling for large datasets (>500 files)
-			if (filesToDisplay.length > 500) {
-				// Reset scroll handler attachment if table wrapper changed
-				const tableWrapper = document.querySelector('.files-table-wrapper')
-				if (tableWrapper && virtualScrollState.scrollHandlerAttached) {
-					// Check if handler is still attached
-					if (!tableWrapper.hasAttribute('data-vscroll-attached')) {
-						virtualScrollState.scrollHandlerAttached = false
-						tableWrapper.setAttribute('data-vscroll-attached', 'true')
-					}
-				}
-				renderFilesWithVirtualScrolling(tbody, filesToDisplay)
-			} else {
-				// Clear virtual scroll state for smaller datasets
-				virtualScrollState.allFiles = null
-				virtualScrollState.scrollHandlerAttached = false
-				// Render all files directly for smaller datasets
-				filesToDisplay.forEach((file) => {
-					const row = renderFileRow(file)
-					tbody.appendChild(row)
-				})
-			}
+			// Render all rows without virtual scrolling so the user can scroll/select the full dataset
+			filesToDisplay.forEach((file) => {
+				const row = renderFileRow(file)
+				tbody.appendChild(row)
+			})
 		}
 
 		updateSortIndicators()
@@ -342,96 +326,7 @@ export function createDataModule({ invoke, dialog }) {
 		updateActionButtons()
 	}
 
-	// ============================================================================
-	// VIRTUAL SCROLLING (for large datasets)
-	// ============================================================================
-
-	let virtualScrollState = {
-		visibleStart: 0,
-		visibleEnd: 50,
-		rowHeight: 48, // Approximate row height in pixels
-		buffer: 10, // Extra rows to render outside viewport
-		allFiles: null,
-		scrollHandler: null,
-		scrollHandlerAttached: false,
-	}
-
-	function renderFilesWithVirtualScrolling(tbody, files) {
-		const tableWrapper = document.querySelector('.files-table-wrapper')
-		if (!tableWrapper) return
-
-		// Clear existing content
-		tbody.innerHTML = ''
-
-		// Store files for virtual scrolling
-		virtualScrollState.allFiles = files
-
-		// Calculate visible range
-		const scrollTop = tableWrapper.scrollTop || 0
-		const containerHeight = tableWrapper.clientHeight || 800
-		const startIndex = Math.max(
-			0,
-			Math.floor(scrollTop / virtualScrollState.rowHeight) - virtualScrollState.buffer,
-		)
-		const endIndex = Math.min(
-			files.length,
-			Math.ceil((scrollTop + containerHeight) / virtualScrollState.rowHeight) +
-				virtualScrollState.buffer,
-		)
-
-		virtualScrollState.visibleStart = startIndex
-		virtualScrollState.visibleEnd = endIndex
-
-		// Add spacer for rows before visible range
-		if (startIndex > 0) {
-			const spacerTop = document.createElement('tr')
-			spacerTop.style.height = `${startIndex * virtualScrollState.rowHeight}px`
-			spacerTop.innerHTML = '<td colspan="11"></td>'
-			tbody.appendChild(spacerTop)
-		}
-
-		// Render visible rows
-		for (let i = startIndex; i < endIndex && i < files.length; i++) {
-			const file = files[i]
-			const row = renderFileRow(file)
-			tbody.appendChild(row)
-		}
-
-		// Add spacer for rows after visible range
-		if (endIndex < files.length) {
-			const spacerBottom = document.createElement('tr')
-			spacerBottom.style.height = `${(files.length - endIndex) * virtualScrollState.rowHeight}px`
-			spacerBottom.innerHTML = '<td colspan="11"></td>'
-			tbody.appendChild(spacerBottom)
-		}
-
-		// Set up scroll handler (debounced) - only once per table wrapper
-		if (!virtualScrollState.scrollHandlerAttached) {
-			virtualScrollState.scrollHandler = debounce(() => {
-				if (tableWrapper && virtualScrollState.allFiles) {
-					renderFilesWithVirtualScrolling(tbody, virtualScrollState.allFiles)
-				}
-			}, 16) // ~60fps
-
-			tableWrapper.addEventListener('scroll', virtualScrollState.scrollHandler, { passive: true })
-			virtualScrollState.scrollHandlerAttached = true
-		}
-
-		// Update total height for proper scrolling
-		tableWrapper.style.overflowY = 'auto'
-	}
-
-	function debounce(func, wait) {
-		let timeout
-		return function executedFunction(...args) {
-			const later = () => {
-				clearTimeout(timeout)
-				func(...args)
-			}
-			clearTimeout(timeout)
-			timeout = setTimeout(later, wait)
-		}
-	}
+	// Virtual scrolling removed; table now renders all rows so scroll height matches dataset size.
 
 	// ============================================================================
 	// UI UPDATES
@@ -501,13 +396,13 @@ export function createDataModule({ invoke, dialog }) {
 		const selectAllCheckbox = document.getElementById('select-all-data-files')
 		if (!selectAllCheckbox) return
 
-		const visibleFileIds = Array.from(document.querySelectorAll('.file-checkbox')).map((cb) =>
-			parseInt(cb.dataset.id),
-		)
+		// Use filtered files array instead of DOM query to support virtual scrolling
+		const allFilteredFileIds = filesToDisplay.map((f) => f.id)
 
 		const allSelected =
-			visibleFileIds.length > 0 && visibleFileIds.every((id) => selectedFileIds.includes(id))
-		const someSelected = visibleFileIds.some((id) => selectedFileIds.includes(id))
+			allFilteredFileIds.length > 0 &&
+			allFilteredFileIds.every((id) => selectedFileIds.includes(id))
+		const someSelected = allFilteredFileIds.some((id) => selectedFileIds.includes(id))
 
 		selectAllCheckbox.checked = allSelected
 		selectAllCheckbox.indeterminate = someSelected && !allSelected
@@ -659,18 +554,19 @@ export function createDataModule({ invoke, dialog }) {
 		const selectAllFiles = document.getElementById('select-all-data-files')
 		if (selectAllFiles) {
 			selectAllFiles.addEventListener('change', (e) => {
-				const visibleFileIds = Array.from(document.querySelectorAll('.file-checkbox')).map((cb) =>
-					parseInt(cb.dataset.id),
-				)
+				// Use filtered files array instead of DOM query to support virtual scrolling
+				const allFilteredFileIds = filesToDisplay.map((f) => f.id)
 
 				if (e.target.checked) {
-					visibleFileIds.forEach((id) => {
+					// Select all filtered files
+					allFilteredFileIds.forEach((id) => {
 						if (!selectedFileIds.includes(id)) {
 							selectedFileIds.push(id)
 						}
 					})
 				} else {
-					selectedFileIds = selectedFileIds.filter((id) => !visibleFileIds.includes(id))
+					// Deselect all filtered files
+					selectedFileIds = selectedFileIds.filter((id) => !allFilteredFileIds.includes(id))
 				}
 
 				renderFilesPanel()
