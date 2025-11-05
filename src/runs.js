@@ -287,11 +287,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						}" title="View results folder" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f1f5f9'; this.style.color='#2563eb'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'">
 							<img src="assets/icons/folder.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" onmouseover="this.style.filter='invert(32%) sepia(94%) saturate(1352%) hue-rotate(212deg) brightness(99%) contrast(96%)'" onmouseout="this.style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'" />
 						</button>
-						<button class="run-rerun-btn" data-run-id="${run.id}" data-pipeline-id="${
-							run.pipeline_id
-						}" title="Re-run pipeline" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(62%) sepia(81%) saturate(414%) hue-rotate(121deg) brightness(96%) contrast(87%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
-							<img src="assets/icons/rerun.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
-						</button>
 						<button class="run-delete-btn" data-run-id="${
 							run.id
 						}" title="Delete run" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #94a3b8; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#fef2f2'; this.style.color='#dc2626'; this.querySelector('img').style.filter='invert(28%) sepia(93%) saturate(3338%) hue-rotate(340deg) brightness(95%) contrast(92%)'" onmouseout="this.style.background='transparent'; this.style.color='#94a3b8'; this.querySelector('img').style.filter='invert(65%) sepia(6%) saturate(307%) hue-rotate(183deg) brightness(93%) contrast(86%)'">
@@ -343,11 +338,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 				header.addEventListener('click', async (e) => {
 					// Don't expand if clicking action buttons
-					if (
-						e.target.closest('.run-delete-btn') ||
-						e.target.closest('.run-rerun-btn') ||
-						e.target.closest('.run-view-folder-btn')
-					) {
+					if (e.target.closest('.run-delete-btn') || e.target.closest('.run-view-folder-btn')) {
 						return
 					}
 
@@ -383,46 +374,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								await invoke('open_folder', { path: resultsPath })
 							} catch (error) {
 								alert(`Error opening folder: ${error}`)
-							}
-						}
-					})
-				}
-
-				// Handle rerun button
-				const rerunBtn = card.querySelector('.run-rerun-btn')
-				if (rerunBtn) {
-					rerunBtn.addEventListener('click', async (e) => {
-						e.stopPropagation()
-						const confirmed = await confirmWithDialog(
-							`Re-run pipeline "${pipelineName}" with the same configuration?`,
-							{ title: 'Re-run Pipeline', type: 'info' },
-						)
-						if (confirmed) {
-							try {
-								const pipelineId = parseInt(rerunBtn.dataset.pipelineId)
-								// Reuse the saved configuration by creating a run config from this run
-								const runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
-								const inputOverrides = runMetadata.input_overrides || {}
-								const paramOverrides = runMetadata.parameter_overrides || {}
-
-								await invoke('save_run_config', {
-									pipelineId,
-									name: `Re-run of ${run.id}`,
-									configData: {
-										inputs: inputOverrides,
-										parameters: paramOverrides,
-									},
-								})
-								// Navigate to pipelines tab and trigger run
-								if (navigateTo) {
-									navigateTo('pipelines')
-									// Give time for navigation, then trigger run
-									setTimeout(async () => {
-										await window.pipelineModule?.runPipeline?.(pipelineId)
-									}, 100)
-								}
-							} catch (error) {
-								alert(`Error re-running pipeline: ${error}`)
 							}
 						}
 					})

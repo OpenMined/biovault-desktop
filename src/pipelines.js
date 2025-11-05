@@ -41,6 +41,18 @@ export function createPipelinesModule({
 			pipelineState.pendingDataRun = null
 
 			const pipelines = await invoke('get_pipelines')
+			// Pre-load all projects for step resolution
+			const projects = await invoke('get_projects')
+			const projectsMap = new Map()
+			projects.forEach((p) => {
+				const key = `${p.name}@${p.version}`
+				projectsMap.set(key, p)
+				// Also allow lookup by name only (for latest version)
+				if (!projectsMap.has(p.name)) {
+					projectsMap.set(p.name, p)
+				}
+			})
+
 			const gridContainer = document.getElementById('pipelines-grid')
 			const emptyState = document.getElementById('pipelines-empty-state')
 
@@ -62,7 +74,7 @@ export function createPipelinesModule({
 			gridContainer.innerHTML = ''
 
 			pipelines.forEach((pipeline) => {
-				renderPipelineCard(pipeline, gridContainer)
+				renderPipelineCard(pipeline, gridContainer, projectsMap)
 			})
 
 			pipelineState.pipelines = pipelines
@@ -75,13 +87,48 @@ export function createPipelinesModule({
 		}
 	}
 
-	function renderPipelineCard(pipeline, container) {
+	function renderPipelineCard(pipeline, container, projectsMap = new Map()) {
 		const stepCount = pipeline.spec?.steps?.length || 0
 		const description = pipeline.spec?.description || ''
 		const context = getPendingDataRunContext()
 		const hasDataSelected = context && context.fileIds && context.fileIds.length > 0
 		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
 		const canRunWithData = hasDataSelected && acceptsGenotype
+
+		// Resolve step projects to get names and versions
+		const stepDetails = (pipeline.spec?.steps || [])
+			.map((step) => {
+				if (!step.uses) return null
+				const uses = step.uses
+
+				// Try to find project in map
+				let project = null
+				if (uses.includes('@')) {
+					// Has version: name@version
+					project = projectsMap.get(uses)
+				} else {
+					// No version: try by name
+					project = projectsMap.get(uses)
+				}
+
+				if (project) {
+					return {
+						id: step.id,
+						name: project.name,
+						version: project.version,
+					}
+				}
+
+				// Parse name@version if present
+				if (uses.includes('@')) {
+					const [name, version] = uses.split('@')
+					return { id: step.id, name, version }
+				}
+
+				// Fallback: use the uses value as name
+				return { id: step.id, name: uses, version: null }
+			})
+			.filter((s) => s !== null)
 
 		const card = document.createElement('div')
 		card.className = 'pipeline-card'
@@ -109,9 +156,20 @@ export function createPipelinesModule({
 				}, event)">⋯</button>
 			</div>
 			${dataBadge}
-			<p class="pipeline-card-description">${description}</p>
+			${description ? `<p class="pipeline-card-description">${description}</p>` : ''}
 			<div class="pipeline-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-				<span class="pipeline-step-badge">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>
+				${
+					stepDetails.length > 0
+						? `<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">${stepDetails
+								.map((s) => {
+									const versionText = s.version ? ` v${s.version}` : ''
+									return `<span style="display: inline-block; padding: 4px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #475569;">${s.name}${versionText}</span>`
+								})
+								.join('')}</div>`
+						: `<span class="pipeline-step-badge">${stepCount} ${
+								stepCount === 1 ? 'step' : 'steps'
+							}</span>`
+				}
 				${
 					canRunWithData
 						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3);">
@@ -133,15 +191,7 @@ export function createPipelinesModule({
 			if (runDataBtn) {
 				runDataBtn.addEventListener('click', async (event) => {
 					event.stopPropagation()
-					// Show alert that pipeline editing is coming soon
-					if (dialog && dialog.message) {
-						await dialog.message('Pipeline editing in UI coming soon', {
-							title: 'Coming Soon',
-							type: 'info',
-						})
-					} else {
-						alert('Pipeline editing in UI coming soon')
-					}
+					await handlePipelineRunClick(pipeline.id)
 				})
 			}
 		} else {
