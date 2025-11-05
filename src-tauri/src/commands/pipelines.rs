@@ -183,10 +183,6 @@ pub async fn create_pipeline(
         pipeline_dir = managed_pipeline_dir.clone();
         pipeline_yaml_path = managed_pipeline_dir.join("pipeline.yaml");
 
-        // Copy pipeline.yaml to managed location
-        fs::copy(&source_pipeline_yaml_path, &pipeline_yaml_path)
-            .map_err(|e| format!("Failed to copy pipeline.yaml: {}", e))?;
-
         // Resolve and import dependencies
         // Use spawn_blocking because BioVaultDb is not Send
         // base_path is the directory containing pipeline.yaml (where project.yaml might also be)
@@ -206,7 +202,6 @@ pub async fn create_pipeline(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                // resolve_pipeline_dependencies saves the updated spec automatically
                 Ok::<PipelineSpec, String>(spec)
             })
         })
@@ -214,6 +209,8 @@ pub async fn create_pipeline(
         .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
 
         let spec = spec_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
+
+        // Note: resolve_pipeline_dependencies already saves the spec (with description preserved)
         imported_spec = Some(spec);
     } else {
         fs::create_dir_all(&pipeline_dir)
