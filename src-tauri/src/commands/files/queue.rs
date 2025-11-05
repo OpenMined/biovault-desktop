@@ -164,3 +164,129 @@ pub fn resume_queue_processor(state: tauri::State<AppState>) -> Result<bool, Str
 pub fn get_queue_processor_status(state: tauri::State<AppState>) -> Result<bool, String> {
     Ok(!state.queue_processor_paused.load(Ordering::SeqCst))
 }
+
+#[tauri::command]
+pub fn clear_pending_queue(state: tauri::State<AppState>) -> Result<usize, String> {
+    crate::desktop_log!("🗑️ clear_pending_queue called");
+
+    // Pause the queue processor first to prevent race conditions
+    state.queue_processor_paused.store(true, Ordering::SeqCst);
+    crate::desktop_log!("   Paused queue processor");
+
+    // Small delay to let any in-flight operations complete
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let db = state.biovault_db.lock().unwrap();
+    let conn = db.connection();
+
+    // Delete files with status 'pending' or 'processing'
+    let deleted = conn
+        .execute(
+            "DELETE FROM files WHERE status IN ('pending', 'processing')",
+            [],
+        )
+        .map_err(|e| format!("Failed to clear pending queue: {}", e))?;
+
+    crate::desktop_log!(
+        "✅ Cleared {} files (pending + processing) from queue",
+        deleted
+    );
+    Ok(deleted)
+}
+
+#[derive(serde::Serialize)]
+pub struct QueueInfo {
+    pub total_pending: usize,
+    pub processing_count: usize,
+    pub queue_position: Option<usize>, // Position of specific file if file_id provided
+    pub is_processor_running: bool,
+    pub currently_processing: Option<QueueFileInfo>,
+}
+
+#[derive(serde::Serialize)]
+pub struct QueueFileInfo {
+    pub id: i64,
+    pub file_path: String,
+}
+
+#[tauri::command]
+pub fn get_queue_info(
+    state: tauri::State<AppState>,
+    file_id: Option<i64>,
+) -> Result<QueueInfo, String> {
+    let db = state.biovault_db.lock().unwrap();
+    let conn = db.connection();
+
+    // Get total pending files count
+    let total_pending: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to get pending count: {}", e))?;
+
+    // Get processing files count
+    let processing_count: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE status = 'processing'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to get processing count: {}", e))?;
+
+    // Get currently processing file (if any)
+    let currently_processing: Option<QueueFileInfo> = conn
+        .query_row(
+            "SELECT id, file_path FROM files WHERE status = 'processing' LIMIT 1",
+            [],
+            |row| {
+                Ok(QueueFileInfo {
+                    id: row.get(0)?,
+                    file_path: row.get(1)?,
+                })
+            },
+        )
+        .ok();
+
+    // Get queue position for specific file if provided
+    let queue_position: Option<usize> = if let Some(fid) = file_id {
+        // First verify the file is pending
+        let is_pending: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM files WHERE id = ?1 AND status = 'pending'",
+                [fid],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if is_pending {
+            // Get position: count files that were added before this one
+            conn.query_row(
+                "SELECT COUNT(*) FROM files 
+                 WHERE status = 'pending' 
+                 AND queue_added_at < (SELECT queue_added_at FROM files WHERE id = ?1)",
+                [fid],
+                |row| {
+                    let pos: usize = row.get(0)?;
+                    Ok(Some(pos + 1)) // +1 because position is 1-indexed
+                },
+            )
+            .map_err(|e| format!("Failed to get queue position: {}", e))?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let is_processor_running = !state.queue_processor_paused.load(Ordering::SeqCst);
+
+    Ok(QueueInfo {
+        total_pending,
+        processing_count,
+        queue_position,
+        is_processor_running,
+        currently_processing,
+    })
+}

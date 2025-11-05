@@ -13,6 +13,8 @@ export function createDataModule({ invoke, dialog }) {
 	let queueIntervalId = null
 	let existingFilePaths = new Set()
 	let filesToDisplay = [] // Filtered files currently displayed
+	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessing }
+	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing }
 
 	// ============================================================================
 	// HELPERS
@@ -135,7 +137,26 @@ export function createDataModule({ invoke, dialog }) {
 	// RENDERING - STATUS BADGE
 	// ============================================================================
 
-	function renderStatusBadge(status, error = null) {
+	function renderStatusBadge(status, error = null, fileId = null) {
+		if (status === 'pending' && fileId) {
+			const queueInfo = queueInfoCache.get(fileId)
+			if (queueInfo) {
+				const { position, totalPending, isProcessorRunning } = queueInfo
+				if (position !== undefined && totalPending !== undefined) {
+					const queueText =
+						position > 0
+							? `Queue: #${position} of ${totalPending}`
+							: `Queue: ${totalPending} file${totalPending === 1 ? '' : 's'} waiting`
+					const processorStatus = isProcessorRunning ? 'Processor running' : 'Processor paused'
+					const title = `${queueText} • ${processorStatus}`
+					return `<span class="status-badge status-pending" title="${title}">⏳ PENDING #${position}/${totalPending}</span>`
+				}
+			}
+			// Fallback if no queue info yet
+			const totalPending = globalQueueInfo?.totalPending || '?'
+			return `<span class="status-badge status-pending" title="Pending in queue">⏳ PENDING (${totalPending} in queue)</span>`
+		}
+
 		const badges = {
 			pending: '<span class="status-badge status-pending" title="Pending">⏳ PENDING</span>',
 			processing:
@@ -160,7 +181,7 @@ export function createDataModule({ invoke, dialog }) {
 		const isSelected = selectedFileIds.includes(file.id)
 		if (isSelected) row.classList.add('selected')
 
-		const statusBadge = renderStatusBadge(file.status, file.processing_error)
+		const statusBadge = renderStatusBadge(file.status, file.processing_error, file.id)
 		const participantId = file.participant_id
 		const participantDisplay = participantId
 			? `<span class="participant-link" data-participant-id="${participantId}" title="Click to filter by ${participantId}">${participantId}</span>`
@@ -174,7 +195,9 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${statusBadge}</td>
 			<td class="col-file" title="${file.file_path}">
 				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''}</span>
+					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
+						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+					}</span>
 					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
 				</span>
 			</td>
@@ -464,6 +487,62 @@ export function createDataModule({ invoke, dialog }) {
 	}
 
 	// ============================================================================
+	// QUEUE INFORMATION
+	// ============================================================================
+
+	async function fetchQueueInfo() {
+		try {
+			// Get global queue info
+			const globalInfo = await invoke('get_queue_info', { fileId: null })
+			globalQueueInfo = globalInfo
+
+			// Update queue processor running status
+			queueProcessorRunning = globalInfo.is_processor_running
+
+			// Get queue info for all pending files
+			const pendingFiles = allFiles.filter((f) => f.status === 'pending')
+			if (pendingFiles.length > 0) {
+				// Fetch queue position for each pending file
+				const queueInfoPromises = pendingFiles.map(async (file) => {
+					try {
+						const info = await invoke('get_queue_info', { fileId: file.id })
+						return { fileId: file.id, info }
+					} catch (error) {
+						console.error(`Error fetching queue info for file ${file.id}:`, error)
+						return null
+					}
+				})
+
+				const queueInfos = await Promise.all(queueInfoPromises)
+				queueInfos.forEach((result) => {
+					if (result) {
+						queueInfoCache.set(result.fileId, {
+							position: result.info.queue_position || 0,
+							totalPending: result.info.total_pending,
+							isProcessorRunning: result.info.is_processor_running,
+						})
+					}
+				})
+			}
+
+			// Log queue information
+			if (globalInfo.total_pending > 0) {
+				console.log(
+					`📊 Queue status: ${globalInfo.total_pending} pending, ${
+						globalInfo.processing_count
+					} processing, processor ${globalInfo.is_processor_running ? 'running' : 'paused'}`,
+				)
+				if (globalInfo.currently_processing) {
+					const fileName = globalInfo.currently_processing.file_path.split('/').pop()
+					console.log(`   Currently processing: ${fileName}`)
+				}
+			}
+		} catch (error) {
+			console.error('Error fetching queue info:', error)
+		}
+	}
+
+	// ============================================================================
 	// MAIN DATA LOADING
 	// ============================================================================
 
@@ -481,11 +560,18 @@ export function createDataModule({ invoke, dialog }) {
 			console.log('📊 Data loaded:', { participants: participants.length, files: files.length })
 
 			const pendingCount = files.filter((f) => f.status === 'pending').length
+			const processingCount = files.filter((f) => f.status === 'processing').length
 			document.getElementById('pending-count').textContent = pendingCount
 
 			const processQueueBtn = document.getElementById('process-queue-btn')
 			if (processQueueBtn) {
 				processQueueBtn.style.display = pendingCount > 0 ? 'flex' : 'none'
+			}
+
+			const clearQueueBtn = document.getElementById('clear-queue-btn')
+			if (clearQueueBtn) {
+				// Show button if there are pending OR processing files
+				clearQueueBtn.style.display = pendingCount + processingCount > 0 ? 'flex' : 'none'
 			}
 
 			// Show/hide main UI or global empty state
@@ -500,8 +586,23 @@ export function createDataModule({ invoke, dialog }) {
 				globalEmptyState.style.display = 'none'
 			}
 
+			// Clear queue info cache for files that are no longer pending
+			const currentPendingIds = new Set(
+				files.filter((f) => f.status === 'pending').map((f) => f.id),
+			)
+			for (const [fileId] of queueInfoCache.entries()) {
+				if (!currentPendingIds.has(fileId)) {
+					queueInfoCache.delete(fileId)
+				}
+			}
+
 			renderFilesPanel()
 			updateActionButtons()
+
+			// Fetch queue information for pending files
+			await fetchQueueInfo()
+			// Re-render to show updated queue info
+			renderFilesPanel()
 
 			// Sync current selection state to sessionStorage
 			syncSelectionToSessionStorage()
@@ -663,6 +764,48 @@ export function createDataModule({ invoke, dialog }) {
 			})
 		}
 
+		// Clear queue button
+		const clearQueueBtn = document.getElementById('clear-queue-btn')
+		if (clearQueueBtn) {
+			clearQueueBtn.addEventListener('click', async () => {
+				// Get queue info to include both pending and processing files
+				const queueInfo = await invoke('get_queue_info', { fileId: null })
+				const totalQueueCount = queueInfo.total_pending + queueInfo.processing_count
+
+				if (totalQueueCount === 0) {
+					return
+				}
+
+				const processingText =
+					queueInfo.processing_count > 0
+						? ` (including ${queueInfo.processing_count} currently being processed)`
+						: ''
+
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to clear the queue? This will remove ${totalQueueCount} file${
+						totalQueueCount === 1 ? '' : 's'
+					}${processingText} from the queue. This will stop any ongoing imports. This action cannot be undone.`,
+					{ title: 'Clear Queue', type: 'warning' },
+				)
+
+				if (confirmed) {
+					try {
+						const deleted = await invoke('clear_pending_queue')
+						await dialog.message(
+							`Cleared ${deleted} file${deleted === 1 ? '' : 's'} from the queue.`,
+							{ title: 'Queue Cleared', type: 'info' },
+						)
+						await loadData()
+					} catch (error) {
+						await dialog.message(`Error clearing queue: ${error}`, {
+							title: 'Error',
+							type: 'error',
+						})
+					}
+				}
+			})
+		}
+
 		// Queue processor interval
 		if (!queueIntervalId) {
 			queueIntervalId = setInterval(async () => {
@@ -675,9 +818,17 @@ export function createDataModule({ invoke, dialog }) {
 				)
 
 				if (queueProcessorRunning && isDataTabActive && pendingCount > 0) {
+					// Update queue info more frequently than full data reload
+					await fetchQueueInfo()
+					renderFilesPanel()
+					// Also do full data reload periodically to catch status changes
 					await loadData()
+				} else if (isDataTabActive && pendingCount > 0) {
+					// Even if processor is paused, update queue info
+					await fetchQueueInfo()
+					renderFilesPanel()
 				}
-			}, 3000)
+			}, 2000) // Update every 2 seconds when there are pending files
 		}
 
 		void updateQueueButton()
