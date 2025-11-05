@@ -167,7 +167,7 @@ pub fn get_queue_processor_status(state: tauri::State<AppState>) -> Result<bool,
 
 #[tauri::command]
 pub fn clear_pending_queue(state: tauri::State<AppState>) -> Result<usize, String> {
-    crate::desktop_log!("🗑️ clear_pending_queue called (using library)");
+    crate::desktop_log!("🗑️ clear_pending_queue called");
 
     // Pause the queue processor first to prevent race conditions
     state.queue_processor_paused.store(true, Ordering::SeqCst);
@@ -177,12 +177,20 @@ pub fn clear_pending_queue(state: tauri::State<AppState>) -> Result<usize, Strin
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     let db = state.biovault_db.lock().unwrap();
+    let conn = db.connection();
 
-    // Use CLI library function to clear pending and processing queue
-    let deleted = biovault::data::clear_pending_queue(&db)
+    // Delete files with status 'pending' or 'processing'
+    let deleted = conn
+        .execute(
+            "DELETE FROM files WHERE status IN ('pending', 'processing')",
+            [],
+        )
         .map_err(|e| format!("Failed to clear pending queue: {}", e))?;
 
-    crate::desktop_log!("✅ Cleared {} files (pending + processing) from queue", deleted);
+    crate::desktop_log!(
+        "✅ Cleared {} files (pending + processing) from queue",
+        deleted
+    );
     Ok(deleted)
 }
 
@@ -207,22 +215,78 @@ pub fn get_queue_info(
     file_id: Option<i64>,
 ) -> Result<QueueInfo, String> {
     let db = state.biovault_db.lock().unwrap();
+    let conn = db.connection();
 
-    // Use CLI library function to get queue info
-    let cli_queue_info = biovault::data::get_queue_info(&db, file_id)
-        .map_err(|e| format!("Failed to get queue info: {}", e))?;
+    // Get total pending files count
+    let total_pending: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to get pending count: {}", e))?;
+
+    // Get processing files count
+    let processing_count: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE status = 'processing'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to get processing count: {}", e))?;
+
+    // Get currently processing file (if any)
+    let currently_processing: Option<QueueFileInfo> = conn
+        .query_row(
+            "SELECT id, file_path FROM files WHERE status = 'processing' LIMIT 1",
+            [],
+            |row| {
+                Ok(QueueFileInfo {
+                    id: row.get(0)?,
+                    file_path: row.get(1)?,
+                })
+            },
+        )
+        .ok();
+
+    // Get queue position for specific file if provided
+    let queue_position: Option<usize> = if let Some(fid) = file_id {
+        // First verify the file is pending
+        let is_pending: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM files WHERE id = ?1 AND status = 'pending'",
+                [fid],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if is_pending {
+            // Get position: count files that were added before this one
+            conn.query_row(
+                "SELECT COUNT(*) FROM files 
+                 WHERE status = 'pending' 
+                 AND queue_added_at < (SELECT queue_added_at FROM files WHERE id = ?1)",
+                [fid],
+                |row| {
+                    let pos: usize = row.get(0)?;
+                    Ok(Some(pos + 1)) // +1 because position is 1-indexed
+                },
+            )
+            .map_err(|e| format!("Failed to get queue position: {}", e))?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let is_processor_running = !state.queue_processor_paused.load(Ordering::SeqCst);
 
-    // Convert CLI QueueInfo to desktop QueueInfo
     Ok(QueueInfo {
-        total_pending: cli_queue_info.total_pending,
-        processing_count: cli_queue_info.processing_count,
-        queue_position: cli_queue_info.queue_position,
+        total_pending,
+        processing_count,
+        queue_position,
         is_processor_running,
-        currently_processing: cli_queue_info.currently_processing.map(|f| QueueFileInfo {
-            id: f.id,
-            file_path: f.file_path,
-        }),
+        currently_processing,
     })
 }

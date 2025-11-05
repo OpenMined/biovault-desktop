@@ -223,11 +223,12 @@ pub fn run() {
                                     match biovault_db_for_processor.lock() {
                                         Ok(db) => {
                                             // Check if file still exists before updating
-                                            let file_exists: Result<bool, _> = db.connection().query_row(
-                                                "SELECT COUNT(*) FROM files WHERE id = ?1",
-                                                [file.id],
-                                                |row| Ok(row.get::<_, i64>(0)? > 0),
-                                            );
+                                            let file_exists: Result<bool, _> =
+                                                db.connection().query_row(
+                                                    "SELECT COUNT(*) FROM files WHERE id = ?1",
+                                                    [file.id],
+                                                    |row| Ok(row.get::<_, i64>(0)? > 0),
+                                                );
 
                                             if let Ok(true) = file_exists {
                                                 if biovault::data::update_file_from_queue(
@@ -256,11 +257,12 @@ pub fn run() {
                                     let error_msg = format!("{}", e);
                                     if let Ok(db) = biovault_db_for_processor.lock() {
                                         // Check if file still exists before updating
-                                        let file_exists: Result<bool, _> = db.connection().query_row(
-                                            "SELECT COUNT(*) FROM files WHERE id = ?1",
-                                            [file.id],
-                                            |row| Ok(row.get::<_, i64>(0)? > 0),
-                                        );
+                                        let file_exists: Result<bool, _> =
+                                            db.connection().query_row(
+                                                "SELECT COUNT(*) FROM files WHERE id = ?1",
+                                                [file.id],
+                                                |row| Ok(row.get::<_, i64>(0)? > 0),
+                                            );
 
                                         if let Ok(true) = file_exists {
                                             let _ = biovault::data::update_file_status(
