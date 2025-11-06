@@ -150,7 +150,33 @@ fn process_single_file_sync(
 
 #[tauri::command]
 pub fn pause_queue_processor(state: tauri::State<AppState>) -> Result<bool, String> {
+    crate::desktop_log!("⏸️ pause_queue_processor called");
+
+    // Pause the processor first
     state.queue_processor_paused.store(true, Ordering::SeqCst);
+    crate::desktop_log!("   Set pause flag to true");
+
+    // Small delay to let current loop iteration check the flag
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Reset any files marked as "processing" back to "pending" so they can be picked up again when resumed
+    let db = state.biovault_db.lock().unwrap();
+    let conn = db.connection();
+
+    let reset_count = conn
+        .execute(
+            "UPDATE files SET status = 'pending' WHERE status = 'processing'",
+            [],
+        )
+        .map_err(|e| format!("Failed to reset processing files: {}", e))?;
+
+    if reset_count > 0 {
+        crate::desktop_log!(
+            "   Reset {} processing file(s) back to pending",
+            reset_count
+        );
+    }
+
     Ok(true)
 }
 
@@ -201,6 +227,7 @@ pub struct QueueInfo {
     pub queue_position: Option<usize>, // Position of specific file if file_id provided
     pub is_processor_running: bool,
     pub currently_processing: Option<QueueFileInfo>,
+    pub estimated_time_remaining_seconds: Option<f64>, // Estimated seconds remaining for queue
 }
 
 #[derive(serde::Serialize)]
@@ -215,78 +242,25 @@ pub fn get_queue_info(
     file_id: Option<i64>,
 ) -> Result<QueueInfo, String> {
     let db = state.biovault_db.lock().unwrap();
-    let conn = db.connection();
 
-    // Get total pending files count
-    let total_pending: usize = conn
-        .query_row(
-            "SELECT COUNT(*) FROM files WHERE status = 'pending'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get pending count: {}", e))?;
-
-    // Get processing files count
-    let processing_count: usize = conn
-        .query_row(
-            "SELECT COUNT(*) FROM files WHERE status = 'processing'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get processing count: {}", e))?;
-
-    // Get currently processing file (if any)
-    let currently_processing: Option<QueueFileInfo> = conn
-        .query_row(
-            "SELECT id, file_path FROM files WHERE status = 'processing' LIMIT 1",
-            [],
-            |row| {
-                Ok(QueueFileInfo {
-                    id: row.get(0)?,
-                    file_path: row.get(1)?,
-                })
-            },
-        )
-        .ok();
-
-    // Get queue position for specific file if provided
-    let queue_position: Option<usize> = if let Some(fid) = file_id {
-        // First verify the file is pending
-        let is_pending: bool = conn
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM files WHERE id = ?1 AND status = 'pending'",
-                [fid],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if is_pending {
-            // Get position: count files that were added before this one
-            conn.query_row(
-                "SELECT COUNT(*) FROM files 
-                 WHERE status = 'pending' 
-                 AND queue_added_at < (SELECT queue_added_at FROM files WHERE id = ?1)",
-                [fid],
-                |row| {
-                    let pos: usize = row.get(0)?;
-                    Ok(Some(pos + 1)) // +1 because position is 1-indexed
-                },
-            )
-            .map_err(|e| format!("Failed to get queue position: {}", e))?
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    // Use library function to get queue info (includes time estimates)
+    let lib_info = biovault::data::get_queue_info(&db, file_id)
+        .map_err(|e| format!("Failed to get queue info: {}", e))?;
 
     let is_processor_running = !state.queue_processor_paused.load(Ordering::SeqCst);
 
+    // Convert library QueueFileInfo to Tauri QueueFileInfo
+    let currently_processing = lib_info.currently_processing.map(|info| QueueFileInfo {
+        id: info.id,
+        file_path: info.file_path,
+    });
+
     Ok(QueueInfo {
-        total_pending,
-        processing_count,
-        queue_position,
+        total_pending: lib_info.total_pending,
+        processing_count: lib_info.processing_count,
+        queue_position: lib_info.queue_position,
         is_processor_running,
         currently_processing,
+        estimated_time_remaining_seconds: lib_info.estimated_time_remaining_seconds,
     })
 }

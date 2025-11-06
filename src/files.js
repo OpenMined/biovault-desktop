@@ -164,18 +164,18 @@ export function createFilesModule({ invoke, dialog }) {
 			let statusBadge = ''
 			if (f.status === 'pending') {
 				statusBadge =
-					'<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⏳ PENDING</span>'
+					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/clock.svg" width="10" height="10" alt="" style="vertical-align: middle;" />PENDING</span>'
 			} else if (f.status === 'processing') {
 				statusBadge =
-					'<span style="background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">⚙️ PROCESSING</span>'
+					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/loader.svg" width="10" height="10" alt="" style="vertical-align: middle; animation: spin 1s linear infinite;" />PROCESSING</span>'
 			} else if (f.status === 'error') {
 				statusBadge =
-					'<span style="background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' +
+					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #dc3545; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;" title="' +
 					(f.processing_error || '') +
-					'">❌ ERROR</span>'
+					'"><img src="assets/icons/x-circle.svg" width="10" height="10" alt="" style="vertical-align: middle;" />ERROR</span>'
 			} else {
 				statusBadge =
-					'<span style="background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;">✓ COMPLETE</span>'
+					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/check-circle.svg" width="10" height="10" alt="" style="vertical-align: middle;" />COMPLETE</span>'
 			}
 
 			const isMarkedForDelete = selectedFilesForDelete.includes(f.id)
@@ -294,14 +294,16 @@ export function createFilesModule({ invoke, dialog }) {
 			queueProcessorRunning = isRunning
 			const pendingCount = parseInt(document.getElementById('pending-count').textContent, 10) || 0
 
-			if (isRunning) {
-				icon.textContent = '⏸'
-				text.textContent = 'Pause Queue'
-				btn.style.background = '#28a745'
-			} else {
-				icon.textContent = '▶'
-				text.textContent = 'Resume Queue'
-				btn.style.background = '#ffc107'
+			if (btn && icon && text) {
+				if (isRunning) {
+					icon.innerHTML = '<img src="assets/icons/pause.svg" width="14" height="14" alt="" />'
+					text.textContent = 'Pause Queue'
+					btn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+				} else {
+					icon.innerHTML = '<img src="assets/icons/play.svg" width="14" height="14" alt="" />'
+					text.textContent = 'Resume Queue'
+					btn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+				}
 			}
 
 			if (spinner) {

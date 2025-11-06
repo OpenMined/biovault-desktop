@@ -97,7 +97,9 @@
 
 .page-header-actions {
 	display: flex;
-	gap: 12px;
+	align-items: center;
+	gap: 16px;
+	flex-wrap: nowrap;
 }
 
 .custom-extension {

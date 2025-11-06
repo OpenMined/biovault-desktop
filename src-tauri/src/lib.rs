@@ -184,11 +184,43 @@ pub fn run() {
                                 continue;
                             }
 
+                            // Check pause flag before starting expensive operations
+                            if paused_flag.load(Ordering::SeqCst) {
+                                // Paused - reset this file back to pending and break
+                                if let Ok(db) = biovault_db_for_processor.lock() {
+                                    let _ = biovault::data::update_file_status(
+                                        &db, file.id, "pending", None,
+                                    );
+                                }
+                                break; // Break out of file processing loop
+                            }
+
                             // Process file WITHOUT holding lock (expensive I/O operations)
                             let hash_result = biovault::data::hash_file(&file.file_path);
 
+                            // Check pause flag again after hashing
+                            if paused_flag.load(Ordering::SeqCst) {
+                                // Paused during processing - reset back to pending
+                                if let Ok(db) = biovault_db_for_processor.lock() {
+                                    let _ = biovault::data::update_file_status(
+                                        &db, file.id, "pending", None,
+                                    );
+                                }
+                                break;
+                            }
+
                             match hash_result {
                                 Ok(hash) => {
+                                    // Check pause flag before metadata operations
+                                    if paused_flag.load(Ordering::SeqCst) {
+                                        if let Ok(db) = biovault_db_for_processor.lock() {
+                                            let _ = biovault::data::update_file_status(
+                                                &db, file.id, "pending", None,
+                                            );
+                                        }
+                                        break;
+                                    }
+
                                     // Detect and analyze file WITHOUT holding lock
                                     let metadata = if file.data_type.as_deref() == Some("Unknown")
                                         || file.data_type.is_none()
@@ -200,6 +232,16 @@ pub fn run() {
                                             )
                                         {
                                             if detected.data_type == "Genotype" {
+                                                // Check pause flag before expensive analysis
+                                                if paused_flag.load(Ordering::SeqCst) {
+                                                    if let Ok(db) = biovault_db_for_processor.lock()
+                                                    {
+                                                        let _ = biovault::data::update_file_status(
+                                                            &db, file.id, "pending", None,
+                                                        );
+                                                    }
+                                                    break;
+                                                }
                                                 // It's a genotype - analyze it fully
                                                 biovault::data::analyze_genotype_file(
                                                     &file.file_path,
@@ -212,11 +254,30 @@ pub fn run() {
                                             None
                                         }
                                     } else if file.data_type.as_deref() == Some("Genotype") {
+                                        // Check pause flag before expensive analysis
+                                        if paused_flag.load(Ordering::SeqCst) {
+                                            if let Ok(db) = biovault_db_for_processor.lock() {
+                                                let _ = biovault::data::update_file_status(
+                                                    &db, file.id, "pending", None,
+                                                );
+                                            }
+                                            break;
+                                        }
                                         // Already known to be genotype - analyze it
                                         biovault::data::analyze_genotype_file(&file.file_path).ok()
                                     } else {
                                         None
                                     };
+
+                                    // Final pause check before updating database
+                                    if paused_flag.load(Ordering::SeqCst) {
+                                        if let Ok(db) = biovault_db_for_processor.lock() {
+                                            let _ = biovault::data::update_file_status(
+                                                &db, file.id, "pending", None,
+                                            );
+                                        }
+                                        break;
+                                    }
 
                                     // Lock briefly to update DB with results
                                     // First check if file still exists (might have been deleted by clear queue)

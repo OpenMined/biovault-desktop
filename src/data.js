@@ -9,12 +9,12 @@ export function createDataModule({ invoke, dialog }) {
 	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
-	let queueProcessorRunning = false
+	let _queueProcessorRunning = false
 	let queueIntervalId = null
 	let existingFilePaths = new Set()
 	let filesToDisplay = [] // Filtered files currently displayed
-	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessing }
-	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing }
+	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessorRunning, estimatedTimeRemaining }
+	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
 
 	// ============================================================================
 	// HELPERS
@@ -137,11 +137,35 @@ export function createDataModule({ invoke, dialog }) {
 	// RENDERING - STATUS BADGE
 	// ============================================================================
 
+	// Format time estimate in human-readable format
+	function formatTimeEstimate(seconds) {
+		if (!seconds || seconds <= 0) return null
+
+		if (seconds < 60) {
+			return `${Math.round(seconds)}s`
+		} else if (seconds < 3600) {
+			const minutes = Math.round(seconds / 60)
+			return `${minutes}m`
+		} else {
+			const hours = Math.floor(seconds / 3600)
+			const minutes = Math.round((seconds % 3600) / 60)
+			if (minutes > 0) {
+				return `${hours}h ${minutes}m`
+			}
+			return `${hours}h`
+		}
+	}
+
 	function renderStatusBadge(status, error = null, fileId = null) {
 		if (status === 'pending' && fileId) {
 			const queueInfo = queueInfoCache.get(fileId)
 			if (queueInfo) {
-				const { position, totalPending, isProcessorRunning } = queueInfo
+				const {
+					position,
+					totalPending,
+					isProcessorRunning,
+					estimatedTimeRemaining: _estimatedTimeRemaining,
+				} = queueInfo
 				if (position !== undefined && totalPending !== undefined) {
 					const queueText =
 						position > 0
@@ -149,22 +173,44 @@ export function createDataModule({ invoke, dialog }) {
 							: `Queue: ${totalPending} file${totalPending === 1 ? '' : 's'} waiting`
 					const processorStatus = isProcessorRunning ? 'Processor running' : 'Processor paused'
 					const title = `${queueText} • ${processorStatus}`
-					return `<span class="status-badge status-pending" title="${title}">⏳ PENDING #${position}/${totalPending}</span>`
+					return `<span class="status-badge status-pending" title="${title}">
+						<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+						PENDING #${position}/${totalPending}
+					</span>`
 				}
 			}
 			// Fallback if no queue info yet
 			const totalPending = globalQueueInfo?.totalPending || '?'
-			return `<span class="status-badge status-pending" title="Pending in queue">⏳ PENDING (${totalPending} in queue)</span>`
+			return `<span class="status-badge status-pending" title="Pending in queue">
+				<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+				PENDING (${totalPending} in queue)
+			</span>`
 		}
 
 		const badges = {
-			pending: '<span class="status-badge status-pending" title="Pending">⏳ PENDING</span>',
-			processing:
-				'<span class="status-badge status-processing" title="Processing">⚙️ PROCESSING</span>',
-			error: `<span class="status-badge status-error" title="${error || 'Error'}">❌ ERROR</span>`,
-			complete: '<span class="status-badge status-complete" title="Complete">✓ COMPLETE</span>',
-			mixed: '<span class="status-badge status-mixed" title="Mixed status">◐ MIXED</span>',
-			unknown: '<span class="status-badge status-unknown" title="Unknown">? UNKNOWN</span>',
+			pending: `<span class="status-badge status-pending" title="Pending">
+				<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+				PENDING
+			</span>`,
+			processing: `<span class="status-badge status-processing" title="Processing">
+				<img src="assets/icons/loader.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle; animation: spin 1s linear infinite;" />
+				PROCESSING
+			</span>`,
+			error: `<span class="status-badge status-error" title="${error || 'Error'}">
+				<img src="assets/icons/x-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+				ERROR
+			</span>`,
+			complete: `<span class="status-badge status-complete" title="Complete">
+				<img src="assets/icons/check-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+				COMPLETE
+			</span>`,
+			mixed: `<span class="status-badge status-mixed" title="Mixed status">
+				<img src="assets/icons/alert-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+				MIXED
+			</span>`,
+			unknown: `<span class="status-badge status-unknown" title="Unknown">
+				?
+			</span>`,
 		}
 		return badges[status] || badges.unknown
 	}
@@ -196,8 +242,8 @@ export function createDataModule({ invoke, dialog }) {
 			<td class="col-file" title="${file.file_path}">
 				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
 					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
-						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
-					}</span>
+			file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+		}</span>
 					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
 				</span>
 			</td>
@@ -213,18 +259,14 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-						? '#e83e8c'
-						: '#666'
-			}">${
-				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-					? file.inferred_sex
-					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-						? 'Unknown'
-						: '-'
-			}</td>
+			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+		}">${
+			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+				? file.inferred_sex
+				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+				? 'Unknown'
+				: '-'
+		}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
@@ -311,12 +353,12 @@ export function createDataModule({ invoke, dialog }) {
 		// Get files to display - apply all filters and store at module level
 		filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
 
-		// Update page title with file count (only in Data view)
+		// Update page title (keep it simple, file count is in badge)
 		const dataView = document.getElementById('data-view')
-		const pageTitle = dataView?.querySelector('.page-title')
+		const pageTitle =
+			dataView?.querySelector('.page-titlemodern') || dataView?.querySelector('.page-title')
 		if (pageTitle) {
-			const titleText = `${filesToDisplay.length} files`
-			pageTitle.innerHTML = `Data <span style="font-size: 14px; font-weight: 400; color: #6b7280; margin-left: 8px;">(${titleText})</span>`
+			pageTitle.textContent = 'Data'
 		}
 
 		// Clean up file selections (remove files that don't exist anymore)
@@ -381,7 +423,7 @@ export function createDataModule({ invoke, dialog }) {
 
 		if (selectedFileIds.length > 0) {
 			btn.style.display = 'flex'
-			btn.textContent = 'Delete'
+			// Keep the icon, just update the title
 			btn.title = `Delete ${selectedFileIds.length} file${selectedFileIds.length === 1 ? '' : 's'}`
 		} else {
 			btn.style.display = 'none'
@@ -391,18 +433,35 @@ export function createDataModule({ invoke, dialog }) {
 	function updateActionButtons() {
 		const runBtn = document.getElementById('run-analysis-btn')
 		const runText = document.getElementById('run-analysis-text')
-		const selectionCountEl = document.getElementById('selection-count')
+		const _selectionCountEl = document.getElementById('selection-count')
 		const selectionActionsGroup = document.getElementById('selection-actions-group')
 
 		const fileCount = selectedFileIds.length
+
 		if (fileCount > 0) {
-			runBtn.disabled = false
-			runText.textContent = 'Run Pipeline'
-			runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
-			if (selectionCountEl && selectionActionsGroup) {
-				const countText =
-					selectionCountEl.querySelector('#selection-count-text') || selectionCountEl
-				countText.textContent = fileCount.toString()
+			// Check if all selected files have status "complete"
+			const selectedFiles = allFiles.filter((f) => selectedFileIds.includes(f.id))
+			const allComplete =
+				selectedFiles.length > 0 && selectedFiles.every((f) => f.status === 'complete')
+			const incompleteCount = selectedFiles.filter((f) => f.status !== 'complete').length
+
+			if (allComplete) {
+				runBtn.disabled = false
+				runText.textContent = 'Run Pipeline'
+				runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
+			} else {
+				runBtn.disabled = true
+				runText.textContent = 'Run Pipeline'
+				runBtn.title = `${incompleteCount} file${
+					incompleteCount === 1 ? '' : 's'
+				} not complete. Only files with status "complete" can be used in pipelines.`
+			}
+
+			if (selectionActionsGroup) {
+				const countText = document.getElementById('selection-count-text')
+				if (countText) {
+					countText.textContent = fileCount.toString()
+				}
 				selectionActionsGroup.style.display = 'flex'
 			}
 		} else {
@@ -452,34 +511,97 @@ export function createDataModule({ invoke, dialog }) {
 		syncSelectionToSessionStorage()
 	}
 
+	// Update queue status indicator with count and time estimate
+	function updateQueueStatusIndicator(globalInfo) {
+		const statusIndicator = document.getElementById('queue-status-indicator')
+		const pendingCountEl = document.getElementById('pending-count')
+		const timeEstimateEl = document.getElementById('queue-time-estimate-display')
+		const pendingCount = globalInfo?.total_pending || 0
+		const processingCount = globalInfo?.processing_count || 0
+		const hasQueueItems = pendingCount > 0 || processingCount > 0
+		const isProcessorRunning = globalInfo?.is_processor_running || false
+
+		// Only show status indicator when there are files processing or pending
+		if (statusIndicator && pendingCountEl) {
+			if (hasQueueItems) {
+				statusIndicator.style.display = 'flex'
+				pendingCountEl.textContent = pendingCount
+
+				// Only show time estimate if processor is actually running (not paused)
+				if (timeEstimateEl) {
+					if (isProcessorRunning) {
+						const timeEstimate = globalInfo?.estimated_time_remaining_seconds
+							? formatTimeEstimate(globalInfo.estimated_time_remaining_seconds)
+							: null
+
+						if (timeEstimate) {
+							timeEstimateEl.textContent = `~${timeEstimate}`
+							timeEstimateEl.title = `Estimated time remaining: ${timeEstimate}`
+							timeEstimateEl.style.display = 'inline'
+						} else {
+							timeEstimateEl.style.display = 'none'
+						}
+					} else {
+						// Processor is paused - hide time estimate since it's frozen
+						timeEstimateEl.style.display = 'none'
+					}
+				}
+			} else {
+				statusIndicator.style.display = 'none'
+			}
+		}
+	}
+
 	async function updateQueueButton() {
 		try {
-			const isRunning = await invoke('get_queue_processor_status')
+			// Always fetch fresh queue info to ensure UI is in sync with backend
+			const globalInfo = await invoke('get_queue_info', { fileId: null })
+			globalQueueInfo = globalInfo
+
+			const isRunning = globalInfo.is_processor_running
+			_queueProcessorRunning = isRunning
+
 			const btn = document.getElementById('process-queue-btn')
-			const icon = document.getElementById('queue-btn-icon')
+			const iconContainer = document.getElementById('queue-btn-icon-container')
 			const text = document.getElementById('queue-btn-text')
-			const spinner = document.getElementById('queue-spinner')
+			const spinnerContainer = document.getElementById('queue-spinner-container')
+			const queueCard = document.getElementById('queue-card-container')
 
-			queueProcessorRunning = isRunning
-			const pendingCount = parseInt(
-				document.getElementById('pending-count')?.textContent || '0',
-				10,
-			)
+			// Use fresh data from backend, not stale DOM values
+			const pendingCount = globalInfo.total_pending || 0
+			const processingCount = globalInfo.processing_count || 0
+			const hasQueueItems = pendingCount > 0 || processingCount > 0
 
-			if (btn && icon && text) {
-				if (isRunning) {
-					icon.textContent = '⏸'
-					text.textContent = 'Pause Queue'
-					btn.style.background = '#28a745'
+			// Only show queue card when there are files processing or pending
+			if (queueCard) {
+				if (hasQueueItems) {
+					queueCard.style.display = 'inline-flex'
 				} else {
-					icon.textContent = '▶'
-					text.textContent = 'Resume Queue'
-					btn.style.background = '#ffc107'
+					queueCard.style.display = 'none'
 				}
 			}
 
-			if (spinner) {
-				spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
+			// Update button state
+			if (btn && iconContainer && text) {
+				if (isRunning) {
+					iconContainer.innerHTML =
+						'<img src="assets/icons/pause.svg" width="14" height="14" alt="" />'
+					text.textContent = 'Pause'
+					btn.className = 'queue-control-btn btn-queue-pause'
+				} else {
+					iconContainer.innerHTML =
+						'<img src="assets/icons/play.svg" width="14" height="14" alt="" />'
+					text.textContent = 'Resume'
+					btn.className = 'queue-control-btn btn-queue-resume'
+				}
+			}
+
+			// Update status indicator with fresh global info
+			updateQueueStatusIndicator(globalInfo)
+
+			// Show spinner only when actually processing (running AND has pending files)
+			if (spinnerContainer) {
+				spinnerContainer.style.display = isRunning && pendingCount > 0 ? 'inline-flex' : 'none'
 			}
 		} catch (error) {
 			console.error('Error getting queue status:', error)
@@ -497,7 +619,10 @@ export function createDataModule({ invoke, dialog }) {
 			globalQueueInfo = globalInfo
 
 			// Update queue processor running status
-			queueProcessorRunning = globalInfo.is_processor_running
+			_queueProcessorRunning = globalInfo.is_processor_running
+
+			// Update queue status indicator with time estimate
+			updateQueueStatusIndicator(globalInfo)
 
 			// Get queue info for all pending files
 			const pendingFiles = allFiles.filter((f) => f.status === 'pending')
@@ -520,6 +645,7 @@ export function createDataModule({ invoke, dialog }) {
 							position: result.info.queue_position || 0,
 							totalPending: result.info.total_pending,
 							isProcessorRunning: result.info.is_processor_running,
+							estimatedTimeRemaining: result.info.estimated_time_remaining_seconds,
 						})
 					}
 				})
@@ -559,20 +685,29 @@ export function createDataModule({ invoke, dialog }) {
 
 			console.log('📊 Data loaded:', { participants: participants.length, files: files.length })
 
+			// Update file count badge (total files, not filtered)
+			const fileCountEl =
+				document.getElementById('file-countmodern') || document.getElementById('file-count')
+			if (fileCountEl) {
+				const count = files.length
+				fileCountEl.textContent = `${count} file${count === 1 ? '' : 's'}`
+			}
+
 			const pendingCount = files.filter((f) => f.status === 'pending').length
 			const processingCount = files.filter((f) => f.status === 'processing').length
-			document.getElementById('pending-count').textContent = pendingCount
+			// Update status indicator will be handled by updateQueueInfo when it refreshes
 
-			const processQueueBtn = document.getElementById('process-queue-btn')
-			if (processQueueBtn) {
-				processQueueBtn.style.display = pendingCount > 0 ? 'flex' : 'none'
-			}
+			// Queue button is always visible (to pause/resume)
+			// Status indicator only shows when there are pending files
 
 			const clearQueueBtn = document.getElementById('clear-queue-btn')
 			if (clearQueueBtn) {
 				// Show button if there are pending OR processing files
 				clearQueueBtn.style.display = pendingCount + processingCount > 0 ? 'flex' : 'none'
 			}
+
+			// Update queue UI
+			await updateQueueButton()
 
 			// Show/hide main UI or global empty state
 			const mainLayout = document.querySelector('.data-main-layout')
@@ -625,14 +760,8 @@ export function createDataModule({ invoke, dialog }) {
 			})
 		}
 
-		// Data type filter
-		const dataTypeFilter = document.getElementById('data-type-filter')
-		if (dataTypeFilter) {
-			dataTypeFilter.addEventListener('change', (e) => {
-				currentDataTypeFilter = e.target.value
-				renderFilesPanel()
-			})
-		}
+		// Data type filter removed - showing all types
+		currentDataTypeFilter = 'All'
 
 		// Sortable headers
 		document.querySelectorAll('.sortable-header').forEach((header) => {
@@ -756,6 +885,8 @@ export function createDataModule({ invoke, dialog }) {
 						await invoke('resume_queue_processor')
 					}
 
+					// Immediately refresh queue info to get accurate state
+					await fetchQueueInfo()
 					await updateQueueButton()
 					await loadData()
 				} catch (error) {
@@ -809,26 +940,35 @@ export function createDataModule({ invoke, dialog }) {
 		// Queue processor interval
 		if (!queueIntervalId) {
 			queueIntervalId = setInterval(async () => {
+				const isDataTabActive = document.getElementById('data-view')?.classList.contains('active')
+				if (!isDataTabActive) return
+
+				// Always fetch fresh queue info from backend
+				await fetchQueueInfo()
+
+				// Update button and UI based on fresh state
 				await updateQueueButton()
 
-				const isDataTabActive = document.getElementById('data-view')?.classList.contains('active')
-				const pendingCount = parseInt(
-					document.getElementById('pending-count')?.textContent || '0',
-					10,
-				)
+				// Get fresh state from backend
+				const pendingCount = globalQueueInfo?.total_pending || 0
+				const processingCount = globalQueueInfo?.processing_count || 0
+				const hasQueueItems = pendingCount > 0 || processingCount > 0
+				const isRunning = globalQueueInfo?.is_processor_running || false
 
-				if (queueProcessorRunning && isDataTabActive && pendingCount > 0) {
-					// Update queue info more frequently than full data reload
-					await fetchQueueInfo()
+				if (hasQueueItems) {
+					// Update file list to reflect status changes
 					renderFilesPanel()
-					// Also do full data reload periodically to catch status changes
+
+					// Only do full data reload if processor is running (to catch completions)
+					// When paused, we still update UI but don't need aggressive reloads
+					if (isRunning) {
+						await loadData()
+					}
+				} else {
+					// No queue items - hide queue card and refresh data
 					await loadData()
-				} else if (isDataTabActive && pendingCount > 0) {
-					// Even if processor is paused, update queue info
-					await fetchQueueInfo()
-					renderFilesPanel()
 				}
-			}, 2000) // Update every 2 seconds when there are pending files
+			}, 2000) // Update every 2 seconds when data tab is active
 		}
 
 		void updateQueueButton()
