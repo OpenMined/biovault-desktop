@@ -242,8 +242,8 @@ export function createDataModule({ invoke, dialog }) {
 			<td class="col-file" title="${file.file_path}">
 				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
 					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
-			file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
-		}</span>
+						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+					}</span>
 					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
 				</span>
 			</td>
@@ -259,14 +259,18 @@ export function createDataModule({ invoke, dialog }) {
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-		}">${
-			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-				? file.inferred_sex
-				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-				? 'Unknown'
-				: '-'
-		}</td>
+				file.inferred_sex === 'Male'
+					? '#007bff'
+					: file.inferred_sex === 'Female'
+						? '#e83e8c'
+						: '#666'
+			}">${
+				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+					? file.inferred_sex
+					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+						? 'Unknown'
+						: '-'
+			}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
