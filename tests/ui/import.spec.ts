@@ -538,8 +538,16 @@ test.describe('Import Data workflow', () => {
 		const alreadyImported = page.locator('#file-list tr.already-imported')
 		await expect(alreadyImported).toHaveCount(preparedFiles.length - incompleteRows.length)
 
-		const availableCheckboxes = page.locator('#file-list tr input[type="checkbox"]:not([disabled])')
-		await expect(availableCheckboxes).toHaveCount(incompleteRows.length)
+		const pendingCheckboxes = page.locator(
+			'#file-list tr:not(.already-imported) input[type="checkbox"]:not([disabled])',
+		)
+		await expect(pendingCheckboxes).toHaveCount(incompleteRows.length)
+
+		const processingCheckboxes = page.locator(
+			'#file-list tr.already-imported input[type="checkbox"]:not([disabled])',
+		)
+		// Already imported/processing rows now keep enabled checkboxes for quick re-runs
+		await expect(processingCheckboxes).toHaveCount(preparedFiles.length - incompleteRows.length)
 
 		// Close the modal before navigating to other tabs
 		const closeModalBtn = page
