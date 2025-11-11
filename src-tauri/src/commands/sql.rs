@@ -554,7 +554,7 @@ mod tests {
     fn value_conversion_handles_types() {
         assert_eq!(value_ref_to_string(ValueRef::Null), "NULL");
         assert_eq!(value_ref_to_string(ValueRef::Integer(42)), "42");
-        assert_eq!(value_ref_to_string(ValueRef::Real(3.1400)), "3.14");
+        assert_eq!(value_ref_to_string(ValueRef::Real(3.15)), "3.15");
         assert_eq!(value_ref_to_string(ValueRef::Text(b"hello")), "hello");
         assert_eq!(
             value_ref_to_string(ValueRef::Blob(&[1_u8, 2, 3])),

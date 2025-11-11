@@ -443,23 +443,10 @@ export function createDataModule({ invoke, dialog }) {
 		const fileCount = selectedFileIds.length
 
 		if (fileCount > 0) {
-			// Check if all selected files have status "complete"
-			const selectedFiles = allFiles.filter((f) => selectedFileIds.includes(f.id))
-			const allComplete =
-				selectedFiles.length > 0 && selectedFiles.every((f) => f.status === 'complete')
-			const incompleteCount = selectedFiles.filter((f) => f.status !== 'complete').length
-
-			if (allComplete) {
-				runBtn.disabled = false
-				runText.textContent = 'Run Pipeline'
-				runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
-			} else {
-				runBtn.disabled = true
-				runText.textContent = 'Run Pipeline'
-				runBtn.title = `${incompleteCount} file${
-					incompleteCount === 1 ? '' : 's'
-				} not complete. Only files with status "complete" can be used in pipelines.`
-			}
+			// Enable run button for any selected files
+			runBtn.disabled = false
+			runText.textContent = 'Run Pipeline'
+			runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
 
 			if (selectionActionsGroup) {
 				const countText = document.getElementById('selection-count-text')
