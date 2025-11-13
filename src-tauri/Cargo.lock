@@ -583,7 +583,7 @@ checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "bv-desktop"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "biovault",
  "chrono",
