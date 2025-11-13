@@ -512,7 +512,7 @@ export function createImportModule({
 		const tbody = document.getElementById('file-list')
 		tbody.innerHTML = ''
 		for (const file of Array.from(selectedFiles)) {
-			if (!currentFiles.includes(file) || isFileAlreadyImported(file)) {
+			if (!currentFiles.includes(file)) {
 				selectedFiles.delete(file)
 			}
 		}
@@ -642,34 +642,32 @@ export function createImportModule({
 		}
 
 		// Make row clickable (except when clicking on inputs/buttons)
-		if (!alreadyImported) {
-			row.style.cursor = 'pointer'
-			row.addEventListener('click', (e) => {
-				// Don't toggle if clicking on input, button, or checkbox itself
-				if (
-					e.target.tagName === 'INPUT' ||
-					e.target.tagName === 'BUTTON' ||
-					e.target.closest('button')
-				) {
-					return
+		row.style.cursor = 'pointer'
+		row.addEventListener('click', (e) => {
+			// Don't toggle if clicking on input, button, or checkbox itself
+			if (
+				e.target.tagName === 'INPUT' ||
+				e.target.tagName === 'BUTTON' ||
+				e.target.closest('button')
+			) {
+				return
+			}
+			const checkbox = row.querySelector('input[type="checkbox"]')
+			if (checkbox && !checkbox.disabled) {
+				checkbox.checked = !checkbox.checked
+				if (checkbox.checked) {
+					selectedFiles.add(file)
+					row.classList.add('selected')
+				} else {
+					selectedFiles.delete(file)
+					row.classList.remove('selected')
 				}
-				const checkbox = row.querySelector('input[type="checkbox"]')
-				if (checkbox && !checkbox.disabled) {
-					checkbox.checked = !checkbox.checked
-					if (checkbox.checked) {
-						selectedFiles.add(file)
-						row.classList.add('selected')
-					} else {
-						selectedFiles.delete(file)
-						row.classList.remove('selected')
-					}
-					updateSelectAllCheckbox()
-					updateImportButton()
-					updateSelectedFileCount()
-					updateVisibleSections()
-				}
-			})
-		}
+				updateSelectAllCheckbox()
+				updateImportButton()
+				updateSelectedFileCount()
+				updateVisibleSections()
+			}
+		})
 
 		// Checkbox cell
 		const checkboxCell = document.createElement('td')
@@ -679,12 +677,6 @@ export function createImportModule({
 		checkbox.type = 'checkbox'
 		checkbox.checked = selectedFiles.has(file)
 		checkbox.dataset.filePath = file // Store file path for easier lookup
-		if (alreadyImported) {
-			checkbox.checked = false
-			checkbox.disabled = true
-			checkbox.title = 'File already imported'
-			selectedFiles.delete(file)
-		}
 		// Add selected class to row if checked
 		if (checkbox.checked) {
 			row.classList.add('selected')
@@ -1124,12 +1116,10 @@ export function createImportModule({
 		if (patternInput) {
 			patternInput.value = ''
 		}
-		// Select all files by default (excluding already imported ones)
+		// Select all files by default
 		selectedFiles.clear()
 		currentFiles.forEach((file) => {
-			if (!isFileAlreadyImported(file)) {
-				selectedFiles.add(file)
-			}
+			selectedFiles.add(file)
 		})
 		renderFiles()
 		markActivePattern(currentPattern)
@@ -1214,7 +1204,7 @@ export function createImportModule({
 	}
 	function updateSelectAllCheckbox() {
 		const selectAllCheckbox = document.getElementById('select-all-files')
-		const selectableFiles = currentFiles.filter((file) => !isFileAlreadyImported(file))
+		const selectableFiles = currentFiles
 		if (selectableFiles.length === 0) {
 			selectAllCheckbox.checked = false
 			return
@@ -1442,7 +1432,7 @@ export function createImportModule({
 		// Check for files with assigned IDs that aren't selected
 		const filesWithIdsButNotSelected = currentFiles.filter((file) => {
 			if (selectedFiles.has(file)) return false // Skip files that are selected
-			if (isFileAlreadyImported(file)) return false // Skip already imported files
+			// Allow all files
 			// Check if file has an ID assigned (manual or auto)
 			const manualId = fileParticipantIds[file]
 			const autoId = autoParticipantIds[file]
@@ -2114,9 +2104,7 @@ export function createImportModule({
 	function handleSelectAllFiles(checked) {
 		if (checked) {
 			currentFiles.forEach((file) => {
-				if (!isFileAlreadyImported(file)) {
-					selectedFiles.add(file)
-				}
+				selectedFiles.add(file)
 			})
 		} else {
 			selectedFiles.clear()
