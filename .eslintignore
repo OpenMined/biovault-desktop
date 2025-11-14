@@ -9,3 +9,6 @@ artifacts/
 # Test results
 test-results/
 playwright-report/
+
+# Lock files
+package-lock.json
