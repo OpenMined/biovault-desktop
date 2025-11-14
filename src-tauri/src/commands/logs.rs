@@ -102,23 +102,24 @@ pub fn get_desktop_log_text(max_bytes: Option<u64>) -> Result<String, String> {
         .map_err(|e| format!("Failed to read log metadata: {}", e))?;
     let file_size = metadata.len();
     let max_bytes = max_bytes.unwrap_or(20000);
-
     let mut reader = BufReader::new(file);
 
-    if file_size > max_bytes {
-        let start_pos = file_size.saturating_sub(max_bytes);
+    if max_bytes == 0 || file_size <= max_bytes {
+        let mut contents = String::new();
         reader
-            .seek(SeekFrom::Start(start_pos))
-            .map_err(|e| format!("Failed to seek log file: {}", e))?;
-
-        // Discard partial first line
-        let mut discard = Vec::new();
-        let _ = reader.read_until(b'\n', &mut discard);
-    } else {
-        reader
-            .seek(SeekFrom::Start(0))
-            .map_err(|e| format!("Failed to seek log file: {}", e))?;
+            .read_to_string(&mut contents)
+            .map_err(|e| format!("Failed to read log file: {}", e))?;
+        return Ok(contents);
     }
+
+    let start_pos = file_size.saturating_sub(max_bytes);
+    reader
+        .seek(SeekFrom::Start(start_pos))
+        .map_err(|e| format!("Failed to seek log file: {}", e))?;
+
+    // Discard partial first line
+    let mut discard = Vec::new();
+    let _ = reader.read_until(b'\n', &mut discard);
 
     let mut contents = String::new();
     reader
