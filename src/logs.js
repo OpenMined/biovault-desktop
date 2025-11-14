@@ -291,8 +291,10 @@ function ansiToHtml(value) {
 
 export function createLogsModule({ invoke }) {
 	let desktopLogText = ''
-	const MAX_BYTES = 20000
+	const MAX_BYTES = 0 // 0 = full file from backend
 	let lastLoadedAt = 0
+	let autoRefreshTimer = null
+	const AUTO_REFRESH_INTERVAL_MS = 1000
 
 	async function refreshLogs({ force = false } = {}) {
 		const now = Date.now()
@@ -308,6 +310,19 @@ export function createLogsModule({ invoke }) {
 			displayLogs()
 		} catch (error) {
 			console.error('Error loading logs:', error)
+		}
+	}
+
+	function setLogsAutoRefreshEnabled(enabled) {
+		if (enabled) {
+			if (autoRefreshTimer !== null) return
+			refreshLogs({ force: true })
+			autoRefreshTimer = setInterval(() => {
+				refreshLogs({ force: true })
+			}, AUTO_REFRESH_INTERVAL_MS)
+		} else if (autoRefreshTimer !== null) {
+			clearInterval(autoRefreshTimer)
+			autoRefreshTimer = null
 		}
 	}
 
@@ -361,6 +376,7 @@ export function createLogsModule({ invoke }) {
 	return {
 		refreshLogs,
 		displayLogs,
+		setLogsAutoRefreshEnabled,
 		clearLogs,
 		copyLogs,
 		openLogsFolder: async () => {

@@ -73,9 +73,10 @@ const {
 	clearAllSelections,
 } = createDataModule({ invoke, dialog })
 
-const { refreshLogs, displayLogs, clearLogs, copyLogs, openLogsFolder } = createLogsModule({
-	invoke,
-})
+const { refreshLogs, displayLogs, setLogsAutoRefreshEnabled, clearLogs, copyLogs, openLogsFolder } =
+	createLogsModule({
+		invoke,
+	})
 
 const {
 	prepareRunView,
@@ -231,6 +232,7 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		prepareRunView,
 		loadRuns,
 		refreshLogs,
+		setLogsAutoRefreshEnabled,
 		loadSettings,
 		initializeMessagesTab,
 		getMessagesInitialized,
