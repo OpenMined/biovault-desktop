@@ -8,6 +8,7 @@ export function createDashboardShell({
 	loadPipelines,
 	loadRuns,
 	displayLogs,
+	setLogsAutoRefreshEnabled,
 	loadSettings,
 	loadSql,
 	initializeMessagesTab,
@@ -59,6 +60,9 @@ export function createDashboardShell({
 
 		targetElement.classList.add('active')
 		activeView = targetView
+
+		const isLogsView = targetView === 'logs'
+		setLogsAutoRefreshEnabled?.(isLogsView)
 
 		// Update active state in sidebar navigation
 		const highlightTabName = importSubViews.includes(targetView) ? 'import' : targetView
