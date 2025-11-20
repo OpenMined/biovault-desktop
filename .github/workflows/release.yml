@@ -305,6 +305,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install protoc
+        if: matrix.build_kind == 'tauri'
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Tauri CLI
         if: matrix.build_kind == 'tauri'
         run: npm install -g @tauri-apps/cli@latest
