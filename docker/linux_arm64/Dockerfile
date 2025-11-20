@@ -43,6 +43,7 @@ RUN dpkg --add-architecture arm64 \
       file \
       unzip \
       binutils \
+      protobuf-compiler \
       binutils-aarch64-linux-gnu \
       gcc-aarch64-linux-gnu \
       g++-aarch64-linux-gnu \
