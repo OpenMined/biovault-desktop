@@ -581,6 +581,12 @@ pub fn run() {
             reset_all_data,
             get_autostart_enabled,
             set_autostart_enabled,
+            // Dev mode commands
+            is_dev_mode,
+            is_dev_syftbox_enabled,
+            get_dev_syftbox_server_url,
+            check_dev_syftbox_server,
+            get_dev_mode_info,
             // Logs commands
             get_command_logs,
             clear_command_logs,

@@ -80,24 +80,35 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		const authBtn = document.getElementById('syftbox-auth-btn')
 
 		try {
+			// Check for dev mode first
+			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
 			const configInfo = await invoke('get_syftbox_config_info')
 
 			// Remove all status classes
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
 
-			if (configInfo.is_authenticated) {
+			// In dev mode with syftbox enabled, show special status
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+				statusBadge.innerHTML = `🧪 DEV MODE - Auth Disabled<br><span style="font-size: 11px; font-weight: normal;">Server: ${devModeInfo.server_url || 'localhost:8080'}</span>`
+				statusBadge.classList.add('connected')
+				statusBadge.style.lineHeight = '1.4'
+				authBtn.textContent = 'Dev Mode Active'
+				authBtn.disabled = true
+				// Update syftbox status to running in dev mode
+				syftboxStatus = { running: true, mode: 'Dev' }
+			} else if (configInfo.is_authenticated) {
 				statusBadge.innerHTML = `✓ Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
 				statusBadge.classList.add('connected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Reauthenticate'
+				authBtn.disabled = false
 			} else {
 				statusBadge.innerHTML = `✗ Not Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
 				statusBadge.classList.add('disconnected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Authenticate'
+				authBtn.disabled = false
 			}
-
-			authBtn.disabled = false
 		} catch (error) {
 			statusBadge.innerHTML = '? Status Unknown'
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')

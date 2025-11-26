@@ -405,6 +405,76 @@ pub fn show_in_folder(file_path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Check if the app is running in dev mode (BIOVAULT_DEV_MODE=1)
+#[tauri::command]
+pub fn is_dev_mode() -> bool {
+    env::var("BIOVAULT_DEV_MODE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
+/// Check if dev syftbox mode is enabled (BIOVAULT_DEV_SYFTBOX=1)
+#[tauri::command]
+pub fn is_dev_syftbox_enabled() -> bool {
+    env::var("BIOVAULT_DEV_SYFTBOX")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
+/// Get the dev syftbox server URL from environment
+#[tauri::command]
+pub fn get_dev_syftbox_server_url() -> Option<String> {
+    env::var("SYFTBOX_SERVER_URL").ok()
+}
+
+/// Check if the syftbox server is reachable (for dev mode)
+#[tauri::command]
+pub async fn check_dev_syftbox_server() -> Result<bool, String> {
+    let server_url = env::var("SYFTBOX_SERVER_URL")
+        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+
+    crate::desktop_log!("🔍 Checking dev syftbox server at: {}", server_url);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    match client.get(&server_url).send().await {
+        Ok(response) => {
+            let reachable = response.status().is_success() || response.status().is_redirection();
+            crate::desktop_log!("  Server response: {} (reachable: {})", response.status(), reachable);
+            Ok(reachable)
+        }
+        Err(e) => {
+            crate::desktop_log!("  Server not reachable: {}", e);
+            Ok(false)
+        }
+    }
+}
+
+/// Get full dev mode information
+#[tauri::command]
+pub fn get_dev_mode_info() -> serde_json::Value {
+    let dev_mode = env::var("BIOVAULT_DEV_MODE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    let dev_syftbox = env::var("BIOVAULT_DEV_SYFTBOX")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    let server_url = env::var("SYFTBOX_SERVER_URL").ok();
+    let syftbox_config_path = env::var("SYFTBOX_CONFIG_PATH").ok();
+    let biovault_home = env::var("BIOVAULT_HOME").ok();
+
+    serde_json::json!({
+        "dev_mode": dev_mode,
+        "dev_syftbox": dev_syftbox,
+        "server_url": server_url,
+        "syftbox_config_path": syftbox_config_path,
+        "biovault_home": biovault_home,
+    })
+}
+
 #[tauri::command]
 pub fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
     let autostart = app.autolaunch();

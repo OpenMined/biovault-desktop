@@ -108,7 +108,16 @@ export function createMessagesModule({
 
 	async function ensureMessagesAuthorization() {
 		try {
-			messagesAuthorized = await invoke('check_syftbox_auth')
+			// Check for dev mode first - if in dev mode with syftbox, treat as authorized
+			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+				console.log('🧪 Messages: Dev mode detected, treating as authorized')
+				messagesAuthorized = true
+				// Set syftbox status to running in dev mode
+				setSyftboxStatus({ running: true, mode: 'Dev' })
+			} else {
+				messagesAuthorized = await invoke('check_syftbox_auth')
+			}
 		} catch (error) {
 			console.error('Failed to check SyftBox authorization:', error)
 			messagesAuthorized = false
@@ -150,8 +159,14 @@ export function createMessagesModule({
 		}
 
 		try {
-			const status = await invoke('get_syftbox_state')
-			setSyftboxStatus(status)
+			// In dev mode, keep status as running/dev
+			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+				setSyftboxStatus({ running: true, mode: 'Dev' })
+			} else {
+				const status = await invoke('get_syftbox_state')
+				setSyftboxStatus(status)
+			}
 		} catch (error) {
 			console.error('Failed to fetch SyftBox state:', error)
 			setSyftboxStatus({ running: false, mode: 'Direct' })
