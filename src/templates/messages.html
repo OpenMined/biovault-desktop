@@ -36,6 +36,48 @@
 					<button class="message-filter" data-filter="all">All</button>
 					<button id="refresh-messages-btn" class="message-secondary">Refresh</button>
 				</div>
+				<div id="message-list" class="message-list">
+					<!-- Thread items rendered here -->
+				</div>
+			</div>
+
+			<!-- Main message area -->
+			<div id="messages-main" class="messages-main" style="display: none;">
+				<div class="message-header">
+					<div class="message-header-info">
+						<h3 id="message-thread-subject">New Message</h3>
+						<span id="message-thread-participants" class="message-participants"></span>
+					</div>
+					<button id="delete-thread-btn" class="message-secondary" style="display: none;">Delete Thread</button>
+				</div>
+
+				<div id="message-conversation" class="message-conversation">
+					<!-- Messages rendered here -->
+				</div>
+
+				<div class="message-compose">
+					<div class="message-compose-recipient" style="display: none;">
+						<label for="message-recipient-input">To:</label>
+						<input type="email" id="message-recipient-input" placeholder="recipient@example.com" />
+					</div>
+					<div id="message-subject-wrapper" class="message-compose-subject" style="display: none;">
+						<label for="message-compose-subject">Subject:</label>
+						<input type="text" id="message-compose-subject" placeholder="Message subject" />
+					</div>
+					<textarea id="message-compose-body" placeholder="Type your message..."></textarea>
+					<div class="message-compose-actions">
+						<button id="message-send-btn" class="message-cta">Send</button>
+					</div>
+				</div>
+
+				<div id="message-project-panel" class="message-project-panel" style="display: none;">
+					<!-- Project attachment panel -->
+				</div>
+			</div>
+
+			<!-- Empty state -->
+			<div id="messages-empty-state" class="messages-empty-state">
+				<p>Select a conversation or start a new message</p>
 			</div>
 		</div>
 	</div>

@@ -50,6 +50,8 @@ RESET_FLAG=0
 STOP_FLAG=0
 SERVER_ONLY=0
 CLIENTS_ONLY=0
+SINGLE_MODE=0
+SINGLE_CLIENT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,14 +67,22 @@ while [[ $# -gt 0 ]]; do
     --clients)
       CLIENTS_ONLY=1
       ;;
+    --single)
+      SINGLE_MODE=1
+      SINGLE_CLIENT="${2:-1}"
+      if [[ "$2" =~ ^[12]$ ]]; then
+        shift
+      fi
+      ;;
     -h|--help)
-      echo "Usage: $0 [--reset] [--stop] [--server] [--clients]"
+      echo "Usage: $0 [--reset] [--stop] [--server] [--clients] [--single [1|2]]"
       echo ""
       echo "Options:"
-      echo "  --reset    Reset sandbox and docker before starting"
-      echo "  --stop     Stop all services and exit"
-      echo "  --server   Start only the syftbox server"
-      echo "  --clients  Start only the sandbox clients (assumes server running)"
+      echo "  --reset       Reset sandbox and docker before starting"
+      echo "  --stop        Stop all services and exit"
+      echo "  --server      Start only the syftbox server"
+      echo "  --clients     Start only the sandbox clients (assumes server running)"
+      echo "  --single [N]  Launch only one desktop instance (1 or 2, default: 1)"
       echo ""
       echo "Environment:"
       echo "  SANDBOX_DIR           Override sandbox location (default: biovault/sandbox)"
@@ -221,6 +231,165 @@ start_clients() {
   echo -e "${YELLOW}Sandbox locations:${NC}"
   echo -e "  Client 1: $SANDBOX_DIR/$CLIENT1_EMAIL"
   echo -e "  Client 2: $SANDBOX_DIR/$CLIENT2_EMAIL"
+
+  # Exchange crypto keys between clients
+  exchange_keys
+
+  # Verify sync is working before launching desktops
+  verify_sync || log_warn "Continuing despite sync issues..."
+}
+
+# Build the bv CLI binary
+ensure_bv_binary() {
+  local target="$BIOVAULT_DIR/cli/target/release/bv"
+  if [[ ! -x "$target" ]]; then
+    log_info "Building BioVault CLI (cargo build --release)..."
+    (cd "$BIOVAULT_DIR/cli" && cargo build --release >/dev/null 2>&1)
+  fi
+  echo "$target"
+}
+
+# Run a command in a client's environment
+with_client_env() {
+  local email="$1"
+  shift
+  (
+    cd "$SANDBOX_DIR/$email"
+    eval "$("$SBENV_BIN" activate --quiet 2>/dev/null || true)"
+    "$@"
+  )
+}
+
+# Wait for a file to exist
+wait_for_file() {
+  local file="$1"
+  local timeout="${2:-60}"
+  local count=0
+
+  while [[ ! -f "$file" ]] && (( count < timeout )); do
+    sleep 1
+    ((count++))
+  done
+
+  [[ -f "$file" ]]
+}
+
+# Exchange crypto keys between clients
+exchange_keys() {
+  log_header "Exchanging Crypto Keys"
+
+  local bv_binary
+  bv_binary="$(ensure_bv_binary)"
+
+  local client1_bundle="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
+  local client2_bundle="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
+
+  # Wait for bundles to be generated (happens during bv init in datasite.sh)
+  log_info "Waiting for client1 public bundle..."
+  if ! wait_for_file "$client1_bundle" 30; then
+    log_error "Client1 bundle not found at: $client1_bundle"
+    return 1
+  fi
+  log_success "Client1 bundle ready"
+
+  log_info "Waiting for client2 public bundle..."
+  if ! wait_for_file "$client2_bundle" 30; then
+    log_error "Client2 bundle not found at: $client2_bundle"
+    return 1
+  fi
+  log_success "Client2 bundle ready"
+
+  # Wait for bundles to sync across clients via SyftBox
+  local client1_sees_client2="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
+  local client2_sees_client1="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
+
+  log_info "Waiting for bundles to sync via SyftBox..."
+
+  local sync_timeout=60
+  local count=0
+  while (( count < sync_timeout )); do
+    if [[ -f "$client1_sees_client2" ]] && [[ -f "$client2_sees_client1" ]]; then
+      break
+    fi
+    sleep 2
+    ((count += 2))
+    echo -ne "\r  Syncing... ${count}s"
+  done
+  echo ""
+
+  if [[ ! -f "$client1_sees_client2" ]]; then
+    log_warn "Client1 doesn't see Client2's bundle yet - will import directly"
+    # Copy bundle manually for dev mode
+    mkdir -p "$(dirname "$client1_sees_client2")"
+    cp "$client2_bundle" "$client1_sees_client2"
+  fi
+
+  if [[ ! -f "$client2_sees_client1" ]]; then
+    log_warn "Client2 doesn't see Client1's bundle yet - will import directly"
+    # Copy bundle manually for dev mode
+    mkdir -p "$(dirname "$client2_sees_client1")"
+    cp "$client1_bundle" "$client2_sees_client1"
+  fi
+
+  log_success "Bundles synced"
+
+  # Client1 imports Client2's bundle
+  log_info "Client1 importing Client2's bundle..."
+  with_client_env "$CLIENT1_EMAIL" "$bv_binary" syc import \
+    "datasites/$CLIENT2_EMAIL/public/crypto/did.json" \
+    --expected-identity "$CLIENT2_EMAIL" || {
+    log_error "Failed to import Client2 bundle into Client1"
+    return 1
+  }
+  log_success "Client1 imported Client2's bundle"
+
+  # Client2 imports Client1's bundle
+  log_info "Client2 importing Client1's bundle..."
+  with_client_env "$CLIENT2_EMAIL" "$bv_binary" syc import \
+    "datasites/$CLIENT1_EMAIL/public/crypto/did.json" \
+    --expected-identity "$CLIENT1_EMAIL" || {
+    log_error "Failed to import Client1 bundle into Client2"
+    return 1
+  }
+  log_success "Client2 imported Client1's bundle"
+
+  log_success "Key exchange complete - clients can now send encrypted messages"
+}
+
+# Verify sync is working between clients
+verify_sync() {
+  log_header "Verifying SyftBox Sync"
+
+  local test_file="sync-test-$(date +%s).txt"
+  local client1_public="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT1_EMAIL/public"
+  local client2_sees_client1="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT1_EMAIL/public"
+
+  # Write test file to client1's public folder
+  log_info "Writing test file to client1's public folder..."
+  echo "Sync test at $(date)" > "$client1_public/$test_file"
+
+  # Wait for it to appear on client2's view
+  log_info "Waiting for file to sync to client2..."
+  local timeout=60
+  local count=0
+  while [[ ! -f "$client2_sees_client1/$test_file" ]] && (( count < timeout )); do
+    sleep 2
+    ((count += 2))
+    echo -ne "\r  Waiting... ${count}s"
+  done
+  echo ""
+
+  if [[ -f "$client2_sees_client1/$test_file" ]]; then
+    log_success "Sync verified! File appeared on client2 in ${count}s"
+    # Cleanup
+    rm -f "$client1_public/$test_file"
+    return 0
+  else
+    log_error "Sync FAILED - file did not appear on client2 after ${timeout}s"
+    log_warn "Check that SyftBox daemons are running and connected"
+    rm -f "$client1_public/$test_file"
+    return 1
+  fi
 }
 
 # Get the biovault home for a client
@@ -354,6 +523,48 @@ main() {
   # Launch desktops
   log_header "Launching Desktop Instances"
 
+  # Clean biovault package once before launching
+  cd "$SCRIPT_DIR/src-tauri"
+  cargo clean -p biovault 2>/dev/null || true
+  cd "$SCRIPT_DIR"
+
+  # Single mode - just launch one instance
+  if (( SINGLE_MODE )); then
+    local client_email client_num
+    if [[ "$SINGLE_CLIENT" == "2" ]]; then
+      client_email="$CLIENT2_EMAIL"
+      client_num=2
+    else
+      client_email="$CLIENT1_EMAIL"
+      client_num=1
+    fi
+
+    log_info "Launching SINGLE desktop instance: $client_email (Ctrl+C to stop)"
+
+    export BIOVAULT_HOME="$(get_biovault_home "$client_email")"
+    export BIOVAULT_DEV_MODE=1
+    export BIOVAULT_DEV_SYFTBOX=1
+    export SYFTBOX_SERVER_URL="$SERVER_URL"
+    export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$client_email/.syftbox/config.json"
+
+    echo ""
+    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Desktop Instance $client_num: $client_email${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
+    echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    if command -v bun >/dev/null 2>&1; then
+      bun run dev
+    else
+      npm run dev
+    fi
+    return
+  fi
+
+  # Two instance mode
   log_info "Launching TWO desktop windows (Ctrl+C to stop both)"
 
   # Launch instance 2 in background first
@@ -363,10 +574,6 @@ main() {
     export BIOVAULT_DEV_SYFTBOX=1
     export SYFTBOX_SERVER_URL="$SERVER_URL"
     export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$CLIENT2_EMAIL/.syftbox/config.json"
-
-    cd "$SCRIPT_DIR/src-tauri"
-    cargo clean -p biovault 2>/dev/null || true
-    cd "$SCRIPT_DIR"
 
     echo ""
     echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
@@ -397,10 +604,6 @@ main() {
   export BIOVAULT_DEV_SYFTBOX=1
   export SYFTBOX_SERVER_URL="$SERVER_URL"
   export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$CLIENT1_EMAIL/.syftbox/config.json"
-
-  cd "$SCRIPT_DIR/src-tauri"
-  cargo clean -p biovault 2>/dev/null || true
-  cd "$SCRIPT_DIR"
 
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"

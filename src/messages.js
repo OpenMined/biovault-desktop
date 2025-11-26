@@ -243,7 +243,7 @@ export function createMessagesModule({
 		if (messagesRefreshInProgress) return
 		messagesRefreshInProgress = true
 
-		const list = document.getElementById('message-thread-list')
+		const list = document.getElementById('message-list')
 		if (list && !list.innerHTML.trim()) {
 			list.innerHTML = '<div class="message-thread-empty">Loading threads...</div>'
 		}
@@ -268,7 +268,7 @@ export function createMessagesModule({
 	}
 
 	function renderMessageThreads() {
-		const list = document.getElementById('message-thread-list')
+		const list = document.getElementById('message-list')
 		if (!list) return
 
 		if (messageThreads.length === 0) {
@@ -522,10 +522,12 @@ export function createMessagesModule({
 			const syftboxStatus = getSyftboxStatus()
 			if (syftboxStatus.running) {
 				await invoke('send_message', {
-					to: recipient,
-					subject: subject || '(No Subject)',
-					body,
-					replyTo: messageReplyTargetId,
+					request: {
+						to: recipient,
+						subject: subject || '(No Subject)',
+						body,
+						reply_to: messageReplyTargetId,
+					}
 				})
 				await loadMessageThreads(true)
 
@@ -617,9 +619,21 @@ export function createMessagesModule({
 	}
 
 	async function ensureMessagesAuthorizationAndStartNew() {
+		// In dev mode, always allow
+		try {
+			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+				messagesAuthorized = true
+			}
+		} catch (e) {
+			// Ignore dev mode check errors
+		}
+
 		if (!messagesAuthorized) {
 			await ensureMessagesAuthorization()
-			return
+			if (!messagesAuthorized) {
+				return
+			}
 		}
 		startNewMessage()
 	}
