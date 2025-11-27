@@ -430,8 +430,8 @@ pub fn get_dev_syftbox_server_url() -> Option<String> {
 /// Check if the syftbox server is reachable (for dev mode)
 #[tauri::command]
 pub async fn check_dev_syftbox_server() -> Result<bool, String> {
-    let server_url = env::var("SYFTBOX_SERVER_URL")
-        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let server_url =
+        env::var("SYFTBOX_SERVER_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
     crate::desktop_log!("🔍 Checking dev syftbox server at: {}", server_url);
 
@@ -443,7 +443,11 @@ pub async fn check_dev_syftbox_server() -> Result<bool, String> {
     match client.get(&server_url).send().await {
         Ok(response) => {
             let reachable = response.status().is_success() || response.status().is_redirection();
-            crate::desktop_log!("  Server response: {} (reachable: {})", response.status(), reachable);
+            crate::desktop_log!(
+                "  Server response: {} (reachable: {})",
+                response.status(),
+                reachable
+            );
             Ok(reachable)
         }
         Err(e) => {

@@ -527,7 +527,7 @@ export function createMessagesModule({
 						subject: subject || '(No Subject)',
 						body,
 						reply_to: messageReplyTargetId,
-					}
+					},
 				})
 				await loadMessageThreads(true)
 

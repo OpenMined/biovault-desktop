@@ -1,35 +1,42 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # =============================================================================
-# dev-two.sh - Launch two BioVault Desktop instances with sandbox syftbox
+# dev-two.sh - Launch BioVault Desktop against the SyftBox devstack simulator
 # =============================================================================
 #
-# This script sets up a complete dev environment with:
-# 1. SyftBox server (docker) running on localhost:8080
-# 2. Two sandbox clients with syftbox daemons running
-# 3. Two BioVault Desktop instances in dev/hotreload mode
+# This script now relies on the BioVault devstack helper
+# (biovault/tests/scripts/devstack.sh) which wraps the syftbox/cmd/devstack
+# tool. It will spin up a full stack (MinIO + server + client daemons) with
+# random ports, write state into biovault/sandbox, wait for the sync probe, and
+# then launch one or two BioVault Desktop instances pointed at the generated
+# sandbox.
 #
-# Usage:
-#   ./dev-two.sh              # Start everything
-#   ./dev-two.sh --reset      # Reset sandbox and restart
-#   ./dev-two.sh --stop       # Stop all services
-#   ./dev-two.sh --server     # Start only the server
-#   ./dev-two.sh --clients    # Start only the clients (assumes server running)
+# Quick start:
+#   ./dev-two.sh --reset                     # fresh stack + two desktops
+#   ./dev-two.sh --reset --single            # fresh stack + single desktop (first client)
+#   ./dev-two.sh --reset --single client2@…  # fresh stack + single desktop for second client
+#   ./dev-two.sh --stop                      # stop devstack and desktop pids
+#
+# Flags are passed through to sbdev:
+#   --reset            Remove the sandbox and rebuild everything
+#   --skip-sync-check  Skip the sbdev sync probe
+#   --client EMAIL     Add a client (repeatable, defaults to client1/client2)
+#   --clients a,b,c    Comma-separated client list
+#   --path DIR         Override sandbox root (default: biovault/syftbox/sandbox)
+#   --single [EMAIL]   Launch only one desktop (defaults to first client)
+#   --stop             Stop devstack and any desktop processes
 #
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIOVAULT_DIR="$SCRIPT_DIR/biovault"
-SANDBOX_DIR="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
-SERVER_SCRIPT="$BIOVAULT_DIR/tests/scripts/server.sh"
-DATASITE_SCRIPT="$BIOVAULT_DIR/tests/scripts/datasite.sh"
-SBENV_BIN="$BIOVAULT_DIR/sbenv/sbenv"
+DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
+SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
 
-# Client configuration
-CLIENT1_EMAIL="${CLIENT1_EMAIL:-client1@sandbox.local}"
-CLIENT2_EMAIL="${CLIENT2_EMAIL:-client2@sandbox.local}"
-SERVER_URL="${SYFTBOX_SERVER_URL:-http://localhost:8080}"
+# Default clients (can be overridden via flags or env)
+DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
+DEFAULT_CLIENT2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 
 # Colors
 RED='\033[0;31m'
@@ -45,581 +52,454 @@ log_warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error() { echo -e "${RED}✗ $1${NC}"; }
 log_header() { echo -e "\n${CYAN}═══════════════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}\n"; }
 
-# Parse arguments
+usage() {
+  cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --reset             Reset sandbox and devstack before starting
+  --skip-sync-check   Skip the sbdev sync probe
+  --stop              Stop devstack and desktop processes
+  --single [EMAIL]    Launch only one desktop (default: first client)
+  --client EMAIL      Add a client (repeatable)
+  --clients LIST      Comma-separated client list
+  --path DIR          Sandbox root (default: biovault/sandbox)
+  -h, --help          Show this help
+EOF
+}
+
+# Parsed flags
 RESET_FLAG=0
 STOP_FLAG=0
-SERVER_ONLY=0
-CLIENTS_ONLY=0
 SINGLE_MODE=0
-SINGLE_CLIENT=""
+SINGLE_TARGET=""
+SKIP_SYNC_CHECK=0
+
+CLIENTS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --reset)
-      RESET_FLAG=1
-      ;;
-    --stop)
-      STOP_FLAG=1
-      ;;
-    --server)
-      SERVER_ONLY=1
-      ;;
-    --clients)
-      CLIENTS_ONLY=1
-      ;;
+    --reset) RESET_FLAG=1 ;;
+    --stop) STOP_FLAG=1 ;;
     --single)
       SINGLE_MODE=1
-      SINGLE_CLIENT="${2:-1}"
-      if [[ "$2" =~ ^[12]$ ]]; then
+      if [[ -n "${2:-}" && "$2" != "--"* ]]; then
+        SINGLE_TARGET="$2"
         shift
       fi
       ;;
+    --client)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--client requires an email"
+        exit 1
+      fi
+      CLIENTS+=("$2")
+      shift
+      ;;
+    --clients)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--clients requires a comma-separated list"
+        exit 1
+      fi
+      IFS=',' read -r -a parsed_clients <<<"$2"
+      CLIENTS+=("${parsed_clients[@]}")
+      shift
+      ;;
+    --path)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--path requires a directory"
+        exit 1
+      fi
+      SANDBOX_ROOT="$2"
+      shift
+      ;;
+    --skip-sync-check)
+      SKIP_SYNC_CHECK=1
+      ;;
     -h|--help)
-      echo "Usage: $0 [--reset] [--stop] [--server] [--clients] [--single [1|2]]"
-      echo ""
-      echo "Options:"
-      echo "  --reset       Reset sandbox and docker before starting"
-      echo "  --stop        Stop all services and exit"
-      echo "  --server      Start only the syftbox server"
-      echo "  --clients     Start only the sandbox clients (assumes server running)"
-      echo "  --single [N]  Launch only one desktop instance (1 or 2, default: 1)"
-      echo ""
-      echo "Environment:"
-      echo "  SANDBOX_DIR           Override sandbox location (default: biovault/sandbox)"
-      echo "  CLIENT1_EMAIL         Email for client 1 (default: client1@sandbox.local)"
-      echo "  CLIENT2_EMAIL         Email for client 2 (default: client2@sandbox.local)"
-      echo "  SYFTBOX_SERVER_URL    Server URL (default: http://localhost:8080)"
+      usage
       exit 0
       ;;
     *)
       log_error "Unknown option: $1"
+      usage
       exit 1
       ;;
   esac
   shift
 done
 
-# Check required files exist
+if [[ ${#CLIENTS[@]} -eq 0 ]]; then
+  CLIENTS=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
+fi
+
+# State holders
+STACK_STATE_FILE=""
+SERVER_PORT=""
+SERVER_URL=""
+CLIENT_LINES=()
+BV_CLI_BIN=""
+
 check_requirements() {
   log_info "Checking requirements..."
 
-  [[ -f "$SERVER_SCRIPT" ]] || { log_error "Missing server script: $SERVER_SCRIPT"; exit 1; }
-  [[ -f "$DATASITE_SCRIPT" ]] || { log_error "Missing datasite script: $DATASITE_SCRIPT"; exit 1; }
-  [[ -x "$SBENV_BIN" ]] || { log_error "Missing sbenv binary: $SBENV_BIN"; exit 1; }
-
-  command -v docker >/dev/null 2>&1 || { log_error "docker is required"; exit 1; }
-  command -v bun >/dev/null 2>&1 || command -v npm >/dev/null 2>&1 || { log_error "bun or npm is required"; exit 1; }
-
-  log_success "All requirements met"
-}
-
-# Stop all services
-stop_all() {
-  log_header "Stopping all services"
-
-  # Stop desktop processes
-  log_info "Stopping any running Tauri dev processes..."
-  pkill -f "tauri dev" 2>/dev/null || true
-  pkill -f "cargo-tauri" 2>/dev/null || true
-
-  # Stop sandbox clients
-  if [[ -d "$SANDBOX_DIR" ]]; then
-    log_info "Stopping sandbox clients..."
-    while IFS= read -r client_dir; do
-      [[ -z "$client_dir" ]] && continue
-      local pid_file="$client_dir/.syftbox/syftbox.pid"
-      if [[ -f "$pid_file" ]]; then
-        local pid
-        pid="$(tr -d ' \n\r' < "$pid_file")"
-        if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
-          log_info "  Stopping client at $client_dir (pid: $pid)"
-          kill "$pid" 2>/dev/null || true
-        fi
-      fi
-    done < <(find "$SANDBOX_DIR" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null)
-  fi
-
-  # Stop docker containers
-  log_info "Stopping docker containers..."
-  "$SERVER_SCRIPT" --reset 2>/dev/null || true
-
-  log_success "All services stopped"
-}
-
-# Start the syftbox server
-start_server() {
-  log_header "Starting SyftBox Server"
-
-  if (( RESET_FLAG )); then
-    log_info "Resetting docker containers..."
-    "$SERVER_SCRIPT" --reset
-  fi
-
-  log_info "Starting server at $SERVER_URL..."
-  "$SERVER_SCRIPT"
-
-  log_success "Server is ready at $SERVER_URL"
-}
-
-# Build syftbox binary (needed before datasite.sh to avoid stdout capture issue)
-# Only outputs the binary path to stdout - all other output goes to stderr
-build_syftbox_binary() {
-  local syftbox_dir="$BIOVAULT_DIR/syftbox"
-  local goos goarch target
-
-  goos="$(go env GOOS)"
-  goarch="$(go env GOARCH)"
-  target="$syftbox_dir/.out/syftbox_client_${goos}_${goarch}"
-
-  if [[ -x "$target" ]]; then
-    echo "$target"
-    return
-  fi
-
-  echo -e "${BLUE}ℹ️  Building SyftBox client binary for ${goos}/${goarch}...${NC}" >&2
-  mkdir -p "$syftbox_dir/.out"
-
-  local version commit build_date ldflags cgo
-  version="$(cd "$syftbox_dir" && git describe --tags --always 2>/dev/null || echo "dev")"
-  commit="$(cd "$syftbox_dir" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
-  build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  ldflags="-s -w"
-  ldflags+=" -X github.com/openmined/syftbox/internal/version.Version=$version"
-  ldflags+=" -X github.com/openmined/syftbox/internal/version.Revision=$commit"
-  ldflags+=" -X github.com/openmined/syftbox/internal/version.BuildDate=$build_date"
-
-  cgo=0
-  [[ "$goos" == "darwin" ]] && cgo=1
-
-  (cd "$syftbox_dir" && GOOS="$goos" GOARCH="$goarch" CGO_ENABLED="$cgo" \
-    go build -trimpath --tags "go_json nomsgpack" -ldflags "$ldflags" \
-    -o "$target" ./cmd/client) >&2
-
-  echo -e "${GREEN}✓ Built syftbox binary: $target${NC}" >&2
-  echo "$target"
-}
-
-# Start sandbox clients
-start_clients() {
-  log_header "Setting Up Sandbox Clients"
-
-  # Check server is reachable
-  log_info "Verifying server at $SERVER_URL..."
-  if ! curl -fsS --max-time 5 "$SERVER_URL" >/dev/null 2>&1; then
-    log_error "Server is not reachable at $SERVER_URL"
-    log_info "Start the server first with: $0 --server"
+  command -v python3 >/dev/null 2>&1 || { log_error "python3 is required"; exit 1; }
+  command -v go >/dev/null 2>&1 || { log_error "Go is required to run the sbdev devstack"; exit 1; }
+  [[ -f "$DEVSTACK_SCRIPT" ]] || { log_error "Devstack helper not found at $DEVSTACK_SCRIPT"; exit 1; }
+  if ! command -v bun >/dev/null 2>&1 && ! command -v npm >/dev/null 2>&1; then
+    log_error "bun or npm is required to run the desktop"
     exit 1
   fi
-  log_success "Server is reachable"
 
-  # Pre-build syftbox binary to avoid stdout capture issues in datasite.sh
-  log_info "Ensuring syftbox binary is built..."
-  SYFTBOX_BINARY_PATH="$(build_syftbox_binary)"
-  export SYFTBOX_BINARY_PATH
-  log_success "Syftbox binary: $SYFTBOX_BINARY_PATH"
-
-  if (( RESET_FLAG )); then
-    log_info "Resetting sandbox..."
-    "$DATASITE_SCRIPT" --reset
-  fi
-
-  log_info "Creating sandbox clients: $CLIENT1_EMAIL, $CLIENT2_EMAIL"
-  "$DATASITE_SCRIPT" --names "$CLIENT1_EMAIL,$CLIENT2_EMAIL"
-
-  log_success "Sandbox clients are ready"
-  echo ""
-  echo -e "${YELLOW}Sandbox locations:${NC}"
-  echo -e "  Client 1: $SANDBOX_DIR/$CLIENT1_EMAIL"
-  echo -e "  Client 2: $SANDBOX_DIR/$CLIENT2_EMAIL"
-
-  # Exchange crypto keys between clients
-  exchange_keys
-
-  # Verify sync is working before launching desktops
-  verify_sync || log_warn "Continuing despite sync issues..."
+  log_success "Requirements look good"
 }
 
-# Build the bv CLI binary
-ensure_bv_binary() {
+ensure_bv_cli() {
   local target="$BIOVAULT_DIR/cli/target/release/bv"
   if [[ ! -x "$target" ]]; then
     log_info "Building BioVault CLI (cargo build --release)..."
     (cd "$BIOVAULT_DIR/cli" && cargo build --release >/dev/null 2>&1)
   fi
-  echo "$target"
+  BV_CLI_BIN="$target"
 }
 
-# Run a command in a client's environment
-with_client_env() {
-  local email="$1"
-  shift
-  (
-    cd "$SANDBOX_DIR/$email"
-    eval "$("$SBENV_BIN" activate --quiet 2>/dev/null || true)"
-    "$@"
+find_state_file() {
+  local candidates=(
+    "$SANDBOX_ROOT/relay/state.json"
+    "$SANDBOX_ROOT/state.json"
   )
-}
-
-# Wait for a file to exist
-wait_for_file() {
-  local file="$1"
-  local timeout="${2:-60}"
-  local count=0
-
-  while [[ ! -f "$file" ]] && (( count < timeout )); do
-    sleep 1
-    ((count++))
-  done
-
-  [[ -f "$file" ]]
-}
-
-# Exchange crypto keys between clients
-exchange_keys() {
-  log_header "Exchanging Crypto Keys"
-
-  local bv_binary
-  bv_binary="$(ensure_bv_binary)"
-
-  local client1_bundle="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
-  local client2_bundle="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
-
-  # Wait for bundles to be generated (happens during bv init in datasite.sh)
-  log_info "Waiting for client1 public bundle..."
-  if ! wait_for_file "$client1_bundle" 30; then
-    log_error "Client1 bundle not found at: $client1_bundle"
-    return 1
-  fi
-  log_success "Client1 bundle ready"
-
-  log_info "Waiting for client2 public bundle..."
-  if ! wait_for_file "$client2_bundle" 30; then
-    log_error "Client2 bundle not found at: $client2_bundle"
-    return 1
-  fi
-  log_success "Client2 bundle ready"
-
-  # Wait for bundles to sync across clients via SyftBox
-  local client1_sees_client2="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
-  local client2_sees_client1="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
-
-  log_info "Waiting for bundles to sync via SyftBox..."
-
-  local sync_timeout=60
-  local count=0
-  while (( count < sync_timeout )); do
-    if [[ -f "$client1_sees_client2" ]] && [[ -f "$client2_sees_client1" ]]; then
-      break
+  for path in "${candidates[@]}"; do
+    if [[ -f "$path" ]]; then
+      echo "$path"
+      return 0
     fi
-    sleep 2
-    ((count += 2))
-    echo -ne "\r  Syncing... ${count}s"
   done
-  echo ""
-
-  if [[ ! -f "$client1_sees_client2" ]]; then
-    log_warn "Client1 doesn't see Client2's bundle yet - will import directly"
-    # Copy bundle manually for dev mode
-    mkdir -p "$(dirname "$client1_sees_client2")"
-    cp "$client2_bundle" "$client1_sees_client2"
-  fi
-
-  if [[ ! -f "$client2_sees_client1" ]]; then
-    log_warn "Client2 doesn't see Client1's bundle yet - will import directly"
-    # Copy bundle manually for dev mode
-    mkdir -p "$(dirname "$client2_sees_client1")"
-    cp "$client1_bundle" "$client2_sees_client1"
-  fi
-
-  log_success "Bundles synced"
-
-  # Client1 imports Client2's bundle
-  log_info "Client1 importing Client2's bundle..."
-  with_client_env "$CLIENT1_EMAIL" "$bv_binary" syc import \
-    "datasites/$CLIENT2_EMAIL/public/crypto/did.json" \
-    --expected-identity "$CLIENT2_EMAIL" || {
-    log_error "Failed to import Client2 bundle into Client1"
-    return 1
-  }
-  log_success "Client1 imported Client2's bundle"
-
-  # Client2 imports Client1's bundle
-  log_info "Client2 importing Client1's bundle..."
-  with_client_env "$CLIENT2_EMAIL" "$bv_binary" syc import \
-    "datasites/$CLIENT1_EMAIL/public/crypto/did.json" \
-    --expected-identity "$CLIENT1_EMAIL" || {
-    log_error "Failed to import Client1 bundle into Client2"
-    return 1
-  }
-  log_success "Client2 imported Client1's bundle"
-
-  log_success "Key exchange complete - clients can now send encrypted messages"
+  return 1
 }
 
-# Verify sync is working between clients
-verify_sync() {
-  log_header "Verifying SyftBox Sync"
+load_state() {
+  STACK_STATE_FILE="$(find_state_file || true)"
+  if [[ -z "$STACK_STATE_FILE" ]]; then
+    log_error "Devstack state not found in $SANDBOX_ROOT (run with --reset to create)"
+    exit 1
+  fi
 
-  local test_file="sync-test-$(date +%s).txt"
-  local client1_public="$SANDBOX_DIR/$CLIENT1_EMAIL/datasites/$CLIENT1_EMAIL/public"
-  local client2_sees_client1="$SANDBOX_DIR/$CLIENT2_EMAIL/datasites/$CLIENT1_EMAIL/public"
+  SERVER_PORT="$(python3 - "$STACK_STATE_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+print(data["server"]["port"])
+PY
+)"
+  SERVER_URL="http://127.0.0.1:${SERVER_PORT}"
 
-  # Write test file to client1's public folder
-  log_info "Writing test file to client1's public folder..."
-  echo "Sync test at $(date)" > "$client1_public/$test_file"
+  CLIENT_LINES=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    CLIENT_LINES+=("$line")
+  done < <(python3 - "$STACK_STATE_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for c in data.get("clients", []):
+    print("|".join([
+        c.get("email", ""),
+        c.get("home_path", ""),
+        c.get("config", ""),
+        c.get("server_url", ""),
+        str(c.get("port", "")),
+    ]))
+PY
+)
 
-  # Wait for it to appear on client2's view
-  log_info "Waiting for file to sync to client2..."
-  local timeout=60
-  local count=0
-  while [[ ! -f "$client2_sees_client1/$test_file" ]] && (( count < timeout )); do
-    sleep 2
-    ((count += 2))
-    echo -ne "\r  Waiting... ${count}s"
-  done
-  echo ""
-
-  if [[ -f "$client2_sees_client1/$test_file" ]]; then
-    log_success "Sync verified! File appeared on client2 in ${count}s"
-    # Cleanup
-    rm -f "$client1_public/$test_file"
-    return 0
-  else
-    log_error "Sync FAILED - file did not appear on client2 after ${timeout}s"
-    log_warn "Check that SyftBox daemons are running and connected"
-    rm -f "$client1_public/$test_file"
-    return 1
+  if [[ ${#CLIENT_LINES[@]} -eq 0 ]]; then
+    log_error "No clients found in devstack state"
+    exit 1
   fi
 }
 
-# Get the biovault home for a client
-get_biovault_home() {
+client_field() {
   local email="$1"
-  echo "$SANDBOX_DIR/$email"
+  local field="$2"
+  local line home cfg srv port
+  for line in "${CLIENT_LINES[@]}"; do
+    IFS='|' read -r em home cfg srv port <<<"$line"
+    if [[ "$em" == "$email" ]]; then
+      case "$field" in
+        home) echo "$home" ;;
+        config) echo "$cfg" ;;
+        server) echo "$srv" ;;
+        port) echo "$port" ;;
+        *) return 1 ;;
+      esac
+      return 0
+    fi
+  done
+  return 1
 }
 
-# Prepare desktop config for a client
+stop_desktops() {
+  log_header "Stopping desktop processes"
+
+  shopt -s nullglob
+  for pid_file in "$SANDBOX_ROOT"/*/desktop.pid; do
+    local pid
+    pid="$(tr -d ' \n\r' < "$pid_file")"
+    if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
+      log_info "Stopping desktop pid $pid ($pid_file)"
+      kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pid_file"
+  done
+  shopt -u nullglob
+
+  pkill -f "tauri dev" 2>/dev/null || true
+  pkill -f "cargo-tauri" 2>/dev/null || true
+}
+
+stop_stack() {
+  stop_desktops
+  log_info "Stopping SyftBox devstack..."
+  local args=(--sandbox "$SANDBOX_ROOT" --stop)
+  (( RESET_FLAG )) && args+=(--reset)
+  if ! bash "$DEVSTACK_SCRIPT" "${args[@]}"; then
+    log_warn "devstack stop reported an issue (continuing)"
+  fi
+  log_success "Stopped"
+}
+
+start_stack() {
+  local existing_state
+  existing_state="$(find_state_file || true)"
+
+  if [[ -n "$existing_state" && $RESET_FLAG -eq 0 ]]; then
+    log_info "Existing devstack state found at $existing_state (use --reset to rebuild)"
+    return
+  fi
+
+  log_header "Starting SyftBox devstack"
+
+  local client_csv
+  client_csv="$(IFS=,; echo "${CLIENTS[*]}")"
+
+  local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv")
+  (( RESET_FLAG )) && args+=(--reset)
+  (( SKIP_SYNC_CHECK )) && args+=(--skip-sync-check)
+
+  bash "$DEVSTACK_SCRIPT" "${args[@]}"
+}
+
 prepare_desktop_config() {
   local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
-  local biovault_home="$client_dir"
-  local config_file="$biovault_home/config.yaml"
+  local home config
+  home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+  config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
 
-  log_info "Preparing desktop config for $email..."
-
-  # Check if config exists (created by bv init in datasite.sh)
-  if [[ ! -f "$config_file" ]]; then
-    log_warn "Config not found at $config_file, creating..."
-    mkdir -p "$biovault_home"
-    cat > "$config_file" <<EOF
-email: "$email"
-syftbox_config_path: "$client_dir/.syftbox/config.json"
-EOF
-  else
-    # Update syftbox_config_path if not set
-    if ! grep -q "syftbox_config_path" "$config_file" 2>/dev/null; then
-      echo "syftbox_config_path: \"$client_dir/.syftbox/config.json\"" >> "$config_file"
-    fi
+  local config_yaml="$home/config.yaml"
+  mkdir -p "$home"
+  if [[ -f "$config_yaml" ]]; then
+    return
   fi
 
-  log_success "Config ready at $config_file"
+  cat > "$config_yaml" <<EOF
+email: "$email"
+syftbox_config_path: "$config"
+EOF
+  log_info "Config ready for $email at $config_yaml"
 }
 
-# Launch a desktop instance
-launch_desktop() {
+launch_desktop_instance() {
   local email="$1"
   local instance_num="$2"
-  local client_dir="$SANDBOX_DIR/$email"
-  local biovault_home="$client_dir"
-  local log_file="$client_dir/desktop.log"
+  local background="$3"
 
-  log_info "Launching desktop instance $instance_num for $email..."
+  local home config server
+  home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+  config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+  server="$(client_field "$email" server)"
+  [[ -z "$server" ]] && server="$SERVER_URL"
 
-  # Prepare config
   prepare_desktop_config "$email"
 
-  # Set environment variables for dev mode
-  export BIOVAULT_HOME="$biovault_home"
+  export BIOVAULT_HOME="$home"
   export BIOVAULT_DEV_MODE=1
   export BIOVAULT_DEV_SYFTBOX=1
-  export SYFTBOX_SERVER_URL="$SERVER_URL"
-  export SYFTBOX_CONFIG_PATH="$client_dir/.syftbox/config.json"
+  export SYFTBOX_SERVER_URL="$server"
+  export SYFTBOX_CONFIG_PATH="$config"
 
-  # Build biovault package fresh
-  log_info "  Building biovault package..."
-  cd "$SCRIPT_DIR/src-tauri"
-  cargo clean -p biovault 2>/dev/null || true
-  cd "$SCRIPT_DIR"
-
-  # Determine package manager
   local pkg_cmd="npm"
   if command -v bun >/dev/null 2>&1; then
     pkg_cmd="bun"
   fi
 
-  log_info "  Starting Tauri dev with $pkg_cmd..."
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-  echo -e "${CYAN}  Desktop Instance $instance_num: $email${NC}"
-  echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-  echo -e "${YELLOW}  BIOVAULT_HOME:     $biovault_home${NC}"
-  echo -e "${YELLOW}  SYFTBOX_CONFIG:    $client_dir/.syftbox/config.json${NC}"
-  echo -e "${YELLOW}  DEV_MODE:          enabled${NC}"
-  echo -e "${YELLOW}  Server:            $SERVER_URL${NC}"
-  echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-  echo ""
-
-  # Launch in foreground for the first instance, background for second
-  if [[ "$instance_num" == "1" ]]; then
-    $pkg_cmd run dev
-  else
-    $pkg_cmd run dev &
-    echo $! > "$client_dir/desktop.pid"
-  fi
-}
-
-# Main execution
-main() {
-  check_requirements
-
-  # Handle stop flag
-  if (( STOP_FLAG )); then
-    stop_all
-    exit 0
-  fi
-
-  # Server only mode
-  if (( SERVER_ONLY )); then
-    start_server
-    exit 0
-  fi
-
-  # Clients only mode
-  if (( CLIENTS_ONLY )); then
-    start_clients
-    exit 0
-  fi
-
-  # Full setup
-  log_header "BioVault Two-Instance Dev Environment"
-
-  echo -e "${YELLOW}This will:${NC}"
-  echo "  1. Start the SyftBox server (docker)"
-  echo "  2. Create two sandbox clients with syftbox daemons"
-  echo "  3. Launch two BioVault Desktop instances"
-  echo ""
-
-  # Reset if requested
-  if (( RESET_FLAG )); then
-    stop_all
-  fi
-
-  # Start server
-  start_server
-
-  # Start clients
-  start_clients
-
-  # Launch desktops
-  log_header "Launching Desktop Instances"
-
-  # Clean biovault package once before launching
-  cd "$SCRIPT_DIR/src-tauri"
-  cargo clean -p biovault 2>/dev/null || true
-  cd "$SCRIPT_DIR"
-
-  # Single mode - just launch one instance
-  if (( SINGLE_MODE )); then
-    local client_email client_num
-    if [[ "$SINGLE_CLIENT" == "2" ]]; then
-      client_email="$CLIENT2_EMAIL"
-      client_num=2
-    else
-      client_email="$CLIENT1_EMAIL"
-      client_num=1
-    fi
-
-    log_info "Launching SINGLE desktop instance: $client_email (Ctrl+C to stop)"
-
-    export BIOVAULT_HOME="$(get_biovault_home "$client_email")"
-    export BIOVAULT_DEV_MODE=1
-    export BIOVAULT_DEV_SYFTBOX=1
-    export SYFTBOX_SERVER_URL="$SERVER_URL"
-    export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$client_email/.syftbox/config.json"
-
-    echo ""
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Desktop Instance $client_num: $client_email${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
-    echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-    echo ""
-
-    if command -v bun >/dev/null 2>&1; then
-      bun run dev
-    else
-      npm run dev
-    fi
-    return
-  fi
-
-  # Two instance mode
-  log_info "Launching TWO desktop windows (Ctrl+C to stop both)"
-
-  # Launch instance 2 in background first
-  (
-    export BIOVAULT_HOME="$(get_biovault_home "$CLIENT2_EMAIL")"
-    export BIOVAULT_DEV_MODE=1
-    export BIOVAULT_DEV_SYFTBOX=1
-    export SYFTBOX_SERVER_URL="$SERVER_URL"
-    export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$CLIENT2_EMAIL/.syftbox/config.json"
-
-    echo ""
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Desktop Instance 2: $CLIENT2_EMAIL${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
-    echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-
-    if command -v bun >/dev/null 2>&1; then
-      bun run dev 2>&1 | sed 's/^/[client2] /'
-    else
-      npm run dev 2>&1 | sed 's/^/[client2] /'
-    fi
-  ) &
-  CLIENT2_PID=$!
-
-  # Store PID for cleanup
-  echo "$CLIENT2_PID" > "$SANDBOX_DIR/$CLIENT2_EMAIL/desktop.pid"
-
-  # Wait a bit for first build to complete so we don't have conflicts
-  log_info "Waiting for instance 2 to start building..."
-  sleep 5
-
-  # Launch instance 1 in foreground
-  export BIOVAULT_HOME="$(get_biovault_home "$CLIENT1_EMAIL")"
-  export BIOVAULT_DEV_MODE=1
-  export BIOVAULT_DEV_SYFTBOX=1
-  export SYFTBOX_SERVER_URL="$SERVER_URL"
-  export SYFTBOX_CONFIG_PATH="$SANDBOX_DIR/$CLIENT1_EMAIL/.syftbox/config.json"
-
-  echo ""
-  echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-  echo -e "${CYAN}  Desktop Instance 1: $CLIENT1_EMAIL${NC}"
+  echo -e "${CYAN}  Desktop Instance ${instance_num}: ${email}${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
   echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
+  echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
 
-  # Trap to cleanup on exit
-  trap 'log_info "Stopping client 2..."; kill $CLIENT2_PID 2>/dev/null || true' EXIT
-
-  if command -v bun >/dev/null 2>&1; then
-    bun run dev 2>&1 | sed 's/^/[client1] /'
+  if [[ "$background" == "bg" ]]; then
+    (cd "$SCRIPT_DIR" && $pkg_cmd run dev 2>&1 | sed "s/^/[client${instance_num}] /") &
+    local pid=$!
+    echo "$pid" > "$home/desktop.pid"
+    log_info "Desktop ${instance_num} started in background (pid $pid)"
   else
-    npm run dev 2>&1 | sed 's/^/[client1] /'
+    (cd "$SCRIPT_DIR" && $pkg_cmd run dev 2>&1 | sed "s/^/[client${instance_num}] /")
+  fi
+}
+
+print_stack_summary() {
+  log_header "Devstack Summary"
+  echo -e "${YELLOW}Sandbox:${NC} $SANDBOX_ROOT"
+  echo -e "${YELLOW}Server:${NC}  $SERVER_URL"
+  for idx in "${!CLIENTS[@]}"; do
+    local email="${CLIENTS[$idx]}"
+    local home config port
+    home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+    config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+    port="$(client_field "$email" port)" || { log_error "No daemon port for $email"; exit 1; }
+    echo -e "  Client $((idx+1)): $email"
+    echo -e "    Home:    $home"
+    echo -e "    Config:  $config"
+    echo -e "    Daemon:  http://127.0.0.1:${port}"
+  done
+}
+
+launch_two_instances() {
+  if [[ ${#CLIENTS[@]} -lt 2 ]]; then
+    log_error "Two clients are required for dual mode (use --client/--clients)"
+    exit 1
+  fi
+  log_header "Launching TWO desktop windows (Ctrl+C stops foreground + devstack daemons keep running)"
+
+  launch_desktop_instance "${CLIENTS[1]}" 2 "bg"
+  sleep 3
+
+  trap 'stop_desktops' EXIT
+  launch_desktop_instance "${CLIENTS[0]}" 1 "fg"
+}
+
+launch_single_instance() {
+  local email="$1"
+  if [[ -z "$email" ]]; then
+    email="${CLIENTS[0]}"
+  fi
+  log_header "Launching SINGLE desktop window for $email"
+  launch_desktop_instance "$email" 1 "fg"
+}
+
+parse_data_dir() {
+  local config_path="$1"
+  python3 - "$config_path" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+print(cfg.get("data_dir",""))
+PY
+}
+
+ensure_client_identity() {
+  local email="$1"
+  local home config syftbox_data vault_dir
+  home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+  config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+  syftbox_data="$(parse_data_dir "$config")"
+  [[ -z "$syftbox_data" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
+
+  vault_dir="$home/.syc"
+  local has_keys=0
+  if [[ -d "$vault_dir/keys" ]]; then
+    if find "$vault_dir/keys" -maxdepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+      has_keys=1
+    fi
+  fi
+
+  if (( ! has_keys )) || (( RESET_FLAG )); then
+    log_info "Provisioning Syft Crypto identity for $email..."
+    rm -f "$home/config.yaml" 2>/dev/null || true
+    BIOVAULT_HOME="$home" \
+      SYFTBOX_CONFIG_PATH="$config" \
+      SYFTBOX_DATA_DIR="$syftbox_data" \
+      SYFTBOX_EMAIL="$email" \
+      "$BV_CLI_BIN" init "$email" --quiet
+  else
+    log_info "Syft Crypto identity already present for $email"
+  fi
+}
+
+provision_identities() {
+  log_header "Provisioning Syft Crypto identities"
+  for email in "${CLIENTS[@]}"; do
+    ensure_client_identity "$email"
+  done
+
+  # Exchange public bundles between clients (best-effort)
+  if [[ ${#CLIENTS[@]} -ge 2 ]]; then
+    local src_email dst_email src_config src_data bundle_path alt_bundle
+    src_email="${CLIENTS[0]}"
+    for dst_email in "${CLIENTS[@]:1}"; do
+      src_config="$(client_field "$src_email" config)"
+      src_data="$(parse_data_dir "$src_config")"
+      bundle_path="$src_data/$src_email/public/crypto/did.json"
+      alt_bundle="$src_data/datasites/$src_email/public/crypto/did.json"
+      if [[ ! -f "$bundle_path" && -f "$alt_bundle" ]]; then
+        bundle_path="$alt_bundle"
+      fi
+      if [[ -f "$bundle_path" ]]; then
+        log_info "Importing $src_email bundle into $dst_email..."
+        BIOVAULT_HOME="$(client_field "$dst_email" home)" \
+          SYFTBOX_CONFIG_PATH="$(client_field "$dst_email" config)" \
+          SYFTBOX_DATA_DIR="$(parse_data_dir "$(client_field "$dst_email" config)")" \
+          "$BV_CLI_BIN" syc import "$bundle_path" --expected-identity "$src_email" || log_warn "Import failed for $dst_email (continuing)"
+      else
+        log_warn "Bundle for $src_email not found at $bundle_path"
+      fi
+    done
+  fi
+}
+
+sync_client_daemon() {
+  local email="$1"
+  local home config data_dir
+  home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+  config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+  data_dir="$(parse_data_dir "$config")"
+  [[ -z "$data_dir" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
+
+  log_info "Running initial sync for $email..."
+  BIOVAULT_HOME="$home" \
+    SYFTBOX_CONFIG_PATH="$config" \
+    SYFTBOX_DATA_DIR="$data_dir" \
+    SYFTBOX_EMAIL="$email" \
+    "$BV_CLI_BIN" message sync --no-cleanup >/dev/null 2>&1 || log_warn "Initial sync failed for $email (continuing)"
+}
+
+run_initial_sync() {
+  log_header "Running initial BioVault syncs"
+  for email in "${CLIENTS[@]}"; do
+    sync_client_daemon "$email"
+  done
+}
+
+main() {
+  check_requirements
+
+  if (( STOP_FLAG )); then
+    stop_stack
+    exit 0
+  fi
+
+  start_stack
+  load_state
+  ensure_bv_cli
+  provision_identities
+  run_initial_sync
+  print_stack_summary
+
+  if (( SINGLE_MODE )); then
+    launch_single_instance "$SINGLE_TARGET"
+  else
+    launch_two_instances
   fi
 }
 
