@@ -3,6 +3,7 @@ pub mod files;
 pub mod jupyter;
 pub mod logs;
 pub mod messages;
+pub mod notifications;
 pub mod participants;
 pub mod pipelines;
 pub mod projects;

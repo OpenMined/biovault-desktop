@@ -458,7 +458,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "biovault"
-version = "0.1.105"
+version = "0.1.107"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -489,7 +489,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
- "syft-crypto-protocol",
+ "syftbox-sdk",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",
@@ -684,6 +684,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
+ "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
@@ -3394,9 +3395,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libsignal-core"
-version = "0.1.0"
-source = "git+https://github.com/signalapp/libsignal.git?tag=v0.85.3#3f8643cf4452e9c66f4091a7e8fa02bfa5ba9262"
+name = "libsignal-core-syft"
+version = "0.85.3-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32362bd91c9a0c5e8d9364090faf352cbf08e3caaefa71969586269a4ef4fa2b"
 dependencies = [
  "curve25519-dalek",
  "derive_more 2.0.1",
@@ -3411,9 +3413,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libsignal-protocol"
-version = "0.1.0"
-source = "git+https://github.com/signalapp/libsignal.git?tag=v0.85.3#3f8643cf4452e9c66f4091a7e8fa02bfa5ba9262"
+name = "libsignal-protocol-syft"
+version = "0.85.3-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d5cf9d2e27b3c02b9c0f453dd624351ee9b7b3dc3c3582764af798cf7250ef8"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -3432,7 +3435,7 @@ dependencies = [
  "indexmap 2.11.4",
  "itertools 0.14.0",
  "libcrux-ml-kem",
- "libsignal-core",
+ "libsignal-core-syft",
  "log",
  "prost",
  "prost-build",
@@ -3440,8 +3443,8 @@ dependencies = [
  "rayon",
  "serde",
  "sha2",
- "signal-crypto",
- "spqr",
+ "signal-crypto-syft",
+ "spqr-syft",
  "subtle",
  "thiserror 2.0.17",
  "uuid",
@@ -3513,6 +3516,18 @@ name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
+
+[[package]]
+name = "mac-notification-sys"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee70bb2bba058d58e252d2944582d634fc884fc9c489a966d428dedcf653e97"
+dependencies = [
+ "cc",
+ "objc2 0.6.2",
+ "objc2-foundation 0.3.1",
+ "time",
+]
 
 [[package]]
 name = "markup5ever"
@@ -3772,6 +3787,20 @@ dependencies = [
  "mio 0.8.11",
  "walkdir",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "notify-rust"
+version = "4.11.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6442248665a5aa2514e794af3b39661a8e73033b1cc5e59899e1276117ee4400"
+dependencies = [
+ "futures-lite",
+ "log",
+ "mac-notification-sys",
+ "serde",
+ "tauri-winrt-notification",
+ "zbus",
 ]
 
 [[package]]
@@ -4757,7 +4786,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -4777,7 +4806,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -5802,9 +5831,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "signal-crypto"
-version = "0.1.0"
-source = "git+https://github.com/signalapp/libsignal.git?tag=v0.85.3#3f8643cf4452e9c66f4091a7e8fa02bfa5ba9262"
+name = "signal-crypto-syft"
+version = "0.85.3-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb72b364ae6f4335c37513ca65319d829589638caf5f21104cee3d62a47115bf"
 dependencies = [
  "aes",
  "cbc",
@@ -5816,7 +5846,7 @@ dependencies = [
  "hmac",
  "hpke-rs",
  "hpke-rs-crypto",
- "libsignal-core",
+ "libsignal-core-syft",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
  "sha1",
@@ -5958,9 +5988,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "spqr"
-version = "1.2.0"
-source = "git+https://github.com/signalapp/SparsePostQuantumRatchet.git?tag=v1.2.0#99a759a3fd40cd9304459fb007fcf177db9ed207"
+name = "spqr-syft"
+version = "0.85.3-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77da2e2f0222b1268e58af3c475579753ced91128da5aa10988bbd9f0f86a9f4"
 dependencies = [
  "cpufeatures",
  "curve25519-dalek",
@@ -6043,7 +6074,7 @@ dependencies = [
 
 [[package]]
 name = "syft-crypto-protocol"
-version = "0.1.0"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6051,7 +6082,7 @@ dependencies = [
  "chacha20poly1305",
  "hex",
  "hkdf",
- "libsignal-protocol",
+ "libsignal-protocol-syft",
  "rand 0.9.2",
  "serde",
  "serde_jcs",
@@ -6061,6 +6092,26 @@ dependencies = [
  "thiserror 2.0.17",
  "urlencoding",
  "zeroize",
+]
+
+[[package]]
+name = "syftbox-sdk"
+version = "0.1.6"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "dirs 5.0.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syft-crypto-protocol",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -6409,6 +6460,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-notification"
+version = "2.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01fc2c5ff41105bd1f7242d8201fdf3efd70749b82fa013a17f2126357d194cc"
+dependencies = [
+ "log",
+ "notify-rust",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
+ "time",
+ "url",
+]
+
+[[package]]
 name = "tauri-plugin-opener"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6570,6 +6640,18 @@ checksum = "fd21509dd1fa9bd355dc29894a6ff10635880732396aa38c0066c1e6c1ab8074"
 dependencies = [
  "embed-resource",
  "toml 0.9.7",
+]
+
+[[package]]
+name = "tauri-winrt-notification"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b1e66e07de489fe43a46678dd0b8df65e0c973909df1b60ba33874e297ba9b9"
+dependencies = [
+ "quick-xml 0.37.5",
+ "thiserror 2.0.17",
+ "windows 0.61.3",
+ "windows-version",
 ]
 
 [[package]]

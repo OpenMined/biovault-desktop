@@ -1636,7 +1636,7 @@ export function initOnboarding({
 		})
 	}
 
-	// Step 3: Email -> Step 4 (SyftBox OTP)
+	// Step 3: Email -> Step 4 (SyftBox OTP) or Step 5 (if dev mode)
 	const nextBtn3 = document.getElementById('onboarding-next-3')
 	if (nextBtn3) {
 		nextBtn3.addEventListener('click', async () => {
@@ -1649,7 +1649,37 @@ export function initOnboarding({
 				return
 			}
 
-			// Move to step 4 (SyftBox OTP)
+			// Check if we're in dev mode with syftbox enabled
+			try {
+				const isDevMode = await invoke('is_dev_mode')
+				const isDevSyftbox = await invoke('is_dev_syftbox_enabled')
+
+				if (isDevMode && isDevSyftbox) {
+					console.log('🧪 Dev mode detected - checking syftbox server...')
+
+					// Check if syftbox server is reachable
+					const serverReachable = await invoke('check_dev_syftbox_server')
+
+					if (serverReachable) {
+						console.log('✅ Dev syftbox server reachable - skipping auth, going directly to init')
+
+						// Skip step 4 (auth) and go directly to step 5 (init)
+						document.getElementById('onboarding-step-3').style.display = 'none'
+						document.getElementById('onboarding-step-5').style.display = 'block'
+
+						// Initialize BioVault directly
+						initializeBioVault(email)
+						return
+					} else {
+						console.log('⚠️ Dev syftbox server not reachable - falling back to normal flow')
+					}
+				}
+			} catch (error) {
+				console.error('Failed to check dev mode:', error)
+				// Continue with normal flow on error
+			}
+
+			// Normal flow: Move to step 4 (SyftBox OTP)
 			document.getElementById('onboarding-step-3').style.display = 'none'
 			document.getElementById('onboarding-step-4').style.display = 'block'
 			document.getElementById('syftbox-send-state').style.display = 'block'
@@ -2051,6 +2081,56 @@ export function initOnboarding({
 		try {
 			const isOnboarded = await invoke('check_is_onboarded')
 			console.log('🔍 Onboarding check - isOnboarded:', isOnboarded, 'type:', typeof isOnboarded)
+
+			// Check dev mode and log info
+			try {
+				const devModeInfo = await invoke('get_dev_mode_info')
+				if (devModeInfo.dev_mode) {
+					console.log('🧪 DEV MODE ACTIVE:', devModeInfo)
+
+					// Add a dev mode banner to the document body
+					let devBanner = document.getElementById('dev-mode-banner')
+					if (!devBanner) {
+						devBanner = document.createElement('div')
+						devBanner.id = 'dev-mode-banner'
+						devBanner.style.cssText = `
+							position: fixed;
+							top: 0;
+							left: 0;
+							right: 0;
+							background: linear-gradient(90deg, #ff6b6b, #feca57);
+							color: #333;
+							padding: 4px 10px;
+							font-size: 11px;
+							font-weight: bold;
+							text-align: center;
+							z-index: 99999;
+							font-family: monospace;
+						`
+						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${devModeInfo.biovault_home || 'default'} | Server: ${devModeInfo.server_url || 'none'}`
+						document.body.insertBefore(devBanner, document.body.firstChild)
+
+						// Adjust body padding to account for banner
+						document.body.style.paddingTop = '24px'
+					}
+
+					// Auto-populate email from BIOVAULT_HOME path if it contains an email
+					if (devModeInfo.biovault_home) {
+						const emailMatch = devModeInfo.biovault_home.match(/([^/\\]+@[^/\\]+)/)
+						if (emailMatch) {
+							const emailInput = document.getElementById('onboarding-email')
+							if (emailInput && !emailInput.value) {
+								emailInput.value = emailMatch[1]
+								// Trigger input event to enable next button
+								emailInput.dispatchEvent(new Event('input', { bubbles: true }))
+								console.log('📧 Auto-populated email from path:', emailMatch[1])
+							}
+						}
+					}
+				}
+			} catch (devError) {
+				console.log('Dev mode check failed (normal in production):', devError)
+			}
 
 			// Show onboarding if user is NOT onboarded (isOnboarded === false)
 			if (isOnboarded === false || isOnboarded === 'false' || !isOnboarded) {
