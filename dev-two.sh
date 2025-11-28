@@ -410,6 +410,32 @@ print(cfg.get("data_dir",""))
 PY
 }
 
+seed_rpc_keepfiles() {
+  log_header "Seeding RPC keep files (.syftkeep)"
+  for email in "${CLIENTS[@]}"; do
+    local home config data_dir
+    home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+    config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+    data_dir="$(parse_data_dir "$config")"
+    [[ -z "$data_dir" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
+
+    for target in "${CLIENTS[@]}"; do
+      # Encrypted tree
+      local rpc_dir="$data_dir/datasites/$target/app_data/biovault/rpc"
+      mkdir -p "$rpc_dir/message" 2>/dev/null || true
+      touch "$rpc_dir/.syftkeep" 2>/dev/null || true
+      touch "$rpc_dir/message/.syftkeep" 2>/dev/null || true
+
+      # Shadow tree
+      local shadow_rpc="$data_dir/unencrypted/$target/app_data/biovault/rpc"
+      mkdir -p "$shadow_rpc/message" 2>/dev/null || true
+      touch "$shadow_rpc/.syftkeep" 2>/dev/null || true
+      touch "$shadow_rpc/message/.syftkeep" 2>/dev/null || true
+    done
+  done
+  log_info "RPC keep files seeded (best-effort)"
+}
+
 ensure_client_identity() {
   local email="$1"
   local home config syftbox_data vault_dir
@@ -533,6 +559,7 @@ main() {
   start_stack
   load_state
   ensure_bv_cli
+  seed_rpc_keepfiles
   provision_identities
   run_initial_sync
   print_stack_summary
