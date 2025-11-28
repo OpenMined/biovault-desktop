@@ -27,6 +27,7 @@ use commands::files::*;
 use commands::jupyter::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
+use commands::notifications::*;
 use commands::participants::*;
 use commands::pipelines::*;
 use commands::projects::*;
@@ -363,6 +364,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -613,7 +615,9 @@ pub fn run() {
             get_syftbox_config_info,
             get_syftbox_state,
             start_syftbox_client,
-            stop_syftbox_client
+            stop_syftbox_client,
+            test_notification,
+            test_notification_applescript
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,8 +1,27 @@
 <div class="view-container">
 	<!-- Page Header -->
-	<header class="page-header">
+	<header class="page-header message-page-header">
 		<div class="page-header-left">
+			<p class="page-eyebrow">Secure inbox</p>
 			<h1 class="page-title">Messages</h1>
+			<p class="page-subtitle">Stay in sync with collaborators and pipelines in real time.</p>
+		</div>
+		<div class="message-hero-actions">
+			<div class="message-syftbox-status">
+				<span id="message-syftbox-indicator" class="status-offline">Offline</span>
+				<select id="message-syftbox-dropdown">
+					<option value="online">Go Online</option>
+					<option value="offline">Go Offline</option>
+				</select>
+			</div>
+			<button id="new-message-btn" class="message-cta">Compose</button>
+			<button id="message-test-notification-btn" class="message-secondary">
+				Test Notification
+			</button>
+			<button id="message-native-test-btn" class="message-secondary subtle">Native Test</button>
+			<button id="message-applescript-test-btn" class="message-secondary subtle">
+				AppleScript Test
+			</button>
 		</div>
 	</header>
 
@@ -18,17 +37,11 @@
 		<div class="messages-container">
 			<div class="message-sidebar">
 				<div class="message-sidebar-header">
-					<h3>Conversations</h3>
-					<button id="new-message-btn" class="message-cta">New Message</button>
-				</div>
-				<div class="message-sidebar-status">
-					<div class="message-syftbox-status">
-						<span id="message-syftbox-indicator" class="status-offline">Offline</span>
-						<select id="message-syftbox-dropdown">
-							<option value="online">Go Online</option>
-							<option value="offline">Go Offline</option>
-						</select>
+					<div>
+						<p class="sidebar-label">Conversations</p>
+						<h3>Inbox</h3>
 					</div>
+					<span class="message-live-pill">Live</span>
 				</div>
 				<div class="message-filters">
 					<button class="message-filter active" data-filter="inbox">Inbox</button>
@@ -60,13 +73,36 @@
 				<div class="message-compose">
 					<div class="message-compose-recipient" style="display: none">
 						<label for="message-recipient-input">To:</label>
-						<input type="email" id="message-recipient-input" placeholder="recipient@example.com" />
+						<input
+							type="email"
+							id="message-recipient-input"
+							placeholder="recipient@example.com"
+							autocapitalize="off"
+							autocomplete="off"
+							autocorrect="off"
+							spellcheck="false"
+						/>
 					</div>
 					<div id="message-subject-wrapper" class="message-compose-subject" style="display: none">
 						<label for="message-compose-subject">Subject:</label>
-						<input type="text" id="message-compose-subject" placeholder="Message subject" />
+						<input
+							type="text"
+							id="message-compose-subject"
+							placeholder="Message subject"
+							autocapitalize="off"
+							autocomplete="off"
+							autocorrect="off"
+							spellcheck="false"
+						/>
 					</div>
-					<textarea id="message-compose-body" placeholder="Type your message..."></textarea>
+					<textarea
+						id="message-compose-body"
+						placeholder="Type your message..."
+						autocapitalize="off"
+						autocomplete="off"
+						autocorrect="off"
+						spellcheck="false"
+					></textarea>
 					<div class="message-compose-actions">
 						<button id="message-send-btn" class="message-cta">Send</button>
 					</div>

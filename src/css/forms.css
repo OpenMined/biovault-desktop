@@ -132,25 +132,52 @@ select {
 }
 
 .message-syftbox-status select {
-	padding: 6px 12px;
-	border: 1px solid #ccc;
-	border-radius: 4px;
+	padding: 8px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	border-radius: 12px;
 	font-size: 12px;
+	background: rgba(255, 255, 255, 0.15);
+	color: #111827;
+	backdrop-filter: blur(6px);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .message-compose-recipient input,
 .message-compose textarea,
 .message-compose input[type='text'] {
 	width: 100%;
-	padding: 10px;
-	border: 1px solid #ccc;
-	border-radius: 6px;
+	padding: 12px;
+	border: 1px solid #d0d7ff;
+	border-radius: 10px;
 	font-size: 13px;
+	background: #fff;
+	box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .message-compose textarea {
 	min-height: 120px;
 	resize: vertical;
+}
+
+#message-syftbox-indicator {
+	padding: 6px 10px;
+	border-radius: 999px;
+	font-weight: 700;
+	font-size: 12px;
+	border: 1px solid transparent;
+	letter-spacing: 0.01em;
+}
+
+#message-syftbox-indicator.status-online {
+	background: #e7f8ef;
+	color: #16a34a;
+	border-color: #bbf7d0;
+}
+
+#message-syftbox-indicator.status-offline {
+	background: #fef3c7;
+	color: #d97706;
+	border-color: #fde68a;
 }
 
 .onboarding-card input {

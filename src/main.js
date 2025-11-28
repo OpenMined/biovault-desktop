@@ -168,6 +168,21 @@ const {
 	getMessagesAuthorized,
 } = messagesModule
 
+// Expose messages module globally for test actions (e.g., notification test button wiring)
+window.__messagesModule = messagesModule
+window.__messagesTriggerTest__ = () => {
+	try {
+		console.log('[Messages] Test notification button clicked')
+		if (messagesModule?.triggerTestNotification) {
+			messagesModule.triggerTestNotification()
+		} else {
+			console.warn('[Messages] triggerTestNotification not available')
+		}
+	} catch (err) {
+		console.warn('[Messages] Test notification trigger failed', err)
+	}
+}
+
 // Function to load saved dependency states without re-checking
 
 // Create import module with placeholder functions

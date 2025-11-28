@@ -163,6 +163,10 @@ ensure_bv_cli() {
   BV_CLI_BIN="$target"
 }
 
+sbdev_tool() {
+  (cd "$BIOVAULT_DIR/syftbox" && GOCACHE="$BIOVAULT_DIR/syftbox/.gocache" go run ./cmd/devstack "$@")
+}
+
 find_state_file() {
   local candidates=(
     "$SANDBOX_ROOT/relay/state.json"
@@ -263,6 +267,8 @@ stop_stack() {
   if ! bash "$DEVSTACK_SCRIPT" "${args[@]}"; then
     log_warn "devstack stop reported an issue (continuing)"
   fi
+  log_info "Pruning global sbdev state..."
+  sbdev_tool prune >/dev/null 2>&1 || log_warn "Global prune failed (continuing)"
   log_success "Stopped"
 }
 
@@ -277,6 +283,9 @@ start_stack() {
 
   log_header "Starting SyftBox devstack"
 
+  log_info "Pruning any dead sbdev stacks (global)"
+  sbdev_tool prune >/dev/null 2>&1 || log_warn "Global prune failed (continuing)"
+
   local client_csv
   client_csv="$(IFS=,; echo "${CLIENTS[*]}")"
 
@@ -285,6 +294,9 @@ start_stack() {
   (( SKIP_SYNC_CHECK )) && args+=(--skip-sync-check)
 
   bash "$DEVSTACK_SCRIPT" "${args[@]}"
+
+  log_info "Active sbdev stacks:"
+  sbdev_tool list || log_warn "Could not list sbdev stacks"
 }
 
 prepare_desktop_config() {
@@ -407,6 +419,7 @@ ensure_client_identity() {
   [[ -z "$syftbox_data" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
 
   vault_dir="$home/.syc"
+  mkdir -p "$vault_dir/keys" "$vault_dir/bundles" "$vault_dir/config"
   local has_keys=0
   if [[ -d "$vault_dir/keys" ]]; then
     if find "$vault_dir/keys" -maxdepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
@@ -422,9 +435,50 @@ ensure_client_identity() {
       SYFTBOX_DATA_DIR="$syftbox_data" \
       SYFTBOX_EMAIL="$email" \
       "$BV_CLI_BIN" init "$email" --quiet
+    if ! find "$vault_dir/keys" -maxdepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+      log_warn "Identity init for $email completed but no keys found in $vault_dir/keys"
+    fi
   else
     log_info "Syft Crypto identity already present for $email"
   fi
+}
+
+find_bundle_for() {
+  local email="$1"
+  local config
+  config="$(client_field "$email" config)" || return 1
+  local data_dir
+  data_dir="$(parse_data_dir "$config")" || return 1
+
+  local primary="$data_dir/$email/public/crypto/did.json"
+  local alt="$data_dir/datasites/$email/public/crypto/did.json"
+
+  if [[ -f "$primary" ]]; then
+    printf '%s\n' "$primary"
+    return 0
+  fi
+  if [[ -f "$alt" ]]; then
+    printf '%s\n' "$alt"
+    return 0
+  fi
+  return 1
+}
+
+import_bundle_pair() {
+  local src_email="$1"
+  local dst_email="$2"
+
+  local bundle
+  bundle="$(find_bundle_for "$src_email")" || {
+    log_warn "Bundle for $src_email not found; cannot import into $dst_email yet"
+    return
+  }
+
+  BIOVAULT_HOME="$(client_field "$dst_email" home)" \
+    SYFTBOX_CONFIG_PATH="$(client_field "$dst_email" config)" \
+    SYFTBOX_DATA_DIR="$(parse_data_dir "$(client_field "$dst_email" config)")" \
+    "$BV_CLI_BIN" syc import "$bundle" --expected-identity "$src_email" \
+    || log_warn "Bundle import $src_email -> $dst_email failed (continuing)"
 }
 
 provision_identities() {
@@ -433,27 +487,14 @@ provision_identities() {
     ensure_client_identity "$email"
   done
 
-  # Exchange public bundles between clients (best-effort)
+  # Exchange public bundles between every pair (best-effort)
   if [[ ${#CLIENTS[@]} -ge 2 ]]; then
-    local src_email dst_email src_config src_data bundle_path alt_bundle
-    src_email="${CLIENTS[0]}"
-    for dst_email in "${CLIENTS[@]:1}"; do
-      src_config="$(client_field "$src_email" config)"
-      src_data="$(parse_data_dir "$src_config")"
-      bundle_path="$src_data/$src_email/public/crypto/did.json"
-      alt_bundle="$src_data/datasites/$src_email/public/crypto/did.json"
-      if [[ ! -f "$bundle_path" && -f "$alt_bundle" ]]; then
-        bundle_path="$alt_bundle"
-      fi
-      if [[ -f "$bundle_path" ]]; then
+    for src_email in "${CLIENTS[@]}"; do
+      for dst_email in "${CLIENTS[@]}"; do
+        [[ "$src_email" == "$dst_email" ]] && continue
         log_info "Importing $src_email bundle into $dst_email..."
-        BIOVAULT_HOME="$(client_field "$dst_email" home)" \
-          SYFTBOX_CONFIG_PATH="$(client_field "$dst_email" config)" \
-          SYFTBOX_DATA_DIR="$(parse_data_dir "$(client_field "$dst_email" config)")" \
-          "$BV_CLI_BIN" syc import "$bundle_path" --expected-identity "$src_email" || log_warn "Import failed for $dst_email (continuing)"
-      else
-        log_warn "Bundle for $src_email not found at $bundle_path"
-      fi
+        import_bundle_pair "$src_email" "$dst_email"
+      done
     done
   fi
 }
