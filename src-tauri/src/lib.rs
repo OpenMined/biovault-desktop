@@ -38,6 +38,7 @@ use commands::syftbox::*;
 
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
+use biovault::messages::watcher::start_message_rpc_watcher;
 
 pub(crate) fn resolve_biovault_home_path() -> PathBuf {
     if let Ok(home) = biovault::config::get_biovault_home() {
@@ -61,6 +62,21 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Temporary stub - all real tables are in CLI database now
     Ok(())
+}
+
+fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) {
+    if new_message_ids.is_empty() {
+        return;
+    }
+
+    let payload = serde_json::json!({
+        "new_message_ids": new_message_ids,
+        "new_messages": new_message_ids.len(),
+    });
+
+    if let Err(err) = app_handle.emit("messages:rpc-activity", payload) {
+        crate::desktop_log!("Failed to emit messages event: {}", err);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -471,6 +487,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Start watching the SyftBox RPC message endpoint for real-time updates (shared implementation in biovault crate)
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let config = biovault::config::Config::load();
+                if let Ok(cfg) = config {
+                    if let Err(err) = start_message_rpc_watcher(cfg, move |ids| {
+                        emit_message_sync(&app_handle, ids);
+                    }) {
+                        crate::desktop_log!("Message watcher failed to start: {}", err);
+                    }
+                } else if let Err(err) = config {
+                    crate::desktop_log!("Message watcher: failed to load config: {}", err);
+                }
+            });
 
             // Start WebSocket bridge for browser development if enabled
             if std::env::var("DEV_WS_BRIDGE").is_ok() {

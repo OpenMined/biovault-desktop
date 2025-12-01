@@ -148,6 +148,7 @@ const messagesModule = createMessagesModule({
 	getCurrentUserEmail,
 	getSyftboxStatus,
 	setSyftboxStatus,
+	listen,
 	getActiveView: () => messagesGetActiveView(),
 	dialog,
 })

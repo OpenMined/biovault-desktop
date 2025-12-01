@@ -4,8 +4,10 @@ export function createMessagesModule({
 	getSyftboxStatus,
 	setSyftboxStatus,
 	_getActiveView,
+	listen,
 	dialog,
 }) {
+	const getActiveView = _getActiveView || (() => '')
 	let messageThreads = []
 	let messageFilter = 'inbox'
 	let activeThreadId = null
@@ -18,6 +20,7 @@ export function createMessagesModule({
 	let threadActivityMap = new Map()
 	let hasActivityBaseline = false
 	let notificationPermission = 'default'
+	let messageSyncUnlisten = null
 	const AUTO_REFRESH_MS = 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
 	let notificationApiPromise = null
@@ -183,6 +186,34 @@ export function createMessagesModule({
 		} catch (error) {
 			console.warn('Browser notification failed', error)
 		}
+	}
+
+	async function handleIncomingMessageSync(payload = {}) {
+		const currentView = getActiveView?.() || ''
+		const emitToasts = currentView !== 'messages'
+		try {
+			// Force a sync to pick up brand-new messages immediately
+			await loadMessageThreads(true, { emitToasts })
+			// Refresh the open conversation if one is active so the new message appears immediately.
+			if (activeThreadId && !isComposingNewMessage) {
+				await openThread(activeThreadId, { preserveComposeDraft: true })
+			}
+		} catch (error) {
+			console.error('Failed to refresh messages after RPC activity:', error, payload)
+		}
+	}
+
+	function setupMessageSyncListener() {
+		if (!listen || messageSyncUnlisten) return
+		listen('messages:rpc-activity', async ({ payload }) => {
+			await handleIncomingMessageSync(payload)
+		})
+			.then((unlisten) => {
+				messageSyncUnlisten = unlisten
+			})
+			.catch((error) => {
+				console.warn('Failed to register message sync listener', error)
+			})
 	}
 
 	function getPrimaryRecipient(participants) {
@@ -566,9 +597,10 @@ export function createMessagesModule({
 		panel.style.display = 'flex'
 	}
 
-	async function openThread(threadId, _options = {}) {
+	async function openThread(threadId, options = {}) {
 		if (!messagesAuthorized) return
 
+		const { preserveComposeDraft = false } = options
 		activeThreadId = threadId
 		isComposingNewMessage = false
 		updateComposeVisibility(false)
@@ -598,17 +630,19 @@ export function createMessagesModule({
 
 			const recipientInput = document.getElementById('message-recipient-input')
 			if (recipientInput) {
-				recipientInput.value = getPrimaryRecipient(participants)
 				recipientInput.readOnly = true
+				if (!preserveComposeDraft) {
+					recipientInput.value = getPrimaryRecipient(participants)
+				}
 			}
 
 			const subjectInput = document.getElementById('message-compose-subject')
-			if (subjectInput) {
+			if (subjectInput && !preserveComposeDraft) {
 				subjectInput.value = ''
 			}
 
 			const bodyInput = document.getElementById('message-compose-body')
-			if (bodyInput) {
+			if (bodyInput && !preserveComposeDraft) {
 				bodyInput.value = ''
 				bodyInput.focus()
 			}
@@ -838,6 +872,9 @@ export function createMessagesModule({
 			participants: ['demo@sandbox.local'],
 		})
 	}
+
+	// Wire up real-time message sync listener as soon as the module is created
+	setupMessageSyncListener()
 
 	return {
 		initializeMessagesTab,
