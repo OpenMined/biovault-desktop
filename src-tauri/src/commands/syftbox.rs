@@ -43,9 +43,29 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         server_url
     );
 
-    biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url)
-        .await
-        .map_err(|e| format!("{}", e))?;
+    if let Ok(cfg) = biovault::config::Config::load() {
+        if let Some(creds) = cfg.syftbox_credentials.as_ref() {
+            crate::desktop_log!(
+                "ℹ️ syftbox_credentials server_url: {:?}",
+                creds.server_url.as_ref()
+            );
+        }
+    }
+    if let Ok(env_server) = std::env::var("SYFTBOX_SERVER_URL") {
+        crate::desktop_log!("ℹ️ SYFTBOX_SERVER_URL env: {}", env_server);
+    }
+
+    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await
+    {
+        Ok(_) => {}
+        Err(err) => {
+            crate::desktop_log!("❌ syftbox_request_otp error: {:?}", err);
+            return Err(format!(
+                "Failed to request OTP via {:?}: {}",
+                server_url, err
+            ));
+        }
+    }
 
     crate::desktop_log!("✅ OTP request sent successfully");
     Ok(())
@@ -59,9 +79,25 @@ pub async fn syftbox_submit_otp(
 ) -> Result<(), String> {
     crate::desktop_log!("🔐 syftbox_submit_otp called (server: {:?})", server_url);
 
-    biovault::cli::commands::syftbox::submit_otp(&code, Some(email), None, server_url, None, None)
-        .await
-        .map_err(|e| format!("{}", e))?;
+    match biovault::cli::commands::syftbox::submit_otp(
+        &code,
+        Some(email),
+        None,
+        server_url.clone(),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(err) => {
+            crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
+            return Err(format!(
+                "Failed to verify OTP via {:?}: {}",
+                server_url, err
+            ));
+        }
+    }
 
     crate::desktop_log!("✅ OTP verified and credentials stored");
     Ok(())

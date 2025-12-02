@@ -671,6 +671,7 @@ pub fn run() {
             syftbox_request_otp,
             syftbox_submit_otp,
             set_syftbox_dev_server,
+            get_env_var,
             get_default_syftbox_server_url,
             check_syftbox_auth,
             get_syftbox_config_info,

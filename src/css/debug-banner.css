@@ -1,0 +1,34 @@
+.debug-banner {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 9999;
+	padding: 8px 12px;
+	background: linear-gradient(90deg, #0ea5e9, #6366f1);
+	color: #fff;
+	font-weight: 600;
+	font-size: 13px;
+	letter-spacing: 0.2px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.debug-banner .debug-pill {
+	background: rgba(255, 255, 255, 0.2);
+	padding: 4px 8px;
+	border-radius: 999px;
+	font-weight: 700;
+	font-size: 12px;
+}
+
+.debug-banner .debug-label {
+	opacity: 0.85;
+	font-weight: 500;
+}
+
+body.with-debug-banner {
+	padding-top: 44px;
+}

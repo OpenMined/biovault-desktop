@@ -276,7 +276,20 @@ export function createMessagesModule({
 				// Set syftbox status to running in dev mode
 				setSyftboxStatus({ running: true, mode: 'Dev' })
 			} else {
-				messagesAuthorized = await invoke('check_syftbox_auth')
+				let skipAuthFlag = false
+				try {
+					const skipAuth = await invoke('get_env_var', { key: 'SYFTBOX_AUTH_ENABLED' })
+					skipAuthFlag = ['0', 'false', 'no'].includes((skipAuth || '').toLowerCase())
+				} catch (_err) {
+					skipAuthFlag = false
+				}
+				if (skipAuthFlag) {
+					console.log('🧪 Messages: SYFTBOX_AUTH_ENABLED disabled, treating as authorized')
+					messagesAuthorized = true
+					setSyftboxStatus({ running: true, mode: 'Online' })
+				} else {
+					messagesAuthorized = await invoke('check_syftbox_auth')
+				}
 			}
 		} catch (error) {
 			console.error('Failed to check SyftBox authorization:', error)

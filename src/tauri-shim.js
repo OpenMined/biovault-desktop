@@ -248,6 +248,14 @@ async function mockInvoke(cmd, args = {}) {
 			}
 		case 'get_default_syftbox_server_url':
 			return 'https://dev.syftbox.net'
+		case 'get_env_var': {
+			const key = args?.key || ''
+			if (typeof key !== 'string') return ''
+			if (typeof process !== 'undefined' && process?.env) {
+				return process.env[key] || ''
+			}
+			return ''
+		}
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':
