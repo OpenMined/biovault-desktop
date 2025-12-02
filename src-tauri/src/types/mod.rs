@@ -1,10 +1,13 @@
 use biovault::data::{ProjectFileNode, ProjectMetadata};
+use biovault::defaults::SYFTBOX_DEFAULT_SERVER_URL;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use biovault::data::BioVaultDb;
+
+pub const DEFAULT_SYFTBOX_SERVER_URL: &str = SYFTBOX_DEFAULT_SERVER_URL;
 
 // Application State
 pub struct AppState {
@@ -26,6 +29,7 @@ pub struct Settings {
     pub ai_api_url: String,
     pub ai_api_token: String,
     pub ai_model: String,
+    pub syftbox_server_url: String,
 }
 
 impl Default for Settings {
@@ -39,6 +43,7 @@ impl Default for Settings {
             ai_api_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
             ai_api_token: String::new(),
             ai_model: "openrouter/auto".to_string(),
+            syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
         }
     }
 }

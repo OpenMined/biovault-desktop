@@ -276,6 +276,56 @@
 	border-radius: 8px;
 }
 
+.status-card.status-card-stacked {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.status-card.status-card-stacked .status-card-content {
+	width: 100%;
+}
+
+.status-card.status-card-stacked .settings-btn {
+	align-self: flex-start;
+}
+
+.syftbox-actions {
+	display: flex;
+	gap: 10px;
+	margin-top: 10px;
+	margin-bottom: 18px;
+	flex-wrap: wrap;
+}
+
+.syftbox-actions + .status-card {
+	margin-top: 16px;
+}
+
+.syftbox-status-card .status-card-title {
+	flex-wrap: wrap;
+}
+
+.syftbox-status-card .status-badge {
+	margin-top: 6px;
+	white-space: normal;
+	max-width: 100%;
+	flex-wrap: wrap;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+}
+
+.syftbox-status-card .badge-line {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.syftbox-status-card .badge-subline {
+	font-size: 11px;
+	font-weight: 500;
+}
+
 .status-card-content {
 	flex: 1;
 }

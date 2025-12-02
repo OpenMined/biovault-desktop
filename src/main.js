@@ -430,6 +430,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		checkUpdates,
 		invoke,
 		dialog,
+		checkSyftBoxStatus,
 		getSelectedParticipants,
 		loadData,
 		initializeMessagesTab,

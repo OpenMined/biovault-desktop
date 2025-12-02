@@ -63,6 +63,7 @@ test.beforeEach(async ({ page, context }) => {
 						ai_api_url: '',
 						ai_api_token: '',
 						ai_model: '',
+						syftbox_server_url: 'https://syftbox.net',
 					}
 				case 'check_dependencies':
 					return { installed: [], missing: [], errors: [] }

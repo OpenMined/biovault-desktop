@@ -36,10 +36,14 @@ pub fn open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn syftbox_request_otp(email: String) -> Result<(), String> {
-    crate::desktop_log!("📧 syftbox_request_otp called for: {}", email);
+pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> Result<(), String> {
+    crate::desktop_log!(
+        "📧 syftbox_request_otp called for: {} (server: {:?})",
+        email,
+        server_url
+    );
 
-    biovault::cli::commands::syftbox::request_otp(Some(email), None, None)
+    biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url)
         .await
         .map_err(|e| format!("{}", e))?;
 
@@ -48,10 +52,14 @@ pub async fn syftbox_request_otp(email: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn syftbox_submit_otp(code: String, email: String) -> Result<(), String> {
-    crate::desktop_log!("🔐 syftbox_submit_otp called");
+pub async fn syftbox_submit_otp(
+    code: String,
+    email: String,
+    server_url: Option<String>,
+) -> Result<(), String> {
+    crate::desktop_log!("🔐 syftbox_submit_otp called (server: {:?})", server_url);
 
-    biovault::cli::commands::syftbox::submit_otp(&code, Some(email), None, None, None, None)
+    biovault::cli::commands::syftbox::submit_otp(&code, Some(email), None, server_url, None, None)
         .await
         .map_err(|e| format!("{}", e))?;
 

@@ -58,7 +58,8 @@
 			"entitlements": "./Entitlements.plist",
 			"minimumSystemVersion": "10.13"
 		},
-		"targets": ["app", "appimage", "dmg", "nsis"]
+		"targets": ["app", "appimage", "dmg", "nsis"],
+		"resources": ["resources/syftbox/syftbox"]
 	},
 	"plugins": {
 		"updater": {

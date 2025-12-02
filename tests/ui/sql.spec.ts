@@ -72,6 +72,7 @@ test.describe('SQL tab', () => {
 							ai_api_url: 'https://openrouter.ai/api/v1/chat/completions',
 							ai_api_token: 'sk-test',
 							ai_model: 'openrouter/auto',
+							syftbox_server_url: 'https://syftbox.net',
 						}
 					default:
 						return null

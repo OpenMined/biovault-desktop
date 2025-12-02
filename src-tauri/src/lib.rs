@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
+    path::BaseDirectory,
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
@@ -387,6 +388,33 @@ pub fn run() {
         ))
         .manage(app_state)
         .setup(move |app| {
+            // Ensure bundled SyftBox binary is exposed if not already provided
+            if std::env::var("SYFTBOX_BINARY").is_err() {
+                match app
+                    .path()
+                    .resolve("syftbox/syftbox", BaseDirectory::Resource)
+                {
+                    Ok(candidate) => {
+                        if candidate.exists() {
+                            let candidate_str = candidate.to_string_lossy().to_string();
+                            std::env::set_var("SYFTBOX_BINARY", &candidate_str);
+                            crate::desktop_log!(
+                                "🔧 Using bundled SyftBox binary: {}",
+                                candidate_str
+                            );
+                        } else {
+                            crate::desktop_log!(
+                                "⚠️ Bundled SyftBox binary not found at {}",
+                                candidate.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        crate::desktop_log!("⚠️ Failed to resolve bundled SyftBox binary: {}", e);
+                    }
+                }
+            }
+
             #[cfg(target_os = "macos")]
             {
                 biovault::cli::commands::check::set_homebrew_install_logger(|message| {
@@ -642,6 +670,8 @@ pub fn run() {
             open_url,
             syftbox_request_otp,
             syftbox_submit_otp,
+            set_syftbox_dev_server,
+            get_default_syftbox_server_url,
             check_syftbox_auth,
             get_syftbox_config_info,
             get_syftbox_state,

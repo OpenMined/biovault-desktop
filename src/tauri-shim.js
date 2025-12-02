@@ -244,7 +244,10 @@ async function mockInvoke(cmd, args = {}) {
 				ai_api_url: 'https://openrouter.ai/api/v1/chat/completions',
 				ai_api_token: '',
 				ai_model: 'openrouter/auto',
+				syftbox_server_url: 'https://dev.syftbox.net',
 			}
+		case 'get_default_syftbox_server_url':
+			return 'https://dev.syftbox.net'
 		case 'check_dependencies':
 			return { installed: [], missing: [], errors: [] }
 		case 'check_is_onboarded':

@@ -13,6 +13,40 @@ export function initOnboarding({
 	getDependencyResults,
 	checkSyftBoxStatus,
 }) {
+	let defaultSyftboxServerUrl = ''
+	let defaultServerPromise = null
+
+	async function getDefaultServer() {
+		if (defaultServerPromise) return defaultServerPromise
+		defaultServerPromise = invoke('get_default_syftbox_server_url')
+			.then((val) => {
+				if (typeof val === 'string' && val.trim()) {
+					defaultSyftboxServerUrl = val.trim()
+				}
+				return defaultSyftboxServerUrl
+			})
+			.catch(() => defaultSyftboxServerUrl)
+		return defaultServerPromise
+	}
+
+	function getCurrentSyftboxServerUrl() {
+		if (document?.body?.dataset?.syftboxServerUrl) {
+			return document.body.dataset.syftboxServerUrl
+		}
+		const input = document.getElementById('setting-syftbox-server')
+		const value = input?.value?.trim()
+		return value || defaultSyftboxServerUrl
+	}
+
+	function updateSyftboxLinkDisplay() {
+		const serverUrl = getCurrentSyftboxServerUrl()
+		const link = document.querySelector('.syftbox-link')
+		if (link) {
+			link.dataset.url = serverUrl
+			link.textContent = serverUrl
+			link.setAttribute('href', serverUrl)
+		}
+	}
 	const LOCKED_BUTTON_ATTR = 'data-locked-original-disabled'
 	let dependencyPanelsLocked = false
 	let activeDependencyName = null
@@ -1719,7 +1753,9 @@ export function initOnboarding({
 
 	const syftboxInfoContinueBtn = document.getElementById('syftbox-info-continue-btn')
 	if (syftboxInfoContinueBtn) {
-		syftboxInfoContinueBtn.addEventListener('click', () => {
+		syftboxInfoContinueBtn.addEventListener('click', async () => {
+			await getDefaultServer()
+			updateSyftboxLinkDisplay()
 			document.getElementById('syftbox-send-state').style.display = 'none'
 			const emailInfo = document.getElementById('syftbox-email-info')
 			emailInfo.style.display = 'block'
@@ -1760,12 +1796,13 @@ export function initOnboarding({
 	if (sendLoginCodeBtn) {
 		sendLoginCodeBtn.addEventListener('click', async () => {
 			const email = document.getElementById('onboarding-email').value.trim()
+			const server_url = getCurrentSyftboxServerUrl()
 
 			sendLoginCodeBtn.disabled = true
 			sendLoginCodeBtn.innerHTML = '<span class="spinner"></span> Sending...'
 
 			try {
-				await invoke('syftbox_request_otp', { email })
+				await invoke('syftbox_request_otp', { email, server_url })
 
 				// Switch to OTP input state
 				document.getElementById('syftbox-email-info').style.display = 'none'
@@ -1862,7 +1899,8 @@ export function initOnboarding({
 			verifyCodeBtn.innerHTML = '<span class="spinner"></span> Verifying...'
 
 			try {
-				await invoke('syftbox_submit_otp', { code, email })
+				const server_url = getCurrentSyftboxServerUrl()
+				await invoke('syftbox_submit_otp', { code, email, server_url })
 
 				// Success - mark inputs as success
 				codeInputs.forEach((inp) => inp.classList.add('success'))

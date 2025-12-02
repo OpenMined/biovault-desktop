@@ -87,7 +87,7 @@ export function createMessagesModule({
 		if (notificationApiPromise) return notificationApiPromise
 		notificationApiPromise = import('@tauri-apps/plugin-notification')
 			.then((mod) => {
-				console.log('[Messages] Loaded notification plugin')
+				console.log('[Messages] Loaded notification plugin', Object.keys(mod || {}))
 				return mod
 			})
 			.catch((err) => {
@@ -102,6 +102,7 @@ export function createMessagesModule({
 		try {
 			const api = await getNotificationApi()
 			if (api?.isPermissionGranted) {
+				console.log('[Messages] Using plugin permission APIs')
 				const granted = await api.isPermissionGranted()
 				if (granted) {
 					notificationPermission = 'granted'
@@ -115,6 +116,7 @@ export function createMessagesModule({
 					return permission === 'granted'
 				}
 			}
+			console.log('[Messages] Plugin permission API not available')
 		} catch (error) {
 			console.warn('Tauri notification permission failed', error)
 		}
@@ -158,8 +160,10 @@ export function createMessagesModule({
 					body,
 					identifier,
 				})
-				console.log('[Messages] Native notification sent via plugin')
+				console.log('[Messages] Native notification sent via plugin', { identifier })
 				// Also attempt to focus via browser Notification for click handling
+			} else {
+				console.warn('[Messages] Plugin sendNotification not available')
 			}
 		} catch (error) {
 			console.warn('Native notification failed, falling back', error)

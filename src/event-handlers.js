@@ -70,6 +70,7 @@ export function setupEventHandlers({
 	checkUpdates,
 	invoke,
 	dialog,
+	checkSyftBoxStatus,
 	// Data (unified participants + files)
 	_getSelectedParticipants,
 	_loadData,
@@ -156,6 +157,14 @@ export function setupEventHandlers({
 				}
 			} catch (err) {
 				console.warn('[Messages] Native notification failed', err)
+			}
+
+			// Also trigger the Rust-side test for more logging
+			try {
+				await invoke('test_notification')
+				console.log('[Messages] Invoked Rust test_notification command')
+			} catch (err) {
+				console.warn('[Messages] Rust notification command failed', err)
 			}
 		})
 	}
@@ -263,6 +272,48 @@ export function setupEventHandlers({
 	if (syftboxAuthBtn) {
 		syftboxAuthBtn.addEventListener('click', async () => {
 			await handleSyftBoxAuthentication()
+		})
+	}
+
+	// Settings - Set Dev Server (skip auth)
+	const syftboxSetDevBtn = document.getElementById('syftbox-set-dev-btn')
+	if (syftboxSetDevBtn) {
+		syftboxSetDevBtn.addEventListener('click', async () => {
+			const server = document.getElementById('setting-syftbox-server')?.value.trim()
+			if (!server) {
+				await dialog.message('Please enter a server URL first.', {
+					title: 'Server URL required',
+					type: 'warning',
+				})
+				return
+			}
+
+			syftboxSetDevBtn.disabled = true
+			const originalText = syftboxSetDevBtn.textContent
+			syftboxSetDevBtn.textContent = 'Setting...'
+
+			try {
+				await invoke('set_syftbox_dev_server', { serverUrl: server })
+				await dialog.message(
+					'Server updated. Auth will be skipped for this host. SyftBox client restarted with the new URL.',
+					{
+						title: 'Dev Server Set',
+						type: 'info',
+					},
+				)
+				if (typeof checkSyftBoxStatus === 'function') {
+					await checkSyftBoxStatus()
+				}
+			} catch (error) {
+				console.error('Error setting dev server:', error)
+				await dialog.message(error?.message || 'Failed to set dev server.', {
+					title: 'Error',
+					type: 'error',
+				})
+			} finally {
+				syftboxSetDevBtn.disabled = false
+				syftboxSetDevBtn.textContent = originalText
+			}
 		})
 	}
 

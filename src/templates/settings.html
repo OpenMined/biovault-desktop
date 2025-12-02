@@ -108,7 +108,28 @@
 				<!-- SyftBox Integration -->
 				<div class="setting-item">
 					<label>SyftBox Integration</label>
-					<div class="status-card">
+					<div class="settings-ai-field">
+						<label for="setting-syftbox-server">Server URL</label>
+						<input
+							type="url"
+							id="setting-syftbox-server"
+							class="setting-input"
+							placeholder="https://dev.syftbox.net"
+						/>
+						<p style="margin: 6px 0 0; color: #6b7280">
+							Point the production app at an alternate SyftBox host (e.g. dev.syftbox.net) without
+							enabling dev mode. Changes are saved to your BioVault config.
+						</p>
+						<div class="syftbox-actions">
+							<button id="syftbox-set-dev-btn" class="settings-btn settings-btn-secondary">
+								Set Dev Server (skip auth)
+							</button>
+							<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
+								Authenticate
+							</button>
+						</div>
+					</div>
+					<div class="status-card status-card-stacked syftbox-status-card">
 						<div class="status-card-content">
 							<div class="status-card-title">
 								<span>Status:</span>
@@ -116,12 +137,10 @@
 									<span class="spinner" style="width: 12px; height: 12px; margin: 0"></span>
 									Checking...
 								</span>
+								<span id="syftbox-dev-badge" class="status-badge" style="display: none"></span>
 							</div>
 							<p class="status-card-description">Connect to SyftBox for secure data sharing</p>
 						</div>
-						<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
-							Authenticate
-						</button>
 					</div>
 				</div>
 

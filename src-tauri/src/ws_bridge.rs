@@ -179,6 +179,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_syftbox_config_info().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_default_syftbox_server_url" => {
+            let result = crate::get_default_syftbox_server_url();
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "get_available_project_examples" => {
             let result = crate::get_available_project_examples().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
