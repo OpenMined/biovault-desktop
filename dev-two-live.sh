@@ -7,18 +7,28 @@ set -euo pipefail
 # - Starts two bun dev instances with per-user SyftBox env and debug banner.
 # - Cleans up sbenv daemons on exit.
 
+# Usage:
+#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]
+# Defaults: client1=client1@sandbox.local, client2=client2@sandbox.local
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYFTBOX_BIN_RES="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
 SBENV_BIN="$ROOT_DIR/biovault/sbenv/cli/target/release/sbenv"
 BV_CLI_BIN="$ROOT_DIR/biovault/cli/target/release/bv"
 SYFTBOX_URL="https://dev.syftbox.net"
 SYFTBOX_AUTH_ENABLED="0"
-SANDBOX_DIR="/Users/madhavajay/dev/datasites/biovault"
-CLIENT1_EMAIL=${1:-me@madhavajay.com}
-CLIENT2_EMAIL=${2:-madhava@openmined.org}
+SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
 LOG_DIR="$ROOT_DIR/logs"
 SBENV_LAUNCH_PIDS=()
+CLIENTS=()
+SINGLE_MODE=0
+SINGLE_TARGET=""
+STOP_ONLY=0
+RESET_FLAG=0
 mkdir -p "$LOG_DIR"
+
+DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
+DEFAULT_CLIENT2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 
 build_syftbox() {
   echo "[live] Building syftbox for prod bundle..."
@@ -198,38 +208,119 @@ cleanup() {
       kill "$pid" >/dev/null 2>&1 || true
     fi
   done
-  stop_sbenv_client "$CLIENT1_EMAIL"
-  stop_sbenv_client "$CLIENT2_EMAIL"
+  local targets=("${CLIENTS[@]:-}")
+  if ((${#targets[@]} == 0)); then
+    targets=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
+  fi
+  for email in "${targets[@]}"; do
+    stop_sbenv_client "$email"
+  done
   echo "[live] Done"
 }
 
 trap cleanup EXIT INT TERM
 
 main() {
+  # Parse args (align with dev-two.sh style)
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --client)
+        CLIENTS+=("${2:?--client requires an email}")
+        shift
+        ;;
+      --clients)
+        IFS=',' read -r -a parsed_clients <<<"${2:?--clients requires a list}"
+        CLIENTS+=("${parsed_clients[@]}")
+        shift
+        ;;
+      --single)
+        SINGLE_MODE=1
+        if [[ -n "${2:-}" && "$2" != --* ]]; then
+          SINGLE_TARGET="$2"
+          shift
+        fi
+        ;;
+      --stop)
+        STOP_ONLY=1
+        ;;
+      --reset)
+        RESET_FLAG=1
+        ;;
+      --path)
+        SANDBOX_DIR="${2:?--path requires a directory}"
+        shift
+        ;;
+      -h|--help)
+        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]"
+        exit 0
+        ;;
+      *)
+        break
+        ;;
+    esac
+    shift
+  done
+
+  if (( STOP_ONLY )); then
+    cleanup
+    exit 0
+  fi
+
+  if (( RESET_FLAG )); then
+    echo "[live] Resetting sandbox at $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+  fi
+
+  if ((${#CLIENTS[@]} == 0)); then
+    CLIENTS=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
+  fi
+
+  if (( SINGLE_MODE )); then
+    if [[ -n "$SINGLE_TARGET" ]]; then
+      CLIENTS=("$SINGLE_TARGET")
+    else
+      CLIENTS=("${CLIENTS[0]}")
+    fi
+  fi
+
   build_syftbox
   ensure_cli
 
-  provision_client "$CLIENT1_EMAIL"
-  provision_client "$CLIENT2_EMAIL"
+  # Provision all requested clients
+  declare -a PROVISIONED=()
+  for email in "${CLIENTS[@]}"; do
+    provision_client "$email"
+    PROVISIONED+=("$email")
+  done
 
-  local c1_dir="$SANDBOX_DIR/$CLIENT1_EMAIL"
-  local c2_dir="$SANDBOX_DIR/$CLIENT2_EMAIL"
-  local c1_cfg="$c1_dir/.syftbox/config.json"
-  local c2_cfg="$c2_dir/.syftbox/config.json"
-  local c1_data="$(read_data_dir "$c1_cfg")"
-  local c2_data="$(read_data_dir "$c2_cfg")"
-  local c1_bundle c2_bundle
-  c1_bundle="$(ensure_bundle_under_datasites "$c1_data" "$CLIENT1_EMAIL")"
-  [[ -z "$c1_bundle" ]] && c1_bundle="$(find_bundle "$c1_data" "$CLIENT1_EMAIL" || true)"
-  c2_bundle="$(ensure_bundle_under_datasites "$c2_data" "$CLIENT2_EMAIL")"
-  [[ -z "$c2_bundle" ]] && c2_bundle="$(find_bundle "$c2_data" "$CLIENT2_EMAIL" || true)"
-  if [[ -n "$c1_bundle" ]]; then import_bundle "$c1_bundle" "$CLIENT1_EMAIL" "$c2_dir" "$CLIENT2_EMAIL"; fi
-  if [[ -n "$c2_bundle" ]]; then import_bundle "$c2_bundle" "$CLIENT2_EMAIL" "$c1_dir" "$CLIENT1_EMAIL"; fi
+  # Exchange bundles pairwise (first two only, to mirror original behavior)
+  if ((${#PROVISIONED[@]} > 1)); then
+    local a="${PROVISIONED[0]}"
+    local b="${PROVISIONED[1]}"
+    local a_dir="$SANDBOX_DIR/$a"
+    local b_dir="$SANDBOX_DIR/$b"
+    local a_cfg="$a_dir/.syftbox/config.json"
+    local b_cfg="$b_dir/.syftbox/config.json"
+    local a_data="$(read_data_dir "$a_cfg")"
+    local b_data="$(read_data_dir "$b_cfg")"
+    local a_bundle b_bundle
+    a_bundle="$(ensure_bundle_under_datasites "$a_data" "$a")"
+    [[ -z "$a_bundle" ]] && a_bundle="$(find_bundle "$a_data" "$a" || true)"
+    b_bundle="$(ensure_bundle_under_datasites "$b_data" "$b")"
+    [[ -z "$b_bundle" ]] && b_bundle="$(find_bundle "$b_data" "$b" || true)"
+    if [[ -n "$a_bundle" ]]; then import_bundle "$a_bundle" "$a" "$b_dir" "$b"; fi
+    if [[ -n "$b_bundle" ]]; then import_bundle "$b_bundle" "$b" "$a_dir" "$a"; fi
+    launch_instance "$a_dir" "client1" "$a" & pid1=$!
+    launch_instance "$b_dir" "client2" "$b" & pid2=$!
+    echo "[live] client1 PID: $pid1"
+    echo "[live] client2 PID: $pid2"
+  else
+    local only="${PROVISIONED[0]}"
+    local only_dir="$SANDBOX_DIR/$only"
+    launch_instance "$only_dir" "client" "$only" & pid1=$!
+    echo "[live] client PID: $pid1"
+  fi
 
-  launch_instance "$c1_dir" "client1" "$CLIENT1_EMAIL" & pid1=$!
-  launch_instance "$c2_dir" "client2" "$CLIENT2_EMAIL" & pid2=$!
-  echo "[live] client1 PID: $pid1"
-  echo "[live] client2 PID: $pid2"
   echo "[live] Use 'tail -f logs/sbenv-*.log' for daemon logs."
   wait
 }
