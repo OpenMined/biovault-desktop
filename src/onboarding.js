@@ -1141,9 +1141,20 @@ export function initOnboarding({
 			? document.getElementById('settings-install-missing-deps-btn')
 			: document.getElementById('install-missing-deps-btn')
 
+		const isBundledDep = (dep) =>
+			(typeof dep?.path === 'string' &&
+				(dep.path.includes('resources/bundled/') ||
+					dep.path.includes('resources/syftbox/') ||
+					dep.path.includes('/syftbox/bin/'))) ||
+			(dep.name && dep.name.toLowerCase() === 'syftbox')
+
+		const depEntries = result.dependencies
+			.map((dep, index) => ({ dep, index }))
+			.filter(({ dep }) => (isSettings ? true : !isBundledDep(dep)))
+
 		let html = ''
 
-		result.dependencies.forEach((dep, index) => {
+		depEntries.forEach(({ dep, index: originalIndex }) => {
 			// Docker Desktop can be installed but not running, so treat found=true as installed
 			const isInstalled = dep.found
 
@@ -1158,7 +1169,7 @@ export function initOnboarding({
 			}
 
 			html += `
-				<div class="dep-item" data-dep-index="${index}" data-dep-name="${safeNameAttr}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
+				<div class="dep-item" data-dep-index="${originalIndex}" data-dep-name="${safeNameAttr}" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;">
 					<span class="dep-status" style="color: ${statusColor};">${statusIcon}</span>
 					<strong style="font-size: 13px; color: #333; flex: 1;">${dep.name}</strong>
 				</div>
@@ -1234,17 +1245,20 @@ export function initOnboarding({
 			if (indexToSelect === null) {
 				// Find first missing dependency
 				let firstMissing = null
-				result.dependencies.forEach((dep, index) => {
+				depEntries.forEach(({ dep, index }) => {
 					// Docker Desktop can be installed but not running, so treat found=true as installed
 					const isInstalled = dep.found
 					if (!isInstalled && firstMissing === null) {
 						firstMissing = index
 					}
 				})
-				indexToSelect = firstMissing !== null ? firstMissing : 0
+				indexToSelect =
+					firstMissing !== null ? firstMissing : parseInt(items[0]?.dataset?.depIndex || '0', 10)
 			}
 
-			const itemToSelect = items[indexToSelect]
+			const itemToSelect =
+				Array.from(items).find((i) => parseInt(i.dataset.depIndex || '-1', 10) === indexToSelect) ||
+				items[0]
 
 			if (itemToSelect) {
 				itemToSelect.click()

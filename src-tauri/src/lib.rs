@@ -65,6 +65,99 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+fn expose_bundled_binaries(app: &tauri::App) {
+    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    crate::desktop_log!("🔍 Exposing bundled binaries for platform: {}", platform);
+
+    let bundles = [
+        (
+            "BIOVAULT_BUNDLED_JAVA",
+            format!("bundled/java/{}/bin/java", platform),
+        ),
+        (
+            "BIOVAULT_BUNDLED_NEXTFLOW",
+            format!("bundled/nextflow/{}/nextflow", platform),
+        ),
+        ("BIOVAULT_BUNDLED_UV", format!("bundled/uv/{}/uv", platform)),
+    ];
+
+    for (env_key, relative_path) in bundles {
+        crate::desktop_log!(
+            "🔍 Checking bundled binary: {} at {}",
+            env_key,
+            relative_path
+        );
+
+        if std::env::var(env_key).is_ok() {
+            crate::desktop_log!("⏭️  {} already set, skipping", env_key);
+            continue;
+        }
+
+        // Try resolving via Tauri's resource system (works in production)
+        let mut candidate = app
+            .path()
+            .resolve(&relative_path, BaseDirectory::Resource)
+            .ok();
+
+        // In development mode, also try the source directory
+        if candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            // Try multiple possible paths for dev mode
+            let possible_paths = if let Ok(cwd) = std::env::current_dir() {
+                vec![
+                    // If CWD is workspace root
+                    cwd.join("src-tauri").join("resources").join(&relative_path),
+                    // If CWD is src-tauri directory
+                    cwd.join("resources").join(&relative_path),
+                    // Absolute path from manifest dir (compile-time)
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join(&relative_path),
+                ]
+            } else {
+                vec![]
+            };
+
+            for path in possible_paths {
+                if path.exists() {
+                    crate::desktop_log!("🔍 Found in dev resources: {}", path.display());
+                    candidate = Some(path);
+                    break;
+                }
+            }
+        }
+
+        match candidate {
+            Some(path) if path.exists() => {
+                let candidate_str = path.to_string_lossy().to_string();
+                std::env::set_var(env_key, &candidate_str);
+                crate::desktop_log!("🔧 Using bundled {}: {}", env_key, candidate_str);
+
+                if env_key == "BIOVAULT_BUNDLED_JAVA" {
+                    if let Some(parent) = path.parent() {
+                        if let Some(home) = parent.parent() {
+                            std::env::set_var(
+                                "BIOVAULT_BUNDLED_JAVA_HOME",
+                                home.to_string_lossy().to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {
+                crate::desktop_log!(
+                    "⚠️ Bundled binary not found for {}: {}",
+                    env_key,
+                    relative_path
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn expose_bundled_binaries(_app: &tauri::App) {}
+
 fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) {
     if new_message_ids.is_empty() {
         return;
@@ -388,6 +481,10 @@ pub fn run() {
         ))
         .manage(app_state)
         .setup(move |app| {
+            // Surface bundled binaries (java/nextflow/uv) to the environment so dependency
+            // checks and runtime execution prefer the packaged versions.
+            expose_bundled_binaries(app);
+
             // Ensure bundled SyftBox binary is exposed if not already provided
             if std::env::var("SYFTBOX_BINARY").is_err() {
                 match app

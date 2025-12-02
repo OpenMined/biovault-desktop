@@ -329,6 +329,21 @@ jobs:
           restore-keys: |
             ${{ matrix.args }}-cargo-
 
+      - name: Fetch bundled dependencies
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+
+          # Fix permissions and remove quarantine attributes (macOS)
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            chmod -R u+rw src-tauri/resources/bundled/ || true
+            xattr -r -d com.apple.quarantine src-tauri/resources/bundled/ 2>/dev/null || true
+          else
+            chmod -R u+rw src-tauri/resources/bundled/ || true
+          fi
+
       - name: Build app (macOS)
         if: runner.os == 'macOS'
         run: |

@@ -132,6 +132,13 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      - name: Fetch bundled dependencies
+        shell: bash
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
       - name: Build Tauri application
         run: npx tauri build --target x86_64-unknown-linux-gnu
 
