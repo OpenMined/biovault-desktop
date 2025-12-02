@@ -763,6 +763,7 @@ pub fn run() {
             check_command_line_tools_installed,
             install_dependency,
             install_dependencies,
+            check_docker_running,
             // SyftBox commands
             open_url,
             syftbox_request_otp,

@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
 pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckResult, String> {
@@ -211,6 +212,25 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn check_docker_running() -> Result<bool, String> {
+    // Prefer configured docker path, fall back to PATH
+    let docker_bin = biovault::config::Config::load()
+        .ok()
+        .and_then(|cfg| cfg.get_binary_path("docker"))
+        .unwrap_or_else(|| "docker".to_string());
+
+    // Run a quick health check
+    let status = Command::new(&docker_bin)
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))?;
+
+    Ok(status.success())
 }
 
 #[tauri::command]
