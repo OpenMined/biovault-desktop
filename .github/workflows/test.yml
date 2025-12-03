@@ -190,6 +190,16 @@ jobs:
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
 
+      - name: Sign bundled binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "Signing all bundled executables for notarization..."
+          find src-tauri/resources/bundled -type f -perm +111 | while read -r bin; do
+            echo "Signing: $bin"
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || echo "Warning: failed to sign $bin"
+          done
+          echo "Done signing bundled binaries"
+
       - name: Create bundled placeholders (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
