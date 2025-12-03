@@ -287,6 +287,11 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
         .join("database")
         .join("settings.json");
 
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create settings directory: {}", e))?;
+    }
+
     // Normalise server URL before persisting
     let normalized_server = normalize_server_url(&settings.syftbox_server_url);
     settings.syftbox_server_url = if normalized_server.is_empty() {
@@ -448,6 +453,11 @@ pub fn set_syftbox_dev_server(server_url: String) -> Result<(), String> {
     crate::desktop_log!("🚀 SyftBox client started with new server settings");
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_env_var(key: String) -> Option<String> {
+    std::env::var(&key).ok()
 }
 
 #[tauri::command]

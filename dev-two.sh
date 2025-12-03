@@ -277,8 +277,29 @@ start_stack() {
   existing_state="$(find_state_file || true)"
 
   if [[ -n "$existing_state" && $RESET_FLAG -eq 0 ]]; then
-    log_info "Existing devstack state found at $existing_state (use --reset to rebuild)"
-    return
+    if ((${#CLIENTS[@]})); then
+      local missing
+      missing="$(
+        python3 - "$existing_state" "${CLIENTS[@]}" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+want = sys.argv[2:]
+have = {c.get("email") for c in state.get("clients", [])}
+missing = [c for c in want if c not in have]
+print(",".join(missing))
+PY
+      )"
+      if [[ -n "$missing" ]]; then
+        log_warn "Existing devstack missing requested clients: $missing. Rebuilding with --reset."
+        RESET_FLAG=1
+      else
+        log_info "Existing devstack state found at $existing_state (use --reset to rebuild)"
+        return
+      fi
+    else
+      log_info "Existing devstack state found at $existing_state (use --reset to rebuild)"
+      return
+    fi
   fi
 
   log_header "Starting SyftBox devstack"

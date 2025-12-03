@@ -54,6 +54,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Create syftbox placeholder for lint
+        run: |
+          mkdir -p src-tauri/resources/syftbox
+          touch src-tauri/resources/syftbox/syftbox
+
       - name: Run Rust linters
         run: |
           cargo clippy --manifest-path ./src-tauri/Cargo.toml -- -D warnings
@@ -125,6 +130,11 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: 'latest'
+
+      - name: Create syftbox placeholder for build
+        run: |
+          mkdir -p src-tauri/resources/syftbox
+          touch src-tauri/resources/syftbox/syftbox
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile

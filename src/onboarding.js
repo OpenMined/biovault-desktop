@@ -47,6 +47,9 @@ export function initOnboarding({
 			link.setAttribute('href', serverUrl)
 		}
 	}
+
+	// Kick off default server fetch early
+	getDefaultServer().catch(() => {})
 	const LOCKED_BUTTON_ATTR = 'data-locked-original-disabled'
 	let dependencyPanelsLocked = false
 	let activeDependencyName = null
@@ -1809,6 +1812,7 @@ export function initOnboarding({
 	const sendLoginCodeBtn = document.getElementById('send-login-code-btn')
 	if (sendLoginCodeBtn) {
 		sendLoginCodeBtn.addEventListener('click', async () => {
+			await getDefaultServer()
 			const email = document.getElementById('onboarding-email').value.trim()
 			const server_url = getCurrentSyftboxServerUrl()
 
@@ -1913,6 +1917,7 @@ export function initOnboarding({
 			verifyCodeBtn.innerHTML = '<span class="spinner"></span> Verifying...'
 
 			try {
+				await getDefaultServer()
 				const server_url = getCurrentSyftboxServerUrl()
 				await invoke('syftbox_submit_otp', { code, email, server_url })
 

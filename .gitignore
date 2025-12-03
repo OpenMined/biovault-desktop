@@ -36,3 +36,4 @@ src-tauri/resources/bundled/
 artifacts/*
 .cache/
 test-results/*
+sandbox/*

@@ -1,6 +1,7 @@
 export function createSettingsModule({ invoke, dialog, loadSavedDependencies, onAiConfigUpdated }) {
 	let currentUserEmail = ''
-	let syftboxStatus = { running: false, mode: 'Direct' }
+	// Default to online so the messages page starts in connected mode until we learn the real status.
+	let syftboxStatus = { running: true, mode: 'Online' }
 	let currentSettings = null
 	let defaultSyftboxServerUrl = ''
 	let defaultServerPromise = null

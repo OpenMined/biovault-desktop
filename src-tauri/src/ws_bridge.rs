@@ -183,6 +183,16 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_default_syftbox_server_url();
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_env_var" => {
+            let key: String = serde_json::from_value(
+                args.get("key")
+                    .cloned()
+                    .ok_or_else(|| "Missing key".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse key: {}", e))?;
+            let result = crate::get_env_var(key);
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "get_available_project_examples" => {
             let result = crate::get_available_project_examples().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
