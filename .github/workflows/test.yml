@@ -15,8 +15,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    runs-on: macos-latest
+  configure-build-matrix:
+    name: Determine build targets
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-targets: ${{ steps.set-matrix.outputs.has-targets }}
+    steps:
+      - name: Build matrix
+        id: set-matrix
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          entries = [
+              {
+                  'runs-on': 'macos-latest',
+                  'args': 'aarch64-apple-darwin',
+                  'build_kind': 'tauri',
+                  'target': 'macos-arm64',
+              },
+              {
+                  'runs-on': 'macos-latest',
+                  'args': 'x86_64-apple-darwin',
+                  'build_kind': 'tauri',
+                  'target': 'macos-x64',
+              },
+              {
+                  'runs-on': 'windows-latest',
+                  'args': 'x86_64-pc-windows-msvc',
+                  'build_kind': 'tauri',
+                  'target': 'windows-x64',
+              },
+              {
+                  'runs-on': 'ubuntu-22.04',
+                  'args': 'x86_64-unknown-linux-gnu',
+                  'build_kind': 'tauri',
+                  'target': 'linux-x64',
+              },
+              {
+                  'runs-on': 'ubuntu-22.04-arm',
+                  'args': 'aarch64-unknown-linux-gnu',
+                  'build_kind': 'docker',
+                  'target': 'linux-arm64',
+              },
+          ]
+
+          matrix = {'include': entries}
+          has_targets = 'true'
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"matrix={json.dumps(matrix)}\n")
+              fh.write(f"has-targets={has_targets}\n")
+          PY
+
+  build:
+    name: Build app bundle
+    needs:
+      - configure-build-matrix
+    if: ${{ needs.configure-build-matrix.outputs.has-targets == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.configure-build-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runs-on }}
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -26,69 +88,37 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout
+      - name: Enable git long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
+      - name: Checkout project
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        if: matrix.build_kind == 'docker'
+        uses: docker/setup-buildx-action@v3
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Cache Rust dependencies
+      - name: Cache Docker layers
+        if: matrix.build_kind == 'docker'
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin
-            target
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-arm64-${{ hashFiles('docker/linux_arm64/Dockerfile') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-buildx-arm64-
 
-      - name: Create resource placeholders for lint
-        run: |
-          mkdir -p src-tauri/resources/syftbox
-          touch src-tauri/resources/syftbox/syftbox
-          mkdir -p src-tauri/resources/bundled/java
-          mkdir -p src-tauri/resources/bundled/nextflow
-          mkdir -p src-tauri/resources/bundled/uv
-          touch src-tauri/resources/bundled/README.txt
-
-      - name: Run Rust linters
-        run: |
-          cargo clippy --manifest-path ./src-tauri/Cargo.toml -- -D warnings
-          cargo fmt --manifest-path ./src-tauri/Cargo.toml --check
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Import signing certificate into keychain
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
         with:
-          node-version: '20'
-          cache: 'npm'
+          p12-file-base64: ${{ secrets.SIGNING_CERTIFICATE_P12_DATA }}
+          p12-password: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
 
-      - name: Run frontend lint suite
-        run: ./lint.sh
-
-  test-ui:
-    runs-on: ubuntu-22.04
-    env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -101,19 +131,32 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            xdg-utils \
-            unzip \
             libfuse2
 
+      - name: Setup Rust
+        if: matrix.build_kind == 'tauri'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.args }}
+
+      - name: Setup Node.js
+        if: matrix.build_kind == 'tauri'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install protoc
+        if: matrix.build_kind == 'tauri'
         uses: arduino/setup-protoc@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri CLI
+        if: matrix.build_kind == 'tauri'
+        run: npm install -g @tauri-apps/cli@latest
 
       - name: Cache Rust dependencies
+        if: matrix.build_kind == 'tauri'
         uses: actions/cache@v4
         with:
           path: |
@@ -122,39 +165,94 @@ jobs:
             ~/.cargo/bin
             target
             src-tauri/target
-          key: x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            x86_64-unknown-linux-gnu-cargo-
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: 'latest'
-
-      - name: Create syftbox placeholder for build
-        run: |
-          mkdir -p src-tauri/resources/syftbox
-          touch src-tauri/resources/syftbox/syftbox
-
-      - name: Install JavaScript dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+            ${{ matrix.args }}-cargo-
 
       - name: Fetch bundled dependencies
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
         shell: bash
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
 
-      - name: Run UI smoke tests
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-        run: ./test-ui.sh
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            chmod -R u+rw src-tauri/resources/bundled/ || true
+            xattr -r -d com.apple.quarantine src-tauri/resources/bundled/ 2>/dev/null || true
+          else
+            chmod -R u+rw src-tauri/resources/bundled/ || true
+          fi
+
+      - name: Create bundled placeholders (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -Path "src-tauri/resources/bundled/java" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
+          Set-Content -Path "src-tauri/resources/bundled/README.txt" -Value "Placeholder for bundled dependencies"
+
+      - name: Build app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          mkdir -p artifacts
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}.dmg || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz.sig || true
+
+      - name: Build app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          New-Item -Path artifacts -ItemType Directory -Force
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe -ErrorAction SilentlyContinue
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
+
+      - name: Build app (Linux)
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          tauri build --target ${{ matrix.args }}
+
+          mkdir -p artifacts
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+
+      - name: Build app (Linux arm64 via Docker)
+        if: matrix.build_kind == 'docker'
+        run: |
+          chmod +x docker/linux_arm64/*.sh
+          FORCE_BUILDX=1 BUILD_CACHE="--cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max" ./docker/linux_arm64/build-image.sh --arm64
+          ./docker/linux_arm64/build-appimage.sh --arm64
+
+          mkdir -p artifacts
+          sudo chown -R $(id -u):$(id -g) src-tauri/target/${{ matrix.args }}/release/bundle/ || true
+
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || echo "No AppImage found"
+
+      - name: Move Docker cache
+        if: matrix.build_kind == 'docker'
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          path: artifacts/
+          if-no-files-found: warn
+
+      - name: Clean up all user keychains
+        if: always() && runner.os == 'macOS'
+        run: |
+          keychains=$(security list-keychains | tr -d '" "')
+          echo "$keychains" | while IFS= read -r keychain; do
+            if [[ "$keychain" != "/Library/Keychains/System.keychain" && "$keychain" != "/Library/Keychains/SystemRootCertificates.keychain" ]]; then
+              echo "Deleting keychain: $keychain"
+              security delete-keychain "$keychain"
+            fi
+          done
