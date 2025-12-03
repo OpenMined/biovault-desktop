@@ -169,6 +169,13 @@ jobs:
           restore-keys: |
             ${{ matrix.args }}-cargo-
 
+      - name: Create syftbox placeholder
+        if: matrix.build_kind == 'tauri'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/syftbox
+          touch src-tauri/resources/syftbox/syftbox
+
       - name: Fetch bundled dependencies
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
         shell: bash
@@ -187,6 +194,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          New-Item -Path "src-tauri/resources/syftbox" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/syftbox/syftbox" -ItemType File -Force
           New-Item -Path "src-tauri/resources/bundled/java" -ItemType Directory -Force
           New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
           New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
