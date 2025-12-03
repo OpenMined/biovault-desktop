@@ -36,6 +36,7 @@ use commands::runs::*;
 use commands::settings::*;
 use commands::sql::*;
 use commands::syftbox::*;
+use commands::whatsapp::*;
 
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
@@ -777,7 +778,20 @@ pub fn run() {
             start_syftbox_client,
             stop_syftbox_client,
             test_notification,
-            test_notification_applescript
+            test_notification_applescript,
+            // WhatsApp commands
+            whatsapp_start_login,
+            whatsapp_logout,
+            whatsapp_get_status,
+            whatsapp_send_message,
+            whatsapp_shutdown,
+            whatsapp_check_auth_exists,
+            whatsapp_get_auth_path,
+            whatsapp_open_auth_folder,
+            whatsapp_reset_auth,
+            whatsapp_get_message_log,
+            whatsapp_clear_message_log,
+            whatsapp_send_notification
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
