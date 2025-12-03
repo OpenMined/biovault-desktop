@@ -54,10 +54,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Create syftbox placeholder for lint
+      - name: Create resource placeholders for lint
         run: |
           mkdir -p src-tauri/resources/syftbox
           touch src-tauri/resources/syftbox/syftbox
+          mkdir -p src-tauri/resources/bundled/java
+          mkdir -p src-tauri/resources/bundled/nextflow
+          mkdir -p src-tauri/resources/bundled/uv
+          touch src-tauri/resources/bundled/README.txt
 
       - name: Run Rust linters
         run: |
