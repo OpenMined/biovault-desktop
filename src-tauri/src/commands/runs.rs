@@ -284,62 +284,57 @@ pub async fn execute_analysis(
         }
     };
 
-    let nextflow_bin_display = config
-        .as_ref()
-        .and_then(|cfg| cfg.get_binary_path("nextflow"))
-        .unwrap_or_else(|| "nextflow".to_string());
+    let nextflow_bin_display =
+        resolve_binary_path(config.as_ref(), "nextflow").unwrap_or_else(|| "nextflow".to_string());
     env_lines.push(format!(
         "  Nextflow binary preference = {}",
         nextflow_bin_display
     ));
 
     if let Some(ref cfg) = config {
-        env_lines.push("  Configured binary paths:".to_string());
+        env_lines.push("  Preferred binary paths:".to_string());
         for binary in DEPENDENCY_BINARIES {
-            match cfg.get_binary_path(binary) {
+            match resolve_binary_path(Some(cfg), binary) {
                 Some(path) => env_lines.push(format!("    {} = {}", binary, path)),
                 None => env_lines.push(format!("    {} = <not configured>", binary)),
             }
         }
+    } else {
+        env_lines.push("  Preferred binary paths: <config missing>".to_string());
+    }
 
-        if let Some(augmented_path) = build_augmented_path(cfg) {
-            env::set_var("PATH", &augmented_path);
-            env_lines.push(format!("  PATH (augmented) = {}", augmented_path));
+    if let Some(augmented_path) = build_augmented_path(config.as_ref()) {
+        env::set_var("PATH", &augmented_path);
+        env_lines.push(format!("  PATH (augmented) = {}", augmented_path));
+    } else {
+        env_lines.push("  PATH (augmented) = <unchanged>".to_string());
+    }
+
+    let mut java_home_set = false;
+    if let Some(java_bin) = resolve_binary_path(config.as_ref(), "java") {
+        env_lines.push(format!("  java binary = {}", java_bin));
+        if let Some(java_home) = derive_java_home(&java_bin) {
+            env::set_var("JAVA_HOME", &java_home);
+            env_lines.push(format!(
+                "  JAVA_HOME derived from java binary = {}",
+                java_home
+            ));
+            java_home_set = true;
         } else {
-            env_lines.push("  PATH (augmented) = <unchanged>".to_string());
+            env_lines.push(format!(
+                "  WARNING: Could not derive JAVA_HOME from java binary: {}",
+                java_bin
+            ));
         }
+    }
 
-        let mut java_home_set = false;
-        if let Some(java_bin) = cfg.get_binary_path("java") {
-            env_lines.push(format!("  java binary = {}", java_bin));
-            if let Some(java_home) = derive_java_home(&java_bin) {
-                env::set_var("JAVA_HOME", &java_home);
-                env_lines.push(format!(
-                    "  JAVA_HOME derived from java binary = {}",
-                    java_home
-                ));
-                java_home_set = true;
-            } else {
-                env_lines.push(format!(
-                    "  WARNING: Could not derive JAVA_HOME from java binary: {}",
-                    java_bin
-                ));
-            }
+    if !java_home_set {
+        if let Some(ref existing) = original_java_home {
+            env_lines.push(format!(
+                "  JAVA_HOME retained (pre-existing) = {}",
+                existing
+            ));
         }
-
-        if !java_home_set {
-            if let Some(ref existing) = original_java_home {
-                env_lines.push(format!(
-                    "  JAVA_HOME retained (pre-existing) = {}",
-                    existing
-                ));
-            }
-        }
-    } else if let Some(existing) = original_java_home.clone() {
-        env_lines.push(format!(
-            "  JAVA_HOME retained (pre-existing) = {}",
-            existing
-        ));
     }
 
     let nxf_home_path = biovault_home.join("data").join("nextflow");
@@ -564,13 +559,44 @@ pub fn get_run_logs_full(state: tauri::State<AppState>, run_id: i64) -> Result<S
     Ok(log_content)
 }
 
-/// Build augmented PATH from configured binary paths
-fn build_augmented_path(cfg: &Config) -> Option<String> {
+fn bundled_env_var(name: &str) -> Option<&'static str> {
+    match name {
+        "java" => Some("BIOVAULT_BUNDLED_JAVA"),
+        "nextflow" => Some("BIOVAULT_BUNDLED_NEXTFLOW"),
+        "uv" => Some("BIOVAULT_BUNDLED_UV"),
+        "syftbox" => Some("SYFTBOX_BINARY"),
+        _ => None,
+    }
+}
+
+fn resolve_binary_path(cfg: Option<&Config>, name: &str) -> Option<String> {
+    if let Some(cfg) = cfg {
+        if let Some(path) = cfg.get_binary_path(name) {
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+
+    if let Some(env_key) = bundled_env_var(name) {
+        if let Ok(env_path) = env::var(env_key) {
+            let trimmed = env_path.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Build augmented PATH from configured/bundled binary paths
+fn build_augmented_path(cfg: Option<&Config>) -> Option<String> {
     let mut entries = BTreeSet::new();
 
     // Extract parent directories from configured binary paths
     for key in DEPENDENCY_BINARIES {
-        if let Some(bin_path) = cfg.get_binary_path(key) {
+        if let Some(bin_path) = resolve_binary_path(cfg, key) {
             if !bin_path.is_empty() {
                 if let Some(parent) = Path::new(&bin_path).parent() {
                     entries.insert(parent.to_path_buf());

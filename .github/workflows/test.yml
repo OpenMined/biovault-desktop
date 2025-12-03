@@ -54,10 +54,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Create syftbox placeholder for lint
+      - name: Create resource placeholders for lint
         run: |
           mkdir -p src-tauri/resources/syftbox
           touch src-tauri/resources/syftbox/syftbox
+          mkdir -p src-tauri/resources/bundled/java
+          mkdir -p src-tauri/resources/bundled/nextflow
+          mkdir -p src-tauri/resources/bundled/uv
+          touch src-tauri/resources/bundled/README.txt
 
       - name: Run Rust linters
         run: |
@@ -98,7 +102,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             xdg-utils \
-            unzip
+            unzip \
+            libfuse2
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -142,8 +147,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build Tauri application
-        run: npx tauri build --target x86_64-unknown-linux-gnu
+      - name: Fetch bundled dependencies
+        shell: bash
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Run UI smoke tests
         env:
