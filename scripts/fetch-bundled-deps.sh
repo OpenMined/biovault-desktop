@@ -358,6 +358,7 @@ main() {
 
   echo "🏗  Preparing bundled dependencies for $platform"
   mkdir -p "$OUT_ROOT"
+  echo "Placeholder for bundled dependencies" > "$OUT_ROOT/README.txt"
 
   extract_java "$os" "$arch"
   fetch_nextflow "$os" "$arch"
