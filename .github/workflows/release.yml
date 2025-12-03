@@ -209,6 +209,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+      APPIMAGE_EXTRACT_AND_RUN: 1
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -293,7 +294,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libfuse2 \
-            patchelf
+            patchelf \
+            libgtk-3-dev \
+            squashfs-tools \
+            desktop-file-utils \
+            zsync
 
       - name: Setup Rust
         if: matrix.build_kind == 'tauri'
@@ -370,8 +375,6 @@ jobs:
 
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           tauri build --target ${{ matrix.args }}
 
