@@ -154,9 +154,6 @@ jobs:
           ./scripts/fetch-bundled-deps.sh
           chmod -R u+rw src-tauri/resources/bundled/ || true
 
-      - name: Build Tauri application
-        run: npx tauri build --target x86_64-unknown-linux-gnu
-
       - name: Run UI smoke tests
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
