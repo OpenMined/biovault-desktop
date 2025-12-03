@@ -55,9 +55,9 @@ jobs:
                   'target': 'linux-x64',
               },
               {
-                  'runs-on': 'ubuntu-22.04-arm',
+                  'runs-on': 'ubuntu-22.04-arm64',
                   'args': 'aarch64-unknown-linux-gnu',
-                  'build_kind': 'docker',
+                  'build_kind': 'tauri',
                   'target': 'linux-arm64',
               },
           ]
@@ -88,6 +88,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       GH_TOKEN: ${{ github.token }}
       APPIMAGE_EXTRACT_AND_RUN: "1"
+      TAURI_CLI_LOG_LEVEL: trace
     steps:
       - name: Enable git long paths (Windows)
         if: runner.os == 'Windows'
@@ -132,7 +133,13 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libfuse2
+            libfuse2 \
+            patchelf \
+            libgtk-3-dev \
+            squashfs-tools \
+            desktop-file-utils \
+            zsync \
+            appstream
 
       - name: Setup Rust
         if: matrix.build_kind == 'tauri'
@@ -235,12 +242,15 @@ jobs:
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
-          # Download and extract linuxdeploy tools without needing FUSE
-          # AppImages are ELF + squashfs, we extract the squashfs directly
-          sudo apt-get install -y squashfs-tools
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" == "aarch64" ]]; then
+            APPIMAGE_ARCH="aarch64"
+          else
+            APPIMAGE_ARCH="x86_64"
+          fi
 
           # linuxdeploy
-          wget -q https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage -O /tmp/linuxdeploy.AppImage
+          wget -q "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-${APPIMAGE_ARCH}.AppImage" -O /tmp/linuxdeploy.AppImage
           chmod +x /tmp/linuxdeploy.AppImage
           # Extract using --appimage-extract (this works without FUSE)
           cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy.AppImage --appimage-extract || true
@@ -254,7 +264,7 @@ jobs:
           chmod +x /tmp/linuxdeploy-extracted/AppRun
 
           # linuxdeploy-plugin-appimage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage -O /tmp/plugin.AppImage
+          wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-${APPIMAGE_ARCH}.AppImage" -O /tmp/plugin.AppImage
           chmod +x /tmp/plugin.AppImage
           cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./plugin.AppImage --appimage-extract || true
           if [ ! -d /tmp/squashfs-root ]; then
@@ -269,17 +279,29 @@ jobs:
           ls -la /tmp/linuxdeploy-extracted/
           ls -la /tmp/plugin-extracted/
 
+          {
+            echo "LINUXDEPLOY=/tmp/linuxdeploy-extracted/usr/bin/linuxdeploy"
+            echo "LINUXDEPLOY_PLUGIN_APPIMAGE=/tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage"
+            echo "APPIMAGETOOL=/tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool"
+          } >> "$GITHUB_ENV"
+
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
-        env:
-          LINUXDEPLOY: /tmp/linuxdeploy-extracted/AppRun
-          LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/AppRun
         run: |
-          tauri build --target ${{ matrix.args }}
+          set -o pipefail
+          tauri build --target ${{ matrix.args }} --verbose 2>&1 | tee tauri-linux.log
 
           mkdir -p artifacts
           mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
+
+      - name: Dump linuxdeploy logs on failure
+        if: failure() && runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          echo "Searching for linuxdeploy/appimage logs..."
+          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
+          echo "Dumping tauri-linux.log (if present)..."
+          sed -n '1,400p' tauri-linux.log || true
 
       - name: Build app (Linux arm64 via Docker)
         if: matrix.build_kind == 'docker'
