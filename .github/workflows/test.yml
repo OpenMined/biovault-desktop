@@ -233,6 +233,8 @@ jobs:
 
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           tauri build --target ${{ matrix.args }}
 
