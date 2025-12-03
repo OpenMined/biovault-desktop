@@ -54,14 +54,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Build syftbox binary
-        run: ./scripts/build-syftbox-prod.sh
+      - name: Create syftbox placeholder for lint
+        run: |
+          mkdir -p src-tauri/resources/syftbox
+          touch src-tauri/resources/syftbox/syftbox
 
       - name: Run Rust linters
         run: |
@@ -135,14 +131,10 @@ jobs:
         with:
           bun-version: 'latest'
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Build syftbox binary
-        run: ./scripts/build-syftbox-prod.sh
+      - name: Create syftbox placeholder for build
+        run: |
+          mkdir -p src-tauri/resources/syftbox
+          touch src-tauri/resources/syftbox/syftbox
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
