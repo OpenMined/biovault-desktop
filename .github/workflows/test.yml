@@ -54,6 +54,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Build syftbox binary
+        run: ./scripts/build-syftbox-prod.sh
+
       - name: Run Rust linters
         run: |
           cargo clippy --manifest-path ./src-tauri/Cargo.toml -- -D warnings
@@ -125,6 +134,15 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: 'latest'
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Build syftbox binary
+        run: ./scripts/build-syftbox-prod.sh
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
