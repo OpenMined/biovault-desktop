@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
+    path::BaseDirectory,
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
@@ -27,6 +28,7 @@ use commands::files::*;
 use commands::jupyter::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
+use commands::notifications::*;
 use commands::participants::*;
 use commands::pipelines::*;
 use commands::projects::*;
@@ -37,6 +39,7 @@ use commands::syftbox::*;
 
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
+use biovault::messages::watcher::start_message_rpc_watcher;
 
 pub(crate) fn resolve_biovault_home_path() -> PathBuf {
     if let Ok(home) = biovault::config::get_biovault_home() {
@@ -60,6 +63,21 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Temporary stub - all real tables are in CLI database now
     Ok(())
+}
+
+fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) {
+    if new_message_ids.is_empty() {
+        return;
+    }
+
+    let payload = serde_json::json!({
+        "new_message_ids": new_message_ids,
+        "new_messages": new_message_ids.len(),
+    });
+
+    if let Err(err) = app_handle.emit("messages:rpc-activity", payload) {
+        crate::desktop_log!("Failed to emit messages event: {}", err);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -363,12 +381,40 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
         .manage(app_state)
         .setup(move |app| {
+            // Ensure bundled SyftBox binary is exposed if not already provided
+            if std::env::var("SYFTBOX_BINARY").is_err() {
+                match app
+                    .path()
+                    .resolve("syftbox/syftbox", BaseDirectory::Resource)
+                {
+                    Ok(candidate) => {
+                        if candidate.exists() {
+                            let candidate_str = candidate.to_string_lossy().to_string();
+                            std::env::set_var("SYFTBOX_BINARY", &candidate_str);
+                            crate::desktop_log!(
+                                "🔧 Using bundled SyftBox binary: {}",
+                                candidate_str
+                            );
+                        } else {
+                            crate::desktop_log!(
+                                "⚠️ Bundled SyftBox binary not found at {}",
+                                candidate.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        crate::desktop_log!("⚠️ Failed to resolve bundled SyftBox binary: {}", e);
+                    }
+                }
+            }
+
             #[cfg(target_os = "macos")]
             {
                 biovault::cli::commands::check::set_homebrew_install_logger(|message| {
@@ -469,6 +515,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Start watching the SyftBox RPC message endpoint for real-time updates (shared implementation in biovault crate)
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let config = biovault::config::Config::load();
+                if let Ok(cfg) = config {
+                    if let Err(err) = start_message_rpc_watcher(cfg, move |ids| {
+                        emit_message_sync(&app_handle, ids);
+                    }) {
+                        crate::desktop_log!("Message watcher failed to start: {}", err);
+                    }
+                } else if let Err(err) = config {
+                    crate::desktop_log!("Message watcher: failed to load config: {}", err);
+                }
+            });
 
             // Start WebSocket bridge for browser development if enabled
             if std::env::var("DEV_WS_BRIDGE").is_ok() {
@@ -581,6 +642,12 @@ pub fn run() {
             reset_all_data,
             get_autostart_enabled,
             set_autostart_enabled,
+            // Dev mode commands
+            is_dev_mode,
+            is_dev_syftbox_enabled,
+            get_dev_syftbox_server_url,
+            check_dev_syftbox_server,
+            get_dev_mode_info,
             // Logs commands
             get_command_logs,
             clear_command_logs,
@@ -603,11 +670,16 @@ pub fn run() {
             open_url,
             syftbox_request_otp,
             syftbox_submit_otp,
+            set_syftbox_dev_server,
+            get_env_var,
+            get_default_syftbox_server_url,
             check_syftbox_auth,
             get_syftbox_config_info,
             get_syftbox_state,
             start_syftbox_client,
-            stop_syftbox_client
+            stop_syftbox_client,
+            test_notification,
+            test_notification_applescript
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -55,6 +55,14 @@
 	flex-shrink: 0;
 }
 
+.page-eyebrow {
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	color: #94a3b8;
+	margin: 0;
+}
+
 .page-subtitle {
 	font-size: 14px;
 	color: #6b7280;

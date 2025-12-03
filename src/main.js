@@ -17,6 +17,7 @@ import { createSqlModule } from './sql.js'
 import { createUpdaterModule } from './updater.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
+import { mountDebugBanner } from './debug-banner.js'
 
 const { open } = dialog
 const { listen } = event
@@ -148,6 +149,7 @@ const messagesModule = createMessagesModule({
 	getCurrentUserEmail,
 	getSyftboxStatus,
 	setSyftboxStatus,
+	listen,
 	getActiveView: () => messagesGetActiveView(),
 	dialog,
 })
@@ -167,6 +169,21 @@ const {
 	getMessagesInitialized,
 	getMessagesAuthorized,
 } = messagesModule
+
+// Expose messages module globally for test actions (e.g., notification test button wiring)
+window.__messagesModule = messagesModule
+window.__messagesTriggerTest__ = () => {
+	try {
+		console.log('[Messages] Test notification button clicked')
+		if (messagesModule?.triggerTestNotification) {
+			messagesModule.triggerTestNotification()
+		} else {
+			console.warn('[Messages] triggerTestNotification not available')
+		}
+	} catch (err) {
+		console.warn('[Messages] Test notification trigger failed', err)
+	}
+}
 
 // Function to load saved dependency states without re-checking
 
@@ -345,6 +362,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 	initializeDataTab()
 	pipelinesModule.initialize()
 
+	// Optional debug banner
+	await mountDebugBanner()
+
 	// Setup all event handlers
 	setupEventHandlers({
 		navigateTo,
@@ -414,6 +434,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		checkUpdates,
 		invoke,
 		dialog,
+		checkSyftBoxStatus,
 		getSelectedParticipants,
 		loadData,
 		initializeMessagesTab,

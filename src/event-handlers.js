@@ -70,6 +70,7 @@ export function setupEventHandlers({
 	checkUpdates,
 	invoke,
 	dialog,
+	checkSyftBoxStatus,
 	// Data (unified participants + files)
 	_getSelectedParticipants,
 	_loadData,
@@ -91,7 +92,7 @@ export function setupEventHandlers({
 			if (btn.classList.contains('active')) return
 			setActiveMessageFilterButton(btn.dataset.filter)
 			resetActiveThread()
-			loadMessageThreads(false)
+			loadMessageThreads(false, { emitToasts: false })
 		})
 	})
 
@@ -106,6 +107,78 @@ export function setupEventHandlers({
 	if (newMessageBtn) {
 		newMessageBtn.addEventListener('click', () => {
 			ensureMessagesAuthorizationAndStartNew()
+		})
+	}
+
+	const testNotificationBtn = document.getElementById('message-test-notification-btn')
+	if (testNotificationBtn) {
+		testNotificationBtn.addEventListener('click', () => {
+			// triggerTestNotification is exported from messages.js and attached to module scope
+			if (typeof window.__messagesTriggerTest__ === 'function') {
+				window.__messagesTriggerTest__()
+			} else {
+				console.warn('Test notification handler not available')
+			}
+		})
+	}
+
+	const nativeTestBtn = document.getElementById('message-native-test-btn')
+	if (nativeTestBtn) {
+		nativeTestBtn.addEventListener('click', async () => {
+			console.log('[Messages] Native notification test clicked')
+			try {
+				// Check if Tauri is available
+				if (typeof window !== 'undefined' && window.__TAURI__?.notification) {
+					const { isPermissionGranted, requestPermission, sendNotification } =
+						window.__TAURI__.notification
+
+					// Request permission if not granted
+					let permissionGranted = await isPermissionGranted()
+					console.log('[Messages] Notification permission granted:', permissionGranted)
+
+					if (!permissionGranted) {
+						console.log('[Messages] Requesting notification permission...')
+						const permission = await requestPermission()
+						permissionGranted = permission === 'granted'
+						console.log('[Messages] Permission result:', permission)
+					}
+
+					if (permissionGranted) {
+						await sendNotification({
+							title: 'BioVault Notification Test',
+							body: 'If you see this, native notifications are working! 🎉',
+						})
+						console.log('[Messages] Native notification sent')
+					} else {
+						console.warn('[Messages] Notification permission denied')
+					}
+				} else {
+					console.warn('[Messages] Tauri notification API not available')
+				}
+			} catch (err) {
+				console.warn('[Messages] Native notification failed', err)
+			}
+
+			// Also trigger the Rust-side test for more logging
+			try {
+				await invoke('test_notification')
+				console.log('[Messages] Invoked Rust test_notification command')
+			} catch (err) {
+				console.warn('[Messages] Rust notification command failed', err)
+			}
+		})
+	}
+
+	const applescriptTestBtn = document.getElementById('message-applescript-test-btn')
+	if (applescriptTestBtn) {
+		applescriptTestBtn.addEventListener('click', async () => {
+			console.log('[Messages] AppleScript notification test clicked')
+			try {
+				await invoke('test_notification_applescript')
+				console.log('[Messages] AppleScript notification command invoked')
+			} catch (err) {
+				console.warn('[Messages] AppleScript notification failed', err)
+			}
 		})
 	}
 
@@ -199,6 +272,48 @@ export function setupEventHandlers({
 	if (syftboxAuthBtn) {
 		syftboxAuthBtn.addEventListener('click', async () => {
 			await handleSyftBoxAuthentication()
+		})
+	}
+
+	// Settings - Set Dev Server (skip auth)
+	const syftboxSetDevBtn = document.getElementById('syftbox-set-dev-btn')
+	if (syftboxSetDevBtn) {
+		syftboxSetDevBtn.addEventListener('click', async () => {
+			const server = document.getElementById('setting-syftbox-server')?.value.trim()
+			if (!server) {
+				await dialog.message('Please enter a server URL first.', {
+					title: 'Server URL required',
+					type: 'warning',
+				})
+				return
+			}
+
+			syftboxSetDevBtn.disabled = true
+			const originalText = syftboxSetDevBtn.textContent
+			syftboxSetDevBtn.textContent = 'Setting...'
+
+			try {
+				await invoke('set_syftbox_dev_server', { serverUrl: server })
+				await dialog.message(
+					'Server updated. Auth will be skipped for this host. SyftBox client restarted with the new URL.',
+					{
+						title: 'Dev Server Set',
+						type: 'info',
+					},
+				)
+				if (typeof checkSyftBoxStatus === 'function') {
+					await checkSyftBoxStatus()
+				}
+			} catch (error) {
+				console.error('Error setting dev server:', error)
+				await dialog.message(error?.message || 'Failed to set dev server.', {
+					title: 'Error',
+					type: 'error',
+				})
+			} finally {
+				syftboxSetDevBtn.disabled = false
+				syftboxSetDevBtn.textContent = originalText
+			}
 		})
 	}
 

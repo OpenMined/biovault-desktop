@@ -34,6 +34,7 @@
 						"dialog:default",
 						"opener:default",
 						"opener:allow-open-url",
+						"notification:default",
 						"updater:default",
 						"updater:allow-check",
 						"process:default",
@@ -57,7 +58,8 @@
 			"entitlements": "./Entitlements.plist",
 			"minimumSystemVersion": "10.13"
 		},
-		"targets": ["app", "appimage", "dmg", "nsis"]
+		"targets": ["app", "appimage", "dmg", "nsis"],
+		"resources": ["resources/syftbox/syftbox"]
 	},
 	"plugins": {
 		"updater": {

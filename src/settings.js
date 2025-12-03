@@ -1,7 +1,23 @@
 export function createSettingsModule({ invoke, dialog, loadSavedDependencies, onAiConfigUpdated }) {
 	let currentUserEmail = ''
-	let syftboxStatus = { running: false, mode: 'Direct' }
+	// Default to online so the messages page starts in connected mode until we learn the real status.
+	let syftboxStatus = { running: true, mode: 'Online' }
 	let currentSettings = null
+	let defaultSyftboxServerUrl = ''
+	let defaultServerPromise = null
+
+	async function getDefaultServer() {
+		if (defaultServerPromise) return defaultServerPromise
+		defaultServerPromise = invoke('get_default_syftbox_server_url')
+			.then((val) => {
+				if (typeof val === 'string' && val.trim()) {
+					defaultSyftboxServerUrl = val.trim()
+				}
+				return defaultSyftboxServerUrl
+			})
+			.catch(() => defaultSyftboxServerUrl)
+		return defaultServerPromise
+	}
 
 	function setSaveStatus(message, tone = 'info') {
 		const statusEl = document.getElementById('settings-save-status')
@@ -12,6 +28,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 
 	async function loadSettings() {
 		try {
+			await getDefaultServer()
 			const configPath = await invoke('get_config_path').catch(() => 'Not set')
 			document.getElementById('config-path-display').textContent = configPath
 
@@ -19,6 +36,11 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			currentSettings = settings
 			document.getElementById('setting-email').value = settings.email || ''
 			currentUserEmail = settings.email || ''
+			const syftboxServerInput = document.getElementById('setting-syftbox-server')
+			if (syftboxServerInput) {
+				syftboxServerInput.value = settings.syftbox_server_url || defaultSyftboxServerUrl
+				syftboxServerInput.placeholder = defaultSyftboxServerUrl || 'https://your-syftbox-host'
+			}
 
 			document.getElementById('setting-ai-url').value = settings.ai_api_url || ''
 			document.getElementById('setting-ai-token').value = settings.ai_api_token || ''
@@ -78,26 +100,59 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	async function checkSyftBoxStatus() {
 		const statusBadge = document.getElementById('syftbox-status-badge')
 		const authBtn = document.getElementById('syftbox-auth-btn')
+		const devBadge = document.getElementById('syftbox-dev-badge')
+		const serverLabel =
+			(currentSettings?.syftbox_server_url && currentSettings.syftbox_server_url.trim()) ||
+			defaultSyftboxServerUrl
 
 		try {
+			// Check for dev mode first
+			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
 			const configInfo = await invoke('get_syftbox_config_info')
 
 			// Remove all status classes
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
 
-			if (configInfo.is_authenticated) {
-				statusBadge.innerHTML = `✓ Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
+			// In dev mode with syftbox enabled, show special status
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+				const devServer = devModeInfo.server_url || serverLabel || 'localhost:8080'
+				statusBadge.innerHTML = `
+					<div class="badge-line">🧪 DEV MODE - Auth Disabled</div>
+					<div class="badge-subline">Server: ${devServer}</div>
+				`
+				statusBadge.classList.add('connected')
+				statusBadge.style.lineHeight = '1.4'
+				authBtn.textContent = 'Dev Mode Active'
+				authBtn.disabled = true
+				// Update syftbox status to running in dev mode
+				syftboxStatus = { running: true, mode: 'Dev' }
+			} else if (configInfo.is_authenticated) {
+				statusBadge.innerHTML = `
+					<div class="badge-line">✓ Authenticated</div>
+					<div class="badge-subline">Server: ${serverLabel}</div>
+					<div class="badge-subline">Config: ${configInfo.config_path}</div>
+				`
 				statusBadge.classList.add('connected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Reauthenticate'
+				authBtn.disabled = false
 			} else {
-				statusBadge.innerHTML = `✗ Not Authenticated<br><span style="font-size: 11px; font-weight: normal;">Config: ${configInfo.config_path}</span>`
+				statusBadge.innerHTML = `
+					<div class="badge-line">✗ Not Authenticated</div>
+					<div class="badge-subline">Server: ${serverLabel}</div>
+					<div class="badge-subline">Config: ${configInfo.config_path}</div>
+				`
 				statusBadge.classList.add('disconnected')
 				statusBadge.style.lineHeight = '1.4'
 				authBtn.textContent = 'Authenticate'
+				authBtn.disabled = false
 			}
 
-			authBtn.disabled = false
+			if (devBadge) {
+				devBadge.style.display = serverLabel !== defaultSyftboxServerUrl ? 'inline-flex' : 'none'
+				devBadge.textContent =
+					serverLabel !== defaultSyftboxServerUrl ? 'Auth skipped (dev host)' : ''
+			}
 		} catch (error) {
 			statusBadge.innerHTML = '? Status Unknown'
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
@@ -110,11 +165,28 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 
 	async function handleSyftBoxAuthentication() {
 		const email = document.getElementById('setting-email').value.trim()
+		const serverUrlInput = document.getElementById('setting-syftbox-server')
+		const desiredServerUrl = serverUrlInput?.value.trim()
 
 		if (!email) {
 			await dialog.message('Please enter your email address first.', {
 				title: 'Email Required',
 				type: 'warning',
+			})
+			return
+		}
+
+		// Persist the latest settings (including server URL) before starting auth
+		try {
+			await saveSettingsChanges()
+			if (desiredServerUrl) {
+				document.body.dataset.syftboxServerUrl = desiredServerUrl
+			}
+		} catch (error) {
+			console.error('Error saving settings before auth:', error)
+			await dialog.message('Could not save settings before authentication. Please try again.', {
+				title: 'Save Failed',
+				type: 'error',
 			})
 			return
 		}
@@ -181,6 +253,8 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		const aiApiUrl = document.getElementById('setting-ai-url').value.trim()
 		const aiApiToken = document.getElementById('setting-ai-token').value.trim()
 		const aiModel = document.getElementById('setting-ai-model').value.trim()
+		const syftboxServerUrl =
+			document.getElementById('setting-syftbox-server')?.value.trim() || defaultSyftboxServerUrl
 
 		const settings = {
 			...(currentSettings || {}),
@@ -188,6 +262,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			ai_api_url: aiApiUrl,
 			ai_api_token: aiApiToken,
 			ai_model: aiModel,
+			syftbox_server_url: syftboxServerUrl,
 		}
 
 		try {
@@ -195,6 +270,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			currentSettings = settings
 			currentUserEmail = email
 			setSaveStatus('Settings saved successfully.', 'success')
+			await checkSyftBoxStatus()
 			onAiConfigUpdated?.()
 		} catch (error) {
 			console.error('Error saving settings:', error)

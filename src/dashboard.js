@@ -16,7 +16,7 @@ export function createDashboardShell({
 	getMessagesAuthorized,
 	getSyftboxStatus,
 	startMessagesAutoRefresh,
-	stopMessagesAutoRefresh,
+	_stopMessagesAutoRefresh,
 }) {
 	let activeView = 'run'
 	let lastImportView = 'import'
@@ -109,10 +109,6 @@ export function createDashboardShell({
 			}
 			default:
 				break
-		}
-
-		if (targetView !== 'messages') {
-			stopMessagesAutoRefresh?.()
 		}
 	}
 
