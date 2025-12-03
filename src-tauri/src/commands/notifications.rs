@@ -1,4 +1,3 @@
-use std::process::Command;
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
@@ -40,6 +39,8 @@ pub fn test_notification_applescript() -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
+        use std::process::Command;
+
         let script = r#"display notification "If you see this, AppleScript notifications work! 🎉" with title "BioVault" subtitle "Notification Test""#;
 
         let output = Command::new("osascript")

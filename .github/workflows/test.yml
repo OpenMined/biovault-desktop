@@ -232,10 +232,48 @@ jobs:
           Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe -ErrorAction SilentlyContinue
           Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
 
+      - name: Setup AppImage tools (Linux)
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          # Download and extract linuxdeploy tools without needing FUSE
+          # AppImages are ELF + squashfs, we extract the squashfs directly
+          sudo apt-get install -y squashfs-tools
+
+          # linuxdeploy
+          wget -q https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage -O /tmp/linuxdeploy.AppImage
+          chmod +x /tmp/linuxdeploy.AppImage
+          # Extract using --appimage-extract (this works without FUSE)
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            # Fallback: extract squashfs manually
+            OFFSET=$(readelf -h /tmp/linuxdeploy.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/linuxdeploy-extracted
+          chmod +x /tmp/linuxdeploy-extracted/AppRun
+
+          # linuxdeploy-plugin-appimage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage -O /tmp/plugin.AppImage
+          chmod +x /tmp/plugin.AppImage
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./plugin.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            OFFSET=$(readelf -h /tmp/plugin.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/plugin.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/plugin.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/plugin-extracted
+          chmod +x /tmp/plugin-extracted/AppRun
+
+          echo "AppImage tools extracted successfully"
+          ls -la /tmp/linuxdeploy-extracted/
+          ls -la /tmp/plugin-extracted/
+
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
+          LINUXDEPLOY: /tmp/linuxdeploy-extracted/AppRun
+          LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/AppRun
         run: |
           tauri build --target ${{ matrix.args }}
 

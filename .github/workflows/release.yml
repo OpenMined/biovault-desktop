@@ -177,9 +177,9 @@ jobs:
 
           if is_enabled('BUILD_LINUX_ARM64'):
               entries.append({
-                  'runs-on': 'ubuntu-22.04-arm',
+                  'runs-on': 'ubuntu-22.04-arm64',
                   'args': 'aarch64-unknown-linux-gnu',
-                  'build_kind': 'docker',
+                  'build_kind': 'tauri',
                   'target': 'linux-arm64',
               })
 
@@ -291,7 +291,9 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libfuse2 \
+            patchelf
 
       - name: Setup Rust
         if: matrix.build_kind == 'tauri'
@@ -368,6 +370,8 @@ jobs:
 
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           tauri build --target ${{ matrix.args }}
 
