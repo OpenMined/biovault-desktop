@@ -53,6 +53,7 @@ RUN dpkg --add-architecture arm64 \
       qemu-user-static \
       binfmt-support \
       software-properties-common \
+      ca-certificates \
  && apt-get install -y --no-install-recommends \
       libgtk-3-dev:arm64 \
       libwebkit2gtk-4.1-dev:arm64 \
@@ -67,6 +68,7 @@ RUN dpkg --add-architecture arm64 \
       libfuse2:arm64 \
       && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
+ && update-binfmts --enable qemu-aarch64 || true \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64

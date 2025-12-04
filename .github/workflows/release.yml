@@ -34,7 +34,7 @@ on:
         default: true
         type: boolean
       build_linux_arm64:
-        description: "Build Linux (arm64 via Docker)"
+        description: "Build Linux (arm64, no bundled deps)"
         required: false
         default: true
         type: boolean
@@ -177,7 +177,7 @@ jobs:
 
           if is_enabled('BUILD_LINUX_ARM64'):
               entries.append({
-                  'runs-on': 'ubuntu-22.04-arm64',
+                  'runs-on': 'ubuntu-24.04-arm',
                   'args': 'aarch64-unknown-linux-gnu',
                   'build_kind': 'tauri',
                   'target': 'linux-arm64',
@@ -227,6 +227,10 @@ jobs:
       - name: Set up Docker Buildx
         if: matrix.build_kind == 'docker'
         uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU (Docker)
+        if: matrix.build_kind == 'docker'
+        uses: docker/setup-qemu-action@v3
 
       - name: Cache Docker layers
         if: matrix.build_kind == 'docker'
@@ -331,7 +335,7 @@ jobs:
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Setup Go (syftbox)
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         uses: actions/setup-go@v5
         with:
           go-version-file: biovault/syftbox/go.mod
@@ -353,7 +357,7 @@ jobs:
             ${{ matrix.args }}-cargo-
 
       - name: Fetch bundled dependencies
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         shell: bash
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
@@ -368,10 +372,26 @@ jobs:
           fi
 
       - name: Build syftbox client
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
+
+      - name: Create placeholder resources (arm64 no-bundle build)
+        if: matrix.target == 'linux-arm64'
+        run: |
+          # Create placeholder directories and files for resources that tauri.conf.json expects
+          mkdir -p src-tauri/resources/syftbox
+          mkdir -p src-tauri/resources/bundled/java
+          mkdir -p src-tauri/resources/bundled/nextflow
+          mkdir -p src-tauri/resources/bundled/uv
+
+          # Create placeholder files
+          touch src-tauri/resources/syftbox/syftbox
+          echo "Placeholder - bundled deps not included in arm64 build" > src-tauri/resources/bundled/README.txt
+          touch src-tauri/resources/bundled/java/.placeholder
+          touch src-tauri/resources/bundled/nextflow/.placeholder
+          touch src-tauri/resources/bundled/uv/.placeholder
 
       - name: Sign syftbox client (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'

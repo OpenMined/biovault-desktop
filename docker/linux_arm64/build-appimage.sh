@@ -98,6 +98,7 @@ export GOARCH=arm64
 export CGO_ENABLED=1
 export CC=aarch64-linux-gnu-gcc
 export CXX=aarch64-linux-gnu-g++
+export GOFLAGS=-buildvcs=false
 
 ARCH=$(uname -m)
 if [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then
