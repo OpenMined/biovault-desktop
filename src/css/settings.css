@@ -539,6 +539,73 @@
 }
 
 /* ============================================================================
+   CRYPTO KEYS
+   ============================================================================ */
+.key-status-card {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.key-status-left {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 280px;
+}
+
+.key-avatar {
+	width: 72px;
+	height: 72px;
+	border-radius: 12px;
+	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	border: 1px solid #e5e7eb;
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+}
+
+.key-meta {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.key-identity {
+	font-weight: 600;
+	font-size: 15px;
+	color: #0f172a;
+}
+
+.key-fingerprint {
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 12px;
+	color: #475569;
+}
+
+.key-status-line {
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.key-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	flex: 1;
+}
+
+.key-warning {
+	color: #dc2626;
+	font-size: 12px;
+	margin-top: 8px;
+}
+
+/* ============================================================================
    RESPONSIVE
    ============================================================================ */
 
@@ -567,4 +634,190 @@
 		align-items: flex-start;
 		gap: 16px;
 	}
+}
+
+/* ============================================================================
+   IDENTITY SECTION
+   ============================================================================ */
+
+.identity-email-row {
+	margin-bottom: 4px;
+}
+
+.identity-email-row .setting-input {
+	font-size: 15px;
+	font-weight: 500;
+}
+
+.identity-email-row .setting-input.changed {
+	border-color: #f59e0b;
+	background: #fffbeb;
+}
+
+.identity-change-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 12px;
+	padding: 12px 16px;
+	background: #fffbeb;
+	border: 1px solid #fcd34d;
+	border-radius: 8px;
+	flex-wrap: wrap;
+}
+
+.identity-change-hint {
+	flex: 1;
+	min-width: 200px;
+	font-size: 13px;
+	color: #92400e;
+	font-weight: 500;
+}
+
+.identity-change-actions .settings-btn {
+	padding: 8px 16px;
+	font-size: 13px;
+}
+
+/* ============================================================================
+   CONTACTS SECTION
+   ============================================================================ */
+
+.contacts-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 300px;
+	overflow-y: auto;
+	padding: 4px;
+}
+
+.contacts-loading {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 16px;
+	color: #6b7280;
+	font-size: 13px;
+}
+
+.contacts-empty {
+	padding: 24px;
+	text-align: center;
+	color: #9ca3af;
+	font-size: 13px;
+	background: #f9fafb;
+	border-radius: 8px;
+	border: 1px dashed #e5e7eb;
+}
+
+.contact-item {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px;
+	background: #f8f9fa;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	transition: all 0.2s;
+}
+
+.contact-item:hover {
+	background: #f3f4f6;
+	border-color: #d1d5db;
+}
+
+.contact-avatar {
+	width: 40px;
+	height: 40px;
+	border-radius: 8px;
+	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	border: 1px solid #e5e7eb;
+	flex-shrink: 0;
+}
+
+.contact-avatar svg {
+	width: 100%;
+	height: 100%;
+}
+
+.contact-info {
+	flex: 1;
+	min-width: 0;
+}
+
+.contact-identity {
+	font-weight: 600;
+	font-size: 14px;
+	color: #1f2937;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.contact-fingerprint {
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 11px;
+	color: #6b7280;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.contacts-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 12px;
+}
+
+.refresh-status {
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.refresh-status.success {
+	color: #10b981;
+}
+
+.refresh-status.error {
+	color: #ef4444;
+}
+
+/* ============================================================================
+   KEY MANAGEMENT MODAL
+   ============================================================================ */
+
+#key-manage-modal .modal-body {
+	margin-bottom: 0;
+}
+
+/* Default button style in modal for cancel-type buttons */
+#key-manage-modal
+	.modal-body
+	button:not(.primary):not(.danger):not(.btn-small):not(.copy-inline-btn):not(
+		.key-card-actions button
+	) {
+	background: #f3f4f6;
+	color: #374151;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	padding: 12px 16px;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+#key-manage-modal
+	.modal-body
+	button:not(.primary):not(.danger):not(.btn-small):not(.copy-inline-btn):not(
+		.key-card-actions button
+	):hover {
+	background: #e5e7eb;
+	border-color: #d1d5db;
 }

@@ -177,6 +177,19 @@ export function createMessagesModule({
 		if (thread.last_message_preview) bodyParts.push(thread.last_message_preview)
 		const body = bodyParts.join(' • ')
 
+		// Also send WhatsApp notification if configured
+		try {
+			const subject = thread.subject || 'New BioVault message'
+			const whatsappMsg = `📬 ${subject}\n${body}`
+			await invoke('whatsapp_send_notification', { message: whatsappMsg })
+			console.log('[Messages] WhatsApp notification sent')
+		} catch (error) {
+			// Silently ignore if WhatsApp not configured - that's expected
+			if (!error?.toString()?.includes('not configured')) {
+				console.warn('[Messages] WhatsApp notification failed', error)
+			}
+		}
+
 		const identifier = thread.thread_id || thread.subject || 'biovault-message'
 
 		// Try Tauri plugin (native) first

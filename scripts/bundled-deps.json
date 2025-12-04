@@ -1,0 +1,11 @@
+{
+	"java": {
+		"major": 25
+	},
+	"nextflow": {
+		"version": "v25.10.2"
+	},
+	"uv": {
+		"version": "v0.9.14"
+	}
+}

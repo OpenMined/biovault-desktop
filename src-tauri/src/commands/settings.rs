@@ -213,6 +213,11 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Internal function to load settings (callable from other modules)
+pub fn load_settings_internal() -> Result<Settings, String> {
+    get_settings()
+}
+
 #[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;

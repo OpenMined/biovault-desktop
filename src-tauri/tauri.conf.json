@@ -59,7 +59,14 @@
 			"minimumSystemVersion": "10.13"
 		},
 		"targets": ["app", "appimage", "dmg", "nsis"],
-		"resources": ["resources/syftbox/syftbox", "resources/templates/*"]
+		"resources": [
+			"resources/syftbox/syftbox",
+			"resources/templates/*",
+			"resources/bundled/README.txt",
+			"resources/bundled/java",
+			"resources/bundled/nextflow",
+			"resources/bundled/uv"
+		]
 	},
 	"plugins": {
 		"updater": {

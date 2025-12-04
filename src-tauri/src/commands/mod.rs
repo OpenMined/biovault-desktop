@@ -1,6 +1,7 @@
 pub mod dependencies;
 pub mod files;
 pub mod jupyter;
+pub mod key;
 pub mod logs;
 pub mod messages;
 pub mod notifications;
@@ -12,3 +13,4 @@ pub mod sessions;
 pub mod settings;
 pub mod sql;
 pub mod syftbox;
+pub mod whatsapp;
