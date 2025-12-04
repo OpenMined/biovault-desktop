@@ -263,6 +263,21 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Create placeholder resources (arm64 no-bundle build)
+        run: |
+          # Create placeholder directories and files for resources that tauri.conf.json expects
+          mkdir -p src-tauri/resources/syftbox
+          mkdir -p src-tauri/resources/bundled/java
+          mkdir -p src-tauri/resources/bundled/nextflow
+          mkdir -p src-tauri/resources/bundled/uv
+
+          # Create placeholder files
+          touch src-tauri/resources/syftbox/syftbox
+          echo "Placeholder - bundled deps not included in arm64 build" > src-tauri/resources/bundled/README.txt
+          touch src-tauri/resources/bundled/java/.placeholder
+          touch src-tauri/resources/bundled/nextflow/.placeholder
+          touch src-tauri/resources/bundled/uv/.placeholder
+
       - name: Setup AppImage tools
         run: |
           APPIMAGE_ARCH="aarch64"
