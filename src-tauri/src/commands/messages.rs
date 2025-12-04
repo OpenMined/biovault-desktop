@@ -105,6 +105,34 @@ pub fn list_message_threads(
                 .iter()
                 .any(|m| matches!(m.message_type, MessageType::Project { .. }));
 
+            // Detect session threads from metadata
+            let mut session_id: Option<String> = None;
+            let mut session_name: Option<String> = None;
+            for msg in &msgs {
+                if let Some(meta) = &msg.metadata {
+                    // Check for session_chat metadata
+                    if let Some(session_chat) = meta.get("session_chat") {
+                        if let Some(id) = session_chat.get("session_id").and_then(|v| v.as_str()) {
+                            session_id = Some(id.to_string());
+                        }
+                        if let Some(name) = session_chat.get("session_name").and_then(|v| v.as_str()) {
+                            session_name = Some(name.to_string());
+                        }
+                        break;
+                    }
+                    // Check for session_invite metadata
+                    if let Some(invite) = meta.get("session_invite") {
+                        if let Some(id) = invite.get("session_id").and_then(|v| v.as_str()) {
+                            session_id = Some(id.to_string());
+                        }
+                        if let Some(name) = invite.get("session_name").and_then(|v| v.as_str()) {
+                            session_name = Some(name.to_string());
+                        }
+                        break;
+                    }
+                }
+            }
+
             let mut participants: HashSet<String> = HashSet::new();
             for msg in &msgs {
                 if !msg.from.is_empty() {
@@ -140,6 +168,8 @@ pub fn list_message_threads(
                 last_message_at: Some(last_msg.created_at.to_rfc3339()),
                 last_message_preview: preview,
                 has_project,
+                session_id,
+                session_name,
             })
         })
         .collect();

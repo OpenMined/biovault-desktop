@@ -19,7 +19,6 @@ export function createMessagesModule({
 	const getActiveView = _getActiveView || (() => '')
 
 	let messageThreads = []
-	let messageFilter = 'inbox'
 	let activeThreadId = null
 	let messageReplyTargetId = null
 	let isComposingNewMessage = false
@@ -32,6 +31,7 @@ export function createMessagesModule({
 	let notificationPermission = 'default'
 	let messageSyncUnlisten = null
 	let notificationApiPromise = null
+	let searchTerm = ''
 
 	const AUTO_REFRESH_MS = 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
@@ -180,13 +180,6 @@ export function createMessagesModule({
 	// UI UPDATES
 	// ============================================================================
 
-	function setActiveMessageFilterButton(filter) {
-		messageFilter = filter
-		document.querySelectorAll('.msg-filter-btn, .message-filter').forEach((btn) => {
-			btn.classList.toggle('active', btn.dataset.filter === filter)
-		})
-	}
-
 	function collectParticipants(messages) {
 		const set = new Set()
 		messages.forEach((msg) => {
@@ -218,26 +211,20 @@ export function createMessagesModule({
 	}
 
 	function updateConnectionStatus() {
-		const dot = document.getElementById('msg-status-dot')
-		const indicator = document.getElementById('message-syftbox-indicator')
-		const dropdown = document.getElementById('message-syftbox-dropdown')
+		const toggle = document.getElementById('message-syftbox-toggle')
+		const statusWrapper = document.getElementById('msg-connection-wrapper')
 
 		const syftboxStatus = getSyftboxStatus()
 		const isOnline = syftboxStatus.running
 
-		if (dot) {
-			dot.classList.toggle('online', isOnline)
+		if (toggle) {
+			toggle.checked = isOnline
+			toggle.disabled = !messagesAuthorized
 		}
 
-		if (indicator) {
-			indicator.textContent = isOnline ? 'Online' : 'Offline'
-			indicator.classList.toggle('status-online', isOnline)
-			indicator.classList.toggle('status-offline', !isOnline)
-		}
-
-		if (dropdown) {
-			dropdown.value = isOnline ? 'online' : 'offline'
-			dropdown.disabled = !messagesAuthorized
+		// Add class to wrapper for enhanced styling
+		if (statusWrapper) {
+			statusWrapper.classList.toggle('is-online', isOnline)
 		}
 	}
 
@@ -316,47 +303,93 @@ export function createMessagesModule({
 
 	async function getNotificationApi() {
 		if (notificationApiPromise) return notificationApiPromise
-		notificationApiPromise = import('@tauri-apps/plugin-notification')
-			.then((mod) => mod)
-			.catch(() => null)
+		notificationApiPromise = (async () => {
+			// First try the dynamic import (preferred)
+			try {
+				const mod = await import('@tauri-apps/plugin-notification')
+				if (mod?.sendNotification) {
+					console.log('🔔 Using @tauri-apps/plugin-notification module')
+					return mod
+				}
+			} catch (err) {
+				console.log('🔔 Dynamic import failed, trying window.__TAURI__:', err?.message)
+			}
+
+			// Fallback to window.__TAURI__.notification (works in some setups)
+			if (typeof window !== 'undefined' && window.__TAURI__?.notification) {
+				console.log('🔔 Using window.__TAURI__.notification API')
+				return window.__TAURI__.notification
+			}
+
+			console.log('🔔 No Tauri notification API available')
+			return null
+		})()
 		return notificationApiPromise
 	}
 
 	async function ensureNotificationPermission() {
+		console.log('🔔 Checking notification permission...')
 		try {
 			const api = await getNotificationApi()
+			console.log('🔔 Tauri notification API:', {
+				available: !!api,
+				hasIsPermissionGranted: !!api?.isPermissionGranted,
+			})
 			if (api?.isPermissionGranted) {
 				const granted = await api.isPermissionGranted()
+				console.log('🔔 Tauri permission status:', granted)
 				if (granted) {
 					notificationPermission = 'granted'
 					return true
 				}
 				if (api.requestPermission) {
+					console.log('🔔 Requesting Tauri notification permission...')
 					const permission = await api.requestPermission()
+					console.log('🔔 Tauri permission response:', permission)
 					notificationPermission = permission
 					return permission === 'granted'
 				}
 			}
 		} catch (error) {
-			console.warn('Tauri notification permission failed', error)
+			console.warn('🔔 Tauri notification permission failed:', error)
 		}
 
-		if (typeof Notification === 'undefined') return false
-		if (notificationPermission === 'granted') return true
+		if (typeof Notification === 'undefined') {
+			console.log('🔔 Browser Notification API not available')
+			return false
+		}
+		if (notificationPermission === 'granted') {
+			console.log('🔔 Browser notification already granted')
+			return true
+		}
 
 		try {
+			console.log('🔔 Requesting browser notification permission...')
 			notificationPermission = await Notification.requestPermission()
+			console.log('🔔 Browser permission response:', notificationPermission)
 		} catch (error) {
+			console.error('🔔 Browser notification permission error:', error)
 			notificationPermission = 'denied'
 		}
 		return notificationPermission === 'granted'
 	}
 
 	async function showSystemNotification(thread) {
-		if (!thread) return
+		console.log('🔔 showSystemNotification called', {
+			thread_id: thread?.thread_id,
+			subject: thread?.subject,
+		})
+		if (!thread) {
+			console.log('🔔 No thread provided, skipping notification')
+			return
+		}
 
 		const granted = await ensureNotificationPermission()
-		if (!granted) return
+		console.log('🔔 Notification permission granted:', granted)
+		if (!granted) {
+			console.log('🔔 Permission not granted, skipping notification')
+			return
+		}
 
 		const participants = formatParticipants(thread.participants || [])
 		const bodyParts = []
@@ -374,22 +407,29 @@ export function createMessagesModule({
 
 		const identifier = thread.thread_id || thread.subject || 'biovault-message'
 
-		// Native notification
+		// AppleScript notification - most reliable in dev mode on macOS
+		// (Tauri plugin and mac-notification-sys both fail silently in dev mode)
+		const title = thread.subject || 'New message'
 		try {
-			const api = await getNotificationApi()
-			if (api?.sendNotification) {
-				await api.sendNotification({
-					title: thread.subject || 'New message',
-					body,
-					identifier,
-				})
+			console.log('🔔 Sending AppleScript notification...', { title, body })
+			await invoke('send_notification_applescript', { title, body })
+			console.log('🔔 AppleScript notification sent successfully')
+		} catch (err) {
+			console.log('🔔 AppleScript notification failed:', err)
+
+			// Fallback to mac-notification-sys (may work in production builds)
+			try {
+				console.log('🔔 Trying mac-notification-sys fallback...')
+				await invoke('send_native_notification', { title, body })
+				console.log('🔔 mac-notification-sys notification sent')
+			} catch (nativeErr) {
+				console.log('🔔 mac-notification-sys also failed:', nativeErr)
 			}
-		} catch (_) {
-			// Fallback to browser
 		}
 
 		// Browser notification for click handling
 		try {
+			console.log('🔔 Creating browser notification')
 			const notif = new Notification(thread.subject || 'New message', {
 				body,
 				tag: identifier,
@@ -404,8 +444,9 @@ export function createMessagesModule({
 				openThread(thread.thread_id)
 				notif.close()
 			}
-		} catch (_) {
-			// Ignore
+			console.log('🔔 Browser notification created')
+		} catch (err) {
+			console.error('🔔 Browser notification error:', err)
 		}
 	}
 
@@ -416,6 +457,7 @@ export function createMessagesModule({
 	async function handleIncomingMessageSync(payload = {}) {
 		const currentView = getActiveView?.() || ''
 		const emitToasts = currentView !== 'messages'
+		console.log('🔔 handleIncomingMessageSync:', { payload, currentView, emitToasts })
 
 		try {
 			await loadMessageThreads(true, { emitToasts })
@@ -429,16 +471,29 @@ export function createMessagesModule({
 
 	function setupMessageSyncListener() {
 		if (!listen || messageSyncUnlisten) return
+		console.log('🔔 Setting up message sync listener...')
 
 		listen('messages:rpc-activity', async ({ payload }) => {
+			console.log('🔔 messages:rpc-activity event received:', payload)
 			await handleIncomingMessageSync(payload)
 		})
 			.then((unlisten) => {
 				messageSyncUnlisten = unlisten
+				console.log('🔔 Message sync listener registered successfully')
 			})
 			.catch((error) => {
 				console.warn('Failed to register message sync listener', error)
 			})
+	}
+
+	function setupSearchListener() {
+		const searchInput = document.getElementById('msg-search')
+		if (!searchInput) return
+
+		searchInput.addEventListener('input', (e) => {
+			searchTerm = e.target.value.trim()
+			renderMessageThreads()
+		})
 	}
 
 	// ============================================================================
@@ -489,7 +544,21 @@ export function createMessagesModule({
 			stopMessagesAutoRefresh()
 		} else {
 			const syftboxStatus = getSyftboxStatus()
-			if (syftboxStatus.running) {
+			// Auto-connect to online if authorized but not currently running
+			if (!syftboxStatus.running) {
+				try {
+					// Attempt to start SyftBox client automatically
+					const status = await invoke('start_syftbox_client')
+					setSyftboxStatus(status)
+					if (status.running) {
+						startMessagesAutoRefresh(true)
+						ensureNotificationPermission()
+					}
+				} catch (error) {
+					console.warn('Auto-connect to SyftBox failed:', error)
+					// Continue without auto-connect, user can manually enable
+				}
+			} else {
 				startMessagesAutoRefresh(true)
 				ensureNotificationPermission()
 			}
@@ -541,6 +610,12 @@ export function createMessagesModule({
 	function updateThreadActivity(threads, emitToasts = true) {
 		const nextMap = new Map()
 		const canToast = emitToasts && hasActivityBaseline
+		console.log('🔔 updateThreadActivity:', {
+			emitToasts,
+			hasActivityBaseline,
+			canToast,
+			threadCount: threads?.length,
+		})
 
 		threads.forEach((thread) => {
 			if (!thread || !thread.thread_id) return
@@ -550,6 +625,12 @@ export function createMessagesModule({
 			if (!canToast) return
 			const previous = threadActivityMap.get(thread.thread_id) || 0
 			if (ts > previous) {
+				console.log('🔔 New activity detected for thread:', {
+					thread_id: thread.thread_id,
+					ts,
+					previous,
+					subject: thread.subject,
+				})
 				showSystemNotification(thread)
 			}
 		})
@@ -600,7 +681,7 @@ export function createMessagesModule({
 				await invoke('sync_messages')
 			}
 
-			const result = await invoke('list_message_threads', { filter: messageFilter })
+			const result = await invoke('list_message_threads', { filter: 'all' })
 			messageThreads = result || []
 
 			updateThreadActivity(messageThreads, emitToasts)
@@ -619,10 +700,21 @@ export function createMessagesModule({
 		const list = document.getElementById('message-list')
 		if (!list) return
 
-		if (messageThreads.length === 0) {
+		// Filter threads based on search term
+		const filteredThreads = searchTerm
+			? messageThreads.filter((thread) => {
+					const term = searchTerm.toLowerCase()
+					const subject = (thread.subject || '').toLowerCase()
+					const preview = (thread.last_message_preview || '').toLowerCase()
+					const participants = (thread.participants || []).join(' ').toLowerCase()
+					return subject.includes(term) || preview.includes(term) || participants.includes(term)
+				})
+			: messageThreads
+
+		if (filteredThreads.length === 0) {
 			list.innerHTML = `
 				<div class="message-thread-empty">
-					<p>No conversations yet</p>
+					<p>${searchTerm ? 'No matching conversations' : 'No conversations yet'}</p>
 				</div>
 			`
 			return
@@ -631,7 +723,7 @@ export function createMessagesModule({
 		list.innerHTML = ''
 		const currentUserEmail = getCurrentUserEmail()
 
-		messageThreads.forEach((thread) => {
+		filteredThreads.forEach((thread) => {
 			const item = document.createElement('div')
 			item.className = 'message-thread-item'
 
@@ -651,8 +743,8 @@ export function createMessagesModule({
 			const displayName = isSelfThread
 				? '📝 Note to Self'
 				: others.length > 0
-				? others.join(', ')
-				: participants.join(', ')
+					? others.join(', ')
+					: participants.join(', ')
 
 			const displaySubject =
 				thread.subject && thread.subject.trim().length > 0 ? thread.subject : NO_SUBJECT_PLACEHOLDER
@@ -660,6 +752,28 @@ export function createMessagesModule({
 			if (isSelfThread) {
 				item.classList.add('self-thread')
 			}
+			if (thread.session_id) {
+				item.classList.add('session-thread')
+			}
+
+			// Session badge takes priority if present
+			const sessionBadge = thread.session_id
+				? `<span class="message-thread-session" title="${escapeHtml(
+						thread.session_name || 'Session',
+					)}">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+						<circle cx="9" cy="7" r="4"></circle>
+						<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+						<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+					</svg>
+					Session
+				</span>`
+				: ''
+			const projectBadge =
+				!thread.session_id && thread.has_project
+					? '<span class="message-thread-project">Project</span>'
+					: ''
 
 			item.innerHTML = `
 				<div class="message-thread-top">
@@ -668,10 +782,11 @@ export function createMessagesModule({
 						thread.unread_count > 0
 							? `<span class="message-thread-unread">${
 									thread.unread_count > 9 ? '9+' : thread.unread_count
-							  }</span>`
+								}</span>`
 							: ''
 					}
-					${thread.has_project ? '<span class="message-thread-project">Project</span>' : ''}
+					${sessionBadge}
+					${projectBadge}
 				</div>
 				<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>
 				<div class="message-thread-preview">${escapeHtml(thread.last_message_preview || '')}</div>
@@ -693,145 +808,11 @@ export function createMessagesModule({
 		const conversation = document.getElementById('message-conversation')
 		if (!conversation) return
 
-		conversation.innerHTML = ''
-		const currentUserEmail = getCurrentUserEmail()
-
-		// Group consecutive messages from the same sender, with date awareness
-		const groups = []
-		let currentGroup = null
-		let lastDateKey = null
-
-		messages.forEach((msg, index) => {
-			const isOutgoing = emailsMatch(msg.from, currentUserEmail)
-			const isSelfMessage =
-				emailsMatch(msg.from, msg.to) ||
-				(emailsMatch(msg.from, currentUserEmail) && emailsMatch(msg.to, currentUserEmail))
-			const senderId = normalizeEmail(msg.from) || 'unknown'
-			const msgDateKey = getDateKey(msg.created_at)
-
-			// Start new group if sender changes, it's the first message, or date changes
-			const dateChanged = msgDateKey && lastDateKey && msgDateKey !== lastDateKey
-			const isFirstMessage = index === 0
-			if (!currentGroup || currentGroup.senderId !== senderId || dateChanged) {
-				currentGroup = {
-					senderId,
-					isOutgoing,
-					isSelfMessage,
-					messages: [],
-					dateKey: msgDateKey,
-					showDateSeparator: isFirstMessage || dateChanged,
-					dateLabel: formatDateSeparator(msg.created_at),
-				}
-				groups.push(currentGroup)
-			}
-
-			lastDateKey = msgDateKey
-			currentGroup.messages.push({ ...msg, index })
+		// Use the shared renderer with full features enabled
+		renderMessagesToContainer(conversation, messages, {
+			compact: false,
+			showSessionInvites: true,
 		})
-
-		// Render each group
-		groups.forEach((group, groupIndex) => {
-			// Date separator
-			if (group.showDateSeparator && group.dateLabel) {
-				const dateSep = document.createElement('div')
-				dateSep.className = 'message-date-separator'
-				dateSep.innerHTML = `<span>${escapeHtml(group.dateLabel)}</span>`
-				conversation.appendChild(dateSep)
-			}
-
-			const groupDiv = document.createElement('div')
-			groupDiv.className = `message-group${group.isOutgoing ? ' outgoing' : ' incoming'}${
-				group.isSelfMessage ? ' self-note' : ''
-			}`
-
-			// Group header (sender name) - only for incoming non-self messages
-			if (!group.isOutgoing && !group.isSelfMessage) {
-				const groupHeader = document.createElement('div')
-				groupHeader.className = 'message-group-header'
-				groupHeader.textContent = group.senderId
-				groupDiv.appendChild(groupHeader)
-			} else if (group.isSelfMessage && groupIndex === 0) {
-				const selfLabel = document.createElement('div')
-				selfLabel.className = 'message-self-label'
-				selfLabel.innerHTML = '<span>📝</span> Note to Self'
-				groupDiv.appendChild(selfLabel)
-			}
-
-			// Render messages in group
-			group.messages.forEach((msg, msgIndex) => {
-				const isFirst = msgIndex === 0
-				const isLast = msgIndex === group.messages.length - 1
-				const msgDiv = document.createElement('div')
-
-				let bubbleClass = 'message-bubble'
-				if (group.isOutgoing) bubbleClass += ' outgoing'
-				if (group.isSelfMessage) bubbleClass += ' self-note'
-				if (isFirst) bubbleClass += ' first'
-				if (isLast) bubbleClass += ' last'
-				if (!isFirst && !isLast) bubbleClass += ' middle'
-				msgDiv.className = bubbleClass
-
-				// Message body
-				const body = document.createElement('div')
-				body.className = 'message-bubble-body'
-				body.textContent = msg.body || ''
-				msgDiv.appendChild(body)
-
-				// Session invite
-				const invite = getSessionInviteFromMessage(msg)
-				if (invite) {
-					const inviteCard = document.createElement('div')
-					inviteCard.className = 'message-session-invite'
-
-					const metaParts = []
-					if (invite.from) metaParts.push(`From ${invite.from}`)
-					if (invite.created_at) metaParts.push(formatFullDateTime(invite.created_at))
-
-					inviteCard.innerHTML = `
-						<h5>📋 ${escapeHtml(invite.session_name)}</h5>
-						${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
-						${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
-					`
-
-					const actions = document.createElement('div')
-					actions.className = 'invite-actions'
-					const openBtn = document.createElement('button')
-					openBtn.textContent = 'Open Session'
-					openBtn.addEventListener('click', () => {
-						window.__SESSION_INVITE_TO_OPEN__ = invite.session_id
-						window.dispatchEvent(
-							new CustomEvent('session-invite-open', { detail: { sessionId: invite.session_id } }),
-						)
-						if (typeof window.navigateTo === 'function') {
-							window.navigateTo('sessions')
-						}
-					})
-					actions.appendChild(openBtn)
-					inviteCard.appendChild(actions)
-					msgDiv.appendChild(inviteCard)
-				}
-
-				// Timestamp - only show on last message of group
-				if (isLast && msg.created_at) {
-					const footer = document.createElement('div')
-					footer.className = 'message-bubble-meta'
-					footer.textContent = formatFullDateTime(msg.created_at)
-					msgDiv.appendChild(footer)
-				}
-
-				groupDiv.appendChild(msgDiv)
-			})
-
-			conversation.appendChild(groupDiv)
-		})
-
-		// Scroll to bottom smoothly
-		setTimeout(() => {
-			conversation.scrollTo({
-				top: conversation.scrollHeight,
-				behavior: 'smooth',
-			})
-		}, 50)
 	}
 
 	function renderProjectPanel(messages) {
@@ -998,6 +979,9 @@ export function createMessagesModule({
 			await loadMessageThreads(forceSync, { emitToasts: false })
 		}
 
+		// Setup search functionality
+		setupSearchListener()
+
 		messagesInitialized = true
 	}
 
@@ -1070,8 +1054,8 @@ export function createMessagesModule({
 	}
 
 	async function setSyftboxTarget(target) {
-		const dropdown = document.getElementById('message-syftbox-dropdown')
-		if (dropdown) dropdown.disabled = true
+		const toggle = document.getElementById('message-syftbox-toggle')
+		if (toggle) toggle.disabled = true
 
 		try {
 			if (target === 'online') {
@@ -1088,7 +1072,7 @@ export function createMessagesModule({
 			console.error('Failed to toggle SyftBox:', error)
 			alert(`Failed to ${target === 'online' ? 'connect' : 'disconnect'}: ${error}`)
 		} finally {
-			if (dropdown) dropdown.disabled = false
+			if (toggle) toggle.disabled = false
 		}
 
 		updateSyftboxIndicator()
@@ -1152,10 +1136,6 @@ export function createMessagesModule({
 		messageReplyTargetId = null
 	}
 
-	function getMessageFilter() {
-		return messageFilter
-	}
-
 	async function triggerTestNotification() {
 		await showSystemNotification({
 			thread_id: 'test-thread',
@@ -1167,6 +1147,179 @@ export function createMessagesModule({
 
 	// Initialize sync listener
 	setupMessageSyncListener()
+
+	// ============================================================================
+	// SHARED MESSAGE RENDERER (for embedding in other views like Sessions)
+	// ============================================================================
+
+	/**
+	 * Render messages to any container element (SHARED RENDERER)
+	 * Used by: Messages view, Session chat, and any future embedded message views
+	 *
+	 * @param {HTMLElement} container - The container element to render into
+	 * @param {Array} messages - Array of message objects
+	 * @param {Object} options - Rendering options
+	 * @param {boolean} options.compact - Use compact mode (no date separators, simpler styling)
+	 * @param {boolean} options.showSessionInvites - Show session invite cards (default: false in compact)
+	 * @param {string} options.currentUserEmail - Override current user email
+	 */
+	function renderMessagesToContainer(container, messages, options = {}) {
+		if (!container) return
+
+		const { compact = false, showSessionInvites = !compact, currentUserEmail: userEmail } = options
+		const currentUser = userEmail || getCurrentUserEmail()
+
+		container.innerHTML = ''
+
+		if (!messages || messages.length === 0) {
+			container.innerHTML = `<div class="msg-embedded-empty">No messages yet</div>`
+			return
+		}
+
+		// Group consecutive messages from the same sender, with date awareness
+		const groups = []
+		let currentGroup = null
+		let lastDateKey = null
+
+		messages.forEach((msg, index) => {
+			const isOutgoing = emailsMatch(msg.from, currentUser)
+			const isSelfMessage =
+				emailsMatch(msg.from, msg.to) ||
+				(emailsMatch(msg.from, currentUser) && emailsMatch(msg.to, currentUser))
+			const senderId = normalizeEmail(msg.from) || 'unknown'
+			const msgDateKey = getDateKey(msg.created_at)
+
+			const dateChanged = msgDateKey && lastDateKey && msgDateKey !== lastDateKey
+			const isFirstMessage = index === 0
+			if (!currentGroup || currentGroup.senderId !== senderId || (!compact && dateChanged)) {
+				currentGroup = {
+					senderId,
+					isOutgoing,
+					isSelfMessage,
+					messages: [],
+					dateKey: msgDateKey,
+					showDateSeparator: !compact && (isFirstMessage || dateChanged),
+					dateLabel: formatDateSeparator(msg.created_at),
+				}
+				groups.push(currentGroup)
+			}
+
+			lastDateKey = msgDateKey
+			currentGroup.messages.push({ ...msg, index })
+		})
+
+		// Render each group
+		groups.forEach((group, groupIndex) => {
+			// Date separator (only in non-compact mode)
+			if (group.showDateSeparator && group.dateLabel) {
+				const dateSep = document.createElement('div')
+				dateSep.className = 'message-date-separator'
+				dateSep.innerHTML = `<span>${escapeHtml(group.dateLabel)}</span>`
+				container.appendChild(dateSep)
+			}
+
+			const groupDiv = document.createElement('div')
+			groupDiv.className = `message-group${group.isOutgoing ? ' outgoing' : ' incoming'}${
+				group.isSelfMessage ? ' self-note' : ''
+			}${compact ? ' compact' : ''}`
+
+			// Group header (sender name) - only for incoming non-self messages
+			if (!compact && !group.isOutgoing && !group.isSelfMessage) {
+				const groupHeader = document.createElement('div')
+				groupHeader.className = 'message-group-header'
+				groupHeader.textContent = group.senderId
+				groupDiv.appendChild(groupHeader)
+			} else if (!compact && group.isSelfMessage && groupIndex === 0) {
+				// Self-note label (only in full mode, first group)
+				const selfLabel = document.createElement('div')
+				selfLabel.className = 'message-self-label'
+				selfLabel.innerHTML = '<span>📝</span> Note to Self'
+				groupDiv.appendChild(selfLabel)
+			}
+
+			// Render messages in group
+			group.messages.forEach((msg, msgIndex) => {
+				const isFirst = msgIndex === 0
+				const isLast = msgIndex === group.messages.length - 1
+				const msgDiv = document.createElement('div')
+
+				let bubbleClass = 'message-bubble'
+				if (group.isOutgoing) bubbleClass += ' outgoing'
+				if (group.isSelfMessage) bubbleClass += ' self-note'
+				if (compact) bubbleClass += ' compact'
+				if (isFirst) bubbleClass += ' first'
+				if (isLast) bubbleClass += ' last'
+				if (!isFirst && !isLast) bubbleClass += ' middle'
+				msgDiv.className = bubbleClass
+
+				// Message body
+				const body = document.createElement('div')
+				body.className = 'message-bubble-body'
+				body.textContent = msg.body || ''
+				msgDiv.appendChild(body)
+
+				// Session invite card (only if showSessionInvites is true)
+				if (showSessionInvites) {
+					const invite = getSessionInviteFromMessage(msg)
+					if (invite) {
+						const inviteCard = document.createElement('div')
+						inviteCard.className = 'message-session-invite'
+
+						const metaParts = []
+						if (invite.from) metaParts.push(`From ${invite.from}`)
+						if (invite.created_at) metaParts.push(formatFullDateTime(invite.created_at))
+
+						inviteCard.innerHTML = `
+							<h5>📋 ${escapeHtml(invite.session_name)}</h5>
+							${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
+							${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
+						`
+
+						const actions = document.createElement('div')
+						actions.className = 'invite-actions'
+						const openBtn = document.createElement('button')
+						openBtn.textContent = 'Open Session'
+						openBtn.addEventListener('click', () => {
+							window.__SESSION_INVITE_TO_OPEN__ = invite.session_id
+							window.dispatchEvent(
+								new CustomEvent('session-invite-open', {
+									detail: { sessionId: invite.session_id },
+								}),
+							)
+							if (typeof window.navigateTo === 'function') {
+								window.navigateTo('sessions')
+							}
+						})
+						actions.appendChild(openBtn)
+						inviteCard.appendChild(actions)
+						msgDiv.appendChild(inviteCard)
+					}
+				}
+
+				// Timestamp - show on last message of group
+				if (isLast && msg.created_at) {
+					const footer = document.createElement('div')
+					footer.className = 'message-bubble-meta'
+					if (compact) {
+						const date = new Date(msg.created_at)
+						footer.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+					} else {
+						footer.textContent = formatFullDateTime(msg.created_at)
+					}
+					msgDiv.appendChild(footer)
+				}
+
+				groupDiv.appendChild(msgDiv)
+			})
+
+			container.appendChild(groupDiv)
+		})
+
+		// Scroll to bottom
+		setTimeout(() => {
+			container.scrollTop = container.scrollHeight
+		}, 50)
+	}
 
 	// ============================================================================
 	// PUBLIC API
@@ -1181,16 +1334,16 @@ export function createMessagesModule({
 		sendCurrentMessage,
 		deleteMessage,
 		openThread,
-		setActiveMessageFilterButton,
 		setSyftboxTarget,
 		handleDeleteThread,
 		ensureMessagesAuthorizationAndStartNew,
 		updateComposeVisibilityPublic,
 		resetActiveThread,
-		getMessageFilter,
 		getMessagesInitialized: () => messagesInitialized,
 		getMessagesAuthorized: () => messagesAuthorized,
 		triggerTestNotification,
+		// Shared renderer for embedding in other views
+		renderMessagesToContainer,
 	}
 }
 

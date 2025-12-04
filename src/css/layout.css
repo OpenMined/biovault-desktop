@@ -14,18 +14,18 @@
    ============================================================================ */
 
 .page-header {
-	padding: 12px 24px;
+	padding: 16px 24px;
 	/* Account for macOS traffic lights when title is hidden */
-	padding-top: 32px;
+	/* padding-top: 38px; */
 	border-bottom: 1px solid #e2e8f0;
-	background: #ffffff;
+	background: linear-gradient(to bottom, #ffffff 0%, #fafbfc 100%);
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	flex-shrink: 0;
 	width: 100%;
-	min-height: 52px;
-	gap: 16px;
+	min-height: 64px;
+	gap: 20px;
 	/* Make header draggable on macOS */
 	-webkit-app-region: drag;
 }
@@ -34,34 +34,40 @@
 .page-header button,
 .page-header a,
 .page-header input,
-.page-header select {
+.page-header select,
+.page-header label {
 	-webkit-app-region: no-drag;
 }
 
 .page-header-left {
 	display: flex;
-	flex-direction: row;
-	align-items: center;
-	gap: 16px;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
 	text-align: left;
 	flex: 1;
 	min-width: 0;
-	flex-wrap: nowrap;
-	overflow: hidden;
 }
 
-.page-title,
-.page-titlemodern {
+/* Title row with optional count badge */
+.page-header-title-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.page-title {
 	font-family: var(--font-family, 'Rubik', sans-serif);
-	font-size: 20px;
+	font-size: 22px;
 	font-weight: 600;
-	color: #1e293b;
+	color: #0f172a;
 	margin: 0;
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	white-space: nowrap;
-	letter-spacing: -0.01em;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
 }
 
 .page-title svg {
@@ -71,14 +77,27 @@
 	flex-shrink: 0;
 }
 
-.page-eyebrow {
+/* Count badge next to title */
+.page-count-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 8px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border-radius: 12px;
 	font-family: var(--font-family, 'Rubik', sans-serif);
-	font-size: 11px;
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: #94a3b8;
-	margin: 0;
-	font-weight: 500;
+	font-size: 12px;
+	font-weight: 600;
+	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+}
+
+.page-count-badge.muted {
+	background: #e2e8f0;
+	color: #64748b;
+	box-shadow: none;
 }
 
 .page-subtitle {
@@ -87,40 +106,50 @@
 	color: #64748b;
 	margin: 0;
 	font-weight: 400;
+	line-height: 1.4;
+	max-width: 500px;
 }
 
+/* Stats row for multiple badges */
 .page-stats {
 	display: flex;
-	gap: 10px;
+	gap: 8px;
+	margin-top: 4px;
 	flex-wrap: wrap;
 }
 
 .stat-badge {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	gap: 6px;
-	padding: 5px 12px;
-	background: #f3f4f6;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
+	gap: 5px;
+	padding: 4px 10px;
+	background: #f1f5f9;
+	border: 1px solid #e2e8f0;
+	border-radius: 6px;
 	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	color: #475569;
-	font-weight: 600;
+	font-weight: 500;
 }
 
 .stat-badge svg {
-	width: 14px;
-	height: 14px;
+	width: 13px;
+	height: 13px;
 	flex-shrink: 0;
-	color: #10b981;
+	color: #64748b;
+}
+
+.stat-badge span:first-of-type {
+	font-weight: 600;
+	color: #334155;
 }
 
 .page-header-right {
 	display: flex;
-	gap: 10px;
+	gap: 8px;
 	flex-shrink: 0;
 	align-items: center;
+	padding-top: 2px;
 }
 
 .page-header-actions {
@@ -131,18 +160,111 @@
 }
 
 /* ============================================================================
-   SECONDARY BUTTONS IN HEADERS
+   HEADER SEARCH BAR
    ============================================================================ */
 
+.page-header-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.page-header-search svg {
+	position: absolute;
+	left: 12px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 15px;
+	height: 15px;
+	color: #94a3b8;
+	pointer-events: none;
+	z-index: 1;
+}
+
+.page-header-search input {
+	width: 220px;
+	height: 36px;
+	padding: 0 12px 0 38px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	color: #334155;
+	transition: all 0.15s ease;
+}
+
+.page-header-search input:focus {
+	outline: none;
+	background: #ffffff;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.page-header-search input::placeholder {
+	color: #94a3b8;
+}
+
+/* ============================================================================
+   UNIFIED BUTTON SYSTEM
+   ============================================================================ */
+
+/* Primary Button - Main action */
+.btn-primary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 16px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border: none;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+}
+
+.btn-primary:hover {
+	background: linear-gradient(135deg, #059669 0%, #047857 100%);
+	box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4);
+	transform: translateY(-1px);
+}
+
+.btn-primary:active {
+	transform: translateY(0);
+	box-shadow: 0 1px 2px rgba(16, 185, 129, 0.3);
+}
+
+.btn-primary svg {
+	width: 14px;
+	height: 14px;
+}
+
+.btn-primary:disabled {
+	background: #d1d5db;
+	color: #9ca3af;
+	cursor: not-allowed;
+	box-shadow: none;
+	transform: none;
+}
+
+/* Secondary Button - Secondary action */
 .btn-secondary {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	padding: 8px 14px;
+	height: 36px;
+	padding: 0 14px;
 	background: #ffffff;
 	color: #475569;
-	border: 1px solid #e5e7eb;
+	border: 1px solid #e2e8f0;
 	border-radius: 8px;
 	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 13px;
@@ -153,12 +275,142 @@
 }
 
 .btn-secondary:hover {
-	background: #f9fafb;
-	border-color: #d1d5db;
-	color: #374151;
+	background: #f8fafc;
+	border-color: #cbd5e1;
+	color: #334155;
+}
+
+.btn-secondary:active {
+	background: #f1f5f9;
 }
 
 .btn-secondary svg {
+	width: 14px;
+	height: 14px;
+	color: #64748b;
+}
+
+.btn-secondary:disabled {
+	background: #f8fafc;
+	color: #cbd5e1;
+	border-color: #e2e8f0;
+	cursor: not-allowed;
+}
+
+/* Ghost Button - Minimal styling */
+.btn-ghost {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 12px;
+	background: transparent;
+	color: #64748b;
+	border: none;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.btn-ghost:hover {
+	background: #f1f5f9;
+	color: #334155;
+}
+
+.btn-ghost svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* Small button variants */
+.btn-primary-small,
+.btn-secondary-small {
+	height: 32px;
+	padding: 0 12px;
+	font-size: 12px;
+	border-radius: 6px;
+}
+
+.btn-primary-small {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border: none;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+}
+
+.btn-primary-small:hover {
+	background: linear-gradient(135deg, #059669 0%, #047857 100%);
+	box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+}
+
+.btn-secondary-small {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: #ffffff;
+	color: #475569;
+	border: 1px solid #e2e8f0;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.btn-secondary-small:hover {
+	background: #f8fafc;
+	border-color: #cbd5e1;
+}
+
+/* Icon-only buttons */
+.btn-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	background: #ffffff;
+	color: #64748b;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.btn-icon:hover {
+	background: #f8fafc;
+	color: #334155;
+	border-color: #cbd5e1;
+}
+
+.btn-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+.btn-icon.btn-icon-small {
+	width: 32px;
+	height: 32px;
+	border-radius: 6px;
+}
+
+.btn-icon.btn-icon-small svg {
 	width: 14px;
 	height: 14px;
 }

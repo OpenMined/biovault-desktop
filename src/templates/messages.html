@@ -1,46 +1,81 @@
-<div class="view-container messages-view-container">
-	<!-- Minimal Header -->
-	<header class="page-header msg-header">
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
 		<div class="page-header-left">
-			<div class="msg-header-title">
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-				</svg>
+			<div class="page-header-title-row">
 				<h1 class="page-title">Messages</h1>
 			</div>
-			<div class="msg-connection-status" id="msg-connection-wrapper">
-				<span class="msg-status-dot" id="msg-status-dot"></span>
-				<span class="msg-status-text" id="message-syftbox-indicator">Offline</span>
-				<select id="message-syftbox-dropdown" class="msg-status-select">
-					<option value="online">Online</option>
-					<option value="offline">Offline</option>
-				</select>
-			</div>
+			<p class="page-subtitle">Secure peer-to-peer messaging</p>
 		</div>
 		<div class="page-header-right">
-			<button id="new-message-btn" class="msg-compose-btn">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-					<line x1="12" y1="5" x2="12" y2="19"></line>
-					<line x1="5" y1="12" x2="19" y2="12"></line>
-				</svg>
-				<span>New Message</span>
-			</button>
+			<div class="page-header-actions">
+				<div class="msg-connection-toggle" id="msg-connection-wrapper">
+					<input type="checkbox" id="message-syftbox-toggle" class="msg-toggle-input" />
+					<div class="msg-toggle-track">
+						<span class="msg-toggle-option" data-value="offline">Offline</span>
+						<span class="msg-toggle-option" data-value="online">Online</span>
+						<span class="msg-toggle-bubble"></span>
+					</div>
+				</div>
+				<button id="refresh-messages-btn" class="btn-secondary" title="Sync messages">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<polyline points="23 4 23 10 17 10"></polyline>
+						<polyline points="1 20 1 14 7 14"></polyline>
+						<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+					</svg>
+					<span>Sync</span>
+				</button>
+				<button id="new-message-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+					</svg>
+					Compose
+				</button>
+			</div>
 		</div>
 	</header>
 
 	<!-- Main Content -->
-	<div class="view-content msg-content">
+	<div class="view-content">
 		<!-- Authorization Warning -->
 		<div id="messages-syftbox-warning" class="msg-auth-warning" style="display: none">
 			<div class="msg-auth-card">
 				<div class="msg-auth-icon">
-					<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+					<svg
+						width="40"
+						height="40"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
 						<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
 						<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
 					</svg>
 				</div>
 				<h3>Connect to Start Messaging</h3>
-				<p>Authorize SyftBox to enable secure peer-to-peer messaging with your collaborators.</p>
+				<p>Authorize SyftBox to enable secure messaging.</p>
 				<button id="messages-auth-btn" class="msg-auth-btn">Connect SyftBox</button>
 			</div>
 		</div>
@@ -51,30 +86,24 @@
 			<aside class="msg-sidebar">
 				<div class="msg-sidebar-top">
 					<div class="msg-search-wrapper">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<circle cx="11" cy="11" r="8"></circle>
 							<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
 						</svg>
-						<input type="text" id="msg-search" placeholder="Search conversations..." class="msg-search-input" />
-					</div>
-					<div class="msg-filters">
-						<button class="msg-filter-btn active" data-filter="inbox">Inbox</button>
-						<button class="msg-filter-btn" data-filter="sent">Sent</button>
-						<button class="msg-filter-btn" data-filter="all">All</button>
+						<input type="text" id="msg-search" placeholder="Search..." class="msg-search-input" />
 					</div>
 				</div>
 				<div id="message-list" class="msg-thread-list">
 					<!-- Thread items rendered here -->
-				</div>
-				<div class="msg-sidebar-footer">
-					<button id="refresh-messages-btn" class="msg-refresh-btn">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<polyline points="23 4 23 10 17 10"></polyline>
-							<polyline points="1 20 1 14 7 14"></polyline>
-							<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-						</svg>
-						<span>Sync</span>
-					</button>
 				</div>
 			</aside>
 
@@ -92,10 +121,26 @@
 						</div>
 					</div>
 					<div class="msg-conv-actions">
-						<button id="delete-thread-btn" class="msg-action-btn msg-action-danger" style="display: none" title="Delete conversation">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<button
+							id="delete-thread-btn"
+							class="msg-action-btn msg-action-danger"
+							style="display: none"
+							title="Delete conversation"
+						>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
 								<polyline points="3 6 5 6 21 6"></polyline>
-								<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+								<path
+									d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+								></path>
 							</svg>
 						</button>
 					</div>
@@ -114,7 +159,7 @@
 							<input
 								type="email"
 								id="message-recipient-input"
-								placeholder="Enter recipient email..."
+								placeholder="recipient@example.com"
 								autocapitalize="off"
 								autocomplete="off"
 								autocorrect="off"
@@ -126,7 +171,7 @@
 							<input
 								type="text"
 								id="message-compose-subject"
-								placeholder="Add a subject..."
+								placeholder="Subject..."
 								autocapitalize="off"
 								autocomplete="off"
 								autocorrect="off"
@@ -137,15 +182,24 @@
 					<div class="msg-compose-main">
 						<textarea
 							id="message-compose-body"
-							placeholder="Write your message..."
+							placeholder="Type a message..."
 							rows="1"
 							autocapitalize="off"
 							autocomplete="off"
 							autocorrect="off"
 							spellcheck="false"
 						></textarea>
-						<button id="message-send-btn" class="msg-send-btn" title="Send message">
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+						<button id="message-send-btn" class="msg-send-btn" title="Send">
+							<svg
+								width="18"
+								height="18"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
 								<line x1="22" y1="2" x2="11" y2="13"></line>
 								<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
 							</svg>
@@ -153,13 +207,24 @@
 					</div>
 				</div>
 
-				<!-- Project Panel (collapsible) -->
+				<!-- Project Panel -->
 				<div id="message-project-panel" class="msg-project-panel" style="display: none">
 					<div class="msg-project-header">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path
+								d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+							></path>
 						</svg>
-						<span>Project Details</span>
+						<span>Project</span>
 					</div>
 					<div id="message-project-details" class="msg-project-body"></div>
 				</div>
@@ -169,28 +234,39 @@
 			<div id="messages-empty-state" class="msg-empty">
 				<div class="msg-empty-content">
 					<div class="msg-empty-icon">
-						<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+						<svg
+							width="48"
+							height="48"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
 							<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
 						</svg>
 					</div>
 					<h3>No conversation selected</h3>
-					<p>Choose a thread from the sidebar or start a new message</p>
+					<p>Select a thread or compose a new message</p>
 					<button id="msg-empty-compose" class="msg-empty-btn">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<line x1="12" y1="5" x2="12" y2="19"></line>
-							<line x1="5" y1="12" x2="19" y2="12"></line>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
 						</svg>
-						<span>New Message</span>
+						Compose
 					</button>
 				</div>
 			</div>
 		</div>
-	</div>
-
-	<!-- Hidden test buttons (dev only) -->
-	<div class="msg-dev-tools" style="display: none">
-		<button id="message-test-notification-btn">Test Notification</button>
-		<button id="message-native-test-btn">Native Test</button>
-		<button id="message-applescript-test-btn">AppleScript Test</button>
 	</div>
 </div>

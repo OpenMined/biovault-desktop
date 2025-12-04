@@ -33,12 +33,10 @@ export function setupEventHandlers({
 	// Messages
 	loadMessageThreads,
 	sendCurrentMessage,
-	setActiveMessageFilterButton,
-	resetActiveThread,
+	_resetActiveThread,
 	ensureMessagesAuthorizationAndStartNew,
 	handleDeleteThread,
 	setSyftboxTarget,
-	getMessageFilter,
 	getSyftboxStatus,
 	// Projects
 	showCreateProjectModal,
@@ -82,17 +80,6 @@ export function setupEventHandlers({
 	document.querySelectorAll('.file-table th[data-sort]').forEach((header) => {
 		header.addEventListener('click', () => {
 			setSortField(header.dataset.sort)
-		})
-	})
-
-	// Messages filter buttons
-	const messageFilterButtons = document.querySelectorAll('.message-filter, .msg-filter-btn')
-	messageFilterButtons.forEach((btn) => {
-		btn.addEventListener('click', () => {
-			if (btn.classList.contains('active')) return
-			setActiveMessageFilterButton(btn.dataset.filter)
-			resetActiveThread()
-			loadMessageThreads(false, { emitToasts: false })
 		})
 	})
 
@@ -196,17 +183,28 @@ export function setupEventHandlers({
 		sendMessageBtn.addEventListener('click', sendCurrentMessage)
 	}
 
-	// Messages - SyftBox dropdown
-	const syftboxDropdown = document.getElementById('message-syftbox-dropdown')
-	if (syftboxDropdown) {
-		syftboxDropdown.addEventListener('change', (event) => {
-			const target = event.target.value
+	// Messages - SyftBox toggle
+	const syftboxToggle = document.getElementById('message-syftbox-toggle')
+	if (syftboxToggle) {
+		syftboxToggle.addEventListener('change', (event) => {
+			const wantOnline = event.target.checked
 			const status = getSyftboxStatus()
-			if ((target === 'online' && status.running) || (target === 'offline' && !status.running)) {
+			// Skip if already in desired state
+			if ((wantOnline && status.running) || (!wantOnline && !status.running)) {
 				return
 			}
-			setSyftboxTarget(target)
+			setSyftboxTarget(wantOnline ? 'online' : 'offline')
 		})
+
+		// Allow clicking on the track to toggle
+		const toggleTrack = document.querySelector('.msg-toggle-track')
+		if (toggleTrack) {
+			toggleTrack.addEventListener('click', () => {
+				if (syftboxToggle.disabled) return
+				syftboxToggle.checked = !syftboxToggle.checked
+				syftboxToggle.dispatchEvent(new Event('change'))
+			})
+		}
 	}
 
 	// Messages - Auth button
@@ -248,8 +246,6 @@ export function setupEventHandlers({
 	if (deleteThreadBtn) {
 		deleteThreadBtn.addEventListener('click', handleDeleteThread)
 	}
-
-	setActiveMessageFilterButton(getMessageFilter())
 
 	// Done button (import results view)
 	const doneBtn = document.getElementById('done-btn')

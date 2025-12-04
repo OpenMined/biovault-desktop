@@ -598,7 +598,9 @@
 .view-mode-btn.active {
 	background: white;
 	color: #10b981;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.1),
+		0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .view-mode-btn svg {
@@ -710,7 +712,9 @@
 	overflow: hidden;
 	background: white;
 	border-radius: 12px;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.1),
+		0 1px 2px rgba(0, 0, 0, 0.06);
 	border: 1px solid #e2e8f0;
 	min-height: 0;
 }
@@ -790,7 +794,9 @@
 .header-filter-select:focus {
 	outline: none;
 	border-color: #10b981;
-	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15), 0 2px 4px rgba(16, 185, 129, 0.1);
+	box-shadow:
+		0 0 0 3px rgba(16, 185, 129, 0.15),
+		0 2px 4px rgba(16, 185, 129, 0.1);
 	background: white;
 }
 
@@ -831,7 +837,9 @@
 .header-search-input:focus {
 	outline: none;
 	border-color: #10b981;
-	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15), 0 2px 4px rgba(16, 185, 129, 0.1);
+	box-shadow:
+		0 0 0 3px rgba(16, 185, 129, 0.15),
+		0 2px 4px rgba(16, 185, 129, 0.1);
 	background: white;
 }
 
@@ -1554,8 +1562,8 @@
 		brightness(95%) contrast(95%);
 }
 
-/* Secondary Action Button - Blue (Run Pipeline) */
-.btn-secondary {
+/* Action Button - Blue (Run Pipeline, Queue actions) */
+.btn-action {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
@@ -1573,18 +1581,18 @@
 	font-family: inherit;
 }
 
-.btn-secondary:hover:not(:disabled) {
+.btn-action:hover:not(:disabled) {
 	background: #2563eb;
 	box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
 	transform: translateY(-1px);
 }
 
-.btn-secondary:active:not(:disabled) {
+.btn-action:active:not(:disabled) {
 	transform: translateY(0);
 	box-shadow: 0 1px 2px rgba(59, 130, 246, 0.2);
 }
 
-.btn-secondary:disabled {
+.btn-action:disabled {
 	background: #d1d5db;
 	color: #9ca3af;
 	cursor: not-allowed;
@@ -1593,12 +1601,12 @@
 	transform: none;
 }
 
-.btn-secondary:disabled img {
+.btn-action:disabled img {
 	filter: brightness(0) saturate(100%) invert(60%) sepia(0%) saturate(0%) hue-rotate(0deg)
 		brightness(95%) contrast(95%);
 }
 
-.btn-secondary img {
+.btn-action img {
 	filter: brightness(0) invert(1);
 	opacity: 0.95;
 }

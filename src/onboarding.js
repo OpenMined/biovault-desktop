@@ -517,7 +517,9 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${
+							dep.name
+						}</h3>
 						${
 							dep.website
 								? `
@@ -569,8 +571,8 @@ export function initOnboarding({
 					</div>
 
 					<div style="display: flex; gap: 8px;">
-						<button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+						<button id="reset-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Reset</button>
+						<button id="check-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Check Again</button>
 					</div>
 					<p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
 				</div>
@@ -759,7 +761,9 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${
+							dep.name
+						}</h3>
 						${
 							dep.website
 								? `
@@ -787,8 +791,8 @@ export function initOnboarding({
 					</div>
 
 					<div style="display: flex; gap: 8px; margin-bottom: 8px;">
-						<button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+						<button id="install-single-btn-${depIndex}" class="btn-primary" style="padding: 8px 16px; font-size: 12px; font-weight: 600;">Install</button>
+						<button id="check-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Check Again</button>
 					</div>
 					<p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
 				</div>
@@ -2145,7 +2149,9 @@ export function initOnboarding({
 							z-index: 99999;
 							font-family: monospace;
 						`
-						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${devModeInfo.biovault_home || 'default'} | Server: ${devModeInfo.server_url || 'none'}`
+						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${
+							devModeInfo.biovault_home || 'default'
+						} | Server: ${devModeInfo.server_url || 'none'}`
 						document.body.insertBefore(devBanner, document.body.firstChild)
 
 						// Adjust body padding to account for banner
@@ -2207,8 +2213,6 @@ export function initOnboarding({
 					console.error('❌ First onboarding step not found!')
 				}
 
-				// Update title
-				document.title = 'BioVault - Setup'
 				console.log('✅ Onboarding setup complete')
 			} else {
 				console.log('✅ User is already onboarded')

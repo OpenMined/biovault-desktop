@@ -46,6 +46,42 @@
 	border-color: #fecaca !important;
 }
 
+/* Danger button - red background with white text/icon */
+.btn-danger {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 14px;
+	background: #dc2626;
+	color: #ffffff;
+	border: 1px solid #dc2626;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.btn-danger:hover {
+	background: #b91c1c;
+	border-color: #b91c1c;
+}
+
+.btn-danger:active {
+	background: #991b1b;
+	border-color: #991b1b;
+}
+
+.btn-danger svg {
+	width: 14px;
+	height: 14px;
+	color: #ffffff;
+	stroke: #ffffff;
+}
+
 /* ============================================================================
    LOG VIEWER (Inline in Runs page)
    ============================================================================ */

@@ -4,11 +4,27 @@
 		<!-- Page Header -->
 		<header class="page-header">
 			<div class="page-header-left">
-				<h1 class="page-title">Pipelines</h1>
+				<div class="page-header-title-row">
+					<h1 class="page-title">Pipelines</h1>
+				</div>
+				<p class="page-subtitle">Multi-step workflows for data processing and analysis</p>
 			</div>
 			<div class="page-header-right">
 				<div class="page-header-actions">
-					<button id="create-pipeline-btn" class="btn-primary">+ New Pipeline</button>
+					<button id="create-pipeline-btn" class="btn-primary">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+						>
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						New Pipeline
+					</button>
 				</div>
 			</div>
 		</header>
@@ -36,7 +52,20 @@
 					</svg>
 					<h3>No pipelines yet</h3>
 					<p>Create your first pipeline to get started</p>
-					<button id="empty-create-pipeline-btn" class="btn-primary">+ New Pipeline</button>
+					<button id="empty-create-pipeline-btn" class="btn-primary">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+						>
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						New Pipeline
+					</button>
 				</div>
 			</div>
 		</div>
@@ -45,51 +74,58 @@
 	<!-- Pipeline Detail View (hidden by default) -->
 	<div id="pipeline-detail-view" style="display: none">
 		<header class="page-header">
-			<div class="header-left">
-				<button id="back-to-pipelines-btn" class="back-button-icon">
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
+			<div class="page-header-left">
+				<div class="page-header-title-row">
+					<button
+						id="back-to-pipelines-btn"
+						class="btn-icon btn-icon-small"
+						title="Back to pipelines"
 					>
-						<polyline points="15 18 9 12 15 6"></polyline>
-					</svg>
-				</button>
-				<div class="pipeline-header-info">
-					<h1 class="pipeline-detail-title" id="pipeline-detail-name">Pipeline Name</h1>
+						<svg
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<polyline points="15 18 9 12 15 6"></polyline>
+						</svg>
+					</button>
+					<h1 class="page-title" id="pipeline-detail-name">Pipeline Name</h1>
 				</div>
+				<p class="page-subtitle">Configure steps and run your pipeline</p>
 			</div>
-			<div class="pipeline-header-actions">
-				<button id="edit-pipeline-yaml-btn" class="btn-secondary">
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-					</svg>
-					Edit Pipeline
-				</button>
-				<button id="pipeline-detail-run" class="btn-run">
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2.5"
-					>
-						<polygon points="5 3 19 12 5 21 5 3"></polygon>
-					</svg>
-					Run Pipeline
-				</button>
+			<div class="page-header-right">
+				<div class="page-header-actions">
+					<button id="edit-pipeline-yaml-btn" class="btn-secondary">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+						</svg>
+						Edit
+					</button>
+					<button id="pipeline-detail-run" class="btn-primary">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+						>
+							<polygon points="5 3 19 12 5 21 5 3"></polygon>
+						</svg>
+						Run Pipeline
+					</button>
+				</div>
 			</div>
 		</header>
 
