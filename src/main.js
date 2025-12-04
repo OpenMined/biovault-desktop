@@ -20,7 +20,6 @@ import { createWhatsAppModule } from './whatsapp.js'
 import { createNetworkModule } from './network.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
-import { mountDebugBanner } from './debug-banner.js'
 
 const { open } = dialog
 const { listen } = event
@@ -168,13 +167,11 @@ const {
 	startMessagesAutoRefresh,
 	stopMessagesAutoRefresh,
 	sendCurrentMessage,
-	setActiveMessageFilterButton,
 	setSyftboxTarget,
 	handleDeleteThread,
 	ensureMessagesAuthorizationAndStartNew,
 	updateComposeVisibilityPublic,
 	resetActiveThread,
-	getMessageFilter,
 	getMessagesInitialized,
 	getMessagesAuthorized,
 } = messagesModule
@@ -391,9 +388,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 	initializeSessionsTab()
 	networkModule.init()
 
-	// Optional debug banner
-	await mountDebugBanner()
-
 	// Setup all event handlers
 	setupEventHandlers({
 		navigateTo,
@@ -426,12 +420,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 		jumpToNextIncompleteReview,
 		loadMessageThreads,
 		sendCurrentMessage,
-		setActiveMessageFilterButton,
 		resetActiveThread,
 		ensureMessagesAuthorizationAndStartNew,
 		handleDeleteThread,
 		setSyftboxTarget,
-		getMessageFilter,
 		getSyftboxStatus,
 		showCreateProjectModal,
 		hideCreateProjectModal,

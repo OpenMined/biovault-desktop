@@ -2,40 +2,41 @@
 	<!-- Page Header -->
 	<header class="page-header">
 		<div class="page-header-left">
-			<h1 class="page-title">Pipelines</h1>
-			<div class="page-stats">
-				<div class="stat-badge">
-					<svg
-						width="16"
-						height="16"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-					</svg>
-					<span id="pipelines-count">0</span> <span>Pipelines</span>
-				</div>
-				<div class="stat-badge">
-					<svg
-						width="16"
-						height="16"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-					</svg>
-					<span id="projects-count">0</span> <span>Projects</span>
-				</div>
+			<div class="page-header-title-row">
+				<h1 class="page-title">Pipelines</h1>
 			</div>
+			<p class="page-subtitle">Multi-step workflows and reusable computational projects</p>
 		</div>
 		<div class="page-header-right">
 			<div class="page-header-actions">
-				<button id="create-pipeline-btn" class="btn-primary-small">+ New Pipeline</button>
-				<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
+				<button id="create-pipeline-btn" class="btn-secondary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+					>
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					New Pipeline
+				</button>
+				<button id="create-project-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+					>
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					New Project
+				</button>
 			</div>
 		</div>
 	</header>
@@ -48,8 +49,8 @@
 				<div class="section-header">
 					<div class="section-title">
 						<svg
-							width="20"
-							height="20"
+							width="18"
+							height="18"
 							viewBox="0 0 24 24"
 							fill="none"
 							stroke="currentColor"
@@ -60,9 +61,22 @@
 							<line x1="8" y1="12" x2="16" y2="12" />
 						</svg>
 						<h3>Pipelines</h3>
-						<span class="section-count" id="pipelines-count">0</span>
+						<span class="section-count" id="pipelines-section-count">0</span>
 					</div>
-					<button id="create-pipeline-btn" class="btn-primary-small">+ New Pipeline</button>
+					<button id="create-pipeline-section-btn" class="btn-primary-small">
+						<svg
+							width="12"
+							height="12"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+						>
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						New Pipeline
+					</button>
 				</div>
 				<div class="section-description">Multi-step workflows that chain projects together</div>
 				<div class="pipelines-list" id="pipelines-list">
@@ -77,8 +91,8 @@
 				<div class="section-header">
 					<div class="section-title">
 						<svg
-							width="20"
-							height="20"
+							width="18"
+							height="18"
 							viewBox="0 0 24 24"
 							fill="none"
 							stroke="currentColor"
@@ -88,12 +102,37 @@
 							<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
 						</svg>
 						<h3>Projects</h3>
-						<span class="section-count" id="projects-count">0</span>
+						<span class="section-count" id="projects-section-count">0</span>
 					</div>
-					<div style="display: flex; gap: 8px">
-						<button id="create-project-btn" class="btn-primary-small">+ New Project</button>
+					<div class="section-actions">
 						<button id="import-folder-btn" class="btn-secondary-small" title="Import from Folder">
-							📁 Import
+							<svg
+								width="12"
+								height="12"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<path
+									d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+								></path>
+							</svg>
+							Import
+						</button>
+						<button id="create-project-section-btn" class="btn-primary-small">
+							<svg
+								width="12"
+								height="12"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2.5"
+							>
+								<line x1="12" y1="5" x2="12" y2="19"></line>
+								<line x1="5" y1="12" x2="19" y2="12"></line>
+							</svg>
+							New Project
 						</button>
 					</div>
 				</div>

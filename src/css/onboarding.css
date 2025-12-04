@@ -1,3 +1,7 @@
+/* ============================================================================
+   ONBOARDING VIEW - BioVault Desktop
+   ============================================================================ */
+
 .onboarding-view {
 	display: flex;
 	align-items: center;
@@ -14,106 +18,452 @@
 
 .onboarding-card {
 	background: white;
-	border-radius: 12px;
-	padding: 50px;
+	border-radius: 16px;
+	padding: 40px 48px;
 	max-width: 500px;
-	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
 }
 
 .onboarding-card h1 {
 	color: #10b981;
-	margin: 0 0 10px 0;
-	font-size: 36px;
+	margin: 0 0 12px 0;
+	font-size: 28px;
+	font-weight: 700;
 }
 
 .onboarding-card p {
-	color: #666;
-	margin: 0 0 30px 0;
-	font-size: 16px;
+	color: #6b7280;
+	margin: 0 0 24px 0;
+	font-size: 15px;
+	line-height: 1.5;
 }
 
-/* Key setup */
+/* ============================================================================
+   STEP HEADERS & LAYOUT
+   ============================================================================ */
+
+.onboarding-step-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
+	gap: 16px;
+}
+
+.onboarding-step-header h1 {
+	margin: 0;
+	font-size: 26px;
+}
+
+.onboarding-step-description {
+	margin-bottom: 20px;
+	font-size: 14px;
+	color: #6b7280;
+	line-height: 1.6;
+}
+
+/* ============================================================================
+   BUTTONS
+   ============================================================================ */
+
+.onboarding-btn {
+	padding: 12px 24px;
+	font-size: 14px;
+	font-weight: 600;
+	height: auto;
+	min-height: 44px;
+}
+
+.onboarding-btn-full {
+	width: 100%;
+	margin-bottom: 15px;
+}
+
+.onboarding-skip-btn {
+	width: auto !important;
+	min-width: 0;
+	padding: 8px 20px !important;
+	font-size: 13px !important;
+	font-weight: 500;
+}
+
+.onboarding-nav-buttons {
+	display: flex;
+	gap: 10px;
+	margin-top: 20px;
+}
+
+.onboarding-actions {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 15px;
+}
+
+.onboarding-actions-left {
+	display: flex;
+	gap: 10px;
+}
+
+/* ============================================================================
+   DEPENDENCIES PANELS
+   ============================================================================ */
+
+.onboarding-deps-panels {
+	display: flex;
+	gap: 15px;
+	margin-bottom: 20px;
+	height: 350px;
+}
+
+.onboarding-deps-list {
+	flex: 0 0 220px;
+	background: #f8f9fa;
+	padding: 15px;
+	border-radius: 8px;
+	overflow-y: auto;
+	border: 1px solid #e5e7eb;
+}
+
+.onboarding-deps-details {
+	flex: 1;
+	background: #fff;
+	border: 2px solid #10b981;
+	border-radius: 8px;
+	padding: 20px;
+	overflow-y: auto;
+}
+
+.onboarding-deps-placeholder {
+	text-align: center;
+	color: #9ca3af;
+	padding: 40px 20px;
+}
+
+.onboarding-loading {
+	text-align: center;
+	color: #9ca3af;
+	padding: 20px;
+}
+
+/* ============================================================================
+   FORM INPUTS
+   ============================================================================ */
+
+.onboarding-input {
+	width: 100%;
+	padding: 14px 16px;
+	border: 2px solid #e5e7eb;
+	border-radius: 10px;
+	font-size: 15px;
+	color: #1f2937;
+	background: white;
+	transition: all 0.2s ease;
+	font-family: inherit;
+}
+
+.onboarding-input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+.onboarding-input::placeholder {
+	color: #9ca3af;
+}
+
+.onboarding-textarea {
+	width: 100%;
+	padding: 12px 14px;
+	border-radius: 8px;
+	border: 1px solid #d1d5db;
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 13px;
+	resize: vertical;
+}
+
+.onboarding-textarea:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+.onboarding-validation-message {
+	margin-top: 8px;
+	font-size: 12px;
+	min-height: 16px;
+}
+
+/* ============================================================================
+   OTP / CODE INPUTS
+   ============================================================================ */
+
+.onboarding-otp-header {
+	text-align: center;
+	margin-bottom: 20px;
+}
+
+.onboarding-otp-email-row {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #6b7280;
+	margin-bottom: 10px;
+	gap: 8px;
+}
+
+.onboarding-otp-header p {
+	color: #6b7280;
+	font-size: 14px;
+	margin: 0;
+}
+
+.onboarding-otp-inputs {
+	display: flex;
+	justify-content: center;
+	gap: 8px;
+	margin-bottom: 20px;
+}
+
+.syftbox-code-input {
+	width: 44px;
+	height: 50px;
+	text-align: center;
+	border: 2px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 20px;
+	font-weight: 600;
+	transition: all 0.2s;
+	color: #1f2937;
+}
+
+.syftbox-code-input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+.syftbox-code-input.error {
+	border-color: #ef4444;
+	background: #fef2f2;
+}
+
+.syftbox-code-input.success {
+	border-color: #10b981;
+	background: #ecfdf5;
+}
+
+.onboarding-error-message {
+	color: #dc2626;
+	text-align: center;
+	margin-bottom: 15px;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.onboarding-resend {
+	text-align: center;
+}
+
+.onboarding-resend p {
+	font-size: 13px;
+	color: #6b7280;
+	margin-bottom: 8px;
+}
+
+/* ============================================================================
+   SYFTBOX INFO
+   ============================================================================ */
+
+.onboarding-syftbox-hero {
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(5, 150, 105, 0.12));
+	padding: 24px;
+	border-radius: 16px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	margin-bottom: 24px;
+}
+
+.onboarding-syftbox-info {
+	color: #4b5563;
+	font-size: 15px;
+	line-height: 1.6;
+	margin-bottom: 24px;
+}
+
+.onboarding-syftbox-info p {
+	margin-bottom: 16px;
+}
+
+.onboarding-syftbox-info a {
+	color: #10b981;
+	text-decoration: none;
+	font-weight: 600;
+}
+
+.onboarding-syftbox-info a:hover {
+	text-decoration: underline;
+}
+
+.onboarding-email-preview {
+	max-height: 55vh;
+	overflow-y: auto;
+	padding-right: 4px;
+	margin-bottom: 16px;
+}
+
+.onboarding-email-label {
+	color: #6b7280;
+	font-size: 13px;
+	margin-bottom: 12px;
+	text-align: center;
+	font-weight: 600;
+}
+
+.onboarding-email-image-wrap {
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(5, 150, 105, 0.1));
+	padding: 18px;
+	border-radius: 16px;
+	display: flex;
+	justify-content: center;
+}
+
+.onboarding-hint {
+	color: #6b7280;
+	font-size: 13px;
+	margin-bottom: 24px;
+}
+
+/* ============================================================================
+   INITIALIZING & LOG
+   ============================================================================ */
+
+.onboarding-init-status {
+	margin: 30px 0;
+	text-align: center;
+}
+
+.onboarding-init-status p {
+	color: #6b7280;
+	margin: 0;
+}
+
+.onboarding-log {
+	background: #0f172a;
+	color: #e5e7eb;
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 12px;
+	padding: 15px;
+	border-radius: 8px;
+	max-height: 300px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	margin-top: 20px;
+}
+
+/* ============================================================================
+   INSTALL MODAL
+   ============================================================================ */
+
+.onboarding-modal {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.7);
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.onboarding-modal-content {
+	background: white;
+	border-radius: 16px;
+	padding: 32px;
+	max-width: 600px;
+	width: 90%;
+}
+
+.onboarding-modal-content h2 {
+	margin: 0 0 20px 0;
+	color: #10b981;
+	font-size: 20px;
+}
+
+.onboarding-install-progress {
+	margin-bottom: 15px;
+}
+
+.onboarding-progress-track {
+	background: #e5e7eb;
+	border-radius: 4px;
+	height: 8px;
+	overflow: hidden;
+}
+
+.onboarding-progress-bar {
+	width: 0%;
+	background: #10b981;
+	height: 100%;
+	transition: width 0.3s;
+}
+
+.onboarding-install-progress p {
+	font-size: 14px;
+	color: #6b7280;
+	margin-top: 8px;
+}
+
+/* ============================================================================
+   KEY SETUP CARD
+   ============================================================================ */
+
 .key-card {
 	border: 1px solid #e5e7eb;
 	border-radius: 12px;
-	padding: 14px;
+	padding: 16px;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-	background: #fafafa;
+	gap: 14px;
+	background: #f8f9fa;
 }
 
 .key-card-left {
 	display: flex;
 	align-items: center;
-	gap: 12px;
+	gap: 14px;
 }
 
 .key-card-meta {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 3px;
 }
 
 .key-card-actions {
 	display: flex;
-	gap: 8px;
+	gap: 10px;
 	flex-wrap: wrap;
 }
 
 .key-card-actions button {
 	flex: 1;
 	min-width: 150px;
-	padding: 12px 16px;
-	background: #10b981;
-	color: white;
-	border: none;
-	border-radius: 6px;
-	font-size: 14px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: background 0.2s;
-}
-
-.key-card-actions button:hover {
-	background: #059669;
-}
-
-.key-card-actions button.danger {
-	background: #dc2626;
-}
-
-.key-card-actions button.danger:hover {
-	background: #b91c1c;
-}
-
-/* Generic .primary button class for key restore/confirm actions */
-button.primary {
-	background: #10b981;
-	color: white;
-	border: none;
-	border-radius: 6px;
-	padding: 12px 16px;
-	font-size: 14px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: background 0.2s;
-}
-
-button.primary:hover {
-	background: #059669;
 }
 
 .key-avatar {
 	width: 64px;
 	height: 64px;
 	border-radius: 12px;
-	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	background: linear-gradient(135deg, #ecfdf5, #d1fae5);
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	overflow: hidden;
-	border: 1px solid #e5e7eb;
+	border: 1px solid #a7f3d0;
 }
 
 .key-identity {
@@ -136,18 +486,95 @@ button.primary:hover {
 .key-warning {
 	color: #dc2626;
 	font-size: 12px;
+	margin-top: 10px;
+}
+
+/* ============================================================================
+   RECOVERY CODE
+   ============================================================================ */
+
+.onboarding-recovery-block {
+	margin-top: 16px;
+}
+
+.onboarding-recovery-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.onboarding-recovery-header label {
+	font-weight: 600;
+	color: #1f2937;
 }
 
 .recovery-box {
 	background: #0f172a;
 	color: #e5e7eb;
-	padding: 12px;
+	padding: 14px;
 	border-radius: 10px;
 	font-family: 'SF Mono', 'Menlo', monospace;
 	font-size: 13px;
 	white-space: pre-wrap;
 	word-break: break-word;
+	margin: 0;
 }
+
+.recovery-checkbox-label {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	margin-top: 12px;
+	cursor: pointer;
+}
+
+.recovery-checkbox-label input[type='checkbox'] {
+	margin-top: 2px;
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	accent-color: #10b981;
+}
+
+.recovery-checkbox-label span {
+	font-size: 13px;
+	color: #374151;
+	line-height: 1.4;
+}
+
+.onboarding-recovery-actions {
+	margin-top: 12px;
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+/* ============================================================================
+   RESTORE BLOCK
+   ============================================================================ */
+
+.onboarding-restore-block {
+	margin-top: 16px;
+}
+
+.onboarding-restore-block label {
+	font-weight: 600;
+	margin-bottom: 8px;
+	display: block;
+	color: #1f2937;
+}
+
+.onboarding-restore-actions {
+	margin-top: 10px;
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+/* ============================================================================
+   UTILITY BUTTONS
+   ============================================================================ */
 
 .copy-inline-btn {
 	background: transparent !important;
@@ -176,41 +603,21 @@ button.primary:hover {
 }
 
 .btn-small {
-	padding: 6px 12px !important;
+	padding: 8px 14px !important;
 	font-size: 12px !important;
 	width: auto !important;
 	min-width: 0 !important;
 	flex: 0 0 auto !important;
-	background: #e5e7eb;
+	background: #f3f4f6;
 	color: #374151;
-	border: none;
+	border: 1px solid #e5e7eb;
 	border-radius: 6px;
 	cursor: pointer;
 	transition: all 0.2s;
+	font-weight: 500;
 }
 
 .btn-small:hover {
-	background: #d1d5db;
-}
-
-.onboarding-skip-btn {
-	width: auto !important;
-	min-width: 0;
-	padding: 8px 20px !important;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 14px;
-	font-weight: 500;
-	background: none;
-	border: 1px solid #888;
-	color: #888;
-	border-radius: 6px;
-	cursor: pointer;
-	transition: all 0.2s;
-}
-
-.onboarding-skip-btn:hover {
-	border-color: #666;
-	color: #666;
+	background: #e5e7eb;
+	border-color: #d1d5db;
 }

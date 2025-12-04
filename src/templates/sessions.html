@@ -1,16 +1,48 @@
 <div class="view-container">
 	<!-- Page Header -->
-	<header class="page-header session-page-header">
+	<header class="page-header">
 		<div class="page-header-left">
-			<p class="page-eyebrow">Collaborative workspaces</p>
-			<h1 class="page-title">Sessions</h1>
-			<p class="page-subtitle">
-				Create Jupyter environments for collaborative data analysis with beaver.
-			</p>
+			<div class="page-header-title-row">
+				<h1 class="page-title">Sessions</h1>
+			</div>
+			<p class="page-subtitle">Collaborative Jupyter workspaces</p>
 		</div>
-		<div class="session-hero-actions">
-			<button id="refresh-sessions-btn" class="session-secondary">Refresh</button>
-			<button id="new-session-btn" class="session-cta">New Session</button>
+		<div class="page-header-right">
+			<div class="page-header-actions">
+				<button id="refresh-sessions-btn" class="btn-secondary" title="Refresh sessions">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<polyline points="23 4 23 10 17 10"></polyline>
+						<polyline points="1 20 1 14 7 14"></polyline>
+						<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+					</svg>
+					<span>Sync</span>
+				</button>
+				<button id="new-session-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					New
+				</button>
+			</div>
 		</div>
 	</header>
 
@@ -19,18 +51,9 @@
 		<div class="sessions-container">
 			<!-- Session List Sidebar -->
 			<div class="session-sidebar">
-				<div class="session-sidebar-header">
-					<div>
-						<p class="sidebar-label">Your Sessions</p>
-						<h3>Workspaces</h3>
-					</div>
-				</div>
 				<div class="session-invitations">
 					<div class="session-invitations-header">
-						<div>
-							<p class="sidebar-label">Invitations</p>
-							<h4>Pending</h4>
-						</div>
+						<p class="sidebar-label">Invitations</p>
 					</div>
 					<div id="session-invitations-list" class="session-invitations-list">
 						<div class="session-invitations-empty">No pending invitations</div>
@@ -98,17 +121,54 @@
 
 					<!-- Session Chat -->
 					<div class="session-chat-panel">
-						<h4>Session Chat</h4>
-						<div id="session-messages" class="session-messages">
-							<!-- Messages rendered here -->
+						<div class="session-chat-header">
+							<h4>Chat</h4>
+							<button
+								id="open-in-messages-btn"
+								class="session-link-btn"
+								title="Open full conversation in Messages"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+									<polyline points="15 3 21 3 21 9"></polyline>
+									<line x1="10" y1="14" x2="21" y2="3"></line>
+								</svg>
+								Open in Messages
+							</button>
+						</div>
+						<div id="session-messages" class="session-messages msg-embedded">
+							<!-- Messages rendered here using shared component -->
 						</div>
 						<div class="session-compose">
 							<textarea
 								id="session-message-input"
 								placeholder="Type a message..."
-								rows="2"
+								rows="1"
 							></textarea>
-							<button id="send-session-message-btn" class="session-cta">Send</button>
+							<button id="send-session-message-btn" class="session-send-btn" title="Send message">
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<line x1="22" y1="2" x2="11" y2="13"></line>
+									<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+								</svg>
+							</button>
 						</div>
 					</div>
 				</div>
@@ -118,7 +178,7 @@
 			<div id="sessions-empty-state" class="sessions-empty-state">
 				<div class="empty-state-content">
 					<h3>No session selected</h3>
-					<p>Select a session from the list or create a new one to get started.</p>
+					<p>Choose a session from the sidebar or create a new one</p>
 				</div>
 			</div>
 		</div>

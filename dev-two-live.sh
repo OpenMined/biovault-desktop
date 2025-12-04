@@ -184,6 +184,7 @@ launch_instance() {
     SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
     SYFTBOX_CONFIG_PATH="$config_path" \
     SYFTBOX_DATA_DIR="$data_dir" \
+    SYC_VAULT="$home/.syc" \
     BIOVAULT_DEBUG_BANNER=1 \
     bun run dev
   )

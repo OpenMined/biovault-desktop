@@ -87,8 +87,12 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 						}
 					</div>
 					<div class="session-invite-actions">
-						<button class="session-cta" data-action="accept-invite" data-session-id="${invite.session_id}">Accept</button>
-						<button class="session-secondary" data-action="reject-invite" data-session-id="${invite.session_id}">Decline</button>
+						<button class="session-cta" data-action="accept-invite" data-session-id="${
+							invite.session_id
+						}">Accept</button>
+						<button class="session-secondary" data-action="reject-invite" data-session-id="${
+							invite.session_id
+						}">Decline</button>
 					</div>
 				</div>
 			</div>
@@ -372,39 +376,48 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	async function loadSessionMessages(sessionId) {
 		try {
 			const messages = await invoke('get_session_chat_messages', { sessionId })
-			renderSessionMessages(messages)
+			renderSessionMessages(messages, sessionId)
 		} catch (error) {
 			console.error('Failed to load session messages:', error)
-			renderSessionMessages([])
+			renderSessionMessages([], sessionId)
 		}
 	}
 
-	function renderSessionMessages(messages) {
+	function renderSessionMessages(messages, _sessionId) {
 		const containerEl = document.getElementById('session-messages')
 		if (!containerEl) return
 
 		const currentUser = getCurrentUserEmail?.() || 'owner@local'
 
-		if (!messages || messages.length === 0) {
-			containerEl.innerHTML = '<div class="session-messages-empty">No messages yet</div>'
-			return
-		}
-
-		containerEl.innerHTML = messages
-			.map((msg) => {
-				const isOutgoing = msg.from === currentUser
-				return `
-				<div class="session-message ${isOutgoing ? 'outgoing' : ''}">
-					<div class="session-message-header">${escapeHtml(msg.from || 'Unknown')} - ${formatRelativeTime(
-						msg.created_at,
-					)}</div>
-					<div class="session-message-body">${escapeHtml(msg.body || '')}</div>
-				</div>
-			`
+		// Use shared renderer from messages module if available
+		if (window.__messagesModule?.renderMessagesToContainer) {
+			window.__messagesModule.renderMessagesToContainer(containerEl, messages, {
+				compact: true,
+				currentUserEmail: currentUser,
 			})
-			.join('')
+		} else {
+			// Fallback: simple rendering if messages module not loaded
+			if (!messages || messages.length === 0) {
+				containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
+				return
+			}
 
-		containerEl.scrollTop = containerEl.scrollHeight
+			containerEl.innerHTML = messages
+				.map((msg) => {
+					const isOutgoing = msg.from === currentUser
+					return `
+					<div class="message-group ${isOutgoing ? 'outgoing' : 'incoming'} compact">
+						<div class="message-bubble ${isOutgoing ? 'outgoing' : ''} compact">
+							<div class="message-bubble-body">${escapeHtml(msg.body || '')}</div>
+							<div class="message-bubble-meta">${formatRelativeTime(msg.created_at)}</div>
+						</div>
+					</div>
+				`
+				})
+				.join('')
+
+			containerEl.scrollTop = containerEl.scrollHeight
+		}
 	}
 
 	async function sendSessionMessage() {
@@ -666,6 +679,29 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 					e.preventDefault()
 					sendSessionMessage()
 				}
+			})
+		}
+
+		// Open in Messages button - navigates to the session thread in Messages view
+		const openInMessagesBtn = document.getElementById('open-in-messages-btn')
+		if (openInMessagesBtn) {
+			openInMessagesBtn.addEventListener('click', () => {
+				if (!activeSessionId) return
+				const session = sessions.find((s) => s.session_id === activeSessionId)
+				if (!session) return
+
+				// Navigate to Messages tab
+				if (typeof window.navigateTo === 'function') {
+					window.navigateTo('messages')
+				}
+
+				// After a short delay, open the session thread (messages module will find it by session_id)
+				setTimeout(() => {
+					if (window.__messagesModule) {
+						// Refresh messages and look for the session thread
+						window.__messagesModule.loadMessageThreads(true, { emitToasts: false })
+					}
+				}, 200)
 			})
 		}
 

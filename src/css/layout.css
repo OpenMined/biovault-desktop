@@ -1,97 +1,147 @@
-/* Legacy horizontal tabs (hidden by default - vertical sidebar is primary) */
-.tabs {
-	display: none;
-}
+/* ============================================================================
+   LAYOUT - BioVault Desktop
+   Clean, consistent page structure
+   ============================================================================ */
 
+/* Legacy horizontal tabs (hidden) */
+.tabs,
 .tab {
 	display: none;
 }
 
 /* ============================================================================
-   PAGE HEADERS - Consistent styling across all screens
+   PAGE HEADERS - Unified styling for all pages
    ============================================================================ */
 
 .page-header {
-	padding: 20px 32px;
-	border-bottom: 1px solid #e5e7eb;
+	padding: 16px 24px;
+	/* Account for macOS traffic lights when title is hidden */
+	/* padding-top: 38px; */
+	border-bottom: 1px solid #e2e8f0;
 	background: linear-gradient(to bottom, #ffffff 0%, #fafbfc 100%);
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	flex-shrink: 0;
 	width: 100%;
-	min-height: 72px;
-	gap: 24px;
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	min-height: 64px;
+	gap: 20px;
+	/* Make header draggable on macOS */
+	-webkit-app-region: drag;
+}
+
+/* Ensure buttons are clickable in draggable header */
+.page-header button,
+.page-header a,
+.page-header input,
+.page-header select,
+.page-header label {
+	-webkit-app-region: no-drag;
 }
 
 .page-header-left {
 	display: flex;
-	flex-direction: row;
-	align-items: center;
-	gap: 16px;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
 	text-align: left;
 	flex: 1;
 	min-width: 0;
-	flex-wrap: nowrap;
-	overflow: hidden;
 }
 
-.page-title {
-	font-size: 24px;
-	font-weight: 400;
-	color: #1f2937;
-	margin: 0;
+/* Title row with optional count badge */
+.page-header-title-row {
 	display: flex;
 	align-items: center;
 	gap: 12px;
+}
+
+.page-title {
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 22px;
+	font-weight: 600;
+	color: #0f172a;
+	margin: 0;
+	display: flex;
+	align-items: center;
+	gap: 10px;
 	white-space: nowrap;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
 }
 
 .page-title svg {
-	width: 28px;
-	height: 28px;
+	width: 22px;
+	height: 22px;
 	color: #10b981;
 	flex-shrink: 0;
 }
 
-.page-eyebrow {
-	font-size: 11px;
-	text-transform: uppercase;
-	letter-spacing: 0.12em;
-	color: #94a3b8;
-	margin: 0;
+/* Count badge next to title */
+.page-count-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 8px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border-radius: 12px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 12px;
+	font-weight: 600;
+	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+}
+
+.page-count-badge.muted {
+	background: #e2e8f0;
+	color: #64748b;
+	box-shadow: none;
 }
 
 .page-subtitle {
-	font-size: 14px;
-	color: #6b7280;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	color: #64748b;
 	margin: 0;
 	font-weight: 400;
+	line-height: 1.4;
+	max-width: 500px;
 }
 
+/* Stats row for multiple badges */
 .page-stats {
 	display: flex;
-	gap: 16px;
+	gap: 8px;
+	margin-top: 4px;
 	flex-wrap: wrap;
 }
 
 .stat-badge {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	gap: 8px;
-	padding: 6px 12px;
-	background: #f3f4f6;
+	gap: 5px;
+	padding: 4px 10px;
+	background: #f1f5f9;
+	border: 1px solid #e2e8f0;
 	border-radius: 6px;
-	font-size: 13px;
-	color: #4b5563;
-	font-weight: 600;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 12px;
+	color: #475569;
+	font-weight: 500;
 }
 
 .stat-badge svg {
-	width: 16px;
-	height: 16px;
+	width: 13px;
+	height: 13px;
 	flex-shrink: 0;
+	color: #64748b;
+}
+
+.stat-badge span:first-of-type {
+	font-weight: 600;
+	color: #334155;
 }
 
 .page-header-right {
@@ -99,20 +149,291 @@
 	gap: 8px;
 	flex-shrink: 0;
 	align-items: center;
-	flex-wrap: nowrap;
-	overflow: visible;
+	padding-top: 2px;
 }
 
 .page-header-actions {
 	display: flex;
 	align-items: center;
-	gap: 16px;
+	gap: 8px;
 	flex-wrap: nowrap;
 }
 
-.custom-extension {
-	margin-top: 10px;
+/* ============================================================================
+   HEADER SEARCH BAR
+   ============================================================================ */
+
+.page-header-search {
+	position: relative;
+	display: flex;
+	align-items: center;
 }
+
+.page-header-search svg {
+	position: absolute;
+	left: 12px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 15px;
+	height: 15px;
+	color: #94a3b8;
+	pointer-events: none;
+	z-index: 1;
+}
+
+.page-header-search input {
+	width: 220px;
+	height: 36px;
+	padding: 0 12px 0 38px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	color: #334155;
+	transition: all 0.15s ease;
+}
+
+.page-header-search input:focus {
+	outline: none;
+	background: #ffffff;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.page-header-search input::placeholder {
+	color: #94a3b8;
+}
+
+/* ============================================================================
+   UNIFIED BUTTON SYSTEM
+   ============================================================================ */
+
+/* Primary Button - Main action */
+.btn-primary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 16px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border: none;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+}
+
+.btn-primary:hover {
+	background: linear-gradient(135deg, #059669 0%, #047857 100%);
+	box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4);
+	transform: translateY(-1px);
+}
+
+.btn-primary:active {
+	transform: translateY(0);
+	box-shadow: 0 1px 2px rgba(16, 185, 129, 0.3);
+}
+
+.btn-primary svg {
+	width: 14px;
+	height: 14px;
+}
+
+.btn-primary:disabled {
+	background: #d1d5db;
+	color: #9ca3af;
+	cursor: not-allowed;
+	box-shadow: none;
+	transform: none;
+}
+
+/* Secondary Button - Secondary action */
+.btn-secondary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 14px;
+	background: #ffffff;
+	color: #475569;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.btn-secondary:hover {
+	background: #f8fafc;
+	border-color: #cbd5e1;
+	color: #334155;
+}
+
+.btn-secondary:active {
+	background: #f1f5f9;
+}
+
+.btn-secondary svg {
+	width: 14px;
+	height: 14px;
+	color: #64748b;
+}
+
+.btn-secondary:disabled {
+	background: #f8fafc;
+	color: #cbd5e1;
+	border-color: #e2e8f0;
+	cursor: not-allowed;
+}
+
+/* Ghost Button - Minimal styling */
+.btn-ghost {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 12px;
+	background: transparent;
+	color: #64748b;
+	border: none;
+	border-radius: 8px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.btn-ghost:hover {
+	background: #f1f5f9;
+	color: #334155;
+}
+
+.btn-ghost svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* Small button variants */
+.btn-primary-small,
+.btn-secondary-small {
+	height: 32px;
+	padding: 0 12px;
+	font-size: 12px;
+	border-radius: 6px;
+}
+
+.btn-primary-small {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	color: #ffffff;
+	border: none;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+	box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+}
+
+.btn-primary-small:hover {
+	background: linear-gradient(135deg, #059669 0%, #047857 100%);
+	box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+}
+
+.btn-secondary-small {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: #ffffff;
+	color: #475569;
+	border: 1px solid #e2e8f0;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.btn-secondary-small:hover {
+	background: #f8fafc;
+	border-color: #cbd5e1;
+}
+
+/* Icon-only buttons */
+.btn-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	background: #ffffff;
+	color: #64748b;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.btn-icon:hover {
+	background: #f8fafc;
+	color: #334155;
+	border-color: #cbd5e1;
+}
+
+.btn-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+.btn-icon.btn-icon-small {
+	width: 32px;
+	height: 32px;
+	border-radius: 6px;
+}
+
+.btn-icon.btn-icon-small svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* ============================================================================
+   VIEW CONTENT AREAS
+   ============================================================================ */
+
+.view-content {
+	flex: 1;
+	overflow-y: auto;
+	background: #f8fafc;
+	min-height: 0;
+}
+
+/* Standard content padding */
+.view-content > div:first-child {
+	padding: 16px 20px;
+}
+
+/* ============================================================================
+   LOADING ANIMATIONS
+   ============================================================================ */
 
 @keyframes progress-indeterminate {
 	0% {
@@ -123,10 +444,46 @@
 	}
 }
 
-.highlight {
-	background: yellow;
-	font-weight: bold;
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
 }
+
+@keyframes spin {
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(360deg);
+	}
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+.highlight {
+	background: rgba(16, 185, 129, 0.1);
+	color: #059669;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-weight: 600;
+}
+
+.ellipsis {
+	display: block;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ============================================================================
+   TABLE BASE STYLES
+   ============================================================================ */
 
 table {
 	width: 100%;
@@ -134,65 +491,42 @@ table {
 	background: white;
 }
 
+.sortable-header,
 .sortable-files-header {
 	cursor: pointer;
 	user-select: none;
 }
 
-.sortable-files-header .sort-indicator {
+.sort-indicator {
 	font-size: 10px;
+	margin-left: 4px;
 }
 
-.delete-btn {
-	padding: 8px 16px;
-	background: #dc3545;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 13px;
-}
-
-.delete-btn:hover {
-	background: #c82333;
-}
-
-.open-folder-btn {
-	padding: 8px 16px;
-	background: #17a2b8;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 13px;
-	margin-left: 10px;
-}
-
-.open-folder-btn:hover {
-	background: #138496;
-}
+/* ============================================================================
+   COLUMN DEFINITIONS
+   ============================================================================ */
 
 .col-checkbox {
 	width: 40px;
 	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .col-filename {
 	width: 180px;
 	min-width: 100px;
 }
-
 .col-extension {
 	width: 60px;
 	min-width: 50px;
 	flex-shrink: 0;
 }
-
 .col-participant {
 	width: 150px;
 	min-width: 100px;
 }
-
 .col-actions {
 	width: 40px;
 	flex-shrink: 0;
@@ -207,82 +541,102 @@ table {
 	cursor: col-resize;
 	background: transparent;
 	z-index: 2;
+	transition: background 0.15s ease;
 }
 
-.column-resizer:hover {
-	background: #0066cc;
-}
-
+.column-resizer:hover,
 .column-resizer.resizing {
-	background: #0066cc;
+	background: #10b981;
 }
 
-.col-checkbox {
-	display: flex;
-	align-items: center;
-	justify-content: center;
+/* ============================================================================
+   ACTION BUTTONS
+   ============================================================================ */
+
+.delete-btn {
+	padding: 8px 14px;
+	background: #ef4444;
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	transition: all 0.15s ease;
 }
 
-.col-participant {
-	padding: 0 !important;
+.delete-btn:hover {
+	background: #dc2626;
+}
+
+.open-folder-btn {
+	padding: 8px 14px;
+	background: #0ea5e9;
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	margin-left: 8px;
+	transition: all 0.15s ease;
+}
+
+.open-folder-btn:hover {
+	background: #0284c7;
 }
 
 .show-in-folder-btn {
-	padding: 4px 8px;
-	background: #f0f0f0;
-	border: 1px solid #ddd;
-	border-radius: 4px;
+	padding: 6px 10px;
+	background: #f8fafc;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
 	cursor: pointer;
-	font-size: 16px;
-	transition: background 0.2s;
+	font-size: 14px;
+	transition: all 0.15s ease;
 }
 
 .show-in-folder-btn:hover {
-	background: #e0e0e0;
+	background: #f1f5f9;
+	border-color: #d1d5db;
 }
 
-.show-in-folder-btn:active {
-	background: #d0d0d0;
-}
-
-h3 {
-	margin-bottom: 15px;
-}
+/* ============================================================================
+   STATUS BADGES
+   ============================================================================ */
 
 .status-online {
-	background: #e6f4ea;
-	color: #1e7d34;
-	padding: 4px 10px;
+	background: rgba(16, 185, 129, 0.1);
+	color: #059669;
+	padding: 4px 12px;
 	border-radius: 999px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	font-weight: 600;
 }
 
 .status-offline {
-	background: #fdecea;
-	color: #b33a3a;
-	padding: 4px 10px;
+	background: rgba(239, 68, 68, 0.1);
+	color: #dc2626;
+	padding: 4px 12px;
 	border-radius: 999px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	font-weight: 600;
 }
 
-@keyframes spin {
-	0% {
-		transform: rotate(0deg);
-	}
-
-	100% {
-		transform: rotate(360deg);
-	}
-}
+/* ============================================================================
+   SPINNERS
+   ============================================================================ */
 
 .spinner {
 	display: inline-block;
 	width: 14px;
 	height: 14px;
-	border: 2px solid rgba(255, 255, 255, 0.3);
-	border-top: 2px solid white;
+	border: 2px solid rgba(16, 185, 129, 0.2);
+	border-top: 2px solid #10b981;
 	border-radius: 50%;
 	animation: spin 0.6s linear infinite;
 	margin-right: 8px;
@@ -292,45 +646,127 @@ h3 {
 .queue-spinner {
 	width: 14px;
 	height: 14px;
-	border: 2px solid rgba(255, 255, 255, 0.35);
+	border: 2px solid rgba(255, 255, 255, 0.3);
 	border-top: 2px solid white;
 	border-radius: 50%;
 	animation: spin 0.6s linear infinite;
 }
 
+/* ============================================================================
+   DANGER ZONE
+   ============================================================================ */
+
 .danger-zone {
-	margin-top: 40px;
+	margin-top: 32px;
 	padding: 20px;
-	background: #fff5f5;
-	border: 2px solid #feb2b2;
-	border-radius: 8px;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 12px;
 }
 
 .danger-zone h3 {
-	color: #c53030;
-	margin: 0 0 10px 0;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	color: #dc2626;
+	margin: 0 0 8px 0;
+	font-weight: 600;
+	font-size: 15px;
 }
 
 .danger-zone p {
-	color: #742a2a;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	color: #991b1b;
 	font-size: 13px;
-	margin-bottom: 15px;
+	margin-bottom: 16px;
 }
 
 .danger-btn {
-	background: #dc3545 !important;
+	background: #ef4444 !important;
+	color: white !important;
 }
 
 .danger-btn:hover {
-	background: #c82333 !important;
+	background: #dc2626 !important;
 }
 
-.ellipsis {
-	display: block;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	font-size: 13px;
+/* ============================================================================
+   HEADINGS
+   ============================================================================ */
+
+h3 {
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	margin-bottom: 12px;
+	font-weight: 600;
+	color: #1e293b;
 }
 
-/* Button styles moved to buttons.css for consistency */
+/* ============================================================================
+   EMPTY STATES
+   ============================================================================ */
+
+.empty-state,
+.files-empty-state,
+.pipelines-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 48px 24px;
+	text-align: center;
+	color: #64748b;
+}
+
+.empty-state svg,
+.files-empty-state svg,
+.pipelines-empty-state svg {
+	margin-bottom: 16px;
+	color: #cbd5e1;
+}
+
+.empty-state h3,
+.files-empty-state h3,
+.pipelines-empty-state h3 {
+	font-size: 16px;
+	font-weight: 600;
+	color: #475569;
+	margin: 0 0 8px 0;
+}
+
+.empty-state p,
+.files-empty-state p,
+.pipelines-empty-state p {
+	font-size: 14px;
+	color: #94a3b8;
+	margin: 0;
+}
+
+/* ============================================================================
+   CARDS
+   ============================================================================ */
+
+.card {
+	background: #ffffff;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 16px;
+}
+
+.card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+
+.card-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: #1e293b;
+}
+
+/* ============================================================================
+   CUSTOM CONTENT PADDING OVERRIDES
+   ============================================================================ */
+
+.custom-extension {
+	margin-top: 10px;
+}

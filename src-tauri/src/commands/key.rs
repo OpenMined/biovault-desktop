@@ -79,39 +79,14 @@ pub async fn key_generate(
     let email = resolve_email(email.as_deref(), &config)?;
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
 
-    // If force is true, delete ALL existing key and bundle files to avoid "multiple identities" error
-    if force.unwrap_or(false) {
-        let keys_dir = vault_path.join("keys");
-        let bundles_dir = vault_path.join("bundles");
-
-        // Remove all key files
-        if keys_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&keys_dir) {
-                for entry in entries.flatten() {
-                    if entry
-                        .path()
-                        .extension()
-                        .map(|e| e == "key")
-                        .unwrap_or(false)
-                    {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
-                }
-            }
-        }
-
-        // Remove all bundle files (except imported contacts)
-        // Only remove files that match our identity pattern
-        let slug = syftbox_sdk::sanitize_identity(&email);
-        let bundle_path = bundles_dir.join(format!("{slug}.json"));
-        if bundle_path.exists() {
-            let _ = std::fs::remove_file(&bundle_path);
-        }
-    }
-
-    let outcome =
-        biovault::syftbox::syc::provision_local_identity(&email, &data_root, Some(&vault_path))
-            .map_err(|e| format!("failed to generate identity: {e}"))?;
+    let overwrite = force.unwrap_or(false);
+    let outcome = biovault::syftbox::syc::provision_local_identity_with_options(
+        &email,
+        &data_root,
+        Some(&vault_path),
+        overwrite,
+    )
+    .map_err(|e| format!("failed to generate identity: {e}"))?;
     let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
     Ok(KeyOperationResult {
@@ -156,14 +131,16 @@ fn resolve_email<'a>(
     config: &'a biovault::config::Config,
 ) -> Result<String, String> {
     if let Some(e) = email {
-        if !e.trim().is_empty() {
-            return Ok(e.trim().to_string());
+        let trimmed = e.trim();
+        if !trimmed.is_empty() && trimmed != "setup@pending" {
+            return Ok(trimmed.to_string());
         }
     }
-    if !config.email.trim().is_empty() {
+    let config_email = config.email.trim();
+    if !config_email.is_empty() && config_email != "setup@pending" {
         return Ok(config.email.clone());
     }
-    Err("email is required".to_string())
+    Err("email is required (setup not complete)".to_string())
 }
 
 fn resolve_paths(

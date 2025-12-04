@@ -1,135 +1,138 @@
 <div class="view-container">
-	<!-- Page Header - Clean & Intuitive -->
-	<header class="page-headermodern">
-		<!-- Single Row: Title, Search & Actions -->
-		<div class="header-inline-row">
-			<!-- Left: Title & File Count -->
-			<div class="header-title-section">
-				<h1 class="page-titlemodern">Data</h1>
-				<span id="file-countmodern" class="file-count-badge">0 files</span>
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<div class="page-header-title-row">
+				<h1 class="page-title">Data</h1>
+				<span id="file-count" class="page-count-badge">0</span>
+			</div>
+			<p class="page-subtitle">Imported genotype files and analysis results</p>
+		</div>
+		<div class="page-header-right">
+			<!-- Search -->
+			<div class="page-header-search">
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<circle cx="11" cy="11" r="8"></circle>
+					<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+				</svg>
+				<input type="text" id="file-search" placeholder="Search files..." />
 			</div>
 
-			<!-- Center: Search -->
-			<div class="header-search-section">
-				<div class="search-group">
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-iconmodern">
+			<!-- Selection Actions (hidden by default) -->
+			<div class="selection-actionsmodern" style="display: none" id="selection-actions-group">
+				<span class="selection-count-text" id="selection-count-text">0</span>
+				<button
+					id="delete-selected-btn"
+					class="btn-icon btn-icon-small"
+					title="Delete selected files"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<polyline points="3 6 5 6 21 6"></polyline>
 						<path
-							d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"
-							stroke="currentColor"
-							stroke-width="1.2"
-							fill="none"
-						/>
+							d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+						></path>
 					</svg>
-					<input
-						type="text"
-						id="file-search"
-						class="search-inputmodern"
-						placeholder="Search files or participants..."
-					/>
-				</div>
+				</button>
 			</div>
 
-			<!-- Right: Actions -->
-			<div class="header-actions-section">
-				<!-- Selection Count & Delete -->
-				<div class="selection-actionsmodern" style="display: none" id="selection-actions-group">
-					<span class="selection-count-text" id="selection-count-text">0</span>
-					<button id="delete-selected-btn" class="btn-deletemodern" title="Delete selected files">
-						<img src="assets/icons/trash.svg" width="16" height="16" alt="Delete" />
-					</button>
-				</div>
-
-				<!-- Queue Controls -->
-				<div class="queue-cardmodern" id="queue-card-container" style="display: none">
-					<button id="process-queue-btn" class="queue-control-btn" title="Toggle queue processing">
-						<span id="queue-btn-icon-container" class="queue-icon-wrapper"></span>
-						<span id="queue-btn-text" class="queue-btn-label">Resume</span>
-					</button>
-					<div class="queue-statusmodern" id="queue-status-indicator" style="display: none">
-						<div class="queue-status-content">
-							<span
-								id="queue-spinner-container"
-								class="queue-spinner-wrapper"
-								style="display: none"
-							>
-								<svg width="12" height="12" viewBox="0 0 24 24" class="queue-spinner-svg">
-									<circle
-										cx="12"
-										cy="12"
-										r="10"
-										stroke="currentColor"
-										stroke-width="2"
-										fill="none"
-										opacity="0.25"
-									/>
-									<path
-										d="M12 2 A10 10 0 0 1 22 12"
-										stroke="currentColor"
-										stroke-width="2"
-										fill="none"
-										stroke-linecap="round"
-									/>
-								</svg>
-							</span>
-							<span id="pending-count" class="queue-count">0</span>
-							<span class="queue-time-estimate" id="queue-time-estimate-display"></span>
-						</div>
+			<!-- Queue Controls -->
+			<div class="queue-cardmodern" id="queue-card-container" style="display: none">
+				<button id="process-queue-btn" class="btn-action" title="Toggle queue processing">
+					<span id="queue-btn-icon-container" class="queue-icon-wrapper"></span>
+					<span id="queue-btn-text" class="queue-btn-label">Resume</span>
+				</button>
+				<div class="queue-statusmodern" id="queue-status-indicator" style="display: none">
+					<div class="queue-status-content">
+						<span id="queue-spinner-container" class="queue-spinner-wrapper" style="display: none">
+							<svg width="12" height="12" viewBox="0 0 24 24" class="queue-spinner-svg">
+								<circle
+									cx="12"
+									cy="12"
+									r="10"
+									stroke="currentColor"
+									stroke-width="2"
+									fill="none"
+									opacity="0.25"
+								/>
+								<path
+									d="M12 2 A10 10 0 0 1 22 12"
+									stroke="currentColor"
+									stroke-width="2"
+									fill="none"
+									stroke-linecap="round"
+								/>
+							</svg>
+						</span>
+						<span id="pending-count" class="queue-count">0</span>
+						<span class="queue-time-estimate" id="queue-time-estimate-display"></span>
 					</div>
-					<button
-						id="clear-queue-btn"
-						class="queue-clear-btn"
-						title="Clear all pending files"
-						style="display: none"
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<line x1="18" y1="6" x2="6" y2="18"></line>
-							<line x1="6" y1="6" x2="18" y2="18"></line>
-						</svg>
-					</button>
 				</div>
+				<button
+					id="clear-queue-btn"
+					class="btn-icon btn-icon-small"
+					title="Clear all pending files"
+					style="display: none"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<line x1="18" y1="6" x2="6" y2="18"></line>
+						<line x1="6" y1="6" x2="18" y2="18"></line>
+					</svg>
+				</button>
+			</div>
 
-				<!-- Primary Actions -->
-				<div class="action-buttonsmodern">
-					<button
-						id="run-analysis-btn"
-						class="btn-actionmodern btn-pipeline"
-						title="Select files to run pipeline"
+			<!-- Primary Actions -->
+			<div class="page-header-actions">
+				<button id="run-analysis-btn" class="btn-action" title="Select files to run pipeline">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
 					>
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<polygon points="5 3 19 12 5 21 5 3"></polygon>
-						</svg>
-						<span id="run-analysis-text">Run Pipeline</span>
-					</button>
-					<button id="open-import-modal-btn" class="btn-actionmodern btn-import">
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-							<polyline points="7 10 12 15 17 10"></polyline>
-							<line x1="12" y1="15" x2="12" y2="3"></line>
-						</svg>
-						<span>Import</span>
-					</button>
-				</div>
+						<polygon points="5 3 19 12 5 21 5 3"></polygon>
+					</svg>
+					<span id="run-analysis-text">Run Pipeline</span>
+				</button>
+				<button id="open-import-modal-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+						<polyline points="7 10 12 15 17 10"></polyline>
+						<line x1="12" y1="15" x2="12" y2="3"></line>
+					</svg>
+					<span>Import</span>
+				</button>
 			</div>
 		</div>
 	</header>
