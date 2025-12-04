@@ -93,6 +93,11 @@ export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib:/usr/aarch64-linux-gnu/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 export RUST_BACKTRACE=1
 export RUST_LOG=tauri_bundler=debug
+export GOOS=linux
+export GOARCH=arm64
+export CGO_ENABLED=1
+export CC=aarch64-linux-gnu-gcc
+export CXX=aarch64-linux-gnu-g++
 
 ARCH=$(uname -m)
 if [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then
@@ -100,6 +105,8 @@ if [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then
 fi
 
 npm install
+./scripts/fetch-bundled-deps.sh
+./scripts/build-syftbox-prod.sh
 npm run tauri build -- --target aarch64-unknown-linux-gnu
 EOF_BUILD
 )"
