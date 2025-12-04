@@ -173,7 +173,7 @@ do_reset() {
     echo -e "${RED}WARNING: This will:${NC}"
     echo -e "  1. Discard all uncommitted changes in submodules"
     echo -e "  2. Remove untracked files in submodules"
-    echo -e "  3. Checkout 'main' (or 'master') branch in all submodules"
+    echo -e "  3. Fetch, checkout 'main' (or 'master'), and pull in all submodules"
     echo -e "  4. Initialize any uninitialized submodules"
     echo ""
     echo -ne "${YELLOW}Are you sure you want to reset all submodules? [y/N]: ${NC}"
@@ -192,12 +192,19 @@ do_reset() {
         echo "  → $name"
         git checkout -- . 2>/dev/null
         git clean -fd 2>/dev/null
+        git fetch origin 2>/dev/null
         if git show-ref --verify --quiet refs/heads/main; then
             git checkout main 2>/dev/null
+            git pull origin main 2>/dev/null
         elif git show-ref --verify --quiet refs/heads/master; then
             git checkout master 2>/dev/null
+            git pull origin master 2>/dev/null
+        elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            git checkout -b main origin/main 2>/dev/null
+        elif git show-ref --verify --quiet refs/remotes/origin/master; then
+            git checkout -b master origin/master 2>/dev/null
         else
-            echo "    (no main/master branch, staying on current)"
+            echo "    (no main/master branch found locally or on origin)"
         fi
     '
 
