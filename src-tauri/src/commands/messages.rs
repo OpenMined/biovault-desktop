@@ -115,7 +115,9 @@ pub fn list_message_threads(
                         if let Some(id) = session_chat.get("session_id").and_then(|v| v.as_str()) {
                             session_id = Some(id.to_string());
                         }
-                        if let Some(name) = session_chat.get("session_name").and_then(|v| v.as_str()) {
+                        if let Some(name) =
+                            session_chat.get("session_name").and_then(|v| v.as_str())
+                        {
                             session_name = Some(name.to_string());
                         }
                         break;
