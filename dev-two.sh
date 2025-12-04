@@ -326,17 +326,10 @@ prepare_desktop_config() {
   home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
   config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
 
-  local config_yaml="$home/config.yaml"
   mkdir -p "$home"
-  if [[ -f "$config_yaml" ]]; then
-    return
-  fi
-
-  cat > "$config_yaml" <<EOF
-email: "$email"
-syftbox_config_path: "$config"
-EOF
-  log_info "Config ready for $email at $config_yaml"
+  # Note: config.yaml is NOT created here so onboarding flow will run.
+  # The email will be auto-populated from BIOVAULT_HOME path in dev mode.
+  log_info "Home directory ready for $email at $home"
 }
 
 launch_desktop_instance() {
@@ -357,6 +350,7 @@ launch_desktop_instance() {
   export BIOVAULT_DEV_SYFTBOX=1
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
+  export SYC_VAULT="$home/.syc"
 
   local pkg_cmd="npm"
   if command -v bun >/dev/null 2>&1; then
@@ -369,6 +363,7 @@ launch_desktop_instance() {
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
   echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
+  echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
 
@@ -406,6 +401,9 @@ launch_two_instances() {
   fi
   log_header "Launching TWO desktop windows (Ctrl+C stops foreground + devstack daemons keep running)"
 
+  # Ensure onboarding will run by removing any previous config.yaml in sandbox homes
+  rm -f "$(client_field "${CLIENTS[0]}" home)"/config.yaml "$(client_field "${CLIENTS[1]}" home)"/config.yaml
+
   launch_desktop_instance "${CLIENTS[1]}" 2 "bg"
   sleep 3
 
@@ -419,6 +417,7 @@ launch_single_instance() {
     email="${CLIENTS[0]}"
   fi
   log_header "Launching SINGLE desktop window for $email"
+  rm -f "$(client_field "$email" home)"/config.yaml
   launch_desktop_instance "$email" 1 "fg"
 }
 
@@ -529,21 +528,7 @@ import_bundle_pair() {
 }
 
 provision_identities() {
-  log_header "Provisioning Syft Crypto identities"
-  for email in "${CLIENTS[@]}"; do
-    ensure_client_identity "$email"
-  done
-
-  # Exchange public bundles between every pair (best-effort)
-  if [[ ${#CLIENTS[@]} -ge 2 ]]; then
-    for src_email in "${CLIENTS[@]}"; do
-      for dst_email in "${CLIENTS[@]}"; do
-        [[ "$src_email" == "$dst_email" ]] && continue
-        log_info "Importing $src_email bundle into $dst_email..."
-        import_bundle_pair "$src_email" "$dst_email"
-      done
-    done
-  fi
+  log_header "Skipping Syft Crypto provisioning (use onboarding flow)"
 }
 
 sync_client_daemon() {
@@ -563,10 +548,7 @@ sync_client_daemon() {
 }
 
 run_initial_sync() {
-  log_header "Running initial BioVault syncs"
-  for email in "${CLIENTS[@]}"; do
-    sync_client_daemon "$email"
-  done
+  log_header "Skipping initial BioVault syncs (onboarding will handle setup)"
 }
 
 main() {

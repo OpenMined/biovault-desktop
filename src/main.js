@@ -17,6 +17,7 @@ import { createSqlModule } from './sql.js'
 import { createSessionsModule } from './sessions.js'
 import { createUpdaterModule } from './updater.js'
 import { createWhatsAppModule } from './whatsapp.js'
+import { createNetworkModule } from './network.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 import { mountDebugBanner } from './debug-banner.js'
@@ -201,6 +202,9 @@ sessionsModule = createSessionsModule({
 })
 const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
 
+// Create network module
+const networkModule = createNetworkModule({ invoke, shellApi })
+
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
 let importSetLastImportView = () => console.warn('setLastImportView not yet initialized')
@@ -318,6 +322,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('sessions', 'sessions-view'),
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
+			templateLoader.loadAndInject('network', 'network-view'),
 			templateLoader.loadAndInject('logs', 'logs-view'),
 			templateLoader.loadAndInject('settings', 'settings-view'),
 		])
@@ -384,6 +389,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	initializeDataTab()
 	pipelinesModule.initialize()
 	initializeSessionsTab()
+	networkModule.init()
 
 	// Optional debug banner
 	await mountDebugBanner()

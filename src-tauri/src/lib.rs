@@ -748,6 +748,11 @@ pub fn run() {
             key_restore,
             key_list_contacts,
             key_refresh_contacts,
+            // Network commands
+            network_scan_datasites,
+            network_import_contact,
+            network_remove_contact,
+            network_trust_changed_key,
             // Dev mode commands
             is_dev_mode,
             is_dev_syftbox_enabled,

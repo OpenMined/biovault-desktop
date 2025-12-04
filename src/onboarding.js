@@ -1712,14 +1712,12 @@ export function initOnboarding({
 					const serverReachable = await invoke('check_dev_syftbox_server')
 
 					if (serverReachable) {
-						console.log('✅ Dev syftbox server reachable - skipping auth, going directly to init')
+						console.log('✅ Dev syftbox server reachable - skipping auth, showing key setup')
 
-						// Skip step 4 (auth) and go directly to step 5 (init)
+						// Skip step 4 (auth) but still show key setup step
 						document.getElementById('onboarding-step-3').style.display = 'none'
-						document.getElementById('onboarding-step-5').style.display = 'block'
-
-						// Initialize BioVault directly
-						initializeBioVault(email)
+						document.getElementById('onboarding-step-3-key').style.display = 'block'
+						await showKeyStep(email)
 						return
 					} else {
 						console.log('⚠️ Dev syftbox server not reachable - falling back to normal flow')

@@ -745,7 +745,7 @@ export function createMessagesModule({
 		updateMessagesEmptyState()
 	}
 
-	function startNewMessage() {
+	function startNewMessage(prefillRecipient = null) {
 		isComposingNewMessage = true
 		activeThreadId = null
 		messageReplyTargetId = null
@@ -760,7 +760,7 @@ export function createMessagesModule({
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {
 			recipientInput.readOnly = false
-			recipientInput.value = ''
+			recipientInput.value = prefillRecipient || ''
 			recipientInput.focus()
 		}
 
