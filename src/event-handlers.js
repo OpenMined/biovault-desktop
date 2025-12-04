@@ -90,9 +90,14 @@ export function setupEventHandlers({
 	messageFilterButtons.forEach((btn) => {
 		btn.addEventListener('click', () => {
 			if (btn.classList.contains('active')) return
-			setActiveMessageFilterButton(btn.dataset.filter)
+			const filter = btn.dataset.filter
+			setActiveMessageFilterButton(filter)
 			resetActiveThread()
-			loadMessageThreads(false, { emitToasts: false })
+			// setActiveMessageFilterButton handles loading for 'failed' filter
+			// Only call loadMessageThreads for normal filters
+			if (filter !== 'failed') {
+				loadMessageThreads(false, { emitToasts: false })
+			}
 		})
 	})
 

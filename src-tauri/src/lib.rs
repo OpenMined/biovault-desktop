@@ -676,6 +676,12 @@ pub fn run() {
             mark_thread_as_read,
             delete_thread,
             delete_message,
+            // Failed messages commands
+            list_failed_messages,
+            count_failed_messages,
+            dismiss_failed_message,
+            delete_failed_message,
+            sync_messages_with_failures,
             // Projects commands
             import_project,
             import_project_from_folder,
@@ -746,6 +752,7 @@ pub fn run() {
             key_get_status,
             key_generate,
             key_restore,
+            key_republish,
             key_list_contacts,
             key_refresh_contacts,
             // Network commands

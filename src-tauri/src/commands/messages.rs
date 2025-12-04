@@ -342,3 +342,138 @@ pub fn delete_thread(thread_id: String) -> Result<usize, String> {
         }
     }
 }
+
+// ============================================================================
+// Failed Messages (decryption failures)
+// ============================================================================
+
+use biovault::messages::models::FailedMessage;
+use serde::Serialize;
+
+/// Serializable failed message for frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct FailedMessageInfo {
+    pub id: String,
+    pub sender_identity: String,
+    pub sender_fingerprint: String,
+    pub recipient_fingerprint: Option<String>,
+    pub failure_reason: String,
+    pub failure_reason_display: String,
+    pub error_details: String,
+    pub suggested_action: String,
+    pub created_at: String,
+    pub dismissed: bool,
+}
+
+impl From<FailedMessage> for FailedMessageInfo {
+    fn from(fm: FailedMessage) -> Self {
+        Self {
+            id: fm.id.clone(),
+            sender_identity: fm.sender_identity.clone(),
+            sender_fingerprint: fm.sender_fingerprint.clone(),
+            recipient_fingerprint: fm.recipient_fingerprint.clone(),
+            failure_reason: format!("{:?}", fm.failure_reason),
+            failure_reason_display: fm.failure_reason.to_string(),
+            error_details: fm.error_details.clone(),
+            suggested_action: fm.suggested_action(),
+            created_at: fm.created_at.to_rfc3339(),
+            dismissed: fm.dismissed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FailedMessagesResult {
+    pub failed_messages: Vec<FailedMessageInfo>,
+    pub count: usize,
+}
+
+#[tauri::command]
+pub fn list_failed_messages(
+    include_dismissed: Option<bool>,
+) -> Result<FailedMessagesResult, String> {
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    let include = include_dismissed.unwrap_or(false);
+    let failed = db
+        .list_failed_messages(include)
+        .map_err(|e| format!("Failed to list failed messages: {}", e))?;
+
+    let count = failed.len();
+    let infos: Vec<FailedMessageInfo> = failed.into_iter().map(|f| f.into()).collect();
+
+    Ok(FailedMessagesResult {
+        failed_messages: infos,
+        count,
+    })
+}
+
+#[tauri::command]
+pub fn count_failed_messages() -> Result<usize, String> {
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    db.count_failed_messages()
+        .map_err(|e| format!("Failed to count failed messages: {}", e))
+}
+
+#[tauri::command]
+pub fn dismiss_failed_message(id: String) -> Result<bool, String> {
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    db.dismiss_failed_message(&id)
+        .map_err(|e| format!("Failed to dismiss failed message: {}", e))
+}
+
+#[tauri::command]
+pub fn delete_failed_message(id: String) -> Result<bool, String> {
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    db.delete_failed_message(&id)
+        .map_err(|e| format!("Failed to delete failed message: {}", e))
+}
+
+/// Sync messages and also capture decryption failures
+/// Returns new message count and failed message count
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncWithFailuresResult {
+    pub new_message_ids: Vec<String>,
+    pub new_messages: usize,
+    pub new_failed: usize,
+    pub total_failed: usize,
+}
+
+#[tauri::command]
+pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
+    let config = load_config()?;
+    let (_db, sync) = init_message_system(&config)
+        .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
+
+    let (ids, count, new_failed) = sync
+        .sync_quiet_with_failures()
+        .map_err(|e| format!("Failed to sync messages: {}", e))?;
+
+    let total_failed = sync.count_failed_messages().unwrap_or(0);
+
+    Ok(SyncWithFailuresResult {
+        new_message_ids: ids,
+        new_messages: count,
+        new_failed,
+        total_failed,
+    })
+}
