@@ -177,9 +177,9 @@ jobs:
 
           if is_enabled('BUILD_LINUX_ARM64'):
               entries.append({
-                  'runs-on': 'ubuntu-22.04-arm',
+                  'runs-on': 'ubuntu-22.04-arm64',
                   'args': 'aarch64-unknown-linux-gnu',
-                  'build_kind': 'docker',
+                  'build_kind': 'tauri',
                   'target': 'linux-arm64',
               })
 
@@ -209,6 +209,11 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      TAURI_CLI_LOG_LEVEL: trace
+      LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
+      LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
+      APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -285,13 +290,23 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             build-essential \
+            pkg-config \
             curl \
+            xdg-utils \
             wget \
             file \
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libsqlite3-dev \
+            libfuse2 \
+            patchelf \
+            libgtk-3-dev \
+            squashfs-tools \
+            desktop-file-utils \
+            zsync \
+            appstream
 
       - name: Setup Rust
         if: matrix.build_kind == 'tauri'
@@ -314,6 +329,14 @@ jobs:
       - name: Install Tauri CLI
         if: matrix.build_kind == 'tauri'
         run: npm install -g @tauri-apps/cli@latest
+
+      - name: Setup Go (syftbox)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
 
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
@@ -344,6 +367,67 @@ jobs:
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
 
+      - name: Build syftbox client
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
+      - name: Sign syftbox client (macOS)
+        if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
+        run: |
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ -f "$SYFTBOX_BIN" ]]; then
+            echo "Signing syftbox client for notarization..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
+          else
+            echo "Syftbox client not found at $SYFTBOX_BIN, skipping sign step."
+          fi
+
+      - name: Setup AppImage tools (Linux)
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" == "aarch64" ]]; then
+            APPIMAGE_ARCH="aarch64"
+          else
+            APPIMAGE_ARCH="x86_64"
+          fi
+
+          # linuxdeploy
+          wget -q "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-${APPIMAGE_ARCH}.AppImage" -O /tmp/linuxdeploy.AppImage
+          chmod +x /tmp/linuxdeploy.AppImage
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            OFFSET=$(readelf -h /tmp/linuxdeploy.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/linuxdeploy-extracted
+          chmod +x /tmp/linuxdeploy-extracted/AppRun
+
+          # linuxdeploy-plugin-appimage
+          wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-${APPIMAGE_ARCH}.AppImage" -O /tmp/plugin.AppImage
+          chmod +x /tmp/plugin.AppImage
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./plugin.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            OFFSET=$(readelf -h /tmp/plugin.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/plugin.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/plugin.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/plugin-extracted
+          chmod +x /tmp/plugin-extracted/AppRun
+
+          echo "AppImage tools extracted successfully"
+          ls -la /tmp/linuxdeploy-extracted/ || true
+          ls -la /tmp/plugin-extracted/ || true
+
+          {
+            echo "LINUXDEPLOY=/tmp/linuxdeploy-extracted/usr/bin/linuxdeploy"
+            echo "LINUXDEPLOY_PLUGIN_APPIMAGE=/tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage"
+            echo "APPIMAGETOOL=/tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool"
+          } >> "$GITHUB_ENV"
+
       - name: Build app (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -369,7 +453,8 @@ jobs:
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
-          tauri build --target ${{ matrix.args }}
+          set -o pipefail
+          tauri build --target ${{ matrix.args }} --verbose 2>&1 | tee tauri-linux.log
 
           mkdir -p artifacts
 
@@ -381,6 +466,14 @@ jobs:
 
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
           mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+
+      - name: Dump linuxdeploy logs on failure
+        if: failure() && runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          echo "Searching for linuxdeploy/appimage logs..."
+          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
+          echo "Dumping tauri-linux.log (if present)..."
+          sed -n '1,400p' tauri-linux.log || true
 
       - name: Build app (Linux arm64 via Docker)
         if: matrix.build_kind == 'docker'
