@@ -2,6 +2,7 @@
  * Messages Module - Modern Messaging Interface
  * Handles secure peer-to-peer messaging via SyftBox
  */
+import { createContactAutocomplete } from './contact-autocomplete.js'
 
 export function createMessagesModule({
 	invoke,
@@ -35,6 +36,7 @@ export function createMessagesModule({
 
 	const AUTO_REFRESH_MS = 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
+	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	// ============================================================================
 	// UTILITIES
@@ -944,6 +946,7 @@ export function createMessagesModule({
 
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {
+			contactAutocomplete.attachToInputs(['message-recipient-input'])
 			recipientInput.readOnly = false
 			recipientInput.value = prefillRecipient || ''
 			recipientInput.focus()
@@ -971,6 +974,8 @@ export function createMessagesModule({
 
 	async function initializeMessagesTab(forceSync = false) {
 		if (messagesInitialized && !forceSync) return
+
+		contactAutocomplete.attachToInputs(['message-recipient-input'])
 
 		await ensureMessagesAuthorization()
 		await refreshSyftboxState()
