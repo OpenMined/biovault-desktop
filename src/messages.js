@@ -95,6 +95,40 @@ export function createMessagesModule({
 		})
 	}
 
+	function formatDateSeparator(value) {
+		if (!value) return ''
+		const date = new Date(value)
+		if (Number.isNaN(date.getTime())) return ''
+
+		const now = new Date()
+		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+		const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000)
+		const msgDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+		if (msgDate.getTime() === today.getTime()) {
+			return 'Today'
+		}
+		if (msgDate.getTime() === yesterday.getTime()) {
+			return 'Yesterday'
+		}
+
+		// Within last week
+		const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+		if (msgDate >= weekAgo) {
+			return date.toLocaleDateString([], { weekday: 'long' })
+		}
+
+		// Older
+		return date.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
+	}
+
+	function getDateKey(value) {
+		if (!value) return ''
+		const date = new Date(value)
+		if (Number.isNaN(date.getTime())) return ''
+		return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+	}
+
 	function normalizeMetadata(value) {
 		if (!value) return null
 		if (typeof value === 'string') {
@@ -116,6 +150,15 @@ export function createMessagesModule({
 			return (parts[0][0] + parts[1][0]).toUpperCase()
 		}
 		return name.slice(0, 2).toUpperCase()
+	}
+
+	function normalizeEmail(email) {
+		if (!email) return ''
+		return String(email).toLowerCase().trim()
+	}
+
+	function emailsMatch(email1, email2) {
+		return normalizeEmail(email1) === normalizeEmail(email2)
 	}
 
 	function getSessionInviteFromMessage(msg) {
@@ -147,8 +190,8 @@ export function createMessagesModule({
 	function collectParticipants(messages) {
 		const set = new Set()
 		messages.forEach((msg) => {
-			if (msg.from) set.add(msg.from)
-			if (msg.to) set.add(msg.to)
+			if (msg.from) set.add(normalizeEmail(msg.from))
+			if (msg.to) set.add(normalizeEmail(msg.to))
 		})
 		return Array.from(set)
 	}
@@ -156,7 +199,7 @@ export function createMessagesModule({
 	function formatParticipants(participants) {
 		if (!participants || participants.length === 0) return ''
 		const currentUserEmail = getCurrentUserEmail()
-		const others = participants.filter((p) => p !== currentUserEmail)
+		const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
 		return others.length > 0 ? others.join(', ') : participants.join(', ')
 	}
 
@@ -198,22 +241,35 @@ export function createMessagesModule({
 		}
 	}
 
-	function updateConversationAvatar(participants) {
+	function updateConversationAvatar(participants, isSelfThread = false) {
 		const avatarEl = document.getElementById('msg-conv-avatar')
 		if (!avatarEl) return
 
 		const currentUserEmail = getCurrentUserEmail()
-		const others = (participants || []).filter((p) => p !== currentUserEmail)
+		const others = (participants || []).filter((p) => !emailsMatch(p, currentUserEmail))
 		const primaryEmail = others[0] || (participants && participants[0]) || ''
 
 		const span = avatarEl.querySelector('span')
 		if (span) {
-			span.textContent = getInitials(primaryEmail)
+			if (isSelfThread) {
+				span.textContent = '📝'
+			} else {
+				span.textContent = getInitials(primaryEmail)
+			}
+		}
+
+		// Update avatar style for self-threads
+		if (isSelfThread) {
+			avatarEl.classList.add('self-avatar')
+		} else {
+			avatarEl.classList.remove('self-avatar')
 		}
 	}
 
 	function updateComposeVisibility(showRecipient) {
-		const recipientContainer = document.querySelector('.msg-compose-recipient, .message-compose-recipient')
+		const recipientContainer = document.querySelector(
+			'.msg-compose-recipient, .message-compose-recipient',
+		)
 		const subjectWrapper = document.getElementById('message-subject-wrapper')
 
 		if (recipientContainer) {
@@ -587,22 +643,41 @@ export function createMessagesModule({
 			}
 
 			const participants = thread.participants || []
-			const others = participants.filter((p) => p !== currentUserEmail)
-			const displayName = others.length > 0 ? others.join(', ') : participants.join(', ')
+			const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
+
+			// Check if this is a self-message thread (only participant is current user)
+			const isSelfThread =
+				participants.length === 1 && emailsMatch(participants[0], currentUserEmail)
+			const displayName = isSelfThread
+				? '📝 Note to Self'
+				: others.length > 0
+				? others.join(', ')
+				: participants.join(', ')
+
 			const displaySubject =
-				thread.subject && thread.subject.trim().length > 0
-					? thread.subject
-					: NO_SUBJECT_PLACEHOLDER
+				thread.subject && thread.subject.trim().length > 0 ? thread.subject : NO_SUBJECT_PLACEHOLDER
+
+			if (isSelfThread) {
+				item.classList.add('self-thread')
+			}
 
 			item.innerHTML = `
 				<div class="message-thread-top">
 					<div class="message-thread-header">${escapeHtml(displayName) || '(No participants)'}</div>
-					${thread.unread_count > 0 ? `<span class="message-thread-unread">${thread.unread_count > 9 ? '9+' : thread.unread_count}</span>` : ''}
+					${
+						thread.unread_count > 0
+							? `<span class="message-thread-unread">${
+									thread.unread_count > 9 ? '9+' : thread.unread_count
+							  }</span>`
+							: ''
+					}
 					${thread.has_project ? '<span class="message-thread-project">Project</span>' : ''}
 				</div>
 				<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>
 				<div class="message-thread-preview">${escapeHtml(thread.last_message_preview || '')}</div>
-				<div class="message-thread-meta">${thread.last_message_at ? formatDateTime(thread.last_message_at) : ''}</div>
+				<div class="message-thread-meta">${
+					thread.last_message_at ? formatDateTime(thread.last_message_at) : ''
+				}</div>
 			`
 
 			item.addEventListener('click', () => openThread(thread.thread_id))
@@ -621,61 +696,133 @@ export function createMessagesModule({
 		conversation.innerHTML = ''
 		const currentUserEmail = getCurrentUserEmail()
 
-		messages.forEach((msg) => {
-			const isOutgoing = msg.from === currentUserEmail
-			const msgDiv = document.createElement('div')
-			msgDiv.className = `message-bubble${isOutgoing ? ' outgoing' : ''}`
+		// Group consecutive messages from the same sender, with date awareness
+		const groups = []
+		let currentGroup = null
+		let lastDateKey = null
 
-			const header = document.createElement('div')
-			header.className = 'message-bubble-header'
-			header.textContent = isOutgoing ? 'You' : msg.from || 'Unknown'
-			msgDiv.appendChild(header)
+		messages.forEach((msg, index) => {
+			const isOutgoing = emailsMatch(msg.from, currentUserEmail)
+			const isSelfMessage =
+				emailsMatch(msg.from, msg.to) ||
+				(emailsMatch(msg.from, currentUserEmail) && emailsMatch(msg.to, currentUserEmail))
+			const senderId = normalizeEmail(msg.from) || 'unknown'
+			const msgDateKey = getDateKey(msg.created_at)
 
-			const body = document.createElement('div')
-			body.className = 'message-bubble-body'
-			body.textContent = msg.body || ''
-			msgDiv.appendChild(body)
-
-			// Session invite
-			const invite = getSessionInviteFromMessage(msg)
-			if (invite) {
-				const inviteCard = document.createElement('div')
-				inviteCard.className = 'message-session-invite'
-
-				const metaParts = []
-				if (invite.from) metaParts.push(`From ${invite.from}`)
-				if (invite.created_at) metaParts.push(formatFullDateTime(invite.created_at))
-
-				inviteCard.innerHTML = `
-					<h5>📋 ${escapeHtml(invite.session_name)}</h5>
-					${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
-					${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
-				`
-
-				const actions = document.createElement('div')
-				actions.className = 'invite-actions'
-				const openBtn = document.createElement('button')
-				openBtn.textContent = 'Open Session'
-				openBtn.addEventListener('click', () => {
-					window.__SESSION_INVITE_TO_OPEN__ = invite.session_id
-					window.dispatchEvent(
-						new CustomEvent('session-invite-open', { detail: { sessionId: invite.session_id } }),
-					)
-					if (typeof window.navigateTo === 'function') {
-						window.navigateTo('sessions')
-					}
-				})
-				actions.appendChild(openBtn)
-				inviteCard.appendChild(actions)
-				msgDiv.appendChild(inviteCard)
+			// Start new group if sender changes, it's the first message, or date changes
+			const dateChanged = msgDateKey && lastDateKey && msgDateKey !== lastDateKey
+			const isFirstMessage = index === 0
+			if (!currentGroup || currentGroup.senderId !== senderId || dateChanged) {
+				currentGroup = {
+					senderId,
+					isOutgoing,
+					isSelfMessage,
+					messages: [],
+					dateKey: msgDateKey,
+					showDateSeparator: isFirstMessage || dateChanged,
+					dateLabel: formatDateSeparator(msg.created_at),
+				}
+				groups.push(currentGroup)
 			}
 
-			const footer = document.createElement('div')
-			footer.className = 'message-bubble-meta'
-			footer.textContent = msg.created_at ? formatFullDateTime(msg.created_at) : ''
-			msgDiv.appendChild(footer)
+			lastDateKey = msgDateKey
+			currentGroup.messages.push({ ...msg, index })
+		})
 
-			conversation.appendChild(msgDiv)
+		// Render each group
+		groups.forEach((group, groupIndex) => {
+			// Date separator
+			if (group.showDateSeparator && group.dateLabel) {
+				const dateSep = document.createElement('div')
+				dateSep.className = 'message-date-separator'
+				dateSep.innerHTML = `<span>${escapeHtml(group.dateLabel)}</span>`
+				conversation.appendChild(dateSep)
+			}
+
+			const groupDiv = document.createElement('div')
+			groupDiv.className = `message-group${group.isOutgoing ? ' outgoing' : ' incoming'}${
+				group.isSelfMessage ? ' self-note' : ''
+			}`
+
+			// Group header (sender name) - only for incoming non-self messages
+			if (!group.isOutgoing && !group.isSelfMessage) {
+				const groupHeader = document.createElement('div')
+				groupHeader.className = 'message-group-header'
+				groupHeader.textContent = group.senderId
+				groupDiv.appendChild(groupHeader)
+			} else if (group.isSelfMessage && groupIndex === 0) {
+				const selfLabel = document.createElement('div')
+				selfLabel.className = 'message-self-label'
+				selfLabel.innerHTML = '<span>📝</span> Note to Self'
+				groupDiv.appendChild(selfLabel)
+			}
+
+			// Render messages in group
+			group.messages.forEach((msg, msgIndex) => {
+				const isFirst = msgIndex === 0
+				const isLast = msgIndex === group.messages.length - 1
+				const msgDiv = document.createElement('div')
+
+				let bubbleClass = 'message-bubble'
+				if (group.isOutgoing) bubbleClass += ' outgoing'
+				if (group.isSelfMessage) bubbleClass += ' self-note'
+				if (isFirst) bubbleClass += ' first'
+				if (isLast) bubbleClass += ' last'
+				if (!isFirst && !isLast) bubbleClass += ' middle'
+				msgDiv.className = bubbleClass
+
+				// Message body
+				const body = document.createElement('div')
+				body.className = 'message-bubble-body'
+				body.textContent = msg.body || ''
+				msgDiv.appendChild(body)
+
+				// Session invite
+				const invite = getSessionInviteFromMessage(msg)
+				if (invite) {
+					const inviteCard = document.createElement('div')
+					inviteCard.className = 'message-session-invite'
+
+					const metaParts = []
+					if (invite.from) metaParts.push(`From ${invite.from}`)
+					if (invite.created_at) metaParts.push(formatFullDateTime(invite.created_at))
+
+					inviteCard.innerHTML = `
+						<h5>📋 ${escapeHtml(invite.session_name)}</h5>
+						${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
+						${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
+					`
+
+					const actions = document.createElement('div')
+					actions.className = 'invite-actions'
+					const openBtn = document.createElement('button')
+					openBtn.textContent = 'Open Session'
+					openBtn.addEventListener('click', () => {
+						window.__SESSION_INVITE_TO_OPEN__ = invite.session_id
+						window.dispatchEvent(
+							new CustomEvent('session-invite-open', { detail: { sessionId: invite.session_id } }),
+						)
+						if (typeof window.navigateTo === 'function') {
+							window.navigateTo('sessions')
+						}
+					})
+					actions.appendChild(openBtn)
+					inviteCard.appendChild(actions)
+					msgDiv.appendChild(inviteCard)
+				}
+
+				// Timestamp - only show on last message of group
+				if (isLast && msg.created_at) {
+					const footer = document.createElement('div')
+					footer.className = 'message-bubble-meta'
+					footer.textContent = formatFullDateTime(msg.created_at)
+					msgDiv.appendChild(footer)
+				}
+
+				groupDiv.appendChild(msgDiv)
+			})
+
+			conversation.appendChild(groupDiv)
 		})
 
 		// Scroll to bottom smoothly
@@ -721,7 +868,7 @@ export function createMessagesModule({
 
 	function getPrimaryRecipient(participants) {
 		const currentUserEmail = getCurrentUserEmail()
-		const others = (participants || []).filter((p) => p !== currentUserEmail)
+		const others = (participants || []).filter((p) => !emailsMatch(p, currentUserEmail))
 		return others[0] || (participants && participants[0]) || ''
 	}
 
@@ -743,21 +890,35 @@ export function createMessagesModule({
 
 			const summary = messageThreads.find((thread) => thread.thread_id === threadId)
 			const participants = summary ? summary.participants : collectParticipants(messages)
+			const currentUserEmail = getCurrentUserEmail()
+
+			// Check if this is a self-message thread
+			const isSelfThread =
+				participants.length === 1 && emailsMatch(participants[0], currentUserEmail)
 
 			const subjectText = resolveSubject(summary, messages)
 			const subjectEl = document.getElementById('message-thread-subject')
 			if (subjectEl) {
-				subjectEl.textContent =
-					subjectText && subjectText.trim().length > 0 ? subjectText : NO_SUBJECT_PLACEHOLDER
+				if (isSelfThread) {
+					subjectEl.textContent = '📝 Note to Self'
+				} else {
+					subjectEl.textContent =
+						subjectText && subjectText.trim().length > 0 ? subjectText : NO_SUBJECT_PLACEHOLDER
+				}
 			}
 
 			const participantsEl = document.getElementById('message-thread-participants')
 			if (participantsEl) {
-				const formatted = formatParticipants(participants)
-				participantsEl.textContent = formatted || ''
+				if (isSelfThread) {
+					participantsEl.textContent =
+						subjectText && subjectText !== NO_SUBJECT_PLACEHOLDER ? subjectText : 'Personal notes'
+				} else {
+					const formatted = formatParticipants(participants)
+					participantsEl.textContent = formatted || ''
+				}
 			}
 
-			updateConversationAvatar(participants)
+			updateConversationAvatar(participants, isSelfThread)
 
 			const recipientInput = document.getElementById('message-recipient-input')
 			if (recipientInput) {
@@ -798,7 +959,7 @@ export function createMessagesModule({
 		const participantsEl = document.getElementById('message-thread-participants')
 		if (participantsEl) participantsEl.textContent = 'Start a new conversation'
 
-		updateConversationAvatar([])
+		updateConversationAvatar([], false)
 
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {

@@ -20,7 +20,6 @@ import { createWhatsAppModule } from './whatsapp.js'
 import { createNetworkModule } from './network.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
-import { mountDebugBanner } from './debug-banner.js'
 
 const { open } = dialog
 const { listen } = event
@@ -390,9 +389,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 	pipelinesModule.initialize()
 	initializeSessionsTab()
 	networkModule.init()
-
-	// Optional debug banner
-	await mountDebugBanner()
 
 	// Setup all event handlers
 	setupEventHandlers({

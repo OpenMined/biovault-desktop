@@ -2297,17 +2297,16 @@ export function initOnboarding({
 			const status = await invoke('key_get_status', { email })
 			onboardingKeyStatus = status
 			renderKeyCard(status)
-			if (!status.exists) {
-				await generateKey(email)
-			} else {
+			if (status.exists) {
+				// Key exists - user can continue or regenerate
 				document.getElementById('onboarding-next-3-key').disabled = false
 			}
+			// If no key exists, user must click "Generate New" explicitly
 		} catch (error) {
 			console.error('Failed to load key status:', error)
 			onboardingKeyStatus = { identity: email, exists: false }
 			renderKeyCard(onboardingKeyStatus)
-			// Auto-generate a key if loading failed
-			await generateKey(email)
+			// User must click "Generate New" explicitly
 		}
 	}
 
