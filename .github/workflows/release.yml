@@ -211,6 +211,9 @@ jobs:
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: 1
       TAURI_CLI_LOG_LEVEL: trace
+      LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
+      LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
+      APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
