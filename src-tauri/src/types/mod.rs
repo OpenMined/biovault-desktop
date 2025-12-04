@@ -263,3 +263,59 @@ pub struct LogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+// Session Types
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Session {
+    pub id: i64,
+    pub session_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub session_path: String,
+    pub owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    pub role: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_port: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_pid: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_token: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateSessionRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub peer: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SessionJupyterStatus {
+    pub session_id: String,
+    pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SessionMessage {
+    pub id: i64,
+    pub session_id: i64,
+    pub sender: String,
+    pub body: String,
+    pub created_at: String,
+}

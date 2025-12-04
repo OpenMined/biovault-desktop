@@ -46,6 +46,34 @@ export function createMessagesModule({
 		return date.toLocaleString()
 	}
 
+	function normalizeMetadata(value) {
+		if (!value) return null
+		if (typeof value === 'string') {
+			try {
+				return JSON.parse(value)
+			} catch (error) {
+				console.warn('Failed to parse metadata string', error)
+				return null
+			}
+		}
+		return value
+	}
+
+	function getSessionInviteFromMessage(msg) {
+		if (!msg) return null
+		const meta = normalizeMetadata(msg.metadata)
+		if (!meta || !meta.session_invite) return null
+		const invite = meta.session_invite
+		if (!invite.session_id) return null
+		return {
+			session_id: invite.session_id,
+			session_name: invite.session_name || 'Session',
+			from: invite.from || msg.from,
+			description: invite.description,
+			created_at: invite.created_at,
+		}
+	}
+
 	function setActiveMessageFilterButton(filter) {
 		messageFilter = filter
 		document.querySelectorAll('.message-filter').forEach((btn) => {
@@ -556,6 +584,38 @@ export function createMessagesModule({
 			body.className = 'message-bubble-body'
 			body.textContent = msg.body || ''
 			msgDiv.appendChild(body)
+
+			const invite = getSessionInviteFromMessage(msg)
+			if (invite) {
+				const inviteCard = document.createElement('div')
+				inviteCard.className = 'message-session-invite'
+				const metaParts = []
+				if (invite.from) metaParts.push(`From ${invite.from}`)
+				if (invite.created_at) metaParts.push(formatDateTime(invite.created_at))
+
+				inviteCard.innerHTML = `
+					<h5>Session invite: ${escapeHtml(invite.session_name)}</h5>
+					${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
+					${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
+				`
+
+				const actions = document.createElement('div')
+				actions.className = 'invite-actions'
+				const openBtn = document.createElement('button')
+				openBtn.textContent = 'Open in Sessions'
+				openBtn.addEventListener('click', () => {
+					window.__SESSION_INVITE_TO_OPEN__ = invite.session_id
+					window.dispatchEvent(
+						new CustomEvent('session-invite-open', { detail: { sessionId: invite.session_id } }),
+					)
+					if (typeof window.navigateTo === 'function') {
+						window.navigateTo('sessions')
+					}
+				})
+				actions.appendChild(openBtn)
+				inviteCard.appendChild(actions)
+				msgDiv.appendChild(inviteCard)
+			}
 
 			const footer = document.createElement('div')
 			footer.className = 'message-bubble-meta'

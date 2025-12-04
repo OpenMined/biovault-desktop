@@ -12,8 +12,8 @@
    ============================================================================ */
 
 .app-sidebar {
-	width: 90px;
-	min-width: 90px;
+	width: 64px;
+	min-width: 64px;
 	background: #ffffff;
 	border-right: 1px solid #e5e7eb;
 	display: flex;
@@ -30,7 +30,7 @@
 	overflow-x: auto;
 	display: flex;
 	flex-direction: column;
-	gap: 6px; /* More spacing between items */
+	gap: 2px; /* Compact spacing */
 	min-height: 0;
 	scrollbar-width: none;
 }
@@ -72,15 +72,15 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 3px; /* Tighter gap */
-	padding: 12px 8px 12px 5px; /* Less left padding to account for border */
-	margin: 0 8px;
+	gap: 2px; /* Compact gap */
+	padding: 8px 4px 8px 3px; /* Compact padding */
+	margin: 0 4px;
 	background: transparent;
 	border: none;
-	border-left: 3px solid transparent; /* Reserve space for active border */
-	border-radius: 0 12px 12px 0; /* Always rounded on right */
+	border-left: 2px solid transparent; /* Thinner active border */
+	border-radius: 0 8px 8px 0; /* Smaller radius */
 	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-	font-size: 11px;
+	font-size: 9px;
 	font-weight: 500; /* Lighter for inactive */
 	color: #6b7280;
 	cursor: pointer;
@@ -99,16 +99,16 @@
 
 .nav-item img {
 	flex-shrink: 0;
-	width: 24px;
-	height: 24px;
+	width: 18px;
+	height: 18px;
 	transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 	opacity: 0.75; /* Slightly more visible */
 }
 
 .nav-label {
 	display: block;
-	font-size: 11px;
-	line-height: 1.2;
+	font-size: 9px;
+	line-height: 1.1;
 	color: #9ca3af; /* Lighter gray for inactive labels */
 }
 
@@ -196,40 +196,40 @@
 
 @media (max-width: 1024px) {
 	.app-sidebar {
-		width: 76px;
-		min-width: 76px;
+		width: 56px;
+		min-width: 56px;
 	}
 
 	.nav-item {
-		padding: 12px 10px;
-		font-size: 10px;
-		gap: 5px;
-		margin: 0 6px;
+		padding: 6px 3px;
+		font-size: 8px;
+		gap: 2px;
+		margin: 0 3px;
 	}
 
 	.nav-item img {
-		width: 22px;
-		height: 22px;
+		width: 16px;
+		height: 16px;
 	}
 }
 
 @media (max-width: 768px) {
 	.app-sidebar {
-		width: 70px;
-		min-width: 70px;
+		width: 50px;
+		min-width: 50px;
 	}
 
 	.nav-item {
 		justify-content: center;
-		padding: 11px 9px;
-		font-size: 9px;
-		gap: 4px;
-		margin: 0 6px;
+		padding: 5px 2px;
+		font-size: 7px;
+		gap: 1px;
+		margin: 0 2px;
 	}
 
 	.nav-item img {
-		width: 20px;
-		height: 20px;
+		width: 14px;
+		height: 14px;
 	}
 
 	.app-topbar {

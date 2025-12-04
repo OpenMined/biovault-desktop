@@ -33,6 +33,7 @@ use commands::participants::*;
 use commands::pipelines::*;
 use commands::projects::*;
 use commands::runs::*;
+use commands::sessions::*;
 use commands::settings::*;
 use commands::sql::*;
 use commands::syftbox::*;
@@ -679,7 +680,25 @@ pub fn run() {
             start_syftbox_client,
             stop_syftbox_client,
             test_notification,
-            test_notification_applescript
+            test_notification_applescript,
+            // Sessions commands
+            get_sessions,
+            get_session,
+            create_session,
+            update_session_peer,
+            delete_session,
+            launch_session_jupyter,
+            stop_session_jupyter,
+            reset_session_jupyter,
+            get_session_jupyter_status,
+            get_session_messages,
+            send_session_message,
+            get_session_chat_messages,
+            send_session_chat_message,
+            open_session_folder,
+            get_session_invitations,
+            accept_session_invitation,
+            reject_session_invitation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

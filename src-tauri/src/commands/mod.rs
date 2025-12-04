@@ -8,6 +8,7 @@ pub mod participants;
 pub mod pipelines;
 pub mod projects;
 pub mod runs;
+pub mod sessions;
 pub mod settings;
 pub mod sql;
 pub mod syftbox;

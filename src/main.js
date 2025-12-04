@@ -14,6 +14,7 @@ import { createHomebrewInstaller } from './homebrew-installer.js'
 import { createDependenciesModule } from './dependencies.js'
 import { createSettingsModule } from './settings.js'
 import { createSqlModule } from './sql.js'
+import { createSessionsModule } from './sessions.js'
 import { createUpdaterModule } from './updater.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
@@ -47,6 +48,9 @@ const { loadSavedDependencies, checkDependenciesForPanel, getDependencyResults }
 	createDependenciesModule({ invoke })
 
 const { initializeSqlTab, activateSqlTab, invalidateAiConfig } = createSqlModule({ invoke, dialog })
+
+// Sessions module placeholder - will be fully initialized after getCurrentUserEmail is available
+let sessionsModule = null
 
 const { checkUpdates, checkUpdatesOnStartup } = createUpdaterModule()
 
@@ -185,7 +189,13 @@ window.__messagesTriggerTest__ = () => {
 	}
 }
 
-// Function to load saved dependency states without re-checking
+// Create sessions module with getCurrentUserEmail
+sessionsModule = createSessionsModule({
+	invoke,
+	dialog,
+	getCurrentUserEmail,
+})
+const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
 
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
@@ -258,6 +268,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		startMessagesAutoRefresh,
 		stopMessagesAutoRefresh,
 		loadSql: activateSqlTab,
+		activateSessionsTab,
+		deactivateSessionsTab,
 	})
 
 setRunNavigateTo(navigateTo)
@@ -299,6 +311,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('data', 'data-view'),
 			// Load all templates into their direct tabs
 			templateLoader.loadAndInject('sql', 'sql-view'),
+			templateLoader.loadAndInject('sessions', 'sessions-view'),
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
 			templateLoader.loadAndInject('logs', 'logs-view'),
@@ -361,6 +374,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	window.__NAV_HANDLERS_READY__ = true
 	initializeDataTab()
 	pipelinesModule.initialize()
+	initializeSessionsTab()
 
 	// Optional debug banner
 	await mountDebugBanner()

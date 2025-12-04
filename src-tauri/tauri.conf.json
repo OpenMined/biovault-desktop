@@ -59,7 +59,7 @@
 			"minimumSystemVersion": "10.13"
 		},
 		"targets": ["app", "appimage", "dmg", "nsis"],
-		"resources": ["resources/syftbox/syftbox"]
+		"resources": ["resources/syftbox/syftbox", "resources/templates/*"]
 	},
 	"plugins": {
 		"updater": {
