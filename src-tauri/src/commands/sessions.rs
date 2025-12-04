@@ -10,6 +10,7 @@ use biovault::data::BioVaultDb;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus};
 use rand::Rng;
 use rusqlite::OptionalExtension;
+use serde_json::json;
 use std::fs;
 use std::path::Path;
 
@@ -27,7 +28,15 @@ fn generate_session_id() -> String {
 
 fn get_sessions_dir() -> std::path::PathBuf {
     let biovault_home = resolve_biovault_home_path();
-    biovault_home.join("sessions")
+    let owner = get_owner_email();
+
+    // Place sessions inside the owner's datasite shared/biovault/sessions so they replicate to peers
+    biovault_home
+        .join("datasites")
+        .join(owner)
+        .join("shared")
+        .join("biovault")
+        .join("sessions")
 }
 
 fn get_owner_email() -> String {
@@ -191,6 +200,37 @@ fn link_dev_notebooks(session_path: &Path) {
     }
 }
 
+fn ensure_session_permissions(session_path: &Path, owner: &str, peer: &Option<String>) {
+    // Create syft.pub.yaml to allow the peer to read (and admin remains with owner)
+    // Owner gets admin; peer gets read; write remains empty (owner has implicit rights)
+    let perm_path = session_path.join("syft.pub.yaml");
+    if perm_path.exists() {
+        return;
+    }
+
+    let mut read_list = vec![];
+    if let Some(peer_email) = peer {
+        read_list.push(peer_email.clone());
+    }
+
+    let doc = json!({
+        "rules": [
+            {
+                "pattern": "**",
+                "access": {
+                    "admin": [owner],
+                    "read": read_list,
+                    "write": Vec::<String>::new(),
+                },
+            },
+        ],
+    });
+
+    if let Ok(yaml) = serde_yaml::to_string(&doc) {
+        let _ = std::fs::write(&perm_path, yaml);
+    }
+}
+
 #[tauri::command]
 pub fn get_sessions() -> Result<Vec<Session>, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
@@ -274,6 +314,14 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
     let session_path = sessions_dir.join(&session_id);
     let owner = get_owner_email();
 
+    if request
+        .peer
+        .as_ref()
+        .is_some_and(|peer| peer.eq_ignore_ascii_case(&owner))
+    {
+        return Err("Peer email cannot be your own email".to_string());
+    }
+
     // Create session directory
     fs::create_dir_all(&session_path)
         .map_err(|e| format!("Failed to create session directory: {}", e))?;
@@ -281,6 +329,8 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
     // Create data subdirectory
     fs::create_dir_all(session_path.join("data"))
         .map_err(|e| format!("Failed to create data directory: {}", e))?;
+
+    ensure_session_permissions(&session_path, &owner, &request.peer);
 
     let session_path_str = session_path.to_string_lossy().to_string();
 
@@ -374,6 +424,13 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
 pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<Session, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
     let owner = get_owner_email();
+
+    if peer
+        .as_ref()
+        .is_some_and(|p| p.eq_ignore_ascii_case(&owner))
+    {
+        return Err("Peer email cannot be your own email".to_string());
+    }
 
     db.connection()
         .execute(
@@ -658,6 +715,18 @@ pub fn get_session_invitations() -> Result<Vec<SessionInvitation>, String> {
     let biovault_home = resolve_biovault_home_path();
     let mut invitations = Vec::new();
 
+    let is_rejected = |session_id: &str| {
+        let path = biovault_home
+            .join("datasites")
+            .join(&owner)
+            .join("app_data")
+            .join("biovault")
+            .join("rpc")
+            .join("session")
+            .join(format!("{}.rejected", session_id));
+        path.exists()
+    };
+
     // Look for invitations in our RPC folder
     // datasites/<our_email>/app_data/biovault/rpc/session/
     let rpc_path = biovault_home
@@ -679,6 +748,7 @@ pub fn get_session_invitations() -> Result<Vec<SessionInvitation>, String> {
                             // Only return pending invitations
                             if invitation.status == "pending"
                                 && !session_exists(&invitation.session_id)?
+                                && !is_rejected(&invitation.session_id)
                             {
                                 invitations.push(invitation);
                             }
@@ -705,7 +775,7 @@ pub fn get_session_invitations() -> Result<Vec<SessionInvitation>, String> {
                             if let Some(session_id) =
                                 invite.get("session_id").and_then(|v| v.as_str())
                             {
-                                if session_exists(session_id)? {
+                                if session_exists(session_id)? || is_rejected(session_id) {
                                     continue;
                                 }
                                 let session_name = invite
@@ -745,10 +815,30 @@ pub fn get_session_invitations() -> Result<Vec<SessionInvitation>, String> {
         }
     }
 
-    // Sort by created_at descending
-    invitations.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    use std::collections::HashMap;
 
-    Ok(invitations)
+    // De-duplicate by (session_id, requester) keeping the newest created_at
+    let mut dedup: HashMap<(String, String), SessionInvitation> = HashMap::new();
+    for invite in invitations.into_iter() {
+        let key = (invite.session_id.clone(), invite.requester.clone());
+        match dedup.get(&key) {
+            None => {
+                dedup.insert(key, invite);
+            }
+            Some(existing) => {
+                if invite.created_at > existing.created_at {
+                    dedup.insert(key, invite);
+                }
+            }
+        }
+    }
+
+    let mut invites: Vec<SessionInvitation> = dedup.into_values().collect();
+
+    // Sort by created_at descending
+    invites.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(invites)
 }
 
 #[tauri::command]
@@ -798,6 +888,8 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         .map_err(|e| format!("Failed to create session directory: {}", e))?;
     fs::create_dir_all(session_path.join("data"))
         .map_err(|e| format!("Failed to create data directory: {}", e))?;
+
+    ensure_session_permissions(&session_path, &owner, &Some(invitation.requester.clone()));
 
     // Dev helper: link notebooks into the session folder
     link_dev_notebooks(&session_path);
@@ -949,6 +1041,12 @@ pub fn reject_session_invitation(session_id: String, reason: Option<String>) -> 
     let _ = fs::write(
         &response_file,
         serde_json::to_string_pretty(&response).unwrap(),
+    );
+
+    // Mark locally so we can hide the invite from list in case of stale message copies
+    let _ = fs::write(
+        rpc_path.join(format!("{}.rejected", session_id)),
+        "rejected",
     );
 
     send_session_invite_response_message(

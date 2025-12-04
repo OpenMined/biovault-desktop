@@ -175,46 +175,10 @@
 	overflow: hidden;
 }
 
-#pipeline-detail-view .page-header {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	padding: 16px 28px;
-	border-bottom: 1px solid #e5e7eb;
-	background: linear-gradient(to bottom, #ffffff 0%, #fafafa 100%);
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-.header-left {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	flex: 1;
-	min-width: 0;
-}
-
-.back-button-icon {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 32px;
-	height: 32px;
-	background: none;
-	border: none;
-	border-radius: 6px;
-	color: #9ca3af;
-	cursor: pointer;
-	transition: all 0.15s;
-	flex-shrink: 0;
-}
-
-.back-button-icon:hover {
-	background: #f3f4f6;
-	color: #6b7280;
-}
+/* Pipeline Detail View uses unified page-header */
 
 .back-button,
-.btn-secondary {
+.pipelines-btn-secondary {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -245,11 +209,6 @@
 	transform: translateY(0);
 }
 
-.pipeline-header-info {
-	flex: 1;
-	min-width: 0;
-}
-
 .pipeline-detail-title {
 	margin: 0;
 	font-size: 20px;
@@ -275,38 +234,6 @@
 	border-radius: 4px;
 	font-size: 12px;
 	font-weight: 500;
-}
-
-.pipeline-header-actions {
-	display: flex;
-	gap: 8px;
-}
-
-.btn-run {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 9px 18px;
-	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-	color: white;
-	border: none;
-	border-radius: 8px;
-	font-size: 14px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-	box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
-}
-
-.btn-run:hover {
-	background: linear-gradient(135deg, #059669 0%, #047857 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
-}
-
-.btn-run:active {
-	transform: translateY(0);
-	box-shadow: 0 2px 4px rgba(16, 185, 129, 0.25);
 }
 
 #pipeline-detail-view .view-content {

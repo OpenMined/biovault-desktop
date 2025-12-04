@@ -1,4 +1,8 @@
+import { createContactAutocomplete } from './contact-autocomplete.js'
+
 export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
+	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
+
 	let sessions = []
 	let activeSessionId = null
 	let jupyterPollingInterval = null
@@ -83,8 +87,12 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 						}
 					</div>
 					<div class="session-invite-actions">
-						<button class="session-cta" data-action="accept-invite" data-session-id="${invite.session_id}">Accept</button>
-						<button class="session-secondary" data-action="reject-invite" data-session-id="${invite.session_id}">Decline</button>
+						<button class="session-cta" data-action="accept-invite" data-session-id="${
+							invite.session_id
+						}">Accept</button>
+						<button class="session-secondary" data-action="reject-invite" data-session-id="${
+							invite.session_id
+						}">Decline</button>
 					</div>
 				</div>
 			</div>
@@ -179,15 +187,9 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		renderSessionDetail(session)
 		await loadSessionMessages(sessionId)
-		const status = await refreshJupyterStatus(sessionId)
+		const _status = await refreshJupyterStatus(sessionId)
 		startJupyterPolling(sessionId)
 		startSessionMessagesPolling(sessionId)
-
-		// Auto-launch Jupyter if not running
-		if (!status.running) {
-			console.log('[Sessions] Auto-launching Jupyter for session:', sessionId)
-			await launchSessionJupyter()
-		}
 	}
 
 	async function refreshSessionsAndInvites() {
@@ -297,14 +299,22 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
+	function setLaunchLoading(isLoading) {
+		const launchBtn = document.getElementById('launch-session-jupyter-btn')
+		if (!launchBtn) return
+		if (isLoading) {
+			launchBtn.disabled = true
+			launchBtn.innerHTML = '<span class="btn-spinner"></span> Launching...'
+		} else {
+			launchBtn.disabled = false
+			launchBtn.textContent = 'Launch Jupyter'
+		}
+	}
+
 	async function launchSessionJupyter() {
 		if (!activeSessionId) return
 
-		const launchBtn = document.getElementById('launch-session-jupyter-btn')
-		if (launchBtn) {
-			launchBtn.disabled = true
-			launchBtn.textContent = 'Launching...'
-		}
+		setLaunchLoading(true)
 
 		try {
 			console.log('[Sessions] Launching Jupyter for session:', activeSessionId)
@@ -315,10 +325,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 			console.error('[Sessions] Failed to launch Jupyter:', error)
 			await dialog.message(`Failed to launch Jupyter: ${error}`, { title: 'Error', kind: 'error' })
 		} finally {
-			if (launchBtn) {
-				launchBtn.disabled = false
-				launchBtn.textContent = 'Launch Jupyter'
-			}
+			setLaunchLoading(false)
 		}
 	}
 
@@ -369,39 +376,48 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	async function loadSessionMessages(sessionId) {
 		try {
 			const messages = await invoke('get_session_chat_messages', { sessionId })
-			renderSessionMessages(messages)
+			renderSessionMessages(messages, sessionId)
 		} catch (error) {
 			console.error('Failed to load session messages:', error)
-			renderSessionMessages([])
+			renderSessionMessages([], sessionId)
 		}
 	}
 
-	function renderSessionMessages(messages) {
+	function renderSessionMessages(messages, _sessionId) {
 		const containerEl = document.getElementById('session-messages')
 		if (!containerEl) return
 
 		const currentUser = getCurrentUserEmail?.() || 'owner@local'
 
-		if (!messages || messages.length === 0) {
-			containerEl.innerHTML = '<div class="session-messages-empty">No messages yet</div>'
-			return
-		}
-
-		containerEl.innerHTML = messages
-			.map((msg) => {
-				const isOutgoing = msg.from === currentUser
-				return `
-				<div class="session-message ${isOutgoing ? 'outgoing' : ''}">
-					<div class="session-message-header">${escapeHtml(msg.from || 'Unknown')} - ${formatRelativeTime(
-						msg.created_at,
-					)}</div>
-					<div class="session-message-body">${escapeHtml(msg.body || '')}</div>
-				</div>
-			`
+		// Use shared renderer from messages module if available
+		if (window.__messagesModule?.renderMessagesToContainer) {
+			window.__messagesModule.renderMessagesToContainer(containerEl, messages, {
+				compact: true,
+				currentUserEmail: currentUser,
 			})
-			.join('')
+		} else {
+			// Fallback: simple rendering if messages module not loaded
+			if (!messages || messages.length === 0) {
+				containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
+				return
+			}
 
-		containerEl.scrollTop = containerEl.scrollHeight
+			containerEl.innerHTML = messages
+				.map((msg) => {
+					const isOutgoing = msg.from === currentUser
+					return `
+					<div class="message-group ${isOutgoing ? 'outgoing' : 'incoming'} compact">
+						<div class="message-bubble ${isOutgoing ? 'outgoing' : ''} compact">
+							<div class="message-bubble-body">${escapeHtml(msg.body || '')}</div>
+							<div class="message-bubble-meta">${formatRelativeTime(msg.created_at)}</div>
+						</div>
+					</div>
+				`
+				})
+				.join('')
+
+			containerEl.scrollTop = containerEl.scrollHeight
+		}
 	}
 
 	async function sendSessionMessage() {
@@ -438,6 +454,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	function showCreateSessionModal() {
 		const modal = document.getElementById('create-session-modal')
 		if (modal) {
+			contactAutocomplete.attachToInputs(['session-peer-input'])
 			modal.style.display = 'flex'
 			document.getElementById('session-name-input').value = ''
 			document.getElementById('session-description-input').value = ''
@@ -492,6 +509,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	function showAddPeerModal() {
 		const modal = document.getElementById('add-peer-modal')
 		if (modal) {
+			contactAutocomplete.attachToInputs(['peer-email-input'])
 			modal.style.display = 'flex'
 			document.getElementById('peer-email-input').value = ''
 			document.getElementById('peer-email-input').focus()
@@ -612,6 +630,9 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	function initializeSessionsTab() {
+		// Preload contact suggestions for peer inputs
+		contactAutocomplete.attachToInputs(['session-peer-input', 'peer-email-input'])
+
 		const newBtn = document.getElementById('new-session-btn')
 		if (newBtn) newBtn.addEventListener('click', showCreateSessionModal)
 
@@ -658,6 +679,29 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 					e.preventDefault()
 					sendSessionMessage()
 				}
+			})
+		}
+
+		// Open in Messages button - navigates to the session thread in Messages view
+		const openInMessagesBtn = document.getElementById('open-in-messages-btn')
+		if (openInMessagesBtn) {
+			openInMessagesBtn.addEventListener('click', () => {
+				if (!activeSessionId) return
+				const session = sessions.find((s) => s.session_id === activeSessionId)
+				if (!session) return
+
+				// Navigate to Messages tab
+				if (typeof window.navigateTo === 'function') {
+					window.navigateTo('messages')
+				}
+
+				// After a short delay, open the session thread (messages module will find it by session_id)
+				setTimeout(() => {
+					if (window.__messagesModule) {
+						// Refresh messages and look for the session thread
+						window.__messagesModule.loadMessageThreads(true, { emitToasts: false })
+					}
+				}, 200)
 			})
 		}
 

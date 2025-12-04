@@ -1,132 +1,136 @@
-<div class="table-container">
-	<!-- File Type Sub-tabs -->
-	<div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd">
-		<button
-			class="file-type-tab active"
-			data-type="Genotype"
-			style="
-				padding: 10px 20px;
-				background: none;
-				border: none;
-				border-bottom: 3px solid #007bff;
-				cursor: pointer;
-				font-size: 14px;
-				font-weight: 500;
-				color: #007bff;
-			"
-		>
-			Genotype
-		</button>
-		<button
-			class="file-type-tab"
-			data-type="Unknown"
-			style="
-				padding: 10px 20px;
-				background: none;
-				border: none;
-				border-bottom: 3px solid transparent;
-				cursor: pointer;
-				font-size: 14px;
-				font-weight: 500;
-				color: #666;
-			"
-		>
-			Unknown
-		</button>
-	</div>
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<div class="page-header-title-row">
+				<h1 class="page-title">Files</h1>
+				<span id="files-count" class="page-count-badge">0</span>
+			</div>
+			<p class="page-subtitle">Raw file browser with processing queue</p>
+		</div>
+		<div class="page-header-right">
+			<!-- Search -->
+			<div class="page-header-search">
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<circle cx="11" cy="11" r="8"></circle>
+					<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+				</svg>
+				<input type="text" id="files-search" placeholder="Search files..." />
+			</div>
 
-	<div
-		style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px"
-	>
-		<h2 style="margin: 0">Files (<span id="files-count">0</span>)</h2>
-		<div style="display: flex; gap: 10px; align-items: center">
-			<input
-				type="text"
-				id="files-search"
-				class="table-search-input"
-				placeholder="Search files..."
-			/>
-			<button
-				id="process-queue-btn"
-				style="
-					padding: 8px 16px;
-					background: #28a745;
-					color: white;
-					border: none;
-					border-radius: 4px;
-					cursor: pointer;
-					display: flex;
-					align-items: center;
-					gap: 6px;
-				"
-			>
-				<span id="queue-btn-icon">⏸</span>
-				<span id="queue-btn-text">Pause Queue</span>
-				<span id="queue-spinner" class="queue-spinner" style="display: none"></span>
-				(<span id="pending-count">0</span>)
-			</button>
-			<button
-				id="delete-selected-files-btn"
-				style="
-					padding: 8px 16px;
-					background: #dc3545;
-					color: white;
-					border: none;
-					border-radius: 4px;
-					cursor: pointer;
-					display: none;
-				"
-			>
-				Delete Selected
-			</button>
+			<div class="page-header-actions">
+				<button id="process-queue-btn" class="btn-secondary">
+					<span id="queue-btn-icon-container">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<rect x="6" y="4" width="4" height="16"></rect>
+							<rect x="14" y="4" width="4" height="16"></rect>
+						</svg>
+					</span>
+					<span id="queue-btn-text">Pause</span>
+					<span
+						id="queue-spinner"
+						class="spinner"
+						style="display: none; width: 12px; height: 12px; margin: 0"
+					></span>
+					(<span id="pending-count">0</span>)
+				</button>
+				<button
+					id="delete-selected-files-btn"
+					class="btn-secondary"
+					style="display: none; color: #ef4444"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<polyline points="3 6 5 6 21 6"></polyline>
+						<path
+							d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+						></path>
+					</svg>
+					Delete
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<!-- Main Content -->
+	<div class="view-content">
+		<div class="files-content-container">
+			<!-- File Type Tabs -->
+			<div class="files-type-tabs">
+				<button class="file-type-tab active" data-type="Genotype">Genotype</button>
+				<button class="file-type-tab" data-type="Unknown">Unknown</button>
+			</div>
+
+			<table>
+				<thead>
+					<tr>
+						<th style="width: 40px"><input type="checkbox" id="select-all-files-table" /></th>
+						<th class="sortable-files-header" data-sort-field="id">
+							ID <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="status">
+							Status <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="participant">
+							Participant ID <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="file_path">
+							File Path <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="data_type">
+							Data Type <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="source">
+							Source <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="grch_version">
+							GRCh <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="row_count">
+							Rows <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="chromosome_count">
+							Chromosomes <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="inferred_sex">
+							Sex <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="file_hash">
+							Hash <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="created_at">
+							Created At <span class="sort-indicator"></span>
+						</th>
+						<th class="sortable-files-header" data-sort-field="updated_at">
+							Updated At <span class="sort-indicator"></span>
+						</th>
+						<th>Actions</th>
+					</tr>
+				</thead>
+				<tbody id="files-table"></tbody>
+			</table>
 		</div>
 	</div>
-	<table>
-		<thead>
-			<tr>
-				<th style="width: 40px"><input type="checkbox" id="select-all-files-table" /></th>
-				<th class="sortable-files-header" data-sort-field="id">
-					ID <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="status">
-					Status <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="participant">
-					Participant ID <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="file_path">
-					File Path <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="data_type">
-					Data Type <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="source">
-					Source <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="grch_version">
-					GRCh <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="row_count">
-					Rows <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="chromosome_count">
-					Chromosomes <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="inferred_sex">
-					Sex <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="file_hash">
-					Hash <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="created_at">
-					Created At <span class="sort-indicator"></span>
-				</th>
-				<th class="sortable-files-header" data-sort-field="updated_at">
-					Updated At <span class="sort-indicator"></span>
-				</th>
-				<th>Actions</th>
-			</tr>
-		</thead>
-		<tbody id="files-table"></tbody>
-	</table>
 </div>
