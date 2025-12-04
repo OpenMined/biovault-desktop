@@ -33,6 +33,11 @@ on:
         required: false
         default: true
         type: boolean
+      build_linux_arm64:
+        description: "Build Linux (arm64, no bundled deps)"
+        required: false
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       version:
@@ -55,6 +60,10 @@ on:
         type: boolean
         default: true
       build_linux_x64:
+        required: false
+        type: boolean
+        default: true
+      build_linux_arm64:
         required: false
         type: boolean
         default: true
@@ -122,6 +131,7 @@ jobs:
           BUILD_MACOS_X64: ${{ inputs.build_macos_x64 }}
           BUILD_WINDOWS_X64: ${{ inputs.build_windows_x64 }}
           BUILD_LINUX_X64: ${{ inputs.build_linux_x64 }}
+          BUILD_LINUX_ARM64: ${{ inputs.build_linux_arm64 }}
         run: |
           python - <<'PY'
           import json
@@ -163,6 +173,14 @@ jobs:
                   'args': 'x86_64-unknown-linux-gnu',
                   'build_kind': 'tauri',
                   'target': 'linux-x64',
+              })
+
+          if is_enabled('BUILD_LINUX_ARM64'):
+              entries.append({
+                  'runs-on': 'ubuntu-24.04-arm',
+                  'args': 'aarch64-unknown-linux-gnu',
+                  'build_kind': 'tauri',
+                  'target': 'linux-arm64',
               })
 
           matrix = {'include': entries}
@@ -317,7 +335,7 @@ jobs:
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Setup Go (syftbox)
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         uses: actions/setup-go@v5
         with:
           go-version-file: biovault/syftbox/go.mod
@@ -339,7 +357,7 @@ jobs:
             ${{ matrix.args }}-cargo-
 
       - name: Fetch bundled dependencies
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         shell: bash
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
@@ -354,7 +372,7 @@ jobs:
           fi
 
       - name: Build syftbox client
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
