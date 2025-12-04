@@ -210,7 +210,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: 1
-      APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
+      TAURI_CLI_LOG_LEVEL: trace
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -352,6 +352,50 @@ jobs:
           else
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
+
+      - name: Setup AppImage tools (Linux)
+        if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
+        run: |
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" == "aarch64" ]]; then
+            APPIMAGE_ARCH="aarch64"
+          else
+            APPIMAGE_ARCH="x86_64"
+          fi
+
+          # linuxdeploy
+          wget -q "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-${APPIMAGE_ARCH}.AppImage" -O /tmp/linuxdeploy.AppImage
+          chmod +x /tmp/linuxdeploy.AppImage
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            OFFSET=$(readelf -h /tmp/linuxdeploy.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/linuxdeploy-extracted
+          chmod +x /tmp/linuxdeploy-extracted/AppRun
+
+          # linuxdeploy-plugin-appimage
+          wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-${APPIMAGE_ARCH}.AppImage" -O /tmp/plugin.AppImage
+          chmod +x /tmp/plugin.AppImage
+          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./plugin.AppImage --appimage-extract || true
+          if [ ! -d /tmp/squashfs-root ]; then
+            OFFSET=$(readelf -h /tmp/plugin.AppImage | grep "Start of section" | awk '{print $NF}')
+            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/plugin.AppImage || \
+            unsquashfs -d /tmp/squashfs-root /tmp/plugin.AppImage
+          fi
+          mv /tmp/squashfs-root /tmp/plugin-extracted
+          chmod +x /tmp/plugin-extracted/AppRun
+
+          echo "AppImage tools extracted successfully"
+          ls -la /tmp/linuxdeploy-extracted/ || true
+          ls -la /tmp/plugin-extracted/ || true
+
+          {
+            echo "LINUXDEPLOY=/tmp/linuxdeploy-extracted/usr/bin/linuxdeploy"
+            echo "LINUXDEPLOY_PLUGIN_APPIMAGE=/tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage"
+            echo "APPIMAGETOOL=/tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool"
+          } >> "$GITHUB_ENV"
 
       - name: Build app (macOS)
         if: runner.os == 'macOS'
