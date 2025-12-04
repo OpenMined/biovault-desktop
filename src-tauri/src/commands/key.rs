@@ -581,3 +581,55 @@ pub fn network_trust_changed_key(identity: String) -> Result<ContactInfo, String
     // Simply re-import the contact, which overwrites the existing bundle
     network_import_contact(identity)
 }
+
+#[derive(Serialize, Debug, Clone)]
+pub struct RepublishResult {
+    pub identity: String,
+    pub fingerprint: String,
+    pub export_path: String,
+    pub vault_matches_export: bool,
+}
+
+/// Re-publish the public DID from the local vault to the public export location
+/// Useful when the did.json file gets out of sync with the vault bundle
+#[tauri::command]
+pub fn key_republish(email: Option<String>) -> Result<RepublishResult, String> {
+    let config = load_config(email.as_deref())?;
+    let email = resolve_email(email.as_deref(), &config)?;
+    let (data_root, vault_path) = resolve_paths(&config, None, None)?;
+
+    let slug = syftbox_sdk::sanitize_identity(&email);
+    let bundle_path = vault_path.join("bundles").join(format!("{slug}.json"));
+    let export_path = resolve_export_path(&data_root, &email);
+
+    if !bundle_path.exists() {
+        return Err(format!(
+            "No bundle found in vault for {email}. Generate keys first."
+        ));
+    }
+
+    // Read the vault bundle
+    let vault_info = biovault::syftbox::syc::parse_public_bundle_file(&bundle_path)
+        .map_err(|e| format!("failed to read vault bundle: {e}"))?;
+
+    // Ensure parent directory exists
+    if let Some(parent) = export_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create export directory: {e}"))?;
+    }
+
+    // Copy the bundle to the export location
+    std::fs::copy(&bundle_path, &export_path)
+        .map_err(|e| format!("failed to publish bundle: {e}"))?;
+
+    // Verify the copy
+    let export_info = biovault::syftbox::syc::parse_public_bundle_file(&export_path)
+        .map_err(|e| format!("failed to verify exported bundle: {e}"))?;
+
+    Ok(RepublishResult {
+        identity: vault_info.identity,
+        fingerprint: vault_info.fingerprint.clone(),
+        export_path: export_path.to_string_lossy().to_string(),
+        vault_matches_export: vault_info.fingerprint == export_info.fingerprint,
+    })
+}

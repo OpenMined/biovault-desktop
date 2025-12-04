@@ -566,14 +566,50 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		}
 	}
 
+	async function handleRepublishDID() {
+		const btn = document.getElementById('key-republish-btn')
+		if (btn) {
+			btn.disabled = true
+			btn.textContent = 'Republishing...'
+		}
+		try {
+			const email = document.getElementById('setting-email')?.value.trim() || currentUserEmail
+			const result = await invoke('key_republish', { email: email || null })
+
+			if (result.vault_matches_export) {
+				await dialog.message(
+					`DID republished successfully.\n\nFingerprint: ${result.fingerprint}\nExported to: ${result.export_path}`,
+					{ title: 'Success' },
+				)
+			} else {
+				await dialog.message(
+					`Warning: DID was republished but verification failed.\n\nFingerprint: ${result.fingerprint}`,
+					{ title: 'Warning', type: 'warning' },
+				)
+			}
+			// Refresh key status to update the display
+			await refreshKeyStatus()
+		} catch (error) {
+			console.error('Failed to republish DID:', error)
+			await dialog.message(`Failed to republish DID: ${error}`, { title: 'Error', type: 'error' })
+		} finally {
+			if (btn) {
+				btn.disabled = false
+				btn.textContent = 'Republish DID'
+			}
+		}
+	}
+
 	function bindKeyButtons() {
 		if (keyHandlersBound) return
 
 		// Main settings buttons
 		const openVaultBtn = document.getElementById('key-open-vault-btn')
+		const republishBtn = document.getElementById('key-republish-btn')
 		const manageBtn = document.getElementById('key-manage-btn')
 
 		openVaultBtn?.addEventListener('click', handleOpenVault)
+		republishBtn?.addEventListener('click', handleRepublishDID)
 		manageBtn?.addEventListener('click', openKeyModal)
 
 		// Contacts refresh button

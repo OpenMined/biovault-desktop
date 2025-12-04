@@ -172,6 +172,7 @@ const {
 	ensureMessagesAuthorizationAndStartNew,
 	updateComposeVisibilityPublic,
 	resetActiveThread,
+	setActiveMessageFilterButton,
 	getMessagesInitialized,
 	getMessagesAuthorized,
 } = messagesModule
@@ -421,6 +422,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		loadMessageThreads,
 		sendCurrentMessage,
 		resetActiveThread,
+		setActiveMessageFilterButton,
 		ensureMessagesAuthorizationAndStartNew,
 		handleDeleteThread,
 		setSyftboxTarget,

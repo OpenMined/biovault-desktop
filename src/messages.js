@@ -33,9 +33,12 @@ export function createMessagesModule({
 	let messageSyncUnlisten = null
 	let notificationApiPromise = null
 	let searchTerm = ''
+	let messageFilter = 'inbox'
 
 	const AUTO_REFRESH_MS = 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
+	let failedMessages = []
+	let failedMessagesCount = 0
 	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	// ============================================================================
@@ -175,6 +178,262 @@ export function createMessagesModule({
 			from: invite.from || msg.from,
 			description: invite.description,
 			created_at: invite.created_at,
+		}
+	}
+
+	function setActiveMessageFilterButton(filter) {
+		messageFilter = filter
+		document.querySelectorAll('.message-filter').forEach((btn) => {
+			btn.classList.toggle('active', btn.dataset.filter === filter)
+		})
+
+		// Show failed messages panel or regular thread list based on filter
+		const _messageList = document.getElementById('message-list')
+		const messagesMain = document.getElementById('messages-main')
+		const emptyState = document.getElementById('messages-empty-state')
+
+		if (filter === 'failed') {
+			// Hide normal message UI when viewing failed messages
+			if (messagesMain) messagesMain.style.display = 'none'
+			if (emptyState) emptyState.style.display = 'none'
+			loadFailedMessages()
+		} else {
+			// Restore normal view
+			loadMessageThreads(false, { emitToasts: false })
+		}
+	}
+
+	async function loadFailedMessages() {
+		if (!messagesAuthorized) return
+
+		const list = document.getElementById('message-list')
+		if (!list) return
+
+		try {
+			const result = await invoke('list_failed_messages', { includeDismissed: false })
+			failedMessages = result?.failed_messages || []
+			renderFailedMessages()
+		} catch (error) {
+			console.error('Failed to load failed messages:', error)
+			if (list) {
+				list.innerHTML = '<div class="message-thread-empty">Failed to load failed messages</div>'
+			}
+		}
+	}
+
+	async function updateFailedMessagesBadge() {
+		try {
+			const count = await invoke('count_failed_messages')
+			failedMessagesCount = count || 0
+			const badge = document.getElementById('failed-messages-badge')
+			if (badge) {
+				badge.textContent = failedMessagesCount > 9 ? '9+' : failedMessagesCount
+				badge.style.display = failedMessagesCount > 0 ? 'inline-block' : 'none'
+			}
+			// Add warning class to failed filter button if there are failures
+			const failedBtn = document.querySelector('.message-filter-failed')
+			if (failedBtn) {
+				failedBtn.classList.toggle('has-failures', failedMessagesCount > 0)
+			}
+		} catch (error) {
+			console.error('Failed to update failed messages badge:', error)
+		}
+	}
+
+	function renderFailedMessages() {
+		const list = document.getElementById('message-list')
+		if (!list) return
+
+		if (failedMessages.length === 0) {
+			list.innerHTML = '<div class="message-thread-empty">No failed messages</div>'
+			return
+		}
+
+		list.innerHTML = ''
+		failedMessages.forEach((failed) => {
+			const item = document.createElement('div')
+			item.className = 'message-thread-item failed-message-item'
+
+			const topRow = document.createElement('div')
+			topRow.className = 'message-thread-top'
+
+			const header = document.createElement('div')
+			header.className = 'message-thread-header'
+			header.innerHTML = `<span class="failed-icon">⚠️</span> ${escapeHtml(failed.sender_identity || 'Unknown sender')}`
+			topRow.appendChild(header)
+
+			const errorTag = document.createElement('span')
+			errorTag.className = 'message-thread-error-tag'
+			errorTag.textContent = getFailureReasonShort(failed.failure_reason)
+			topRow.appendChild(errorTag)
+
+			item.appendChild(topRow)
+
+			const subject = document.createElement('div')
+			subject.className = 'message-thread-subject'
+			subject.textContent = failed.failure_reason_display || 'Decryption failed'
+			item.appendChild(subject)
+
+			const preview = document.createElement('div')
+			preview.className = 'message-thread-preview'
+			preview.textContent = failed.suggested_action || 'Unknown error'
+			item.appendChild(preview)
+
+			const metaRow = document.createElement('div')
+			metaRow.className = 'message-thread-meta'
+			metaRow.textContent = failed.created_at ? formatDateTime(failed.created_at) : ''
+			item.appendChild(metaRow)
+
+			item.addEventListener('click', () => {
+				showFailedMessageDetails(failed)
+			})
+
+			list.appendChild(item)
+		})
+	}
+
+	function getFailureReasonShort(reason) {
+		if (!reason) return 'Error'
+		if (reason.includes('SenderBundleNotCached')) return 'Missing Key'
+		if (reason.includes('RecipientKeyMismatch')) return 'Key Mismatch'
+		if (reason.includes('WrongRecipient')) return 'Wrong Key'
+		if (reason.includes('DecryptionFailed')) return 'Decrypt Error'
+		if (reason.includes('InvalidEnvelope')) return 'Invalid'
+		return 'Error'
+	}
+
+	function showFailedMessageDetails(failed) {
+		const messagesMain = document.getElementById('messages-main')
+		const emptyState = document.getElementById('messages-empty-state')
+		const conversation = document.getElementById('message-conversation')
+		const subjectEl = document.getElementById('message-thread-subject')
+		const participantsEl = document.getElementById('message-thread-participants')
+		const deleteBtn = document.getElementById('delete-thread-btn')
+		const composeSection = document.querySelector('.message-compose')
+
+		if (messagesMain) messagesMain.style.display = 'flex'
+		if (emptyState) emptyState.style.display = 'none'
+		if (deleteBtn) deleteBtn.style.display = 'none'
+		if (composeSection) composeSection.style.display = 'none'
+
+		if (subjectEl) subjectEl.textContent = 'Failed Message'
+		if (participantsEl) participantsEl.textContent = `From: ${failed.sender_identity || 'Unknown'}`
+
+		if (conversation) {
+			conversation.innerHTML = `
+				<div class="failed-message-details">
+					<div class="failed-message-header">
+						<h3>⚠️ Message Could Not Be Decrypted</h3>
+						<p class="failed-reason">${escapeHtml(failed.failure_reason_display || failed.failure_reason)}</p>
+					</div>
+
+					<div class="failed-message-info">
+						<div class="info-row">
+							<span class="info-label">Sender:</span>
+							<span class="info-value">${escapeHtml(failed.sender_identity || 'Unknown')}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Sender Key Fingerprint:</span>
+							<span class="info-value fingerprint">${escapeHtml(failed.sender_fingerprint || 'Unknown')}</span>
+						</div>
+						${
+							failed.recipient_fingerprint
+								? `
+						<div class="info-row">
+							<span class="info-label">Expected Recipient Key:</span>
+							<span class="info-value fingerprint">${escapeHtml(failed.recipient_fingerprint)}</span>
+						</div>
+						`
+								: ''
+						}
+						<div class="info-row">
+							<span class="info-label">Received:</span>
+							<span class="info-value">${failed.created_at ? formatDateTime(failed.created_at) : 'Unknown'}</span>
+						</div>
+					</div>
+
+					<div class="failed-message-suggestion">
+						<h4>Suggested Action</h4>
+						<p>${escapeHtml(failed.suggested_action || 'Contact the sender or check your key configuration.')}</p>
+					</div>
+
+					<div class="failed-message-actions">
+						<button class="message-cta" onclick="window.__messagesModule?.handleImportSenderKey?.('${escapeHtml(failed.sender_identity)}')">
+							Import Sender's Key
+						</button>
+						<button class="message-secondary" onclick="window.__messagesModule?.startNewMessage?.('${escapeHtml(failed.sender_identity)}')">
+							Compose Message to Sender
+						</button>
+						<button class="message-secondary danger" onclick="window.__messagesModule?.dismissFailedMessage?.('${escapeHtml(failed.id)}')">
+							Dismiss
+						</button>
+						<button class="message-secondary danger" onclick="window.__messagesModule?.deleteFailedMessage?.('${escapeHtml(failed.id)}')">
+							Delete
+						</button>
+					</div>
+
+					<div class="failed-message-technical">
+						<details>
+							<summary>Technical Details</summary>
+							<pre>${escapeHtml(failed.error_details || 'No additional details')}</pre>
+						</details>
+					</div>
+				</div>
+			`
+		}
+	}
+
+	async function handleImportSenderKey(senderEmail) {
+		if (!senderEmail) {
+			alert('No sender email available')
+			return
+		}
+		try {
+			await invoke('network_import_contact', { email: senderEmail })
+			alert(`Key for ${senderEmail} imported successfully. Try syncing messages again.`)
+			// Refresh to potentially decrypt the message now
+			await invoke('sync_messages_with_failures')
+			await updateFailedMessagesBadge()
+			if (messageFilter === 'failed') {
+				await loadFailedMessages()
+			}
+		} catch (error) {
+			console.error('Failed to import sender key:', error)
+			alert(`Failed to import key for ${senderEmail}: ${error}`)
+		}
+	}
+
+	async function dismissFailedMessage(id) {
+		if (!id) return
+		try {
+			await invoke('dismiss_failed_message', { id })
+			await updateFailedMessagesBadge()
+			if (messageFilter === 'failed') {
+				await loadFailedMessages()
+			}
+		} catch (error) {
+			console.error('Failed to dismiss failed message:', error)
+			alert(`Failed to dismiss message: ${error}`)
+		}
+	}
+
+	async function deleteFailedMessage(id) {
+		if (!id) return
+		const confirmed = await confirmWithDialog('Delete this failed message record?', {
+			title: 'Delete Failed Message',
+			type: 'warning',
+		})
+		if (!confirmed) return
+
+		try {
+			await invoke('delete_failed_message', { id })
+			await updateFailedMessagesBadge()
+			if (messageFilter === 'failed') {
+				await loadFailedMessages()
+			}
+		} catch (error) {
+			console.error('Failed to delete failed message:', error)
+			alert(`Failed to delete message: ${error}`)
 		}
 	}
 
@@ -680,7 +939,7 @@ export function createMessagesModule({
 
 		try {
 			if (refresh) {
-				await invoke('sync_messages')
+				await invoke('sync_messages_with_failures')
 			}
 
 			const result = await invoke('list_message_threads', { filter: 'all' })
@@ -688,6 +947,8 @@ export function createMessagesModule({
 
 			updateThreadActivity(messageThreads, emitToasts)
 			renderMessageThreads()
+			// Also update the failed messages badge
+			await updateFailedMessagesBadge()
 		} catch (error) {
 			console.error('Failed to load message threads:', error)
 			if (list) {
@@ -982,6 +1243,7 @@ export function createMessagesModule({
 
 		if (messagesAuthorized) {
 			await loadMessageThreads(forceSync, { emitToasts: false })
+			await updateFailedMessagesBadge()
 		}
 
 		// Setup search functionality
@@ -1344,9 +1606,16 @@ export function createMessagesModule({
 		ensureMessagesAuthorizationAndStartNew,
 		updateComposeVisibilityPublic,
 		resetActiveThread,
+		setActiveMessageFilterButton,
 		getMessagesInitialized: () => messagesInitialized,
 		getMessagesAuthorized: () => messagesAuthorized,
 		triggerTestNotification,
+		// Failed messages
+		loadFailedMessages,
+		updateFailedMessagesBadge,
+		handleImportSenderKey,
+		dismissFailedMessage,
+		deleteFailedMessage,
 		// Shared renderer for embedding in other views
 		renderMessagesToContainer,
 	}
