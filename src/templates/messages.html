@@ -102,6 +102,16 @@
 						<input type="text" id="msg-search" placeholder="Search..." class="msg-search-input" />
 					</div>
 				</div>
+				<div class="message-filters">
+					<button class="message-filter active" data-filter="inbox">Inbox</button>
+					<button class="message-filter" data-filter="sent">Sent</button>
+					<button class="message-filter" data-filter="all">All</button>
+					<button class="message-filter message-filter-failed" data-filter="failed">
+						Failed
+						<span id="failed-messages-badge" class="failed-badge" style="display: none">0</span>
+					</button>
+					<button id="refresh-messages-btn" class="message-secondary">Refresh</button>
+				</div>
 				<div id="message-list" class="msg-thread-list">
 					<!-- Thread items rendered here -->
 				</div>

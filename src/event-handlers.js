@@ -33,7 +33,8 @@ export function setupEventHandlers({
 	// Messages
 	loadMessageThreads,
 	sendCurrentMessage,
-	_resetActiveThread,
+	resetActiveThread,
+	setActiveMessageFilterButton,
 	ensureMessagesAuthorizationAndStartNew,
 	handleDeleteThread,
 	setSyftboxTarget,
@@ -80,6 +81,22 @@ export function setupEventHandlers({
 	document.querySelectorAll('.file-table th[data-sort]').forEach((header) => {
 		header.addEventListener('click', () => {
 			setSortField(header.dataset.sort)
+		})
+	})
+
+	// Messages filter buttons
+	const messageFilterButtons = document.querySelectorAll('.message-filter')
+	messageFilterButtons.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			if (btn.classList.contains('active')) return
+			const filter = btn.dataset.filter
+			setActiveMessageFilterButton(filter)
+			resetActiveThread()
+			// setActiveMessageFilterButton handles loading for 'failed' filter
+			// Only call loadMessageThreads for normal filters
+			if (filter !== 'failed') {
+				loadMessageThreads(false, { emitToasts: false })
+			}
 		})
 	})
 

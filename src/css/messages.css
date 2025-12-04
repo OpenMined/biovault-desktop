@@ -1271,3 +1271,172 @@
 	border-radius: 12px;
 	border: 1px solid #e2e8f0;
 }
+
+/* Failed Messages Styles */
+.message-filter-failed {
+	position: relative;
+}
+
+.message-filter-failed.has-failures {
+	background: #fef2f2;
+	border-color: #fca5a5;
+	color: #b91c1c;
+}
+
+.failed-badge {
+	display: inline-block;
+	background: #ef4444;
+	color: white;
+	font-size: 10px;
+	font-weight: 700;
+	padding: 2px 6px;
+	border-radius: 10px;
+	margin-left: 4px;
+	min-width: 16px;
+	text-align: center;
+}
+
+.failed-message-item {
+	border-left: 3px solid #ef4444;
+	background: linear-gradient(90deg, #fef2f2, transparent);
+}
+
+.failed-icon {
+	margin-right: 4px;
+}
+
+.message-thread-error-tag {
+	padding: 2px 8px;
+	background: #fef2f2;
+	border: 1px solid #fca5a5;
+	border-radius: 6px;
+	font-size: 10px;
+	font-weight: 600;
+	color: #b91c1c;
+}
+
+.failed-message-details {
+	padding: 24px;
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+
+.failed-message-header {
+	text-align: center;
+	padding: 20px;
+	background: linear-gradient(135deg, #fef2f2, #fff);
+	border: 1px solid #fca5a5;
+	border-radius: 12px;
+}
+
+.failed-message-header h3 {
+	margin: 0 0 8px 0;
+	color: #b91c1c;
+	font-size: 18px;
+}
+
+.failed-message-header .failed-reason {
+	margin: 0;
+	color: #dc2626;
+	font-size: 14px;
+}
+
+.failed-message-info {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 12px;
+	padding: 16px;
+}
+
+.failed-message-info .info-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 8px 0;
+	border-bottom: 1px solid #e2e8f0;
+}
+
+.failed-message-info .info-row:last-child {
+	border-bottom: none;
+}
+
+.failed-message-info .info-label {
+	color: #64748b;
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.failed-message-info .info-value {
+	color: #0f172a;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.failed-message-info .info-value.fingerprint {
+	font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+	font-size: 11px;
+	color: #6366f1;
+	background: #eef2ff;
+	padding: 4px 8px;
+	border-radius: 6px;
+}
+
+.failed-message-suggestion {
+	background: #fefce8;
+	border: 1px solid #fde047;
+	border-radius: 12px;
+	padding: 16px;
+}
+
+.failed-message-suggestion h4 {
+	margin: 0 0 8px 0;
+	color: #854d0e;
+	font-size: 14px;
+}
+
+.failed-message-suggestion p {
+	margin: 0;
+	color: #a16207;
+	font-size: 13px;
+}
+
+.failed-message-actions {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	justify-content: center;
+	padding: 16px 0;
+}
+
+.failed-message-actions .danger {
+	background: #fef2f2;
+	border-color: #fca5a5;
+	color: #b91c1c;
+}
+
+.failed-message-actions .danger:hover {
+	background: #fee2e2;
+}
+
+.failed-message-technical {
+	margin-top: 8px;
+}
+
+.failed-message-technical summary {
+	cursor: pointer;
+	color: #64748b;
+	font-size: 12px;
+	padding: 8px 0;
+}
+
+.failed-message-technical pre {
+	background: #1e293b;
+	color: #e2e8f0;
+	padding: 16px;
+	border-radius: 8px;
+	font-size: 11px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
