@@ -665,14 +665,17 @@ checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 name = "bv-desktop"
 version = "0.1.15"
 dependencies = [
+ "anyhow",
  "biovault",
  "chrono",
  "csv",
  "dirs 5.0.1",
  "futures-util",
+ "hex",
  "image",
  "libc",
  "os_pipe",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "rusqlite",
@@ -680,6 +683,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "syftbox-sdk",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -6094,7 +6098,7 @@ dependencies = [
 
 [[package]]
 name = "syft-crypto-protocol"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6118,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "syftbox-sdk"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

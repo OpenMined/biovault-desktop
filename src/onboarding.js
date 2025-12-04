@@ -517,7 +517,9 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${
+							dep.name
+						}</h3>
 						${
 							dep.website
 								? `
@@ -569,8 +571,8 @@ export function initOnboarding({
 					</div>
 
 					<div style="display: flex; gap: 8px;">
-						<button id="reset-path-btn-${depIndex}" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+						<button id="reset-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Reset</button>
+						<button id="check-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Check Again</button>
 					</div>
 					<p style="font-size: 10px; color: #666; margin-top: 8px;">Reset auto-detects, Check Again verifies your path</p>
 				</div>
@@ -759,7 +761,9 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name}</h3>
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${
+							dep.name
+						}</h3>
 						${
 							dep.website
 								? `
@@ -787,8 +791,8 @@ export function initOnboarding({
 					</div>
 
 					<div style="display: flex; gap: 8px; margin-bottom: 8px;">
-						<button id="install-single-btn-${depIndex}" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Install</button>
-						<button id="check-path-btn-${depIndex}" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Check Again</button>
+						<button id="install-single-btn-${depIndex}" class="btn-primary" style="padding: 8px 16px; font-size: 12px; font-weight: 600;">Install</button>
+						<button id="check-path-btn-${depIndex}" class="btn-secondary" style="padding: 8px 16px; font-size: 12px;">Check Again</button>
 					</div>
 					<p style="font-size: 10px; color: #666; margin-top: 4px;">Install auto-detects, Check Again verifies your manual path</p>
 				</div>
@@ -1712,14 +1716,12 @@ export function initOnboarding({
 					const serverReachable = await invoke('check_dev_syftbox_server')
 
 					if (serverReachable) {
-						console.log('✅ Dev syftbox server reachable - skipping auth, going directly to init')
+						console.log('✅ Dev syftbox server reachable - skipping auth, showing key setup')
 
-						// Skip step 4 (auth) and go directly to step 5 (init)
+						// Skip step 4 (auth) but still show key setup step
 						document.getElementById('onboarding-step-3').style.display = 'none'
-						document.getElementById('onboarding-step-5').style.display = 'block'
-
-						// Initialize BioVault directly
-						initializeBioVault(email)
+						document.getElementById('onboarding-step-3-key').style.display = 'block'
+						await showKeyStep(email)
 						return
 					} else {
 						console.log('⚠️ Dev syftbox server not reachable - falling back to normal flow')
@@ -1730,27 +1732,10 @@ export function initOnboarding({
 				// Continue with normal flow on error
 			}
 
-			// Normal flow: Move to step 4 (SyftBox OTP)
+			// Normal flow: go to key setup step first
 			document.getElementById('onboarding-step-3').style.display = 'none'
-			document.getElementById('onboarding-step-4').style.display = 'block'
-			document.getElementById('syftbox-send-state').style.display = 'block'
-			document.getElementById('syftbox-email-info').style.display = 'none'
-			document.getElementById('syftbox-otp-state').style.display = 'none'
-			document.getElementById('syftbox-error-message').style.display = 'none'
-			const sendBtn = document.getElementById('send-login-code-btn')
-			if (sendBtn) {
-				sendBtn.disabled = false
-				sendBtn.textContent = 'Send Code'
-			}
-			document.querySelectorAll('.syftbox-code-input').forEach((input) => {
-				input.value = ''
-				input.classList.remove('error', 'success')
-			})
-			const verifyBtn = document.getElementById('verify-code-btn')
-			if (verifyBtn) {
-				verifyBtn.disabled = true
-				verifyBtn.textContent = 'Verify Code'
-			}
+			document.getElementById('onboarding-step-3-key').style.display = 'block'
+			await showKeyStep(email)
 		})
 	}
 
@@ -2164,7 +2149,9 @@ export function initOnboarding({
 							z-index: 99999;
 							font-family: monospace;
 						`
-						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${devModeInfo.biovault_home || 'default'} | Server: ${devModeInfo.server_url || 'none'}`
+						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${
+							devModeInfo.biovault_home || 'default'
+						} | Server: ${devModeInfo.server_url || 'none'}`
 						document.body.insertBefore(devBanner, document.body.firstChild)
 
 						// Adjust body padding to account for banner
@@ -2226,8 +2213,6 @@ export function initOnboarding({
 					console.error('❌ First onboarding step not found!')
 				}
 
-				// Update title
-				document.title = 'BioVault - Setup'
 				console.log('✅ Onboarding setup complete')
 			} else {
 				console.log('✅ User is already onboarded')
@@ -2236,6 +2221,278 @@ export function initOnboarding({
 			console.error('❌ Error checking onboarding status:', error)
 		}
 	}
+
+	// Key onboarding helpers
+	let onboardingKeyStatus = null
+	let onboardingRecovery = null
+
+	function buildIdenticon(seed) {
+		let hash = 0
+		for (let i = 0; i < seed.length; i += 1) {
+			hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+		}
+		const hue = hash % 360
+		const fg = `hsl(${hue}, 65%, 45%)`
+		const bg = '#f3f4f6'
+		const cells = 5
+		const size = 14
+		const padding = 6
+		let bits = hash || 1
+		let rects = ''
+		for (let y = 0; y < cells; y += 1) {
+			for (let x = 0; x < Math.ceil(cells / 2); x += 1) {
+				const on = bits & 1
+				bits = (bits >> 1) | ((bits & 1) << 31)
+				if (on) {
+					const rx = padding + x * size
+					const ry = padding + y * size
+					const mirrorX = padding + (cells - x - 1) * size
+					rects += `<rect x="${rx}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
+					if (mirrorX !== rx) {
+						rects += `<rect x="${mirrorX}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
+					}
+				}
+			}
+		}
+		const dim = padding * 2 + cells * size
+		return `<svg width="${dim}" height="${dim}" viewBox="0 0 ${dim} ${dim}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Identity fingerprint"><rect width="${dim}" height="${dim}" fill="${bg}" rx="12" ry="12"/>${rects}</svg>`
+	}
+
+	function renderKeyCard(status) {
+		document.getElementById('onboarding-key-identity').textContent = status?.identity || 'Unknown'
+		document.getElementById('onboarding-key-fp').textContent =
+			status?.vault_fingerprint || 'No key found'
+		document.getElementById('onboarding-key-status').textContent = status?.exists
+			? `Vault bundle at ${status.bundle_path}`
+			: 'No key found; generate or restore to continue.'
+		document.getElementById('onboarding-key-warning').textContent = status?.exists
+			? ''
+			: 'No key detected for this email. Generate or restore before continuing.'
+		const avatar = document.getElementById('onboarding-key-avatar')
+		if (avatar) {
+			avatar.innerHTML = buildIdenticon(status?.vault_fingerprint || status?.identity || 'seed')
+		}
+	}
+
+	async function showKeyStep(email) {
+		// If we already have state for this email (e.g., user pressed back), restore UI
+		if (onboardingKeyStatus?.identity === email && onboardingKeyStatus?.exists) {
+			renderKeyCard(onboardingKeyStatus)
+			document.getElementById('onboarding-restore-block').style.display = 'none'
+			if (onboardingRecovery) {
+				document.getElementById('onboarding-recovery-text').textContent = onboardingRecovery
+				document.getElementById('onboarding-recovery-block').style.display = 'block'
+			} else {
+				document.getElementById('onboarding-recovery-block').style.display = 'none'
+			}
+			document.getElementById('onboarding-next-3-key').disabled = false
+			return
+		}
+
+		// Fresh start - reset everything
+		onboardingRecovery = null
+		onboardingKeyStatus = { identity: email, exists: false }
+		document.getElementById('onboarding-recovery-block').style.display = 'none'
+		document.getElementById('onboarding-restore-block').style.display = 'none'
+		document.getElementById('onboarding-recovery-ack').checked = false
+		document.getElementById('onboarding-next-3-key').disabled = true
+		renderKeyCard(onboardingKeyStatus)
+		try {
+			const status = await invoke('key_get_status', { email })
+			onboardingKeyStatus = status
+			renderKeyCard(status)
+			if (status.exists) {
+				// Key exists - user can continue or regenerate
+				document.getElementById('onboarding-next-3-key').disabled = false
+			}
+			// If no key exists, user must click "Generate New" explicitly
+		} catch (error) {
+			console.error('Failed to load key status:', error)
+			onboardingKeyStatus = { identity: email, exists: false }
+			renderKeyCard(onboardingKeyStatus)
+			// User must click "Generate New" explicitly
+		}
+	}
+
+	async function generateKey(email, force = false) {
+		const generateBtn = document.getElementById('onboarding-generate-btn')
+		generateBtn.disabled = true
+		try {
+			const result = await invoke('key_generate', { email, force })
+			onboardingKeyStatus = {
+				identity: result.identity,
+				vault_fingerprint: result.fingerprint,
+				export_fingerprint: result.fingerprint,
+				export_matches: true,
+				exists: true,
+				bundle_path: result.bundle_path,
+				export_path: result.export_path,
+				vault_path: result.vault_path,
+				bundle: null,
+			}
+			onboardingRecovery = result.mnemonic
+			renderKeyCard(onboardingKeyStatus)
+			if (result.mnemonic) {
+				document.getElementById('onboarding-recovery-text').textContent = result.mnemonic
+				document.getElementById('onboarding-recovery-block').style.display = 'block'
+				// Keep Next enabled - alert will show if checkbox not checked
+				document.getElementById('onboarding-next-3-key').disabled = false
+			} else {
+				document.getElementById('onboarding-recovery-block').style.display = 'none'
+				document.getElementById('onboarding-next-3-key').disabled = false
+			}
+		} catch (error) {
+			console.error('Failed to generate key:', error)
+			await dialog.message(`Failed to generate key: ${error}`, { title: 'Error', type: 'error' })
+			document.getElementById('onboarding-next-3-key').disabled = true
+		} finally {
+			generateBtn.disabled = false
+		}
+	}
+
+	async function restoreKey(email, mnemonic) {
+		try {
+			const result = await invoke('key_restore', { email, mnemonic })
+			onboardingKeyStatus = {
+				identity: result.identity,
+				vault_fingerprint: result.fingerprint,
+				export_fingerprint: result.fingerprint,
+				export_matches: true,
+				exists: true,
+				bundle_path: result.bundle_path,
+				export_path: result.export_path,
+				vault_path: result.vault_path,
+				bundle: null,
+			}
+			// Show the mnemonic back to user so they can confirm they have it
+			onboardingRecovery = mnemonic
+			renderKeyCard(onboardingKeyStatus)
+			document.getElementById('onboarding-restore-block').style.display = 'none'
+			document.getElementById('onboarding-recovery-text').textContent = mnemonic
+			document.getElementById('onboarding-recovery-block').style.display = 'block'
+			document.getElementById('onboarding-recovery-ack').checked = false
+			document.getElementById('onboarding-next-3-key').disabled = false
+			await dialog.message(
+				'Key restored successfully. Please confirm you have saved your recovery code before continuing.',
+				{ title: 'Success' },
+			)
+		} catch (error) {
+			console.error('Failed to restore key:', error)
+			await dialog.message(`Failed to restore key: ${error}`, { title: 'Error', type: 'error' })
+			document.getElementById('onboarding-next-3-key').disabled = true
+		}
+	}
+
+	document.getElementById('onboarding-back-3-key')?.addEventListener('click', () => {
+		document.getElementById('onboarding-step-3-key').style.display = 'none'
+		document.getElementById('onboarding-step-3').style.display = 'block'
+	})
+
+	document.getElementById('onboarding-next-3-key')?.addEventListener('click', () => {
+		if (
+			document.getElementById('onboarding-recovery-block').style.display !== 'none' &&
+			!document.getElementById('onboarding-recovery-ack').checked
+		) {
+			dialog.message('Please confirm you have saved the recovery code.', {
+				title: 'Recovery Required',
+				type: 'warning',
+			})
+			return
+		}
+		document.getElementById('onboarding-step-3-key').style.display = 'none'
+		document.getElementById('onboarding-step-4').style.display = 'block'
+		const step4 = document.getElementById('onboarding-step-4')
+		if (step4) {
+			step4.dataset.fromSettings = 'false'
+		}
+		document.getElementById('syftbox-email-preview-address').textContent = document
+			.getElementById('onboarding-email')
+			.value.trim()
+		updateSyftboxLinkDisplay()
+	})
+
+	document.getElementById('onboarding-generate-btn')?.addEventListener('click', async () => {
+		const email = document.getElementById('onboarding-email').value.trim()
+		if (!email) return
+		// Warn if a key already exists
+		if (onboardingKeyStatus?.exists) {
+			const confirmed = await dialog.confirm(
+				'This will overwrite your existing key. Make sure you have saved your recovery code for the current key, or you will lose access to any data encrypted with it.\n\nAre you sure you want to generate a new key?',
+				{ title: 'Warning: Regenerate Key?', kind: 'warning' },
+			)
+			if (!confirmed) return
+			// Force regeneration by deleting existing key
+			await generateKey(email, true)
+		} else {
+			await generateKey(email, false)
+		}
+	})
+
+	document.getElementById('onboarding-restore-btn')?.addEventListener('click', () => {
+		document.getElementById('onboarding-restore-block').style.display = 'block'
+		document.getElementById('onboarding-recovery-block').style.display = 'none'
+		document.getElementById('onboarding-next-3-key').disabled = true
+	})
+
+	document.getElementById('onboarding-restore-cancel-btn')?.addEventListener('click', () => {
+		document.getElementById('onboarding-restore-block').style.display = 'none'
+		// Restore the recovery block if there was a recovery code showing
+		if (onboardingRecovery) {
+			document.getElementById('onboarding-recovery-block').style.display = 'block'
+		}
+		// Keep Next enabled - alert handles validation
+		document.getElementById('onboarding-next-3-key').disabled = !onboardingKeyStatus?.exists
+	})
+
+	document.getElementById('onboarding-restore-confirm-btn')?.addEventListener('click', async () => {
+		const email = document.getElementById('onboarding-email').value.trim()
+		if (!email) return
+		const mnemonic = document.getElementById('onboarding-restore-input').value.trim()
+		if (!mnemonic) {
+			await dialog.message('Please enter a recovery code to restore.', {
+				title: 'Recovery Required',
+				type: 'warning',
+			})
+			return
+		}
+		await restoreKey(email, mnemonic)
+	})
+
+	// Checkbox no longer disables Next - we show an alert instead when clicked
+
+	document.getElementById('onboarding-copy-recovery-btn')?.addEventListener('click', async () => {
+		if (!onboardingRecovery) return
+		await copyToClipboard(onboardingRecovery)
+	})
+
+	document.getElementById('onboarding-copy-fp-btn')?.addEventListener('click', async () => {
+		if (!onboardingKeyStatus?.vault_fingerprint) return
+		await copyToClipboard(onboardingKeyStatus.vault_fingerprint)
+	})
+
+	document
+		.getElementById('onboarding-copy-recovery-inline')
+		?.addEventListener('click', async () => {
+			if (!onboardingRecovery) return
+			const btn = document.getElementById('onboarding-copy-recovery-inline')
+			await copyToClipboard(onboardingRecovery)
+			btn?.classList.add('copied')
+			setTimeout(() => btn?.classList.remove('copied'), 1500)
+		})
+
+	document.getElementById('onboarding-open-vault-btn')?.addEventListener('click', async () => {
+		const vaultPath = onboardingKeyStatus?.vault_path
+		if (!vaultPath) {
+			await dialog.message('No vault path available.', { title: 'Error', type: 'error' })
+			return
+		}
+		try {
+			await invoke('open_folder', { path: vaultPath })
+		} catch (error) {
+			console.error('Failed to open vault:', error)
+			await dialog.message(`Failed to open vault: ${error}`, { title: 'Error', type: 'error' })
+		}
+	})
 
 	// Caller triggers initial onboarding check as needed
 	return { checkOnboarding }

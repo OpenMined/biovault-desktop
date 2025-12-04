@@ -1,0 +1,254 @@
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<div class="page-header-title-row">
+				<h1 class="page-title">Sessions</h1>
+			</div>
+			<p class="page-subtitle">Collaborative Jupyter workspaces</p>
+		</div>
+		<div class="page-header-right">
+			<div class="page-header-actions">
+				<button id="refresh-sessions-btn" class="btn-secondary" title="Refresh sessions">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<polyline points="23 4 23 10 17 10"></polyline>
+						<polyline points="1 20 1 14 7 14"></polyline>
+						<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+					</svg>
+					<span>Sync</span>
+				</button>
+				<button id="new-session-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					New
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<!-- Main Content -->
+	<div class="view-content">
+		<div class="sessions-container">
+			<!-- Session List Sidebar -->
+			<div class="session-sidebar">
+				<div class="session-invitations">
+					<div class="session-invitations-header">
+						<p class="sidebar-label">Invitations</p>
+					</div>
+					<div id="session-invitations-list" class="session-invitations-list">
+						<div class="session-invitations-empty">No pending invitations</div>
+					</div>
+				</div>
+				<div id="session-list" class="session-list">
+					<!-- Session items rendered here -->
+				</div>
+			</div>
+
+			<!-- Main Session Area -->
+			<div id="sessions-main" class="sessions-main" style="display: none">
+				<!-- Session Detail View -->
+				<div id="session-detail" class="session-detail">
+					<div class="session-header">
+						<div class="session-header-info">
+							<h3 id="session-name">Session Name</h3>
+							<span id="session-status" class="session-status status-active">Active</span>
+						</div>
+						<div class="session-header-actions">
+							<button id="open-session-folder-btn" class="session-secondary">Open Folder</button>
+							<button id="delete-session-btn" class="session-secondary danger">Delete</button>
+						</div>
+					</div>
+
+					<div class="session-info-panel">
+						<div class="session-info-row">
+							<span class="session-info-label">Created:</span>
+							<span id="session-created-at" class="session-info-value">-</span>
+						</div>
+						<div class="session-info-row">
+							<span class="session-info-label">Owner:</span>
+							<span id="session-owner" class="session-info-value">-</span>
+						</div>
+						<div class="session-info-row">
+							<span class="session-info-label">Collaborator:</span>
+							<span id="session-peer" class="session-info-value">-</span>
+							<button id="add-peer-btn" class="session-link-btn" style="display: none">Add</button>
+						</div>
+						<div class="session-info-row">
+							<span class="session-info-label">Path:</span>
+							<span id="session-path" class="session-info-value session-path-value">-</span>
+						</div>
+					</div>
+
+					<!-- Jupyter Controls -->
+					<div class="session-jupyter-panel">
+						<h4>Jupyter Environment</h4>
+						<div id="session-jupyter-status" class="session-jupyter-status">
+							<span class="jupyter-status-indicator stopped">Stopped</span>
+						</div>
+						<div id="session-jupyter-url" class="session-jupyter-url" style="display: none">
+							<a href="#" target="_blank" id="session-jupyter-link">Open Jupyter</a>
+						</div>
+						<div class="session-jupyter-actions">
+							<button id="launch-session-jupyter-btn" class="session-cta jupyter-launch">
+								Launch Jupyter
+							</button>
+							<button id="stop-session-jupyter-btn" class="session-secondary" style="display: none">
+								Stop
+							</button>
+							<button id="reset-session-jupyter-btn" class="session-secondary">Reset</button>
+						</div>
+					</div>
+
+					<!-- Session Chat -->
+					<div class="session-chat-panel">
+						<div class="session-chat-header">
+							<h4>Chat</h4>
+							<button
+								id="open-in-messages-btn"
+								class="session-link-btn"
+								title="Open full conversation in Messages"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+									<polyline points="15 3 21 3 21 9"></polyline>
+									<line x1="10" y1="14" x2="21" y2="3"></line>
+								</svg>
+								Open in Messages
+							</button>
+						</div>
+						<div id="session-messages" class="session-messages msg-embedded">
+							<!-- Messages rendered here using shared component -->
+						</div>
+						<div class="session-compose">
+							<textarea
+								id="session-message-input"
+								placeholder="Type a message..."
+								rows="1"
+							></textarea>
+							<button id="send-session-message-btn" class="session-send-btn" title="Send message">
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<line x1="22" y1="2" x2="11" y2="13"></line>
+									<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+								</svg>
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Empty state -->
+			<div id="sessions-empty-state" class="sessions-empty-state">
+				<div class="empty-state-content">
+					<h3>No session selected</h3>
+					<p>Choose a session from the sidebar or create a new one</p>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Create Session Modal -->
+	<div id="create-session-modal" class="modal-overlay" style="display: none">
+		<div class="modal-content session-modal">
+			<div class="modal-header">
+				<h2>Create New Session</h2>
+				<button id="close-session-modal-btn" class="modal-close">&times;</button>
+			</div>
+			<div class="modal-body">
+				<div class="form-group">
+					<label for="session-name-input">Session Name</label>
+					<input
+						type="text"
+						id="session-name-input"
+						placeholder="e.g., Genomics Analysis"
+						autocomplete="off"
+					/>
+				</div>
+				<div class="form-group">
+					<label for="session-description-input">Description (optional)</label>
+					<textarea
+						id="session-description-input"
+						placeholder="Brief description of the session..."
+						rows="2"
+					></textarea>
+				</div>
+				<div class="form-group">
+					<label for="session-peer-input">Invite Collaborator (optional)</label>
+					<input
+						type="email"
+						id="session-peer-input"
+						placeholder="collaborator@example.com"
+						autocomplete="off"
+					/>
+					<p class="form-hint">You can add a collaborator later if you prefer.</p>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<button id="cancel-session-modal-btn" class="session-secondary">Cancel</button>
+				<button id="confirm-create-session-btn" class="session-cta">Create Session</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Add Peer Modal -->
+	<div id="add-peer-modal" class="modal-overlay" style="display: none">
+		<div class="modal-content session-modal small">
+			<div class="modal-header">
+				<h2>Add Collaborator</h2>
+				<button id="close-peer-modal-btn" class="modal-close">&times;</button>
+			</div>
+			<div class="modal-body">
+				<div class="form-group">
+					<label for="peer-email-input">Collaborator Email</label>
+					<input
+						type="email"
+						id="peer-email-input"
+						placeholder="collaborator@example.com"
+						autocomplete="off"
+					/>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<button id="cancel-peer-modal-btn" class="session-secondary">Cancel</button>
+				<button id="confirm-add-peer-btn" class="session-cta">Add Collaborator</button>
+			</div>
+		</div>
+	</div>
+</div>

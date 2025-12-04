@@ -30,6 +30,7 @@ pub struct Settings {
     pub ai_api_token: String,
     pub ai_model: String,
     pub syftbox_server_url: String,
+    pub whatsapp_phone: String,
 }
 
 impl Default for Settings {
@@ -44,6 +45,7 @@ impl Default for Settings {
             ai_api_token: String::new(),
             ai_model: "openrouter/auto".to_string(),
             syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
+            whatsapp_phone: String::new(),
         }
     }
 }
@@ -210,6 +212,10 @@ pub struct MessageThreadSummary {
     pub last_message_at: Option<String>,
     pub last_message_preview: String,
     pub has_project: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,4 +268,60 @@ pub struct LogEntry {
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+// Session Types
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Session {
+    pub id: i64,
+    pub session_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub session_path: String,
+    pub owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    pub role: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_port: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_pid: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jupyter_token: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateSessionRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub peer: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SessionJupyterStatus {
+    pub session_id: String,
+    pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SessionMessage {
+    pub id: i64,
+    pub session_id: i64,
+    pub sender: String,
+    pub body: String,
+    pub created_at: String,
 }

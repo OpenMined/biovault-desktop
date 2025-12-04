@@ -1,147 +1,196 @@
+/* ============================================================================
+   BIOVAULT SIDEBAR - Modern Organic Design
+   Clean, beautiful, biology-inspired aesthetic
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
+
 .app-layout {
 	display: flex;
 	height: 100vh;
 	overflow: hidden;
-	background: #f8f9fa;
+	background: #ffffff;
+}
+
+/* ============================================================================
+   SIDEBAR CONTAINER
+   ============================================================================ */
+
+.app-sidebar {
+	width: 72px;
+	min-width: 72px;
+	background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+	border-right: 1px solid #e2e8f0;
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	position: relative;
+	overflow: hidden;
+	padding-top: 10px;
+	padding-bottom: 10px;
+}
+
+/* Subtle organic texture overlay */
+.app-sidebar::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(circle at 20% 30%, rgba(16, 185, 129, 0.03) 0%, transparent 50%),
+		radial-gradient(circle at 80% 70%, rgba(14, 165, 233, 0.02) 0%, transparent 50%);
+	pointer-events: none;
+}
+
+/* Draggable area for macOS window controls */
+.app-sidebar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 32px;
+	-webkit-app-region: drag;
+}
+
+.sidebar-nav {
+	flex: 1;
+	/* macOS traffic lights ~28px, then small gap - symmetric with footer */
+	padding: 0 0 4px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	overflow-y: auto;
+	scrollbar-width: none;
 	position: relative;
 	z-index: 1;
 }
 
-/* ============================================================================
-   LEFT SIDEBAR
-   ============================================================================ */
-
-.app-sidebar {
-	width: 90px;
-	min-width: 90px;
-	background: #ffffff;
-	border-right: 1px solid #e5e7eb;
-	display: flex;
-	flex-direction: column;
-	height: 100vh;
-	z-index: 100;
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.sidebar-nav {
-	flex: 1 1 auto;
-	padding: 0; /* Flush to top */
-	overflow-y: auto;
-	overflow-x: auto;
-	display: flex;
-	flex-direction: column;
-	gap: 6px; /* More spacing between items */
-	min-height: 0;
-	scrollbar-width: none;
+.sidebar-nav::-webkit-scrollbar {
+	display: none;
 }
 
 .sidebar-footer {
-	flex: 0 0 auto;
-	padding: 12px 0 20px;
+	padding: 6px 0 8px;
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-	border-top: 1px solid #f3f4f6;
+	gap: 1px;
+	border-top: 1px solid rgba(226, 232, 240, 0.8);
+	position: relative;
+	z-index: 1;
+	background: linear-gradient(180deg, transparent 0%, rgba(248, 250, 252, 0.5) 100%);
 }
 
 .sidebar-divider {
 	display: none;
 }
 
-.sidebar-nav::-webkit-scrollbar {
-	width: 5px;
-	height: 5px;
-}
+/* ============================================================================
+   NAV ITEMS - Beautiful organic buttons
+   ============================================================================ */
 
-.sidebar-nav::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-.sidebar-nav::-webkit-scrollbar-thumb {
-	background: #d1d5db;
-	border-radius: 3px;
-}
-
-.sidebar-nav::-webkit-scrollbar-thumb:hover {
-	background: #9ca3af;
-}
-
-/* Navigation Items */
 .nav-item {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 3px; /* Tighter gap */
-	padding: 12px 8px 12px 5px; /* Less left padding to account for border */
+	gap: 4px;
+	padding: 10px 6px;
 	margin: 0 8px;
 	background: transparent;
 	border: none;
-	border-left: 3px solid transparent; /* Reserve space for active border */
-	border-radius: 0 12px 12px 0; /* Always rounded on right */
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-	font-size: 11px;
-	font-weight: 500; /* Lighter for inactive */
-	color: #6b7280;
+	border-radius: 12px;
+	font-family:
+		'Rubik',
+		-apple-system,
+		BlinkMacSystemFont,
+		sans-serif;
+	font-size: 10px;
+	font-weight: 500;
+	letter-spacing: 0.01em;
+	color: #64748b;
 	cursor: pointer;
-	transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	text-align: center;
-	width: auto;
 	position: relative;
-	user-select: none;
-	letter-spacing: 0;
-}
-
-/* First nav item gets top margin for window controls spacing */
-.sidebar-nav .nav-item:first-child {
-	margin-top: 8px;
 }
 
 .nav-item img {
-	flex-shrink: 0;
-	width: 24px;
-	height: 24px;
-	transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-	opacity: 0.75; /* Slightly more visible */
+	width: 22px;
+	height: 22px;
+	opacity: 0.5;
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .nav-label {
-	display: block;
-	font-size: 11px;
-	line-height: 1.2;
-	color: #9ca3af; /* Lighter gray for inactive labels */
+	font-size: 10px;
+	line-height: 1.1;
+	color: inherit;
+	font-weight: 500;
+	transition: all 0.2s ease;
 }
 
+/* ============================================================================
+   HOVER STATE - Soft lift effect
+   ============================================================================ */
+
 .nav-item:hover {
-	background: #f3f4f6;
-	color: #1f2937;
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(20, 184, 166, 0.05) 100%);
+	color: #475569;
+	box-shadow:
+		0 2px 8px rgba(16, 185, 129, 0.08),
+		inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .nav-item:hover img {
-	opacity: 1;
-	/* No scale - keep icon size consistent */
+	opacity: 0.75;
 }
+
+/* ============================================================================
+   ACTIVE STATE - Vibrant organic highlight
+   ============================================================================ */
 
 .nav-item.active {
-	background: #f9fafb; /* Lighter, more subtle */
-	color: #10b981;
-	font-weight: 600; /* Bolder when active */
-	border-left-color: #10b981; /* Change border from transparent to green */
-	box-shadow: 0 2px 8px rgba(16, 185, 129, 0.08); /* Subtle green glow */
-}
-
-.nav-item.active .nav-label {
-	color: #10b981; /* Green text for active label */
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(20, 184, 166, 0.1) 100%);
+	color: #059669;
+	box-shadow:
+		0 2px 12px rgba(16, 185, 129, 0.15),
+		inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .nav-item.active img {
 	opacity: 1;
-	transform: scale(1.05); /* Slightly larger when active */
-	/* No filter - let icon keep its natural color */
+	filter: brightness(0) saturate(100%) invert(52%) sepia(52%) saturate(557%) hue-rotate(118deg)
+		brightness(92%) contrast(92%);
+}
+
+.nav-item.active .nav-label {
+	color: #059669;
+	font-weight: 600;
+}
+
+/* Active indicator - flush with window edge */
+.nav-item.active::before {
+	content: '';
+	position: absolute;
+	left: -8px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 3px;
+	height: 24px;
+	background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+	border-radius: 0 2px 2px 0;
+	box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
 }
 
 /* ============================================================================
-   MAIN AREA (Right Side)
+   PRESSED STATE
+   ============================================================================ */
+
+.nav-item:active {
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(20, 184, 166, 0.08) 100%);
+}
+
+/* ============================================================================
+   MAIN CONTENT AREA
    ============================================================================ */
 
 .app-main {
@@ -150,18 +199,14 @@
 	flex-direction: column;
 	min-width: 0;
 	overflow: hidden;
+	background: #ffffff;
 }
-
-/* ============================================================================
-   CONTENT AREA
-   ============================================================================ */
 
 .app-content {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
-	background: #f8f9fa;
 }
 
 .tab-content {
@@ -173,7 +218,6 @@
 .tab-content.active {
 	display: flex;
 	flex-direction: column;
-	min-height: 0;
 }
 
 .view-container {
@@ -186,60 +230,35 @@
 .view-content {
 	flex: 1;
 	overflow-y: auto;
-	background: #f8f9fa;
-	min-height: 0; /* Fix flexbox scrolling issue */
+	background: #f8fafc;
 }
 
 /* ============================================================================
    RESPONSIVE
    ============================================================================ */
 
-@media (max-width: 1024px) {
+@media (max-width: 900px) {
 	.app-sidebar {
-		width: 76px;
-		min-width: 76px;
+		width: 64px;
+		min-width: 64px;
 	}
 
 	.nav-item {
-		padding: 12px 10px;
-		font-size: 10px;
-		gap: 5px;
+		padding: 8px 4px;
 		margin: 0 6px;
+		border-radius: 10px;
 	}
 
 	.nav-item img {
-		width: 22px;
-		height: 22px;
-	}
-}
-
-@media (max-width: 768px) {
-	.app-sidebar {
-		width: 70px;
-		min-width: 70px;
+		width: 18px;
+		height: 18px;
 	}
 
-	.nav-item {
-		justify-content: center;
-		padding: 11px 9px;
+	.nav-label {
 		font-size: 9px;
-		gap: 4px;
-		margin: 0 6px;
 	}
 
-	.nav-item img {
-		width: 20px;
-		height: 20px;
-	}
-
-	.app-topbar {
-		height: 56px;
-		min-height: 56px;
-		padding: 0 16px;
-	}
-
-	.topbar-icon-btn {
-		width: 36px;
-		height: 36px;
+	.nav-item.active::before {
+		left: -6px;
 	}
 }

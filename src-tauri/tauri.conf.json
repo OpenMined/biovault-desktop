@@ -13,7 +13,8 @@
 				"title": "BioVault",
 				"width": 1100,
 				"height": 700,
-				"hiddenTitle": true,
+				"minWidth": 900,
+				"minHeight": 600,
 				"devtools": true
 			}
 		],
@@ -61,6 +62,7 @@
 		"targets": ["app", "appimage", "dmg", "nsis"],
 		"resources": [
 			"resources/syftbox/syftbox",
+			"resources/templates/*",
 			"resources/bundled/README.txt",
 			"resources/bundled/java",
 			"resources/bundled/nextflow",

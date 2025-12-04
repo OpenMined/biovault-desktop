@@ -315,6 +315,45 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "key_get_status" => {
+            let email: Option<String> = args
+                .get("email")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::key_get_status(email).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "key_generate" => {
+            let email: Option<String> = args
+                .get("email")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let force: Option<bool> = args
+                .get("force")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let state = app.state::<crate::AppState>();
+            let result = crate::key_generate(email, force, state)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "key_restore" => {
+            let email: String = serde_json::from_value(
+                args.get("email")
+                    .cloned()
+                    .ok_or_else(|| "Missing email".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse email: {}", e))?;
+            let mnemonic: String = serde_json::from_value(
+                args.get("mnemonic")
+                    .cloned()
+                    .ok_or_else(|| "Missing mnemonic".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse mnemonic: {}", e))?;
+            let state = app.state::<crate::AppState>();
+            let result = crate::key_restore(email, mnemonic, state)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))

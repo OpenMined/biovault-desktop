@@ -96,21 +96,7 @@ provision_client() {
   local email="$1"
   start_sbenv_client "$email"
   wait_for_sbenv_daemon "$email"
-  local client_dir="$SANDBOX_DIR/$email"
-  local config_path="$client_dir/.syftbox/config.json"
-  local data_dir
-  data_dir="$(read_data_dir "$config_path")"
-  if [[ -z "$data_dir" ]]; then
-    echo "[live] ERROR: data_dir missing in $config_path" >&2
-    exit 1
-  fi
-  BIOVAULT_HOME="$client_dir" \
-  SYFTBOX_CONFIG_PATH="$config_path" \
-  SYFTBOX_DATA_DIR="$data_dir" \
-  SYFTBOX_EMAIL="$email" \
-  SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
-  SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
-  "$BV_CLI_BIN" init "$email" --quiet || true
+  # Do not pre-provision keys/bundles; onboarding in-app will handle identity.
 }
 
 find_bundle() {
@@ -183,6 +169,8 @@ launch_instance() {
   local tag="$1"; shift
   local email="$1"; shift
   echo "[live] Launching BioVault ($tag) with BIOVAULT_HOME=$home email=$email" >&2
+    # Ensure onboarding screens appear by removing any prior config.yaml
+    rm -f "$home/config.yaml"
   (
     cd "$ROOT_DIR"
     local config_path="$home/.syftbox/config.json"
@@ -196,6 +184,7 @@ launch_instance() {
     SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
     SYFTBOX_CONFIG_PATH="$config_path" \
     SYFTBOX_DATA_DIR="$data_dir" \
+    SYC_VAULT="$home/.syc" \
     BIOVAULT_DEBUG_BANNER=1 \
     bun run dev
   )
@@ -293,23 +282,11 @@ main() {
     PROVISIONED+=("$email")
   done
 
-  # Exchange bundles pairwise (first two only, to mirror original behavior)
   if ((${#PROVISIONED[@]} > 1)); then
     local a="${PROVISIONED[0]}"
     local b="${PROVISIONED[1]}"
     local a_dir="$SANDBOX_DIR/$a"
     local b_dir="$SANDBOX_DIR/$b"
-    local a_cfg="$a_dir/.syftbox/config.json"
-    local b_cfg="$b_dir/.syftbox/config.json"
-    local a_data="$(read_data_dir "$a_cfg")"
-    local b_data="$(read_data_dir "$b_cfg")"
-    local a_bundle b_bundle
-    a_bundle="$(ensure_bundle_under_datasites "$a_data" "$a")"
-    [[ -z "$a_bundle" ]] && a_bundle="$(find_bundle "$a_data" "$a" || true)"
-    b_bundle="$(ensure_bundle_under_datasites "$b_data" "$b")"
-    [[ -z "$b_bundle" ]] && b_bundle="$(find_bundle "$b_data" "$b" || true)"
-    if [[ -n "$a_bundle" ]]; then import_bundle "$a_bundle" "$a" "$b_dir" "$b"; fi
-    if [[ -n "$b_bundle" ]]; then import_bundle "$b_bundle" "$b" "$a_dir" "$a"; fi
     launch_instance "$a_dir" "client1" "$a" & pid1=$!
     launch_instance "$b_dir" "client2" "$b" & pid2=$!
     echo "[live] client1 PID: $pid1"

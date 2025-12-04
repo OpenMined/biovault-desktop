@@ -1,0 +1,111 @@
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<div class="page-header-title-row">
+				<h1 class="page-title">Network</h1>
+			</div>
+			<p class="page-subtitle">Trusted collaborators and network discovery</p>
+		</div>
+		<div class="page-header-right">
+			<div class="page-header-actions">
+				<button id="network-refresh-btn" class="btn-secondary" title="Scan for new contacts">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<circle cx="11" cy="11" r="8"></circle>
+						<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+					</svg>
+					<span>Scan</span>
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<!-- Main Content -->
+	<div class="view-content">
+		<div class="network-content">
+			<!-- Trusted Contacts Section -->
+			<section class="network-section contacts-section">
+				<div class="section-header">
+					<h3>
+						<img src="assets/icons/user-lock.svg" width="16" height="16" alt="Trusted" />
+						Trusted Contacts
+					</h3>
+					<span class="contact-count" id="contacts-count">0</span>
+				</div>
+				<p class="section-description">
+					People you can send encrypted messages and collaborate with
+				</p>
+				<div id="contacts-list" class="contact-list">
+					<div class="empty-state" id="contacts-empty">
+						<p>No contacts yet. Scan to discover contacts.</p>
+					</div>
+				</div>
+			</section>
+
+			<!-- Discovered Section -->
+			<section class="network-section discovered-section">
+				<div class="section-header">
+					<h3>
+						<img src="assets/icons/scan-eye.svg" width="16" height="16" alt="Discovered" />
+						Discovered
+					</h3>
+					<span class="contact-count" id="network-count">0</span>
+				</div>
+				<p class="section-description">
+					Contacts found on the network. Add them to start collaborating.
+				</p>
+				<div id="network-list" class="contact-list">
+					<div class="empty-state" id="network-empty">
+						<p>No contacts found. Click Scan to discover.</p>
+					</div>
+				</div>
+			</section>
+		</div>
+	</div>
+</div>
+
+<!-- Contact Card Template -->
+<template id="contact-card-template">
+	<div class="contact-card" data-email="">
+		<div class="contact-avatar">
+			<canvas class="contact-identicon" width="48" height="48"></canvas>
+		</div>
+		<div class="contact-info">
+			<div class="contact-email"></div>
+			<div class="contact-fingerprint" title="Public key fingerprint"></div>
+			<div class="contact-path-row">
+				<div class="contact-path" title="Bundle path"></div>
+				<button class="btn btn-icon open-folder-btn" title="Open in Finder" style="display: none">
+					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Open folder" />
+				</button>
+			</div>
+		</div>
+		<div class="contact-status">
+			<span class="status-badge trusted">Trusted</span>
+			<span class="status-badge warning" style="display: none">Key Changed</span>
+		</div>
+		<div class="contact-actions">
+			<button class="btn btn-icon message-btn" title="Send message" style="display: none">
+				<img src="assets/icons/mail.svg" width="16" height="16" alt="Message" />
+			</button>
+			<button class="btn btn-icon add-btn" title="Add contact" style="display: none">
+				<img src="assets/icons/check-circle.svg" width="16" height="16" alt="Add" />
+			</button>
+			<button class="btn btn-icon trust-btn" title="Trust new key" style="display: none">
+				<img src="assets/icons/user-lock.svg" width="16" height="16" alt="Trust" />
+			</button>
+			<button class="btn btn-icon remove-btn" title="Remove contact" style="display: none">
+				<img src="assets/icons/x-circle.svg" width="16" height="16" alt="Remove" />
+			</button>
+		</div>
+	</div>
+</template>

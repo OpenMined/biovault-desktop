@@ -26,6 +26,7 @@ use types::AppState;
 use commands::dependencies::*;
 use commands::files::*;
 use commands::jupyter::*;
+use commands::key::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
 use commands::notifications::*;
@@ -33,9 +34,11 @@ use commands::participants::*;
 use commands::pipelines::*;
 use commands::projects::*;
 use commands::runs::*;
+use commands::sessions::*;
 use commands::settings::*;
 use commands::sql::*;
 use commands::syftbox::*;
+use commands::whatsapp::*;
 
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
@@ -224,7 +227,16 @@ pub fn run() {
     );
 
     let email = load_biovault_email(&Some(biovault_home_dir.clone()));
-    let window_title = format!("BioVault - {}", email);
+
+    // Build window title - include debug info if BIOVAULT_DEBUG_BANNER is set
+    let window_title = if std::env::var("BIOVAULT_DEBUG_BANNER")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+    {
+        format!("BioVault - {} [{}]", email, home_display)
+    } else {
+        format!("BioVault - {}", email)
+    };
 
     // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");
@@ -739,6 +751,17 @@ pub fn run() {
             reset_all_data,
             get_autostart_enabled,
             set_autostart_enabled,
+            // Key management
+            key_get_status,
+            key_generate,
+            key_restore,
+            key_list_contacts,
+            key_refresh_contacts,
+            // Network commands
+            network_scan_datasites,
+            network_import_contact,
+            network_remove_contact,
+            network_trust_changed_key,
             // Dev mode commands
             is_dev_mode,
             is_dev_syftbox_enabled,
@@ -777,7 +800,38 @@ pub fn run() {
             start_syftbox_client,
             stop_syftbox_client,
             test_notification,
-            test_notification_applescript
+            test_notification_applescript,
+            // Sessions commands
+            get_sessions,
+            get_session,
+            create_session,
+            update_session_peer,
+            delete_session,
+            launch_session_jupyter,
+            stop_session_jupyter,
+            reset_session_jupyter,
+            get_session_jupyter_status,
+            get_session_messages,
+            send_session_message,
+            get_session_chat_messages,
+            send_session_chat_message,
+            open_session_folder,
+            get_session_invitations,
+            accept_session_invitation,
+            reject_session_invitation,
+            // WhatsApp commands
+            whatsapp_start_login,
+            whatsapp_logout,
+            whatsapp_get_status,
+            whatsapp_send_message,
+            whatsapp_shutdown,
+            whatsapp_check_auth_exists,
+            whatsapp_get_auth_path,
+            whatsapp_open_auth_folder,
+            whatsapp_reset_auth,
+            whatsapp_get_message_log,
+            whatsapp_clear_message_log,
+            whatsapp_send_notification
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

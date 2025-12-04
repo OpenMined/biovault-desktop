@@ -9,3 +9,8 @@ artifacts/
 # Test results
 test-results/
 playwright-report/
+
+# External repos (submodules)
+Baileys/
+warelay/
+biovault/
