@@ -17,8 +17,8 @@
    ============================================================================ */
 
 .app-sidebar {
-	width: 80px;
-	min-width: 80px;
+	width: 72px;
+	min-width: 72px;
 	background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 	border-right: 1px solid #e2e8f0;
 	display: flex;
@@ -38,12 +38,24 @@
 	pointer-events: none;
 }
 
+/* Draggable area for macOS window controls */
+.app-sidebar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 32px;
+	-webkit-app-region: drag;
+}
+
 .sidebar-nav {
 	flex: 1;
-	padding: 16px 0;
+	/* macOS traffic lights ~28px, then small gap - symmetric with footer */
+	padding: 0 0 4px 0;
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 1px;
 	overflow-y: auto;
 	scrollbar-width: none;
 	position: relative;
@@ -55,10 +67,10 @@
 }
 
 .sidebar-footer {
-	padding: 12px 0 20px;
+	padding: 6px 0 8px;
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 1px;
 	border-top: 1px solid rgba(226, 232, 240, 0.8);
 	position: relative;
 	z-index: 1;
@@ -78,12 +90,12 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 5px;
-	padding: 12px 8px;
-	margin: 0 10px;
+	gap: 4px;
+	padding: 10px 6px;
+	margin: 0 8px;
 	background: transparent;
 	border: none;
-	border-radius: 14px;
+	border-radius: 12px;
 	font-family: 'Rubik', -apple-system, BlinkMacSystemFont, sans-serif;
 	font-size: 10px;
 	font-weight: 500;
@@ -145,18 +157,18 @@
 	font-weight: 600;
 }
 
-/* Active indicator - glowing bar */
+/* Active indicator - flush with window edge */
 .nav-item.active::before {
 	content: '';
 	position: absolute;
-	left: -10px;
+	left: -8px;
 	top: 50%;
 	transform: translateY(-50%);
 	width: 3px;
 	height: 24px;
-	background: linear-gradient(180deg, #10b981 0%, #14b8a6 100%);
-	border-radius: 0 4px 4px 0;
-	box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+	background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+	border-radius: 0 2px 2px 0;
+	box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
 }
 
 /* ============================================================================
@@ -217,22 +229,26 @@
 
 @media (max-width: 900px) {
 	.app-sidebar {
-		width: 68px;
-		min-width: 68px;
+		width: 64px;
+		min-width: 64px;
 	}
 
 	.nav-item {
-		padding: 10px 6px;
-		margin: 0 8px;
-		border-radius: 12px;
+		padding: 8px 4px;
+		margin: 0 6px;
+		border-radius: 10px;
 	}
 
 	.nav-item img {
-		width: 20px;
-		height: 20px;
+		width: 18px;
+		height: 18px;
 	}
 
 	.nav-label {
 		font-size: 9px;
+	}
+
+	.nav-item.active::before {
+		left: -6px;
 	}
 }

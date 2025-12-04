@@ -14,7 +14,9 @@
    ============================================================================ */
 
 .page-header {
-	padding: 20px 28px;
+	padding: 12px 24px;
+	/* Account for macOS traffic lights when title is hidden */
+	padding-top: 32px;
 	border-bottom: 1px solid #e2e8f0;
 	background: #ffffff;
 	display: flex;
@@ -22,8 +24,18 @@
 	justify-content: space-between;
 	flex-shrink: 0;
 	width: 100%;
-	min-height: 64px;
-	gap: 20px;
+	min-height: 52px;
+	gap: 16px;
+	/* Make header draggable on macOS */
+	-webkit-app-region: drag;
+}
+
+/* Ensure buttons are clickable in draggable header */
+.page-header button,
+.page-header a,
+.page-header input,
+.page-header select {
+	-webkit-app-region: no-drag;
 }
 
 .page-header-left {
@@ -164,7 +176,7 @@
 
 /* Standard content padding */
 .view-content > div:first-child {
-	padding: 20px 24px;
+	padding: 16px 20px;
 }
 
 /* ============================================================================

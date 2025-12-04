@@ -86,7 +86,7 @@ export function setupEventHandlers({
 	})
 
 	// Messages filter buttons
-	const messageFilterButtons = document.querySelectorAll('.message-filter')
+	const messageFilterButtons = document.querySelectorAll('.message-filter, .msg-filter-btn')
 	messageFilterButtons.forEach((btn) => {
 		btn.addEventListener('click', () => {
 			if (btn.classList.contains('active')) return
@@ -95,6 +95,14 @@ export function setupEventHandlers({
 			loadMessageThreads(false, { emitToasts: false })
 		})
 	})
+
+	// Messages - Empty state compose button
+	const msgEmptyCompose = document.getElementById('msg-empty-compose')
+	if (msgEmptyCompose) {
+		msgEmptyCompose.addEventListener('click', () => {
+			ensureMessagesAuthorizationAndStartNew()
+		})
+	}
 
 	// Messages - Refresh
 	const refreshMessagesBtn = document.getElementById('refresh-messages-btn')
