@@ -1,0 +1,88 @@
+<div class="network-container">
+	<div class="network-header">
+		<h2>Network</h2>
+		<div class="network-actions">
+			<button id="network-refresh-btn" class="btn btn-secondary" title="Scan for new contacts">
+				<img src="assets/icons/scan-eye.svg" width="16" height="16" alt="Scan" />
+				Refresh
+			</button>
+		</div>
+	</div>
+
+	<div class="network-content">
+		<!-- Contacts Section - People with imported keys -->
+		<section class="network-section contacts-section">
+			<div class="section-header">
+				<h3>
+					<img src="assets/icons/user-lock.svg" width="18" height="18" alt="Contacts" />
+					Contacts
+				</h3>
+				<span class="contact-count" id="contacts-count">0</span>
+			</div>
+			<p class="section-description">
+				People whose keys you have imported. You can send encrypted messages to these contacts.
+			</p>
+			<div id="contacts-list" class="contact-list">
+				<div class="empty-state" id="contacts-empty">
+					<p>No contacts yet. Import keys from the network below.</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- Network Section - Discovered datasites -->
+		<section class="network-section discovered-section">
+			<div class="section-header">
+				<h3>
+					<img src="assets/icons/network.svg" width="18" height="18" alt="Network" />
+					Discovered
+				</h3>
+				<span class="contact-count" id="network-count">0</span>
+			</div>
+			<p class="section-description">
+				People found on the network. Click "Add Contact" to import their public key.
+			</p>
+			<div id="network-list" class="contact-list">
+				<div class="empty-state" id="network-empty">
+					<p>No datasites found. Click Refresh to scan the network.</p>
+				</div>
+			</div>
+		</section>
+	</div>
+</div>
+
+<!-- Contact Card Template -->
+<template id="contact-card-template">
+	<div class="contact-card" data-email="">
+		<div class="contact-avatar">
+			<canvas class="contact-identicon" width="48" height="48"></canvas>
+		</div>
+		<div class="contact-info">
+			<div class="contact-email"></div>
+			<div class="contact-fingerprint" title="Public key fingerprint"></div>
+			<div class="contact-path-row">
+				<div class="contact-path" title="Bundle path"></div>
+				<button class="btn btn-icon open-folder-btn" title="Open in Finder" style="display: none">
+					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Open folder" />
+				</button>
+			</div>
+		</div>
+		<div class="contact-status">
+			<span class="status-badge trusted">Trusted</span>
+			<span class="status-badge warning" style="display: none">Key Changed</span>
+		</div>
+		<div class="contact-actions">
+			<button class="btn btn-icon message-btn" title="Send message" style="display: none">
+				<img src="assets/icons/mail.svg" width="16" height="16" alt="Message" />
+			</button>
+			<button class="btn btn-icon add-btn" title="Add contact" style="display: none">
+				<img src="assets/icons/check-circle.svg" width="16" height="16" alt="Add" />
+			</button>
+			<button class="btn btn-icon trust-btn" title="Trust new key" style="display: none">
+				<img src="assets/icons/user-lock.svg" width="16" height="16" alt="Trust" />
+			</button>
+			<button class="btn btn-icon remove-btn" title="Remove contact" style="display: none">
+				<img src="assets/icons/x-circle.svg" width="16" height="16" alt="Remove" />
+			</button>
+		</div>
+	</div>
+</template>

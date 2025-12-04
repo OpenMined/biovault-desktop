@@ -34,6 +34,7 @@ use commands::participants::*;
 use commands::pipelines::*;
 use commands::projects::*;
 use commands::runs::*;
+use commands::sessions::*;
 use commands::settings::*;
 use commands::sql::*;
 use commands::syftbox::*;
@@ -747,6 +748,11 @@ pub fn run() {
             key_restore,
             key_list_contacts,
             key_refresh_contacts,
+            // Network commands
+            network_scan_datasites,
+            network_import_contact,
+            network_remove_contact,
+            network_trust_changed_key,
             // Dev mode commands
             is_dev_mode,
             is_dev_syftbox_enabled,
@@ -786,6 +792,24 @@ pub fn run() {
             stop_syftbox_client,
             test_notification,
             test_notification_applescript,
+            // Sessions commands
+            get_sessions,
+            get_session,
+            create_session,
+            update_session_peer,
+            delete_session,
+            launch_session_jupyter,
+            stop_session_jupyter,
+            reset_session_jupyter,
+            get_session_jupyter_status,
+            get_session_messages,
+            send_session_message,
+            get_session_chat_messages,
+            send_session_chat_message,
+            open_session_folder,
+            get_session_invitations,
+            accept_session_invitation,
+            reject_session_invitation,
             // WhatsApp commands
             whatsapp_start_login,
             whatsapp_logout,

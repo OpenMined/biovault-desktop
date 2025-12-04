@@ -17,6 +17,8 @@ export function createDashboardShell({
 	getSyftboxStatus,
 	startMessagesAutoRefresh,
 	_stopMessagesAutoRefresh,
+	activateSessionsTab,
+	deactivateSessionsTab,
 }) {
 	let activeView = 'run'
 	let lastImportView = 'import'
@@ -100,6 +102,7 @@ export function createDashboardShell({
 				loadSettings?.()
 				break
 			case 'messages': {
+				deactivateSessionsTab?.()
 				const initialized = getMessagesInitialized?.()
 				initializeMessagesTab?.(!initialized)
 				if (getMessagesAuthorized?.() && getSyftboxStatus?.()?.running) {
@@ -107,7 +110,11 @@ export function createDashboardShell({
 				}
 				break
 			}
+			case 'sessions':
+				activateSessionsTab?.()
+				break
 			default:
+				deactivateSessionsTab?.()
 				break
 		}
 	}

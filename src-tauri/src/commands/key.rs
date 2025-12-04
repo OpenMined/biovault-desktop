@@ -79,18 +79,33 @@ pub async fn key_generate(
     let email = resolve_email(email.as_deref(), &config)?;
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
 
-    // If force is true, delete existing key and bundle files to allow regeneration
+    // If force is true, delete ALL existing key and bundle files to avoid "multiple identities" error
     if force.unwrap_or(false) {
-        let slug = syftbox_sdk::sanitize_identity(&email);
-        let key_path = vault_path.join("keys").join(format!("{slug}.key"));
-        let bundle_path = vault_path.join("bundles").join(format!("{slug}.json"));
-        if key_path.exists() {
-            std::fs::remove_file(&key_path)
-                .map_err(|e| format!("failed to remove existing key: {e}"))?;
+        let keys_dir = vault_path.join("keys");
+        let bundles_dir = vault_path.join("bundles");
+
+        // Remove all key files
+        if keys_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&keys_dir) {
+                for entry in entries.flatten() {
+                    if entry
+                        .path()
+                        .extension()
+                        .map(|e| e == "key")
+                        .unwrap_or(false)
+                    {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
         }
+
+        // Remove all bundle files (except imported contacts)
+        // Only remove files that match our identity pattern
+        let slug = syftbox_sdk::sanitize_identity(&email);
+        let bundle_path = bundles_dir.join(format!("{slug}.json"));
         if bundle_path.exists() {
-            std::fs::remove_file(&bundle_path)
-                .map_err(|e| format!("failed to remove existing bundle: {e}"))?;
+            let _ = std::fs::remove_file(&bundle_path);
         }
     }
 
@@ -397,4 +412,195 @@ pub async fn key_refresh_contacts(
     }
 
     Ok(result)
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct DiscoveredContact {
+    pub identity: String,
+    pub fingerprint: String,
+    pub did_path: String,
+    pub is_imported: bool,
+    pub has_changed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_bundle_path: Option<String>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct NetworkScanResult {
+    pub contacts: Vec<DiscoveredContact>,
+    pub discovered: Vec<DiscoveredContact>,
+    pub current_identity: String,
+}
+
+/// Scan datasites for did.json files and return contacts/discovered lists
+/// Does NOT auto-import - just reports what's found
+#[tauri::command]
+pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
+    let config = load_config(None)?;
+    let current_email = config.email.clone();
+    let (data_root, vault_path) = resolve_paths(&config, None, None)?;
+    let bundles_dir = vault_path.join("bundles");
+
+    // Find datasites directory
+    let datasites_dir = if data_root
+        .file_name()
+        .map(|n| n == "datasites")
+        .unwrap_or(false)
+    {
+        data_root.clone()
+    } else {
+        data_root.join("datasites")
+    };
+
+    let mut contacts = Vec::new();
+    let mut discovered = Vec::new();
+
+    let current_slug = syftbox_sdk::sanitize_identity(&current_email);
+
+    if datasites_dir.exists() {
+        let entries = std::fs::read_dir(&datasites_dir)
+            .map_err(|e| format!("failed to read datasites: {e}"))?;
+
+        for entry in entries.flatten() {
+            let datasite_path = entry.path();
+            if !datasite_path.is_dir() {
+                continue;
+            }
+
+            let did_path = datasite_path.join("public").join("crypto").join("did.json");
+            if !did_path.exists() {
+                continue;
+            }
+
+            if let Ok(remote_info) = biovault::syftbox::syc::parse_public_bundle_file(&did_path) {
+                let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
+
+                // Skip current identity
+                if slug == current_slug {
+                    continue;
+                }
+
+                let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
+                let is_imported = local_bundle_path.exists();
+
+                let (has_changed, local_fingerprint) = if is_imported {
+                    match biovault::syftbox::syc::parse_public_bundle_file(&local_bundle_path) {
+                        Ok(local_info) => {
+                            let changed = local_info.fingerprint != remote_info.fingerprint;
+                            (changed, Some(local_info.fingerprint))
+                        }
+                        Err(_) => (false, None),
+                    }
+                } else {
+                    (false, None)
+                };
+
+                let contact = DiscoveredContact {
+                    identity: remote_info.identity,
+                    fingerprint: remote_info.fingerprint,
+                    did_path: did_path.to_string_lossy().to_string(),
+                    is_imported,
+                    has_changed,
+                    local_fingerprint,
+                    local_bundle_path: if is_imported {
+                        Some(local_bundle_path.to_string_lossy().to_string())
+                    } else {
+                        None
+                    },
+                };
+
+                if is_imported {
+                    contacts.push(contact);
+                } else {
+                    discovered.push(contact);
+                }
+            }
+        }
+    }
+
+    // Sort both lists alphabetically
+    contacts.sort_by(|a, b| a.identity.to_lowercase().cmp(&b.identity.to_lowercase()));
+    discovered.sort_by(|a, b| a.identity.to_lowercase().cmp(&b.identity.to_lowercase()));
+
+    Ok(NetworkScanResult {
+        contacts,
+        discovered,
+        current_identity: current_email,
+    })
+}
+
+/// Import a contact's public key bundle from their datasite
+#[tauri::command]
+pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
+    let config = load_config(None)?;
+    let (data_root, vault_path) = resolve_paths(&config, None, None)?;
+    let bundles_dir = vault_path.join("bundles");
+
+    // Ensure bundles directory exists
+    if !bundles_dir.exists() {
+        std::fs::create_dir_all(&bundles_dir)
+            .map_err(|e| format!("failed to create bundles directory: {e}"))?;
+    }
+
+    // Find datasites directory
+    let datasites_dir = if data_root
+        .file_name()
+        .map(|n| n == "datasites")
+        .unwrap_or(false)
+    {
+        data_root.clone()
+    } else {
+        data_root.join("datasites")
+    };
+
+    let did_path = datasites_dir
+        .join(&identity)
+        .join("public")
+        .join("crypto")
+        .join("did.json");
+
+    if !did_path.exists() {
+        return Err(format!("DID not found for {identity}"));
+    }
+
+    let remote_info = biovault::syftbox::syc::parse_public_bundle_file(&did_path)
+        .map_err(|e| format!("failed to parse DID: {e}"))?;
+
+    let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
+    let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
+
+    std::fs::copy(&did_path, &local_bundle_path)
+        .map_err(|e| format!("failed to import bundle: {e}"))?;
+
+    Ok(ContactInfo {
+        identity: remote_info.identity,
+        fingerprint: remote_info.fingerprint,
+        bundle_path: local_bundle_path.to_string_lossy().to_string(),
+    })
+}
+
+/// Remove a contact's public key bundle from the vault
+#[tauri::command]
+pub fn network_remove_contact(identity: String) -> Result<(), String> {
+    let config = load_config(None)?;
+    let (_, vault_path) = resolve_paths(&config, None, None)?;
+    let bundles_dir = vault_path.join("bundles");
+
+    let slug = syftbox_sdk::sanitize_identity(&identity);
+    let bundle_path = bundles_dir.join(format!("{slug}.json"));
+
+    if bundle_path.exists() {
+        std::fs::remove_file(&bundle_path).map_err(|e| format!("failed to remove bundle: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Trust a changed key by re-importing from the datasite
+#[tauri::command]
+pub fn network_trust_changed_key(identity: String) -> Result<ContactInfo, String> {
+    // Simply re-import the contact, which overwrites the existing bundle
+    network_import_contact(identity)
 }
