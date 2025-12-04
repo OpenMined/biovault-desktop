@@ -251,6 +251,229 @@
 					</div>
 				</div>
 
+				<!-- Notifications -->
+				<div class="setting-item">
+					<label>Notifications</label>
+					<p style="color: #6b7280; margin-bottom: 12px">
+						Configure notification channels for BioVault alerts and messages.
+					</p>
+
+					<!-- WhatsApp Integration -->
+					<div class="status-card status-card-stacked whatsapp-status-card">
+						<div class="status-card-content">
+							<div class="status-card-title">
+								<span style="font-size: 16px">WhatsApp</span>
+								<span id="whatsapp-status-badge" class="status-badge checking">
+									<span class="spinner" style="width: 12px; height: 12px; margin: 0"></span>
+									Checking...
+								</span>
+							</div>
+							<p class="status-card-description">
+								Receive notifications and send commands via WhatsApp Web
+							</p>
+						</div>
+						<div class="whatsapp-actions" style="display: flex; gap: 8px">
+							<button id="whatsapp-setup-btn" class="settings-btn settings-btn-primary">
+								Setup
+							</button>
+							<button
+								id="whatsapp-disconnect-btn"
+								class="settings-btn settings-btn-secondary"
+								style="display: none"
+							>
+								Disconnect
+							</button>
+						</div>
+					</div>
+
+					<!-- WhatsApp Credentials Path -->
+					<div class="status-card" style="margin-top: 12px">
+						<div class="status-card-content" style="flex: 1">
+							<div class="status-card-title">
+								<span>Credentials Location</span>
+							</div>
+							<p
+								id="whatsapp-auth-path"
+								style="
+									font-size: 12px;
+									color: #6b7280;
+									margin: 4px 0 8px;
+									font-family: 'SF Mono', monospace;
+								"
+							>
+								~/.baileys
+							</p>
+							<div style="display: flex; gap: 8px; align-items: center">
+								<button id="whatsapp-open-folder-btn" class="settings-btn settings-btn-secondary">
+									Open Folder
+								</button>
+								<button
+									id="whatsapp-reset-auth-btn"
+									class="settings-btn settings-btn-secondary"
+									style="color: #ef4444"
+								>
+									Reset Credentials
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<!-- WhatsApp Phone Number Setting -->
+					<div class="status-card" style="margin-top: 12px">
+						<div class="status-card-content" style="flex: 1">
+							<div class="status-card-title">
+								<span>Your Phone Number</span>
+							</div>
+							<p style="font-size: 12px; color: #6b7280; margin: 4px 0 8px">
+								Notifications will be sent to this number
+							</p>
+							<div style="display: flex; gap: 8px; align-items: center">
+								<input
+									type="tel"
+									id="whatsapp-notification-phone"
+									placeholder="+1234567890"
+									style="
+										flex: 1;
+										max-width: 200px;
+										padding: 8px 12px;
+										border: 1px solid #d1d5db;
+										border-radius: 6px;
+										font-size: 14px;
+									"
+								/>
+								<button id="whatsapp-save-phone-btn" class="settings-btn settings-btn-primary">
+									Save
+								</button>
+								<span
+									id="whatsapp-phone-save-status"
+									style="font-size: 12px; color: #6b7280"
+								></span>
+							</div>
+						</div>
+					</div>
+
+					<!-- WhatsApp Test Send -->
+					<div class="status-card" style="margin-top: 12px">
+						<div class="status-card-content" style="flex: 1">
+							<div class="status-card-title">
+								<span>Test Notification</span>
+							</div>
+							<div
+								style="
+									display: flex;
+									gap: 8px;
+									margin-top: 8px;
+									flex-wrap: wrap;
+									align-items: center;
+								"
+							>
+								<input
+									type="text"
+									id="whatsapp-test-message"
+									placeholder="Hello from BioVault!"
+									value="Hello from BioVault!"
+									style="
+										flex: 1;
+										min-width: 200px;
+										padding: 8px 12px;
+										border: 1px solid #d1d5db;
+										border-radius: 6px;
+										font-size: 14px;
+									"
+								/>
+								<button id="whatsapp-test-send-btn" class="settings-btn settings-btn-secondary">
+									Send Test
+								</button>
+							</div>
+							<p
+								id="whatsapp-test-result"
+								style="margin-top: 8px; font-size: 12px; color: #6b7280"
+							></p>
+						</div>
+					</div>
+
+					<!-- WhatsApp Message Log -->
+					<div class="status-card" style="margin-top: 12px">
+						<div class="status-card-content" style="flex: 1">
+							<div style="display: flex; justify-content: space-between; align-items: center">
+								<div class="status-card-title">
+									<span>Message Log</span>
+								</div>
+								<button
+									id="whatsapp-clear-log-btn"
+									class="settings-btn settings-btn-secondary"
+									style="padding: 4px 8px; font-size: 11px"
+								>
+									Clear
+								</button>
+							</div>
+							<div
+								id="whatsapp-message-log"
+								style="
+									margin-top: 8px;
+									max-height: 200px;
+									overflow-y: auto;
+									font-family: 'SF Mono', monospace;
+									font-size: 11px;
+									background: #f9fafb;
+									border-radius: 6px;
+									padding: 8px;
+								"
+							>
+								<p style="color: #9ca3af; text-align: center">No messages yet</p>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- WhatsApp QR Modal -->
+				<div id="whatsapp-qr-modal" class="modal" style="display: none">
+					<div class="modal-content" style="max-width: 400px">
+						<div class="modal-header">
+							<h2>Connect WhatsApp</h2>
+							<button class="modal-close" id="whatsapp-modal-close">&times;</button>
+						</div>
+						<div class="modal-body" style="text-align: center; padding: 24px">
+							<div id="whatsapp-qr-loading" style="padding: 40px">
+								<div class="spinner" style="width: 32px; height: 32px; margin: 0 auto 16px"></div>
+								<p style="color: #6b7280">Generating QR code...</p>
+							</div>
+							<div id="whatsapp-qr-container" style="display: none">
+								<p style="margin-bottom: 16px; color: #374151">
+									Scan this QR code with WhatsApp on your phone
+								</p>
+								<img
+									id="whatsapp-qr-image"
+									style="width: 256px; height: 256px; border-radius: 8px; border: 1px solid #e5e7eb"
+									alt="WhatsApp QR Code"
+								/>
+								<p style="margin-top: 16px; font-size: 12px; color: #9ca3af">
+									Open WhatsApp &gt; Settings &gt; Linked Devices &gt; Link a Device
+								</p>
+							</div>
+							<div id="whatsapp-connected-success" style="display: none; padding: 20px">
+								<div style="font-size: 48px; margin-bottom: 16px">&#x2705;</div>
+								<p style="font-size: 16px; font-weight: 500; color: #10b981">
+									Connected successfully!
+								</p>
+								<p id="whatsapp-connected-name" style="margin-top: 8px; color: #6b7280"></p>
+							</div>
+							<div id="whatsapp-error" style="display: none; padding: 20px">
+								<div style="font-size: 48px; margin-bottom: 16px">&#x26A0;</div>
+								<p style="font-size: 16px; font-weight: 500; color: #ef4444">Connection failed</p>
+								<p id="whatsapp-error-message" style="margin-top: 8px; color: #6b7280"></p>
+								<button
+									id="whatsapp-retry-btn"
+									class="settings-btn settings-btn-primary"
+									style="margin-top: 16px"
+								>
+									Try Again
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+
 				<!-- Danger Zone -->
 				<div class="danger-zone">
 					<h3>⚠️ Danger Zone</h3>

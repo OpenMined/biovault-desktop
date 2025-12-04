@@ -147,6 +147,8 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 					switch (cmd) {
 						case 'check_is_onboarded':
 							return true
+						case 'check_docker_running':
+							return true
 						case 'get_participants':
 							return state.participants.map((p) => ({ ...p }))
 						case 'get_files':

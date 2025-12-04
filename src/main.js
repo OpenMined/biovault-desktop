@@ -15,6 +15,7 @@ import { createDependenciesModule } from './dependencies.js'
 import { createSettingsModule } from './settings.js'
 import { createSqlModule } from './sql.js'
 import { createUpdaterModule } from './updater.js'
+import { createWhatsAppModule } from './whatsapp.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 import { mountDebugBanner } from './debug-banner.js'
@@ -64,6 +65,9 @@ const {
 	loadSavedDependencies,
 	onAiConfigUpdated: invalidateAiConfig,
 })
+
+// Create WhatsApp module for notifications
+const whatsAppModule = createWhatsAppModule({ invoke, listen })
 
 const {
 	loadData,
@@ -351,6 +355,11 @@ window.addEventListener('DOMContentLoaded', async () => {
 		refreshLogs({ force: true })
 		loadSettings()
 		updateSelectedFileCount()
+
+		// Initialize WhatsApp module (checks status and sets up event listeners)
+		whatsAppModule.init().catch((err) => {
+			console.warn('WhatsApp module init failed:', err)
+		})
 	} else {
 		console.log('🚀 User NOT onboarded, will show onboarding screen...')
 	}

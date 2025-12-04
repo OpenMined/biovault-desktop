@@ -592,6 +592,89 @@ export function createPipelinesModule({
 		return true
 	}
 
+	async function showDockerWarningModal(runAction) {
+		return new Promise((resolve) => {
+			const existing = document.getElementById('docker-warning-modal')
+			if (existing) existing.remove()
+
+			const overlay = document.createElement('div')
+			overlay.id = 'docker-warning-modal'
+			overlay.style.cssText =
+				'position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 9999;'
+
+			const modal = document.createElement('div')
+			modal.style.cssText =
+				'background: #ffffff; color: #0f172a; width: min(460px, 92vw); border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,0.25); padding: 22px 24px; display: flex; flex-direction: column; gap: 14px;'
+
+			modal.innerHTML = `
+				<div style="display:flex; gap:12px; align-items:flex-start;">
+					<div style="width:14px; height:14px; margin-top:2px; color:#b91c1c;">⚠️</div>
+					<div style="flex:1;">
+						<div style="font-weight:700; font-size:16px; margin-bottom:6px;">Docker isn’t running</div>
+						<div style="font-size:13px; line-height:1.4; color:#334155;">
+							Start Docker Desktop, then re-check. You can also choose to run anyway (it may fail).
+						</div>
+						<div id="docker-check-status" style="margin-top:8px; font-size:12px; color:#b91c1c;"></div>
+					</div>
+				</div>
+				<div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+					<button id="docker-cancel" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#0f172a; font-weight:600; cursor:pointer;">Cancel</button>
+					<button id="docker-run-anyway" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-weight:700; cursor:pointer;">Run anyway</button>
+					<button id="docker-recheck" style="padding:10px 14px; border-radius:8px; border:none; background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; font-weight:700; cursor:pointer;">I started Docker, re-check</button>
+				</div>
+			`
+
+			const statusEl = modal.querySelector('#docker-check-status')
+
+			function close() {
+				overlay.remove()
+			}
+
+			modal.querySelector('#docker-cancel').addEventListener('click', () => {
+				close()
+				resolve(false)
+			})
+
+			modal.querySelector('#docker-run-anyway').addEventListener('click', async () => {
+				close()
+				await runAction()
+				resolve(true)
+			})
+
+			modal.querySelector('#docker-recheck').addEventListener('click', async () => {
+				statusEl.textContent = 'Checking Docker...'
+				statusEl.style.color = '#0f172a'
+				try {
+					const running = await invoke('check_docker_running')
+					if (running) {
+						statusEl.textContent = 'Docker is running! Starting pipeline...'
+						statusEl.style.color = '#15803d'
+						close()
+						await runAction()
+						resolve(true)
+					} else {
+						statusEl.textContent = 'Still not running. Please start Docker then click re-check.'
+						statusEl.style.color = '#b91c1c'
+					}
+				} catch (err) {
+					console.error('Docker re-check failed:', err)
+					statusEl.textContent = 'Could not check Docker (see console).'
+					statusEl.style.color = '#b91c1c'
+				}
+			})
+
+			overlay.addEventListener('click', (e) => {
+				if (e.target === overlay) {
+					close()
+					resolve(false)
+				}
+			})
+
+			overlay.appendChild(modal)
+			document.body.appendChild(overlay)
+		})
+	}
+
 	// Public function to show modal directly (called from Data tab)
 	async function showDataRunModalDirect() {
 		const context = getPendingDataRunContext()
@@ -1072,39 +1155,58 @@ export function createPipelinesModule({
 			}
 
 			const resultsDir = resultsInput.value.trim() || null
+			const doRun = async () => {
+				runBtn.disabled = true
+				runBtn.textContent = 'Starting…'
+				try {
+					const run = await invoke('run_pipeline', {
+						pipelineId,
+						inputOverrides: {},
+						resultsDir,
+						selection: {
+							fileIds: context.fileIds,
+							participantIds: context.participantIds,
+						},
+					})
+
+					clearDataRunContext()
+					closeDataRunModal()
+
+					// Store run ID in sessionStorage for auto-expansion on runs page
+					if (typeof sessionStorage !== 'undefined') {
+						sessionStorage.setItem('autoExpandRunId', run.id.toString())
+					}
+
+					alert(`Pipeline started! Run ID: ${run.id}`)
+
+					if (typeof navigateTo === 'function') {
+						navigateTo('runs')
+					}
+				} catch (error) {
+					console.error('Failed to start pipeline:', error)
+					alert('Failed to run pipeline: ' + error)
+				} finally {
+					runBtn.disabled = false
+					runBtn.textContent = 'Run Pipeline'
+				}
+			}
+
 			runBtn.disabled = true
-			runBtn.textContent = 'Starting…'
-
+			runBtn.textContent = 'Checking Docker…'
 			try {
-				const run = await invoke('run_pipeline', {
-					pipelineId,
-					inputOverrides: {},
-					resultsDir,
-					selection: {
-						fileIds: context.fileIds,
-						participantIds: context.participantIds,
-					},
-				})
-
-				clearDataRunContext()
-				closeDataRunModal()
-
-				// Store run ID in sessionStorage for auto-expansion on runs page
-				if (typeof sessionStorage !== 'undefined') {
-					sessionStorage.setItem('autoExpandRunId', run.id.toString())
+				const running = await invoke('check_docker_running')
+				if (running) {
+					await doRun()
+				} else {
+					runBtn.disabled = false
+					runBtn.textContent = 'Run Pipeline'
+					await showDockerWarningModal(doRun)
 				}
-
-				alert(`Pipeline started! Run ID: ${run.id}`)
-
-				if (typeof navigateTo === 'function') {
-					navigateTo('runs')
-				}
-			} catch (error) {
-				console.error('Failed to start pipeline:', error)
-				alert('Failed to run pipeline: ' + error)
-			} finally {
+			} catch (err) {
+				console.warn('Docker check failed (continuing):', err)
 				runBtn.disabled = false
 				runBtn.textContent = 'Run Pipeline'
+				await showDockerWarningModal(doRun)
 			}
 		})
 	}

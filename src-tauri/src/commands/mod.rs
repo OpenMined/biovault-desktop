@@ -12,3 +12,4 @@ pub mod runs;
 pub mod settings;
 pub mod sql;
 pub mod syftbox;
+pub mod whatsapp;

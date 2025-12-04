@@ -1,0 +1,18 @@
+{
+	"name": "whatsapp-bridge",
+	"version": "1.0.0",
+	"description": "WhatsApp Web bridge for BioVault desktop using Baileys",
+	"type": "module",
+	"main": "bridge.js",
+	"scripts": {
+		"start": "node bridge.js"
+	},
+	"dependencies": {
+		"@whiskeysockets/baileys": "^7.0.0-rc.9",
+		"qrcode": "^1.5.4",
+		"pino": "^9.0.0"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	}
+}
