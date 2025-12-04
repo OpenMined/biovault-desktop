@@ -373,6 +373,17 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Sign syftbox client (macOS)
+        if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
+        run: |
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ -f "$SYFTBOX_BIN" ]]; then
+            echo "Signing syftbox client for notarization..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
+          else
+            echo "Syftbox client not found at $SYFTBOX_BIN, skipping sign step."
+          fi
+
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
