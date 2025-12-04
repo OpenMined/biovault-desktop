@@ -177,6 +177,16 @@ PY
     echo "⚠️  Java bin directory missing at $dest_dir/bin" >&2
   fi
 
+  # Ensure libjvm.so is directly under lib/ so linuxdeploy can find it (AppImage bundling)
+  if [[ "$os" == "linux" ]]; then
+    local libjvm_server="$dest_dir/lib/server/libjvm.so"
+    local libjvm_flat="$dest_dir/lib/libjvm.so"
+    if [[ -f "$libjvm_server" && ! -f "$libjvm_flat" ]]; then
+      cp "$libjvm_server" "$libjvm_flat"
+      echo "✅ Copied libjvm.so to $libjvm_flat for AppImage bundling"
+    fi
+  fi
+
   echo "✅ Java ${version} prepared at $dest_dir/bin/java"
   rm -rf "$tmpdir"
 }

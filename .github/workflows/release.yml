@@ -290,13 +290,16 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             build-essential \
+            pkg-config \
             curl \
+            xdg-utils \
             wget \
             file \
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            libsqlite3-dev \
             libfuse2 \
             patchelf \
             libgtk-3-dev \
@@ -327,6 +330,14 @@ jobs:
         if: matrix.build_kind == 'tauri'
         run: npm install -g @tauri-apps/cli@latest
 
+      - name: Setup Go (syftbox)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
         uses: actions/cache@v4
@@ -355,6 +366,12 @@ jobs:
           else
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
+
+      - name: Build syftbox client
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
 
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
