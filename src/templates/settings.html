@@ -55,16 +55,67 @@
 					</div>
 				</div>
 
-				<!-- Email -->
+				<!-- Identity -->
 				<div class="setting-item">
-					<label>Email</label>
-					<input
-						type="email"
-						id="setting-email"
-						class="setting-input"
-						placeholder="user@example.com"
-					/>
-					<p>Your email address</p>
+					<label>Identity</label>
+					<div class="identity-email-row">
+						<input
+							type="email"
+							id="setting-email"
+							class="setting-input"
+							placeholder="user@example.com"
+						/>
+						<div id="identity-change-actions" class="identity-change-actions" style="display: none">
+							<span id="identity-change-hint" class="identity-change-hint">
+								Email changed — confirm to update identity and re-authenticate with SyftBox
+							</span>
+							<button id="identity-confirm-btn" class="settings-btn settings-btn-primary">
+								Confirm Identity Change
+							</button>
+							<button id="identity-cancel-btn" class="settings-btn settings-btn-secondary">
+								Cancel
+							</button>
+						</div>
+					</div>
+					<div class="status-card key-status-card" style="margin-top: 16px">
+						<div class="key-status-left">
+							<div id="key-avatar" class="key-avatar"></div>
+							<div class="key-meta">
+								<div id="key-identity-label" class="key-identity">Loading...</div>
+								<div id="key-fingerprint" class="key-fingerprint">—</div>
+								<div id="key-status-line" class="key-status-line">Checking vault…</div>
+							</div>
+						</div>
+						<div class="key-actions">
+							<button id="key-open-vault-btn" class="settings-btn settings-btn-secondary">
+								Open Vault
+							</button>
+							<button id="key-manage-btn" class="settings-btn settings-btn-primary">
+								Manage Key
+							</button>
+						</div>
+					</div>
+					<p id="key-warning" class="key-warning"></p>
+				</div>
+
+				<!-- Contacts -->
+				<div class="setting-item">
+					<label>Contacts</label>
+					<p style="margin-bottom: 12px">
+						Public keys from other users in your vault. Use "Refresh Keys" to sync from SyftBox.
+					</p>
+					<div id="contacts-list" class="contacts-list">
+						<div class="contacts-loading">
+							<div class="spinner" style="width: 20px; height: 20px"></div>
+							<span>Loading contacts...</span>
+						</div>
+					</div>
+					<div class="contacts-actions">
+						<button id="refresh-contacts-btn" class="settings-btn settings-btn-secondary">
+							Refresh Keys
+						</button>
+						<span id="refresh-contacts-status" class="refresh-status"></span>
+					</div>
 				</div>
 
 				<!-- AI SQL Assistant -->
@@ -433,6 +484,90 @@
 					<button id="reset-all-btn" class="danger-btn">Reset All Data</button>
 				</div>
 			</div>
+		</div>
+	</div>
+</div>
+
+<!-- Key Management Modal -->
+<div id="key-manage-modal" class="modal-overlay" style="display: none">
+	<div class="modal-content" style="max-width: 600px">
+		<div class="modal-header">
+			<h2>Manage Crypto Key</h2>
+			<button id="key-modal-close" class="modal-close">&times;</button>
+		</div>
+		<div class="modal-body">
+			<div class="key-card">
+				<div class="key-card-left">
+					<div id="modal-key-avatar" class="key-avatar"></div>
+					<div class="key-card-meta">
+						<div id="modal-key-identity" class="key-identity">Loading...</div>
+						<div id="modal-key-fp" class="key-fingerprint">—</div>
+						<div id="modal-key-status" class="key-status-line">Checking vault…</div>
+					</div>
+				</div>
+				<div class="key-card-actions" id="modal-key-actions">
+					<button id="modal-restore-btn">Restore from Recovery Code</button>
+					<button id="modal-generate-btn" class="danger">Generate New</button>
+				</div>
+			</div>
+
+			<!-- Recovery code display (after generate/restore) -->
+			<div id="modal-recovery-block" style="display: none; margin-top: 16px">
+				<div
+					style="
+						display: flex;
+						align-items: center;
+						justify-content: space-between;
+						margin-bottom: 8px;
+					"
+				>
+					<label style="font-weight: 600">Recovery Code (save securely)</label>
+					<button id="modal-copy-recovery-inline" class="copy-inline-btn" title="Copy to clipboard">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+							<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+						</svg>
+					</button>
+				</div>
+				<pre id="modal-recovery-text" class="recovery-box"></pre>
+				<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap">
+					<button id="modal-copy-recovery-btn" class="btn-small">Copy Code</button>
+					<button id="modal-copy-fp-btn" class="btn-small">Copy Fingerprint</button>
+					<button id="modal-open-vault-btn" class="btn-small">Open Vault</button>
+				</div>
+			</div>
+
+			<!-- Restore input block -->
+			<div id="modal-restore-block" style="display: none; margin-top: 16px">
+				<label style="font-weight: 600; margin-bottom: 8px; display: block"
+					>Enter Recovery Code</label
+				>
+				<textarea
+					id="modal-restore-input"
+					rows="3"
+					placeholder="Paste your BIP-39 recovery code"
+					style="
+						width: 100%;
+						padding: 10px;
+						border-radius: 8px;
+						border: 1px solid #d1d5db;
+						font-family: monospace;
+					"
+				></textarea>
+				<div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap">
+					<button id="modal-restore-confirm-btn" class="primary">Restore</button>
+					<button id="modal-restore-cancel-btn">Cancel</button>
+				</div>
+			</div>
+
+			<p id="modal-key-warning" class="key-warning" style="margin-top: 10px"></p>
 		</div>
 	</div>
 </div>

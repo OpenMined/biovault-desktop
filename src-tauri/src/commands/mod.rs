@@ -1,6 +1,7 @@
 pub mod dependencies;
 pub mod files;
 pub mod jupyter;
+pub mod key;
 pub mod logs;
 pub mod messages;
 pub mod notifications;

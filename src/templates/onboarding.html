@@ -134,6 +134,103 @@
 			</div>
 		</div>
 
+		<!-- Step 3.5: Key Setup -->
+		<div id="onboarding-step-3-key" class="onboarding-step" style="display: none">
+			<h1 style="font-size: 26px; margin-bottom: 12px">Secure Your Key</h1>
+			<p style="margin-bottom: 16px; color: #555">
+				We use a Syft Crypto key for encryption. You can use an existing key (if found), restore
+				from a recovery code, or generate a new one.
+			</p>
+			<div class="key-card">
+				<div class="key-card-left">
+					<div id="onboarding-key-avatar" class="key-avatar"></div>
+					<div class="key-card-meta">
+						<div id="onboarding-key-identity" class="key-identity">Loading...</div>
+						<div id="onboarding-key-fp" class="key-fingerprint">—</div>
+						<div id="onboarding-key-status" class="key-status-line">Checking vault…</div>
+					</div>
+				</div>
+				<div class="key-card-actions" id="onboarding-key-actions">
+					<button id="onboarding-restore-btn">Restore from Recovery Code</button>
+					<button id="onboarding-generate-btn" class="danger">Generate New</button>
+				</div>
+			</div>
+			<div id="onboarding-recovery-block" style="display: none; margin-top: 16px">
+				<div
+					style="
+						display: flex;
+						align-items: center;
+						justify-content: space-between;
+						margin-bottom: 8px;
+					"
+				>
+					<label style="font-weight: 600">Recovery Code (save securely)</label>
+					<button
+						id="onboarding-copy-recovery-inline"
+						class="copy-inline-btn"
+						title="Copy to clipboard"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+							<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+						</svg>
+					</button>
+				</div>
+				<pre id="onboarding-recovery-text" class="recovery-box"></pre>
+				<label
+					class="recovery-checkbox-label"
+					style="
+						display: flex;
+						align-items: flex-start;
+						gap: 10px;
+						margin-top: 12px;
+						cursor: pointer;
+					"
+				>
+					<input
+						type="checkbox"
+						id="onboarding-recovery-ack"
+						style="margin-top: 2px; flex-shrink: 0; width: 18px; height: 18px"
+					/>
+					<span style="font-size: 13px; color: #374151; line-height: 1.4">
+						I have saved this recovery code; it will not be shown again.
+					</span>
+				</label>
+				<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap">
+					<button id="onboarding-copy-recovery-btn" class="btn-small">Copy Code</button>
+					<button id="onboarding-copy-fp-btn" class="btn-small">Copy Fingerprint</button>
+					<button id="onboarding-open-vault-btn" class="btn-small">Open Vault</button>
+				</div>
+			</div>
+			<div id="onboarding-restore-block" style="display: none; margin-top: 16px">
+				<label style="font-weight: 600; margin-bottom: 8px; display: block"
+					>Enter Recovery Code</label
+				>
+				<textarea
+					id="onboarding-restore-input"
+					rows="3"
+					placeholder="Paste your BIP-39 recovery code"
+					style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #d1d5db"
+				></textarea>
+				<div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap">
+					<button id="onboarding-restore-confirm-btn" class="primary">Restore</button>
+					<button id="onboarding-restore-cancel-btn">Cancel</button>
+				</div>
+			</div>
+			<p id="onboarding-key-warning" class="key-warning" style="margin-top: 10px"></p>
+			<div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end">
+				<button id="onboarding-back-3-key" style="background: #6c757d">← Back</button>
+				<button id="onboarding-next-3-key" class="primary">Next →</button>
+			</div>
+		</div>
+
 		<!-- Step 4: SyftBox OTP Authentication (Optional) -->
 		<div id="onboarding-step-4" class="onboarding-step" style="display: none">
 			<div

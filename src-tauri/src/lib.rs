@@ -26,6 +26,7 @@ use types::AppState;
 use commands::dependencies::*;
 use commands::files::*;
 use commands::jupyter::*;
+use commands::key::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
 use commands::notifications::*;
@@ -740,6 +741,12 @@ pub fn run() {
             reset_all_data,
             get_autostart_enabled,
             set_autostart_enabled,
+            // Key management
+            key_get_status,
+            key_generate,
+            key_restore,
+            key_list_contacts,
+            key_refresh_contacts,
             // Dev mode commands
             is_dev_mode,
             is_dev_syftbox_enabled,
