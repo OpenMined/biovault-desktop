@@ -212,6 +212,10 @@ pub struct MessageThreadSummary {
     pub last_message_at: Option<String>,
     pub last_message_preview: String,
     pub has_project: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

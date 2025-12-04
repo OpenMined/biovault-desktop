@@ -3,10 +3,10 @@
    ============================================================================ */
 
 .settings-container {
-	padding: 24px 32px;
-	max-width: 900px;
 	margin: 0 auto;
 	overflow-y: auto;
+	overflow-x: hidden;
+	max-width: 100%;
 }
 
 .settings-section {
@@ -25,6 +25,7 @@
 	border-radius: 12px;
 	padding: 24px;
 	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	overflow: hidden;
 }
 
 .setting-item label {
@@ -44,15 +45,15 @@
 
 /* Config Path Display */
 .config-path-display {
-	background: #f0f8ff;
-	border-left: 4px solid #3b82f6;
+	background: #ecfdf5;
+	border-left: 4px solid #10b981;
 	border-radius: 8px;
 	padding: 16px;
 	margin-bottom: 8px;
 }
 
 .config-path-display label {
-	color: #3b82f6;
+	color: #059669;
 	margin-bottom: 8px;
 }
 
@@ -113,13 +114,13 @@
 
 .dependency-item:hover {
 	background: #f8fafc;
-	border-color: #3b82f6;
+	border-color: #10b981;
 }
 
 .dependency-item.active {
-	background: #eff6ff;
-	border-color: #3b82f6;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+	background: #ecfdf5;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .dependency-item-name {
@@ -147,7 +148,7 @@
 .dependency-details {
 	flex: 1;
 	background: white;
-	border: 2px solid #3b82f6;
+	border: 2px solid #10b981;
 	border-radius: 8px;
 	padding: 20px;
 	overflow-y: auto;
@@ -183,8 +184,8 @@
 
 .setting-input:focus {
 	outline: none;
-	border-color: #3b82f6;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .setting-input::placeholder {
@@ -229,8 +230,8 @@
 
 .settings-ai-field input:focus {
 	outline: none;
-	border-color: #3b82f6;
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
 .settings-ai-actions {
@@ -304,16 +305,20 @@
 
 .syftbox-status-card .status-card-title {
 	flex-wrap: wrap;
+	max-width: 100%;
+	overflow: hidden;
 }
 
 .syftbox-status-card .status-badge {
 	margin-top: 6px;
 	white-space: normal;
 	max-width: 100%;
+	width: 100%;
 	flex-wrap: wrap;
 	flex-direction: column;
 	align-items: flex-start;
 	gap: 4px;
+	overflow: hidden;
 }
 
 .syftbox-status-card .badge-line {
@@ -324,6 +329,10 @@
 .syftbox-status-card .badge-subline {
 	font-size: 11px;
 	font-weight: 500;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .status-card-content {
@@ -420,7 +429,7 @@
 }
 
 .toggle-switch input:checked + .toggle-slider {
-	background-color: #3b82f6;
+	background-color: #10b981;
 }
 
 .toggle-switch input:checked + .toggle-slider:before {
@@ -428,7 +437,7 @@
 }
 
 .toggle-switch input:focus + .toggle-slider {
-	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
 }
 
 /* ============================================================================
@@ -481,61 +490,64 @@
 }
 
 /* ============================================================================
-   BUTTONS
+   BUTTONS - Consistent with Global System
    ============================================================================ */
 
 .settings-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
 	padding: 10px 20px;
 	border: none;
 	border-radius: 8px;
 	font-size: 14px;
 	font-weight: 500;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition: all 0.15s ease;
 	white-space: nowrap;
 }
 
+/* Primary - Green (matches global btn-primary) */
 .settings-btn-primary {
-	background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+	background: #10b981;
 	color: white;
 }
 
-.settings-btn-primary:hover {
-	background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+.settings-btn-primary:hover:not(:disabled) {
+	background: #059669;
 }
 
-.settings-btn-primary:active {
-	transform: translateY(0);
+.settings-btn-primary:active:not(:disabled) {
+	background: #047857;
 }
 
+/* Secondary - Grey outline (matches global btn-secondary) */
 .settings-btn-secondary {
-	background: linear-gradient(135deg, #17a2b8 0%, #0d6efd 100%);
-	color: white;
+	background: #ffffff;
+	color: #475569;
+	border: 1px solid #e2e8f0;
 }
 
-.settings-btn-secondary:hover {
-	background: linear-gradient(135deg, #138496 0%, #0b5ed7 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
+.settings-btn-secondary:hover:not(:disabled) {
+	background: #f9fafb;
+	border-color: #d1d5db;
+	color: #374151;
 }
 
+/* Success - Green (same as primary for consistency) */
 .settings-btn-success {
-	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+	background: #10b981;
 	color: white;
 }
 
-.settings-btn-success:hover {
-	background: linear-gradient(135deg, #059669 0%, #047857 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+.settings-btn-success:hover:not(:disabled) {
+	background: #059669;
 }
 
 .settings-btn:disabled {
-	opacity: 0.6;
+	opacity: 0.5;
 	cursor: not-allowed;
-	transform: none !important;
 }
 
 /* ============================================================================
@@ -559,12 +571,12 @@
 	width: 72px;
 	height: 72px;
 	border-radius: 12px;
-	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	background: linear-gradient(135deg, #ecfdf5, #d1fae5);
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	overflow: hidden;
-	border: 1px solid #e5e7eb;
+	border: 1px solid #a7f3d0;
 	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
 }
 
@@ -610,10 +622,6 @@
    ============================================================================ */
 
 @media (max-width: 768px) {
-	.settings-container {
-		padding: 16px;
-	}
-
 	.settings-ai-grid {
 		grid-template-columns: 1fr;
 	}
@@ -731,12 +739,12 @@
 	width: 40px;
 	height: 40px;
 	border-radius: 8px;
-	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	background: linear-gradient(135deg, #ecfdf5, #d1fae5);
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	overflow: hidden;
-	border: 1px solid #e5e7eb;
+	border: 1px solid #a7f3d0;
 	flex-shrink: 0;
 }
 

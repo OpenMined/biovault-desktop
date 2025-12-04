@@ -11,6 +11,7 @@
 		"updater:allow-check",
 		"dialog:default",
 		"process:default",
-		"process:allow-restart"
+		"process:allow-restart",
+		"notification:default"
 	]
 }

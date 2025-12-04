@@ -1,70 +1,88 @@
-<div class="table-container">
-	<div
-		style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px"
-	>
-		<h2 style="margin: 0">Participants (<span id="participant-count">0</span>)</h2>
-		<div style="display: flex; gap: 10px; align-items: center">
-			<input
-				type="text"
-				id="participants-search"
-				class="table-search-input"
-				placeholder="Search participants..."
-			/>
-			<button
-				id="open-import-modal-btn"
-				style="
-					padding: 10px 20px;
-					background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-					color: white;
-					border: none;
-					border-radius: 8px;
-					cursor: pointer;
-					font-weight: 600;
-					font-size: 14px;
-					box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
-					transition: all 0.2s ease;
-				"
-			>
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<div class="page-header-title-row">
+				<h1 class="page-title">Participants</h1>
+				<span id="participant-count" class="page-count-badge">0</span>
+			</div>
+			<p class="page-subtitle">Individuals with imported genotype data</p>
+		</div>
+		<div class="page-header-right">
+			<!-- Search -->
+			<div class="page-header-search">
 				<svg
-					width="14"
-					height="14"
-					viewBox="0 0 16 16"
-					fill="currentColor"
-					style="margin-right: 6px; vertical-align: middle"
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
 				>
-					<path
-						d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"
-					/>
+					<circle cx="11" cy="11" r="8"></circle>
+					<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
 				</svg>
-				Import
-			</button>
-			<button
-				id="delete-selected-participants-btn"
-				style="
-					padding: 8px 16px;
-					background: #dc3545;
-					color: white;
-					border: none;
-					border-radius: 4px;
-					cursor: pointer;
-					display: none;
-				"
-			>
-				Delete Selected
-			</button>
+				<input type="text" id="participants-search" placeholder="Search participants..." />
+			</div>
+
+			<div class="page-header-actions">
+				<button
+					id="delete-selected-participants-btn"
+					class="btn-secondary"
+					style="display: none; color: #ef4444"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<polyline points="3 6 5 6 21 6"></polyline>
+						<path
+							d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+						></path>
+					</svg>
+					Delete Selected
+				</button>
+				<button id="open-import-modal-btn" class="btn-primary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+						<polyline points="7 10 12 15 17 10"></polyline>
+						<line x1="12" y1="15" x2="12" y2="3"></line>
+					</svg>
+					Import
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<!-- Main Content -->
+	<div class="view-content">
+		<div class="participants-table-container">
+			<table>
+				<thead>
+					<tr>
+						<th style="width: 40px">
+							<input type="checkbox" id="select-all-participants-table" />
+						</th>
+						<th>ID</th>
+						<th>Participant ID</th>
+						<th>Created At</th>
+					</tr>
+				</thead>
+				<tbody id="participants-table"></tbody>
+			</table>
 		</div>
 	</div>
-	<table>
-		<thead>
-			<tr>
-				<th style="width: 40px">
-					<input type="checkbox" id="select-all-participants-table" />
-				</th>
-				<th>ID</th>
-				<th>Participant ID</th>
-				<th>Created At</th>
-			</tr>
-		</thead>
-		<tbody id="participants-table"></tbody>
-	</table>
 </div>

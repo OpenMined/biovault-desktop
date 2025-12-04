@@ -227,7 +227,16 @@ pub fn run() {
     );
 
     let email = load_biovault_email(&Some(biovault_home_dir.clone()));
-    let window_title = format!("BioVault - {}", email);
+
+    // Build window title - include debug info if BIOVAULT_DEBUG_BANNER is set
+    let window_title = if std::env::var("BIOVAULT_DEBUG_BANNER")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+    {
+        format!("BioVault - {} [{}]", email, home_display)
+    } else {
+        format!("BioVault - {}", email)
+    };
 
     // Desktop DB for runs/projects (keep separate for now)
     let db_path = biovault_home_dir.join("biovault.db");

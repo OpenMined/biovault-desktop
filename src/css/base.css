@@ -1,21 +1,141 @@
+/* ============================================================================
+   BASE STYLES - BioVault Desktop
+   Clean foundation with Rubik typography
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
+
 * {
 	margin: 0;
 	padding: 0;
 	box-sizing: border-box;
 }
 
+:root {
+	/* Primary - Fresh green */
+	--color-primary: #10b981;
+	--color-primary-light: #34d399;
+	--color-primary-dark: #059669;
+
+	/* Secondary - Teal */
+	--color-secondary: #14b8a6;
+	--color-secondary-light: #2dd4bf;
+	--color-secondary-dark: #0d9488;
+
+	/* Accent - Blue */
+	--color-accent: #0ea5e9;
+	--color-accent-light: #38bdf8;
+	--color-accent-dark: #0284c7;
+
+	/* Backgrounds */
+	--color-bg-main: #ffffff;
+	--color-bg-secondary: #f8fafc;
+	--color-bg-tertiary: #f1f5f9;
+	--color-bg-sidebar: #fafbfc;
+
+	/* Text */
+	--color-text-primary: #1e293b;
+	--color-text-secondary: #475569;
+	--color-text-muted: #64748b;
+	--color-text-light: #94a3b8;
+
+	/* Borders */
+	--color-border: #e5e7eb;
+	--color-border-light: #f1f5f9;
+
+	/* Shadows */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+	/* Typography */
+	--font-family: 'Rubik', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+
+	/* Spacing */
+	--space-xs: 4px;
+	--space-sm: 8px;
+	--space-md: 16px;
+	--space-lg: 24px;
+	--space-xl: 32px;
+
+	/* Radii */
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 14px;
+	--radius-xl: 20px;
+
+	/* Transitions */
+	--transition-fast: 0.15s ease;
+	--transition-base: 0.2s ease;
+}
+
+html {
+	font-size: 16px;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+}
+
 body {
-	font-family:
-		system-ui,
-		-apple-system,
-		BlinkMacSystemFont,
-		'Segoe UI',
-		Roboto,
-		'Helvetica Neue',
-		Arial,
-		sans-serif;
+	font-family: var(--font-family);
+	font-weight: 400;
+	line-height: 1.5;
+	color: var(--color-text-primary);
+	background: var(--color-bg-main);
 	height: 100vh;
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
+}
+
+/* ============================================================================
+   SELECTION
+   ============================================================================ */
+
+::selection {
+	background: rgba(16, 185, 129, 0.2);
+	color: inherit;
+}
+
+::-moz-selection {
+	background: rgba(16, 185, 129, 0.2);
+	color: inherit;
+}
+
+/* ============================================================================
+   FOCUS STATES
+   ============================================================================ */
+
+:focus-visible {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 2px;
+}
+
+/* ============================================================================
+   SCROLLBAR
+   ============================================================================ */
+
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: #d1d5db;
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #9ca3af;
+}
+
+/* Thin scrollbars */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: #d1d5db transparent;
 }
