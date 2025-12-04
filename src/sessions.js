@@ -1,4 +1,8 @@
+import { createContactAutocomplete } from './contact-autocomplete.js'
+
 export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
+	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
+
 	let sessions = []
 	let activeSessionId = null
 	let jupyterPollingInterval = null
@@ -182,12 +186,6 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		const status = await refreshJupyterStatus(sessionId)
 		startJupyterPolling(sessionId)
 		startSessionMessagesPolling(sessionId)
-
-		// Auto-launch Jupyter if not running
-		if (!status.running) {
-			console.log('[Sessions] Auto-launching Jupyter for session:', sessionId)
-			await launchSessionJupyter()
-		}
 	}
 
 	async function refreshSessionsAndInvites() {
@@ -297,14 +295,22 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
+	function setLaunchLoading(isLoading) {
+		const launchBtn = document.getElementById('launch-session-jupyter-btn')
+		if (!launchBtn) return
+		if (isLoading) {
+			launchBtn.disabled = true
+			launchBtn.innerHTML = '<span class="btn-spinner"></span> Launching...'
+		} else {
+			launchBtn.disabled = false
+			launchBtn.textContent = 'Launch Jupyter'
+		}
+	}
+
 	async function launchSessionJupyter() {
 		if (!activeSessionId) return
 
-		const launchBtn = document.getElementById('launch-session-jupyter-btn')
-		if (launchBtn) {
-			launchBtn.disabled = true
-			launchBtn.textContent = 'Launching...'
-		}
+		setLaunchLoading(true)
 
 		try {
 			console.log('[Sessions] Launching Jupyter for session:', activeSessionId)
@@ -315,10 +321,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 			console.error('[Sessions] Failed to launch Jupyter:', error)
 			await dialog.message(`Failed to launch Jupyter: ${error}`, { title: 'Error', kind: 'error' })
 		} finally {
-			if (launchBtn) {
-				launchBtn.disabled = false
-				launchBtn.textContent = 'Launch Jupyter'
-			}
+			setLaunchLoading(false)
 		}
 	}
 
@@ -438,6 +441,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	function showCreateSessionModal() {
 		const modal = document.getElementById('create-session-modal')
 		if (modal) {
+			contactAutocomplete.attachToInputs(['session-peer-input'])
 			modal.style.display = 'flex'
 			document.getElementById('session-name-input').value = ''
 			document.getElementById('session-description-input').value = ''
@@ -492,6 +496,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	function showAddPeerModal() {
 		const modal = document.getElementById('add-peer-modal')
 		if (modal) {
+			contactAutocomplete.attachToInputs(['peer-email-input'])
 			modal.style.display = 'flex'
 			document.getElementById('peer-email-input').value = ''
 			document.getElementById('peer-email-input').focus()
@@ -612,6 +617,9 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	function initializeSessionsTab() {
+		// Preload contact suggestions for peer inputs
+		contactAutocomplete.attachToInputs(['session-peer-input', 'peer-email-input'])
+
 		const newBtn = document.getElementById('new-session-btn')
 		if (newBtn) newBtn.addEventListener('click', showCreateSessionModal)
 

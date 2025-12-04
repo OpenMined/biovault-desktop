@@ -1,3 +1,5 @@
+import { createContactAutocomplete } from './contact-autocomplete.js'
+
 export function createMessagesModule({
 	invoke,
 	getCurrentUserEmail,
@@ -24,6 +26,7 @@ export function createMessagesModule({
 	const AUTO_REFRESH_MS = 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
 	let notificationApiPromise = null
+	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	async function confirmWithDialog(message, options = {}) {
 		if (dialog?.confirm) {
@@ -759,6 +762,7 @@ export function createMessagesModule({
 
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {
+			contactAutocomplete.attachToInputs(['message-recipient-input'])
 			recipientInput.readOnly = false
 			recipientInput.value = prefillRecipient || ''
 			recipientInput.focus()
@@ -782,6 +786,8 @@ export function createMessagesModule({
 
 	async function initializeMessagesTab(forceSync = false) {
 		if (messagesInitialized && !forceSync) return
+
+		contactAutocomplete.attachToInputs(['message-recipient-input'])
 
 		await ensureMessagesAuthorization()
 		await refreshSyftboxState()
