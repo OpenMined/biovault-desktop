@@ -44,7 +44,9 @@ export function createContactAutocomplete({ invoke, getCurrentUserEmail }) {
 
 	function renderDatalist(emails) {
 		const datalist = ensureDatalist()
-		datalist.innerHTML = emails.map((email) => `<option value="${escapeHtml(email)}"></option>`).join('')
+		datalist.innerHTML = emails
+			.map((email) => `<option value="${escapeHtml(email)}"></option>`)
+			.join('')
 		return datalist
 	}
 

@@ -8,9 +8,9 @@ use biovault::cli::commands::jupyter;
 use biovault::cli::commands::messages::get_message_db_path;
 use biovault::data::BioVaultDb;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus};
-use serde_json::json;
 use rand::Rng;
 use rusqlite::OptionalExtension;
+use serde_json::json;
 use std::fs;
 use std::path::Path;
 

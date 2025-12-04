@@ -183,7 +183,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		renderSessionDetail(session)
 		await loadSessionMessages(sessionId)
-		const status = await refreshJupyterStatus(sessionId)
+		const _status = await refreshJupyterStatus(sessionId)
 		startJupyterPolling(sessionId)
 		startSessionMessagesPolling(sessionId)
 	}
