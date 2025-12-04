@@ -13,6 +13,8 @@
 				"title": "BioVault",
 				"width": 1100,
 				"height": 700,
+				"minWidth": 900,
+				"minHeight": 600,
 				"hiddenTitle": true,
 				"devtools": true
 			}

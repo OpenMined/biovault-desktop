@@ -1,52 +1,60 @@
-<div class="network-container">
-	<div class="network-header">
-		<h2>Network</h2>
-		<div class="network-actions">
-			<button id="network-refresh-btn" class="btn btn-secondary" title="Scan for new contacts">
-				<img src="assets/icons/scan-eye.svg" width="16" height="16" alt="Scan" />
-				Refresh
-			</button>
+<div class="view-container">
+	<!-- Page Header -->
+	<header class="page-header">
+		<div class="page-header-left">
+			<h1 class="page-title">Network</h1>
 		</div>
-	</div>
+		<div class="page-header-right">
+			<div class="page-header-actions">
+				<button id="network-refresh-btn" class="btn-secondary" title="Scan for new contacts">
+					<img src="assets/icons/scan-eye.svg" width="14" height="14" alt="Scan" />
+					Refresh
+				</button>
+			</div>
+		</div>
+	</header>
 
-	<div class="network-content">
-		<!-- Contacts Section - People with imported keys -->
-		<section class="network-section contacts-section">
-			<div class="section-header">
-				<h3>
-					<img src="assets/icons/user-lock.svg" width="18" height="18" alt="Contacts" />
-					Contacts
-				</h3>
-				<span class="contact-count" id="contacts-count">0</span>
-			</div>
-			<p class="section-description">
-				People whose keys you have imported. You can send encrypted messages to these contacts.
-			</p>
-			<div id="contacts-list" class="contact-list">
-				<div class="empty-state" id="contacts-empty">
-					<p>No contacts yet. Import keys from the network below.</p>
+	<!-- Main Content -->
+	<div class="view-content">
+		<div class="network-content">
+			<!-- Contacts Section -->
+			<section class="network-section contacts-section">
+				<div class="section-header">
+					<h3>
+						<img src="assets/icons/user-lock.svg" width="18" height="18" alt="Contacts" />
+						Contacts
+					</h3>
+					<span class="contact-count" id="contacts-count">0</span>
 				</div>
-			</div>
-		</section>
+				<p class="section-description">
+					People whose keys you have imported. You can send encrypted messages to these contacts.
+				</p>
+				<div id="contacts-list" class="contact-list">
+					<div class="empty-state" id="contacts-empty">
+						<p>No contacts yet. Import keys from the network below.</p>
+					</div>
+				</div>
+			</section>
 
-		<!-- Network Section - Discovered datasites -->
-		<section class="network-section discovered-section">
-			<div class="section-header">
-				<h3>
-					<img src="assets/icons/network.svg" width="18" height="18" alt="Network" />
-					Discovered
-				</h3>
-				<span class="contact-count" id="network-count">0</span>
-			</div>
-			<p class="section-description">
-				People found on the network. Click "Add Contact" to import their public key.
-			</p>
-			<div id="network-list" class="contact-list">
-				<div class="empty-state" id="network-empty">
-					<p>No datasites found. Click Refresh to scan the network.</p>
+			<!-- Network Section -->
+			<section class="network-section discovered-section">
+				<div class="section-header">
+					<h3>
+						<img src="assets/icons/network.svg" width="18" height="18" alt="Network" />
+						Discovered
+					</h3>
+					<span class="contact-count" id="network-count">0</span>
 				</div>
-			</div>
-		</section>
+				<p class="section-description">
+					People found on the network. Click "Add Contact" to import their public key.
+				</p>
+				<div id="network-list" class="contact-list">
+					<div class="empty-state" id="network-empty">
+						<p>No datasites found. Click Refresh to scan the network.</p>
+					</div>
+				</div>
+			</section>
+		</div>
 	</div>
 </div>
 

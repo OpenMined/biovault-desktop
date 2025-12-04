@@ -1,280 +1,137 @@
-.file-type-select {
-	width: 100%;
-	min-height: 140px;
-	border: 1px solid #cbd5f5;
-	border-radius: 8px;
-	padding: 4px;
+/* ============================================================================
+   FORMS - BioVault Desktop
+   Clean, consistent form controls
+   ============================================================================ */
+
+/* ============================================================================
+   BASE INPUT STYLES
+   ============================================================================ */
+
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+	font-family: var(--font-family, 'Rubik', sans-serif);
 }
 
-.custom-extension input {
-	width: 100%;
-	padding: 8px;
-	border: 1px solid #cbd5f5;
-	border-radius: 6px;
-	font-family: 'Courier New', monospace;
-	font-size: 13px;
-}
+/* ============================================================================
+   TEXT INPUTS
+   ============================================================================ */
 
-.pattern-input-label {
-	font-size: 11px;
-	font-weight: 600;
-	color: #475569;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-}
-
-.pattern-input {
+input[type='text'],
+input[type='email'],
+input[type='url'],
+input[type='password'],
+input[type='tel'],
+input[type='number'],
+textarea {
 	width: 100%;
 	padding: 10px 12px;
-	border: 1px solid #cbd5f5;
+	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	font-size: 13px;
-	font-family: 'Courier New', monospace;
-}
-
-.pattern-input:focus {
-	border-color: #2563eb;
-	box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
-}
-
-.pattern-option-btn-label {
-	font-weight: 600;
-	font-size: 11px;
-	color: #475569;
-	white-space: nowrap;
-}
-
-.operation-progress-label {
-	font-size: 13px;
-	font-weight: 600;
-	margin-bottom: 6px;
-}
-
-.file-list-select-all {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	font-weight: 600;
-}
-
-.import-project-section input {
-	width: 70%;
-	padding: 10px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 14px;
-	margin-right: 10px;
+	color: #1e293b;
+	background: #ffffff;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.selection-panel {
-	flex: 1;
-	display: flex;
-	flex-direction: column;
-	background: white;
-	border: 1px solid #ddd;
-	border-radius: 8px;
-	padding: 20px;
+input[type='text']:focus,
+input[type='email']:focus,
+input[type='url']:focus,
+input[type='password']:focus,
+input[type='tel']:focus,
+input[type='number']:focus,
+textarea:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
-.selection-panel h3 {
-	margin-bottom: 15px;
+input::placeholder,
+textarea::placeholder {
+	color: #9ca3af;
 }
 
-.selection-list {
-	flex: 1;
-	overflow-y: auto;
-	border: 1px solid #ddd;
-	border-radius: 4px;
-	padding: 10px;
-}
-
-.selection-item {
-	padding: 10px;
-	margin-bottom: 5px;
-	background: #f5f5f5;
-	border-radius: 4px;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	gap: 10px;
-}
-
-.selection-item:hover {
-	background: #e5e5e5;
-}
-
-.selection-item.selected {
-	background: #0066cc;
-	color: white;
-}
+/* ============================================================================
+   SELECT
+   ============================================================================ */
 
 select {
 	width: 100%;
-	padding: 8px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
-	background: white;
+	padding: 10px 36px 10px 12px;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	background: #ffffff;
+	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 14px;
+	color: #1e293b;
+	cursor: pointer;
+	appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 10px center;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.participant-id-input {
-	padding: 4px 8px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
-	font-size: 13px;
-	font-family: monospace;
-	margin: 0 8px;
-}
-
-.participant-id-input.manual {
-	background: #fff3e0;
-	border-color: #ff9800;
-}
-
-.message-syftbox-status select {
-	padding: 8px 12px;
-	border: 1px solid rgba(255, 255, 255, 0.35);
-	border-radius: 12px;
-	font-size: 12px;
-	background: rgba(255, 255, 255, 0.15);
-	color: #111827;
-	backdrop-filter: blur(6px);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
-}
-
-.message-compose-recipient input,
-.message-compose textarea,
-.message-compose input[type='text'] {
-	width: 100%;
-	padding: 12px;
-	border: 1px solid #d0d7ff;
-	border-radius: 10px;
-	font-size: 13px;
-	background: #fff;
-	box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
-}
-
-.message-compose textarea {
-	min-height: 120px;
-	resize: vertical;
-}
-
-#message-syftbox-indicator {
-	padding: 6px 10px;
-	border-radius: 999px;
-	font-weight: 700;
-	font-size: 12px;
-	border: 1px solid transparent;
-	letter-spacing: 0.01em;
-}
-
-#message-syftbox-indicator.status-online {
-	background: #e7f8ef;
-	color: #16a34a;
-	border-color: #bbf7d0;
-}
-
-#message-syftbox-indicator.status-offline {
-	background: #fef3c7;
-	color: #d97706;
-	border-color: #fde68a;
-}
-
-.onboarding-card input {
-	width: 100%;
-	padding: 12px;
-	border: 2px solid #ddd;
-	border-radius: 6px;
-	font-size: 16px;
-	margin-bottom: 20px;
-}
-
-.syftbox-code-input:focus {
-	outline: none;
-	border-color: #667eea;
-	box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-.syftbox-code-input.error {
-	border-color: #dc3545;
-	background-color: #fff5f5;
-}
-
-.syftbox-code-input.success {
-	border-color: #28a745;
-	background-color: #f0fff4;
-}
-
-.form-group label {
-	display: block;
-	font-weight: 600;
-	margin-bottom: 8px;
-}
-
-.form-group input {
-	width: 100%;
-	padding: 10px;
-	border: 1px solid #ddd;
-	border-radius: 4px;
-	font-size: 14px;
-}
-
-.settings-ai-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-	gap: 12px;
-	margin-bottom: 12px;
-}
-
-.settings-ai-field label {
-	display: block;
-	font-weight: 600;
-	margin-bottom: 6px;
-	color: #334155;
-	font-size: 13px;
-}
-
-.settings-ai-field input {
-	width: 100%;
-	padding: 10px;
-	border: 1px solid #cbd5f5;
-	border-radius: 6px;
-	background: #f8fafc;
-	font-size: 14px;
-}
-
-.settings-ai-field input:focus {
+select:focus {
 	outline: none;
 	border-color: #10b981;
-	box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
-.settings-ai-actions {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	margin-top: 8px;
+/* ============================================================================
+   CHECKBOX
+   ============================================================================ */
+
+input[type='checkbox'] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 18px;
+	height: 18px;
+	border: 2px solid #d1d5db;
+	border-radius: 4px;
+	background: #ffffff;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	position: relative;
+	flex-shrink: 0;
 }
 
-.settings-save-status {
-	font-size: 12px;
-	color: #64748b;
-	min-height: 18px;
+input[type='checkbox']:checked {
+	background: #10b981;
+	border-color: #10b981;
 }
 
-.settings-save-status[data-tone='success'] {
-	color: #047857;
+input[type='checkbox']:checked::after {
+	content: '';
+	position: absolute;
+	left: 5px;
+	top: 1px;
+	width: 4px;
+	height: 9px;
+	border: solid white;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
 }
 
-.settings-save-status[data-tone='error'] {
-	color: #b91c1c;
+input[type='checkbox']:hover:not(:disabled) {
+	border-color: #10b981;
 }
+
+input[type='checkbox']:focus {
+	outline: none;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+/* ============================================================================
+   TOGGLE SWITCH
+   ============================================================================ */
 
 .toggle-switch {
 	position: relative;
 	display: inline-block;
-	width: 50px;
-	height: 26px;
+	width: 44px;
+	height: 24px;
 }
 
 .toggle-switch input {
@@ -290,32 +147,353 @@ select {
 	left: 0;
 	right: 0;
 	bottom: 0;
-	background-color: #ccc;
-	transition: 0.3s;
-	border-radius: 26px;
+	background: #d1d5db;
+	transition: all 0.2s ease;
+	border-radius: 24px;
 }
 
 .toggle-slider:before {
 	position: absolute;
 	content: '';
-	height: 20px;
-	width: 20px;
+	height: 18px;
+	width: 18px;
 	left: 3px;
 	bottom: 3px;
 	background-color: white;
-	transition: 0.3s;
+	transition: all 0.2s ease;
 	border-radius: 50%;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .toggle-switch input:checked + .toggle-slider {
-	background-color: #4f46e5;
+	background: #10b981;
 }
 
 .toggle-switch input:checked + .toggle-slider:before {
-	transform: translateX(24px);
+	transform: translateX(20px);
 }
 
 .toggle-switch input:disabled + .toggle-slider {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+/* ============================================================================
+   FORM GROUPS
+   ============================================================================ */
+
+.form-group {
+	margin-bottom: 16px;
+}
+
+.form-group label {
+	display: block;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 600;
+	font-size: 13px;
+	color: #475569;
+	margin-bottom: 6px;
+}
+
+.form-hint {
+	font-size: 12px;
+	color: #94a3b8;
+	margin-top: 4px;
+}
+
+/* ============================================================================
+   FIELD LABELS
+   ============================================================================ */
+
+.field-label {
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 600;
+	font-size: 12px;
+	color: #64748b;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-bottom: 6px;
+	display: block;
+}
+
+.field-hint {
+	font-size: 12px;
+	color: #94a3b8;
+	margin-top: 4px;
+}
+
+.required {
+	color: #ef4444;
+}
+
+/* ============================================================================
+   FILE TYPE SELECT
+   ============================================================================ */
+
+.file-type-select {
+	width: 100%;
+	min-height: 120px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 4px;
+	background: white;
+}
+
+/* ============================================================================
+   PATTERN INPUT
+   ============================================================================ */
+
+.pattern-input-label {
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 11px;
+	font-weight: 600;
+	color: #64748b;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.pattern-input {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 13px;
+	font-family: var(--font-mono, 'SF Mono', monospace);
+	background: #f8fafc;
+}
+
+.pattern-input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+	background: white;
+}
+
+/* ============================================================================
+   PARTICIPANT ID INPUT
+   ============================================================================ */
+
+.participant-id-input {
+	padding: 6px 10px;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	font-size: 13px;
+	font-family: var(--font-mono, 'SF Mono', monospace);
+	margin: 0 8px;
+}
+
+.participant-id-input.manual {
+	background: #fef3c7;
+	border-color: #f59e0b;
+}
+
+/* ============================================================================
+   SELECTION PANELS
+   ============================================================================ */
+
+.selection-panel {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 16px;
+}
+
+.selection-list {
+	flex: 1;
+	overflow-y: auto;
+	border: 1px solid #f1f5f9;
+	border-radius: 8px;
+	padding: 6px;
+	background: #f8fafc;
+}
+
+.selection-item {
+	padding: 10px 12px;
+	margin-bottom: 4px;
+	background: white;
+	border: 1px solid #f1f5f9;
+	border-radius: 6px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 13px;
+	transition: all 0.15s ease;
+}
+
+.selection-item:hover {
+	background: #f8fafc;
+	border-color: #e5e7eb;
+}
+
+.selection-item.selected {
+	background: rgba(16, 185, 129, 0.08);
+	border-color: #10b981;
+	color: #059669;
+}
+
+/* ============================================================================
+   SETTINGS FIELDS
+   ============================================================================ */
+
+.settings-ai-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.settings-ai-field label {
+	display: block;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 600;
+	margin-bottom: 6px;
+	color: #64748b;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.settings-ai-field input {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #f8fafc;
+	font-size: 14px;
+}
+
+.settings-ai-field input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+	background: white;
+}
+
+.settings-ai-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 12px;
+}
+
+.settings-save-status {
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-size: 12px;
+	color: #94a3b8;
+}
+
+.settings-save-status[data-tone='success'] {
+	color: #059669;
+}
+
+.settings-save-status[data-tone='error'] {
+	color: #dc2626;
+}
+
+/* ============================================================================
+   ONBOARDING INPUTS
+   ============================================================================ */
+
+.onboarding-card input {
+	width: 100%;
+	padding: 12px 14px;
+	border: 2px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 15px;
+	margin-bottom: 16px;
+}
+
+.onboarding-card input:focus {
+	outline: none;
+	border-color: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.syftbox-code-input.error {
+	border-color: #ef4444;
+	background: #fef2f2;
+}
+
+.syftbox-code-input.success {
+	border-color: #10b981;
+	background: #ecfdf5;
+}
+
+/* ============================================================================
+   MESSAGE COMPOSE
+   ============================================================================ */
+
+.message-compose textarea,
+.message-compose input[type='text'],
+.message-compose-recipient input {
+	width: 100%;
+	padding: 12px 14px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 14px;
+	background: white;
+}
+
+.message-compose textarea {
+	min-height: 100px;
+	resize: vertical;
+	line-height: 1.5;
+}
+
+/* ============================================================================
+   STATUS INDICATORS
+   ============================================================================ */
+
+#message-syftbox-indicator {
+	padding: 5px 12px;
+	border-radius: 999px;
+	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-weight: 600;
+	font-size: 12px;
+}
+
+#message-syftbox-indicator.status-online {
+	background: rgba(16, 185, 129, 0.1);
+	color: #059669;
+}
+
+#message-syftbox-indicator.status-offline {
+	background: rgba(245, 158, 11, 0.1);
+	color: #d97706;
+}
+
+/* ============================================================================
+   MISC
+   ============================================================================ */
+
+.file-list-select-all {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.operation-progress-label {
+	font-size: 13px;
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.custom-extension input {
+	font-family: var(--font-mono, 'SF Mono', monospace);
+	font-size: 13px;
+}
+
+.pattern-option-btn-label {
+	font-weight: 600;
+	font-size: 11px;
+	color: #64748b;
+	white-space: nowrap;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
 }

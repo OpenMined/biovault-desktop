@@ -36,7 +36,7 @@
 					</svg>
 					Copy All
 				</button>
-				<button id="clear-logs-btn" class="btn-secondary" style="color: #dc2626">
+				<button id="clear-logs-btn" class="btn-secondary btn-danger-text">
 					<svg
 						width="14"
 						height="14"
@@ -58,29 +58,9 @@
 
 	<!-- Main Content -->
 	<div class="view-content">
-		<div style="padding: 24px; height: 100%; display: flex; flex-direction: column">
-			<div
-				style="
-					flex: 1;
-					overflow-y: auto;
-					background: #1e1e1e;
-					border-radius: 8px;
-					padding: 20px;
-					border: 1px solid #e5e7eb;
-				"
-			>
-				<pre
-					id="logs-content"
-					style="
-						color: #d4d4d4;
-						font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, 'Courier New', monospace;
-						font-size: 13px;
-						line-height: 1.6;
-						margin: 0;
-						white-space: pre-wrap;
-						word-wrap: break-word;
-					"
-				></pre>
+		<div class="logs-container">
+			<div class="logs-panel">
+				<pre id="logs-content" class="logs-content"></pre>
 			</div>
 		</div>
 	</div>
