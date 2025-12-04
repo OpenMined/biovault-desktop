@@ -75,19 +75,160 @@ traverse_submodules() {
     done <<< "$submodules"
 }
 
-root_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-root_dirty=""
-if [[ -n $(git status --porcelain -uno 2>/dev/null) ]]; then
-    root_dirty=" ${RED}[dirty]${NC}"
-fi
-echo -e "${CYAN}$(basename "$(pwd)")/${NC} ${BLUE}[$root_branch]${NC}${root_dirty}"
+show_tree() {
+    root_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    root_dirty=""
+    if [[ -n $(git status --porcelain -uno 2>/dev/null) ]]; then
+        root_dirty=" ${RED}[dirty]${NC}"
+    fi
+    echo -e "${CYAN}$(basename "$(pwd)")/${NC} ${BLUE}[$root_branch]${NC}${root_dirty}"
 
-traverse_submodules "." ""
+    traverse_submodules "." ""
 
-echo ""
-echo -e "${GREEN}Legend:${NC}"
-echo -e "  ${BLUE}[branch]${NC}     - on branch"
-echo -e "  ${YELLOW}(tag)${NC}        - detached at tag"
-echo -e "  ${YELLOW}(detached)${NC}   - detached HEAD"
-echo -e "  ${RED}[dirty]${NC}      - uncommitted changes"
-echo -e "  ${RED}[uninitialized]${NC} - submodule not checked out"
+    echo ""
+    echo -e "${GREEN}Legend:${NC}"
+    echo -e "  ${BLUE}[branch]${NC}     - on branch"
+    echo -e "  ${YELLOW}(tag)${NC}        - detached at tag"
+    echo -e "  ${YELLOW}(detached)${NC}   - detached HEAD"
+    echo -e "  ${RED}[dirty]${NC}      - uncommitted changes"
+    echo -e "  ${RED}[uninitialized]${NC} - submodule not checked out"
+}
+
+collect_dirty_submodules() {
+    local base_path="$1"
+    local submodules=$(git -C "$base_path" config --file .gitmodules --get-regexp path 2>/dev/null | awk '{print $2}')
+
+    for submodule in $submodules; do
+        local full_path="$base_path/$submodule"
+        if [[ -d "$full_path/.git" || -f "$full_path/.git" ]]; then
+            if [[ -n $(git -C "$full_path" status --porcelain -uno 2>/dev/null) ]]; then
+                echo "$full_path"
+            fi
+            collect_dirty_submodules "$full_path"
+        fi
+    done
+}
+
+do_branch() {
+    local branch_name="$1"
+
+    echo -e "${YELLOW}Current state:${NC}"
+    echo ""
+    show_tree
+    echo ""
+
+    local dirty_modules=$(collect_dirty_submodules ".")
+
+    if [[ -z "$dirty_modules" ]]; then
+        echo -e "${GREEN}No dirty submodules found.${NC}"
+        exit 0
+    fi
+
+    if [[ -z "$branch_name" ]]; then
+        local root_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        echo -ne "${YELLOW}Enter branch name${NC} [${BLUE}$root_branch${NC}]: "
+        read -r branch_name
+        if [[ -z "$branch_name" ]]; then
+            branch_name="$root_branch"
+        fi
+    fi
+
+    echo -e "${CYAN}Dirty submodules that will be branched:${NC}"
+    echo "$dirty_modules" | while read -r mod; do
+        echo -e "  → ${mod#./}"
+    done
+    echo ""
+    echo -e "${YELLOW}This will create/checkout branch '${branch_name}' in each dirty submodule.${NC}"
+    echo -ne "${YELLOW}Continue? [y/N]: ${NC}"
+    read -r confirm
+
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "${BLUE}Aborted.${NC}"
+        exit 0
+    fi
+
+    echo ""
+    echo "$dirty_modules" | while read -r mod; do
+        echo -ne "  → ${mod#./}: "
+        if git -C "$mod" show-ref --verify --quiet "refs/heads/$branch_name"; then
+            git -C "$mod" checkout "$branch_name" 2>/dev/null
+            echo -e "${BLUE}checked out existing branch${NC}"
+        else
+            git -C "$mod" checkout -b "$branch_name" 2>/dev/null
+            echo -e "${GREEN}created new branch${NC}"
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}Done! New state:${NC}"
+    echo ""
+    show_tree
+}
+
+do_reset() {
+    echo -e "${YELLOW}Current state:${NC}"
+    echo ""
+    show_tree
+    echo ""
+    echo -e "${RED}WARNING: This will:${NC}"
+    echo -e "  1. Discard all uncommitted changes in submodules"
+    echo -e "  2. Remove untracked files in submodules"
+    echo -e "  3. Checkout 'main' (or 'master') branch in all submodules"
+    echo -e "  4. Initialize any uninitialized submodules"
+    echo ""
+    echo -ne "${YELLOW}Are you sure you want to reset all submodules? [y/N]: ${NC}"
+    read -r confirm
+
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "${BLUE}Aborted.${NC}"
+        exit 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}Resetting submodules...${NC}"
+    echo ""
+
+    git submodule foreach --recursive '
+        echo "  → $name"
+        git checkout -- . 2>/dev/null
+        git clean -fd 2>/dev/null
+        if git show-ref --verify --quiet refs/heads/main; then
+            git checkout main 2>/dev/null
+        elif git show-ref --verify --quiet refs/heads/master; then
+            git checkout master 2>/dev/null
+        else
+            echo "    (no main/master branch, staying on current)"
+        fi
+    '
+
+    echo ""
+    echo -e "${CYAN}Updating submodules...${NC}"
+    git submodule update --init --recursive
+
+    echo ""
+    echo -e "${GREEN}Done! New state:${NC}"
+    echo ""
+    show_tree
+}
+
+case "$1" in
+    --reset)
+        do_reset
+        ;;
+    --branch)
+        do_branch "$2"
+        ;;
+    --help|-h)
+        echo "Usage: ./mods.sh [OPTIONS]"
+        echo ""
+        echo "Options:"
+        echo "  (none)              Show submodule tree with branch/dirty status"
+        echo "  --branch [name]     Checkout/create branch in all dirty submodules"
+        echo "                      (prompts for name if not provided, defaults to root branch)"
+        echo "  --reset             Reset all submodules to main/master"
+        echo "  --help, -h          Show this help"
+        ;;
+    *)
+        show_tree
+        ;;
+esac

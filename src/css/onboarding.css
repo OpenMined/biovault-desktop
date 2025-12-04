@@ -32,6 +32,167 @@
 	font-size: 16px;
 }
 
+/* Key setup */
+.key-card {
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 14px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	background: #fafafa;
+}
+
+.key-card-left {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.key-card-meta {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.key-card-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.key-card-actions button {
+	flex: 1;
+	min-width: 150px;
+	padding: 12px 16px;
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background 0.2s;
+}
+
+.key-card-actions button:hover {
+	background: #059669;
+}
+
+.key-card-actions button.danger {
+	background: #dc2626;
+}
+
+.key-card-actions button.danger:hover {
+	background: #b91c1c;
+}
+
+/* Generic .primary button class for key restore/confirm actions */
+button.primary {
+	background: #10b981;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	padding: 12px 16px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background 0.2s;
+}
+
+button.primary:hover {
+	background: #059669;
+}
+
+.key-avatar {
+	width: 64px;
+	height: 64px;
+	border-radius: 12px;
+	background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	border: 1px solid #e5e7eb;
+}
+
+.key-identity {
+	font-weight: 600;
+	font-size: 15px;
+	color: #0f172a;
+}
+
+.key-fingerprint {
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 12px;
+	color: #475569;
+}
+
+.key-status-line {
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.key-warning {
+	color: #dc2626;
+	font-size: 12px;
+}
+
+.recovery-box {
+	background: #0f172a;
+	color: #e5e7eb;
+	padding: 12px;
+	border-radius: 10px;
+	font-family: 'SF Mono', 'Menlo', monospace;
+	font-size: 13px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.copy-inline-btn {
+	background: transparent !important;
+	border: none !important;
+	border-radius: 4px !important;
+	padding: 4px !important;
+	cursor: pointer;
+	color: #6b7280 !important;
+	transition: all 0.2s;
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	width: auto !important;
+	min-width: 0 !important;
+	flex: 0 0 auto !important;
+}
+
+.copy-inline-btn:hover {
+	background: rgba(0, 0, 0, 0.05) !important;
+	color: #374151 !important;
+}
+
+.copy-inline-btn.copied {
+	background: transparent !important;
+	color: #10b981 !important;
+}
+
+.btn-small {
+	padding: 6px 12px !important;
+	font-size: 12px !important;
+	width: auto !important;
+	min-width: 0 !important;
+	flex: 0 0 auto !important;
+	background: #e5e7eb;
+	color: #374151;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.btn-small:hover {
+	background: #d1d5db;
+}
+
 .onboarding-skip-btn {
 	width: auto !important;
 	min-width: 0;

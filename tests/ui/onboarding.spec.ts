@@ -147,6 +147,25 @@ test.describe('Onboarding flow', () => {
 							}
 							throw new Error('Invalid verification code')
 						}
+						case 'key_get_status':
+							return {
+								identity: 'tester@example.com',
+								vault_path: '/tmp/.syc',
+								bundle_path: '/tmp/.syc/bundles/tester_example_com.json',
+								export_path: '/tmp/datasites/tester@example.com/public/crypto/did.json',
+								vault_fingerprint: 'abc123def456',
+								exists: true,
+							}
+						case 'key_generate':
+							return {
+								identity: 'tester@example.com',
+								fingerprint: 'abc123def456',
+								vault_path: '/tmp/.syc',
+								bundle_path: '/tmp/.syc/bundles/tester_example_com.json',
+								export_path: '/tmp/datasites/tester@example.com/public/crypto/did.json',
+								mnemonic:
+									'test word one two three four five six seven eight nine ten eleven twelve',
+							}
 						default:
 							console.warn('[Playwright] Unhandled invoke command', cmd, args)
 							return null
@@ -169,6 +188,11 @@ test.describe('Onboarding flow', () => {
 		await page.fill('#onboarding-email', 'tester@example.com')
 		await expect(page.locator('#onboarding-next-3')).toBeEnabled()
 		await page.locator('#onboarding-next-3').click()
+
+		// Handle the key setup step (step 3-key)
+		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await page.locator('#onboarding-next-3-key').click()
+
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()
 
 		await Promise.all([
@@ -190,6 +214,11 @@ test.describe('Onboarding flow', () => {
 		await advanceToEmailStep(page)
 		await page.fill('#onboarding-email', 'tester@example.com')
 		await page.locator('#onboarding-next-3').click()
+
+		// Handle the key setup step (step 3-key)
+		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await page.locator('#onboarding-next-3-key').click()
+
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()
 
 		await page.locator('#syftbox-info-continue-btn').click()
