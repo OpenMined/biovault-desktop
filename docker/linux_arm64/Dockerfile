@@ -40,6 +40,9 @@ RUN dpkg --add-architecture arm64 \
       desktop-file-utils \
       libfuse2 \
       xdg-utils \
+      squashfs-tools \
+      zsync \
+      appstream \
       file \
       unzip \
       binutils \
@@ -60,6 +63,7 @@ RUN dpkg --add-architecture arm64 \
       libssl-dev:arm64 \
       libstdc++6:arm64 \
       libgcc-s1:arm64 \
+      libsqlite3-dev:arm64 \
       libfuse2:arm64 \
       && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
@@ -67,11 +71,18 @@ RUN dpkg --add-architecture arm64 \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64
 
+# Install Go (amd64 toolchain, used for cross-compiling syftbox)
+ENV GO_VERSION=1.24.3
+RUN curl -fsSLO "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+ && rm -rf /usr/local/go \
+ && tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz" \
+ && rm "go${GO_VERSION}.linux-amd64.tar.gz"
+
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
  && /root/.cargo/bin/rustup default stable \
  && /root/.cargo/bin/rustup target add aarch64-unknown-linux-gnu
 
-ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
+ENV PATH="/usr/local/go/bin:/root/.cargo/bin:/root/.local/bin:${PATH}"
 
 WORKDIR /workspace/biovault
 
