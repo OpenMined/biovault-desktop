@@ -112,8 +112,8 @@ jobs:
           New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
           New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
 
-          # Create placeholder files
-          New-Item -Path "src-tauri/resources/syftbox/syftbox.exe" -ItemType File -Force
+          # Create placeholder files (syftbox without extension - matches tauri.conf.json)
+          New-Item -Path "src-tauri/resources/syftbox/syftbox" -ItemType File -Force
           "Placeholder - bundled deps not included in Windows PR build" | Out-File -FilePath "src-tauri/resources/bundled/README.txt"
           New-Item -Path "src-tauri/resources/bundled/java/.placeholder" -ItemType File -Force
           New-Item -Path "src-tauri/resources/bundled/nextflow/.placeholder" -ItemType File -Force
