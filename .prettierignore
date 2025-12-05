@@ -6,4 +6,5 @@ dist
 build
 coverage
 test-results
+package-lock.json
 **/*.min.js
