@@ -397,6 +397,23 @@ jobs:
           touch src-tauri/resources/bundled/nextflow/.placeholder
           touch src-tauri/resources/bundled/uv/.placeholder
 
+      - name: Create placeholder resources (Windows no-bundle build)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Create placeholder directories and files for resources that tauri.conf.json expects
+          New-Item -Path "src-tauri/resources/syftbox" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/bundled/java" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
+          New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
+
+          # Create placeholder files (syftbox without extension - matches tauri.conf.json)
+          New-Item -Path "src-tauri/resources/syftbox/syftbox" -ItemType File -Force
+          "Placeholder - bundled deps not included in Windows build" | Out-File -FilePath "src-tauri/resources/bundled/README.txt"
+          New-Item -Path "src-tauri/resources/bundled/java/.placeholder" -ItemType File -Force
+          New-Item -Path "src-tauri/resources/bundled/nextflow/.placeholder" -ItemType File -Force
+          New-Item -Path "src-tauri/resources/bundled/uv/.placeholder" -ItemType File -Force
+
       - name: Sign syftbox client (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
         run: |
