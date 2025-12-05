@@ -414,16 +414,48 @@ jobs:
           New-Item -Path "src-tauri/resources/bundled/nextflow/.placeholder" -ItemType File -Force
           New-Item -Path "src-tauri/resources/bundled/uv/.placeholder" -ItemType File -Force
 
-      - name: Sign syftbox client (macOS)
+      - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
         run: |
+          echo "Signing all bundled binaries for notarization..."
+
+          # Sign syftbox
           SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
           if [[ -f "$SYFTBOX_BIN" ]]; then
-            echo "Signing syftbox client for notarization..."
+            echo "Signing syftbox client..."
             codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
-          else
-            echo "Syftbox client not found at $SYFTBOX_BIN, skipping sign step."
           fi
+
+          # Sign all uv binaries
+          if [[ -d "src-tauri/resources/bundled/uv" ]]; then
+            find src-tauri/resources/bundled/uv -type f -perm +111 | while read -r bin; do
+              echo "Signing uv binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            done
+          fi
+
+          # Sign all java binaries
+          if [[ -d "src-tauri/resources/bundled/java" ]]; then
+            find src-tauri/resources/bundled/java -type f -perm +111 | while read -r bin; do
+              echo "Signing java binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+            # Also sign any .dylib files
+            find src-tauri/resources/bundled/java -name "*.dylib" -type f | while read -r lib; do
+              echo "Signing java dylib: $lib"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$lib" || true
+            done
+          fi
+
+          # Sign all nextflow binaries
+          if [[ -d "src-tauri/resources/bundled/nextflow" ]]; then
+            find src-tauri/resources/bundled/nextflow -type f -perm +111 | while read -r bin; do
+              echo "Signing nextflow binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+          fi
+
+          echo "Finished signing bundled binaries"
 
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
