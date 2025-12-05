@@ -197,6 +197,7 @@ sessionsModule = createSessionsModule({
 	invoke,
 	dialog,
 	getCurrentUserEmail,
+	listen,
 })
 const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
 

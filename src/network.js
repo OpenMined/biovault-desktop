@@ -147,24 +147,56 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const emptyEl = document.getElementById('contacts-empty')
 		const countEl = document.getElementById('contacts-count')
 
+		// Normalize and dedupe by identity (prefer entries with a local bundle path)
+		const deduped = []
+		const seen = new Map() // identity -> index in deduped
+		;(contacts || []).forEach((c) => {
+			const id = c.identity
+			if (!id) return
+			if (!seen.has(id)) {
+				seen.set(id, deduped.length)
+				deduped.push(c)
+				return
+			}
+			// Prefer entry that has a local bundle path or has_changed flag
+			const idx = seen.get(id)
+			const existing = deduped[idx]
+			const existingHasPath = !!existing.local_bundle_path
+			const candidateHasPath = !!c.local_bundle_path
+			const candidateChanged = !!c.has_changed
+			const existingChanged = !!existing.has_changed
+			if (
+				(candidateHasPath && !existingHasPath) ||
+				(candidateHasPath === existingHasPath && candidateChanged && !existingChanged)
+			) {
+				deduped[idx] = c
+			}
+		})
+
 		if (!listEl) {
 			console.warn('contacts-list not found in DOM')
 			return
 		}
 
-		// Clear existing cards (but keep the empty state element)
-		listEl.querySelectorAll('.contact-card').forEach((el) => el.remove())
+		// Hard reset the list to avoid stale duplicate cards
+		while (listEl.firstChild) {
+			listEl.removeChild(listEl.firstChild)
+		}
+		// Re-attach the empty state element if it exists
+		if (emptyEl) {
+			listEl.appendChild(emptyEl)
+		}
 
-		if (contacts.length === 0) {
+		if (deduped.length === 0) {
 			if (emptyEl) emptyEl.style.display = 'block'
 			if (countEl) countEl.textContent = '0'
 			return
 		}
 
 		if (emptyEl) emptyEl.style.display = 'none'
-		if (countEl) countEl.textContent = contacts.length.toString()
+		if (countEl) countEl.textContent = deduped.length.toString()
 
-		contacts.forEach((contact) => {
+		deduped.forEach((contact) => {
 			const card = createContactCard(contact, true)
 			if (card) {
 				listEl.appendChild(card)
@@ -177,24 +209,38 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const emptyEl = document.getElementById('network-empty')
 		const countEl = document.getElementById('network-count')
 
+		// Dedupe discovered too, just in case
+		const deduped = []
+		const seen = new Set()
+		;(discovered || []).forEach((c) => {
+			if (!c.identity || seen.has(c.identity)) return
+			seen.add(c.identity)
+			deduped.push(c)
+		})
+
 		if (!listEl) {
 			console.warn('network-list not found in DOM')
 			return
 		}
 
-		// Clear existing cards
-		listEl.querySelectorAll('.contact-card').forEach((el) => el.remove())
+		// Hard reset the list to avoid stale duplicate cards
+		while (listEl.firstChild) {
+			listEl.removeChild(listEl.firstChild)
+		}
+		if (emptyEl) {
+			listEl.appendChild(emptyEl)
+		}
 
-		if (discovered.length === 0) {
+		if (deduped.length === 0) {
 			if (emptyEl) emptyEl.style.display = 'block'
 			if (countEl) countEl.textContent = '0'
 			return
 		}
 
 		if (emptyEl) emptyEl.style.display = 'none'
-		if (countEl) countEl.textContent = discovered.length.toString()
+		if (countEl) countEl.textContent = deduped.length.toString()
 
-		discovered.forEach((contact) => {
+		deduped.forEach((contact) => {
 			const card = createContactCard(contact, false)
 			if (card) {
 				listEl.appendChild(card)
@@ -218,6 +264,27 @@ export function createNetworkModule({ invoke, shellApi }) {
 			console.log('🔍 Template check:', document.getElementById('contact-card-template'))
 			console.log('🔍 Contacts list check:', document.getElementById('contacts-list'))
 			console.log('🔍 Network list check:', document.getElementById('network-list'))
+			console.table(
+				(result.contacts || []).map((c) => ({
+					identity: c.identity,
+					fp: c.fingerprint,
+					local_bundle_path: c.local_bundle_path,
+					has_changed: c.has_changed,
+					is_imported: true,
+				})),
+				['identity', 'fp', 'local_bundle_path', 'has_changed', 'is_imported'],
+			)
+			console.table(
+				(result.discovered || []).map((c) => ({
+					identity: c.identity,
+					fp: c.fingerprint,
+					did_path: c.did_path,
+					local_bundle_path: c.local_bundle_path,
+					has_changed: c.has_changed,
+					is_imported: false,
+				})),
+				['identity', 'fp', 'did_path', 'local_bundle_path', 'has_changed', 'is_imported'],
+			)
 
 			renderContacts(result.contacts)
 			renderDiscovered(result.discovered)

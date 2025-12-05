@@ -14,11 +14,11 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-// Embed the session template notebook at compile time
+// Embed notebooks at compile time
 const SESSION_TEMPLATE_NOTEBOOK: &str =
     include_str!("../../resources/templates/session_template.ipynb");
-const DEV_NOTEBOOK_DO: &str = "/Users/madhavajay/dev/biovault-desktop/workspace3/src-tauri/resources/templates/sc_test_do.ipynb";
-const DEV_NOTEBOOK_DS: &str = "/Users/madhavajay/dev/biovault-desktop/workspace3/src-tauri/resources/templates/sc_test_ds.ipynb";
+const SC_TEST_DO_NOTEBOOK: &str = include_str!("../../resources/templates/sc_test_do.ipynb");
+const SC_TEST_DS_NOTEBOOK: &str = include_str!("../../resources/templates/sc_test_ds.ipynb");
 
 fn generate_session_id() -> String {
     let mut rng = rand::thread_rng();
@@ -37,6 +37,42 @@ fn get_sessions_dir() -> std::path::PathBuf {
         .join("shared")
         .join("biovault")
         .join("sessions")
+}
+
+fn get_private_sessions_dir() -> std::path::PathBuf {
+    // Private (non-synced) sessions root lives alongside BIOVAULT_HOME, not inside datasites
+    resolve_biovault_home_path().join("sessions")
+}
+
+fn get_private_session_path(session_id: &str) -> std::path::PathBuf {
+    get_private_sessions_dir().join(session_id)
+}
+
+fn ensure_private_session_dir(session_id: &str) -> Result<std::path::PathBuf, String> {
+    let private_root = get_private_session_path(session_id);
+    fs::create_dir_all(&private_root)
+        .map_err(|e| format!("Failed to create private session dir: {}", e))?;
+
+    // Ensure a data subdir exists for local artifacts (not synced)
+    fs::create_dir_all(private_root.join("data"))
+        .map_err(|e| format!("Failed to create private data directory: {}", e))?;
+
+    // Bootstrap private config from the shared session if missing
+    let shared_session_path = get_sessions_dir().join(session_id);
+    let shared_config = shared_session_path.join("session.json");
+    let private_config = private_root.join("session.json");
+    if shared_config.exists() && !private_config.exists() {
+        if let Err(e) = fs::copy(&shared_config, &private_config) {
+            eprintln!(
+                "Warning: Failed to copy session.json to private session dir: {}",
+                e
+            );
+        }
+    }
+
+    // Note: Example notebooks are copied at launch time if user opts in
+
+    Ok(private_root)
 }
 
 fn get_owner_email() -> String {
@@ -166,37 +202,61 @@ fn send_session_invite_response_message(
     }
 }
 
-#[cfg(unix)]
-fn symlink_dev_notebook(src: &str, dest: &Path) -> Result<(), String> {
-    std::os::unix::fs::symlink(src, dest).map_err(|e| e.to_string())
-}
-
-#[cfg(not(unix))]
-fn symlink_dev_notebook(src: &str, dest: &Path) -> Result<(), String> {
-    // Fallback: copy on non-Unix
-    fs::copy(src, dest).map(|_| ()).map_err(|e| e.to_string())
-}
-
-fn link_dev_notebooks(session_path: &Path) {
-    let links = [
-        (DEV_NOTEBOOK_DO, session_path.join("sc_test_do.ipynb")),
-        (DEV_NOTEBOOK_DS, session_path.join("sc_test_ds.ipynb")),
+/// Copy example notebooks into the session folder
+fn copy_example_notebooks(session_path: &Path) {
+    let notebooks = [
+        ("template.ipynb", SESSION_TEMPLATE_NOTEBOOK),
+        ("sc_test_do.ipynb", SC_TEST_DO_NOTEBOOK),
+        ("sc_test_ds.ipynb", SC_TEST_DS_NOTEBOOK),
     ];
 
-    for (src, dest) in links.iter() {
-        if Path::new(src).exists() {
-            if dest.exists() {
-                continue;
-            }
-            if let Err(e) = symlink_dev_notebook(src, dest) {
-                eprintln!(
-                    "Warning: Failed to link notebook {} -> {}: {}",
-                    src,
-                    dest.display(),
-                    e
-                );
-            }
+    for (filename, content) in notebooks.iter() {
+        let dest = session_path.join(filename);
+        if dest.exists() {
+            continue;
         }
+        if let Err(e) = fs::write(&dest, content) {
+            eprintln!("Warning: Failed to copy notebook {}: {}", filename, e);
+        } else {
+            eprintln!("[Sessions] Copied example notebook: {}", filename);
+        }
+    }
+}
+
+/// Ensure the RPC session folder has proper syft.pub.yaml permissions for SyftBox sync
+fn ensure_rpc_session_permissions(rpc_path: &Path) {
+    let perm_path = rpc_path.join("syft.pub.yaml");
+    if perm_path.exists() {
+        return;
+    }
+
+    // Use the same permission format as DEFAULT_RPC_PERMISSION_CONTENT from syftbox-sdk
+    let permissions = r#"rules:
+  - pattern: "**/*.request"
+    access:
+      admin: []
+      read:
+        - "*"
+      write:
+        - "*"
+  - pattern: "**/*.response"
+    access:
+      admin: []
+      read:
+        - "*"
+      write:
+        - "*"
+  - pattern: "**/*.rejected"
+    access:
+      admin: []
+      read:
+        - "*"
+      write:
+        - "*"
+"#;
+
+    if let Err(e) = fs::write(&perm_path, permissions) {
+        eprintln!("Warning: Failed to write RPC session permissions: {}", e);
     }
 }
 
@@ -326,16 +386,17 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
     fs::create_dir_all(&session_path)
         .map_err(|e| format!("Failed to create session directory: {}", e))?;
 
-    // Create data subdirectory
-    fs::create_dir_all(session_path.join("data"))
-        .map_err(|e| format!("Failed to create data directory: {}", e))?;
+    // Create private (non-synced) session workspace for notebooks/venv
+    let private_session_path = ensure_private_session_dir(&session_id)?;
+    fs::create_dir_all(private_session_path.join("data"))
+        .map_err(|e| format!("Failed to create private data directory: {}", e))?;
 
     ensure_session_permissions(&session_path, &owner, &request.peer);
 
     let session_path_str = session_path.to_string_lossy().to_string();
 
-    // Dev helper: link notebooks into the session folder
-    link_dev_notebooks(&session_path);
+    // Note: Example notebooks are copied at launch time if user opts in,
+    // not at session creation time
 
     db.connection()
         .execute(
@@ -364,10 +425,7 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| format!("Failed to write session config: {}", e))?;
 
-    // Copy template notebook to session folder
-    let template_path = session_path.join("template.ipynb");
-    fs::write(&template_path, SESSION_TEMPLATE_NOTEBOOK)
-        .map_err(|e| format!("Failed to write template notebook: {}", e))?;
+    // Note: Example notebooks are copied at launch time if user opts in
 
     // Send session invitation to peer if specified
     if let Some(peer_email) = &request.peer {
@@ -385,6 +443,9 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
         if let Err(e) = fs::create_dir_all(&rpc_path) {
             eprintln!("Warning: Failed to create RPC folder: {}", e);
         } else {
+            // Ensure proper SyftBox permissions for the RPC session folder
+            ensure_rpc_session_permissions(&rpc_path);
+
             let invitation = serde_json::json!({
                 "session_id": &session_id,
                 "requester": &owner,
@@ -404,6 +465,7 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
                 eprintln!("Warning: Failed to write session invitation: {}", e);
             } else {
                 println!("📨 Session invitation sent to {}", peer_email);
+                println!("   Path: {:?}", request_file);
             }
         }
 
@@ -458,6 +520,9 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
         if let Err(e) = fs::create_dir_all(&rpc_path) {
             eprintln!("Warning: Failed to create RPC folder: {}", e);
         } else {
+            // Ensure proper SyftBox permissions for the RPC session folder
+            ensure_rpc_session_permissions(&rpc_path);
+
             // Write session invitation request
             let invitation = serde_json::json!({
                 "session_id": &session_id,
@@ -478,6 +543,7 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
                 eprintln!("Warning: Failed to write session invitation: {}", e);
             } else {
                 println!("📨 Session invitation sent to {}", peer_email);
+                println!("   Path: {:?}", request_file);
             }
         }
 
@@ -500,7 +566,11 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
 
     // Stop Jupyter if running
     if session.jupyter_pid.is_some() {
-        let _ = tauri::async_runtime::block_on(jupyter::stop(&session.session_path));
+        let _ = tauri::async_runtime::block_on(jupyter::stop(
+            ensure_private_session_dir(&session_id)?
+                .to_string_lossy()
+                .as_ref(),
+        ));
     }
 
     // Delete session from database
@@ -514,18 +584,53 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Write session.json file for beaver integration
+fn write_session_json(session_path: &std::path::Path, session: &Session) -> Result<(), String> {
+    let session_json = json!({
+        "session_id": session.session_id,
+        "peer": session.peer,
+        "owner": session.owner,
+        "role": session.role,
+        "status": session.status
+    });
+
+    let json_path = session_path.join("session.json");
+    fs::write(
+        &json_path,
+        serde_json::to_string_pretty(&session_json).unwrap(),
+    )
+    .map_err(|e| format!("Failed to write session.json: {}", e))?;
+
+    eprintln!(
+        "[Sessions] Wrote session.json to {} for beaver integration",
+        json_path.display()
+    );
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn launch_session_jupyter(
     session_id: String,
     python_version: Option<String>,
+    copy_examples: Option<bool>,
 ) -> Result<SessionJupyterStatus, String> {
     let session = get_session(session_id.clone())?;
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    let session_path = session.session_path.clone();
+    let _session_path = session.session_path.clone();
+    let private_session_path = ensure_private_session_dir(&session_id)?;
     let version_clone = version.clone();
     let session_id_clone = session_id.clone();
     let owner = session.owner.clone();
     let biovault_home = resolve_biovault_home_path();
+
+    // Write session.json for beaver active_session() detection
+    write_session_json(&private_session_path, &session)?;
+
+    // Copy example notebooks if requested
+    if copy_examples.unwrap_or(false) {
+        copy_example_notebooks(&private_session_path);
+    }
 
     tauri::async_runtime::spawn_blocking(move || {
         // Set environment variables for beaver auto-detection
@@ -536,8 +641,12 @@ pub async fn launch_session_jupyter(
             "SYFTBOX_DATA_DIR",
             biovault_home.to_string_lossy().to_string(),
         );
+        std::env::set_var("BIOVAULT_HOME", biovault_home.to_string_lossy().to_string());
 
-        tauri::async_runtime::block_on(jupyter::start(&session_path, &version_clone))
+        tauri::async_runtime::block_on(jupyter::start(
+            &private_session_path.to_string_lossy(),
+            &version_clone,
+        ))
     })
     .await
     .map_err(|e| format!("Failed to launch Jupyter (task join): {}", e))?
@@ -548,11 +657,11 @@ pub async fn launch_session_jupyter(
 
 #[tauri::command]
 pub async fn stop_session_jupyter(session_id: String) -> Result<SessionJupyterStatus, String> {
-    let session = get_session(session_id.clone())?;
-    let session_path = session.session_path.clone();
+    let _session = get_session(session_id.clone())?;
+    let session_path = ensure_private_session_dir(&session_id)?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::stop(&session_path))
+        tauri::async_runtime::block_on(jupyter::stop(&session_path.to_string_lossy()))
     })
     .await
     .map_err(|e| format!("Failed to stop Jupyter (task join): {}", e))?
@@ -566,22 +675,25 @@ pub async fn reset_session_jupyter(
     session_id: String,
     python_version: Option<String>,
 ) -> Result<SessionJupyterStatus, String> {
-    let session = get_session(session_id.clone())?;
+    let _session = get_session(session_id.clone())?;
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    let session_path = session.session_path.clone();
+    let session_path = ensure_private_session_dir(&session_id)?;
     let version_clone = version.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::reset(&session_path, &version_clone))
+        tauri::async_runtime::block_on(jupyter::reset(
+            &session_path.to_string_lossy(),
+            &version_clone,
+        ))
     })
     .await
     .map_err(|e| format!("Failed to reset Jupyter (task join): {}", e))?
     .map_err(|e| format!("Failed to reset Jupyter: {}", e))?;
 
     // Stop after reset
-    let stop_path = session.session_path.clone();
+    let stop_path = ensure_private_session_dir(&session_id)?;
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::stop(&stop_path))
+        tauri::async_runtime::block_on(jupyter::stop(&stop_path.to_string_lossy()))
     })
     .await;
 
@@ -593,10 +705,11 @@ pub fn get_session_jupyter_status(session_id: String) -> Result<SessionJupyterSt
     let session = get_session(session_id.clone())?;
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
 
-    let canonical = Path::new(&session.session_path)
+    let private_session_path = ensure_private_session_dir(&session_id)?;
+    let canonical = private_session_path
         .canonicalize()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| session.session_path.clone());
+        .unwrap_or_else(|_| private_session_path.to_string_lossy().to_string());
 
     let env = db
         .get_dev_env(&canonical)
@@ -883,16 +996,16 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
     // Create local session as the "peer" (invited party)
     let sessions_dir = get_sessions_dir();
     let session_path = sessions_dir.join(&session_id);
+    let private_session_path = ensure_private_session_dir(&session_id)?;
 
     fs::create_dir_all(&session_path)
         .map_err(|e| format!("Failed to create session directory: {}", e))?;
-    fs::create_dir_all(session_path.join("data"))
-        .map_err(|e| format!("Failed to create data directory: {}", e))?;
+    fs::create_dir_all(private_session_path.join("data"))
+        .map_err(|e| format!("Failed to create private data directory: {}", e))?;
 
     ensure_session_permissions(&session_path, &owner, &Some(invitation.requester.clone()));
 
-    // Dev helper: link notebooks into the session folder
-    link_dev_notebooks(&session_path);
+    // Note: Example notebooks are copied at launch time if user opts in
 
     let session_path_str = session_path.to_string_lossy().to_string();
 
@@ -931,10 +1044,7 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| format!("Failed to write session config: {}", e))?;
 
-    // Copy template notebook
-    let template_path = session_path.join("template.ipynb");
-    fs::write(&template_path, SESSION_TEMPLATE_NOTEBOOK)
-        .map_err(|e| format!("Failed to write template notebook: {}", e))?;
+    // Note: Example notebooks are copied at launch time if user opts in
 
     // Send acceptance response to requester
     let requester_rpc = biovault_home
@@ -946,6 +1056,7 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         .join("session");
 
     let _ = fs::create_dir_all(&requester_rpc);
+    ensure_rpc_session_permissions(&requester_rpc);
 
     let response = serde_json::json!({
         "session_id": &session_id,
@@ -1027,6 +1138,7 @@ pub fn reject_session_invitation(session_id: String, reason: Option<String>) -> 
         .join("session");
 
     let _ = fs::create_dir_all(&requester_rpc);
+    ensure_rpc_session_permissions(&requester_rpc);
 
     let response = serde_json::json!({
         "session_id": &session_id,
@@ -1098,6 +1210,148 @@ pub fn get_session_chat_messages(session_id: String) -> Result<Vec<VaultMessage>
     Ok(messages)
 }
 
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct BeaverSummary {
+    pub filename: String,
+    pub path: String,
+    pub sender: Option<String>,
+    pub created_at: Option<String>,
+    pub name: Option<String>,
+    pub envelope_id: Option<String>,
+    pub envelope_type: Option<String>,
+    pub manifest_type: Option<String>,
+    pub manifest_func: Option<String>,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_session_beaver_summaries(session_id: String) -> Result<Vec<BeaverSummary>, String> {
+    let session = get_session(session_id.clone())?;
+    let owner = session.owner.clone();
+
+    // Prefer shadow/unencrypted path for local view of .beaver files
+    let shadow_path = resolve_biovault_home_path()
+        .join("unencrypted")
+        .join(owner)
+        .join("shared")
+        .join("biovault")
+        .join("sessions")
+        .join(&session.session_id);
+
+    if !shadow_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut results = Vec::new();
+    for entry in std::fs::read_dir(&shadow_path)
+        .map_err(|e| format!("Failed to read session folder: {}", e))?
+    {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("beaver") {
+            continue;
+        }
+
+        let filename = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown.beaver".to_string());
+
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to read beaver file {}: {}",
+                    path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        let json: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to parse beaver file {}: {}",
+                    path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        let manifest = json.get("manifest").cloned().unwrap_or_default();
+        let manifest_type = manifest
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let manifest_func = manifest
+            .get("func_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let inputs = json
+            .get("inputs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let outputs = json
+            .get("outputs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        results.push(BeaverSummary {
+            filename,
+            path: path.to_string_lossy().to_string(),
+            sender: json
+                .get("sender")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            created_at: json
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            name: json
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            envelope_id: json
+                .get("envelope_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            envelope_type: json
+                .get("manifest")
+                .and_then(|m| m.get("envelope_type"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| manifest_type.clone()),
+            manifest_type,
+            manifest_func,
+            inputs,
+            outputs,
+        });
+    }
+
+    // Sort by created_at descending
+    results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(results)
+}
+
 #[tauri::command]
 pub fn send_session_chat_message(session_id: String, body: String) -> Result<VaultMessage, String> {
     if body.trim().is_empty() {
@@ -1105,14 +1359,11 @@ pub fn send_session_chat_message(session_id: String, body: String) -> Result<Vau
     }
 
     let session = get_session(session_id.clone())?;
-    let recipient = if session.role == "owner" {
-        session
-            .peer
-            .clone()
-            .ok_or_else(|| "No peer set for this session".to_string())?
-    } else {
-        session.owner.clone()
-    };
+    // peer field always represents "the other person" regardless of role
+    let recipient = session
+        .peer
+        .clone()
+        .ok_or_else(|| "No peer set for this session".to_string())?;
 
     let subject = format!("Session: {}", session.name);
     let metadata = serde_json::json!({

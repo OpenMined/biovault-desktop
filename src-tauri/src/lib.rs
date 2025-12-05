@@ -822,6 +822,7 @@ pub fn run() {
             get_session_messages,
             send_session_message,
             get_session_chat_messages,
+            get_session_beaver_summaries,
             send_session_chat_message,
             open_session_folder,
             get_session_invitations,

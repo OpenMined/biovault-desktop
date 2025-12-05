@@ -5,4 +5,5 @@ src-tauri/gen
 dist
 build
 coverage
+test-results
 **/*.min.js

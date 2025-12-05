@@ -174,7 +174,10 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
 #[tauri::command]
 pub async fn complete_onboarding(email: String) -> Result<(), String> {
     println!("🏁 [complete_onboarding] called with email: {}", email);
-    println!("🏁 [complete_onboarding] SYC_VAULT env: {:?}", env::var("SYC_VAULT"));
+    println!(
+        "🏁 [complete_onboarding] SYC_VAULT env: {:?}",
+        env::var("SYC_VAULT")
+    );
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
@@ -190,12 +193,19 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
 
     // Check vault state BEFORE init
     let syc_path = biovault_path.join(".syc");
-    println!("🏁 [complete_onboarding] .syc path: {}, exists: {}", syc_path.display(), syc_path.exists());
+    println!(
+        "🏁 [complete_onboarding] .syc path: {}, exists: {}",
+        syc_path.display(),
+        syc_path.exists()
+    );
     if syc_path.exists() {
         let keys_path = syc_path.join("keys");
         let bundles_path = syc_path.join("bundles");
-        println!("🏁 [complete_onboarding] .syc/keys exists: {}, .syc/bundles exists: {}",
-            keys_path.exists(), bundles_path.exists());
+        println!(
+            "🏁 [complete_onboarding] .syc/keys exists: {}, .syc/bundles exists: {}",
+            keys_path.exists(),
+            bundles_path.exists()
+        );
     }
 
     // Call bv init to set up templates and directory structure
@@ -260,7 +270,10 @@ pub fn get_settings() -> Result<Settings, String> {
         .join("BioVault")
         .join("database")
         .join("settings.json");
-    println!("⚙️ [get_settings] settings_path: {}", settings_path.display());
+    println!(
+        "⚙️ [get_settings] settings_path: {}",
+        settings_path.display()
+    );
 
     let mut settings = if settings_path.exists() {
         println!("⚙️ [get_settings] settings.json exists, loading...");
@@ -271,7 +284,10 @@ pub fn get_settings() -> Result<Settings, String> {
         println!("⚙️ [get_settings] settings.json does NOT exist, using defaults");
         Settings::default()
     };
-    println!("⚙️ [get_settings] initial email from settings.json: '{}'", settings.email);
+    println!(
+        "⚙️ [get_settings] initial email from settings.json: '{}'",
+        settings.email
+    );
 
     // Load email from BioVault config if not set in settings
     if settings.email.is_empty() {
@@ -286,12 +302,19 @@ pub fn get_settings() -> Result<Settings, String> {
         });
         println!("⚙️ [get_settings] BIOVAULT_HOME: {}", biovault_home);
         let config_path = PathBuf::from(&biovault_home).join("config.yaml");
-        println!("⚙️ [get_settings] config_path: {}, exists: {}", config_path.display(), config_path.exists());
+        println!(
+            "⚙️ [get_settings] config_path: {}, exists: {}",
+            config_path.display(),
+            config_path.exists()
+        );
 
         if config_path.exists() {
             match biovault::config::Config::load() {
                 Ok(config) => {
-                    println!("⚙️ [get_settings] config.yaml loaded, email: '{}'", config.email);
+                    println!(
+                        "⚙️ [get_settings] config.yaml loaded, email: '{}'",
+                        config.email
+                    );
                     settings.email = config.email;
                 }
                 Err(e) => {

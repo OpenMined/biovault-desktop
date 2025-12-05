@@ -13,6 +13,8 @@ export function createWhatsAppModule({ invoke, listen }) {
 	let connectedPhone = null
 	let _connectedName = null
 	let eventListeners = []
+	let listenersReady = false
+	let qrTimeout = null
 
 	// Saved notification phone from settings
 	let savedNotificationPhone = ''
@@ -154,6 +156,11 @@ export function createWhatsAppModule({ invoke, listen }) {
 	 * Display the QR code
 	 */
 	function showQrCode(qrDataUrl) {
+		if (qrTimeout) {
+			clearTimeout(qrTimeout)
+			qrTimeout = null
+		}
+
 		const qrLoading = elements.qrLoading()
 		const qrContainer = elements.qrContainer()
 		const qrImage = elements.qrImage()
@@ -202,10 +209,22 @@ export function createWhatsAppModule({ invoke, listen }) {
 	 * Start the login flow
 	 */
 	async function startLogin() {
+		console.log('WhatsApp: startLogin invoked')
+		if (!listenersReady) {
+			await setupEventListeners()
+		}
 		showQrModal()
+
+		// If no QR arrives within 10s, surface an error hint
+		if (qrTimeout) clearTimeout(qrTimeout)
+		qrTimeout = setTimeout(() => {
+			qrTimeout = null
+			showError('No QR received. Ensure the WhatsApp bridge is running and try again.')
+		}, 10000)
 
 		try {
 			await invoke('whatsapp_start_login')
+			console.log('WhatsApp: start_login invoke returned')
 		} catch (error) {
 			console.error('Failed to start WhatsApp login:', error)
 			showError(error.message || 'Failed to start login')
@@ -254,6 +273,7 @@ export function createWhatsAppModule({ invoke, listen }) {
 	 * Setup event listeners for WhatsApp events from Tauri
 	 */
 	async function setupEventListeners() {
+		if (listenersReady) return
 		// QR code received
 		const unlistenQr = await listen('whatsapp:qr', (event) => {
 			console.log('WhatsApp QR received')
@@ -326,6 +346,8 @@ export function createWhatsAppModule({ invoke, listen }) {
 			loadMessageLog()
 		})
 		eventListeners.push(unlistenSent)
+
+		listenersReady = true
 	}
 
 	/**
