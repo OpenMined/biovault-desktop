@@ -310,7 +310,7 @@ PY
   local client_csv
   client_csv="$(IFS=,; echo "${CLIENTS[*]}")"
 
-  local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv")
+  local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv" --skip-keys)
   (( RESET_FLAG )) && args+=(--reset)
   (( SKIP_SYNC_CHECK )) && args+=(--skip-sync-check)
 

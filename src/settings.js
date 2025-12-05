@@ -30,16 +30,20 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	}
 
 	async function loadSettings() {
+		console.log('⚙️ [SETTINGS] loadSettings() called')
 		try {
 			await getDefaultServer()
 			const configPath = await invoke('get_config_path').catch(() => 'Not set')
+			console.log('⚙️ [SETTINGS] config_path:', configPath)
 			document.getElementById('config-path-display').textContent = configPath
 
 			const settings = await invoke('get_settings')
+			console.log('⚙️ [SETTINGS] get_settings result:', JSON.stringify(settings, null, 2))
 			currentSettings = settings
 			document.getElementById('setting-email').value = settings.email || ''
 			currentUserEmail = settings.email || ''
 			savedEmail = settings.email || ''
+			console.log('⚙️ [SETTINGS] email set to:', currentUserEmail)
 			const syftboxServerInput = document.getElementById('setting-syftbox-server')
 			if (syftboxServerInput) {
 				syftboxServerInput.value = settings.syftbox_server_url || defaultSyftboxServerUrl
@@ -198,14 +202,26 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	}
 
 	async function refreshKeyStatus() {
+		console.log('⚙️ [SETTINGS] refreshKeyStatus() called')
 		try {
 			const email = document.getElementById('setting-email')?.value.trim() || currentUserEmail
+			console.log('⚙️ [SETTINGS] refreshKeyStatus email:', email)
+
+			// First check vault debug info
+			try {
+				const vaultDebug = await invoke('key_check_vault_debug')
+				console.log('⚙️ [SETTINGS] vault debug:', JSON.stringify(vaultDebug, null, 2))
+			} catch (vaultErr) {
+				console.warn('⚙️ [SETTINGS] vault debug failed:', vaultErr)
+			}
+
 			const status = await invoke('key_get_status', { email: email || null })
+			console.log('⚙️ [SETTINGS] key_get_status result:', JSON.stringify(status, null, 2))
 			keyStatus = status
 			vaultPath = status?.vault_path || ''
 			renderKeyStatus(status)
 		} catch (error) {
-			console.error('Failed to load key status:', error)
+			console.error('⚙️ [SETTINGS] Failed to load key status:', error)
 			renderKeyStatus({
 				identity: currentUserEmail || 'Unknown',
 				vault_fingerprint: null,

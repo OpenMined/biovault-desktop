@@ -1795,7 +1795,7 @@ export function createProjectsModule({
 		}
 
 		const launchMessage =
-			'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab bioscript\n- uv run --python .venv jupyter lab'
+			'Launching Jupyter...\nCommands:\n- uv pip install -U --python .venv jupyterlab cleon\n- uv run --python .venv jupyter lab'
 		showOperationModal(launchMessage)
 		setButtonLoadingState(launchBtn, true, 'Starting...')
 		setButtonLoadingState(launchBtn2, true, 'Starting...')
@@ -1803,7 +1803,7 @@ export function createProjectsModule({
 		if (resetBtn) resetBtn.disabled = true
 		if (statusEl)
 			statusEl.textContent =
-				'Launching Jupyter... (uv pip install -U --python .venv jupyterlab bioscript)'
+				'Launching Jupyter... (uv pip install -U --python .venv jupyterlab cleon)'
 
 		try {
 			const result = await invoke('launch_jupyter', {
@@ -1883,7 +1883,7 @@ export function createProjectsModule({
 		if (launchBtn2) launchBtn2.disabled = true
 		if (launchBtn3) launchBtn3.disabled = true
 		const modalMessage =
-			'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab bioscript'
+			'Resetting Jupyter environment...\nSteps:\n- Remove existing .venv\n- uv pip install -U --python .venv jupyterlab cleon'
 		showOperationModal(modalMessage)
 
 		try {

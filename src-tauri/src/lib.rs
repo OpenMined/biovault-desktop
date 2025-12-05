@@ -758,6 +758,7 @@ pub fn run() {
             get_autostart_enabled,
             set_autostart_enabled,
             // Key management
+            key_check_vault_debug,
             key_get_status,
             key_generate,
             key_restore,
