@@ -101,9 +101,29 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
     }
 
     if biovault_path.exists() {
-        fs::remove_dir_all(&biovault_path)
-            .map_err(|e| format!("Failed to delete BIOVAULT_HOME: {}", e))?;
-        crate::desktop_log!("   Deleted: {}", biovault_path.display());
+        // Delete everything EXCEPT .syc folder (preserve crypto keys)
+        let entries = fs::read_dir(&biovault_path)
+            .map_err(|e| format!("Failed to read BIOVAULT_HOME: {}", e))?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            // Skip .syc folder to preserve keys
+            if file_name == ".syc" {
+                crate::desktop_log!("   Preserving: {}", path.display());
+                continue;
+            }
+
+            if path.is_dir() {
+                fs::remove_dir_all(&path)
+                    .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
+            } else {
+                fs::remove_file(&path)
+                    .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
+            }
+            crate::desktop_log!("   Deleted: {}", path.display());
+        }
     }
 
     // Also delete the pointer file that stores the BioVault home location
@@ -153,6 +173,9 @@ pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn complete_onboarding(email: String) -> Result<(), String> {
+    println!("🏁 [complete_onboarding] called with email: {}", email);
+    println!("🏁 [complete_onboarding] SYC_VAULT env: {:?}", env::var("SYC_VAULT"));
+
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
         dirs::desktop_dir()
@@ -161,8 +184,19 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
             .to_string_lossy()
             .to_string()
     });
+    println!("🏁 [complete_onboarding] BIOVAULT_HOME: {}", biovault_home);
 
     let biovault_path = PathBuf::from(&biovault_home);
+
+    // Check vault state BEFORE init
+    let syc_path = biovault_path.join(".syc");
+    println!("🏁 [complete_onboarding] .syc path: {}, exists: {}", syc_path.display(), syc_path.exists());
+    if syc_path.exists() {
+        let keys_path = syc_path.join("keys");
+        let bundles_path = syc_path.join("bundles");
+        println!("🏁 [complete_onboarding] .syc/keys exists: {}, .syc/bundles exists: {}",
+            keys_path.exists(), bundles_path.exists());
+    }
 
     // Call bv init to set up templates and directory structure
     eprintln!("DEBUG: About to call init::execute()");
@@ -220,22 +254,28 @@ pub fn load_settings_internal() -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
+    println!("⚙️ [get_settings] called");
     let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
     let settings_path = desktop_dir
         .join("BioVault")
         .join("database")
         .join("settings.json");
+    println!("⚙️ [get_settings] settings_path: {}", settings_path.display());
 
     let mut settings = if settings_path.exists() {
+        println!("⚙️ [get_settings] settings.json exists, loading...");
         let content = fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?
     } else {
+        println!("⚙️ [get_settings] settings.json does NOT exist, using defaults");
         Settings::default()
     };
+    println!("⚙️ [get_settings] initial email from settings.json: '{}'", settings.email);
 
     // Load email from BioVault config if not set in settings
     if settings.email.is_empty() {
+        println!("⚙️ [get_settings] email empty, loading from config.yaml...");
         let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
             let home_dir = dirs::home_dir().unwrap();
             dirs::desktop_dir()
@@ -244,14 +284,23 @@ pub fn get_settings() -> Result<Settings, String> {
                 .to_string_lossy()
                 .to_string()
         });
+        println!("⚙️ [get_settings] BIOVAULT_HOME: {}", biovault_home);
         let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+        println!("⚙️ [get_settings] config_path: {}, exists: {}", config_path.display(), config_path.exists());
 
         if config_path.exists() {
-            if let Ok(config) = biovault::config::Config::load() {
-                settings.email = config.email;
+            match biovault::config::Config::load() {
+                Ok(config) => {
+                    println!("⚙️ [get_settings] config.yaml loaded, email: '{}'", config.email);
+                    settings.email = config.email;
+                }
+                Err(e) => {
+                    println!("⚙️ [get_settings] config.yaml load failed: {}", e);
+                }
             }
         }
     }
+    println!("⚙️ [get_settings] final email: '{}'", settings.email);
 
     // Keep SyftBox server URL aligned with the BioVault config
     if let Ok(config) = biovault::config::Config::load() {

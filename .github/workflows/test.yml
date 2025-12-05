@@ -135,12 +135,22 @@ jobs:
     runs-on: macos-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Import signing certificate into keychain
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.SIGNING_CERTIFICATE_P12_DATA }}
+          p12-password: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -182,6 +192,47 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Sign bundled binaries
+        run: |
+          echo "Signing all bundled binaries for notarization..."
+
+          # Sign syftbox
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ -f "$SYFTBOX_BIN" ]]; then
+            echo "Signing syftbox client..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
+          fi
+
+          # Sign all uv binaries
+          if [[ -d "src-tauri/resources/bundled/uv" ]]; then
+            find src-tauri/resources/bundled/uv -type f -perm +111 | while read -r bin; do
+              echo "Signing uv binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            done
+          fi
+
+          # Sign all java binaries
+          if [[ -d "src-tauri/resources/bundled/java" ]]; then
+            find src-tauri/resources/bundled/java -type f -perm +111 | while read -r bin; do
+              echo "Signing java binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+            find src-tauri/resources/bundled/java -name "*.dylib" -type f | while read -r lib; do
+              echo "Signing java dylib: $lib"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$lib" || true
+            done
+          fi
+
+          # Sign all nextflow binaries
+          if [[ -d "src-tauri/resources/bundled/nextflow" ]]; then
+            find src-tauri/resources/bundled/nextflow -type f -perm +111 | while read -r bin; do
+              echo "Signing nextflow binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+          fi
+
+          echo "Finished signing bundled binaries"
+
       - name: Build app
         run: |
           tauri build --target aarch64-apple-darwin
@@ -192,17 +243,38 @@ jobs:
           ls -lh src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/ || echo "No dmg directory"
           ls -lh src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ || echo "No macos directory"
 
+      - name: Clean up keychains
+        if: always()
+        run: |
+          keychains=$(security list-keychains | tr -d '" "')
+          echo "$keychains" | while IFS= read -r keychain; do
+            if [[ "$keychain" != "/Library/Keychains/System.keychain" && "$keychain" != "/Library/Keychains/SystemRootCertificates.keychain" ]]; then
+              echo "Deleting keychain: $keychain"
+              security delete-keychain "$keychain"
+            fi
+          done
+
   macos-x64-build:
     name: macOS x64 build
     runs-on: macos-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Import signing certificate into keychain
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.SIGNING_CERTIFICATE_P12_DATA }}
+          p12-password: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -244,6 +316,47 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Sign bundled binaries
+        run: |
+          echo "Signing all bundled binaries for notarization..."
+
+          # Sign syftbox
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ -f "$SYFTBOX_BIN" ]]; then
+            echo "Signing syftbox client..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
+          fi
+
+          # Sign all uv binaries
+          if [[ -d "src-tauri/resources/bundled/uv" ]]; then
+            find src-tauri/resources/bundled/uv -type f -perm +111 | while read -r bin; do
+              echo "Signing uv binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+            done
+          fi
+
+          # Sign all java binaries
+          if [[ -d "src-tauri/resources/bundled/java" ]]; then
+            find src-tauri/resources/bundled/java -type f -perm +111 | while read -r bin; do
+              echo "Signing java binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+            find src-tauri/resources/bundled/java -name "*.dylib" -type f | while read -r lib; do
+              echo "Signing java dylib: $lib"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$lib" || true
+            done
+          fi
+
+          # Sign all nextflow binaries
+          if [[ -d "src-tauri/resources/bundled/nextflow" ]]; then
+            find src-tauri/resources/bundled/nextflow -type f -perm +111 | while read -r bin; do
+              echo "Signing nextflow binary: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+          fi
+
+          echo "Finished signing bundled binaries"
+
       - name: Build app
         run: |
           tauri build --target x86_64-apple-darwin
@@ -253,6 +366,17 @@ jobs:
           echo "Checking for built artifacts..."
           ls -lh src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/ || echo "No dmg directory"
           ls -lh src-tauri/target/x86_64-apple-darwin/release/bundle/macos/ || echo "No macos directory"
+
+      - name: Clean up keychains
+        if: always()
+        run: |
+          keychains=$(security list-keychains | tr -d '" "')
+          echo "$keychains" | while IFS= read -r keychain; do
+            if [[ "$keychain" != "/Library/Keychains/System.keychain" && "$keychain" != "/Library/Keychains/SystemRootCertificates.keychain" ]]; then
+              echo "Deleting keychain: $keychain"
+              security delete-keychain "$keychain"
+            fi
+          done
 
   linux-x64-build:
     name: Linux x64 build

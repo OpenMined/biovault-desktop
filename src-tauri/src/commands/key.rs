@@ -43,7 +43,10 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
         .join(format!("{}.json", syftbox_sdk::sanitize_identity(&email)));
     let export_path = resolve_export_path(&data_root, &email);
 
+    println!("🔑 key_get_status: email={}, vault_path={}, bundle_path={}", email, vault_path.display(), bundle_path.display());
+
     let existing = load_existing_bundle(&vault_path, &email)?;
+    println!("🔑 key_get_status: exists={}", existing.is_some());
 
     let mut export_fp = None;
     let mut export_matches = None;
@@ -69,6 +72,64 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
     })
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct VaultDebugInfo {
+    pub syc_vault_env: Option<String>,
+    pub vault_path: String,
+    pub vault_exists: bool,
+    pub keys_dir_exists: bool,
+    pub bundles_dir_exists: bool,
+    pub key_files: Vec<String>,
+    pub bundle_files: Vec<String>,
+}
+
+#[tauri::command]
+pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
+    let syc_vault_env = std::env::var("SYC_VAULT").ok();
+    let vault_path = resolve_vault_default(None);
+    let vault_exists = vault_path.exists();
+    let keys_dir = vault_path.join("keys");
+    let bundles_dir = vault_path.join("bundles");
+    let keys_dir_exists = keys_dir.exists();
+    let bundles_dir_exists = bundles_dir.exists();
+
+    let mut key_files = Vec::new();
+    let mut bundle_files = Vec::new();
+
+    if keys_dir_exists {
+        if let Ok(entries) = std::fs::read_dir(&keys_dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    key_files.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    if bundles_dir_exists {
+        if let Ok(entries) = std::fs::read_dir(&bundles_dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    bundle_files.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    println!("🔍 VAULT DEBUG: env={:?} path={} exists={} keys={:?} bundles={:?}",
+        syc_vault_env, vault_path.display(), vault_exists, key_files, bundle_files);
+
+    Ok(VaultDebugInfo {
+        syc_vault_env,
+        vault_path: vault_path.to_string_lossy().to_string(),
+        vault_exists,
+        keys_dir_exists,
+        bundles_dir_exists,
+        key_files,
+        bundle_files,
+    })
+}
+
 #[tauri::command]
 pub async fn key_generate(
     email: Option<String>,
@@ -80,6 +141,8 @@ pub async fn key_generate(
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
 
     let overwrite = force.unwrap_or(false);
+    println!("🔑 key_generate: email={}, force={}, vault_path={}", email, overwrite, vault_path.display());
+
     let outcome = biovault::syftbox::syc::provision_local_identity_with_options(
         &email,
         &data_root,
@@ -87,6 +150,9 @@ pub async fn key_generate(
         overwrite,
     )
     .map_err(|e| format!("failed to generate identity: {e}"))?;
+
+    println!("🔑 key_generate: generated={}, has_mnemonic={}", outcome.generated, outcome.recovery_mnemonic.is_some());
+
     let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
     Ok(KeyOperationResult {
@@ -185,14 +251,18 @@ fn resolve_export_path(data_root: &Path, identity: &str) -> PathBuf {
 
 fn resolve_vault_default(vault_override: Option<&Path>) -> PathBuf {
     if let Some(v) = vault_override {
+        println!("🔑 resolve_vault: using override: {}", v.display());
         return v.to_path_buf();
     }
     if let Some(env_vault) = std::env::var_os("SYC_VAULT") {
+        println!("🔑 resolve_vault: using SYC_VAULT env: {:?}", env_vault);
         return PathBuf::from(env_vault);
     }
-    dirs::home_dir()
+    let default = dirs::home_dir()
         .map(|h| h.join(".syc"))
-        .unwrap_or_else(|| PathBuf::from(".syc"))
+        .unwrap_or_else(|| PathBuf::from(".syc"));
+    println!("🔑 resolve_vault: using default: {}", default.display());
+    default
 }
 
 fn load_existing_bundle(

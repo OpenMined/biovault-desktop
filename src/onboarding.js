@@ -1704,6 +1704,15 @@ export function initOnboarding({
 				return
 			}
 
+			// Debug: Check vault status BEFORE going to key step
+			console.log('📧 Email entered:', email, '- checking vault status before key step...')
+			try {
+				const vaultDebug = await invoke('key_check_vault_debug')
+				console.log('🔐 VAULT STATUS BEFORE KEY STEP:', JSON.stringify(vaultDebug, null, 2))
+			} catch (vaultErr) {
+				console.warn('⚠️ Could not check vault status:', vaultErr)
+			}
+
 			// Check if we're in dev mode with syftbox enabled
 			try {
 				const isDevMode = await invoke('is_dev_mode')
@@ -2106,11 +2115,39 @@ export function initOnboarding({
 
 	// Helper function to initialize BioVault
 	async function initializeBioVault(email) {
+		console.log('🏁 [ONBOARDING] initializeBioVault called with email:', email)
 		try {
+			// Check vault status BEFORE completing onboarding
+			try {
+				const vaultDebug = await invoke('key_check_vault_debug')
+				console.log(
+					'🏁 [ONBOARDING] VAULT STATUS BEFORE complete_onboarding:',
+					JSON.stringify(vaultDebug, null, 2),
+				)
+			} catch (vaultErr) {
+				console.warn('🏁 [ONBOARDING] vault debug failed:', vaultErr)
+			}
+
+			console.log('🏁 [ONBOARDING] calling complete_onboarding...')
 			await invoke('complete_onboarding', { email })
+			console.log('🏁 [ONBOARDING] complete_onboarding succeeded')
+
+			// Check vault status AFTER completing onboarding
+			try {
+				const vaultDebug = await invoke('key_check_vault_debug')
+				console.log(
+					'🏁 [ONBOARDING] VAULT STATUS AFTER complete_onboarding:',
+					JSON.stringify(vaultDebug, null, 2),
+				)
+			} catch (vaultErr) {
+				console.warn('🏁 [ONBOARDING] vault debug failed:', vaultErr)
+			}
+
 			// Reload to show main app with updated config
+			console.log('🏁 [ONBOARDING] reloading page...')
 			location.reload()
 		} catch (error) {
+			console.error('🏁 [ONBOARDING] complete_onboarding FAILED:', error)
 			await dialog.message(`Error initializing BioVault: ${error}`, {
 				title: 'Error',
 				type: 'error',
@@ -2121,6 +2158,14 @@ export function initOnboarding({
 	// Check if onboarded on app start
 	async function checkOnboarding() {
 		try {
+			// Debug: Check vault folder status at startup
+			try {
+				const vaultDebug = await invoke('key_check_vault_debug')
+				console.log('🔐 VAULT STATUS AT STARTUP:', JSON.stringify(vaultDebug, null, 2))
+			} catch (vaultErr) {
+				console.warn('⚠️ Could not check vault status:', vaultErr)
+			}
+
 			const isOnboarded = await invoke('check_is_onboarded')
 			console.log('🔍 Onboarding check - isOnboarded:', isOnboarded, 'type:', typeof isOnboarded)
 
@@ -2275,8 +2320,10 @@ export function initOnboarding({
 	}
 
 	async function showKeyStep(email) {
+		console.log('🔑 showKeyStep called for:', email)
 		// If we already have state for this email (e.g., user pressed back), restore UI
 		if (onboardingKeyStatus?.identity === email && onboardingKeyStatus?.exists) {
+			console.log('🔑 Restoring existing state, has recovery:', !!onboardingRecovery)
 			renderKeyCard(onboardingKeyStatus)
 			document.getElementById('onboarding-restore-block').style.display = 'none'
 			if (onboardingRecovery) {
@@ -2290,6 +2337,7 @@ export function initOnboarding({
 		}
 
 		// Fresh start - reset everything
+		console.log('🔑 Fresh start - checking key status')
 		onboardingRecovery = null
 		onboardingKeyStatus = { identity: email, exists: false }
 		document.getElementById('onboarding-recovery-block').style.display = 'none'
@@ -2299,26 +2347,37 @@ export function initOnboarding({
 		renderKeyCard(onboardingKeyStatus)
 		try {
 			const status = await invoke('key_get_status', { email })
+			console.log('🔑 key_get_status result:', JSON.stringify(status, null, 2))
 			onboardingKeyStatus = status
 			renderKeyCard(status)
 			if (status.exists) {
-				// Key exists - user can continue or regenerate
+				console.log('🔑 Key already exists - user can continue (no recovery phrase available)')
+				// Key exists - user can continue, no recovery to show
+				document.getElementById('onboarding-recovery-block').style.display = 'none'
 				document.getElementById('onboarding-next-3-key').disabled = false
+			} else {
+				// No key exists - auto-generate one (force=false ensures no overwrite)
+				console.log('🔑 No key exists - auto-generating with force=false')
+				await generateKey(email, false)
 			}
-			// If no key exists, user must click "Generate New" explicitly
 		} catch (error) {
 			console.error('Failed to load key status:', error)
 			onboardingKeyStatus = { identity: email, exists: false }
 			renderKeyCard(onboardingKeyStatus)
-			// User must click "Generate New" explicitly
+			// Error checking - try to generate (force=false is safe)
+			console.log('🔑 Error checking status - attempting generate with force=false')
+			await generateKey(email, false)
 		}
 	}
 
 	async function generateKey(email, force = false) {
 		const generateBtn = document.getElementById('onboarding-generate-btn')
-		generateBtn.disabled = true
+		if (generateBtn) generateBtn.disabled = true
 		try {
+			console.log('🔑 Generating key for:', email, 'force:', force)
 			const result = await invoke('key_generate', { email, force })
+			console.log('🔑 key_generate result:', JSON.stringify(result, null, 2))
+			console.log('🔑 mnemonic present:', !!result.mnemonic, 'length:', result.mnemonic?.length)
 			onboardingKeyStatus = {
 				identity: result.identity,
 				vault_fingerprint: result.fingerprint,
@@ -2333,11 +2392,13 @@ export function initOnboarding({
 			onboardingRecovery = result.mnemonic
 			renderKeyCard(onboardingKeyStatus)
 			if (result.mnemonic) {
+				console.log('🔑 Showing recovery block with mnemonic')
 				document.getElementById('onboarding-recovery-text').textContent = result.mnemonic
 				document.getElementById('onboarding-recovery-block').style.display = 'block'
 				// Keep Next enabled - alert will show if checkbox not checked
 				document.getElementById('onboarding-next-3-key').disabled = false
 			} else {
+				console.log('🔑 No mnemonic returned, hiding recovery block')
 				document.getElementById('onboarding-recovery-block').style.display = 'none'
 				document.getElementById('onboarding-next-3-key').disabled = false
 			}
@@ -2346,7 +2407,7 @@ export function initOnboarding({
 			await dialog.message(`Failed to generate key: ${error}`, { title: 'Error', type: 'error' })
 			document.getElementById('onboarding-next-3-key').disabled = true
 		} finally {
-			generateBtn.disabled = false
+			if (generateBtn) generateBtn.disabled = false
 		}
 	}
 

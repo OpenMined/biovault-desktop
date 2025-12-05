@@ -1,0 +1,21 @@
+# Ignore notebook files (prevent hot reload on save)
+*.ipynb
+
+# Ignore sandbox/dev directories
+sandbox/
+biovault/sandbox/
+
+# Ignore Python virtualenvs
+.venv/
+**/.venv/
+
+# Ignore session directories (contain notebooks)
+sessions/
+**/sessions/
+
+# Ignore build artifacts
+target/
+node_modules/
+
+# Ignore git
+.git/
