@@ -160,6 +160,7 @@ fn ensure_bridge_running(app: &AppHandle) -> Result<(), String> {
                 }
                 Ok(None) => {
                     // Still running
+                    crate::desktop_log!("📱 WhatsApp bridge already running");
                     return Ok(());
                 }
                 Err(_) => {
@@ -172,6 +173,11 @@ fn ensure_bridge_running(app: &AppHandle) -> Result<(), String> {
     // Start new bridge process
     let node_path = get_node_path();
     let bridge_path = get_bridge_path()?;
+    crate::desktop_log!(
+        "📱 WhatsApp bridge starting with node='{}' bridge='{}'",
+        node_path,
+        bridge_path
+    );
 
     crate::desktop_log!("📱 Starting WhatsApp bridge: {} {}", node_path, bridge_path);
 
@@ -224,6 +230,7 @@ fn send_bridge_command(cmd: &serde_json::Value) -> Result<(), String> {
 
     if let Some(ref mut handle) = *bridge {
         let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
+        crate::desktop_log!("📱 WhatsApp bridge cmd: {}", json);
         writeln!(handle.stdin, "{}", json).map_err(|e| format!("Failed to send command: {}", e))?;
         handle
             .stdin
@@ -241,6 +248,7 @@ fn handle_bridge_event(app: &AppHandle, event: BridgeEvent) {
 
     match event.event.as_str() {
         "qr" => {
+            crate::desktop_log!("📱 WhatsApp: QR event received");
             if let Ok(qr_event) = serde_json::from_value::<WhatsAppQrEvent>(event.data) {
                 let _ = app.emit("whatsapp:qr", qr_event);
             }

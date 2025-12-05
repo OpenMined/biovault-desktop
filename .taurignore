@@ -1,17 +1,40 @@
 # Ignore notebook files (prevent hot reload on save)
 *.ipynb
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Ignore beaver/data files
+*.beaver
+*.bin
+*.h5ad
+*.parquet
+*.request
+*.response
+*.rejected
+
+# Ignore entire biovault data directory
+biovault/
 
 # Ignore sandbox/dev directories
 sandbox/
-biovault/sandbox/
+**/sandbox/
 
 # Ignore Python virtualenvs
 .venv/
 **/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
 
 # Ignore session directories (contain notebooks)
 sessions/
 **/sessions/
+
+# Ignore datasites (synced data)
+datasites/
+**/datasites/
+unencrypted/
+**/unencrypted/
 
 # Ignore build artifacts
 target/

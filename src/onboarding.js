@@ -503,6 +503,14 @@ export function initOnboarding({
 		const safeDepNameAttr = dep.name.replace(/"/g, '&quot;')
 		// Docker Desktop can be installed but not running, so treat found=true as installed
 		const isInstalled = dep.found
+		const hasRunningInfo = typeof dep.running === 'boolean'
+		const statusColor =
+			hasRunningInfo && dep.running ? '#28a745' : hasRunningInfo ? '#dc3545' : '#666'
+		const statusText = hasRunningInfo
+			? dep.running
+				? '🟢 Running'
+				: '🔴 Not Running'
+			: 'Checking status...'
 
 		if (isInstalled) {
 			// Show installed dependency details
@@ -537,19 +545,19 @@ export function initOnboarding({
 							? `
 					<div style="margin-bottom: 12px;">
 						<strong style="font-size: 13px; color: #333;">Version:</strong>
-						<div style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
+						<div class="dep-version-value" style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
 					</div>
 					`
 							: ''
 					}
 
 					${
-						dep.running !== null
+						dep.name.toLowerCase() === 'docker' || hasRunningInfo
 							? `
 					<div style="margin-bottom: 12px;">
 						<strong style="font-size: 13px; color: #333;">Status:</strong>
-						<div style="font-size: 12px; color: ${dep.running ? '#28a745' : '#dc3545'}; margin-top: 5px;">
-							${dep.running ? '🟢 Running' : '🔴 Not Running'}
+						<div id="dep-status-${depIndex}" style="font-size: 12px; color: ${statusColor}; margin-top: 5px;">
+							${statusText}
 						</div>
 					</div>
 					`
@@ -750,6 +758,36 @@ export function initOnboarding({
 						})
 					}
 				})
+			}
+
+			// Refresh Docker status/path when details are shown to avoid stale values after the daemon starts
+			if (dep.name.toLowerCase() === 'docker') {
+				invoke('check_single_dependency', { name: 'docker', path: dep.path || null })
+					.then((fresh) => {
+						if (!fresh) return
+						dep.path = fresh.path || dep.path
+						dep.running = typeof fresh.running === 'boolean' ? fresh.running : dep.running
+						dep.version = fresh.version || dep.version
+
+						const statusEl = document.getElementById(`dep-status-${depIndex}`)
+						if (statusEl && typeof dep.running === 'boolean') {
+							statusEl.textContent = dep.running ? '🟢 Running' : '🔴 Not Running'
+							statusEl.style.color = dep.running ? '#28a745' : '#dc3545'
+						}
+
+						const pathInput = document.getElementById(`path-input-${depIndex}`)
+						if (pathInput && dep.path) {
+							pathInput.value = dep.path
+						}
+
+						const versionEl = detailsPanel.querySelector('.dep-version-value')
+						if (versionEl && dep.version) {
+							versionEl.textContent = dep.version
+						}
+					})
+					.catch((err) => {
+						console.warn('Failed to refresh docker status', err)
+					})
 			}
 		} else {
 			// Show missing dependency details with install button
@@ -1148,12 +1186,19 @@ export function initOnboarding({
 			? document.getElementById('settings-install-missing-deps-btn')
 			: document.getElementById('install-missing-deps-btn')
 
-		const isBundledDep = (dep) =>
-			(typeof dep?.path === 'string' &&
-				(dep.path.includes('resources/bundled/') ||
-					dep.path.includes('resources/syftbox/') ||
-					dep.path.includes('/syftbox/bin/'))) ||
-			(dep.name && dep.name.toLowerCase() === 'syftbox')
+		const isBundledDep = (dep) => {
+			// Normalize path so macOS "Resources" casing and Windows backslashes are handled
+			const normalizedPath =
+				typeof dep?.path === 'string' ? dep.path.replace(/\\/g, '/').toLowerCase() : ''
+
+			return (
+				(normalizedPath &&
+					(normalizedPath.includes('/resources/bundled/') ||
+						normalizedPath.includes('/resources/syftbox/') ||
+						normalizedPath.includes('/syftbox/bin/'))) ||
+				(dep.name && dep.name.toLowerCase() === 'syftbox')
+			)
+		}
 
 		const depEntries = result.dependencies
 			.map((dep, index) => ({ dep, index }))

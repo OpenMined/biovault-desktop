@@ -56,10 +56,21 @@ tauri-plugin-updater = "2"
 [package.metadata.tauri.dev-watcher]
 ignore = [
     "**/*.ipynb",
+    "**/*.beaver",
+    "**/*.bin",
+    "**/*.h5ad",
+    "**/*.parquet",
+    "**/*.request",
+    "**/*.response",
+    "**/biovault/**",
     "**/sandbox/**",
     "**/sessions/**",
+    "**/datasites/**",
+    "**/unencrypted/**",
     "**/.venv/**",
     "**/node_modules/**",
     "**/target/**",
-    "**/.git/**"
+    "**/.git/**",
+    "**/__pycache__/**",
+    "**/.ipynb_checkpoints/**"
 ]

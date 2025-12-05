@@ -433,6 +433,30 @@
 	text-decoration: underline;
 }
 
+.session-jupyter-options {
+	margin-bottom: 12px;
+}
+
+.session-jupyter-options .checkbox-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: #475569;
+	cursor: pointer;
+}
+
+.session-jupyter-options .checkbox-label input[type='checkbox'] {
+	width: 16px;
+	height: 16px;
+	accent-color: #10b981;
+	cursor: pointer;
+}
+
+.session-jupyter-options .checkbox-label span {
+	user-select: none;
+}
+
 .session-jupyter-actions {
 	display: flex;
 	gap: 8px;
@@ -470,6 +494,67 @@
 	flex-direction: column;
 	min-height: 200px;
 	overflow: hidden;
+}
+
+.session-artifacts {
+	padding: 10px 14px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.session-artifact-card {
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	padding: 10px 12px;
+	background: #f9fafb;
+}
+
+.session-artifact-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.session-artifact-title {
+	font-weight: 600;
+	color: #111827;
+	font-size: 14px;
+}
+
+.session-artifact-meta {
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.session-artifact-body {
+	margin-top: 6px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 12px;
+	color: #374151;
+}
+
+.session-artifact-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: #eef2ff;
+	color: #4338ca;
+	font-weight: 600;
+	font-size: 11px;
+}
+
+.session-artifact-empty {
+	font-size: 12px;
+	color: #6b7280;
+	padding: 6px 0;
 }
 
 .session-chat-header {
