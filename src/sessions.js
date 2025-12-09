@@ -1,6 +1,6 @@
 import { createContactAutocomplete } from './contact-autocomplete.js'
 
-export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
+export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, listen }) {
 	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	let sessions = []
@@ -10,6 +10,8 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 	let sessionsRefreshInterval = null
 	let pendingInviteFocusId = null
 	let sessionMessagesInterval = null
+	let messageSyncUnlisten = null
+	const seenArtifactIds = new Map() // sessionId -> Set of envelope_ids/paths
 
 	function formatDateTime(isoString) {
 		if (!isoString) return '-'
@@ -235,6 +237,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		const linkEl = document.getElementById('session-jupyter-link')
 		const launchBtn = document.getElementById('launch-session-jupyter-btn')
 		const stopBtn = document.getElementById('stop-session-jupyter-btn')
+		const optionsEl = document.getElementById('session-jupyter-options')
 
 		if (status.running) {
 			statusEl.innerHTML = '<span class="jupyter-status-indicator running">Running</span>'
@@ -245,11 +248,13 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 			launchBtn.style.display = 'none'
 			stopBtn.style.display = 'inline-flex'
+			if (optionsEl) optionsEl.style.display = 'none'
 		} else {
 			statusEl.innerHTML = '<span class="jupyter-status-indicator stopped">Stopped</span>'
 			urlEl.style.display = 'none'
 			launchBtn.style.display = 'inline-flex'
 			stopBtn.style.display = 'none'
+			if (optionsEl) optionsEl.style.display = 'block'
 		}
 	}
 
@@ -271,11 +276,13 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 
 	function startSessionMessagesPolling(sessionId) {
 		stopSessionMessagesPolling()
+		// Polling is now a fallback - real-time updates come via RPC watcher
+		// Keep a longer interval (15s) just to catch anything the watcher might miss
 		sessionMessagesInterval = setInterval(() => {
 			if (activeSessionId === sessionId) {
-				loadSessionMessages(sessionId)
+				loadSessionMessages(sessionId, { sync: true })
 			}
-		}, 8000)
+		}, 15000)
 	}
 
 	function stopSessionMessagesPolling() {
@@ -299,6 +306,35 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
+	// Real-time message sync listener - fires when RPC watcher detects new messages
+	function setupMessageSyncListener() {
+		if (!listen || messageSyncUnlisten) return
+		console.log('🔔 [Sessions] Setting up message sync listener...')
+
+		listen('messages:rpc-activity', async ({ payload: _payload }) => {
+			// Only refresh if we have an active session open
+			if (activeSessionId) {
+				console.log('🔔 [Sessions] RPC activity detected, refreshing session messages')
+				// Don't sync again since the watcher already synced - just reload from DB
+				await loadSessionMessages(activeSessionId, { sync: false })
+			}
+		})
+			.then((unlisten) => {
+				messageSyncUnlisten = unlisten
+				console.log('🔔 [Sessions] Message sync listener ready')
+			})
+			.catch((err) => {
+				console.error('[Sessions] Failed to setup message sync listener:', err)
+			})
+	}
+
+	function _cleanupMessageSyncListener() {
+		if (messageSyncUnlisten) {
+			messageSyncUnlisten()
+			messageSyncUnlisten = null
+		}
+	}
+
 	function setLaunchLoading(isLoading) {
 		const launchBtn = document.getElementById('launch-session-jupyter-btn')
 		if (!launchBtn) return
@@ -317,8 +353,19 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		setLaunchLoading(true)
 
 		try {
-			console.log('[Sessions] Launching Jupyter for session:', activeSessionId)
-			await invoke('launch_session_jupyter', { sessionId: activeSessionId })
+			const copyExamplesCheckbox = document.getElementById('copy-examples-checkbox')
+			const copyExamples = copyExamplesCheckbox ? copyExamplesCheckbox.checked : false
+
+			console.log(
+				'[Sessions] Launching Jupyter for session:',
+				activeSessionId,
+				'copyExamples:',
+				copyExamples,
+			)
+			await invoke('launch_session_jupyter', {
+				sessionId: activeSessionId,
+				copyExamples: copyExamples,
+			})
 			console.log('[Sessions] Jupyter launched, refreshing status...')
 			await refreshJupyterStatus(activeSessionId)
 		} catch (error) {
@@ -373,51 +420,140 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
-	async function loadSessionMessages(sessionId) {
+	async function loadSessionMessages(sessionId, options = {}) {
+		const { sync = true } = options
 		try {
-			const messages = await invoke('get_session_chat_messages', { sessionId })
-			renderSessionMessages(messages, sessionId)
+			if (sync) {
+				await invoke('sync_messages').catch((e) => console.warn('Message sync failed:', e))
+			}
+			const [messages, artifacts] = await Promise.all([
+				invoke('get_session_chat_messages', { sessionId }),
+				invoke('get_session_beaver_summaries', { sessionId }),
+			])
+			trackArtifactNotifications(sessionId, artifacts)
+			renderSessionTimeline(messages, artifacts, sessionId)
 		} catch (error) {
-			console.error('Failed to load session messages:', error)
-			renderSessionMessages([], sessionId)
+			console.error('Failed to load session messages/artifacts:', error)
+			renderSessionTimeline([], [], sessionId)
 		}
 	}
 
-	function renderSessionMessages(messages, _sessionId) {
+	function renderSessionTimeline(messages, artifacts, _sessionId) {
 		const containerEl = document.getElementById('session-messages')
 		if (!containerEl) return
 
 		const currentUser = getCurrentUserEmail?.() || 'owner@local'
+		const entries = []
 
-		// Use shared renderer from messages module if available
-		if (window.__messagesModule?.renderMessagesToContainer) {
-			window.__messagesModule.renderMessagesToContainer(containerEl, messages, {
-				compact: true,
-				currentUserEmail: currentUser,
+		;(messages || []).forEach((m) => {
+			entries.push({
+				type: 'message',
+				created_at: m.created_at,
+				from: m.from,
+				body: m.body || '',
+				raw: m,
 			})
-		} else {
-			// Fallback: simple rendering if messages module not loaded
-			if (!messages || messages.length === 0) {
-				containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
-				return
-			}
+		})
+		;(artifacts || []).forEach((a) => {
+			entries.push({
+				type: 'artifact',
+				created_at: a.created_at,
+				from: a.sender,
+				data: a,
+			})
+		})
 
-			containerEl.innerHTML = messages
-				.map((msg) => {
-					const isOutgoing = msg.from === currentUser
-					return `
-					<div class="message-group ${isOutgoing ? 'outgoing' : 'incoming'} compact">
-						<div class="message-bubble ${isOutgoing ? 'outgoing' : ''} compact">
-							<div class="message-bubble-body">${escapeHtml(msg.body || '')}</div>
-							<div class="message-bubble-meta">${formatRelativeTime(msg.created_at)}</div>
-						</div>
-					</div>
-				`
-				})
-				.join('')
-
-			containerEl.scrollTop = containerEl.scrollHeight
+		if (!entries.length) {
+			containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
+			return
 		}
+
+		entries.sort((a, b) => {
+			const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+			const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+			return ta - tb
+		})
+
+		containerEl.innerHTML = entries
+			.map((item) => {
+				if (item.type === 'artifact') {
+					const art = item.data
+					const title = escapeHtml(
+						art.name || art.manifest_func || art.manifest_type || art.filename,
+					)
+					const meta = [
+						art.sender ? `from ${escapeHtml(art.sender)}` : 'unknown sender',
+						art.created_at ? formatRelativeTime(art.created_at) : '',
+					]
+						.filter(Boolean)
+						.join(' • ')
+					const pills = []
+					if (art.envelope_type) pills.push(escapeHtml(art.envelope_type))
+					if (art.manifest_type) pills.push(escapeHtml(art.manifest_type))
+					if (art.manifest_func) pills.push(escapeHtml(art.manifest_func))
+					if (art.inputs?.length) pills.push(`${art.inputs.length} input(s)`)
+					if (art.outputs?.length) pills.push(`${art.outputs.length} output(s)`)
+
+					return `
+					<div class="message-group artifact compact">
+						<div class="session-artifact-card">
+							<div class="session-artifact-header">
+								<div class="session-artifact-title">${title}</div>
+								<div class="session-artifact-meta">${meta}</div>
+							</div>
+							<div class="session-artifact-body">
+								${pills.map((p) => `<span class="session-artifact-pill">${escapeHtml(p)}</span>`).join('')}
+							</div>
+						</div>
+					</div>`
+				}
+
+				const isOutgoing = item.from === currentUser
+				return `
+				<div class="message-group ${isOutgoing ? 'outgoing' : 'incoming'} compact">
+					<div class="message-bubble ${isOutgoing ? 'outgoing' : ''} compact">
+						<div class="message-bubble-body">${escapeHtml(item.body)}</div>
+						<div class="message-bubble-meta">${formatRelativeTime(item.created_at)}</div>
+					</div>
+				</div>`
+			})
+			.join('')
+
+		containerEl.scrollTop = containerEl.scrollHeight
+	}
+
+	function trackArtifactNotifications(sessionId, artifacts) {
+		const session = sessions.find((s) => s.session_id === sessionId)
+		const sessionName = session?.name || sessionId
+		const existing = seenArtifactIds.get(sessionId)
+
+		if (!existing) {
+			// First load: seed set, no notifications
+			const initSet = new Set((artifacts || []).map((a) => a.envelope_id || a.path))
+			seenArtifactIds.set(sessionId, initSet)
+			return
+		}
+
+		const newOnes = []
+		for (const art of artifacts || []) {
+			const key = art.envelope_id || art.path
+			if (!key) continue
+			if (!existing.has(key)) {
+				existing.add(key)
+				newOnes.push(art)
+			}
+		}
+
+		if (!newOnes.length) return
+
+		// Send WhatsApp notification for new artifacts
+		newOnes.forEach((art) => {
+			const sender = art.sender || 'unknown'
+			const title = art.name || art.manifest_func || art.manifest_type || art.filename
+			const kind = art.envelope_type || art.manifest_type || 'artifact'
+			const msg = `📦 ${kind} from ${sender}\nSession: ${sessionName}\n${title || ''}`
+			invoke('whatsapp_send_notification', { message: msg }).catch(() => {})
+		})
 	}
 
 	async function sendSessionMessage() {
@@ -442,7 +578,8 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		try {
 			await invoke('send_session_chat_message', { sessionId: activeSessionId, body })
 			inputEl.value = ''
-			await loadSessionMessages(activeSessionId)
+			// No need to sync - message was just stored locally, just reload from DB
+			await loadSessionMessages(activeSessionId, { sync: false })
 		} catch (error) {
 			console.error('Failed to send message:', error)
 			await dialog.message(`Failed to send message: ${error}`, { title: 'Error', kind: 'error' })
@@ -460,6 +597,21 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 			document.getElementById('session-description-input').value = ''
 			document.getElementById('session-peer-input').value = ''
 			document.getElementById('session-name-input').focus()
+		}
+	}
+
+	function openCreateSessionWithDataset(dataset) {
+		const modal = document.getElementById('create-session-modal')
+		if (modal) {
+			contactAutocomplete.attachToInputs(['session-peer-input'])
+			modal.style.display = 'flex'
+			const nameInput = document.getElementById('session-name-input')
+			const descInput = document.getElementById('session-description-input')
+			const peerInput = document.getElementById('session-peer-input')
+			nameInput.value = dataset.name || ''
+			descInput.value = dataset.description || `Session for dataset: ${dataset.name}`
+			peerInput.value = dataset.owner || ''
+			nameInput.focus()
 		}
 	}
 
@@ -633,6 +785,9 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		// Preload contact suggestions for peer inputs
 		contactAutocomplete.attachToInputs(['session-peer-input', 'peer-email-input'])
 
+		// Set up real-time message listener for instant updates
+		setupMessageSyncListener()
+
 		const newBtn = document.getElementById('new-session-btn')
 		if (newBtn) newBtn.addEventListener('click', showCreateSessionModal)
 
@@ -758,10 +913,15 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail }) {
 		stopSessionsAutoRefresh()
 	}
 
+	window.__sessionsModule = {
+		openCreateSessionWithDataset,
+	}
+
 	return {
 		loadSessions,
 		initializeSessionsTab,
 		activateSessionsTab,
 		deactivateSessionsTab,
+		openCreateSessionWithDataset,
 	}
 }

@@ -1,9 +1,12 @@
-export function createDataModule({ invoke, dialog }) {
+export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
+	let viewMode = 'participants'
+	let currentUserEmail = ''
 
 	// State
 	let allParticipants = []
 	let allFiles = []
+	let datasets = []
 	let selectedFileIds = [] // File IDs selected for workflows/operations
 	let currentDataTypeFilter = 'All'
 	let fileSearchTerm = ''
@@ -15,10 +18,63 @@ export function createDataModule({ invoke, dialog }) {
 	let filesToDisplay = [] // Filtered files currently displayed
 	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessorRunning, estimatedTimeRemaining }
 	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
+	let currentEditingAssets = new Map()
+	let currentEditingOriginalName = null
+	let currentEditingWasPublished = false
+	const publishingDatasets = new Set()
+
+	async function refreshCurrentUserEmail() {
+		try {
+			if (typeof getCurrentUserEmail === 'function') {
+				const maybeEmail = await getCurrentUserEmail()
+				if (maybeEmail) {
+					currentUserEmail = maybeEmail
+				}
+			}
+		} catch (err) {
+			console.warn('Could not refresh user email', err)
+		}
+	}
 
 	// ============================================================================
 	// HELPERS
 	// ============================================================================
+
+	function setViewMode(mode) {
+		if (!mode || (mode !== 'participants' && mode !== 'datasets')) return
+		viewMode = mode
+		const participantSection = document.getElementById('participant-data-section')
+		const datasetSection = document.getElementById('dataset-data-section')
+		const datasetEditorSection = document.getElementById('dataset-editor-section')
+		if (participantSection && datasetSection) {
+			participantSection.style.display = mode === 'participants' ? 'flex' : 'none'
+			datasetSection.style.display = mode === 'datasets' ? 'flex' : 'none'
+			// Hide editor when switching views
+			if (datasetEditorSection) {
+				datasetEditorSection.style.display = 'none'
+			}
+		}
+
+		const toggleButtons = document.querySelectorAll('#data-view-toggle .pill-button')
+		toggleButtons.forEach((btn) => {
+			if (btn.dataset.view === mode) {
+				btn.classList.add('active')
+			} else {
+				btn.classList.remove('active')
+			}
+		})
+
+		const globalEmptyState = document.getElementById('data-empty-state')
+		if (globalEmptyState) {
+			globalEmptyState.style.display = mode === 'datasets' ? 'none' : globalEmptyState.style.display
+		}
+
+		if (mode === 'datasets') {
+			void loadDatasets()
+		} else {
+			renderFilesPanel()
+		}
+	}
 
 	function getFileSortValue(file, field) {
 		switch (field) {
@@ -663,6 +719,413 @@ export function createDataModule({ invoke, dialog }) {
 	// MAIN DATA LOADING
 	// ============================================================================
 
+	async function loadDatasets() {
+		try {
+			const result = await invoke('list_datasets_with_assets')
+			datasets = Array.isArray(result) ? result : []
+			await renderDatasets()
+		} catch (error) {
+			console.error('Error loading datasets:', error)
+		}
+	}
+
+	function resetDatasetEditor() {
+		const nameInput = document.getElementById('dataset-form-name')
+		const descInput = document.getElementById('dataset-form-description')
+		const authorInput = document.getElementById('dataset-form-author')
+		const versionInput = document.getElementById('dataset-form-version')
+		const schemaInput = document.getElementById('dataset-form-schema')
+		const assetsContainer = document.getElementById('dataset-form-assets')
+		if (nameInput) nameInput.value = ''
+		if (descInput) descInput.value = ''
+		if (authorInput) authorInput.value = currentUserEmail || ''
+		if (versionInput) versionInput.value = '1.0.0'
+		if (schemaInput) schemaInput.value = 'net.biovault.datasets:1.0.0'
+		if (assetsContainer) assetsContainer.innerHTML = ''
+		currentEditingAssets = new Map()
+		currentEditingOriginalName = null
+		currentEditingWasPublished = false
+	}
+
+	function addAssetRow(asset = {}) {
+		const assetsContainer = document.getElementById('dataset-form-assets')
+		if (!assetsContainer) return
+		const row = document.createElement('div')
+		row.className = 'dataset-asset-row'
+		row.style.display = 'grid'
+		row.style.gridTemplateColumns = '1fr 1fr 1.8fr 1.8fr 40px'
+		row.style.gap = '8px'
+		row.style.marginBottom = '8px'
+
+		const privateVal = asset.resolved_private_path || asset.private_path || ''
+		const mockVal = asset.resolved_mock_path || asset.mock_path || ''
+		const privateId = asset.private_file_id || null
+		const mockId = asset.mock_file_id || null
+		row.dataset.privateId = privateId ?? ''
+		row.dataset.mockId = mockId ?? ''
+		row.dataset.origPrivatePath = privateVal
+		row.dataset.origMockPath = mockVal
+
+		row.innerHTML = `
+			<input class="asset-key" type="text" placeholder="asset key" value="${asset.asset_key || ''}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+			<select class="asset-kind">
+				<option value="twin" ${asset.kind === 'twin' || !asset.kind ? 'selected' : ''}>twin</option>
+				<option value="file" ${asset.kind === 'file' ? 'selected' : ''}>file</option>
+			</select>
+			<div class="input-with-button asset-private-wrap">
+				<input class="asset-private" type="text" placeholder="Private file path" value="${privateVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+				<button class="btn-icon select-private" title="Choose private file">
+					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Browse" />
+				</button>
+			</div>
+			<div class="input-with-button asset-mock-wrap">
+				<input class="asset-mock" type="text" placeholder="Public/mock file path (optional)" value="${mockVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+				<button class="btn-icon select-mock" title="Choose mock/public file">
+					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Browse" />
+				</button>
+			</div>
+			<button class="btn-icon remove-asset" title="Remove">
+				<img src="assets/icons/x.svg" width="14" height="14" alt="Remove" />
+			</button>
+		`
+
+		row.querySelector('.remove-asset')?.addEventListener('click', () => {
+			row.remove()
+		})
+
+		row.querySelector('.select-private')?.addEventListener('click', async (e) => {
+			e.preventDefault()
+			const path = await dialog.open({ multiple: false, directory: false })
+			if (path) {
+				row.querySelector('.asset-private').value = Array.isArray(path) ? path[0] : path
+			}
+		})
+
+		row.querySelector('.select-mock')?.addEventListener('click', async (e) => {
+			e.preventDefault()
+			const path = await dialog.open({ multiple: false, directory: false })
+			if (path) {
+				row.querySelector('.asset-mock').value = Array.isArray(path) ? path[0] : path
+			}
+		})
+
+		row.querySelector('.asset-kind')?.addEventListener('change', () => {
+			updateAssetRowVisibility(row)
+		})
+		updateAssetRowVisibility(row)
+
+		assetsContainer.appendChild(row)
+	}
+
+	function updateAssetRowVisibility(row) {
+		const kind = row.querySelector('.asset-kind')?.value || 'twin'
+		const privWrap = row.querySelector('.asset-private-wrap')
+		const mockWrap = row.querySelector('.asset-mock-wrap')
+		if (kind === 'twin') {
+			if (privWrap) privWrap.style.display = 'flex'
+			if (mockWrap) {
+				mockWrap.style.display = 'flex'
+				const mockInput = mockWrap.querySelector('.asset-mock')
+				if (mockInput) mockInput.placeholder = 'Public/mock file path (optional)'
+			}
+		} else {
+			if (privWrap) privWrap.style.display = 'none'
+			if (mockWrap) {
+				mockWrap.style.display = 'flex'
+				const mockInput = mockWrap.querySelector('.asset-mock')
+				if (mockInput) mockInput.placeholder = 'Public file path'
+			}
+		}
+	}
+
+	async function openDatasetEditor(entry = null) {
+		const editor = document.getElementById('dataset-editor-section')
+		const list = document.getElementById('dataset-data-section')
+		if (!editor || !list) return
+		await refreshCurrentUserEmail()
+		setViewMode('datasets')
+		resetDatasetEditor()
+		list.style.display = 'none'
+		editor.style.display = 'block'
+
+		if (entry) {
+			const { dataset, assets } = entry
+			currentEditingAssets = new Map()
+			currentEditingOriginalName = dataset.name
+			assets?.forEach((a) => currentEditingAssets.set(a.asset_key, a))
+			document.getElementById('dataset-editor-title').textContent = `Edit ${dataset.name}`
+			document.getElementById('dataset-form-name').value = dataset.name
+			document.getElementById('dataset-form-description').value = dataset.description || ''
+			document.getElementById('dataset-form-author').value =
+				dataset.author || currentUserEmail || ''
+			document.getElementById('dataset-form-version').value = dataset.version || '1.0.0'
+			document.getElementById('dataset-form-schema').value =
+				dataset.schema || 'net.biovault.datasets:1.0.0'
+			if (assets && assets.length > 0) {
+				assets.forEach((a) => addAssetRow(a))
+			} else {
+				addAssetRow()
+			}
+			// Check if currently published
+			try {
+				currentEditingWasPublished = await invoke('is_dataset_published', { name: dataset.name })
+			} catch {
+				currentEditingWasPublished = false
+			}
+		} else {
+			currentEditingOriginalName = null
+			currentEditingWasPublished = false
+			document.getElementById('dataset-editor-title').textContent = 'New Dataset'
+			addAssetRow()
+		}
+	}
+
+	function closeDatasetEditor() {
+		const editor = document.getElementById('dataset-editor-section')
+		const list = document.getElementById('dataset-data-section')
+		if (editor) {
+			editor.style.display = 'none'
+		}
+		// Only show dataset list if we're in datasets view mode
+		if (list && viewMode === 'datasets') {
+			list.style.display = 'flex'
+		}
+		resetDatasetEditor()
+	}
+
+	function collectManifestFromForm() {
+		const name = document.getElementById('dataset-form-name')?.value?.trim()
+		const description = document.getElementById('dataset-form-description')?.value?.trim()
+		const author =
+			document.getElementById('dataset-form-author')?.value?.trim() || currentUserEmail || ''
+		const version = document.getElementById('dataset-form-version')?.value?.trim() || '1.0.0'
+		const schema = 'net.biovault.datasets:1.0.0'
+
+		if (!name) {
+			throw new Error('Dataset name is required')
+		}
+
+		const assetsContainer = document.getElementById('dataset-form-assets')
+		const assetRows = assetsContainer
+			? Array.from(assetsContainer.querySelectorAll('.dataset-asset-row'))
+			: []
+		if (assetRows.length === 0) {
+			throw new Error('Add at least one asset')
+		}
+
+		const assets = {}
+		assetRows.forEach((row, idx) => {
+			const key = row.querySelector('.asset-key')?.value?.trim()
+			const kind = row.querySelector('.asset-kind')?.value || 'twin'
+			const privatePath = row.querySelector('.asset-private')?.value?.trim()
+			const mockPath = row.querySelector('.asset-mock')?.value?.trim()
+			const assetFromList = currentEditingAssets.get(key)
+			const privateId = row.dataset.privateId ? parseInt(row.dataset.privateId, 10) : null
+			const mockId = row.dataset.mockId ? parseInt(row.dataset.mockId, 10) : null
+			const origPrivatePath = row.dataset.origPrivatePath || ''
+			const origMockPath = row.dataset.origMockPath || ''
+			if (!key) return
+			const keepPrivateId = privateId && privatePath === origPrivatePath
+			const keepMockId = mockId && mockPath === origMockPath
+			const assetId =
+				assetFromList?.asset_uuid ||
+				(crypto?.randomUUID ? crypto.randomUUID() : `asset-${idx}-${Date.now()}`)
+			const isTwin = kind === 'twin'
+			const manifestMock = mockPath
+				? `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${mockPath
+						.split('/')
+						.pop()}`
+				: undefined
+			assets[key] = {
+				id: assetId,
+				kind,
+				url: isTwin
+					? `{root.private_url}#assets.${key}`
+					: mockPath || `{root.public_url}#assets.${key}`,
+				private: isTwin ? '{url}.private' : undefined,
+				mock: isTwin ? manifestMock : mockPath || undefined,
+				mappings: {
+					private:
+						isTwin && privatePath
+							? { file_path: privatePath, db_file_id: keepPrivateId ? privateId : null }
+							: null,
+					mock: mockPath ? { file_path: mockPath, db_file_id: keepMockId ? mockId : null } : null,
+				},
+				extra: undefined,
+			}
+		})
+
+		const public_url = currentUserEmail
+			? `syft://${currentUserEmail}/public/biovault/datasets/${name}/dataset.yaml`
+			: null
+		const private_url = currentUserEmail
+			? `syft://${currentUserEmail}/private/biovault/datasets/${name}/dataset.yaml`
+			: null
+
+		return {
+			name,
+			description: description || null,
+			author: author || null,
+			schema,
+			version,
+			http_relay_servers: ['syftbox.net'],
+			public_url,
+			private_url,
+			assets,
+			extra: undefined,
+		}
+	}
+
+	async function renderDatasets() {
+		const tbody = document.getElementById('datasets-table-body')
+		const emptyState = document.getElementById('datasets-empty-state')
+		if (!tbody || !emptyState) return
+
+		tbody.innerHTML = ''
+
+		if (!datasets || datasets.length === 0) {
+			emptyState.style.display = 'flex'
+			return
+		}
+
+		emptyState.style.display = 'none'
+
+		for (const entry of datasets) {
+			const { dataset, assets } = entry
+			const tr = document.createElement('tr')
+			const assetCount = assets?.length ?? 0
+
+			// Check actual published state on filesystem
+			let isPublished = false
+			try {
+				isPublished = await invoke('is_dataset_published', { name: dataset.name })
+			} catch {
+				isPublished = false
+			}
+
+			const assetTags = (assets || [])
+				.slice(0, 3)
+				.map((a) => `<span class="chip">${a.asset_key}</span>`)
+				.join(' ')
+			const extraAssets = assetCount > 3 ? `+${assetCount - 3}` : ''
+
+			tr.innerHTML = `
+				<td>${dataset.name}</td>
+				<td>${dataset.version}</td>
+				<td>${dataset.author}</td>
+				<td>${dataset.schema}</td>
+				<td>${assetTags} ${extraAssets}</td>
+				<td>${isPublished ? 'Yes' : 'No'}</td>
+				<td class="actions-cell">
+					<button class="btn-icon edit-dataset-btn" data-name="${dataset.name}" title="Edit dataset">
+						<img src="assets/icons/pencil.svg" width="14" height="14" alt="Edit" />
+					</button>
+					<button class="btn-icon publish-toggle-btn" data-name="${dataset.name}" data-published="${isPublished}" title="${isPublished ? 'Unpublish' : 'Publish'} dataset">
+						<img src="assets/icons/${isPublished ? 'x-circle' : 'upload'}.svg" width="14" height="14" alt="${isPublished ? 'Unpublish' : 'Publish'}" />
+					</button>
+					<button class="btn-icon open-folder-btn" data-name="${dataset.name}" data-public="${dataset.public_url || ''}" title="Open datasets folder">
+						<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Open" />
+					</button>
+					<button class="btn-icon delete-dataset-btn" data-name="${dataset.name}" title="Delete dataset">
+						<img src="assets/icons/trash.svg" width="14" height="14" alt="Delete" />
+					</button>
+				</td>
+			`
+
+			tr.querySelector('.publish-toggle-btn')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				const btn = e.currentTarget
+				const name = btn?.dataset?.name
+				const published = btn?.dataset?.published === 'true'
+
+				if (publishingDatasets.has(name)) return
+
+				if (published) {
+					const confirmed = await dialog.confirm(
+						`Unpublish dataset "${name}" from your datasite? Public copies will be removed.`,
+						{ title: 'Unpublish Dataset', type: 'warning' },
+					)
+					if (!confirmed) return
+					try {
+						await invoke('unpublish_dataset', { name })
+						await loadDatasets()
+					} catch (error) {
+						await dialog.message(`Error unpublishing dataset: ${error}`, {
+							title: 'Unpublish Error',
+							type: 'error',
+						})
+					}
+				} else {
+					const confirmed = await dialog.confirm(
+						`Publish dataset "${name}" to your datasite? Public assets only are copied.`,
+						{ title: 'Publish Dataset', type: 'info' },
+					)
+					if (!confirmed) return
+					try {
+						publishingDatasets.add(name)
+						if (btn) btn.classList.add('loading')
+						await invoke('publish_dataset', {
+							manifestPath: null,
+							name,
+							copyMock: true,
+						})
+						await loadDatasets()
+					} catch (error) {
+						await dialog.message(`Error publishing dataset: ${error}`, {
+							title: 'Publish Error',
+							type: 'error',
+						})
+					} finally {
+						publishingDatasets.delete(name)
+						if (btn) btn.classList.remove('loading')
+					}
+				}
+			})
+
+			tr.querySelector('.delete-dataset-btn')?.addEventListener('click', async () => {
+				const confirmed = await dialog.confirm(
+					`Delete dataset "${dataset.name}"? This removes it from the local catalog.`,
+					{ title: 'Delete Dataset', type: 'warning' },
+				)
+				if (!confirmed) return
+				try {
+					await invoke('delete_dataset', { name: dataset.name })
+					await loadDatasets()
+				} catch (error) {
+					await dialog.message(`Error deleting dataset: ${error}`, {
+						title: 'Delete Error',
+						type: 'error',
+					})
+				}
+			})
+
+			tr.querySelector('.open-folder-btn')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				const pubUrl = e.currentTarget?.dataset?.public
+				try {
+					let localPath
+					if (pubUrl) {
+						localPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: pubUrl })
+					} else {
+						localPath = await invoke('get_datasets_folder_path')
+					}
+					await invoke('open_folder', { path: localPath })
+				} catch (error) {
+					await dialog.message(`Error opening folder: ${error}`, {
+						title: 'Open Folder Error',
+						type: 'error',
+					})
+				}
+			})
+
+			tr.querySelector('.edit-dataset-btn')?.addEventListener('click', () => {
+				openDatasetEditor(entry)
+			})
+
+			tbody.appendChild(tr)
+		}
+	}
+
 	async function loadData() {
 		try {
 			const [participants, files] = await Promise.all([
@@ -700,16 +1163,20 @@ export function createDataModule({ invoke, dialog }) {
 			// Update queue UI
 			await updateQueueButton()
 
-			// Show/hide main UI or global empty state
-			const mainLayout = document.querySelector('.data-main-layout')
+			// Show/hide participant UI or global empty state (datasets view manages its own empty state)
+			const participantLayout = document.getElementById('participant-data-section')
 			const globalEmptyState = document.getElementById('data-empty-state')
 
-			if (participants.length === 0 && files.length === 0) {
-				mainLayout.style.display = 'none'
-				globalEmptyState.style.display = 'flex'
-			} else {
-				mainLayout.style.display = 'flex'
-				globalEmptyState.style.display = 'none'
+			if (participantLayout) {
+				if (participants.length === 0 && files.length === 0) {
+					participantLayout.style.display = 'none'
+					if (viewMode === 'participants') {
+						globalEmptyState.style.display = 'flex'
+					}
+				} else {
+					participantLayout.style.display = viewMode === 'participants' ? 'flex' : 'none'
+					globalEmptyState.style.display = 'none'
+				}
 			}
 
 			// Clear queue info cache for files that are no longer pending
@@ -742,6 +1209,68 @@ export function createDataModule({ invoke, dialog }) {
 	// ============================================================================
 
 	function initializeDataTab() {
+		void refreshCurrentUserEmail()
+		setViewMode(viewMode)
+		// View toggle (Participants vs Datasets)
+		const toggleButtons = document.querySelectorAll('#data-view-toggle .pill-button')
+		toggleButtons.forEach((btn) => {
+			btn.addEventListener('click', () => {
+				setViewMode(btn.dataset.view)
+				closeDatasetEditor()
+			})
+		})
+		const refreshDatasetsBtn = document.getElementById('refresh-datasets-btn')
+		if (refreshDatasetsBtn) {
+			refreshDatasetsBtn.addEventListener('click', () => loadDatasets())
+		}
+		const newDatasetBtn = document.getElementById('new-dataset-btn')
+		if (newDatasetBtn) {
+			newDatasetBtn.addEventListener('click', () => openDatasetEditor(null))
+		}
+
+		const addAssetButton = document.getElementById('dataset-form-add-asset')
+		if (addAssetButton) {
+			addAssetButton.addEventListener('click', () => addAssetRow())
+		}
+
+		const saveDatasetButton = document.getElementById('dataset-editor-save')
+		if (saveDatasetButton) {
+			saveDatasetButton.addEventListener('click', async () => {
+				try {
+					const manifest = collectManifestFromForm()
+					const originalName = currentEditingOriginalName
+					const wasPublished = currentEditingWasPublished
+					await invoke('save_dataset_with_files', {
+						manifest,
+						originalName: originalName || null,
+					})
+					// Auto-republish if it was published before editing
+					if (wasPublished) {
+						try {
+							await invoke('publish_dataset', {
+								manifestPath: null,
+								name: manifest.name,
+								copyMock: true,
+							})
+						} catch (pubErr) {
+							console.warn('Auto-republish failed:', pubErr)
+						}
+					}
+					await loadDatasets()
+					closeDatasetEditor()
+				} catch (error) {
+					await dialog.message(`${error}`, { title: 'Dataset Error', type: 'error' })
+				}
+			})
+		}
+
+		const cancelDatasetButton = document.getElementById('dataset-editor-cancel')
+		if (cancelDatasetButton) {
+			cancelDatasetButton.addEventListener('click', () => {
+				closeDatasetEditor()
+			})
+		}
+
 		// File search (searches both files and participants)
 		const fileSearch = document.getElementById('file-search')
 		if (fileSearch) {

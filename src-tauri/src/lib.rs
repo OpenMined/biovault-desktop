@@ -23,6 +23,7 @@ mod types;
 use types::AppState;
 
 // Import all command functions from command modules
+use commands::datasets::*;
 use commands::dependencies::*;
 use commands::files::*;
 use commands::jupyter::*;
@@ -673,6 +674,17 @@ pub fn run() {
             delete_files_bulk,
             detect_file_types,
             analyze_file_types,
+            // Dataset commands
+            list_datasets_with_assets,
+            upsert_dataset_manifest,
+            delete_dataset,
+            publish_dataset,
+            unpublish_dataset,
+            save_dataset_with_files,
+            is_dataset_published,
+            get_datasets_folder_path,
+            resolve_syft_url_to_local_path,
+            network_scan_datasets,
             // Participants commands
             get_participants,
             delete_participant,
@@ -822,6 +834,7 @@ pub fn run() {
             get_session_messages,
             send_session_message,
             get_session_chat_messages,
+            get_session_beaver_summaries,
             send_session_chat_message,
             open_session_folder,
             get_session_invitations,

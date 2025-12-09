@@ -1,3 +1,4 @@
+pub mod datasets;
 pub mod dependencies;
 pub mod files;
 pub mod jupyter;

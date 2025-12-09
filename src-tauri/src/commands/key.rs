@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::types::AppState;
@@ -43,7 +44,12 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
         .join(format!("{}.json", syftbox_sdk::sanitize_identity(&email)));
     let export_path = resolve_export_path(&data_root, &email);
 
-    println!("🔑 key_get_status: email={}, vault_path={}, bundle_path={}", email, vault_path.display(), bundle_path.display());
+    println!(
+        "🔑 key_get_status: email={}, vault_path={}, bundle_path={}",
+        email,
+        vault_path.display(),
+        bundle_path.display()
+    );
 
     let existing = load_existing_bundle(&vault_path, &email)?;
     println!("🔑 key_get_status: exists={}", existing.is_some());
@@ -116,8 +122,14 @@ pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
         }
     }
 
-    println!("🔍 VAULT DEBUG: env={:?} path={} exists={} keys={:?} bundles={:?}",
-        syc_vault_env, vault_path.display(), vault_exists, key_files, bundle_files);
+    println!(
+        "🔍 VAULT DEBUG: env={:?} path={} exists={} keys={:?} bundles={:?}",
+        syc_vault_env,
+        vault_path.display(),
+        vault_exists,
+        key_files,
+        bundle_files
+    );
 
     Ok(VaultDebugInfo {
         syc_vault_env,
@@ -141,7 +153,12 @@ pub async fn key_generate(
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
 
     let overwrite = force.unwrap_or(false);
-    println!("🔑 key_generate: email={}, force={}, vault_path={}", email, overwrite, vault_path.display());
+    println!(
+        "🔑 key_generate: email={}, force={}, vault_path={}",
+        email,
+        overwrite,
+        vault_path.display()
+    );
 
     let outcome = biovault::syftbox::syc::provision_local_identity_with_options(
         &email,
@@ -151,7 +168,11 @@ pub async fn key_generate(
     )
     .map_err(|e| format!("failed to generate identity: {e}"))?;
 
-    println!("🔑 key_generate: generated={}, has_mnemonic={}", outcome.generated, outcome.recovery_mnemonic.is_some());
+    println!(
+        "🔑 key_generate: generated={}, has_mnemonic={}",
+        outcome.generated,
+        outcome.recovery_mnemonic.is_some()
+    );
 
     let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
@@ -490,6 +511,14 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");
 
+    println!(
+        "🌐 network_scan_datasites: current_email={}, data_root={}, vault_path={}, bundles_dir={}",
+        current_email,
+        data_root.display(),
+        vault_path.display(),
+        bundles_dir.display()
+    );
+
     // Find datasites directory
     let datasites_dir = if data_root
         .file_name()
@@ -505,6 +534,8 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
     let mut discovered = Vec::new();
 
     let current_slug = syftbox_sdk::sanitize_identity(&current_email);
+
+    let mut seen_identities: HashSet<String> = HashSet::new();
 
     if datasites_dir.exists() {
         let entries = std::fs::read_dir(&datasites_dir)
@@ -524,8 +555,23 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
             if let Ok(remote_info) = biovault::syftbox::syc::parse_public_bundle_file(&did_path) {
                 let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
 
-                // Skip current identity
+                // Skip current identity entirely
                 if slug == current_slug {
+                    println!(
+                        "🌐 Skipping current identity {} at {}",
+                        remote_info.identity,
+                        did_path.display()
+                    );
+                    continue;
+                }
+
+                // Skip if we've already added this identity (avoid duplicates from copies/alt locations)
+                if seen_identities.contains(&remote_info.identity) {
+                    println!(
+                        "🌐 Skipping duplicate identity {} at {}",
+                        remote_info.identity,
+                        did_path.display()
+                    );
                     continue;
                 }
 
@@ -558,6 +604,19 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
                     },
                 };
 
+                // Record identity to avoid later duplicates
+                seen_identities.insert(contact.identity.clone());
+
+                println!(
+                    "🌐 Found contact: identity={} fp={} did_path={} local_bundle_path={:?} is_imported={} has_changed={}",
+                    contact.identity,
+                    contact.fingerprint,
+                    contact.did_path,
+                    contact.local_bundle_path,
+                    contact.is_imported,
+                    contact.has_changed
+                );
+
                 if is_imported {
                     contacts.push(contact);
                 } else {
@@ -584,6 +643,13 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
     let config = load_config(None)?;
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");
+
+    println!(
+        "🌐 network_import_contact: identity={} data_root={} vault_path={}",
+        identity,
+        data_root.display(),
+        vault_path.display()
+    );
 
     // Ensure bundles directory exists
     if !bundles_dir.exists() {
@@ -612,6 +678,12 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
         return Err(format!("DID not found for {identity}"));
     }
 
+    println!(
+        "🌐 network_import_contact: did_path={} bundles_dir={}",
+        did_path.display(),
+        bundles_dir.display()
+    );
+
     let remote_info = biovault::syftbox::syc::parse_public_bundle_file(&did_path)
         .map_err(|e| format!("failed to parse DID: {e}"))?;
 
@@ -620,6 +692,12 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
 
     std::fs::copy(&did_path, &local_bundle_path)
         .map_err(|e| format!("failed to import bundle: {e}"))?;
+
+    println!(
+        "🌐 network_import_contact: copied {} to {}",
+        did_path.display(),
+        local_bundle_path.display()
+    );
 
     Ok(ContactInfo {
         identity: remote_info.identity,

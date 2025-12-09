@@ -16,7 +16,7 @@ SYFTBOX_BIN_RES="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
 SBENV_BIN="$ROOT_DIR/biovault/sbenv/cli/target/release/sbenv"
 BV_CLI_BIN="$ROOT_DIR/biovault/cli/target/release/bv"
 SYFTBOX_URL="https://dev.syftbox.net"
-SYFTBOX_AUTH_ENABLED="0"
+SYFTBOX_AUTH_ENABLED="1"
 SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
 LOG_DIR="$ROOT_DIR/logs"
 SBENV_LAUNCH_PIDS=()
@@ -62,10 +62,22 @@ PY
 start_sbenv_client() {
   local email="$1"
   local client_dir="$SANDBOX_DIR/$email"
-  rm -rf "$client_dir"
-  mkdir -p "$client_dir"
-  echo "[live] sbenv init $email"
-  (cd "$client_dir" && "$SBENV_BIN" init --dev --server-url "$SYFTBOX_URL" --email "$email" --binary "$SYFTBOX_BIN_RES")
+  local config_file="$client_dir/.syftbox/config.json"
+
+  # Only wipe and reinit if --reset was passed or no config exists
+  if (( RESET_FLAG )) || [[ ! -f "$config_file" ]]; then
+    if (( RESET_FLAG )); then
+      echo "[live] Resetting client $email (--reset flag)"
+      rm -rf "$client_dir"
+    fi
+    mkdir -p "$client_dir"
+    echo "[live] sbenv init $email"
+    # Don't use --dev flag since live servers require auth (--dev hardcodes SYFTBOX_AUTH_ENABLED=0)
+    (cd "$client_dir" && "$SBENV_BIN" init --server-url "$SYFTBOX_URL" --email "$email" --binary "$SYFTBOX_BIN_RES")
+  else
+    echo "[live] Using existing client config for $email"
+  fi
+
   echo "[live] sbenv start $email"
   (
     set +u
@@ -169,8 +181,6 @@ launch_instance() {
   local tag="$1"; shift
   local email="$1"; shift
   echo "[live] Launching BioVault ($tag) with BIOVAULT_HOME=$home email=$email" >&2
-    # Ensure onboarding screens appear by removing any prior config.yaml
-    rm -f "$home/config.yaml"
   (
     cd "$ROOT_DIR"
     local config_path="$home/.syftbox/config.json"
@@ -255,9 +265,10 @@ main() {
     exit 0
   fi
 
+  # Note: --reset now only resets individual client directories, not the whole SANDBOX_DIR
+  # This is safer when SANDBOX_DIR points to a shared folder like ~/dev/biovaults
   if (( RESET_FLAG )); then
-    echo "[live] Resetting sandbox at $SANDBOX_DIR"
-    rm -rf "$SANDBOX_DIR"
+    echo "[live] Will reset individual client directories (not entire sandbox)"
   fi
 
   if ((${#CLIENTS[@]} == 0)); then

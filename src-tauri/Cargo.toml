@@ -49,6 +49,7 @@ rand = "0.8"
 hex = "0.4"
 anyhow = "1.0"
 syftbox-sdk = { path = "../biovault/syftbox-sdk", features = ["crypto", "process", "auth"] }
+uuid = "1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
@@ -56,10 +57,21 @@ tauri-plugin-updater = "2"
 [package.metadata.tauri.dev-watcher]
 ignore = [
     "**/*.ipynb",
+    "**/*.beaver",
+    "**/*.bin",
+    "**/*.h5ad",
+    "**/*.parquet",
+    "**/*.request",
+    "**/*.response",
+    "**/biovault/**",
     "**/sandbox/**",
     "**/sessions/**",
+    "**/datasites/**",
+    "**/unencrypted/**",
     "**/.venv/**",
     "**/node_modules/**",
     "**/target/**",
-    "**/.git/**"
+    "**/.git/**",
+    "**/__pycache__/**",
+    "**/.ipynb_checkpoints/**"
 ]

@@ -177,6 +177,13 @@ PY
     echo "⚠️  Java bin directory missing at $dest_dir/bin" >&2
   fi
 
+  # Remove legal directory - contains only license files that cause extended
+  # attribute issues with Tauri's build and aren't needed at runtime
+  if [[ -d "$dest_dir/legal" ]]; then
+    rm -rf "$dest_dir/legal"
+    echo "✅ Removed legal directory (license files not needed at runtime)"
+  fi
+
   # Ensure libjvm.so is directly under lib/ so linuxdeploy can find it (AppImage bundling)
   if [[ "$os" == "linux" ]]; then
     local libjvm_server="$dest_dir/lib/server/libjvm.so"
@@ -379,10 +386,10 @@ main() {
   # Fix permissions to ensure files are readable/writable
   chmod -R u+rw "$OUT_ROOT" 2>/dev/null || true
 
-  # Remove macOS quarantine attributes (only on macOS)
+  # Remove ALL macOS extended attributes (only on macOS)
   if [[ "$os" == "macos" ]]; then
-    xattr -r -d com.apple.quarantine "$OUT_ROOT" 2>/dev/null || true
-    echo "✅ Removed macOS quarantine attributes"
+    xattr -rc "$OUT_ROOT" 2>/dev/null || true
+    echo "✅ Removed macOS extended attributes"
   fi
 
   echo "🎉 Bundled artifacts ready under $OUT_ROOT"

@@ -80,7 +80,7 @@ const {
 	isFileAlreadyImported,
 	getSelectedParticipants,
 	clearAllSelections,
-} = createDataModule({ invoke, dialog })
+} = createDataModule({ invoke, dialog, getCurrentUserEmail })
 
 const { refreshLogs, displayLogs, setLogsAutoRefreshEnabled, clearLogs, copyLogs, openLogsFolder } =
 	createLogsModule({
@@ -197,6 +197,7 @@ sessionsModule = createSessionsModule({
 	invoke,
 	dialog,
 	getCurrentUserEmail,
+	listen,
 })
 const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
 

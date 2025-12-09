@@ -417,3 +417,401 @@
 		border-top: 1px solid #e2e8f0;
 	}
 }
+
+/* ============================================================================
+   DATASET LIST (Row-based layout)
+   ============================================================================ */
+
+.dataset-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+/* ============================================================================
+   DATASET ROW
+   ============================================================================ */
+
+.dataset-row {
+	display: grid;
+	grid-template-columns: 180px 1fr 100px 90px 220px;
+	align-items: center;
+	gap: 16px;
+	padding: 12px 16px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-left: 3px solid #6366f1;
+	border-radius: 8px;
+}
+
+.dataset-row:hover {
+	background: #fff;
+	border-color: #cbd5e1;
+	border-left-color: #6366f1;
+}
+
+.dataset-row.is-own {
+	border-left-color: #8b5cf6;
+}
+
+.dataset-row-owner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.dataset-row-owner .owner-identicon,
+.dataset-row-owner svg {
+	flex-shrink: 0;
+	border-radius: 6px;
+}
+
+.dataset-row-owner .owner-email {
+	font-size: 13px;
+	font-weight: 500;
+	color: #475569;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dataset-row-info {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.dataset-row-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.dataset-row-name img {
+	flex-shrink: 0;
+	opacity: 0.6;
+}
+
+.dataset-row-name .dataset-name {
+	font-weight: 600;
+	font-size: 14px;
+	color: #1e293b;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dataset-row-name .chip {
+	padding: 2px 6px;
+	background: #e2e8f0;
+	color: #64748b;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.dataset-row-meta .dataset-description {
+	font-size: 12px;
+	color: #94a3b8;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	margin: 0;
+}
+
+.dataset-row-assets {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.dataset-row-assets .assets-label {
+	font-size: 11px;
+	color: #64748b;
+	text-transform: none;
+}
+
+.dataset-row-assets .assets-count {
+	font-size: 12px;
+	font-weight: 600;
+	color: #1e293b;
+	background: none;
+	padding: 0;
+}
+
+.dataset-row-assets .expand-assets-btn {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	opacity: 0.5;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 4px;
+}
+
+.dataset-row-assets .expand-assets-btn:hover {
+	opacity: 1;
+	background: #e2e8f0;
+}
+
+.dataset-row-assets .expand-assets-btn.expanded img {
+	transform: rotate(180deg);
+}
+
+.dataset-row-status {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.dataset-row-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	justify-content: flex-end;
+}
+
+.dataset-row-actions .btn-sm {
+	height: 28px;
+	padding: 0 10px;
+	font-size: 12px;
+	border-radius: 6px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.dataset-row-actions .btn-icon-sm {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 1px solid #e2e8f0;
+	background: #fff;
+	border-radius: 6px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.dataset-row-actions .btn-icon-sm:hover {
+	background: #f8fafc;
+	border-color: #cbd5e1;
+}
+
+.dataset-row-actions .btn-icon-sm img {
+	opacity: 0.6;
+}
+
+.dataset-row-actions .btn-icon-sm:hover img {
+	opacity: 1;
+}
+
+/* Assets panel (expandable) */
+.dataset-assets-panel {
+	margin-left: 20px;
+	margin-bottom: 8px;
+	padding: 10px 16px;
+	background: #fff;
+	border: 1px solid #e2e8f0;
+	border-top: none;
+	border-radius: 0 0 8px 8px;
+}
+
+/* Code snippet in assets panel */
+.dataset-code-snippet {
+	margin-bottom: 12px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid #e2e8f0;
+}
+
+.code-snippet-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.code-snippet-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: #64748b;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.copy-snippet-btn {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 8px;
+	font-size: 11px;
+	color: #6366f1;
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background 0.15s;
+}
+
+.copy-snippet-btn:hover {
+	background: #eef2ff;
+}
+
+.copy-snippet-btn.copied {
+	color: #10b981;
+}
+
+.code-snippet-code {
+	margin: 0;
+	padding: 10px 12px;
+	background: #1e293b;
+	border-radius: 6px;
+	overflow-x: auto;
+}
+
+.code-snippet-code code {
+	font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+	font-size: 12px;
+	line-height: 1.5;
+	color: #e2e8f0;
+	white-space: pre;
+}
+
+.assets-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: #64748b;
+}
+
+.assets-count {
+	font-size: 12px;
+	font-weight: 600;
+	color: #1e293b;
+}
+
+.assets-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.asset-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 8px;
+	background: #f8fafc;
+	border-radius: 6px;
+}
+
+.asset-info {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1;
+}
+
+.asset-key {
+	font-weight: 500;
+	font-size: 12px;
+	color: #1e293b;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.asset-type {
+	padding: 2px 6px;
+	background: #e0e7ff;
+	color: #4338ca;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.asset-size {
+	font-size: 11px;
+	color: #94a3b8;
+	flex-shrink: 0;
+}
+
+.asset-row .open-asset-btn {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: 1px solid #e2e8f0;
+	border-radius: 4px;
+	cursor: pointer;
+	opacity: 0.6;
+	flex-shrink: 0;
+}
+
+.asset-row .open-asset-btn:hover {
+	opacity: 1;
+	background: #fff;
+}
+
+/* ============================================================================
+   DATASET ROW BUTTON STYLING
+   ============================================================================ */
+
+.dataset-row-actions .btn-sm.btn-primary {
+	background: #10b981;
+	color: #fff;
+	border: none;
+}
+
+.dataset-row-actions .btn-sm.btn-primary:hover {
+	background: #059669;
+}
+
+.dataset-row-actions .btn-sm.btn-secondary {
+	background: #fff;
+	color: #475569;
+	border: 1px solid #e2e8f0;
+}
+
+.dataset-row-actions .btn-sm.btn-secondary:hover {
+	background: #f8fafc;
+	border-color: #cbd5e1;
+}
+
+.dataset-row-actions .btn-sm img {
+	width: 12px;
+	height: 12px;
+}
+
+.dataset-row-actions .btn-sm.btn-secondary img {
+	opacity: 1;
+}
+
+/* ============================================================================
+   DATASETS SECTION
+   ============================================================================ */
+
+.datasets-section {
+	flex: 1;
+}
+
+.datasets-section .dataset-row.is-own {
+	border-left-color: #8b5cf6;
+}
+
+.datasets-section .dataset-item {
+	margin-bottom: 4px;
+}
