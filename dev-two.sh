@@ -337,11 +337,13 @@ launch_desktop_instance() {
   local instance_num="$2"
   local background="$3"
 
-  local home config server
+  local home config server data_dir
   home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
   config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
   server="$(client_field "$email" server)"
   [[ -z "$server" ]] && server="$SERVER_URL"
+  data_dir="$(parse_data_dir "$config")"
+  [[ -z "$data_dir" ]] && data_dir="$home"
 
   prepare_desktop_config "$email"
 
@@ -350,6 +352,7 @@ launch_desktop_instance() {
   export BIOVAULT_DEV_SYFTBOX=1
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
+  export SYFTBOX_DATA_DIR="$data_dir"
   export SYC_VAULT="$home/.syc"
 
   local pkg_cmd="npm"
@@ -362,6 +365,7 @@ launch_desktop_instance() {
   echo -e "${CYAN}  Desktop Instance ${instance_num}: ${email}${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
   echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
+  echo -e "${YELLOW}  SYFTBOX_DATA_DIR:  $SYFTBOX_DATA_DIR${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
   echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"

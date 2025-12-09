@@ -1,9 +1,12 @@
 /**
- * Network module - Manages contacts and network discovery
+ * Network module - Manages contacts, network discovery, and published datasets
  */
 
 export function createNetworkModule({ invoke, shellApi }) {
 	let _currentScanResult = null
+	let _currentDatasets = []
+	let _currentView = 'peers'
+	let _searchQuery = ''
 
 	function buildIdenticon(seed, size = 48) {
 		let hash = 0
@@ -32,16 +35,79 @@ export function createNetworkModule({ invoke, shellApi }) {
 		return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg"><rect width="${size}" height="${size}" fill="${bg}" rx="8"/>${rects}</svg>`
 	}
 
+	function formatFileSize(bytes) {
+		if (!bytes) return 'Unknown size'
+		if (bytes < 1024) return `${bytes} B`
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+	}
+
+	function setViewMode(mode) {
+		if (mode !== 'peers' && mode !== 'datasets') return
+		_currentView = mode
+
+		const peersView = document.getElementById('peers-view')
+		const datasetsView = document.getElementById('datasets-view')
+
+		if (peersView && datasetsView) {
+			peersView.style.display = mode === 'peers' ? 'block' : 'none'
+			datasetsView.style.display = mode === 'datasets' ? 'block' : 'none'
+		}
+
+		const toggleButtons = document.querySelectorAll('#network-view-toggle .pill-button')
+		toggleButtons.forEach((btn) => {
+			if (btn.dataset.view === mode) {
+				btn.classList.add('active')
+			} else {
+				btn.classList.remove('active')
+			}
+		})
+
+		// Update search placeholder
+		const searchInput = document.getElementById('network-search-input')
+		if (searchInput) {
+			searchInput.placeholder = mode === 'peers' ? 'Search peers...' : 'Search datasets...'
+		}
+
+		applySearchFilter()
+	}
+
+	function applySearchFilter() {
+		const query = _searchQuery.toLowerCase().trim()
+
+		if (_currentView === 'peers') {
+			// Filter peer cards
+			const contactCards = document.querySelectorAll('#contacts-list .contact-card')
+			const discoveredCards = document.querySelectorAll('#network-list .contact-card')
+
+			;[...contactCards, ...discoveredCards].forEach((card) => {
+				const email = card.dataset.email?.toLowerCase() || ''
+				const matches = !query || email.includes(query)
+				card.style.display = matches ? 'flex' : 'none'
+			})
+		} else {
+			// Filter dataset rows
+			const datasetItems = document.querySelectorAll('#datasets-list .dataset-item')
+			datasetItems.forEach((item) => {
+				const name = item.dataset.name?.toLowerCase() || ''
+				const owner = item.dataset.owner?.toLowerCase() || ''
+				const matches = !query || name.includes(query) || owner.includes(query)
+				item.style.display = matches ? 'block' : 'none'
+			})
+		}
+	}
+
 	function createContactCard(contact, isContact) {
 		const template = document.getElementById('contact-card-template')
 		if (!template) {
-			console.error('❌ contact-card-template not found in DOM')
+			console.error('contact-card-template not found in DOM')
 			return null
 		}
 
 		const card = template.content.cloneNode(true).querySelector('.contact-card')
 		if (!card) {
-			console.error('❌ .contact-card not found in template')
+			console.error('.contact-card not found in template')
 			return null
 		}
 		card.dataset.email = contact.identity
@@ -49,7 +115,7 @@ export function createNetworkModule({ invoke, shellApi }) {
 		// Avatar with identicon
 		const avatarEl = card.querySelector('.contact-avatar')
 		if (avatarEl) {
-			avatarEl.innerHTML = buildIdenticon(contact.fingerprint || contact.identity, 48)
+			avatarEl.innerHTML = buildIdenticon(contact.identity, 48)
 		}
 
 		// Email
@@ -113,24 +179,15 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const removeBtn = card.querySelector('.remove-btn')
 
 		if (isContact) {
-			// Contact actions: show message and remove buttons
 			messageBtn.style.display = 'inline-flex'
 			addBtn.style.display = 'none'
 			removeBtn.style.display = 'inline-flex'
-
-			if (contact.has_changed) {
-				trustBtn.style.display = 'inline-flex'
-			} else {
-				trustBtn.style.display = 'none'
-			}
-			console.log(`🔑 Contact card for ${contact.identity}: message=visible, remove=visible`)
+			trustBtn.style.display = contact.has_changed ? 'inline-flex' : 'none'
 		} else {
-			// Discovered (not yet contact) actions: show add button only
 			messageBtn.style.display = 'none'
 			addBtn.style.display = 'inline-flex'
 			trustBtn.style.display = 'none'
 			removeBtn.style.display = 'none'
-			console.log(`🌐 Discovered card for ${contact.identity}: add=visible`)
 		}
 
 		// Event handlers
@@ -142,14 +199,233 @@ export function createNetworkModule({ invoke, shellApi }) {
 		return card
 	}
 
+	function createDatasetCard(dataset) {
+		const template = document.getElementById('dataset-card-template')
+		if (!template) {
+			console.error('dataset-card-template not found in DOM')
+			return null
+		}
+
+		// Clone entire template content (row + assets panel)
+		const fragment = template.content.cloneNode(true)
+		const row = fragment.querySelector('.dataset-row')
+		const assetsPanel = fragment.querySelector('.dataset-assets-panel')
+
+		if (!row) {
+			console.error('.dataset-row not found in template')
+			return null
+		}
+
+		// Create wrapper to hold both row and expandable panel
+		const wrapper = document.createElement('div')
+		wrapper.className = 'dataset-item'
+		wrapper.dataset.name = dataset.name
+		wrapper.dataset.owner = dataset.owner
+
+		row.dataset.name = dataset.name
+		row.dataset.owner = dataset.owner
+		if (dataset.is_own) {
+			row.classList.add('is-own')
+		}
+
+		// Owner with identicon
+		const ownerIdenticonEl = row.querySelector('.owner-identicon')
+		if (ownerIdenticonEl) {
+			const parent = ownerIdenticonEl.parentElement
+			if (parent) {
+				const identiconSvg = buildIdenticon(dataset.owner, 32)
+				const span = document.createElement('span')
+				span.innerHTML = identiconSvg
+				span.style.display = 'inline-flex'
+				parent.replaceChild(span, ownerIdenticonEl)
+			}
+		}
+		const ownerEmailEl = row.querySelector('.owner-email')
+		if (ownerEmailEl) {
+			ownerEmailEl.textContent = dataset.owner
+		}
+
+		// Dataset name
+		const nameEl = row.querySelector('.dataset-name')
+		if (nameEl) {
+			nameEl.textContent = dataset.name
+		}
+
+		// Version badge
+		const versionEl = row.querySelector('.dataset-version')
+		if (versionEl) {
+			versionEl.textContent = dataset.version || 'v1.0.0'
+		}
+
+		// Description
+		const descEl = row.querySelector('.dataset-description')
+		if (descEl) {
+			descEl.textContent = dataset.description || ''
+		}
+
+		// Assets count and expand button
+		const assetsCountEl = row.querySelector('.assets-count')
+		const expandBtn = row.querySelector('.expand-assets-btn')
+		const assetCount = dataset.assets?.length || 0
+
+		if (assetsCountEl) {
+			assetsCountEl.textContent = assetCount
+		}
+
+		// Hide expand button if no assets
+		if (expandBtn && assetCount === 0) {
+			expandBtn.style.display = 'none'
+		}
+
+		// Populate assets panel
+		const assetsListEl = assetsPanel?.querySelector('.assets-list')
+		if (assetsListEl && assetCount > 0) {
+			dataset.assets.forEach((asset) => {
+				const assetRow = createAssetRow(asset)
+				if (assetRow) {
+					assetsListEl.appendChild(assetRow)
+				}
+			})
+		}
+
+		// Toggle assets panel on expand button click
+		if (expandBtn && assetsPanel) {
+			expandBtn.addEventListener('click', () => {
+				const isExpanded = assetsPanel.style.display !== 'none'
+				assetsPanel.style.display = isExpanded ? 'none' : 'block'
+				expandBtn.classList.toggle('expanded', !isExpanded)
+			})
+		}
+
+		// Status badge - show "YOUR DATASET" for own, "Trusted" for trusted peers
+		const trustedBadge = row.querySelector('.status-badge.trusted')
+		if (trustedBadge) {
+			if (dataset.is_own) {
+				trustedBadge.textContent = 'YOURS'
+				trustedBadge.style.display = 'inline-flex'
+				trustedBadge.style.background = '#e0e7ff'
+				trustedBadge.style.color = '#4338ca'
+			} else if (dataset.is_trusted) {
+				trustedBadge.textContent = 'Trusted'
+				trustedBadge.style.display = 'inline-flex'
+			} else {
+				trustedBadge.style.display = 'none'
+			}
+		}
+
+		// Action buttons
+		const newSessionBtn = row.querySelector('.new-session-btn')
+		const addPeerBtn = row.querySelector('.add-peer-btn')
+		const messagePeerBtn = row.querySelector('.message-peer-btn')
+		const openDatasetBtn = row.querySelector('.open-dataset-btn')
+
+		// For own datasets: hide new session, add peer, and message buttons
+		if (dataset.is_own) {
+			if (newSessionBtn) newSessionBtn.style.display = 'none'
+			if (addPeerBtn) addPeerBtn.style.display = 'none'
+			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
+		} else if (dataset.is_trusted) {
+			if (addPeerBtn) addPeerBtn.style.display = 'none'
+			if (messagePeerBtn) messagePeerBtn.style.display = 'inline-flex'
+		} else {
+			if (addPeerBtn) addPeerBtn.style.display = 'inline-flex'
+			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
+		}
+
+		// Event handlers
+		if (!dataset.is_own && newSessionBtn) {
+			newSessionBtn.addEventListener('click', () => handleNewSession(dataset))
+		}
+		if (addPeerBtn) {
+			addPeerBtn.addEventListener('click', () => handleNavigateToPeers(dataset.owner))
+		}
+		if (messagePeerBtn) {
+			messagePeerBtn.addEventListener('click', () => handleMessageContact(dataset.owner))
+		}
+		if (openDatasetBtn) {
+			openDatasetBtn.addEventListener('click', () => handleOpenDatasetFolder(dataset.dataset_path))
+		}
+
+		// Populate code snippet
+		const codeSnippetEl = assetsPanel?.querySelector('.code-snippet-code code')
+		if (codeSnippetEl) {
+			const snippet = `import beaver
+bv = beaver.ctx()
+dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
+			codeSnippetEl.textContent = snippet
+		}
+
+		// Copy snippet button
+		const copyBtn = assetsPanel?.querySelector('.copy-snippet-btn')
+		if (copyBtn && codeSnippetEl) {
+			copyBtn.addEventListener('click', async () => {
+				try {
+					await navigator.clipboard.writeText(codeSnippetEl.textContent)
+					copyBtn.classList.add('copied')
+					const labelSpan = copyBtn.querySelector('span')
+					if (labelSpan) labelSpan.textContent = 'Copied!'
+					setTimeout(() => {
+						copyBtn.classList.remove('copied')
+						if (labelSpan) labelSpan.textContent = 'Copy'
+					}, 2000)
+				} catch (err) {
+					console.error('Failed to copy:', err)
+				}
+			})
+		}
+
+		wrapper.appendChild(row)
+		if (assetsPanel) {
+			wrapper.appendChild(assetsPanel)
+		}
+
+		return wrapper
+	}
+
+	function createAssetRow(asset) {
+		const template = document.getElementById('asset-row-template')
+		if (!template) return null
+
+		const row = template.content.cloneNode(true).querySelector('.asset-row')
+		if (!row) return null
+
+		row.dataset.key = asset.key
+
+		const keyEl = row.querySelector('.asset-key')
+		if (keyEl) {
+			keyEl.textContent = asset.key
+		}
+
+		const typeEl = row.querySelector('.asset-type')
+		if (typeEl) {
+			typeEl.textContent = asset.kind || 'unknown'
+		}
+
+		const sizeEl = row.querySelector('.asset-size')
+		if (sizeEl) {
+			sizeEl.textContent = formatFileSize(asset.mock_size)
+		}
+
+		const openBtn = row.querySelector('.open-asset-btn')
+		if (openBtn) {
+			if (asset.mock_path) {
+				openBtn.addEventListener('click', () => handleOpenAssetFolder(asset.mock_path))
+			} else {
+				openBtn.style.opacity = '0.3'
+				openBtn.disabled = true
+			}
+		}
+
+		return row
+	}
+
 	function renderContacts(contacts) {
 		const listEl = document.getElementById('contacts-list')
 		const emptyEl = document.getElementById('contacts-empty')
 		const countEl = document.getElementById('contacts-count')
 
-		// Normalize and dedupe by identity (prefer entries with a local bundle path)
 		const deduped = []
-		const seen = new Map() // identity -> index in deduped
+		const seen = new Map()
 		;(contacts || []).forEach((c) => {
 			const id = c.identity
 			if (!id) return
@@ -158,7 +434,6 @@ export function createNetworkModule({ invoke, shellApi }) {
 				deduped.push(c)
 				return
 			}
-			// Prefer entry that has a local bundle path or has_changed flag
 			const idx = seen.get(id)
 			const existing = deduped[idx]
 			const existingHasPath = !!existing.local_bundle_path
@@ -173,16 +448,11 @@ export function createNetworkModule({ invoke, shellApi }) {
 			}
 		})
 
-		if (!listEl) {
-			console.warn('contacts-list not found in DOM')
-			return
-		}
+		if (!listEl) return
 
-		// Hard reset the list to avoid stale duplicate cards
 		while (listEl.firstChild) {
 			listEl.removeChild(listEl.firstChild)
 		}
-		// Re-attach the empty state element if it exists
 		if (emptyEl) {
 			listEl.appendChild(emptyEl)
 		}
@@ -209,7 +479,6 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const emptyEl = document.getElementById('network-empty')
 		const countEl = document.getElementById('network-count')
 
-		// Dedupe discovered too, just in case
 		const deduped = []
 		const seen = new Set()
 		;(discovered || []).forEach((c) => {
@@ -218,12 +487,8 @@ export function createNetworkModule({ invoke, shellApi }) {
 			deduped.push(c)
 		})
 
-		if (!listEl) {
-			console.warn('network-list not found in DOM')
-			return
-		}
+		if (!listEl) return
 
-		// Hard reset the list to avoid stale duplicate cards
 		while (listEl.firstChild) {
 			listEl.removeChild(listEl.firstChild)
 		}
@@ -248,6 +513,39 @@ export function createNetworkModule({ invoke, shellApi }) {
 		})
 	}
 
+	function renderDatasets(datasets) {
+		const listEl = document.getElementById('datasets-list')
+		const emptyEl = document.getElementById('datasets-empty')
+		const countEl = document.getElementById('datasets-count')
+
+		if (!listEl) return
+
+		while (listEl.firstChild) {
+			listEl.removeChild(listEl.firstChild)
+		}
+		if (emptyEl) {
+			listEl.appendChild(emptyEl)
+		}
+
+		_currentDatasets = datasets || []
+
+		if (_currentDatasets.length === 0) {
+			if (emptyEl) emptyEl.style.display = 'block'
+			if (countEl) countEl.textContent = '0'
+			return
+		}
+
+		if (emptyEl) emptyEl.style.display = 'none'
+		if (countEl) countEl.textContent = _currentDatasets.length.toString()
+
+		_currentDatasets.forEach((dataset) => {
+			const card = createDatasetCard(dataset)
+			if (card) {
+				listEl.appendChild(card)
+			}
+		})
+	}
+
 	async function scanNetwork() {
 		const refreshBtn = document.getElementById('network-refresh-btn')
 		if (refreshBtn) {
@@ -257,72 +555,48 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		try {
-			const result = await invoke('network_scan_datasites')
-			_currentScanResult = result
+			// Scan for peers
+			const peerResult = await invoke('network_scan_datasites')
+			_currentScanResult = peerResult
 
-			console.log('🔍 Network scan result:', result)
-			console.log('🔍 Template check:', document.getElementById('contact-card-template'))
-			console.log('🔍 Contacts list check:', document.getElementById('contacts-list'))
-			console.log('🔍 Network list check:', document.getElementById('network-list'))
-			console.table(
-				(result.contacts || []).map((c) => ({
-					identity: c.identity,
-					fp: c.fingerprint,
-					local_bundle_path: c.local_bundle_path,
-					has_changed: c.has_changed,
-					is_imported: true,
-				})),
-				['identity', 'fp', 'local_bundle_path', 'has_changed', 'is_imported'],
-			)
-			console.table(
-				(result.discovered || []).map((c) => ({
-					identity: c.identity,
-					fp: c.fingerprint,
-					did_path: c.did_path,
-					local_bundle_path: c.local_bundle_path,
-					has_changed: c.has_changed,
-					is_imported: false,
-				})),
-				['identity', 'fp', 'did_path', 'local_bundle_path', 'has_changed', 'is_imported'],
-			)
+			renderContacts(peerResult.contacts)
+			renderDiscovered(peerResult.discovered)
 
-			renderContacts(result.contacts)
-			renderDiscovered(result.discovered)
-
-			console.log('Network scan complete:', {
-				contacts: result.contacts.length,
-				discovered: result.discovered.length,
+			console.log('Peer scan complete:', {
+				contacts: peerResult.contacts?.length || 0,
+				discovered: peerResult.discovered?.length || 0,
 			})
+
+			// Scan for datasets
+			const datasetResult = await invoke('network_scan_datasets')
+			renderDatasets(datasetResult.datasets)
+
+			console.log('Dataset scan complete:', {
+				datasets: datasetResult.datasets?.length || 0,
+			})
+
+			applySearchFilter()
 		} catch (error) {
 			console.error('Failed to scan network:', error)
 		} finally {
 			if (refreshBtn) {
 				refreshBtn.disabled = false
-				refreshBtn.innerHTML =
-					'<img src="assets/icons/scan-eye.svg" width="16" height="16" alt="Scan" /> Refresh'
+				refreshBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><span>Scan</span>`
 			}
 		}
 	}
 
 	async function handleMessageContact(identity) {
-		console.log('📧 Opening message to:', identity)
+		console.log('Opening message to:', identity)
 
-		// Switch to messages tab
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('messages')
-			console.log('📧 Navigated to messages tab')
-		} else {
-			console.warn('📧 navigateTo not available')
 		}
 
-		// Give time for tab to switch, then start new message
 		setTimeout(() => {
 			if (window.__messagesModule?.startNewMessage) {
-				console.log('📧 Starting new message to:', identity)
 				window.__messagesModule.startNewMessage(identity)
 			} else {
-				console.warn('📧 startNewMessage not available on __messagesModule')
-				// Fallback: try to find and fill the recipient input directly
 				const recipientInput = document.getElementById('message-recipient-input')
 				if (recipientInput) {
 					recipientInput.value = identity
@@ -336,7 +610,6 @@ export function createNetworkModule({ invoke, shellApi }) {
 		try {
 			await invoke('network_import_contact', { identity })
 			console.log('Added contact:', identity)
-			// Refresh the list
 			await scanNetwork()
 		} catch (error) {
 			console.error('Failed to add contact:', error)
@@ -379,12 +652,10 @@ export function createNetworkModule({ invoke, shellApi }) {
 	async function handleOpenBundleFolder(bundlePath) {
 		if (!bundlePath) return
 		try {
-			// Get the directory containing the bundle file
 			const folderPath = bundlePath.substring(0, bundlePath.lastIndexOf('/'))
 			if (shellApi?.open) {
 				await shellApi.open(folderPath)
 			} else {
-				// Fallback: use invoke to open folder
 				await invoke('open_folder', { path: folderPath })
 			}
 		} catch (error) {
@@ -392,11 +663,81 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 	}
 
+	async function handleOpenDatasetFolder(datasetPath) {
+		if (!datasetPath) return
+		try {
+			const folderPath = datasetPath.substring(0, datasetPath.lastIndexOf('/'))
+			await invoke('open_folder', { path: folderPath })
+		} catch (error) {
+			console.error('Failed to open dataset folder:', error)
+		}
+	}
+
+	async function handleOpenAssetFolder(assetPath) {
+		if (!assetPath) return
+		try {
+			const folderPath = assetPath.substring(0, assetPath.lastIndexOf('/'))
+			await invoke('open_folder', { path: folderPath })
+		} catch (error) {
+			console.error('Failed to open asset folder:', error)
+		}
+	}
+
+	function handleNavigateToPeers(owner) {
+		// Switch to peers view and focus on the owner
+		setViewMode('peers')
+		_searchQuery = owner
+		const searchInput = document.getElementById('network-search-input')
+		if (searchInput) {
+			searchInput.value = owner
+		}
+		applySearchFilter()
+	}
+
+	async function handleNewSession(dataset) {
+		console.log('Creating new session with dataset:', dataset.name, 'from', dataset.owner)
+
+		// Navigate to sessions tab
+		if (typeof window.navigateTo === 'function') {
+			window.navigateTo('sessions')
+		}
+
+		// Wait for navigation, then open modal with dataset info
+		setTimeout(() => {
+			if (window.__sessionsModule?.openCreateSessionWithDataset) {
+				window.__sessionsModule.openCreateSessionWithDataset(dataset)
+			} else {
+				// Fallback: just open the create modal
+				const createBtn = document.getElementById('create-session-btn')
+				if (createBtn) {
+					createBtn.click()
+				}
+			}
+		}, 200)
+	}
+
 	function init() {
 		// Set up refresh button
 		const refreshBtn = document.getElementById('network-refresh-btn')
 		if (refreshBtn) {
 			refreshBtn.addEventListener('click', scanNetwork)
+		}
+
+		// Set up view toggle
+		const toggleButtons = document.querySelectorAll('#network-view-toggle .pill-button')
+		toggleButtons.forEach((btn) => {
+			btn.addEventListener('click', () => {
+				setViewMode(btn.dataset.view)
+			})
+		})
+
+		// Set up search
+		const searchInput = document.getElementById('network-search-input')
+		if (searchInput) {
+			searchInput.addEventListener('input', (e) => {
+				_searchQuery = e.target.value
+				applySearchFilter()
+			})
 		}
 
 		// Initial scan when tab is first shown
@@ -420,5 +761,6 @@ export function createNetworkModule({ invoke, shellApi }) {
 	return {
 		init,
 		scanNetwork,
+		setViewMode,
 	}
 }

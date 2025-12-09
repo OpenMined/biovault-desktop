@@ -177,6 +177,13 @@ PY
     echo "⚠️  Java bin directory missing at $dest_dir/bin" >&2
   fi
 
+  # Remove legal directory - contains only license files that cause extended
+  # attribute issues with Tauri's build and aren't needed at runtime
+  if [[ -d "$dest_dir/legal" ]]; then
+    rm -rf "$dest_dir/legal"
+    echo "✅ Removed legal directory (license files not needed at runtime)"
+  fi
+
   # Ensure libjvm.so is directly under lib/ so linuxdeploy can find it (AppImage bundling)
   if [[ "$os" == "linux" ]]; then
     local libjvm_server="$dest_dir/lib/server/libjvm.so"

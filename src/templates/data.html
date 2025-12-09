@@ -9,6 +9,12 @@
 			<p class="page-subtitle">Imported genotype files and analysis results</p>
 		</div>
 		<div class="page-header-right">
+			<!-- Data view toggle -->
+			<div class="pill-toggle pill-toggle-lg" id="data-view-toggle">
+				<button class="pill-button active" data-view="participants">Files</button>
+				<button class="pill-button" data-view="datasets">Datasets</button>
+			</div>
+
 			<!-- Search -->
 			<div class="page-header-search">
 				<svg
@@ -140,11 +146,9 @@
 	<!-- Main Content -->
 	<div class="view-content">
 		<div class="data-container">
-			<!-- Main Layout: Files Table -->
-			<div class="data-main-layout">
-				<!-- Files Panel -->
+			<!-- Participants-focused table (existing) -->
+			<div class="data-main-layout" id="participant-data-section">
 				<div class="files-panel">
-					<!-- Files Table -->
 					<div class="files-table-wrapper">
 						<table class="files-table">
 							<thead>
@@ -191,13 +195,10 @@
 									<th class="col-actions">Actions</th>
 								</tr>
 							</thead>
-							<tbody id="files-table-body">
-								<!-- Files will be rendered here -->
-							</tbody>
+							<tbody id="files-table-body"></tbody>
 						</table>
 					</div>
 
-					<!-- Empty State -->
 					<div id="files-empty-state" class="files-empty-state" style="display: none">
 						<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.2">
 							<path
@@ -209,6 +210,197 @@
 						</svg>
 						<h3 id="empty-state-title">No files found</h3>
 						<p id="empty-state-message">Try adjusting your filters or search term</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- Data-focused datasets panel -->
+			<div class="data-main-layout" id="dataset-data-section" style="display: none">
+				<div class="files-panel">
+					<div
+						class="panel-header"
+						style="display: flex; justify-content: space-between; align-items: center; gap: 12px"
+					>
+						<div>
+							<h3 class="panel-title" style="margin: 0">Datasets</h3>
+							<p class="panel-subtitle" style="margin: 2px 0 0; color: var(--muted-text)">
+								Manage dataset manifests, assets, and publishing to your datasite
+							</p>
+						</div>
+						<div class="panel-actions" style="display: flex; gap: 8px">
+							<button id="refresh-datasets-btn" class="btn-icon" title="Reload datasets">
+								<img src="assets/icons/rerun.svg" width="16" height="16" alt="Reload" />
+							</button>
+							<button id="new-dataset-btn" class="btn-primary">New Dataset</button>
+						</div>
+					</div>
+
+					<div class="datasets-table-wrapper">
+						<table class="files-table datasets-table">
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>Version</th>
+									<th>Author</th>
+									<th>Schema</th>
+									<th>Assets</th>
+									<th>Published</th>
+									<th class="col-actions">Actions</th>
+								</tr>
+							</thead>
+							<tbody id="datasets-table-body"></tbody>
+						</table>
+					</div>
+
+					<div id="datasets-empty-state" class="files-empty-state" style="display: none">
+						<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.2">
+							<path d="M4 2h8a2 2 0 0 1 2 2v8.5l-3-2-3 2-3-2-3 2V4a2 2 0 0 1 2-2z" />
+						</svg>
+						<h3>No datasets found</h3>
+						<p>Create a dataset or publish one from the CLI to see it here.</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- Dataset editor view -->
+			<div class="data-main-layout" id="dataset-editor-section" style="display: none">
+				<div class="files-panel">
+					<div
+						class="panel-header"
+						style="display: flex; justify-content: space-between; align-items: center; gap: 12px"
+					>
+						<div>
+							<h3 class="panel-title" id="dataset-editor-title" style="margin: 0">New Dataset</h3>
+							<p class="panel-subtitle" style="margin: 2px 0 0; color: var(--muted-text)">
+								Define dataset metadata and assets
+							</p>
+						</div>
+						<div class="panel-actions" style="display: flex; gap: 8px">
+							<button id="dataset-editor-cancel" class="btn-secondary" type="button">Back</button>
+							<button id="dataset-editor-save" class="btn-primary" type="button">Save</button>
+						</div>
+					</div>
+
+					<div class="dataset-editor-body">
+						<div class="form-row">
+							<label for="dataset-form-name">Name</label>
+							<input
+								id="dataset-form-name"
+								type="text"
+								placeholder="single_cell"
+								autocapitalize="off"
+								autocorrect="off"
+								spellcheck="false"
+							/>
+						</div>
+						<div class="form-row">
+							<label for="dataset-form-description">Description</label>
+							<textarea
+								id="dataset-form-description"
+								rows="2"
+								placeholder="Short summary"
+								autocapitalize="off"
+								autocorrect="off"
+								spellcheck="false"
+							></textarea>
+						</div>
+						<div class="form-grid">
+							<div class="form-row">
+								<label for="dataset-form-author">Author</label>
+								<input
+									id="dataset-form-author"
+									type="text"
+									placeholder="you@example.com"
+									autocapitalize="off"
+									autocorrect="off"
+									spellcheck="false"
+								/>
+							</div>
+							<div class="form-row">
+								<label for="dataset-form-version">Version</label>
+								<input
+									id="dataset-form-version"
+									type="text"
+									placeholder="1.0.0"
+									autocapitalize="off"
+									autocorrect="off"
+									spellcheck="false"
+								/>
+							</div>
+							<div class="form-row">
+								<label for="dataset-form-schema">Schema</label>
+								<input
+									id="dataset-form-schema"
+									type="text"
+									placeholder="net.biovault.datasets:1.0.0"
+									value="net.biovault.datasets:1.0.0"
+									disabled
+								/>
+							</div>
+						</div>
+
+						<div class="form-row" style="margin-top: 12px">
+							<div
+								style="display: flex; align-items: center; justify-content: space-between; gap: 8px"
+							>
+								<label>Assets</label>
+								<button id="dataset-form-add-asset" class="btn-secondary" type="button">
+									Add Asset
+								</button>
+							</div>
+							<div id="dataset-form-assets" class="asset-rows"></div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Dataset modal -->
+			<div id="dataset-modal" class="modal" style="display: none">
+				<div class="modal-overlay"></div>
+				<div class="modal-content" style="max-width: 720px">
+					<div class="modal-header">
+						<h3 id="dataset-modal-title">New Dataset</h3>
+						<button id="dataset-modal-close" class="btn-icon" aria-label="Close">
+							<img src="assets/icons/x.svg" width="16" height="16" alt="Close" />
+						</button>
+					</div>
+					<div class="modal-body">
+						<div class="form-row">
+							<label for="dataset-name">Name</label>
+							<input id="dataset-name" type="text" placeholder="single_cell" />
+						</div>
+						<div class="form-row">
+							<label for="dataset-description">Description</label>
+							<textarea id="dataset-description" rows="2" placeholder="Short summary"></textarea>
+						</div>
+						<div class="form-grid">
+							<div class="form-row">
+								<label for="dataset-author">Author</label>
+								<input id="dataset-author" type="text" placeholder="you@example.com" />
+							</div>
+							<div class="form-row">
+								<label for="dataset-version">Version</label>
+								<input id="dataset-version" type="text" placeholder="1.0.0" />
+							</div>
+							<div class="form-row">
+								<label for="dataset-schema">Schema</label>
+								<input id="dataset-schema" type="text" placeholder="net.biovault.datasets:1.0.0" />
+							</div>
+						</div>
+
+						<div class="form-row" style="margin-top: 12px">
+							<div
+								style="display: flex; align-items: center; justify-content: space-between; gap: 8px"
+							>
+								<label>Assets</label>
+								<button id="add-asset-row" class="btn-secondary" type="button">Add Asset</button>
+							</div>
+							<div id="dataset-assets" class="asset-rows"></div>
+						</div>
+					</div>
+					<div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px">
+						<button id="dataset-cancel" class="btn-secondary" type="button">Cancel</button>
+						<button id="dataset-save" class="btn-primary" type="button">Save Dataset</button>
 					</div>
 				</div>
 			</div>

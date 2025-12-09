@@ -17,8 +17,8 @@ use std::path::Path;
 // Embed notebooks at compile time
 const SESSION_TEMPLATE_NOTEBOOK: &str =
     include_str!("../../resources/templates/session_template.ipynb");
-const SC_TEST_DO_NOTEBOOK: &str = include_str!("../../resources/templates/sc_test_do.ipynb");
-const SC_TEST_DS_NOTEBOOK: &str = include_str!("../../resources/templates/sc_test_ds.ipynb");
+const DEMO_DO_NOTEBOOK: &str = include_str!("../../resources/templates/demo_do.ipynb");
+const DEMO_DS_NOTEBOOK: &str = include_str!("../../resources/templates/demo_ds.ipynb");
 
 fn generate_session_id() -> String {
     let mut rng = rand::thread_rng();
@@ -56,21 +56,6 @@ fn ensure_private_session_dir(session_id: &str) -> Result<std::path::PathBuf, St
     // Ensure a data subdir exists for local artifacts (not synced)
     fs::create_dir_all(private_root.join("data"))
         .map_err(|e| format!("Failed to create private data directory: {}", e))?;
-
-    // Bootstrap private config from the shared session if missing
-    let shared_session_path = get_sessions_dir().join(session_id);
-    let shared_config = shared_session_path.join("session.json");
-    let private_config = private_root.join("session.json");
-    if shared_config.exists() && !private_config.exists() {
-        if let Err(e) = fs::copy(&shared_config, &private_config) {
-            eprintln!(
-                "Warning: Failed to copy session.json to private session dir: {}",
-                e
-            );
-        }
-    }
-
-    // Note: Example notebooks are copied at launch time if user opts in
 
     Ok(private_root)
 }
@@ -203,22 +188,69 @@ fn send_session_invite_response_message(
 }
 
 /// Copy example notebooks into the session folder
+/// In dev mode, creates symlinks so edits are written back to source
+/// In release mode, copies the embedded content
 fn copy_example_notebooks(session_path: &Path) {
+    // Files to copy/symlink: (dest_name, embedded_content, source_filename)
     let notebooks = [
-        ("template.ipynb", SESSION_TEMPLATE_NOTEBOOK),
-        ("sc_test_do.ipynb", SC_TEST_DO_NOTEBOOK),
-        ("sc_test_ds.ipynb", SC_TEST_DS_NOTEBOOK),
+        (
+            "template.ipynb",
+            SESSION_TEMPLATE_NOTEBOOK,
+            "session_template.ipynb",
+        ),
+        ("demo_do.ipynb", DEMO_DO_NOTEBOOK, "demo_do.ipynb"),
+        ("demo_ds.ipynb", DEMO_DS_NOTEBOOK, "demo_ds.ipynb"),
     ];
 
-    for (filename, content) in notebooks.iter() {
-        let dest = session_path.join(filename);
+    #[cfg(debug_assertions)]
+    let templates_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("templates");
+
+    for (dest_name, _content, source_name) in notebooks.iter() {
+        let dest = session_path.join(dest_name);
         if dest.exists() {
             continue;
         }
-        if let Err(e) = fs::write(&dest, content) {
-            eprintln!("Warning: Failed to copy notebook {}: {}", filename, e);
-        } else {
-            eprintln!("[Sessions] Copied example notebook: {}", filename);
+
+        #[cfg(debug_assertions)]
+        {
+            // Dev mode: create symlink to source file
+            let source = templates_dir.join(source_name);
+            if source.exists() {
+                #[cfg(unix)]
+                {
+                    if let Err(e) = std::os::unix::fs::symlink(&source, &dest) {
+                        eprintln!("Warning: Failed to symlink notebook {}: {}", dest_name, e);
+                    } else {
+                        eprintln!(
+                            "[Sessions] Symlinked demo notebook: {} -> {}",
+                            dest_name,
+                            source.display()
+                        );
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    // Windows symlinks require admin or dev mode, fall back to copy
+                    if let Err(e) = fs::write(&dest, _content) {
+                        eprintln!("Warning: Failed to copy notebook {}: {}", dest_name, e);
+                    } else {
+                        eprintln!("[Sessions] Copied demo notebook: {}", dest_name);
+                    }
+                }
+                continue;
+            }
+        }
+
+        // Release mode (or symlink source not found): copy embedded content
+        #[cfg(not(debug_assertions))]
+        {
+            if let Err(e) = fs::write(&dest, _content) {
+                eprintln!("Warning: Failed to copy notebook {}: {}", dest_name, e);
+            } else {
+                eprintln!("[Sessions] Copied demo notebook: {}", dest_name);
+            }
         }
     }
 }
@@ -413,7 +445,7 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
         )
         .map_err(|e| format!("Failed to create session: {}", e))?;
 
-    // Write session config file for beaver env var detection
+    // Write session config file to private path (not shared with peer)
     let config = serde_json::json!({
         "session_id": &session_id,
         "name": &request.name,
@@ -421,7 +453,7 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
         "peer": &request.peer,
         "created_at": chrono::Utc::now().to_rfc3339(),
     });
-    let config_path = session_path.join("session.json");
+    let config_path = private_session_path.join("session.json");
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| format!("Failed to write session config: {}", e))?;
 
@@ -578,8 +610,39 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
         .execute("DELETE FROM sessions WHERE session_id = ?1", [&session_id])
         .map_err(|e| format!("Failed to delete session: {}", e))?;
 
-    // Optionally delete session directory (keep data for safety)
-    // fs::remove_dir_all(&session.session_path).ok();
+    // Delete shared session directory (synced folder)
+    let shared_session_path = get_sessions_dir().join(&session_id);
+    if shared_session_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&shared_session_path) {
+            eprintln!(
+                "[Sessions] Warning: Failed to delete shared session dir {}: {}",
+                shared_session_path.display(),
+                e
+            );
+        } else {
+            eprintln!(
+                "[Sessions] Deleted shared session dir: {}",
+                shared_session_path.display()
+            );
+        }
+    }
+
+    // Delete private session directory (local notebooks, jupyter data)
+    let private_session_path = get_private_session_path(&session_id);
+    if private_session_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&private_session_path) {
+            eprintln!(
+                "[Sessions] Warning: Failed to delete private session dir {}: {}",
+                private_session_path.display(),
+                e
+            );
+        } else {
+            eprintln!(
+                "[Sessions] Deleted private session dir: {}",
+                private_session_path.display()
+            );
+        }
+    }
 
     Ok(())
 }
@@ -702,7 +765,7 @@ pub async fn reset_session_jupyter(
 
 #[tauri::command]
 pub fn get_session_jupyter_status(session_id: String) -> Result<SessionJupyterStatus, String> {
-    let session = get_session(session_id.clone())?;
+    let _session = get_session(session_id.clone())?;
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
 
     let private_session_path = ensure_private_session_dir(&session_id)?;
@@ -732,9 +795,10 @@ pub fn get_session_jupyter_status(session_id: String) -> Result<SessionJupyterSt
         },
     );
 
-    // Update session.json with Jupyter info when running
+    // Update session.json in private path with Jupyter info when running
     if status.running {
-        let config_path = Path::new(&session.session_path).join("session.json");
+        let private_session_path = get_private_session_path(&session_id);
+        let config_path = private_session_path.join("session.json");
         if config_path.exists() {
             if let Ok(content) = fs::read_to_string(&config_path) {
                 if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -1032,7 +1096,7 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         )
         .map_err(|e| format!("Failed to create session: {}", e))?;
 
-    // Write session config
+    // Write session config to private path (not shared with peer)
     let config = serde_json::json!({
         "session_id": &session_id,
         "name": &session_name,
@@ -1040,7 +1104,7 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         "peer": &invitation.requester,
         "created_at": chrono::Utc::now().to_rfc3339(),
     });
-    let config_path = session_path.join("session.json");
+    let config_path = private_session_path.join("session.json");
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| format!("Failed to write session config: {}", e))?;
 
@@ -1229,122 +1293,163 @@ pub struct BeaverSummary {
 pub fn get_session_beaver_summaries(session_id: String) -> Result<Vec<BeaverSummary>, String> {
     let session = get_session(session_id.clone())?;
     let owner = session.owner.clone();
+    let biovault_home = resolve_biovault_home_path();
 
-    // Prefer shadow/unencrypted path for local view of .beaver files
-    let shadow_path = resolve_biovault_home_path()
+    let mut results = Vec::new();
+    let mut seen_files = std::collections::HashSet::new();
+
+    // Path 1: Owner's session folder (our outgoing messages)
+    // {biovault_home}/unencrypted/{owner}/shared/biovault/sessions/{session_id}/
+    let owner_path = biovault_home
         .join("unencrypted")
-        .join(owner)
+        .join(&owner)
         .join("shared")
         .join("biovault")
         .join("sessions")
         .join(&session.session_id);
 
-    if !shadow_path.exists() {
-        return Ok(vec![]);
-    }
+    // Path 2: Peer's session folder (their messages synced to us via datasites)
+    // {biovault_home}/unencrypted/datasites/{peer}/shared/biovault/sessions/{session_id}/
+    let peer_path = if let Some(ref peer) = session.peer {
+        Some(
+            biovault_home
+                .join("unencrypted")
+                .join("datasites")
+                .join(peer)
+                .join("shared")
+                .join("biovault")
+                .join("sessions")
+                .join(&session.session_id),
+        )
+    } else {
+        None
+    };
 
-    let mut results = Vec::new();
-    for entry in std::fs::read_dir(&shadow_path)
-        .map_err(|e| format!("Failed to read session folder: {}", e))?
-    {
-        let entry = match entry {
+    // Collect paths to scan
+    let paths_to_scan: Vec<&std::path::Path> = [Some(owner_path.as_path()), peer_path.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|p| p.exists())
+        .collect();
+
+    for scan_path in paths_to_scan {
+        let entries = match std::fs::read_dir(scan_path) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!(
+                    "[Sessions] Warning: Failed to read session folder {}: {}",
+                    scan_path.display(),
+                    e
+                );
+                continue;
+            }
         };
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("beaver") {
-            continue;
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("beaver") {
+                continue;
+            }
+
+            let filename = path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown.beaver".to_string());
+
+            // Skip if we've already seen this file (dedup across owner/peer paths)
+            if !seen_files.insert(filename.clone()) {
+                continue;
+            }
+
+            let contents = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to read beaver file {}: {}",
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let json: serde_json::Value = match serde_json::from_str(&contents) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse beaver file {}: {}",
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let manifest = json.get("manifest").cloned().unwrap_or_default();
+            let manifest_type = manifest
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let manifest_func = manifest
+                .get("func_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let inputs = json
+                .get("inputs")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let outputs = json
+                .get("outputs")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            results.push(BeaverSummary {
+                filename,
+                path: path.to_string_lossy().to_string(),
+                sender: json
+                    .get("sender")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                created_at: json
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                name: json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                envelope_id: json
+                    .get("envelope_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                envelope_type: json
+                    .get("manifest")
+                    .and_then(|m| m.get("envelope_type"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| manifest_type.clone()),
+                manifest_type,
+                manifest_func,
+                inputs,
+                outputs,
+            });
         }
-
-        let filename = path
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown.beaver".to_string());
-
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to read beaver file {}: {}",
-                    path.display(),
-                    e
-                );
-                continue;
-            }
-        };
-
-        let json: serde_json::Value = match serde_json::from_str(&contents) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to parse beaver file {}: {}",
-                    path.display(),
-                    e
-                );
-                continue;
-            }
-        };
-
-        let manifest = json.get("manifest").cloned().unwrap_or_default();
-        let manifest_type = manifest
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let manifest_func = manifest
-            .get("func_name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let inputs = json
-            .get("inputs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let outputs = json
-            .get("outputs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        results.push(BeaverSummary {
-            filename,
-            path: path.to_string_lossy().to_string(),
-            sender: json
-                .get("sender")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            created_at: json
-                .get("created_at")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            name: json
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            envelope_id: json
-                .get("envelope_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            envelope_type: json
-                .get("manifest")
-                .and_then(|m| m.get("envelope_type"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| manifest_type.clone()),
-            manifest_type,
-            manifest_func,
-            inputs,
-            outputs,
-        });
     }
 
     // Sort by created_at descending

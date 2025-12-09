@@ -600,6 +600,21 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		}
 	}
 
+	function openCreateSessionWithDataset(dataset) {
+		const modal = document.getElementById('create-session-modal')
+		if (modal) {
+			contactAutocomplete.attachToInputs(['session-peer-input'])
+			modal.style.display = 'flex'
+			const nameInput = document.getElementById('session-name-input')
+			const descInput = document.getElementById('session-description-input')
+			const peerInput = document.getElementById('session-peer-input')
+			nameInput.value = dataset.name || ''
+			descInput.value = dataset.description || `Session for dataset: ${dataset.name}`
+			peerInput.value = dataset.owner || ''
+			nameInput.focus()
+		}
+	}
+
 	function hideCreateSessionModal() {
 		const modal = document.getElementById('create-session-modal')
 		if (modal) modal.style.display = 'none'
@@ -898,10 +913,15 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		stopSessionsAutoRefresh()
 	}
 
+	window.__sessionsModule = {
+		openCreateSessionWithDataset,
+	}
+
 	return {
 		loadSessions,
 		initializeSessionsTab,
 		activateSessionsTab,
 		deactivateSessionsTab,
+		openCreateSessionWithDataset,
 	}
 }
