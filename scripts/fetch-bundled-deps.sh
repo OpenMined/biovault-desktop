@@ -49,6 +49,12 @@ NEXTFLOW_VERSION_DEFAULT="$(read_config_value nextflow.version v25.10.2)"
 UV_VERSION_DEFAULT="$(read_config_value uv.version v0.9.14)"
 
 detect_platform() {
+  # Allow explicit overrides for cross-compilation (e.g., CI building x86_64 on arm64 runners)
+  if [[ -n "${BUNDLED_OS:-}" && -n "${BUNDLED_ARCH:-}" ]]; then
+    echo "${BUNDLED_OS}" "${BUNDLED_ARCH}"
+    return
+  fi
+
   local os arch
   case "$(uname -s)" in
     Darwin) os="macos" ;;
