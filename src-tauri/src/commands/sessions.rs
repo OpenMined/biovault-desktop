@@ -215,8 +215,8 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
 
     #[cfg(debug_assertions)]
     let templates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("templates");
+        .join("..")
+        .join("templates-dev");
 
     for entry in notebooks.iter() {
         let dest = session_path.join(&entry.dest);
@@ -297,8 +297,8 @@ fn template_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
     #[cfg(debug_assertions)]
     paths.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("templates"),
+            .join("..")
+            .join("templates-dev"),
     );
 
     if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
