@@ -352,9 +352,9 @@ pub struct ContactInfo {
 /// List all public key bundles in the vault (contacts), excluding the current identity
 #[tauri::command]
 pub fn key_list_contacts(current_email: Option<String>) -> Result<Vec<ContactInfo>, String> {
-    let _config =
+    let config =
         load_config(current_email.as_deref()).unwrap_or_else(|_| Config::new(String::new()));
-    let vault_path = resolve_vault_default(None);
+    let (_, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");
 
     if !bundles_dir.exists() {

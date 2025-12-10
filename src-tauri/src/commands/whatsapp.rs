@@ -118,6 +118,16 @@ fn get_bridge_path() -> Result<String, String> {
         }
     }
 
+    // For development, try relative to CARGO_MANIFEST_DIR (compile-time workspace path)
+    let manifest_bridge = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("whatsapp-bridge").join("bridge.js"));
+    if let Some(path) = manifest_bridge {
+        if path.exists() {
+            return Ok(path.to_string_lossy().to_string());
+        }
+    }
+
     // For development, try relative to workspace
     let dev_paths = &[
         "../whatsapp-bridge/bridge.js",
@@ -131,14 +141,20 @@ fn get_bridge_path() -> Result<String, String> {
         }
     }
 
-    // Try from BIOVAULT_HOME
+    // Try from BIOVAULT_HOME (traverse up to find workspace root)
     if let Ok(home) = std::env::var("BIOVAULT_HOME") {
-        let home_path = std::path::Path::new(&home)
-            .parent()
-            .map(|p| p.join("whatsapp-bridge").join("bridge.js"));
-        if let Some(path) = home_path {
-            if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
+        let home_path = std::path::Path::new(&home);
+        // Try multiple parent levels to find whatsapp-bridge
+        let mut current = home_path.parent();
+        for _ in 0..5 {
+            if let Some(parent) = current {
+                let bridge_path = parent.join("whatsapp-bridge").join("bridge.js");
+                if bridge_path.exists() {
+                    return Ok(bridge_path.to_string_lossy().to_string());
+                }
+                current = parent.parent();
+            } else {
+                break;
             }
         }
     }

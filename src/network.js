@@ -8,35 +8,49 @@ export function createNetworkModule({ invoke, shellApi }) {
 	let _currentView = 'peers'
 	let _searchQuery = ''
 
-	function buildIdenticon(seed, size = 48) {
+	function buildIdenticon(seed, displaySize = 48) {
 		let hash = 0
 		for (let i = 0; i < seed.length; i += 1) {
 			hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
 		}
 		const hue = hash % 360
-		const bg = `hsl(${hue}, 40%, 92%)`
-		const fg = `hsl(${hue}, 55%, 45%)`
-
-		const grid = 5
-		const cell = size / grid
+		const fg = `hsl(${hue}, 65%, 45%)`
+		const bg = '#f3f4f6'
+		const cells = 5
+		const size = 15
+		const padding = 6
+		let bits = hash || 1
 		let rects = ''
-		for (let y = 0; y < grid; y += 1) {
-			for (let x = 0; x < Math.ceil(grid / 2); x += 1) {
-				const idx = y * grid + x
-				const bit = (hash >> idx % 32) & 1
-				if (bit) {
-					rects += `<rect x="${x * cell}" y="${
-						y * cell
-					}" width="${cell}" height="${cell}" fill="${fg}"/>`
-					if (x !== grid - 1 - x) {
-						rects += `<rect x="${(grid - 1 - x) * cell}" y="${
-							y * cell
-						}" width="${cell}" height="${cell}" fill="${fg}"/>`
+		for (let y = 0; y < cells; y += 1) {
+			for (let x = 0; x < Math.ceil(cells / 2); x += 1) {
+				const on = bits & 1
+				bits = (bits >> 1) | ((bits & 1) << 31)
+				if (on) {
+					const rx = padding + x * size
+					const ry = padding + y * size
+					const mirrorX = padding + (cells - x - 1) * size
+					rects += `<rect x="${rx}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
+					if (mirrorX !== rx) {
+						rects += `<rect x="${mirrorX}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
 					}
 				}
 			}
 		}
-		return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg"><rect width="${size}" height="${size}" fill="${bg}" rx="8"/>${rects}</svg>`
+		const dim = padding * 2 + cells * size
+		return `<svg width="${displaySize}" height="${displaySize}" viewBox="0 0 ${dim} ${dim}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Identity fingerprint"><rect width="${dim}" height="${dim}" fill="${bg}" rx="12" ry="12"/>${rects}</svg>`
+	}
+
+	// Look up fingerprint for an identity from current scan results
+	function getFingerprintForIdentity(identity) {
+		if (!_currentScanResult || !identity) return null
+		const allContacts = [
+			...(_currentScanResult.contacts || []),
+			...(_currentScanResult.discovered || []),
+		]
+		const contact = allContacts.find(
+			(c) => c.identity && c.identity.toLowerCase() === identity.toLowerCase(),
+		)
+		return contact?.fingerprint || null
 	}
 
 	function formatFileSize(bytes) {
@@ -116,10 +130,10 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 		card.dataset.email = contact.identity
 
-		// Avatar with identicon
+		// Avatar with identicon (use fingerprint for consistent identity)
 		const avatarEl = card.querySelector('.contact-avatar')
 		if (avatarEl) {
-			avatarEl.innerHTML = buildIdenticon(contact.identity, 48)
+			avatarEl.innerHTML = buildIdenticon(contact.fingerprint || contact.identity, 48)
 		}
 
 		// Email
@@ -232,12 +246,15 @@ export function createNetworkModule({ invoke, shellApi }) {
 			row.classList.add('is-own')
 		}
 
-		// Owner with identicon
+		// Owner with identicon (use fingerprint for consistent identity)
 		const ownerIdenticonEl = row.querySelector('.owner-identicon')
 		if (ownerIdenticonEl) {
 			const parent = ownerIdenticonEl.parentElement
 			if (parent) {
-				const identiconSvg = buildIdenticon(dataset.owner, 32)
+				// Use fingerprint from dataset, fallback to lookup, fallback to email
+				const ownerFingerprint =
+					dataset.owner_fingerprint || getFingerprintForIdentity(dataset.owner) || dataset.owner
+				const identiconSvg = buildIdenticon(ownerFingerprint, 32)
 				const span = document.createElement('span')
 				span.innerHTML = identiconSvg
 				span.style.display = 'inline-flex'

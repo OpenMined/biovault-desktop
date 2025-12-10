@@ -410,14 +410,6 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
     let session_path = sessions_dir.join(&session_id);
     let owner = get_owner_email();
 
-    if request
-        .peer
-        .as_ref()
-        .is_some_and(|peer| peer.eq_ignore_ascii_case(&owner))
-    {
-        return Err("Peer email cannot be your own email".to_string());
-    }
-
     // Create session directory
     fs::create_dir_all(&session_path)
         .map_err(|e| format!("Failed to create session directory: {}", e))?;
@@ -522,13 +514,6 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
 pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<Session, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
     let owner = get_owner_email();
-
-    if peer
-        .as_ref()
-        .is_some_and(|p| p.eq_ignore_ascii_case(&owner))
-    {
-        return Err("Peer email cannot be your own email".to_string());
-    }
 
     db.connection()
         .execute(

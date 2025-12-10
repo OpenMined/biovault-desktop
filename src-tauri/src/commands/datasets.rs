@@ -531,6 +531,7 @@ pub struct DiscoveredDatasetAsset {
 pub struct DiscoveredDataset {
     pub name: String,
     pub owner: String,
+    pub owner_fingerprint: Option<String>,
     pub description: Option<String>,
     pub version: Option<String>,
     pub schema: Option<String>,
@@ -598,7 +599,25 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
         let is_own = owner_slug == current_slug;
 
         // Check if this peer is trusted (has imported bundle) - own datasets are always "trusted"
-        let is_trusted = is_own || bundles_dir.join(format!("{}.json", owner_slug)).exists();
+        let bundle_path = bundles_dir.join(format!("{}.json", owner_slug));
+        let is_trusted = is_own || bundle_path.exists();
+
+        // Try to get fingerprint from bundle
+        let owner_fingerprint = if bundle_path.exists() {
+            std::fs::read_to_string(&bundle_path)
+                .ok()
+                .and_then(|content| {
+                    serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("fingerprint")
+                                .and_then(|f| f.as_str())
+                                .map(String::from)
+                        })
+                })
+        } else {
+            None
+        };
 
         // Look for datasets.yaml index
         let index_path = datasite_path
@@ -686,6 +705,7 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
             datasets.push(DiscoveredDataset {
                 name: manifest.name.clone(),
                 owner: owner.clone(),
+                owner_fingerprint: owner_fingerprint.clone(),
                 description: manifest.description.clone(),
                 version: manifest.version.clone(),
                 schema: manifest.schema.clone(),

@@ -1,7 +1,12 @@
 # Ignore notebook files (prevent hot reload on save)
 *.ipynb
+**/*.ipynb
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
+
+# Ignore templates (contains demo notebooks that may be edited via symlinks)
+src-tauri/resources/templates/
+**/resources/templates/
 
 # Ignore beaver/data files
 *.beaver
