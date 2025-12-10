@@ -390,6 +390,21 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Clear quarantine on bundled binaries (macOS)
+        if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
+        run: |
+          for root in \
+            src-tauri/resources/syftbox \
+            src-tauri/resources/bundled/uv \
+            src-tauri/resources/bundled/java \
+            src-tauri/resources/bundled/nextflow; do
+            if [[ -d "$root" ]]; then
+              xattr -r -c "$root" 2>/dev/null || true
+            elif [[ -f "$root" ]]; then
+              xattr -c "$root" 2>/dev/null || true
+            fi
+          done
+
       - name: Create placeholder resources (arm64 no-bundle build)
         if: matrix.target == 'linux-arm64'
         run: |
@@ -520,6 +535,12 @@ jobs:
           mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}.dmg || true
           mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz || true
           mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz.sig || true
+
+      - name: Clear quarantine on macOS artifacts
+        if: runner.os == 'macOS'
+        run: |
+          find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.app" \) -print0 2>/dev/null | \
+            xargs -0 -I{} xattr -c "{}" 2>/dev/null || true
 
       - name: Build app (Windows)
         if: runner.os == 'Windows'
