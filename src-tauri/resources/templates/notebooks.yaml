@@ -1,0 +1,37 @@
+dev:
+  - source: session_template.ipynb
+    dest: template.ipynb
+  - source: demo_do.ipynb
+    dest: demo_do.ipynb
+  - source: 01-hello-beaver.ipynb
+    dest: 01-hello-beaver.ipynb
+  - source: 02-advanced-features-do.ipynb
+    dest: 02-advanced-features-do.ipynb
+  - source: 02-advanced-features-ds.ipynb
+    dest: 02-advanced-features-ds.ipynb
+  - source: 03-neural-network-do.ipynb
+    dest: 03-neural-network-do.ipynb
+  - source: 03-neural-network-ds.ipynb
+    dest: 03-neural-network-ds.ipynb
+  - source: 04-gwas-do.ipynb
+    dest: 04-gwas-do.ipynb
+  - source: 04-gwas-ds.ipynb
+    dest: 04-gwas-ds.ipynb
+
+prod:
+  - source: session_template.ipynb
+    dest: template.ipynb
+  - source: 01-hello-beaver.ipynb
+    dest: 01-hello-beaver.ipynb
+  - source: 02-advanced-features-do.ipynb
+    dest: 02-advanced-features-do.ipynb
+  - source: 02-advanced-features-ds.ipynb
+    dest: 02-advanced-features-ds.ipynb
+  - source: 03-neural-network-do.ipynb
+    dest: 03-neural-network-do.ipynb
+  - source: 03-neural-network-ds.ipynb
+    dest: 03-neural-network-ds.ipynb
+  - source: 04-gwas-do.ipynb
+    dest: 04-gwas-do.ipynb
+  - source: 04-gwas-ds.ipynb
+    dest: 04-gwas-ds.ipynb

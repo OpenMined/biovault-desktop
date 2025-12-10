@@ -14,15 +14,27 @@ use biovault::data::BioVaultDb;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus};
 use rand::Rng;
 use rusqlite::OptionalExtension;
+use serde::Deserialize;
 use serde_json::json;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use tauri::path::BaseDirectory;
+use tauri::Manager;
 
-// Embed notebooks at compile time
-const SESSION_TEMPLATE_NOTEBOOK: &str =
-    include_str!("../../resources/templates/session_template.ipynb");
-const DEMO_DO_NOTEBOOK: &str = include_str!("../../resources/templates/demo_do.ipynb");
-const DEMO_DS_NOTEBOOK: &str = include_str!("../../resources/templates/demo_ds.ipynb");
+#[derive(Debug, Deserialize, Default)]
+struct NotebookEntry {
+    source: String,
+    dest: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)] // Fields used conditionally via #[cfg(debug_assertions)]
+struct NotebookConfig {
+    #[serde(default)]
+    dev: Vec<NotebookEntry>,
+    #[serde(default)]
+    prod: Vec<NotebookEntry>,
+}
 
 fn generate_session_id() -> String {
     let mut rng = rand::thread_rng();
@@ -193,26 +205,21 @@ fn send_session_invite_response_message(
 
 /// Copy example notebooks into the session folder
 /// In dev mode, creates symlinks so edits are written back to source
-/// In release mode, copies the embedded content
-fn copy_example_notebooks(session_path: &Path) {
-    // Files to copy/symlink: (dest_name, embedded_content, source_filename)
-    let notebooks = [
-        (
-            "template.ipynb",
-            SESSION_TEMPLATE_NOTEBOOK,
-            "session_template.ipynb",
-        ),
-        ("demo_do.ipynb", DEMO_DO_NOTEBOOK, "demo_do.ipynb"),
-        ("demo_ds.ipynb", DEMO_DS_NOTEBOOK, "demo_ds.ipynb"),
-    ];
+/// In release mode, copies bytes from bundled resources
+fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
+    let config = load_notebook_config(app);
+    #[cfg(debug_assertions)]
+    let notebooks: Vec<NotebookEntry> = config.dev;
+    #[cfg(not(debug_assertions))]
+    let notebooks: Vec<NotebookEntry> = config.prod;
 
     #[cfg(debug_assertions)]
-    let templates_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let templates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("templates");
 
-    for (dest_name, _content, _source_name) in notebooks.iter() {
-        let dest = session_path.join(dest_name);
+    for entry in notebooks.iter() {
+        let dest = session_path.join(&entry.dest);
         if dest.exists() {
             continue;
         }
@@ -220,16 +227,16 @@ fn copy_example_notebooks(session_path: &Path) {
         #[cfg(debug_assertions)]
         {
             // Dev mode: create symlink to source file
-            let source = templates_dir.join(_source_name);
+            let source = templates_dir.join(&entry.source);
             if source.exists() {
                 #[cfg(unix)]
                 {
                     if let Err(e) = std::os::unix::fs::symlink(&source, &dest) {
-                        eprintln!("Warning: Failed to symlink notebook {}: {}", dest_name, e);
+                        eprintln!("Warning: Failed to symlink notebook {}: {}", entry.dest, e);
                     } else {
                         eprintln!(
                             "[Sessions] Symlinked demo notebook: {} -> {}",
-                            dest_name,
+                            entry.dest,
                             source.display()
                         );
                     }
@@ -237,26 +244,88 @@ fn copy_example_notebooks(session_path: &Path) {
                 #[cfg(windows)]
                 {
                     // Windows symlinks require admin or dev mode, fall back to copy
-                    if let Err(e) = fs::write(&dest, _content) {
-                        eprintln!("Warning: Failed to copy notebook {}: {}", dest_name, e);
-                    } else {
-                        eprintln!("[Sessions] Copied demo notebook: {}", dest_name);
+                    if let Some(bytes) = read_template_bytes(app, &entry.source) {
+                        if let Err(e) = fs::write(&dest, bytes) {
+                            eprintln!("Warning: Failed to copy notebook {}: {}", entry.dest, e);
+                        } else {
+                            eprintln!("[Sessions] Copied demo notebook: {}", entry.dest);
+                        }
                     }
                 }
                 continue;
             }
         }
 
-        // Release mode (or symlink source not found): copy embedded content
-        #[cfg(not(debug_assertions))]
-        {
-            if let Err(e) = fs::write(&dest, _content) {
-                eprintln!("Warning: Failed to copy notebook {}: {}", dest_name, e);
+        // Copy from bundled resources (or dev fallback) when no symlink is created
+        if let Some(bytes) = read_template_bytes(app, &entry.source) {
+            if let Err(e) = fs::write(&dest, bytes) {
+                eprintln!("Warning: Failed to copy notebook {}: {}", entry.dest, e);
             } else {
-                eprintln!("[Sessions] Copied demo notebook: {}", dest_name);
+                eprintln!("[Sessions] Copied demo notebook: {}", entry.dest);
             }
+        } else {
+            eprintln!(
+                "Warning: Skipping notebook {}: template not found in resources",
+                entry.dest
+            );
         }
     }
+}
+
+fn load_notebook_config(app: &tauri::AppHandle) -> NotebookConfig {
+    const CONFIG_NAME: &str = "notebooks.yaml";
+    if let Some(bytes) = read_template_bytes(app, CONFIG_NAME) {
+        serde_yaml::from_slice(&bytes).unwrap_or_else(|e| {
+            eprintln!(
+                "Warning: Failed to parse notebook config ({}): {}",
+                CONFIG_NAME, e
+            );
+            NotebookConfig::default()
+        })
+    } else {
+        eprintln!(
+            "Warning: Notebook config {} not found; skipping example notebooks",
+            CONFIG_NAME
+        );
+        NotebookConfig::default()
+    }
+}
+
+fn template_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    #[cfg(debug_assertions)]
+    paths.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("templates"),
+    );
+
+    if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+        paths.push(resource_dir.join("resources").join("templates"));
+        paths.push(resource_dir.join("templates"));
+    }
+
+    paths.into_iter().filter(|p| p.exists()).collect()
+}
+
+fn find_template_path(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    for dir in template_dirs(app) {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn read_template_bytes(app: &tauri::AppHandle, name: &str) -> Option<Vec<u8>> {
+    find_template_path(app, name)
+        .and_then(|path| fs::read(&path).ok())
+        .or_else(|| {
+            eprintln!("[Sessions] Template not found or unreadable: {}", name);
+            None
+        })
 }
 
 /// Ensure the RPC session folder has proper syft.pub.yaml permissions for SyftBox sync
@@ -663,6 +732,7 @@ fn write_session_json(session_path: &std::path::Path, session: &Session) -> Resu
 
 #[tauri::command]
 pub async fn launch_session_jupyter(
+    app: tauri::AppHandle,
     session_id: String,
     python_version: Option<String>,
     copy_examples: Option<bool>,
@@ -681,7 +751,7 @@ pub async fn launch_session_jupyter(
 
     // Copy example notebooks if requested
     if copy_examples.unwrap_or(false) {
-        copy_example_notebooks(&private_session_path);
+        copy_example_notebooks(&private_session_path, &app);
     }
 
     tauri::async_runtime::spawn_blocking(move || {
