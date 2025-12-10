@@ -148,8 +148,18 @@ fn expose_bundled_binaries(app: &tauri::App) {
             .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
             .filter(|p| p.exists());
 
-        // In development mode, also try the source directory
-        if candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
+        // In development mode only, also try the source directory.
+        // We detect dev mode by checking if we're NOT inside an .app bundle.
+        #[cfg(target_os = "macos")]
+        let is_production = std::env::current_exe()
+            .map(|p| p.to_string_lossy().contains(".app/Contents/"))
+            .unwrap_or(false);
+        #[cfg(not(target_os = "macos"))]
+        let is_production = false; // TODO: detect production on other platforms
+
+        if !is_production
+            && (candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false))
+        {
             // Try multiple possible paths for dev mode
             let possible_paths = if let Ok(cwd) = std::env::current_dir() {
                 vec![
