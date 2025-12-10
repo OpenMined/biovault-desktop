@@ -165,6 +165,83 @@ do_branch() {
     show_tree
 }
 
+collect_uninitialized_submodules() {
+    local base_path="$1"
+    local submodules=$(git -C "$base_path" config --file .gitmodules --get-regexp path 2>/dev/null | awk '{print $2}')
+
+    for submodule in $submodules; do
+        local full_path="$base_path/$submodule"
+        if [[ ! -d "$full_path/.git" && ! -f "$full_path/.git" ]]; then
+            echo "$full_path"
+        else
+            collect_uninitialized_submodules "$full_path"
+        fi
+    done
+}
+
+do_init() {
+    echo -e "${YELLOW}Current state:${NC}"
+    echo ""
+    show_tree
+    echo ""
+
+    local uninit_modules=$(collect_uninitialized_submodules ".")
+
+    if [[ -z "$uninit_modules" ]]; then
+        echo -e "${GREEN}All submodules are already initialized.${NC}"
+        exit 0
+    fi
+
+    echo -e "${CYAN}Uninitialized submodules that will be initialized:${NC}"
+    echo "$uninit_modules" | while read -r mod; do
+        echo -e "  → ${mod#./}"
+    done
+    echo ""
+    echo -e "${YELLOW}This will run 'git submodule update --init' recursively.${NC}"
+    echo -e "${YELLOW}No existing data will be modified or deleted.${NC}"
+    echo -ne "${YELLOW}Continue? [y/N]: ${NC}"
+    read -r confirm
+
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "${BLUE}Aborted.${NC}"
+        exit 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}Initializing submodules recursively...${NC}"
+
+    local pass=1
+    while true; do
+        uninit_modules=$(collect_uninitialized_submodules ".")
+        if [[ -z "$uninit_modules" ]]; then
+            break
+        fi
+
+        echo -e "${YELLOW}Pass $pass:${NC}"
+        echo "$uninit_modules" | while read -r mod; do
+            local parent_dir=$(dirname "$mod")
+            local submod_name=$(basename "$mod")
+            echo -ne "  → ${mod#./}: "
+            if git -C "$parent_dir" submodule update --init "$submod_name" 2>/dev/null; then
+                echo -e "${GREEN}initialized${NC}"
+            else
+                echo -e "${RED}failed${NC}"
+            fi
+        done
+
+        ((pass++))
+        if [[ $pass -gt 10 ]]; then
+            echo -e "${RED}Too many passes, possible circular dependency. Aborting.${NC}"
+            break
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}Done! New state:${NC}"
+    echo ""
+    show_tree
+}
+
 do_reset() {
     echo -e "${YELLOW}Current state:${NC}"
     echo ""
@@ -225,6 +302,9 @@ case "$1" in
     --branch)
         do_branch "$2"
         ;;
+    --init)
+        do_init
+        ;;
     --help|-h)
         echo "Usage: ./mods.sh [OPTIONS]"
         echo ""
@@ -232,7 +312,8 @@ case "$1" in
         echo "  (none)              Show submodule tree with branch/dirty status"
         echo "  --branch [name]     Checkout/create branch in all dirty submodules"
         echo "                      (prompts for name if not provided, defaults to root branch)"
-        echo "  --reset             Reset all submodules to main/master"
+        echo "  --init              Initialize uninitialized submodules (safe, no data loss)"
+        echo "  --reset             Reset all submodules to main/master (DESTRUCTIVE)"
         echo "  --help, -h          Show this help"
         ;;
     *)

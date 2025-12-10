@@ -18,22 +18,27 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-# Import base64-encoded P12 if provided
-if [[ -n "${SIGNING_CERTIFICATE_P12_DATA:-}" ]]; then
-  if [[ -z "${SIGNING_CERTIFICATE_PASSWORD:-}" ]]; then
-    echo "❌ SIGNING_CERTIFICATE_PASSWORD not set for provided SIGNING_CERTIFICATE_P12_DATA"
-    exit 1
+# Import base64-encoded P12 only if cert not already in keychain (CI use case)
+# Skip import if we can already find the Developer ID cert
+if ! security find-identity -p codesigning -v | grep -q "Developer ID Application"; then
+  if [[ -n "${SIGNING_CERTIFICATE_P12_DATA:-}" ]]; then
+    if [[ -z "${SIGNING_CERTIFICATE_PASSWORD:-}" ]]; then
+      echo "❌ SIGNING_CERTIFICATE_PASSWORD not set for provided SIGNING_CERTIFICATE_P12_DATA"
+      exit 1
+    fi
+    echo "Importing Developer ID certificate from SIGNING_CERTIFICATE_P12_DATA..."
+    TRAP_P12="$(mktemp)"
+    echo "$SIGNING_CERTIFICATE_P12_DATA" | base64 -d >"$TRAP_P12"
+    security import "$TRAP_P12" -k ~/Library/Keychains/login.keychain-db \
+      -P "$SIGNING_CERTIFICATE_PASSWORD" \
+      -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+    # Optionally set partition list if KEYCHAIN_PASSWORD provided
+    if [[ -n "${KEYCHAIN_PASSWORD:-}" ]]; then
+      security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db >/dev/null 2>&1 || true
+    fi
   fi
-  echo "Importing Developer ID certificate from SIGNING_CERTIFICATE_P12_DATA..."
-  TRAP_P12="$(mktemp)"
-  echo "$SIGNING_CERTIFICATE_P12_DATA" | base64 -d >"$TRAP_P12"
-  security import "$TRAP_P12" -k ~/Library/Keychains/login.keychain-db \
-    -P "$SIGNING_CERTIFICATE_PASSWORD" \
-    -T /usr/bin/codesign -T /usr/bin/security >/dev/null
-  # Optionally set partition list if KEYCHAIN_PASSWORD provided
-  if [[ -n "${KEYCHAIN_PASSWORD:-}" ]]; then
-    security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" ~/Library/Keychains/login.keychain-db >/dev/null 2>&1 || true
-  fi
+else
+  echo "Developer ID certificate already in keychain, skipping import"
 fi
 
 # Resolve signing identity if not explicitly set

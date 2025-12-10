@@ -134,11 +134,6 @@ fn expose_bundled_binaries(app: &tauri::App) {
             relative_path
         );
 
-        if std::env::var(env_key).is_ok() {
-            crate::desktop_log!("⏭️  {} already set, skipping", env_key);
-            continue;
-        }
-
         // Try resolving via Tauri's resource system (works in production).
         // We look under both the legacy path ("bundled/...") and the bundle-config
         // path ("resources/bundled/...") because macOS packages include the
@@ -153,8 +148,18 @@ fn expose_bundled_binaries(app: &tauri::App) {
             .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
             .filter(|p| p.exists());
 
-        // In development mode, also try the source directory
-        if candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
+        // In development mode only, also try the source directory.
+        // We detect dev mode by checking if we're NOT inside an .app bundle.
+        #[cfg(target_os = "macos")]
+        let is_production = std::env::current_exe()
+            .map(|p| p.to_string_lossy().contains(".app/Contents/"))
+            .unwrap_or(false);
+        #[cfg(not(target_os = "macos"))]
+        let is_production = false; // TODO: detect production on other platforms
+
+        if !is_production
+            && (candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false))
+        {
             // Try multiple possible paths for dev mode
             let possible_paths = if let Ok(cwd) = std::env::current_dir() {
                 vec![
@@ -185,7 +190,50 @@ fn expose_bundled_binaries(app: &tauri::App) {
             }
         }
 
-        match candidate {
+        // Prefer bundled path; only fall back to pre-set env if no bundled alternative
+        let mut use_path: Option<std::path::PathBuf> = candidate.filter(|p| p.exists());
+
+        if use_path.is_none() {
+            // As a last resort, scan the resources directory for the binary name
+            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                let binary_name = if env_key.contains("JAVA") {
+                    "java"
+                } else if env_key.contains("NEXTFLOW") {
+                    "nextflow"
+                } else if env_key.contains("UV") {
+                    "uv"
+                } else {
+                    ""
+                };
+
+                if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
+                    use_path = Some(found);
+                }
+            }
+        }
+
+        if use_path.is_none() {
+            // Only if no bundled option exists, honor an existing env var
+            if let Ok(existing) = std::env::var(env_key) {
+                let existing_path = std::path::PathBuf::from(existing.trim());
+                if existing_path.exists() {
+                    crate::desktop_log!(
+                        "⏭️  {} using pre-set path (no bundled override found): {}",
+                        env_key,
+                        existing_path.display()
+                    );
+                    use_path = Some(existing_path);
+                } else {
+                    crate::desktop_log!(
+                        "⚠️ {} was set to a missing path ({}); no bundled alternative found",
+                        env_key,
+                        existing_path.display()
+                    );
+                }
+            }
+        }
+
+        match use_path {
             Some(path) if path.exists() => {
                 let candidate_str = path.to_string_lossy().to_string();
                 std::env::set_var(env_key, &candidate_str);
@@ -203,37 +251,6 @@ fn expose_bundled_binaries(app: &tauri::App) {
                 }
             }
             _ => {
-                // As a last resort, scan the resources directory for the binary name
-                if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
-                    let binary_name = if env_key.contains("JAVA") {
-                        "java"
-                    } else if env_key.contains("NEXTFLOW") {
-                        "nextflow"
-                    } else if env_key.contains("UV") {
-                        "uv"
-                    } else {
-                        ""
-                    };
-
-                    if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
-                        let found_str = found.to_string_lossy().to_string();
-                        std::env::set_var(env_key, &found_str);
-                        crate::desktop_log!("🔧 Using bundled {} via scan: {}", env_key, found_str);
-
-                        if env_key == "BIOVAULT_BUNDLED_JAVA" {
-                            if let Some(parent) = found.parent() {
-                                if let Some(home) = parent.parent() {
-                                    std::env::set_var(
-                                        "BIOVAULT_BUNDLED_JAVA_HOME",
-                                        home.to_string_lossy().to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                }
-
                 crate::desktop_log!(
                     "⚠️ Bundled binary not found for {}: {}",
                     env_key,

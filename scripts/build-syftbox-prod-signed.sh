@@ -53,9 +53,10 @@ echo "[syftbox] Build complete: $OUT_BIN"
 echo "[syftbox] Stripping extended attributes..."
 xattr -c "$OUT_BIN" 2>/dev/null || true
 
-# Sign with Developer ID
-echo "[syftbox] Signing with Developer ID..."
-codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$OUT_BIN"
+# Sign with Developer ID and entitlements
+ENTITLEMENTS="$ROOT_DIR/scripts/syftbox.entitlements"
+echo "[syftbox] Signing with Developer ID and entitlements..."
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$OUT_BIN"
 
 # Verify signature
 echo "[syftbox] Verifying signature..."
