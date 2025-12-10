@@ -81,6 +81,22 @@ resolve_app_path() {
   exit 1
 }
 
+if [[ -n "$APP_INPUT" && -f "$APP_INPUT" && "$APP_INPUT" != *.app && "$APP_INPUT" != *.dmg ]]; then
+  BIN="$APP_INPUT"
+  info "Checking standalone binary: $BIN"
+  xattr -l "$BIN" 2>/dev/null | grep -E 'com.apple.quarantine|com.apple.provenance' || echo "No quarantine/provenance attributes."
+  echo "Codesign:"
+  codesign -dv "$BIN"
+  echo "spctl:"
+  if spctl --assess --type exec "$BIN"; then
+    echo "spctl: accepted"
+  else
+    echo "spctl: rejected"
+    exit 1
+  fi
+  exit 0
+fi
+
 resolve_app_path
 info "Checking app: $APP_PATH"
 

@@ -441,6 +441,13 @@ jobs:
       - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
         run: |
+          # Fail early if the signing cert is expired or expiring within 30 days
+          if ! security find-certificate -c "$APPLE_SIGNING_IDENTITY" -p | openssl x509 -noout -checkend $((60*60*24*30)); then
+            echo "❌ Signing certificate is expired or expires within 30 days: $APPLE_SIGNING_IDENTITY"
+            security find-certificate -c "$APPLE_SIGNING_IDENTITY" -p | openssl x509 -noout -dates -subject
+            exit 1
+          fi
+
           echo "Signing all bundled binaries for notarization..."
 
           # Sign syftbox
@@ -480,6 +487,18 @@ jobs:
           fi
 
           echo "Finished signing bundled binaries"
+
+          echo "Verifying bundled binaries (codesign/spctl)..."
+          set -e
+          for f in "$SYFTBOX_BIN" \
+            $(find src-tauri/resources/bundled/uv -type f -perm +111 2>/dev/null) \
+            $(find src-tauri/resources/bundled/nextflow -type f -perm +111 2>/dev/null) \
+            $(find src-tauri/resources/bundled/java/macos-aarch64 -type f \( -perm +111 -o -name "*.dylib" \) 2>/dev/null); do
+            [[ -n "$f" ]] || continue
+            codesign --verify --verbose "$f"
+            spctl --assess --type exec "$f"
+          done
+          set +e
 
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
