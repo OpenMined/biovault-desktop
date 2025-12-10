@@ -1,6 +1,8 @@
-
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Local dev build with ad-hoc signing (no notarization)
+# For production builds use: ./build-signed.sh
 
 # Parse flags
 CLEAN=false
@@ -17,14 +19,14 @@ if [[ "$CLEAN" == "true" ]]; then
   cargo clean --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
 fi
 
-# Ensure bundled binaries (java/nextflow/uv) and SyftBox client are present before packaging.
+# Build syftbox and fetch bundled deps
 chmod +x scripts/build-syftbox-prod.sh scripts/fetch-bundled-deps.sh
 ./scripts/build-syftbox-prod.sh
 ./scripts/fetch-bundled-deps.sh
 
-# On macOS, strip quarantine and ad-hoc sign the bundled syftbox binary so Gatekeeper
-# doesn't kill it during local testing.
+# On macOS, strip quarantine and ad-hoc sign for local testing
 if [[ "$(uname)" == "Darwin" ]]; then
+  echo "Stripping extended attributes..."
   for root in \
     src-tauri/resources/syftbox \
     src-tauri/resources/bundled/uv \
@@ -37,17 +39,30 @@ if [[ "$(uname)" == "Darwin" ]]; then
     fi
   done
 
-  # Ad-hoc sign all bundled executables and dylibs before Tauri packages them
-  echo "Signing bundled executables..."
+  # Ad-hoc sign all bundled executables and dylibs
+  echo "Ad-hoc signing bundled executables..."
   find src-tauri/resources/bundled src-tauri/resources/syftbox -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
     codesign --force --sign - "$f" 2>/dev/null || true
   done || true
 
-  # If a DMG already exists from a prior build, clear its quarantine/provenance
-  # so local test runs of the artifact don't get blocked.
+  # Clear quarantine on any existing DMGs
   find src-tauri/target -name "*.dmg" -type f -maxdepth 5 -print0 2>/dev/null | while IFS= read -r -d '' dmg; do
     xattr -c "$dmg" 2>/dev/null || true
   done || true
 fi
 
-bun run tauri build
+# Build without notarization (local dev)
+echo "Running tauri build (dev mode, no notarization)..."
+APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" bun run tauri build
+
+# Clear quarantine on output artifacts
+if [[ "$(uname)" == "Darwin" ]]; then
+  echo "Clearing quarantine on artifacts..."
+  find src-tauri/target -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.tar.gz" \) -maxdepth 5 -print0 2>/dev/null | while IFS= read -r -d '' artifact; do
+    xattr -c "$artifact" 2>/dev/null || true
+  done || true
+fi
+
+echo ""
+echo "✅ Dev build complete (ad-hoc signed, not notarized)"
+echo "   For production builds use: ./build-signed.sh"
