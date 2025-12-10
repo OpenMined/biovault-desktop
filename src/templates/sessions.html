@@ -51,6 +51,30 @@
 		<div class="sessions-container">
 			<!-- Session List Sidebar -->
 			<div class="session-sidebar">
+				<!-- Search -->
+				<div class="session-sidebar-top">
+					<div class="session-search-wrapper">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<circle cx="11" cy="11" r="8"></circle>
+							<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+						</svg>
+						<input
+							type="text"
+							id="session-search"
+							placeholder="Search sessions..."
+							class="session-search-input"
+						/>
+					</div>
+				</div>
 				<div class="session-invitations">
 					<div class="session-invitations-header">
 						<p class="sidebar-label">Invitations</p>
@@ -96,6 +120,32 @@
 						<div class="session-info-row">
 							<span class="session-info-label">Path:</span>
 							<span id="session-path" class="session-info-value session-path-value">-</span>
+						</div>
+					</div>
+
+					<!-- Linked Datasets -->
+					<div class="session-datasets-panel">
+						<div class="session-datasets-header">
+							<h4>
+								Linked Datasets <span id="session-datasets-count" class="session-count"></span>
+							</h4>
+							<button id="add-dataset-btn" class="session-link-btn" title="Link a dataset">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								Add
+							</button>
+						</div>
+						<div id="session-datasets-list" class="session-datasets-list">
+							<!-- Datasets rendered here -->
 						</div>
 					</div>
 
@@ -198,6 +248,9 @@
 				<button id="close-session-modal-btn" class="modal-close">&times;</button>
 			</div>
 			<div class="modal-body">
+				<!-- Dataset badge (shown when creating session from dataset) -->
+				<div id="session-dataset-badge" class="session-dataset-badge" style="display: none"></div>
+
 				<div class="form-group">
 					<label for="session-name-input">Session Name</label>
 					<input
@@ -254,6 +307,47 @@
 			<div class="modal-footer">
 				<button id="cancel-peer-modal-btn" class="session-secondary">Cancel</button>
 				<button id="confirm-add-peer-btn" class="session-cta">Add Collaborator</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Add Dataset Modal -->
+	<div id="add-dataset-modal" class="modal-overlay" style="display: none">
+		<div class="modal-content session-modal">
+			<div class="modal-header">
+				<h2>Link Dataset</h2>
+				<button id="close-dataset-modal-btn" class="modal-close">&times;</button>
+			</div>
+			<div class="modal-body">
+				<p class="modal-description">
+					Select a dataset from your library or the network to link to this session.
+				</p>
+
+				<!-- Dataset source tabs -->
+				<div class="dataset-source-tabs">
+					<button class="dataset-source-tab active" data-source="yours">Your Datasets</button>
+					<button class="dataset-source-tab" data-source="network">Network</button>
+				</div>
+
+				<!-- Dataset list -->
+				<div id="add-dataset-list" class="add-dataset-list">
+					<div class="add-dataset-loading">Loading datasets...</div>
+				</div>
+
+				<!-- Manual URL input -->
+				<div class="add-dataset-manual">
+					<label for="dataset-url-input">Or enter dataset URL directly:</label>
+					<input
+						type="text"
+						id="dataset-url-input"
+						placeholder="syft://user@example.com/public/biovault/datasets/..."
+						autocomplete="off"
+					/>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<button id="cancel-dataset-modal-btn" class="session-secondary">Cancel</button>
+				<button id="confirm-add-dataset-btn" class="session-cta" disabled>Link Dataset</button>
 			</div>
 		</div>
 	</div>

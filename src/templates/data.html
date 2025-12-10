@@ -1,5 +1,5 @@
 <div class="view-container">
-	<!-- Page Header -->
+	<!-- Page Header - Clean and simple -->
 	<header class="page-header">
 		<div class="page-header-left">
 			<div class="page-header-title-row">
@@ -24,8 +24,6 @@
 					fill="none"
 					stroke="currentColor"
 					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
 				>
 					<circle cx="11" cy="11" r="8"></circle>
 					<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
@@ -33,97 +31,8 @@
 				<input type="text" id="file-search" placeholder="Search files..." />
 			</div>
 
-			<!-- Selection Actions (hidden by default) -->
-			<div class="selection-actionsmodern" style="display: none" id="selection-actions-group">
-				<span class="selection-count-text" id="selection-count-text">0</span>
-				<button
-					id="delete-selected-btn"
-					class="btn-icon btn-icon-small"
-					title="Delete selected files"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<polyline points="3 6 5 6 21 6"></polyline>
-						<path
-							d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-						></path>
-					</svg>
-				</button>
-			</div>
-
-			<!-- Queue Controls -->
-			<div class="queue-cardmodern" id="queue-card-container" style="display: none">
-				<button id="process-queue-btn" class="btn-action" title="Toggle queue processing">
-					<span id="queue-btn-icon-container" class="queue-icon-wrapper"></span>
-					<span id="queue-btn-text" class="queue-btn-label">Resume</span>
-				</button>
-				<div class="queue-statusmodern" id="queue-status-indicator" style="display: none">
-					<div class="queue-status-content">
-						<span id="queue-spinner-container" class="queue-spinner-wrapper" style="display: none">
-							<svg width="12" height="12" viewBox="0 0 24 24" class="queue-spinner-svg">
-								<circle
-									cx="12"
-									cy="12"
-									r="10"
-									stroke="currentColor"
-									stroke-width="2"
-									fill="none"
-									opacity="0.25"
-								/>
-								<path
-									d="M12 2 A10 10 0 0 1 22 12"
-									stroke="currentColor"
-									stroke-width="2"
-									fill="none"
-									stroke-linecap="round"
-								/>
-							</svg>
-						</span>
-						<span id="pending-count" class="queue-count">0</span>
-						<span class="queue-time-estimate" id="queue-time-estimate-display"></span>
-					</div>
-				</div>
-				<button
-					id="clear-queue-btn"
-					class="btn-icon btn-icon-small"
-					title="Clear all pending files"
-					style="display: none"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<line x1="18" y1="6" x2="6" y2="18"></line>
-						<line x1="6" y1="6" x2="18" y2="18"></line>
-					</svg>
-				</button>
-			</div>
-
 			<!-- Primary Actions -->
 			<div class="page-header-actions">
-				<button id="run-analysis-btn" class="btn-action" title="Select files to run pipeline">
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<polygon points="5 3 19 12 5 21 5 3"></polygon>
-					</svg>
-					<span id="run-analysis-text">Run Pipeline</span>
-				</button>
 				<button id="open-import-modal-btn" class="btn-primary">
 					<svg
 						width="14"
@@ -134,14 +43,143 @@
 						stroke-width="2"
 					>
 						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-						<polyline points="7 10 12 15 17 10"></polyline>
-						<line x1="12" y1="15" x2="12" y2="3"></line>
+						<polyline points="17 8 12 3 7 8"></polyline>
+						<line x1="12" y1="3" x2="12" y2="15"></line>
 					</svg>
 					<span>Import</span>
 				</button>
 			</div>
 		</div>
 	</header>
+
+	<!-- Selection Toolbar - Appears when files are selected -->
+	<div class="data-selection-toolbar" id="selection-actions-group" style="display: none">
+		<div class="selection-toolbar-left">
+			<div class="selection-info">
+				<span class="selection-count" id="selection-count-text">0</span>
+				<span class="selection-label">files selected</span>
+			</div>
+			<button class="toolbar-btn-clear" id="clear-selection-btn" title="Clear selection">
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<line x1="18" y1="6" x2="6" y2="18"></line>
+					<line x1="6" y1="6" x2="18" y2="18"></line>
+				</svg>
+			</button>
+		</div>
+		<div class="selection-toolbar-actions">
+			<button
+				id="create-dataset-from-selection-btn"
+				class="toolbar-btn"
+				title="Package into a dataset"
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<path
+						d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+					></path>
+				</svg>
+				<span>Create Dataset</span>
+			</button>
+			<button
+				id="run-analysis-btn"
+				class="toolbar-btn toolbar-btn-primary"
+				title="Run analysis pipeline"
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<polygon points="5 3 19 12 5 21 5 3"></polygon>
+				</svg>
+				<span id="run-analysis-text">Run Pipeline</span>
+			</button>
+			<button
+				id="delete-selected-btn"
+				class="toolbar-btn toolbar-btn-danger"
+				title="Delete selected files"
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<polyline points="3 6 5 6 21 6"></polyline>
+					<path
+						d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+					></path>
+				</svg>
+			</button>
+		</div>
+	</div>
+
+	<!-- Queue Status Bar - Appears when files are in queue -->
+	<div class="data-queue-bar" id="queue-card-container" style="display: none">
+		<div class="queue-bar-left">
+			<button id="process-queue-btn" class="queue-bar-toggle" title="Toggle queue processing">
+				<span id="queue-btn-icon-container" class="queue-bar-icon"></span>
+				<span id="queue-btn-text">Resume</span>
+			</button>
+			<div class="queue-bar-status" id="queue-status-indicator">
+				<span id="queue-spinner-container" class="queue-bar-spinner" style="display: none">
+					<svg width="14" height="14" viewBox="0 0 24 24" class="queue-spinner-svg">
+						<circle
+							cx="12"
+							cy="12"
+							r="10"
+							stroke="currentColor"
+							stroke-width="2"
+							fill="none"
+							opacity="0.25"
+						/>
+						<path
+							d="M12 2 A10 10 0 0 1 22 12"
+							stroke="currentColor"
+							stroke-width="2"
+							fill="none"
+							stroke-linecap="round"
+						/>
+					</svg>
+				</span>
+				<span id="pending-count" class="queue-bar-count">0</span>
+				<span class="queue-bar-label">pending</span>
+				<span class="queue-bar-time" id="queue-time-estimate-display"></span>
+			</div>
+		</div>
+		<button id="clear-queue-btn" class="queue-bar-clear" title="Clear all pending files">
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+			>
+				<line x1="18" y1="6" x2="6" y2="18"></line>
+				<line x1="6" y1="6" x2="18" y2="18"></line>
+			</svg>
+			<span>Clear Queue</span>
+		</button>
+	</div>
 
 	<!-- Main Content -->
 	<div class="view-content">
@@ -216,139 +254,320 @@
 
 			<!-- Data-focused datasets panel -->
 			<div class="data-main-layout" id="dataset-data-section" style="display: none">
-				<div class="files-panel">
-					<div
-						class="panel-header"
-						style="display: flex; justify-content: space-between; align-items: center; gap: 12px"
-					>
-						<div>
-							<h3 class="panel-title" style="margin: 0">Datasets</h3>
-							<p class="panel-subtitle" style="margin: 2px 0 0; color: var(--muted-text)">
-								Manage dataset manifests, assets, and publishing to your datasite
+				<div class="files-panel datasets-panel-modern">
+					<div class="datasets-header">
+						<div class="datasets-header-left">
+							<h3 class="datasets-title">Your Datasets</h3>
+							<p class="datasets-subtitle">
+								Package files as datasets, publish to your datasite, and share with collaborators
 							</p>
 						</div>
-						<div class="panel-actions" style="display: flex; gap: 8px">
-							<button id="refresh-datasets-btn" class="btn-icon" title="Reload datasets">
-								<img src="assets/icons/rerun.svg" width="16" height="16" alt="Reload" />
+						<div class="datasets-header-actions">
+							<button id="refresh-datasets-btn" class="btn-secondary-sm" title="Refresh">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<polyline points="23 4 23 10 17 10"></polyline>
+									<polyline points="1 20 1 14 7 14"></polyline>
+									<path
+										d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+									></path>
+								</svg>
+								<span>Refresh</span>
 							</button>
-							<button id="new-dataset-btn" class="btn-primary">New Dataset</button>
+							<button id="new-dataset-btn" class="btn-primary">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+								>
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								<span>New Dataset</span>
+							</button>
 						</div>
 					</div>
 
-					<div class="datasets-table-wrapper">
-						<table class="files-table datasets-table">
-							<thead>
-								<tr>
-									<th>Name</th>
-									<th>Version</th>
-									<th>Author</th>
-									<th>Schema</th>
-									<th>Assets</th>
-									<th>Published</th>
-									<th class="col-actions">Actions</th>
-								</tr>
-							</thead>
-							<tbody id="datasets-table-body"></tbody>
-						</table>
+					<!-- Dataset visibility info box -->
+					<div class="dataset-visibility-info" id="dataset-visibility-info">
+						<svg
+							class="visibility-info-icon"
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="12" cy="12" r="10" />
+							<path d="M12 16v-4" />
+							<path d="M12 8h.01" />
+						</svg>
+						<span class="visibility-info-text"
+							><strong>Published</strong> datasets appear in the Network tab for synced peers.
+							Preview data helps others understand your dataset.</span
+						>
+						<button class="visibility-info-dismiss" id="dismiss-dataset-info" title="Dismiss">
+							×
+						</button>
 					</div>
 
-					<div id="datasets-empty-state" class="files-empty-state" style="display: none">
-						<svg width="64" height="64" viewBox="0 0 16 16" fill="currentColor" opacity="0.2">
-							<path d="M4 2h8a2 2 0 0 1 2 2v8.5l-3-2-3 2-3-2-3 2V4a2 2 0 0 1 2-2z" />
-						</svg>
-						<h3>No datasets found</h3>
-						<p>Create a dataset or publish one from the CLI to see it here.</p>
+					<div class="datasets-grid" id="datasets-grid">
+						<!-- Dataset cards rendered here -->
+					</div>
+
+					<div id="datasets-empty-state" class="datasets-empty-modern" style="display: none">
+						<div class="datasets-empty-icon">
+							<svg
+								width="48"
+								height="48"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+							>
+								<path
+									d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+								></path>
+								<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+								<line x1="12" y1="22.08" x2="12" y2="12"></line>
+							</svg>
+						</div>
+						<h3>No datasets yet</h3>
+						<p>Create a dataset to package your files for sharing with collaborators in sessions</p>
+						<div class="datasets-empty-actions">
+							<button
+								class="btn-primary"
+								onclick="document.getElementById('new-dataset-btn').click()"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+								>
+									<line x1="12" y1="5" x2="12" y2="19"></line>
+									<line x1="5" y1="12" x2="19" y2="12"></line>
+								</svg>
+								Create Your First Dataset
+							</button>
+						</div>
+						<div class="datasets-empty-tip">
+							<strong>Tip:</strong> Select files in the Files tab and use "Create Dataset" to
+							quickly package them
+						</div>
 					</div>
 				</div>
 			</div>
 
-			<!-- Dataset editor view -->
+			<!-- Dataset editor view - Redesigned -->
 			<div class="data-main-layout" id="dataset-editor-section" style="display: none">
-				<div class="files-panel">
-					<div
-						class="panel-header"
-						style="display: flex; justify-content: space-between; align-items: center; gap: 12px"
-					>
-						<div>
-							<h3 class="panel-title" id="dataset-editor-title" style="margin: 0">New Dataset</h3>
-							<p class="panel-subtitle" style="margin: 2px 0 0; color: var(--muted-text)">
-								Define dataset metadata and assets
-							</p>
-						</div>
-						<div class="panel-actions" style="display: flex; gap: 8px">
-							<button id="dataset-editor-cancel" class="btn-secondary" type="button">Back</button>
-							<button id="dataset-editor-save" class="btn-primary" type="button">Save</button>
+				<div class="dataset-editor-modern">
+					<!-- Header -->
+					<div class="dataset-editor-header">
+						<button id="dataset-editor-cancel" class="btn-back" type="button">
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<polyline points="15 18 9 12 15 6"></polyline>
+							</svg>
+							Back to Datasets
+						</button>
+						<div class="dataset-editor-header-right">
+							<button id="dataset-editor-save" class="btn-primary" type="button">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+								>
+									<polyline points="20 6 9 17 4 12"></polyline>
+								</svg>
+								Save Dataset
+							</button>
 						</div>
 					</div>
 
-					<div class="dataset-editor-body">
-						<div class="form-row">
-							<label for="dataset-form-name">Name</label>
-							<input
-								id="dataset-form-name"
-								type="text"
-								placeholder="single_cell"
-								autocapitalize="off"
-								autocorrect="off"
-								spellcheck="false"
-							/>
-						</div>
-						<div class="form-row">
-							<label for="dataset-form-description">Description</label>
-							<textarea
-								id="dataset-form-description"
-								rows="2"
-								placeholder="Short summary"
-								autocapitalize="off"
-								autocorrect="off"
-								spellcheck="false"
-							></textarea>
-						</div>
-						<div class="form-grid">
-							<div class="form-row">
-								<label for="dataset-form-author">Author</label>
-								<input
-									id="dataset-form-author"
-									type="text"
-									placeholder="you@example.com"
-									autocapitalize="off"
-									autocorrect="off"
-									spellcheck="false"
-								/>
+					<!-- Main Content -->
+					<div class="dataset-editor-content">
+						<!-- Left: Form -->
+						<div class="dataset-editor-form">
+							<div class="dataset-editor-title-section">
+								<h2 id="dataset-editor-title">New Dataset</h2>
+								<p class="dataset-editor-subtitle">
+									Package your files to share securely with collaborators
+								</p>
 							</div>
-							<div class="form-row">
-								<label for="dataset-form-version">Version</label>
-								<input
-									id="dataset-form-version"
-									type="text"
-									placeholder="1.0.0"
-									autocapitalize="off"
-									autocorrect="off"
-									spellcheck="false"
-								/>
+
+							<!-- Basic Info Card -->
+							<div class="editor-card">
+								<div class="editor-card-header">
+									<span class="editor-card-number">1</span>
+									<h3>Basic Information</h3>
+								</div>
+								<div class="editor-card-body">
+									<div class="form-field">
+										<label for="dataset-form-name">Dataset Name</label>
+										<input
+											id="dataset-form-name"
+											type="text"
+											placeholder="e.g., single_cell_analysis"
+											autocapitalize="off"
+											autocorrect="off"
+											spellcheck="false"
+										/>
+										<span class="form-hint">Use lowercase letters, numbers, and underscores</span>
+									</div>
+									<div class="form-field">
+										<label for="dataset-form-description"
+											>Description <span class="optional">(optional)</span></label
+										>
+										<textarea
+											id="dataset-form-description"
+											rows="2"
+											placeholder="What's in this dataset and what is it used for?"
+										></textarea>
+									</div>
+									<div class="form-row-inline">
+										<div class="form-field">
+											<label for="dataset-form-version">Version</label>
+											<input id="dataset-form-version" type="text" value="1.0.0" />
+										</div>
+										<div class="form-field" style="display: none">
+											<label for="dataset-form-author">Author</label>
+											<input id="dataset-form-author" type="text" readonly />
+										</div>
+										<div class="form-field" style="display: none">
+											<label for="dataset-form-schema">Schema</label>
+											<input
+												id="dataset-form-schema"
+												type="text"
+												value="net.biovault.datasets:1.0.0"
+												readonly
+											/>
+										</div>
+									</div>
+								</div>
 							</div>
-							<div class="form-row">
-								<label for="dataset-form-schema">Schema</label>
-								<input
-									id="dataset-form-schema"
-									type="text"
-									placeholder="net.biovault.datasets:1.0.0"
-									value="net.biovault.datasets:1.0.0"
-									disabled
-								/>
+
+							<!-- Assets Card -->
+							<div class="editor-card">
+								<div class="editor-card-header">
+									<span class="editor-card-number">2</span>
+									<h3>Data Files</h3>
+								</div>
+								<div class="editor-card-body">
+									<div class="assets-explanation">
+										<p>Each asset has two versions:</p>
+										<div class="asset-type-grid">
+											<div class="asset-type-item">
+												<span class="asset-type-icon private">🔒</span>
+												<div>
+													<strong>Private (Real Data)</strong>
+													<span>Your actual data - never leaves your machine</span>
+												</div>
+											</div>
+											<div class="asset-type-item">
+												<span class="asset-type-icon mock">📋</span>
+												<div>
+													<strong>Mock (Sample Data)</strong>
+													<span>Safe sample shared with collaborators</span>
+												</div>
+											</div>
+										</div>
+									</div>
+
+									<div id="dataset-form-assets" class="asset-list-modern">
+										<!-- Asset rows rendered here -->
+									</div>
+
+									<button id="dataset-form-add-asset" class="btn-add-asset" type="button">
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+										>
+											<line x1="12" y1="5" x2="12" y2="19"></line>
+											<line x1="5" y1="12" x2="19" y2="12"></line>
+										</svg>
+										Add Another File
+									</button>
+								</div>
 							</div>
 						</div>
 
-						<div class="form-row" style="margin-top: 12px">
-							<div
-								style="display: flex; align-items: center; justify-content: space-between; gap: 8px"
-							>
-								<label>Assets</label>
-								<button id="dataset-form-add-asset" class="btn-secondary" type="button">
-									Add Asset
-								</button>
+						<!-- Right: Preview -->
+						<div class="dataset-editor-preview">
+							<div class="preview-card">
+								<div class="preview-header">
+									<svg
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									>
+										<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+										<circle cx="12" cy="12" r="3"></circle>
+									</svg>
+									Preview
+								</div>
+								<div class="preview-body">
+									<div class="preview-dataset-card">
+										<div class="preview-dataset-icon">
+											<svg
+												width="24"
+												height="24"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="1.5"
+											>
+												<path
+													d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+												></path>
+											</svg>
+										</div>
+										<div class="preview-dataset-name" id="preview-name">your_dataset</div>
+										<div class="preview-dataset-meta" id="preview-meta">v1.0.0 • 0 files</div>
+										<div class="preview-dataset-desc" id="preview-desc">No description</div>
+									</div>
+									<div class="preview-info">
+										<p>This is how your dataset will appear to collaborators on the network.</p>
+									</div>
+								</div>
 							</div>
-							<div id="dataset-form-assets" class="asset-rows"></div>
+
+							<div class="preview-help">
+								<h4>How it works</h4>
+								<ol>
+									<li><strong>Private data</strong> stays on your machine</li>
+									<li><strong>Mock data</strong> is shared publicly</li>
+									<li>Collaborators see mock data, computations run on real data</li>
+								</ol>
+							</div>
 						</div>
 					</div>
 				</div>
