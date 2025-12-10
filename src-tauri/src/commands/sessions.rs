@@ -211,7 +211,7 @@ fn copy_example_notebooks(session_path: &Path) {
         .join("resources")
         .join("templates");
 
-    for (dest_name, _content, source_name) in notebooks.iter() {
+    for (dest_name, _content, _source_name) in notebooks.iter() {
         let dest = session_path.join(dest_name);
         if dest.exists() {
             continue;
@@ -220,7 +220,7 @@ fn copy_example_notebooks(session_path: &Path) {
         #[cfg(debug_assertions)]
         {
             // Dev mode: create symlink to source file
-            let source = templates_dir.join(source_name);
+            let source = templates_dir.join(_source_name);
             if source.exists() {
                 #[cfg(unix)]
                 {
