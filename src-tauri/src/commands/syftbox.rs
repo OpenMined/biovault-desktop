@@ -7,20 +7,55 @@ use syftbox_sdk::syftbox::control as syftctl;
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn load_runtime_config() -> Result<syftbox_sdk::syftbox::config::SyftboxRuntimeConfig, String> {
-    let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
-    cfg.to_syftbox_runtime_config().map_err(|e| e.to_string())
+    let mut cfg = biovault::config::Config::load()
+        .map_err(|e| format!("SyftBox not configured yet: {}", e))?;
+
+    // Require an email to build a usable runtime config, even if tokens are missing.
+    let email = cfg
+        .syftbox_credentials
+        .as_ref()
+        .and_then(|c| c.email.as_deref())
+        .filter(|e| !e.trim().is_empty())
+        .or_else(|| {
+            let trimmed = cfg.email.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .ok_or_else(|| {
+            "SyftBox email is not set. Add an email in Settings → SyftBox and try again."
+                .to_string()
+        })?
+        .to_string();
+
+    // If BioVault email is empty but creds have one, populate it so the runtime config has an identity.
+    if cfg.email.trim().is_empty() {
+        cfg.email = email.clone();
+    }
+
+    cfg.to_syftbox_runtime_config()
+        .map_err(|e| format!("SyftBox config is incomplete: {}", e))
 }
 
 fn ensure_syftbox_config(
     runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig,
 ) -> Result<(), String> {
     let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+
     let creds = cfg.syftbox_credentials.clone().unwrap_or_default();
     let email = if cfg.email.trim().is_empty() {
         creds.email.unwrap_or_default()
     } else {
         cfg.email.clone()
     };
+    if email.trim().is_empty() {
+        return Err(
+            "SyftBox email is not set. Add an email in Settings → SyftBox and try again."
+                .to_string(),
+        );
+    }
     let server_url = creds
         .server_url
         .unwrap_or_else(|| "https://syftbox.net".to_string());
@@ -322,6 +357,14 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
 pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
     let runtime = load_runtime_config()?;
     ensure_syftbox_config(&runtime)?;
+
+    // If the config file still isn't present, report a friendly auth/setup message.
+    if !runtime.config_path.exists() {
+        return Err(
+            "SyftBox is not connected yet. Open Settings → SyftBox and sign in first.".to_string(),
+        );
+    }
+
     match syftctl::start_syftbox(&runtime) {
         Ok(started) => {
             if started {
