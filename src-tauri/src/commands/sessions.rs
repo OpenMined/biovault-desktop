@@ -121,13 +121,21 @@ fn send_session_invite_message(
     owner: &str,
     description: &Option<String>,
 ) {
+    let created_at = chrono::Utc::now().to_rfc3339();
     let metadata = serde_json::json!({
         "session_invite": {
             "session_id": session_id,
             "session_name": session_name,
             "from": owner,
             "description": description,
-            "created_at": chrono::Utc::now().to_rfc3339(),
+            "created_at": &created_at,
+        },
+        // Also include session_chat metadata so this message appears in the session thread
+        "session_chat": {
+            "session_id": session_id,
+            "session_name": session_name,
+            "from": owner,
+            "created_at": &created_at,
         }
     });
 
@@ -135,7 +143,8 @@ fn send_session_invite_message(
         "{} invited you to the session \"{}\" (ID: {}).",
         owner, session_name, session_id
     );
-    let subject = format!("Session Invite: {}", session_name);
+    // Use consistent subject format for all session messages (helps thread grouping)
+    let subject = format!("Session: {}", session_name);
 
     if let Err(e) = messages::send_message(MessageSendRequest {
         to: Some(peer_email.to_string()),
@@ -166,6 +175,13 @@ fn send_session_invite_response_message(
             "reason": reason,
             "session_name": session_name,
             "responded_at": chrono::Utc::now().to_rfc3339(),
+        },
+        // Also include session_chat metadata so this message appears in the session thread
+        "session_chat": {
+            "session_id": session_id,
+            "session_name": session_name,
+            "from": responder,
+            "created_at": chrono::Utc::now().to_rfc3339(),
         }
     });
 
@@ -186,13 +202,16 @@ fn send_session_invite_response_message(
                 .unwrap_or_default()
         )
     };
-    let subject = format!("Session invite {}: {}", status, session_name);
+    let subject = format!("Session: {}", session_name);
+
+    // Find the original session invite message to reply to (keeps all session messages in one thread)
+    let reply_to = find_session_thread_message(session_id);
 
     if let Err(e) = messages::send_message(MessageSendRequest {
         to: Some(requester.to_string()),
         body,
         subject: Some(subject),
-        reply_to: None,
+        reply_to,
         message_type: Some("text".to_string()),
         metadata: Some(metadata),
     }) {

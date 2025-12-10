@@ -864,7 +864,7 @@ export function createMessagesModule({
 				await invoke('sync_messages_with_failures')
 			}
 
-			const result = await invoke('list_message_threads', { filter: 'all' })
+			const result = await invoke('list_message_threads', { scope: 'all' })
 			messageThreads = result || []
 
 			updateThreadActivity(messageThreads, emitToasts)
@@ -893,7 +893,7 @@ export function createMessagesModule({
 					const preview = (thread.last_message_preview || '').toLowerCase()
 					const participants = (thread.participants || []).join(' ').toLowerCase()
 					return subject.includes(term) || preview.includes(term) || participants.includes(term)
-				})
+			  })
 			: messageThreads
 
 		if (filteredThreads.length === 0) {
@@ -954,7 +954,7 @@ export function createMessagesModule({
 			const sessionBadge = thread.session_id
 				? `<span class="message-thread-session" title="${escapeHtml(
 						thread.session_name || 'Secure Session',
-					)}">
+				  )}">
 				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 					<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
 					<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -971,7 +971,7 @@ export function createMessagesModule({
 			const sessionParticipantsLine = isSessionThread
 				? `<div class="message-thread-subject">With ${
 						others.length > 0 ? escapeHtml(others.join(', ')) : 'participants'
-					}</div>`
+				  }</div>`
 				: `<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>`
 
 			item.innerHTML = `
@@ -981,7 +981,7 @@ export function createMessagesModule({
 						thread.unread_count > 0
 							? `<span class="message-thread-unread">${
 									thread.unread_count > 9 ? '9+' : thread.unread_count
-								}</span>`
+							  }</span>`
 							: ''
 					}
 					${sessionBadge}
