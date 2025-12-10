@@ -1258,6 +1258,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					window.__sessionsModule.openCreateSessionWithDataset({
 						name: dataset.name,
 						owner: dataset.author || currentUserEmail,
+						public_url: dataset.public_url,
 					})
 				}
 				// Navigate to sessions tab
