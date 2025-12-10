@@ -56,6 +56,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			setSaveStatus('', 'info')
 
 			loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
+			bindSyftBoxPathButtons()
 
 			checkSyftBoxStatus()
 			loadAutostartStatus()
@@ -310,6 +311,99 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		return div.innerHTML
 	}
 
+	function setSyftBoxPathDisplay(pathId, btnId, path) {
+		const el = document.getElementById(pathId)
+		const btn = document.getElementById(btnId)
+		const trimmed = (path || '').trim()
+		const display = trimmed || 'Not resolved'
+		if (el) {
+			el.textContent = display
+			el.title = display
+		}
+		if (btn) {
+			btn.disabled = !trimmed
+			btn.dataset.path = trimmed
+		}
+	}
+
+	function bindSyftBoxPathButtons() {
+		const buttons = [
+			'syftbox-open-config-btn',
+			'syftbox-open-data-dir-btn',
+			'syftbox-open-datasites-btn',
+			'syftbox-open-logs-btn',
+			'syftbox-open-logfile-btn',
+		]
+
+		buttons.forEach((id) => {
+			const btn = document.getElementById(id)
+			if (!btn || btn.dataset.listenerAttached) return
+			btn.addEventListener('click', async () => {
+				const path = btn.dataset.path
+				if (!path) {
+					await dialog.message('Path is not set yet.', {
+						title: 'Path Unavailable',
+						type: 'warning',
+					})
+					return
+				}
+				try {
+					await invoke('open_folder', { path })
+				} catch (error) {
+					console.error(`Failed to open path (${path}):`, error)
+					await dialog.message(`Failed to open ${path}: ${error}`, {
+						title: 'Open Failed',
+						type: 'error',
+					})
+				}
+			})
+			btn.dataset.listenerAttached = 'true'
+		})
+
+		const startBtn = document.getElementById('syftbox-start-btn')
+		const stopBtn = document.getElementById('syftbox-stop-btn')
+		if (startBtn && !startBtn.dataset.listenerAttached) {
+			startBtn.addEventListener('click', async () => {
+				startBtn.disabled = true
+				stopBtn && (stopBtn.disabled = true)
+				try {
+					await invoke('start_syftbox_client')
+					await checkSyftBoxStatus()
+				} catch (error) {
+					console.error('Failed to start SyftBox:', error)
+					await dialog.message(`Failed to start SyftBox: ${error}`, {
+						title: 'Start Failed',
+						type: 'error',
+					})
+				} finally {
+					startBtn.disabled = false
+					stopBtn && (stopBtn.disabled = false)
+				}
+			})
+			startBtn.dataset.listenerAttached = 'true'
+		}
+		if (stopBtn && !stopBtn.dataset.listenerAttached) {
+			stopBtn.addEventListener('click', async () => {
+				startBtn && (startBtn.disabled = true)
+				stopBtn.disabled = true
+				try {
+					await invoke('stop_syftbox_client')
+					await checkSyftBoxStatus()
+				} catch (error) {
+					console.error('Failed to stop SyftBox:', error)
+					await dialog.message(`Failed to stop SyftBox: ${error}`, {
+						title: 'Stop Failed',
+						type: 'error',
+					})
+				} finally {
+					startBtn && (startBtn.disabled = false)
+					stopBtn.disabled = false
+				}
+			})
+			stopBtn.dataset.listenerAttached = 'true'
+		}
+	}
+
 	async function handleRefreshContacts() {
 		const btn = document.getElementById('refresh-contacts-btn')
 		const statusEl = document.getElementById('refresh-contacts-status')
@@ -356,6 +450,38 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			if (btn) {
 				btn.disabled = false
 				btn.textContent = 'Refresh Keys'
+			}
+		}
+	}
+
+	async function refreshSyftBoxPaths(configInfo) {
+		setSyftBoxPathDisplay('syftbox-config-path', 'syftbox-open-config-btn', configInfo?.config_path)
+		setSyftBoxPathDisplay('syftbox-data-dir', 'syftbox-open-data-dir-btn', configInfo?.data_dir)
+
+		const email = document.getElementById('setting-email')?.value.trim() || currentUserEmail
+		const datasiteDir =
+			configInfo?.data_dir && email ? `${configInfo.data_dir}/datasites/${email}` : ''
+		setSyftBoxPathDisplay('syftbox-datasites-dir', 'syftbox-open-datasites-btn', datasiteDir)
+
+		const logDir = configInfo?.log_dir || (await invoke('get_desktop_log_dir').catch(() => null))
+		setSyftBoxPathDisplay('syftbox-log-dir', 'syftbox-open-logs-btn', logDir)
+		setSyftBoxPathDisplay(
+			'syftbox-log-file',
+			'syftbox-open-logfile-btn',
+			configInfo?.log_path || logDir,
+		)
+
+		const daemonStatus = document.getElementById('syftbox-daemon-status')
+		if (daemonStatus) {
+			if (configInfo?.data_dir_error) {
+				daemonStatus.textContent = `Error: ${configInfo.data_dir_error}`
+				daemonStatus.dataset.tone = 'error'
+			} else if (configInfo?.data_dir) {
+				daemonStatus.textContent = 'Checking...'
+				daemonStatus.dataset.tone = 'info'
+			} else {
+				daemonStatus.textContent = 'No data dir'
+				daemonStatus.dataset.tone = 'warn'
 			}
 		}
 	}
@@ -788,6 +914,8 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			// Check for dev mode first
 			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
 			const configInfo = await invoke('get_syftbox_config_info')
+			await refreshSyftBoxPaths(configInfo)
+			const syftboxState = await invoke('get_syftbox_state').catch(() => ({ running: false }))
 
 			// Remove all status classes
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
@@ -810,6 +938,10 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 					<div class="badge-line">✓ Authenticated</div>
 					<div class="badge-subline">Server: ${serverLabel}</div>
 					<div class="badge-subline">Config: ${configInfo.config_path}</div>
+					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
+					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
+					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
+					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
 				`
 				statusBadge.classList.add('connected')
 				statusBadge.style.lineHeight = '1.4'
@@ -820,6 +952,10 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 					<div class="badge-line">✗ Not Authenticated</div>
 					<div class="badge-subline">Server: ${serverLabel}</div>
 					<div class="badge-subline">Config: ${configInfo.config_path}</div>
+					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
+					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
+					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
+					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
 				`
 				statusBadge.classList.add('disconnected')
 				statusBadge.style.lineHeight = '1.4'
@@ -838,7 +974,14 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			statusBadge.classList.add('checking')
 			authBtn.disabled = false
 			authBtn.textContent = 'Authenticate'
+			await refreshSyftBoxPaths({})
 			console.error('Error checking SyftBox status:', error)
+
+			const daemonStatus = document.getElementById('syftbox-daemon-status')
+			if (daemonStatus) {
+				daemonStatus.textContent = 'Status unknown'
+				daemonStatus.dataset.tone = 'warn'
+			}
 		}
 	}
 

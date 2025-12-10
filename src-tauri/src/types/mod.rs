@@ -249,6 +249,10 @@ pub const DEFAULT_JUPYTER_PYTHON: &str = "3.12";
 pub struct SyftBoxState {
     pub running: bool,
     pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -257,6 +261,12 @@ pub struct SyftBoxConfigInfo {
     pub config_path: String,
     pub has_access_token: bool,
     pub has_refresh_token: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_dir_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
 }
 
 // Log Types
