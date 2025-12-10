@@ -143,10 +143,8 @@ fn expose_bundled_binaries(app: &tauri::App) {
         // We look under both the legacy path ("bundled/...") and the bundle-config
         // path ("resources/bundled/...") because macOS packages include the
         // "resources/" prefix inside the .app bundle.
-        let resource_path_candidates = vec![
-            relative_path.clone(),
-            format!("resources/{}", relative_path),
-        ];
+        let resource_path_candidates = [relative_path.clone(),
+            format!("resources/{}", relative_path)];
 
         let mut candidate = resource_path_candidates
             .iter()
@@ -218,11 +216,7 @@ fn expose_bundled_binaries(app: &tauri::App) {
                     if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
                         let found_str = found.to_string_lossy().to_string();
                         std::env::set_var(env_key, &found_str);
-                        crate::desktop_log!(
-                            "🔧 Using bundled {} via scan: {}",
-                            env_key,
-                            found_str
-                        );
+                        crate::desktop_log!("🔧 Using bundled {} via scan: {}", env_key, found_str);
 
                         if env_key == "BIOVAULT_BUNDLED_JAVA" {
                             if let Some(parent) = found.parent() {
@@ -238,7 +232,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
                     }
                 }
 
-                crate::desktop_log!("⚠️ Bundled binary not found for {}: {}", env_key, relative_path);
+                crate::desktop_log!(
+                    "⚠️ Bundled binary not found for {}: {}",
+                    env_key,
+                    relative_path
+                );
             }
         }
     }
@@ -587,7 +585,10 @@ pub fn run() {
             if std::env::var("SYFTBOX_BINARY").is_err() {
                 // Try both legacy and nested resource paths, then fall back to a scan
                 let mut syftbox_candidates: Vec<PathBuf> = Vec::new();
-                if let Ok(p) = app.path().resolve("syftbox/syftbox", BaseDirectory::Resource) {
+                if let Ok(p) = app
+                    .path()
+                    .resolve("syftbox/syftbox", BaseDirectory::Resource)
+                {
                     syftbox_candidates.push(p);
                 }
                 if let Ok(p) = app
@@ -597,10 +598,8 @@ pub fn run() {
                     syftbox_candidates.push(p);
                 }
 
-                let mut found_syftbox: Option<PathBuf> = syftbox_candidates
-                    .iter()
-                    .find(|p| p.exists())
-                    .cloned();
+                let mut found_syftbox: Option<PathBuf> =
+                    syftbox_candidates.iter().find(|p| p.exists()).cloned();
 
                 if found_syftbox.is_none() {
                     if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
