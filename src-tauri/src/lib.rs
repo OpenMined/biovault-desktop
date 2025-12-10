@@ -70,56 +70,50 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+// Scan resources directory for a bundled binary by name (java/nextflow/uv/syftbox)
+fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
+    let mut search_roots = vec![
+        resource_dir.join("bundled"),
+        resource_dir.join("resources").join("bundled"),
+        resource_dir.join("syftbox"),
+        resource_dir.join("resources").join("syftbox"),
+    ];
+
+    search_roots.sort();
+    search_roots.dedup();
+
+    for root in search_roots {
+        if !root.exists() {
+            continue;
+        }
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n == name)
+                    .unwrap_or(false)
+                {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(not(target_os = "windows"))]
 fn expose_bundled_binaries(app: &tauri::App) {
     let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     crate::desktop_log!("🔍 Exposing bundled binaries for platform: {}", platform);
-
-    // Fallback: scan resources dir for bundled binaries if direct resolution fails
-    fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
-        let mut search_roots = vec![
-            resource_dir.join("bundled"),
-            resource_dir.join("resources").join("bundled"),
-        ];
-
-        // Avoid duplicates
-        search_roots.sort();
-        search_roots.dedup();
-
-        let expected = match name {
-            "java" => "java",
-            "nextflow" => "nextflow",
-            "uv" => "uv",
-            _ => return None,
-        };
-
-        for root in search_roots {
-            if !root.exists() {
-                continue;
-            }
-            let mut stack = vec![root];
-            while let Some(dir) = stack.pop() {
-                let entries = match fs::read_dir(&dir) {
-                    Ok(entries) => entries,
-                    Err(_) => continue,
-                };
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        stack.push(path);
-                    } else if path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n == expected)
-                        .unwrap_or(false)
-                    {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-        None
-    }
 
     let bundles = [
         (
@@ -591,27 +585,39 @@ pub fn run() {
 
             // Ensure bundled SyftBox binary is exposed if not already provided
             if std::env::var("SYFTBOX_BINARY").is_err() {
-                match app
+                // Try both legacy and nested resource paths, then fall back to a scan
+                let mut syftbox_candidates: Vec<PathBuf> = Vec::new();
+                if let Ok(p) = app.path().resolve("syftbox/syftbox", BaseDirectory::Resource) {
+                    syftbox_candidates.push(p);
+                }
+                if let Ok(p) = app
                     .path()
-                    .resolve("syftbox/syftbox", BaseDirectory::Resource)
+                    .resolve("resources/syftbox/syftbox", BaseDirectory::Resource)
                 {
-                    Ok(candidate) => {
-                        if candidate.exists() {
-                            let candidate_str = candidate.to_string_lossy().to_string();
-                            std::env::set_var("SYFTBOX_BINARY", &candidate_str);
-                            crate::desktop_log!(
-                                "🔧 Using bundled SyftBox binary: {}",
-                                candidate_str
-                            );
-                        } else {
-                            crate::desktop_log!(
-                                "⚠️ Bundled SyftBox binary not found at {}",
-                                candidate.display()
-                            );
+                    syftbox_candidates.push(p);
+                }
+
+                let mut found_syftbox: Option<PathBuf> = syftbox_candidates
+                    .iter()
+                    .find(|p| p.exists())
+                    .cloned();
+
+                if found_syftbox.is_none() {
+                    if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                        if let Some(found) = find_bundled_binary(&resource_dir, "syftbox") {
+                            found_syftbox = Some(found);
                         }
                     }
-                    Err(e) => {
-                        crate::desktop_log!("⚠️ Failed to resolve bundled SyftBox binary: {}", e);
+                }
+
+                match found_syftbox {
+                    Some(candidate) if candidate.exists() => {
+                        let candidate_str = candidate.to_string_lossy().to_string();
+                        std::env::set_var("SYFTBOX_BINARY", &candidate_str);
+                        crate::desktop_log!("🔧 Using bundled SyftBox binary: {}", candidate_str);
+                    }
+                    _ => {
+                        crate::desktop_log!("⚠️ Bundled SyftBox binary not found in resources");
                     }
                 }
             }
