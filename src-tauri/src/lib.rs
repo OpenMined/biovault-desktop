@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -73,6 +74,52 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
 fn expose_bundled_binaries(app: &tauri::App) {
     let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     crate::desktop_log!("🔍 Exposing bundled binaries for platform: {}", platform);
+
+    // Fallback: scan resources dir for bundled binaries if direct resolution fails
+    fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
+        let mut search_roots = vec![
+            resource_dir.join("bundled"),
+            resource_dir.join("resources").join("bundled"),
+        ];
+
+        // Avoid duplicates
+        search_roots.sort();
+        search_roots.dedup();
+
+        let expected = match name {
+            "java" => "java",
+            "nextflow" => "nextflow",
+            "uv" => "uv",
+            _ => return None,
+        };
+
+        for root in search_roots {
+            if !root.exists() {
+                continue;
+            }
+            let mut stack = vec![root];
+            while let Some(dir) = stack.pop() {
+                let entries = match fs::read_dir(&dir) {
+                    Ok(entries) => entries,
+                    Err(_) => continue,
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n == expected)
+                        .unwrap_or(false)
+                    {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        None
+    }
 
     let bundles = [
         (
@@ -162,11 +209,42 @@ fn expose_bundled_binaries(app: &tauri::App) {
                 }
             }
             _ => {
-                crate::desktop_log!(
-                    "⚠️ Bundled binary not found for {}: {}",
-                    env_key,
-                    relative_path
-                );
+                // As a last resort, scan the resources directory for the binary name
+                if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                    let binary_name = if env_key.contains("JAVA") {
+                        "java"
+                    } else if env_key.contains("NEXTFLOW") {
+                        "nextflow"
+                    } else if env_key.contains("UV") {
+                        "uv"
+                    } else {
+                        ""
+                    };
+
+                    if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
+                        let found_str = found.to_string_lossy().to_string();
+                        std::env::set_var(env_key, &found_str);
+                        crate::desktop_log!(
+                            "🔧 Using bundled {} via scan: {}",
+                            env_key,
+                            found_str
+                        );
+
+                        if env_key == "BIOVAULT_BUNDLED_JAVA" {
+                            if let Some(parent) = found.parent() {
+                                if let Some(home) = parent.parent() {
+                                    std::env::set_var(
+                                        "BIOVAULT_BUNDLED_JAVA_HOME",
+                                        home.to_string_lossy().to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                crate::desktop_log!("⚠️ Bundled binary not found for {}: {}", env_key, relative_path);
             }
         }
     }
