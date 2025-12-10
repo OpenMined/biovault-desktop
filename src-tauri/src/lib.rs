@@ -180,10 +180,8 @@ fn expose_bundled_binaries(app: &tauri::App) {
             }
         }
 
-        let mut use_path: Option<std::path::PathBuf> = None;
-
         // Prefer bundled path; only fall back to pre-set env if no bundled alternative
-        use_path = candidate.filter(|p| p.exists());
+        let mut use_path: Option<std::path::PathBuf> = candidate.filter(|p| p.exists());
 
         if use_path.is_none() {
             // As a last resort, scan the resources directory for the binary name
