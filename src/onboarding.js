@@ -2005,6 +2005,11 @@ export function initOnboarding({
 							appLayout.style.display = 'flex'
 						}
 
+						// Restore tab content visibility that was set to display:none during auth flow
+						document.querySelectorAll('.tab-content').forEach((view) => {
+							view.style.display = ''
+						})
+
 						// Hide onboarding and show settings
 						document.getElementById('onboarding-view').classList.remove('active')
 						document.getElementById('onboarding-view').style.display = 'none'
@@ -2128,6 +2133,11 @@ export function initOnboarding({
 				if (appLayout) {
 					appLayout.style.display = 'flex'
 				}
+
+				// Restore tab content visibility that was set to display:none during auth flow
+				document.querySelectorAll('.tab-content').forEach((view) => {
+					view.style.display = ''
+				})
 
 				// Hide onboarding and show settings
 				document.getElementById('onboarding-view').classList.remove('active')

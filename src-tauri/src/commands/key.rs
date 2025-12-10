@@ -240,13 +240,11 @@ fn resolve_paths(
     } else {
         // Try syftbox config first, fall back to biovault home for pre-init key operations
         config.get_syftbox_data_dir().unwrap_or_else(|_| {
-            biovault::config::get_biovault_home()
-                .map(|h| h.join("data"))
-                .unwrap_or_else(|_| {
-                    dirs::home_dir()
-                        .map(|h| h.join("Desktop").join("BioVault").join("data"))
-                        .unwrap_or_else(|| PathBuf::from("BioVault").join("data"))
-                })
+            biovault::config::get_biovault_home().unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .map(|h| h.join("Desktop").join("BioVault"))
+                    .unwrap_or_else(|| PathBuf::from("BioVault"))
+            })
         })
     };
     let encrypted_root = syftbox_sdk::syftbox::syc::resolve_encrypted_root(&data_root);
@@ -279,11 +277,41 @@ fn resolve_vault_default(vault_override: Option<&Path>) -> PathBuf {
         println!("🔑 resolve_vault: using SYC_VAULT env: {:?}", env_vault);
         return PathBuf::from(env_vault);
     }
-    let default = dirs::home_dir()
+    // Prefer keeping vault data alongside the BioVault home so onboarding keeps everything together.
+    if let Ok(home) = biovault::config::get_biovault_home() {
+        let colocated = syftbox_sdk::syftbox::syc::vault_path_for_home(&home);
+        if colocated.exists() {
+            println!(
+                "🔑 resolve_vault: using existing BioVault colocated vault: {}",
+                colocated.display()
+            );
+            return colocated;
+        }
+        // Fall back to legacy ~/.syc if it already exists to avoid losing existing keys.
+        let legacy = dirs::home_dir()
+            .map(|h| h.join(".syc"))
+            .unwrap_or_else(|| PathBuf::from(".syc"));
+        if legacy.exists() {
+            println!(
+                "🔑 resolve_vault: legacy vault detected, using: {}",
+                legacy.display()
+            );
+            return legacy;
+        }
+        println!(
+            "🔑 resolve_vault: using new BioVault colocated vault: {}",
+            colocated.display()
+        );
+        return colocated;
+    }
+    let legacy = dirs::home_dir()
         .map(|h| h.join(".syc"))
         .unwrap_or_else(|| PathBuf::from(".syc"));
-    println!("🔑 resolve_vault: using default: {}", default.display());
-    default
+    println!(
+        "🔑 resolve_vault: using legacy default: {}",
+        legacy.display()
+    );
+    legacy
 }
 
 fn load_existing_bundle(

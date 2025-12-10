@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tauri_plugin_autostart::ManagerExt;
 
+const PLACEHOLDER_EMAIL: &str = "setup@pending";
+
 fn normalize_server_url(url: &str) -> String {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -50,12 +52,36 @@ pub fn check_is_onboarded() -> Result<bool, String> {
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     let config_path = biovault_home.join("config.yaml");
     let exists = config_path.exists();
-    crate::desktop_log!(
-        "🔍 Checking onboarding: config_path={:?}, exists={}",
-        config_path,
-        exists
-    );
-    Ok(exists)
+    if !exists {
+        crate::desktop_log!(
+            "🔍 Checking onboarding: config_path={:?}, exists={}",
+            config_path,
+            exists
+        );
+        return Ok(false);
+    }
+
+    match biovault::config::Config::load() {
+        Ok(config) => {
+            let email = config.email.trim();
+            let onboarded = !email.is_empty() && email != PLACEHOLDER_EMAIL;
+            crate::desktop_log!(
+                "🔍 Checking onboarding: config_path={:?}, email='{}', onboarded={}",
+                config_path,
+                email,
+                onboarded
+            );
+            Ok(onboarded)
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "🔍 Checking onboarding: config_path={:?}, failed to load config: {}",
+                config_path,
+                err
+            );
+            Ok(false)
+        }
+    }
 }
 
 #[tauri::command]
@@ -214,6 +240,33 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     init::execute(Some(&email), true)
         .await
         .map_err(|e| format!("Failed to initialize BioVault: {}", e))?;
+
+    // Ensure the config.yaml email matches the onboarding input (even if a placeholder existed before).
+    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    match biovault::config::Config::load() {
+        Ok(mut cfg) => {
+            if cfg.email.trim() != email.trim() {
+                cfg.email = email.clone();
+                if let Err(err) = cfg.save(&config_path) {
+                    crate::desktop_log!(
+                        "⚠️ Failed to persist onboarding email to config.yaml: {}",
+                        err
+                    );
+                } else {
+                    crate::desktop_log!(
+                        "✅ Updated config.yaml email to onboarding value: {}",
+                        cfg.email
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "⚠️ Failed to load config.yaml after init (email may not be saved): {}",
+                err
+            );
+        }
+    }
 
     eprintln!("DEBUG: init::execute() complete, calling save_dependency_states()");
     crate::desktop_log!("✅ Init complete, now saving dependency states...");
