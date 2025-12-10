@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -69,6 +70,46 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+// Scan resources directory for a bundled binary by name (java/nextflow/uv/syftbox)
+fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
+    let mut search_roots = vec![
+        resource_dir.join("bundled"),
+        resource_dir.join("resources").join("bundled"),
+        resource_dir.join("syftbox"),
+        resource_dir.join("resources").join("syftbox"),
+    ];
+
+    search_roots.sort();
+    search_roots.dedup();
+
+    for root in search_roots {
+        if !root.exists() {
+            continue;
+        }
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n == name)
+                    .unwrap_or(false)
+                {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(not(target_os = "windows"))]
 fn expose_bundled_binaries(app: &tauri::App) {
     let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
@@ -98,11 +139,19 @@ fn expose_bundled_binaries(app: &tauri::App) {
             continue;
         }
 
-        // Try resolving via Tauri's resource system (works in production)
-        let mut candidate = app
-            .path()
-            .resolve(&relative_path, BaseDirectory::Resource)
-            .ok();
+        // Try resolving via Tauri's resource system (works in production).
+        // We look under both the legacy path ("bundled/...") and the bundle-config
+        // path ("resources/bundled/...") because macOS packages include the
+        // "resources/" prefix inside the .app bundle.
+        let resource_path_candidates = [
+            relative_path.clone(),
+            format!("resources/{}", relative_path),
+        ];
+
+        let mut candidate = resource_path_candidates
+            .iter()
+            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+            .filter(|p| p.exists());
 
         // In development mode, also try the source directory
         if candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
@@ -115,6 +164,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
                     cwd.join("resources").join(&relative_path),
                     // Absolute path from manifest dir (compile-time)
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join(&relative_path),
+                    // Dev path with explicit resources/ prefix (matches bundle layout)
+                    cwd.join("src-tauri")
+                        .join("resources")
                         .join("resources")
                         .join(&relative_path),
                 ]
@@ -149,6 +203,37 @@ fn expose_bundled_binaries(app: &tauri::App) {
                 }
             }
             _ => {
+                // As a last resort, scan the resources directory for the binary name
+                if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                    let binary_name = if env_key.contains("JAVA") {
+                        "java"
+                    } else if env_key.contains("NEXTFLOW") {
+                        "nextflow"
+                    } else if env_key.contains("UV") {
+                        "uv"
+                    } else {
+                        ""
+                    };
+
+                    if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
+                        let found_str = found.to_string_lossy().to_string();
+                        std::env::set_var(env_key, &found_str);
+                        crate::desktop_log!("🔧 Using bundled {} via scan: {}", env_key, found_str);
+
+                        if env_key == "BIOVAULT_BUNDLED_JAVA" {
+                            if let Some(parent) = found.parent() {
+                                if let Some(home) = parent.parent() {
+                                    std::env::set_var(
+                                        "BIOVAULT_BUNDLED_JAVA_HOME",
+                                        home.to_string_lossy().to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 crate::desktop_log!(
                     "⚠️ Bundled binary not found for {}: {}",
                     env_key,
@@ -500,27 +585,40 @@ pub fn run() {
 
             // Ensure bundled SyftBox binary is exposed if not already provided
             if std::env::var("SYFTBOX_BINARY").is_err() {
-                match app
+                // Try both legacy and nested resource paths, then fall back to a scan
+                let mut syftbox_candidates: Vec<PathBuf> = Vec::new();
+                if let Ok(p) = app
                     .path()
                     .resolve("syftbox/syftbox", BaseDirectory::Resource)
                 {
-                    Ok(candidate) => {
-                        if candidate.exists() {
-                            let candidate_str = candidate.to_string_lossy().to_string();
-                            std::env::set_var("SYFTBOX_BINARY", &candidate_str);
-                            crate::desktop_log!(
-                                "🔧 Using bundled SyftBox binary: {}",
-                                candidate_str
-                            );
-                        } else {
-                            crate::desktop_log!(
-                                "⚠️ Bundled SyftBox binary not found at {}",
-                                candidate.display()
-                            );
+                    syftbox_candidates.push(p);
+                }
+                if let Ok(p) = app
+                    .path()
+                    .resolve("resources/syftbox/syftbox", BaseDirectory::Resource)
+                {
+                    syftbox_candidates.push(p);
+                }
+
+                let mut found_syftbox: Option<PathBuf> =
+                    syftbox_candidates.iter().find(|p| p.exists()).cloned();
+
+                if found_syftbox.is_none() {
+                    if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                        if let Some(found) = find_bundled_binary(&resource_dir, "syftbox") {
+                            found_syftbox = Some(found);
                         }
                     }
-                    Err(e) => {
-                        crate::desktop_log!("⚠️ Failed to resolve bundled SyftBox binary: {}", e);
+                }
+
+                match found_syftbox {
+                    Some(candidate) if candidate.exists() => {
+                        let candidate_str = candidate.to_string_lossy().to_string();
+                        std::env::set_var("SYFTBOX_BINARY", &candidate_str);
+                        crate::desktop_log!("🔧 Using bundled SyftBox binary: {}", candidate_str);
+                    }
+                    _ => {
+                        crate::desktop_log!("⚠️ Bundled SyftBox binary not found in resources");
                     }
                 }
             }

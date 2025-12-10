@@ -315,8 +315,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			<td class="col-file" title="${file.file_path}">
 				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
 					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
-			file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
-		}</span>
+						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+					}</span>
 					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
 				</span>
 			</td>
@@ -332,14 +332,18 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
-		}">${
-			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-				? file.inferred_sex
-				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-				? 'Unknown'
-				: '-'
-		}</td>
+				file.inferred_sex === 'Male'
+					? '#007bff'
+					: file.inferred_sex === 'Female'
+						? '#e83e8c'
+						: '#666'
+			}">${
+				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+					? file.inferred_sex
+					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+						? 'Unknown'
+						: '-'
+			}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
@@ -1211,10 +1215,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 							</svg>
 						</button>
 						<button class="dataset-action-btn ${isPublished ? 'btn-unpublish' : 'btn-publish'}" data-name="${
-				dataset.name
-			}" data-published="${isPublished}" title="${
-				isPublished ? 'Unpublish from datasite' : 'Publish to datasite'
-			}">
+							dataset.name
+						}" data-published="${isPublished}" title="${
+							isPublished ? 'Unpublish from datasite' : 'Publish to datasite'
+						}">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								${
 									isPublished
@@ -1230,8 +1234,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 							</svg>
 						</button>
 						<button class="dataset-action-btn btn-folder" data-name="${dataset.name}" data-public="${
-				dataset.public_url || ''
-			}" title="Open folder">
+							dataset.public_url || ''
+						}" title="Open folder">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
 							</svg>

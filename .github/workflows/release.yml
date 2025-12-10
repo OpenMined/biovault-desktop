@@ -364,6 +364,15 @@ jobs:
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         shell: bash
         run: |
+          # Derive target OS/arch for bundled deps from matrix.args (e.g., x86_64-apple-darwin)
+          case "${{ matrix.args }}" in
+            x86_64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="x86_64" ;;
+            aarch64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="aarch64" ;;
+            x86_64-unknown-linux-*) export BUNDLED_OS="linux" BUNDLED_ARCH="x86_64" ;;
+            aarch64-unknown-linux-*) export BUNDLED_OS="linux" BUNDLED_ARCH="aarch64" ;;
+            *) echo "❌ Unsupported target for bundled deps: ${{ matrix.args }}" >&2; exit 1 ;;
+          esac
+
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
 

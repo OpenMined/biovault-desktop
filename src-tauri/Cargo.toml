@@ -73,5 +73,6 @@ ignore = [
     "**/target/**",
     "**/.git/**",
     "**/__pycache__/**",
-    "**/.ipynb_checkpoints/**"
+    "**/.ipynb_checkpoints/**",
+    "**/resources/templates/**"
 ]
