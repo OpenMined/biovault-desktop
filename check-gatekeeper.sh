@@ -197,6 +197,40 @@ find "$RESOURCES_DIR" \( -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jn
   done
 cat "$SIGN_STATUS"
 
+# Smoke-test key bundled executables to ensure they launch (version check)
+smoke_log=$(mktemp)
+smoke() {
+  local bin="$1"; shift
+  if [[ -x "$bin" ]]; then
+    local args=("$@")
+    local label="${args[*]}"
+    label=${label:-"(no args)"}
+    local out
+    out="$("$bin" "${args[@]}" 2>&1)"
+    local rc=$?
+    echo "[$rc] $bin $label" >>"$smoke_log"
+    echo "$out" | sed 's/^/    /' >>"$smoke_log"
+  fi
+}
+
+for candidate in \
+  "$(find "$RESOURCES_DIR" -type f -name syftbox -perm +111 | head -1)" \
+  "$(find "$RESOURCES_DIR" -type f -name uv -perm +111 | head -1)" \
+  "$(find "$RESOURCES_DIR" -type f -name nextflow -perm +111 | head -1)" \
+  "$(find "$RESOURCES_DIR" -type f -name java -perm +111 | head -1)"; do
+  case "$candidate" in
+    *syftbox) smoke "$candidate" --version ;;
+    *uv) smoke "$candidate" --version ;;
+    *nextflow) smoke "$candidate" -v ;;
+    *java) smoke "$candidate" -version ;;
+  esac
+done
+
+if [[ -s "$smoke_log" ]]; then
+  info "Smoke test of bundled executables (exit code shown):"
+  cat "$smoke_log"
+fi
+
 if [[ -s "$Q_HITS" ]]; then
   err "Found quarantine attributes:"
   cat "$Q_HITS"

@@ -450,11 +450,12 @@ jobs:
 
           echo "Signing all bundled binaries for notarization..."
 
-          # Sign syftbox
+          # Sign syftbox (needs entitlements for Go CGO runtime)
           SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          ENTITLEMENTS="scripts/syftbox.entitlements"
           if [[ -f "$SYFTBOX_BIN" ]]; then
-            echo "Signing syftbox client..."
-            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
+            echo "Signing syftbox client with entitlements..."
+            codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
           fi
 
           # Sign all uv binaries
@@ -465,16 +466,17 @@ jobs:
             done
           fi
 
-          # Sign all java binaries
+          # Sign all java binaries (need entitlements for JVM JIT)
+          JAVA_ENTITLEMENTS="scripts/java.entitlements"
           if [[ -d "src-tauri/resources/bundled/java" ]]; then
             find src-tauri/resources/bundled/java -type f -perm +111 | while read -r bin; do
               echo "Signing java binary: $bin"
-              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+              codesign --force --options runtime --timestamp --entitlements "$JAVA_ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
             done
             # Also sign any .dylib files
             find src-tauri/resources/bundled/java -name "*.dylib" -type f | while read -r lib; do
               echo "Signing java dylib: $lib"
-              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$lib" || true
+              codesign --force --options runtime --timestamp --entitlements "$JAVA_ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$lib" || true
             done
           fi
 
@@ -488,17 +490,15 @@ jobs:
 
           echo "Finished signing bundled binaries"
 
-          echo "Verifying bundled binaries (codesign/spctl)..."
-          set -e
+          echo "Verifying bundled binaries (codesign only)..."
+          # Per-file spctl is intentionally skipped; nested tools are validated by final app notarization.
           for f in "$SYFTBOX_BIN" \
             $(find src-tauri/resources/bundled/uv -type f -perm +111 2>/dev/null) \
             $(find src-tauri/resources/bundled/nextflow -type f -perm +111 2>/dev/null) \
-            $(find src-tauri/resources/bundled/java/macos-aarch64 -type f \( -perm +111 -o -name "*.dylib" \) 2>/dev/null); do
+            $(find src-tauri/resources/bundled/java/macos-aarch64 -type f \( -perm +111 -o -name \"*.dylib\" \) 2>/dev/null); do
             [[ -n "$f" ]] || continue
             codesign --verify --verbose "$f"
-            spctl --assess --type exec "$f"
           done
-          set +e
 
       - name: Setup AppImage tools (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'

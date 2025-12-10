@@ -63,8 +63,37 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			bindKeyButtons()
 			refreshKeyStatus()
 			loadContacts()
+
+			// Auto-start SyftBox daemon if authenticated
+			autoStartSyftBoxDaemon()
 		} catch (error) {
 			console.error('Error loading settings:', error)
+		}
+	}
+
+	async function autoStartSyftBoxDaemon() {
+		try {
+			const configInfo = await invoke('get_syftbox_config_info').catch(() => ({}))
+			const syftboxState = await invoke('get_syftbox_state').catch(() => ({ running: false }))
+
+			// Only auto-start if authenticated and not already running
+			if (configInfo.is_authenticated && !syftboxState.running) {
+				console.log('🚀 [SETTINGS] Auto-starting SyftBox daemon...')
+				const status = await invoke('start_syftbox_client')
+				if (status.running) {
+					console.log('✅ [SETTINGS] SyftBox daemon started successfully')
+				} else if (status.error) {
+					console.error('❌ [SETTINGS] SyftBox daemon failed to start:', status.error)
+				}
+				// Refresh status display
+				await checkSyftBoxStatus()
+			} else if (!configInfo.is_authenticated) {
+				console.log('ℹ️ [SETTINGS] SyftBox not authenticated, skipping auto-start')
+			} else if (syftboxState.running) {
+				console.log('ℹ️ [SETTINGS] SyftBox daemon already running')
+			}
+		} catch (error) {
+			console.error('❌ [SETTINGS] Auto-start SyftBox failed:', error)
 		}
 	}
 

@@ -35,6 +35,9 @@ for dir in "$SYFTBOX_DIR" "$BUNDLED_DIR/uv" "$BUNDLED_DIR/java" "$BUNDLED_DIR/ne
 done
 echo ""
 
+SYFTBOX_ENTITLEMENTS="$ROOT_DIR/scripts/syftbox.entitlements"
+JAVA_ENTITLEMENTS="$ROOT_DIR/scripts/java.entitlements"
+
 sign_binary() {
   local bin="$1"
   local name="$(basename "$bin")"
@@ -42,10 +45,24 @@ sign_binary() {
   codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
 }
 
-# Sign syftbox
+sign_with_syftbox_entitlements() {
+  local bin="$1"
+  local name="$(basename "$bin")"
+  echo "  Signing (with syftbox entitlements): $name"
+  codesign --force --options runtime --timestamp --entitlements "$SYFTBOX_ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+}
+
+sign_with_java_entitlements() {
+  local bin="$1"
+  local name="$(basename "$bin")"
+  echo "  Signing (with java entitlements): $name"
+  codesign --force --options runtime --timestamp --entitlements "$JAVA_ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+}
+
+# Sign syftbox (needs entitlements for Go CGO runtime)
 echo "Signing syftbox..."
 if [[ -f "$SYFTBOX_DIR/syftbox" ]]; then
-  sign_binary "$SYFTBOX_DIR/syftbox"
+  sign_with_syftbox_entitlements "$SYFTBOX_DIR/syftbox"
 fi
 echo ""
 
@@ -58,19 +75,20 @@ if [[ -d "$BUNDLED_DIR/uv" ]]; then
 fi
 echo ""
 
-# Sign java binaries and dylibs
+# Sign java binaries (need entitlements for JVM JIT)
 echo "Signing java binaries..."
 if [[ -d "$BUNDLED_DIR/java" ]]; then
   find "$BUNDLED_DIR/java" -type f -perm +111 | while read -r bin; do
-    sign_binary "$bin" || true
+    sign_with_java_entitlements "$bin" || true
   done
 fi
 echo ""
 
+# Sign java dylibs (also need entitlements)
 echo "Signing java dylibs..."
 if [[ -d "$BUNDLED_DIR/java" ]]; then
   find "$BUNDLED_DIR/java" -name "*.dylib" -type f | while read -r lib; do
-    sign_binary "$lib" || true
+    sign_with_java_entitlements "$lib" || true
   done
 fi
 echo ""
