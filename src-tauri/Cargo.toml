@@ -1,6 +1,6 @@
 [package]
 name = "bv-desktop"
-version = "0.1.19"
+version = "0.1.20"
 description = "BioVault Desktop"
 authors = ["you"]
 edition = "2021"
