@@ -68,6 +68,11 @@ start_sbenv_client() {
   if (( RESET_FLAG )) || [[ ! -f "$config_file" ]]; then
     if (( RESET_FLAG )); then
       echo "[live] Resetting client $email (--reset flag)"
+      # Stop any running Jupyter processes for this client first
+      if [[ -d "$client_dir/sessions" ]]; then
+        echo "[live] Stopping Jupyter processes for $email..."
+        pkill -f "jupyter.*$client_dir" 2>/dev/null || true
+      fi
       rm -rf "$client_dir"
     fi
     mkdir -p "$client_dir"
@@ -213,6 +218,9 @@ cleanup() {
   fi
   for email in "${targets[@]}"; do
     stop_sbenv_client "$email"
+    # Also stop any Jupyter processes for this client
+    local client_dir="$SANDBOX_DIR/$email"
+    pkill -f "jupyter.*$client_dir" 2>/dev/null || true
   done
   echo "[live] Done"
 }

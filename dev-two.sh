@@ -243,6 +243,9 @@ client_field() {
 stop_desktops() {
   log_header "Stopping desktop processes"
 
+  # Stop any Jupyter processes running in the sandbox
+  pkill -f "jupyter.*$SANDBOX_ROOT" 2>/dev/null || true
+
   shopt -s nullglob
   for pid_file in "$SANDBOX_ROOT"/*/desktop.pid; do
     local pid
