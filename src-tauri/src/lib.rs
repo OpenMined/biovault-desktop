@@ -98,11 +98,19 @@ fn expose_bundled_binaries(app: &tauri::App) {
             continue;
         }
 
-        // Try resolving via Tauri's resource system (works in production)
-        let mut candidate = app
-            .path()
-            .resolve(&relative_path, BaseDirectory::Resource)
-            .ok();
+        // Try resolving via Tauri's resource system (works in production).
+        // We look under both the legacy path ("bundled/...") and the bundle-config
+        // path ("resources/bundled/...") because macOS packages include the
+        // "resources/" prefix inside the .app bundle.
+        let resource_path_candidates = vec![
+            relative_path.clone(),
+            format!("resources/{}", relative_path),
+        ];
+
+        let mut candidate = resource_path_candidates
+            .iter()
+            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+            .filter(|p| p.exists());
 
         // In development mode, also try the source directory
         if candidate.is_none() || !candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
@@ -115,6 +123,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
                     cwd.join("resources").join(&relative_path),
                     // Absolute path from manifest dir (compile-time)
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join(&relative_path),
+                    // Dev path with explicit resources/ prefix (matches bundle layout)
+                    cwd.join("src-tauri")
+                        .join("resources")
                         .join("resources")
                         .join(&relative_path),
                 ]
