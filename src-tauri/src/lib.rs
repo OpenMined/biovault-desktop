@@ -143,8 +143,10 @@ fn expose_bundled_binaries(app: &tauri::App) {
         // We look under both the legacy path ("bundled/...") and the bundle-config
         // path ("resources/bundled/...") because macOS packages include the
         // "resources/" prefix inside the .app bundle.
-        let resource_path_candidates = [relative_path.clone(),
-            format!("resources/{}", relative_path)];
+        let resource_path_candidates = [
+            relative_path.clone(),
+            format!("resources/{}", relative_path),
+        ];
 
         let mut candidate = resource_path_candidates
             .iter()
