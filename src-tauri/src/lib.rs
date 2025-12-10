@@ -825,6 +825,7 @@ pub fn run() {
             get_sessions,
             get_session,
             create_session,
+            create_session_with_datasets,
             update_session_peer,
             delete_session,
             launch_session_jupyter,
@@ -840,6 +841,10 @@ pub fn run() {
             get_session_invitations,
             accept_session_invitation,
             reject_session_invitation,
+            // Session dataset commands
+            add_dataset_to_session,
+            remove_dataset_from_session,
+            list_session_datasets,
             // WhatsApp commands
             whatsapp_start_login,
             whatsapp_logout,

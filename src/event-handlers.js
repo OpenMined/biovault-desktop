@@ -108,10 +108,16 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Messages - Refresh
+	// Messages - Refresh (header button)
 	const refreshMessagesBtn = document.getElementById('refresh-messages-btn')
 	if (refreshMessagesBtn) {
 		refreshMessagesBtn.addEventListener('click', () => loadMessageThreads(true))
+	}
+
+	// Messages - Refresh (sidebar icon button)
+	const sidebarRefreshBtn = document.getElementById('sidebar-refresh-btn')
+	if (sidebarRefreshBtn) {
+		sidebarRefreshBtn.addEventListener('click', () => loadMessageThreads(true))
 	}
 
 	// Messages - New message

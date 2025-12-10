@@ -25,9 +25,13 @@ export function createNetworkModule({ invoke, shellApi }) {
 				const idx = y * grid + x
 				const bit = (hash >> idx % 32) & 1
 				if (bit) {
-					rects += `<rect x="${x * cell}" y="${y * cell}" width="${cell}" height="${cell}" fill="${fg}"/>`
+					rects += `<rect x="${x * cell}" y="${
+						y * cell
+					}" width="${cell}" height="${cell}" fill="${fg}"/>`
 					if (x !== grid - 1 - x) {
-						rects += `<rect x="${(grid - 1 - x) * cell}" y="${y * cell}" width="${cell}" height="${cell}" fill="${fg}"/>`
+						rects += `<rect x="${(grid - 1 - x) * cell}" y="${
+							y * cell
+						}" width="${cell}" height="${cell}" fill="${fg}"/>`
 					}
 				}
 			}
@@ -297,20 +301,30 @@ export function createNetworkModule({ invoke, shellApi }) {
 			})
 		}
 
-		// Status badge - show "YOUR DATASET" for own, "Trusted" for trusted peers
+		// Status badges
 		const trustedBadge = row.querySelector('.status-badge.trusted')
-		if (trustedBadge) {
-			if (dataset.is_own) {
-				trustedBadge.textContent = 'YOURS'
-				trustedBadge.style.display = 'inline-flex'
-				trustedBadge.style.background = '#e0e7ff'
-				trustedBadge.style.color = '#4338ca'
-			} else if (dataset.is_trusted) {
-				trustedBadge.textContent = 'Trusted'
-				trustedBadge.style.display = 'inline-flex'
-			} else {
-				trustedBadge.style.display = 'none'
-			}
+		const hasMockBadge = row.querySelector('.status-badge.has-mock')
+		const isOwnBadge = row.querySelector('.status-badge.is-own')
+
+		// Show appropriate badges based on ownership and trust
+		if (dataset.is_own) {
+			// Own datasets
+			if (trustedBadge) trustedBadge.style.display = 'none'
+			if (isOwnBadge) isOwnBadge.style.display = 'inline-block'
+		} else if (dataset.is_trusted) {
+			// Trusted peer's datasets
+			if (trustedBadge) trustedBadge.style.display = 'inline-block'
+			if (isOwnBadge) isOwnBadge.style.display = 'none'
+		} else {
+			// Untrusted peer's datasets
+			if (trustedBadge) trustedBadge.style.display = 'none'
+			if (isOwnBadge) isOwnBadge.style.display = 'none'
+		}
+
+		// Show mock data badge if dataset has mock/preview data
+		const hasMock = dataset.assets?.some((a) => a.mock_ref || a.mock_path) || dataset.has_mock
+		if (hasMockBadge) {
+			hasMockBadge.style.display = hasMock ? 'inline-block' : 'none'
 		}
 
 		// Action buttons
@@ -740,6 +754,10 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 			})
 		}
 
+		// Set up info box dismiss buttons
+		setupInfoBoxDismiss('dismiss-contacts-info', 'network-contacts-info-dismissed')
+		setupInfoBoxDismiss('dismiss-datasets-info', 'network-datasets-info-dismissed')
+
 		// Initial scan when tab is first shown
 		const networkView = document.getElementById('network-view')
 		if (networkView) {
@@ -756,6 +774,24 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 			})
 			observer.observe(networkView, { attributes: true })
 		}
+	}
+
+	function setupInfoBoxDismiss(buttonId, storageKey) {
+		const button = document.getElementById(buttonId)
+		if (!button) return
+
+		const infoBox = button.closest('.network-info-box')
+		if (!infoBox) return
+
+		// Check if already dismissed
+		if (localStorage.getItem(storageKey) === 'true') {
+			infoBox.classList.add('hidden')
+		}
+
+		button.addEventListener('click', () => {
+			infoBox.classList.add('hidden')
+			localStorage.setItem(storageKey, 'true')
+		})
 	}
 
 	return {

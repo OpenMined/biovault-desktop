@@ -86,20 +86,6 @@
 	gap: 8px;
 }
 
-.network-section .empty-state {
-	padding: 24px;
-	text-align: center;
-	color: #94a3b8;
-	font-size: 13px;
-	background: #f8fafc;
-	border-radius: 8px;
-	border: 1px dashed #e2e8f0;
-}
-
-.network-section .empty-state p {
-	margin: 0;
-}
-
 /* ============================================================================
    CONTACT CARD
    ============================================================================ */
@@ -222,11 +208,45 @@
 .network-section .status-badge.trusted {
 	background: #dcfce7;
 	color: #15803d;
+	font-size: 10px;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
 }
 
 .network-section .status-badge.warning {
 	background: #fef3c7;
 	color: #b45309;
+	font-size: 10px;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
+}
+
+.network-section .status-badge.has-mock {
+	background: #e0f2fe;
+	color: #0369a1;
+	font-size: 10px;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
+}
+
+.network-section .status-badge.is-own {
+	background: #ede9fe;
+	color: #6d28d9;
+	font-size: 10px;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
 }
 
 /* ============================================================================
@@ -568,7 +588,8 @@
 .dataset-row-status {
 	display: flex;
 	align-items: center;
-	justify-content: center;
+	justify-content: flex-end;
+	gap: 6px;
 }
 
 .dataset-row-actions {
@@ -814,4 +835,111 @@
 
 .datasets-section .dataset-item {
 	margin-bottom: 4px;
+}
+
+/* ============================================================================
+   INFO BOXES - Compact inline hints
+   ============================================================================ */
+
+.network-info-box {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	margin-bottom: 8px;
+}
+
+.network-info-box.dataset-info-box {
+	background: #fffbeb;
+	border-color: #fde68a;
+}
+
+.info-box-icon {
+	flex-shrink: 0;
+	color: #94a3b8;
+	width: 16px;
+	height: 16px;
+}
+
+.dataset-info-box .info-box-icon {
+	color: #d97706;
+}
+
+.info-box-text {
+	flex: 1;
+	font-size: 12px;
+	color: #64748b;
+	line-height: 1.4;
+}
+
+.info-box-text strong {
+	color: #475569;
+	font-weight: 600;
+}
+
+.dataset-info-box .info-box-text {
+	color: #92400e;
+}
+
+.dataset-info-box .info-box-text strong {
+	color: #78350f;
+}
+
+.info-box-text code {
+	background: rgba(0, 0, 0, 0.05);
+	padding: 1px 5px;
+	border-radius: 3px;
+	font-family: 'SF Mono', Monaco, Consolas, monospace;
+	font-size: 11px;
+}
+
+.info-box-dismiss {
+	background: none;
+	border: none;
+	font-size: 16px;
+	color: #cbd5e1;
+	cursor: pointer;
+	padding: 0;
+	line-height: 1;
+	flex-shrink: 0;
+	transition: color 0.15s;
+}
+
+.info-box-dismiss:hover {
+	color: #94a3b8;
+}
+
+/* Hidden state for dismissed info boxes */
+.network-info-box.hidden {
+	display: none;
+}
+
+/* ============================================================================
+   EMPTY STATES - Clean and minimal
+   ============================================================================ */
+
+.network-section .empty-state {
+	padding: 24px 20px;
+	text-align: center;
+	color: #94a3b8;
+	font-size: 13px;
+	background: #f8fafc;
+	border-radius: 8px;
+	border: 1px dashed #e2e8f0;
+}
+
+.network-section .empty-state p {
+	margin: 0 0 4px 0;
+	line-height: 1.5;
+}
+
+.network-section .empty-state p:last-child {
+	margin-bottom: 0;
+}
+
+.network-section .empty-state strong {
+	color: #64748b;
 }

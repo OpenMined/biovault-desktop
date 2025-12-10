@@ -57,6 +57,28 @@
 	<div class="view-content">
 		<!-- Peers View -->
 		<div class="network-content" id="peers-view">
+			<!-- Info Box -->
+			<div class="network-info-box" id="contacts-info-box">
+				<svg
+					class="info-box-icon"
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<circle cx="12" cy="12" r="10" />
+					<path d="M12 16v-4" />
+					<path d="M12 8h.01" />
+				</svg>
+				<span class="info-box-text"
+					><strong>Trusted</strong> = encryption key imported, secure messaging enabled.
+					<strong>Discovered</strong> = visible on network, click Add to import key.</span
+				>
+				<button class="info-box-dismiss" id="dismiss-contacts-info" title="Dismiss">×</button>
+			</div>
+
 			<!-- Trusted Contacts Section -->
 			<section class="network-section contacts-section">
 				<div class="section-header">
@@ -71,7 +93,8 @@
 				</p>
 				<div id="contacts-list" class="contact-list">
 					<div class="empty-state" id="contacts-empty">
-						<p>No contacts yet. Scan to discover contacts.</p>
+						<p><strong>No trusted contacts yet</strong></p>
+						<p>Click Scan to discover peers, then Add to import their key.</p>
 					</div>
 				</div>
 			</section>
@@ -81,16 +104,17 @@
 				<div class="section-header">
 					<h3>
 						<img src="assets/icons/scan-eye.svg" width="16" height="16" alt="Discovered" />
-						Discovered
+						Discovered Peers
 					</h3>
 					<span class="contact-count" id="network-count">0</span>
 				</div>
 				<p class="section-description">
-					Contacts found on the network. Add them to start collaborating.
+					Peers on the network — click Add to enable encrypted messaging
 				</p>
 				<div id="network-list" class="contact-list">
 					<div class="empty-state" id="network-empty">
-						<p>No contacts found. Click Scan to discover.</p>
+						<p><strong>No peers discovered</strong></p>
+						<p>Click Scan to search for datasites synced to your SyftBox.</p>
 					</div>
 				</div>
 			</section>
@@ -98,6 +122,29 @@
 
 		<!-- Datasets View -->
 		<div class="network-content" id="datasets-view" style="display: none">
+			<!-- Info Box for Datasets -->
+			<div class="network-info-box dataset-info-box" id="datasets-info-box">
+				<svg
+					class="info-box-icon"
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<circle cx="12" cy="12" r="10" />
+					<path d="M12 16v-4" />
+					<path d="M12 8h.01" />
+				</svg>
+				<span class="info-box-text"
+					>Datasets appear when peer datasites sync to your SyftBox.
+					<strong>To publish:</strong> Create in Data tab, then run
+					<code>bv dataset publish --name &lt;name&gt;</code></span
+				>
+				<button class="info-box-dismiss" id="dismiss-datasets-info" title="Dismiss">×</button>
+			</div>
+
 			<section class="network-section datasets-section">
 				<div class="section-header">
 					<h3>
@@ -106,10 +153,11 @@
 					</h3>
 					<span class="contact-count" id="datasets-count">0</span>
 				</div>
-				<p class="section-description">Datasets published by peers on the network</p>
+				<p class="section-description">Datasets from peers on the network</p>
 				<div id="datasets-list" class="dataset-grid">
 					<div class="empty-state" id="datasets-empty">
-						<p>No datasets found. Click Scan to discover.</p>
+						<p><strong>No datasets found</strong></p>
+						<p>Click Scan to search for published datasets from synced datasites.</p>
 					</div>
 				</div>
 			</section>
@@ -127,21 +175,26 @@
 			<div class="contact-email"></div>
 			<div class="contact-fingerprint" title="Public key fingerprint"></div>
 			<div class="contact-path-row">
-				<div class="contact-path" title="Bundle path"></div>
+				<div class="contact-path" title="Key bundle path"></div>
 				<button class="btn btn-icon open-folder-btn" title="Open in Finder" style="display: none">
 					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Open folder" />
 				</button>
 			</div>
 		</div>
 		<div class="contact-status">
-			<span class="status-badge trusted">Trusted</span>
-			<span class="status-badge warning" style="display: none">Key Changed</span>
+			<span class="status-badge trusted" title="Encryption key imported">Trusted</span>
+			<span
+				class="status-badge warning"
+				style="display: none"
+				title="Key changed - verify before trusting"
+				>Key Changed</span
+			>
 		</div>
 		<div class="contact-actions">
 			<button class="btn btn-icon message-btn" title="Send message" style="display: none">
 				<img src="assets/icons/mail.svg" width="16" height="16" alt="Message" />
 			</button>
-			<button class="btn btn-icon add-btn" title="Add contact" style="display: none">
+			<button class="btn btn-icon add-btn" title="Import key" style="display: none">
 				<img src="assets/icons/check-circle.svg" width="16" height="16" alt="Add" />
 			</button>
 			<button class="btn btn-icon trust-btn" title="Trust new key" style="display: none">
@@ -179,7 +232,13 @@
 			</button>
 		</div>
 		<div class="dataset-row-status">
-			<span class="status-badge trusted" style="display: none">Trusted</span>
+			<span class="status-badge trusted" style="display: none" title="Trusted contact"
+				>Trusted</span
+			>
+			<span class="status-badge has-mock" style="display: none" title="Has preview data"
+				>Preview</span
+			>
+			<span class="status-badge is-own" style="display: none" title="Your dataset">Yours</span>
 		</div>
 		<div class="dataset-row-actions">
 			<button

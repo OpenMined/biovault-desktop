@@ -231,6 +231,78 @@
 	color: #94a3b8;
 }
 
+/* ============================================================================
+   MESSAGE FILTERS (Inbox Tabs)
+   ============================================================================ */
+
+.message-filters {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 8px 12px;
+	border-bottom: 1px solid #e2e8f0;
+	background: #fafbfc;
+}
+
+.message-filter {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	padding: 6px 12px;
+	background: transparent;
+	color: #64748b;
+	border: none;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.message-filter:hover {
+	background: #e2e8f0;
+	color: #475569;
+}
+
+.message-filter.active {
+	background: #10b981;
+	color: #fff;
+}
+
+.message-filter.active:hover {
+	background: #059669;
+	color: #fff;
+}
+
+/* Refresh icon button at end of filters */
+.message-filter-refresh {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	margin-left: auto;
+	padding: 0;
+	background: transparent;
+	color: #94a3b8;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.message-filter-refresh:hover {
+	background: #e2e8f0;
+	color: #64748b;
+}
+
+/* Hide legacy refresh button */
+.message-filters .message-secondary {
+	display: none;
+}
+
 /* Thread List */
 .msg-thread-list,
 #message-list {
@@ -324,23 +396,57 @@
 	color: #7c3aed;
 }
 
-/* Session threads */
+/* ============================================================================
+   SESSION THREADS - Distinct visual identity (amber/orange color scheme)
+   Sessions should be clearly distinguishable from regular messages
+   ============================================================================ */
+
 .message-thread-item.session-thread {
-	background: #f0fdf4;
+	background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+	border: 1px solid #fcd34d;
+	border-left: 4px solid #f59e0b;
+	position: relative;
+}
+
+.message-thread-item.session-thread::before {
+	content: '';
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 8px;
+	height: 8px;
+	background: #f59e0b;
+	border-radius: 50%;
+	opacity: 0.6;
 }
 
 .message-thread-item.session-thread:hover {
-	background: #ecfdf5;
+	background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+	border-color: #fbbf24;
 }
 
 .message-thread-item.session-thread.active {
-	background: #dcfce7;
-	border-color: #bbf7d0;
-	box-shadow: none;
+	background: linear-gradient(135deg, #fde68a 0%, #fcd34d 100%);
+	border-color: #f59e0b;
+	border-left: 4px solid #d97706;
+	box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
+}
+
+.message-thread-item.session-thread.active::before {
+	display: none; /* Hide dot when active indicator is showing */
 }
 
 .message-thread-item.session-thread .message-thread-header {
-	color: #15803d;
+	color: #92400e;
+	font-weight: 600;
+}
+
+.message-thread-item.session-thread .message-thread-subject {
+	color: #b45309;
+}
+
+.message-thread-item.session-thread .message-thread-preview {
+	color: #d97706;
 }
 
 .message-thread-top {
@@ -383,17 +489,26 @@
 	text-transform: uppercase;
 }
 
+/* Session Badge - Prominent amber styling to match session threads */
 .message-thread-session {
 	display: inline-flex;
 	align-items: center;
-	gap: 3px;
-	padding: 2px 6px;
-	background: #dcfce7;
-	color: #15803d;
-	border-radius: 4px;
-	font-size: 9px;
-	font-weight: 600;
+	gap: 4px;
+	padding: 3px 8px;
+	background: linear-gradient(135deg, #f59e0b, #d97706);
+	color: #fff;
+	border-radius: 6px;
+	font-size: 10px;
+	font-weight: 700;
 	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	box-shadow: 0 1px 3px rgba(245, 158, 11, 0.3);
+}
+
+.message-thread-session svg {
+	width: 10px;
+	height: 10px;
+	opacity: 0.9;
 }
 
 .message-thread-subject {
@@ -477,6 +592,26 @@
 
 .msg-conv-avatar.self-avatar {
 	background: #8b5cf6;
+}
+
+/* Session avatar - amber styling to match session threads */
+.msg-conv-avatar.session-avatar {
+	background: linear-gradient(135deg, #f59e0b, #d97706);
+	box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+/* Session conversation header enhancement */
+.msg-conv-header.session-header {
+	background: linear-gradient(90deg, #fffbeb 0%, #fff 100%);
+	border-bottom-color: #fcd34d;
+}
+
+.msg-conv-header.session-header .msg-conv-meta h2 {
+	color: #92400e;
+}
+
+.msg-conv-header.session-header .msg-conv-participants {
+	color: #b45309;
 }
 
 .msg-conv-meta {
@@ -708,53 +843,91 @@
 	color: #7c3aed;
 }
 
-/* Session Invite Card */
+/* ============================================================================
+   SESSION INVITE CARD - Distinct amber styling, clearly different from messages
+   ============================================================================ */
+
 .message-session-invite {
-	margin-top: 8px;
-	padding: 10px 12px;
-	background: #f0fdf4;
-	border: 1px solid #bbf7d0;
-	border-radius: 8px;
-	color: #064e3b;
+	margin-top: 10px;
+	padding: 14px 16px;
+	background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+	border: 2px solid #fbbf24;
+	border-left: 4px solid #f59e0b;
+	border-radius: 10px;
+	color: #78350f;
+	position: relative;
+	overflow: hidden;
+}
+
+.message-session-invite::before {
+	content: '🔐';
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	font-size: 16px;
+	opacity: 0.4;
 }
 
 .message-bubble.outgoing .message-session-invite {
-	background: rgba(255, 255, 255, 0.15);
-	border-color: rgba(255, 255, 255, 0.3);
-	color: #fff;
+	background: linear-gradient(135deg, rgba(255, 251, 235, 0.95), rgba(254, 243, 199, 0.95));
+	border-color: #fbbf24;
+	color: #78350f;
 }
 
 .message-session-invite h5 {
-	font-size: 13px;
-	font-weight: 600;
-	margin: 0 0 4px 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+	font-weight: 700;
+	color: #92400e;
+	margin: 0 0 8px 0;
+}
+
+.message-session-invite .invite-label {
+	display: inline-block;
+	padding: 2px 6px;
+	background: #f59e0b;
+	color: #fff;
+	border-radius: 4px;
+	font-size: 9px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-left: 6px;
 }
 
 .message-session-invite .invite-meta {
-	font-size: 11px;
-	margin: 0 0 2px 0;
-	opacity: 0.8;
+	font-size: 12px;
+	color: #b45309;
+	margin: 0 0 4px 0;
 }
 
 .message-session-invite .invite-actions {
 	display: flex;
-	gap: 6px;
-	margin-top: 8px;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid rgba(251, 191, 36, 0.4);
 }
 
 .message-session-invite .invite-actions button {
-	padding: 6px 12px;
-	background: #10b981;
+	padding: 8px 16px;
+	background: linear-gradient(135deg, #f59e0b, #d97706);
 	color: #fff;
 	border: none;
 	border-radius: 6px;
 	font-size: 12px;
-	font-weight: 500;
+	font-weight: 600;
 	cursor: pointer;
+	box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+	transition: all 0.15s ease;
 }
 
 .message-session-invite .invite-actions button:hover {
-	background: #059669;
+	background: linear-gradient(135deg, #d97706, #b45309);
+	transform: translateY(-1px);
+	box-shadow: 0 3px 6px rgba(245, 158, 11, 0.4);
 }
 
 /* ============================================================================
@@ -1279,8 +1452,22 @@
 
 .message-filter-failed.has-failures {
 	background: #fef2f2;
-	border-color: #fca5a5;
 	color: #b91c1c;
+}
+
+.message-filter-failed.has-failures:hover {
+	background: #fee2e2;
+	color: #991b1b;
+}
+
+.message-filter-failed.active {
+	background: #ef4444;
+	color: #fff;
+}
+
+.message-filter-failed.active:hover {
+	background: #dc2626;
+	color: #fff;
 }
 
 .failed-badge {

@@ -198,6 +198,7 @@ sessionsModule = createSessionsModule({
 	dialog,
 	getCurrentUserEmail,
 	listen,
+	getMessagesModule: () => messagesModule,
 })
 const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
 
