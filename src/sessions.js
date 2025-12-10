@@ -1,6 +1,13 @@
 import { createContactAutocomplete } from './contact-autocomplete.js'
+import { escapeHtml, formatDateTime, formatRelativeTime, emailsMatch } from './utils.js'
 
-export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, listen }) {
+export function createSessionsModule({
+	invoke,
+	dialog,
+	getCurrentUserEmail,
+	listen,
+	getMessagesModule,
+}) {
 	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	let sessions = []
@@ -12,27 +19,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 	let sessionMessagesInterval = null
 	let messageSyncUnlisten = null
 	const seenArtifactIds = new Map() // sessionId -> Set of envelope_ids/paths
-
-	function formatDateTime(isoString) {
-		if (!isoString) return '-'
-		const date = new Date(isoString)
-		return date.toLocaleString()
-	}
-
-	function formatRelativeTime(isoString) {
-		if (!isoString) return '-'
-		const date = new Date(isoString)
-		const now = new Date()
-		const diff = now - date
-		const minutes = Math.floor(diff / 60000)
-		const hours = Math.floor(diff / 3600000)
-		const days = Math.floor(diff / 86400000)
-
-		if (days > 0) return `${days}d ago`
-		if (hours > 0) return `${hours}h ago`
-		if (minutes > 0) return `${minutes}m ago`
-		return 'just now'
-	}
+	let sessionSearchTerm = ''
 
 	function focusInvitationCard(sessionId) {
 		if (!sessionId) return
@@ -138,6 +125,17 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		const listEl = document.getElementById('session-list')
 		if (!listEl) return
 
+		// Filter sessions based on search term
+		const filteredSessions = sessionSearchTerm
+			? sessions.filter((session) => {
+					const term = sessionSearchTerm.toLowerCase()
+					const name = (session.name || '').toLowerCase()
+					const peer = (session.peer || '').toLowerCase()
+					const status = (session.status || '').toLowerCase()
+					return name.includes(term) || peer.includes(term) || status.includes(term)
+				})
+			: sessions
+
 		if (sessions.length === 0) {
 			listEl.innerHTML = `
 				<div class="session-list-empty">
@@ -148,7 +146,17 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 			return
 		}
 
-		listEl.innerHTML = sessions
+		if (filteredSessions.length === 0) {
+			listEl.innerHTML = `
+				<div class="session-list-empty">
+					<p>No matching sessions</p>
+					<p>Try a different search term</p>
+				</div>
+			`
+			return
+		}
+
+		listEl.innerHTML = filteredSessions
 			.map(
 				(session) => `
 			<div class="session-list-item ${activeSessionId === session.session_id ? 'active' : ''}"
@@ -172,6 +180,16 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		})
 	}
 
+	function setupSessionSearchListener() {
+		const searchInput = document.getElementById('session-search')
+		if (!searchInput) return
+
+		searchInput.addEventListener('input', (e) => {
+			sessionSearchTerm = e.target.value.trim()
+			renderSessionList()
+		})
+	}
+
 	async function openSessionDetail(sessionId) {
 		activeSessionId = sessionId
 		const session = sessions.find((s) => s.session_id === sessionId)
@@ -188,6 +206,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		if (emptyEl) emptyEl.style.display = 'none'
 
 		renderSessionDetail(session)
+		await loadSessionDatasets(sessionId)
 		await loadSessionMessages(sessionId)
 		const _status = await refreshJupyterStatus(sessionId)
 		startJupyterPolling(sessionId)
@@ -215,6 +234,256 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		} else {
 			peerEl.textContent = 'None'
 			addPeerBtn.style.display = 'inline'
+		}
+	}
+
+	// Session Datasets
+	async function loadSessionDatasets(sessionId) {
+		const listEl = document.getElementById('session-datasets-list')
+		if (!listEl) return
+
+		try {
+			const datasets = await invoke('list_session_datasets', { sessionId })
+			renderSessionDatasets(datasets)
+		} catch (error) {
+			console.error('Failed to load session datasets:', error)
+			listEl.innerHTML = '<div class="session-datasets-error">Failed to load datasets</div>'
+		}
+	}
+
+	function renderSessionDatasets(datasets) {
+		const listEl = document.getElementById('session-datasets-list')
+		const countEl = document.getElementById('session-datasets-count')
+		if (!listEl) return
+
+		if (countEl) {
+			countEl.textContent = datasets.length > 0 ? `(${datasets.length})` : ''
+		}
+
+		if (datasets.length === 0) {
+			listEl.innerHTML = `
+				<div class="session-datasets-empty">
+					<p>No datasets linked</p>
+					<p>Datasets from the Network tab can be associated with sessions</p>
+				</div>
+			`
+			return
+		}
+
+		listEl.innerHTML = datasets
+			.map(
+				(dataset) => `
+				<div class="session-dataset-item" data-url="${escapeHtml(dataset.dataset_public_url)}">
+					<div class="session-dataset-info">
+						<span class="session-dataset-name">${escapeHtml(dataset.dataset_name)}</span>
+						<span class="session-dataset-owner">${escapeHtml(dataset.dataset_owner)}</span>
+					</div>
+					<div class="session-dataset-actions">
+						<span class="session-dataset-role ${dataset.role}">${dataset.role}</span>
+						<button class="btn-icon btn-remove-dataset" title="Remove from session">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M18 6L6 18M6 6l12 12"/>
+							</svg>
+						</button>
+					</div>
+				</div>
+			`,
+			)
+			.join('')
+
+		// Add remove handlers
+		listEl.querySelectorAll('.btn-remove-dataset').forEach((btn) => {
+			btn.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				const item = btn.closest('.session-dataset-item')
+				const datasetUrl = item.dataset.url
+				await removeDatasetFromSession(datasetUrl)
+			})
+		})
+	}
+
+	async function removeDatasetFromSession(datasetUrl) {
+		if (!activeSessionId) return
+
+		try {
+			await invoke('remove_dataset_from_session', {
+				sessionId: activeSessionId,
+				datasetUrl,
+			})
+			await loadSessionDatasets(activeSessionId)
+		} catch (error) {
+			console.error('Failed to remove dataset:', error)
+			await dialog.message(`Failed to remove dataset: ${error}`, { title: 'Error', kind: 'error' })
+		}
+	}
+
+	async function addDatasetToSession(datasetUrl, role = 'shared') {
+		if (!activeSessionId) return
+
+		try {
+			await invoke('add_dataset_to_session', {
+				sessionId: activeSessionId,
+				datasetUrl,
+				role,
+			})
+			await loadSessionDatasets(activeSessionId)
+		} catch (error) {
+			console.error('Failed to add dataset:', error)
+			await dialog.message(`Failed to add dataset: ${error}`, { title: 'Error', kind: 'error' })
+		}
+	}
+
+	// Add Dataset Modal state
+	let availableDatasets = { yours: [], network: [] }
+	let selectedDatasetUrl = null
+	let currentDatasetSource = 'yours'
+
+	function showAddDatasetModal() {
+		const modal = document.getElementById('add-dataset-modal')
+		if (modal) {
+			modal.style.display = 'flex'
+			selectedDatasetUrl = null
+			currentDatasetSource = 'yours'
+			updateDatasetSourceTabs()
+			loadAvailableDatasets()
+		}
+	}
+
+	function hideAddDatasetModal() {
+		const modal = document.getElementById('add-dataset-modal')
+		if (modal) modal.style.display = 'none'
+		selectedDatasetUrl = null
+		document.getElementById('dataset-url-input').value = ''
+		document.getElementById('confirm-add-dataset-btn').disabled = true
+	}
+
+	function updateDatasetSourceTabs() {
+		document.querySelectorAll('.dataset-source-tab').forEach((tab) => {
+			tab.classList.toggle('active', tab.dataset.source === currentDatasetSource)
+		})
+	}
+
+	async function loadAvailableDatasets() {
+		const listEl = document.getElementById('add-dataset-list')
+		if (!listEl) return
+
+		listEl.innerHTML = '<div class="add-dataset-loading">Loading datasets...</div>'
+
+		try {
+			// Load user's own datasets
+			const userDatasets = await invoke('list_datasets_with_assets')
+			availableDatasets.yours = (userDatasets || []).map((entry) => ({
+				name: entry.dataset.name,
+				owner: entry.dataset.author,
+				public_url: entry.dataset.public_url,
+				description: entry.dataset.description,
+				assetCount: entry.assets?.length || 0,
+			}))
+
+			// Load network datasets (discovered from other users)
+			try {
+				const networkDatasets = await invoke('network_scan_datasets')
+				availableDatasets.network = (networkDatasets || []).map((d) => ({
+					name: d.name,
+					owner: d.owner,
+					public_url: d.public_url,
+					description: d.description,
+					assetCount: d.assets?.length || 0,
+				}))
+			} catch {
+				availableDatasets.network = []
+			}
+
+			renderDatasetList()
+		} catch (error) {
+			console.error('Failed to load datasets:', error)
+			listEl.innerHTML = '<div class="add-dataset-error">Failed to load datasets</div>'
+		}
+	}
+
+	function renderDatasetList() {
+		const listEl = document.getElementById('add-dataset-list')
+		if (!listEl) return
+
+		const datasets = availableDatasets[currentDatasetSource] || []
+
+		// Filter out already linked datasets
+		const linkedUrls = new Set()
+		document.querySelectorAll('.session-dataset-item').forEach((item) => {
+			if (item.dataset.url) linkedUrls.add(item.dataset.url)
+		})
+		const filteredDatasets = datasets.filter((d) => !linkedUrls.has(d.public_url))
+
+		if (filteredDatasets.length === 0) {
+			const emptyMessage =
+				currentDatasetSource === 'yours'
+					? 'No datasets available. Create one in the Data tab first.'
+					: 'No datasets discovered on the network yet.'
+			listEl.innerHTML = `<div class="add-dataset-empty">${emptyMessage}</div>`
+			return
+		}
+
+		listEl.innerHTML = filteredDatasets
+			.map(
+				(dataset) => `
+			<div class="add-dataset-item ${selectedDatasetUrl === dataset.public_url ? 'selected' : ''}"
+				 data-url="${escapeHtml(dataset.public_url)}"
+				 data-name="${escapeHtml(dataset.name)}">
+				<div class="add-dataset-item-info">
+					<span class="add-dataset-item-name">${escapeHtml(dataset.name)}</span>
+					<span class="add-dataset-item-owner">${escapeHtml(dataset.owner || 'You')}</span>
+				</div>
+				<div class="add-dataset-item-meta">
+					${
+						dataset.assetCount > 0
+							? `<span>${dataset.assetCount} file${dataset.assetCount !== 1 ? 's' : ''}</span>`
+							: ''
+					}
+				</div>
+			</div>
+		`,
+			)
+			.join('')
+
+		// Add click handlers
+		listEl.querySelectorAll('.add-dataset-item').forEach((item) => {
+			item.addEventListener('click', () => {
+				// Deselect others
+				listEl.querySelectorAll('.add-dataset-item').forEach((i) => i.classList.remove('selected'))
+				// Select this one
+				item.classList.add('selected')
+				selectedDatasetUrl = item.dataset.url
+				document.getElementById('dataset-url-input').value = ''
+				document.getElementById('confirm-add-dataset-btn').disabled = false
+			})
+		})
+	}
+
+	async function confirmAddDataset() {
+		const urlInput = document.getElementById('dataset-url-input')
+		const datasetUrl = urlInput.value.trim() || selectedDatasetUrl
+
+		if (!datasetUrl) {
+			await dialog.message('Please select a dataset or enter a URL', {
+				title: 'No Dataset Selected',
+				kind: 'error',
+			})
+			return
+		}
+
+		const confirmBtn = document.getElementById('confirm-add-dataset-btn')
+		confirmBtn.disabled = true
+		confirmBtn.textContent = 'Linking...'
+
+		try {
+			await addDatasetToSession(datasetUrl, 'shared')
+			hideAddDatasetModal()
+		} catch (error) {
+			console.error('Failed to add dataset:', error)
+			await dialog.message(`Failed to link dataset: ${error}`, { title: 'Error', kind: 'error' })
+		} finally {
+			confirmBtn.disabled = false
+			confirmBtn.textContent = 'Link Dataset'
 		}
 	}
 
@@ -328,7 +597,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 			})
 	}
 
-	function _cleanupMessageSyncListener() {
+	function cleanupMessageSyncListener() {
 		if (messageSyncUnlisten) {
 			messageSyncUnlisten()
 			messageSyncUnlisten = null
@@ -443,9 +712,20 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		if (!containerEl) return
 
 		const currentUser = getCurrentUserEmail?.() || 'owner@local'
+
+		// Separate messages and artifacts
+		const messagesList = messages || []
+		const artifactsList = artifacts || []
+
+		if (!messagesList.length && !artifactsList.length) {
+			containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
+			return
+		}
+
+		// Build timeline entries (messages + artifacts merged by time)
 		const entries = []
 
-		;(messages || []).forEach((m) => {
+		messagesList.forEach((m) => {
 			entries.push({
 				type: 'message',
 				created_at: m.created_at,
@@ -454,7 +734,8 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 				raw: m,
 			})
 		})
-		;(artifacts || []).forEach((a) => {
+
+		artifactsList.forEach((a) => {
 			entries.push({
 				type: 'artifact',
 				created_at: a.created_at,
@@ -463,17 +744,26 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 			})
 		})
 
-		if (!entries.length) {
-			containerEl.innerHTML = '<div class="msg-embedded-empty">No messages yet</div>'
-			return
-		}
-
+		// Sort by time
 		entries.sort((a, b) => {
 			const ta = a.created_at ? new Date(a.created_at).getTime() : 0
 			const tb = b.created_at ? new Date(b.created_at).getTime() : 0
 			return ta - tb
 		})
 
+		// Try to use the shared message renderer for messages
+		const messagesModule = getMessagesModule?.()
+		if (messagesModule?.renderMessagesToContainer && !artifactsList.length) {
+			// If no artifacts, use the shared renderer for better consistency
+			messagesModule.renderMessagesToContainer(containerEl, messagesList, {
+				compact: true,
+				showSessionInvites: false,
+				currentUserEmail: currentUser,
+			})
+			return
+		}
+
+		// Mixed timeline (messages + artifacts) - render manually
 		containerEl.innerHTML = entries
 			.map((item) => {
 				if (item.type === 'artifact') {
@@ -508,7 +798,7 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 					</div>`
 				}
 
-				const isOutgoing = item.from === currentUser
+				const isOutgoing = emailsMatch(item.from, currentUser)
 				return `
 				<div class="message-group ${isOutgoing ? 'outgoing' : 'incoming'} compact">
 					<div class="message-bubble ${isOutgoing ? 'outgoing' : ''} compact">
@@ -600,6 +890,9 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		}
 	}
 
+	// Dataset to associate with new session (set when creating from network tab)
+	let pendingDatasetForSession = null
+
 	function openCreateSessionWithDataset(dataset) {
 		const modal = document.getElementById('create-session-modal')
 		if (modal) {
@@ -611,6 +904,26 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 			nameInput.value = dataset.name || ''
 			descInput.value = dataset.description || `Session for dataset: ${dataset.name}`
 			peerInput.value = dataset.owner || ''
+
+			// Store dataset info for association when session is created
+			pendingDatasetForSession = {
+				owner: dataset.owner,
+				name: dataset.name,
+				public_url: dataset.public_url,
+			}
+
+			// Show dataset badge in modal
+			const datasetBadge = document.getElementById('session-dataset-badge')
+			if (datasetBadge) {
+				datasetBadge.innerHTML = `
+					<span class="chip chip-info">
+						<img src="assets/icons/database.svg" width="12" height="12" alt="" />
+						${dataset.owner}/${dataset.name}
+					</span>
+				`
+				datasetBadge.style.display = 'flex'
+			}
+
 			nameInput.focus()
 		}
 	}
@@ -618,6 +931,14 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 	function hideCreateSessionModal() {
 		const modal = document.getElementById('create-session-modal')
 		if (modal) modal.style.display = 'none'
+
+		// Clear pending dataset
+		pendingDatasetForSession = null
+		const datasetBadge = document.getElementById('session-dataset-badge')
+		if (datasetBadge) {
+			datasetBadge.innerHTML = ''
+			datasetBadge.style.display = 'none'
+		}
 	}
 
 	async function createSession() {
@@ -638,13 +959,29 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		confirmBtn.textContent = 'Creating...'
 
 		try {
-			const session = await invoke('create_session', {
-				request: {
-					name,
-					description: description || null,
-					peer: peer || null,
-				},
-			})
+			// Check if we have a pending dataset to associate
+			const datasets = pendingDatasetForSession ? [pendingDatasetForSession.public_url] : []
+
+			let session
+			if (datasets.length > 0) {
+				// Use the new create_session_with_datasets command
+				session = await invoke('create_session_with_datasets', {
+					request: {
+						name,
+						description: description || null,
+						peer: peer || null,
+					},
+					datasets,
+				})
+			} else {
+				session = await invoke('create_session', {
+					request: {
+						name,
+						description: description || null,
+						peer: peer || null,
+					},
+				})
+			}
 
 			hideCreateSessionModal()
 			await loadSessions()
@@ -775,15 +1112,12 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		}
 	}
 
-	function escapeHtml(text) {
-		const div = document.createElement('div')
-		div.textContent = text
-		return div.innerHTML
-	}
-
 	function initializeSessionsTab() {
 		// Preload contact suggestions for peer inputs
 		contactAutocomplete.attachToInputs(['session-peer-input', 'peer-email-input'])
+
+		// Set up search functionality
+		setupSessionSearchListener()
 
 		// Set up real-time message listener for instant updates
 		setupMessageSyncListener()
@@ -814,6 +1148,52 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 
 		const addPeerBtn = document.getElementById('add-peer-btn')
 		if (addPeerBtn) addPeerBtn.addEventListener('click', showAddPeerModal)
+
+		// Add Dataset modal handlers
+		const addDatasetBtn = document.getElementById('add-dataset-btn')
+		if (addDatasetBtn) addDatasetBtn.addEventListener('click', showAddDatasetModal)
+
+		const closeDatasetModalBtn = document.getElementById('close-dataset-modal-btn')
+		if (closeDatasetModalBtn) closeDatasetModalBtn.addEventListener('click', hideAddDatasetModal)
+
+		const cancelDatasetModalBtn = document.getElementById('cancel-dataset-modal-btn')
+		if (cancelDatasetModalBtn) cancelDatasetModalBtn.addEventListener('click', hideAddDatasetModal)
+
+		const confirmAddDatasetBtn = document.getElementById('confirm-add-dataset-btn')
+		if (confirmAddDatasetBtn) confirmAddDatasetBtn.addEventListener('click', confirmAddDataset)
+
+		// Dataset source tabs
+		document.querySelectorAll('.dataset-source-tab').forEach((tab) => {
+			tab.addEventListener('click', () => {
+				currentDatasetSource = tab.dataset.source
+				updateDatasetSourceTabs()
+				renderDatasetList()
+			})
+		})
+
+		// Dataset URL manual input
+		const datasetUrlInput = document.getElementById('dataset-url-input')
+		if (datasetUrlInput) {
+			datasetUrlInput.addEventListener('input', () => {
+				const hasUrl = datasetUrlInput.value.trim().length > 0
+				if (hasUrl) {
+					// Deselect any selected dataset
+					document
+						.querySelectorAll('.add-dataset-item.selected')
+						.forEach((i) => i.classList.remove('selected'))
+					selectedDatasetUrl = null
+				}
+				document.getElementById('confirm-add-dataset-btn').disabled = !hasUrl && !selectedDatasetUrl
+			})
+		}
+
+		// Dataset modal overlay click to close
+		const datasetModal = document.getElementById('add-dataset-modal')
+		if (datasetModal) {
+			datasetModal.addEventListener('click', (e) => {
+				if (e.target === datasetModal) hideAddDatasetModal()
+			})
+		}
 
 		const launchBtn = document.getElementById('launch-session-jupyter-btn')
 		if (launchBtn) launchBtn.addEventListener('click', launchSessionJupyter)
@@ -911,10 +1291,12 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		stopJupyterPolling()
 		stopSessionMessagesPolling()
 		stopSessionsAutoRefresh()
+		cleanupMessageSyncListener()
 	}
 
 	window.__sessionsModule = {
 		openCreateSessionWithDataset,
+		addDatasetToSession,
 	}
 
 	return {
@@ -923,5 +1305,6 @@ export function createSessionsModule({ invoke, dialog, getCurrentUserEmail, list
 		activateSessionsTab,
 		deactivateSessionsTab,
 		openCreateSessionWithDataset,
+		addDatasetToSession,
 	}
 }

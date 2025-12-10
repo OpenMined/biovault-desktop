@@ -6,6 +6,10 @@ use crate::types::{
 };
 use biovault::cli::commands::jupyter;
 use biovault::cli::commands::messages::get_message_db_path;
+use biovault::data::sessions::{
+    add_session_dataset, get_session_datasets, remove_session_dataset, AddSessionDatasetRequest,
+    SessionDataset,
+};
 use biovault::data::BioVaultDb;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus};
 use rand::Rng;
@@ -1473,19 +1477,213 @@ pub fn send_session_chat_message(session_id: String, body: String) -> Result<Vau
     let subject = format!("Session: {}", session.name);
     let metadata = serde_json::json!({
         "session_chat": {
-            "session_id": session_id,
+            "session_id": session_id.clone(),
             "session_name": session.name,
             "from": get_owner_email(),
             "created_at": chrono::Utc::now().to_rfc3339(),
         }
     });
 
+    // Find the last message in this session's thread to chain messages together
+    // This ensures all session chat messages appear in the same thread in Messages tab
+    let reply_to = find_session_thread_message(&session_id);
+
     messages::send_message(MessageSendRequest {
         to: Some(recipient),
         body,
         subject: Some(subject),
-        reply_to: None,
+        reply_to,
         message_type: Some("text".to_string()),
         metadata: Some(metadata),
     })
+}
+
+/// Find an existing message in the session thread to reply to
+/// This allows session chat messages to be grouped in the same thread
+fn find_session_thread_message(session_id: &str) -> Option<String> {
+    let config = load_message_config().ok()?;
+    let db = open_message_db(&config).ok()?;
+
+    let messages = db.list_messages(None).ok()?;
+
+    // Find any message with this session_id in metadata (prefer the first/oldest one for thread consistency)
+    let mut session_messages: Vec<_> = messages
+        .into_iter()
+        .filter(|m| {
+            if let Some(meta) = m.metadata.as_ref() {
+                if let Some(session_chat) = meta.get("session_chat") {
+                    if let Some(id) = session_chat.get("session_id").and_then(|v| v.as_str()) {
+                        return id == session_id;
+                    }
+                }
+                if let Some(invite) = meta.get("session_invite") {
+                    if let Some(id) = invite.get("session_id").and_then(|v| v.as_str()) {
+                        return id == session_id;
+                    }
+                }
+            }
+            false
+        })
+        .collect();
+
+    // Sort by created_at ascending to get the first message (which starts the thread)
+    session_messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    // Return the first message's ID - this is the thread starter, replying to it chains all messages
+    session_messages.first().map(|m| m.id.clone())
+}
+
+// ============================================================================
+// Session Datasets
+// ============================================================================
+
+/// Parsed dataset URL info
+struct DatasetUrlInfo {
+    owner: String,
+    name: String,
+}
+
+/// Parse a syft:// dataset URL to extract owner and name
+fn parse_dataset_url(url: &str) -> Option<DatasetUrlInfo> {
+    // Format: syft://owner@domain/public/biovault/datasets/name/dataset.yaml
+    if !url.starts_with("syft://") {
+        return None;
+    }
+
+    let remainder = &url[7..]; // Skip "syft://"
+    let parts: Vec<&str> = remainder.split('/').collect();
+
+    if parts.len() < 5 {
+        return None;
+    }
+
+    let owner = parts[0].to_string();
+
+    // Find "datasets" in the path and get the next part as name
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "datasets" && i + 1 < parts.len() {
+            return Some(DatasetUrlInfo {
+                owner,
+                name: parts[i + 1].to_string(),
+            });
+        }
+    }
+
+    None
+}
+
+#[tauri::command]
+pub fn add_dataset_to_session(
+    session_id: String,
+    dataset_url: String,
+    role: Option<String>,
+) -> Result<SessionDataset, String> {
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Verify session exists
+    let _: i64 = db
+        .connection()
+        .query_row(
+            "SELECT id FROM sessions WHERE session_id = ?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("Session not found: {}", session_id))?;
+
+    let info = parse_dataset_url(&dataset_url)
+        .ok_or_else(|| format!("Invalid dataset URL: {}", dataset_url))?;
+
+    let request = AddSessionDatasetRequest {
+        session_id: session_id.clone(),
+        dataset_public_url: dataset_url.clone(),
+        dataset_owner: info.owner.clone(),
+        dataset_name: info.name.clone(),
+        role,
+    };
+
+    add_session_dataset(&db, &request)
+        .map_err(|e| format!("Failed to add dataset to session: {}", e))?;
+
+    // Return the newly added dataset
+    let datasets = get_session_datasets(&db, &session_id)
+        .map_err(|e| format!("Failed to get session datasets: {}", e))?;
+
+    datasets
+        .into_iter()
+        .find(|d| d.dataset_public_url == dataset_url)
+        .ok_or_else(|| "Failed to retrieve added dataset".to_string())
+}
+
+#[tauri::command]
+pub fn remove_dataset_from_session(
+    session_id: String,
+    dataset_url: String,
+) -> Result<bool, String> {
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
+
+    remove_session_dataset(&db, &session_id, &dataset_url)
+        .map_err(|e| format!("Failed to remove dataset from session: {}", e))
+}
+
+#[tauri::command]
+pub fn list_session_datasets(session_id: String) -> Result<Vec<SessionDataset>, String> {
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
+
+    get_session_datasets(&db, &session_id)
+        .map_err(|e| format!("Failed to list session datasets: {}", e))
+}
+
+/// Create a session with associated datasets
+#[tauri::command]
+pub fn create_session_with_datasets(
+    request: CreateSessionRequest,
+    datasets: Vec<String>,
+) -> Result<Session, String> {
+    // First create the session
+    let session = create_session(request)?;
+
+    // Then add the datasets
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
+
+    for dataset_url in datasets {
+        if let Some(info) = parse_dataset_url(&dataset_url) {
+            let req = AddSessionDatasetRequest {
+                session_id: session.session_id.clone(),
+                dataset_public_url: dataset_url,
+                dataset_owner: info.owner,
+                dataset_name: info.name,
+                role: Some("shared".to_string()),
+            };
+            if let Err(e) = add_session_dataset(&db, &req) {
+                eprintln!("Warning: Failed to add dataset to session: {}", e);
+            }
+        }
+    }
+
+    // Update session.json with dataset info
+    let private_session_path = get_private_session_path(&session.session_id);
+    if private_session_path.exists() {
+        if let Ok(datasets_list) = get_session_datasets(&db, &session.session_id) {
+            let config_path = private_session_path.join("session.json");
+            if config_path.exists() {
+                if let Ok(content) = fs::read_to_string(&config_path) {
+                    if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
+                        config["datasets"] = serde_json::json!(datasets_list
+                            .iter()
+                            .map(|d| serde_json::json!({
+                                "owner": d.dataset_owner,
+                                "name": d.dataset_name,
+                                "public_url": d.dataset_public_url,
+                                "role": d.role,
+                            }))
+                            .collect::<Vec<_>>());
+                        let _ =
+                            fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(session)
 }

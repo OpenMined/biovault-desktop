@@ -64,6 +64,23 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 		})
 
+		// Update page subtitle based on view
+		const pageSubtitle = document.querySelector('#data-view .page-subtitle')
+		if (pageSubtitle) {
+			if (mode === 'datasets') {
+				pageSubtitle.textContent =
+					'Package files as datasets and publish to share with collaborators'
+			} else {
+				pageSubtitle.textContent = 'Imported genotype files and analysis results'
+			}
+		}
+
+		// Update search placeholder based on view
+		const searchInput = document.getElementById('file-search')
+		if (searchInput) {
+			searchInput.placeholder = mode === 'datasets' ? 'Search datasets...' : 'Search files...'
+		}
+
 		const globalEmptyState = document.getElementById('data-empty-state')
 		if (globalEmptyState) {
 			globalEmptyState.style.display = mode === 'datasets' ? 'none' : globalEmptyState.style.display
@@ -298,8 +315,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			<td class="col-file" title="${file.file_path}">
 				<span style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
 					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
-						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
-					}</span>
+			file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+		}</span>
 					<span style="font-weight: 500; color: #1e293b;">${file.file_path.split('/').pop()}</span>
 				</span>
 			</td>
@@ -315,18 +332,14 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
 			<td class="sex-cell" style="font-weight: ${file.inferred_sex ? '600' : 'normal'}; color: ${
-				file.inferred_sex === 'Male'
-					? '#007bff'
-					: file.inferred_sex === 'Female'
-						? '#e83e8c'
-						: '#666'
-			}">${
-				file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
-					? file.inferred_sex
-					: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
-						? 'Unknown'
-						: '-'
-			}</td>
+			file.inferred_sex === 'Male' ? '#007bff' : file.inferred_sex === 'Female' ? '#e83e8c' : '#666'
+		}">${
+			file.inferred_sex && file.inferred_sex !== 'Unknown' && file.inferred_sex !== 'UNKNOWN'
+				? file.inferred_sex
+				: file.inferred_sex === 'Unknown' || file.inferred_sex === 'UNKNOWN'
+				? 'Unknown'
+				: '-'
+		}</td>
 			<td class="actions-cell">
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
@@ -480,29 +493,18 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	function updateDeleteButton() {
 		const btn = document.getElementById('delete-selected-btn')
 		if (!btn) return
-
-		if (selectedFileIds.length > 0) {
-			btn.style.display = 'flex'
-			// Keep the icon, just update the title
-			btn.title = `Delete ${selectedFileIds.length} file${selectedFileIds.length === 1 ? '' : 's'}`
-		} else {
-			btn.style.display = 'none'
-		}
+		// Update title for accessibility - visibility is handled by the toolbar
+		btn.title = `Delete ${selectedFileIds.length} file${selectedFileIds.length === 1 ? '' : 's'}`
 	}
 
 	function updateActionButtons() {
-		const runBtn = document.getElementById('run-analysis-btn')
 		const runText = document.getElementById('run-analysis-text')
-		const _selectionCountEl = document.getElementById('selection-count')
 		const selectionActionsGroup = document.getElementById('selection-actions-group')
 
 		const fileCount = selectedFileIds.length
 
-		if (fileCount > 0) {
-			// Enable run button for any selected files
-			runBtn.disabled = false
-			runText.textContent = 'Run Pipeline'
-			runBtn.title = `Run pipeline on ${fileCount} file${fileCount === 1 ? '' : 's'}`
+		if (fileCount > 0 && viewMode === 'participants') {
+			if (runText) runText.textContent = `Run Pipeline`
 
 			if (selectionActionsGroup) {
 				const countText = document.getElementById('selection-count-text')
@@ -512,9 +514,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				selectionActionsGroup.style.display = 'flex'
 			}
 		} else {
-			runBtn.disabled = true
-			runText.textContent = 'Run Pipeline'
-			runBtn.title = 'Select files to run pipeline'
+			if (runText) runText.textContent = 'Run Pipeline'
 			if (selectionActionsGroup) {
 				selectionActionsGroup.style.display = 'none'
 			}
@@ -560,7 +560,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 	// Update queue status indicator with count and time estimate
 	function updateQueueStatusIndicator(globalInfo) {
-		const statusIndicator = document.getElementById('queue-status-indicator')
+		const _statusIndicator = document.getElementById('queue-status-indicator')
 		const pendingCountEl = document.getElementById('pending-count')
 		const timeEstimateEl = document.getElementById('queue-time-estimate-display')
 		const pendingCount = globalInfo?.total_pending || 0
@@ -568,33 +568,28 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const hasQueueItems = pendingCount > 0 || processingCount > 0
 		const isProcessorRunning = globalInfo?.is_processor_running || false
 
-		// Only show status indicator when there are files processing or pending
-		if (statusIndicator && pendingCountEl) {
-			if (hasQueueItems) {
-				statusIndicator.style.display = 'flex'
-				pendingCountEl.textContent = pendingCount
+		// Update pending count
+		if (pendingCountEl) {
+			pendingCountEl.textContent = pendingCount
+		}
 
-				// Only show time estimate if processor is actually running (not paused)
-				if (timeEstimateEl) {
-					if (isProcessorRunning) {
-						const timeEstimate = globalInfo?.estimated_time_remaining_seconds
-							? formatTimeEstimate(globalInfo.estimated_time_remaining_seconds)
-							: null
+		// Only show time estimate if processor is actually running (not paused)
+		if (timeEstimateEl) {
+			if (isProcessorRunning && hasQueueItems) {
+				const timeEstimate = globalInfo?.estimated_time_remaining_seconds
+					? formatTimeEstimate(globalInfo.estimated_time_remaining_seconds)
+					: null
 
-						if (timeEstimate) {
-							timeEstimateEl.textContent = `~${timeEstimate}`
-							timeEstimateEl.title = `Estimated time remaining: ${timeEstimate}`
-							timeEstimateEl.style.display = 'inline'
-						} else {
-							timeEstimateEl.style.display = 'none'
-						}
-					} else {
-						// Processor is paused - hide time estimate since it's frozen
-						timeEstimateEl.style.display = 'none'
-					}
+				if (timeEstimate) {
+					timeEstimateEl.textContent = `• ~${timeEstimate}`
+					timeEstimateEl.title = `Estimated time remaining: ${timeEstimate}`
+					timeEstimateEl.style.display = 'inline'
+				} else {
+					timeEstimateEl.style.display = 'none'
 				}
 			} else {
-				statusIndicator.style.display = 'none'
+				// Processor is paused or queue is empty - hide time estimate
+				timeEstimateEl.style.display = 'none'
 			}
 		}
 	}
@@ -613,19 +608,25 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			const text = document.getElementById('queue-btn-text')
 			const spinnerContainer = document.getElementById('queue-spinner-container')
 			const queueCard = document.getElementById('queue-card-container')
+			const clearQueueBtn = document.getElementById('clear-queue-btn')
 
 			// Use fresh data from backend, not stale DOM values
 			const pendingCount = globalInfo.total_pending || 0
 			const processingCount = globalInfo.processing_count || 0
 			const hasQueueItems = pendingCount > 0 || processingCount > 0
 
-			// Only show queue card when there are files processing or pending
+			// Only show queue bar when there are files processing or pending
 			if (queueCard) {
 				if (hasQueueItems) {
-					queueCard.style.display = 'inline-flex'
+					queueCard.style.display = 'flex'
 				} else {
 					queueCard.style.display = 'none'
 				}
+			}
+
+			// Show/hide clear button based on queue state
+			if (clearQueueBtn) {
+				clearQueueBtn.style.display = hasQueueItems ? 'inline-flex' : 'none'
 			}
 
 			// Update button state
@@ -634,12 +635,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					iconContainer.innerHTML =
 						'<img src="assets/icons/pause.svg" width="14" height="14" alt="" />'
 					text.textContent = 'Pause'
-					btn.className = 'queue-control-btn btn-queue-pause'
+					btn.className = 'queue-bar-toggle btn-queue-pause'
 				} else {
 					iconContainer.innerHTML =
 						'<img src="assets/icons/play.svg" width="14" height="14" alt="" />'
 					text.textContent = 'Resume'
-					btn.className = 'queue-control-btn btn-queue-resume'
+					btn.className = 'queue-bar-toggle btn-queue-resume'
 				}
 			}
 
@@ -745,17 +746,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		currentEditingAssets = new Map()
 		currentEditingOriginalName = null
 		currentEditingWasPublished = false
+		updateEditorPreview()
 	}
 
 	function addAssetRow(asset = {}) {
 		const assetsContainer = document.getElementById('dataset-form-assets')
 		if (!assetsContainer) return
+
 		const row = document.createElement('div')
-		row.className = 'dataset-asset-row'
-		row.style.display = 'grid'
-		row.style.gridTemplateColumns = '1fr 1fr 1.8fr 1.8fr 40px'
-		row.style.gap = '8px'
-		row.style.marginBottom = '8px'
+		row.className = 'asset-row-modern'
 
 		const privateVal = asset.resolved_private_path || asset.private_path || ''
 		const mockVal = asset.resolved_mock_path || asset.mock_path || ''
@@ -765,76 +764,144 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		row.dataset.mockId = mockId ?? ''
 		row.dataset.origPrivatePath = privateVal
 		row.dataset.origMockPath = mockVal
+		row.dataset.kind = asset.kind || 'twin'
+
+		// Generate a default key from filename or index
+		const assetCount = assetsContainer.querySelectorAll('.asset-row-modern').length
+		const defaultKey = asset.asset_key || `file_${assetCount + 1}`
+
+		// Get just the filename for display
+		const _privateFileName = privateVal ? privateVal.split('/').pop() : ''
+		const _mockFileName = mockVal ? mockVal.split('/').pop() : ''
 
 		row.innerHTML = `
-			<input class="asset-key" type="text" placeholder="asset key" value="${asset.asset_key || ''}" autocapitalize="off" autocorrect="off" spellcheck="false" />
-			<select class="asset-kind">
-				<option value="twin" ${asset.kind === 'twin' || !asset.kind ? 'selected' : ''}>twin</option>
-				<option value="file" ${asset.kind === 'file' ? 'selected' : ''}>file</option>
-			</select>
-			<div class="input-with-button asset-private-wrap">
-				<input class="asset-private" type="text" placeholder="Private file path" value="${privateVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
-				<button class="btn-icon select-private" title="Choose private file">
-					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Browse" />
+			<div class="asset-row-header">
+				<div class="asset-row-title">
+					<input class="asset-key" type="text" placeholder="asset_name" value="${defaultKey}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+					<span class="asset-row-badge">Twin</span>
+				</div>
+				<button class="btn-remove-asset" title="Remove this file">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="18" y1="6" x2="6" y2="18"></line>
+						<line x1="6" y1="6" x2="18" y2="18"></line>
+					</svg>
 				</button>
 			</div>
-			<div class="input-with-button asset-mock-wrap">
-				<input class="asset-mock" type="text" placeholder="Public/mock file path (optional)" value="${mockVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
-				<button class="btn-icon select-mock" title="Choose mock/public file">
-					<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Browse" />
-				</button>
+			<div class="asset-row-files">
+				<div class="asset-file-input">
+					<label class="private-label">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+							<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+						</svg>
+						Private (Real Data)
+					</label>
+					<div class="file-input-group">
+						<input class="asset-private" type="text" placeholder="Select your private file..." value="${privateVal}" title="${privateVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+						<button class="btn-browse select-private" title="Browse for private file">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+							</svg>
+						</button>
+					</div>
+				</div>
+				<div class="asset-file-input">
+					<label class="mock-label">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+							<polyline points="14 2 14 8 20 8"></polyline>
+						</svg>
+						Mock (Sample) - Optional
+					</label>
+					<div class="file-input-group">
+						<input class="asset-mock" type="text" placeholder="Select sample/mock file..." value="${mockVal}" title="${mockVal}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+						<button class="btn-browse select-mock" title="Browse for mock file">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+							</svg>
+						</button>
+					</div>
+				</div>
 			</div>
-			<button class="btn-icon remove-asset" title="Remove">
-				<img src="assets/icons/x.svg" width="14" height="14" alt="Remove" />
-			</button>
 		`
 
-		row.querySelector('.remove-asset')?.addEventListener('click', () => {
+		// Remove button
+		row.querySelector('.btn-remove-asset')?.addEventListener('click', () => {
 			row.remove()
+			updateEditorPreview()
 		})
 
+		// Browse for private file
 		row.querySelector('.select-private')?.addEventListener('click', async (e) => {
 			e.preventDefault()
 			const path = await dialog.open({ multiple: false, directory: false })
 			if (path) {
-				row.querySelector('.asset-private').value = Array.isArray(path) ? path[0] : path
+				const pathStr = Array.isArray(path) ? path[0] : path
+				const privateInput = row.querySelector('.asset-private')
+				privateInput.value = pathStr
+				privateInput.title = pathStr
+
+				// Auto-fill asset key from filename if empty or default
+				const keyInput = row.querySelector('.asset-key')
+				if (keyInput && (!keyInput.value || keyInput.value.startsWith('file_'))) {
+					const fileName = pathStr.split('/').pop()
+					const cleanName = fileName
+						.replace(/\.[^.]+$/, '')
+						.toLowerCase()
+						.replace(/[^a-z0-9_]/g, '_')
+					keyInput.value = cleanName
+				}
+				updateEditorPreview()
 			}
 		})
 
+		// Browse for mock file
 		row.querySelector('.select-mock')?.addEventListener('click', async (e) => {
 			e.preventDefault()
 			const path = await dialog.open({ multiple: false, directory: false })
 			if (path) {
-				row.querySelector('.asset-mock').value = Array.isArray(path) ? path[0] : path
+				const pathStr = Array.isArray(path) ? path[0] : path
+				const mockInput = row.querySelector('.asset-mock')
+				mockInput.value = pathStr
+				mockInput.title = pathStr
+				updateEditorPreview()
 			}
 		})
 
-		row.querySelector('.asset-kind')?.addEventListener('change', () => {
-			updateAssetRowVisibility(row)
+		// Update preview on key change
+		row.querySelector('.asset-key')?.addEventListener('input', () => {
+			updateEditorPreview()
 		})
-		updateAssetRowVisibility(row)
 
 		assetsContainer.appendChild(row)
+		updateEditorPreview()
 	}
 
-	function updateAssetRowVisibility(row) {
-		const kind = row.querySelector('.asset-kind')?.value || 'twin'
-		const privWrap = row.querySelector('.asset-private-wrap')
-		const mockWrap = row.querySelector('.asset-mock-wrap')
-		if (kind === 'twin') {
-			if (privWrap) privWrap.style.display = 'flex'
-			if (mockWrap) {
-				mockWrap.style.display = 'flex'
-				const mockInput = mockWrap.querySelector('.asset-mock')
-				if (mockInput) mockInput.placeholder = 'Public/mock file path (optional)'
-			}
-		} else {
-			if (privWrap) privWrap.style.display = 'none'
-			if (mockWrap) {
-				mockWrap.style.display = 'flex'
-				const mockInput = mockWrap.querySelector('.asset-mock')
-				if (mockInput) mockInput.placeholder = 'Public file path'
-			}
+	function updateEditorPreview() {
+		const nameInput = document.getElementById('dataset-form-name')
+		const descInput = document.getElementById('dataset-form-description')
+		const versionInput = document.getElementById('dataset-form-version')
+		const assetsContainer = document.getElementById('dataset-form-assets')
+
+		const previewName = document.getElementById('preview-name')
+		const previewMeta = document.getElementById('preview-meta')
+		const previewDesc = document.getElementById('preview-desc')
+
+		if (previewName) {
+			previewName.textContent = nameInput?.value?.trim() || 'your_dataset'
+		}
+
+		const assetCount = assetsContainer?.querySelectorAll('.asset-row-modern').length || 0
+		if (previewMeta) {
+			previewMeta.textContent = `v${versionInput?.value || '1.0.0'} • ${assetCount} file${
+				assetCount !== 1 ? 's' : ''
+			}`
+		}
+
+		if (previewDesc) {
+			const desc = descInput?.value?.trim()
+			previewDesc.textContent = desc || 'No description'
+			previewDesc.style.fontStyle = desc ? 'normal' : 'italic'
 		}
 	}
 
@@ -846,14 +913,29 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		setViewMode('datasets')
 		resetDatasetEditor()
 		list.style.display = 'none'
-		editor.style.display = 'block'
+		editor.style.display = 'flex'
+
+		// Set up preview update listeners
+		const nameInput = document.getElementById('dataset-form-name')
+		const descInput = document.getElementById('dataset-form-description')
+		const versionInput = document.getElementById('dataset-form-version')
+		const authorInput = document.getElementById('dataset-form-author')
+
+		nameInput?.addEventListener('input', updateEditorPreview)
+		descInput?.addEventListener('input', updateEditorPreview)
+		versionInput?.addEventListener('input', updateEditorPreview)
+
+		// Set author (hidden but used)
+		if (authorInput) {
+			authorInput.value = currentUserEmail || ''
+		}
 
 		if (entry) {
 			const { dataset, assets } = entry
 			currentEditingAssets = new Map()
 			currentEditingOriginalName = dataset.name
 			assets?.forEach((a) => currentEditingAssets.set(a.asset_key, a))
-			document.getElementById('dataset-editor-title').textContent = `Edit ${dataset.name}`
+			document.getElementById('dataset-editor-title').textContent = `Edit Dataset`
 			document.getElementById('dataset-form-name').value = dataset.name
 			document.getElementById('dataset-form-description').value = dataset.description || ''
 			document.getElementById('dataset-form-author').value =
@@ -875,9 +957,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		} else {
 			currentEditingOriginalName = null
 			currentEditingWasPublished = false
-			document.getElementById('dataset-editor-title').textContent = 'New Dataset'
-			addAssetRow()
+			document.getElementById('dataset-editor-title').textContent = 'Create New Dataset'
+			// Don't add empty row - let user click "Add File"
 		}
+
+		updateEditorPreview()
 	}
 
 	function closeDatasetEditor() {
@@ -905,18 +989,23 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			throw new Error('Dataset name is required')
 		}
 
+		// Validate name format
+		if (!/^[a-z0-9_]+$/.test(name)) {
+			throw new Error('Dataset name must contain only lowercase letters, numbers, and underscores')
+		}
+
 		const assetsContainer = document.getElementById('dataset-form-assets')
 		const assetRows = assetsContainer
-			? Array.from(assetsContainer.querySelectorAll('.dataset-asset-row'))
+			? Array.from(assetsContainer.querySelectorAll('.asset-row-modern'))
 			: []
 		if (assetRows.length === 0) {
-			throw new Error('Add at least one asset')
+			throw new Error('Add at least one file to the dataset')
 		}
 
 		const assets = {}
 		assetRows.forEach((row, idx) => {
 			const key = row.querySelector('.asset-key')?.value?.trim()
-			const kind = row.querySelector('.asset-kind')?.value || 'twin'
+			const kind = row.dataset.kind || 'twin'
 			const privatePath = row.querySelector('.asset-private')?.value?.trim()
 			const mockPath = row.querySelector('.asset-mock')?.value?.trim()
 			const assetFromList = currentEditingAssets.get(key)
@@ -925,6 +1014,19 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			const origPrivatePath = row.dataset.origPrivatePath || ''
 			const origMockPath = row.dataset.origMockPath || ''
 			if (!key) return
+
+			// Validate key format
+			if (!/^[a-z0-9_]+$/.test(key)) {
+				throw new Error(
+					`Asset name "${key}" must contain only lowercase letters, numbers, and underscores`,
+				)
+			}
+
+			// Require at least private path for twin assets
+			if (kind === 'twin' && !privatePath) {
+				throw new Error(`Asset "${key}" needs a private file path`)
+			}
+
 			const keepPrivateId = privateId && privatePath === origPrivatePath
 			const keepMockId = mockId && mockPath === origMockPath
 			const assetId =
@@ -977,11 +1079,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	async function renderDatasets() {
-		const tbody = document.getElementById('datasets-table-body')
+		const grid = document.getElementById('datasets-grid')
 		const emptyState = document.getElementById('datasets-empty-state')
-		if (!tbody || !emptyState) return
+		if (!grid || !emptyState) return
 
-		tbody.innerHTML = ''
+		grid.innerHTML = ''
 
 		if (!datasets || datasets.length === 0) {
 			emptyState.style.display = 'flex'
@@ -990,9 +1092,23 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		emptyState.style.display = 'none'
 
+		// Fetch session counts for all datasets
+		let sessionCounts = {}
+		try {
+			const sessions = await invoke('list_sessions')
+			if (Array.isArray(sessions)) {
+				sessions.forEach((s) => {
+					if (s.dataset_name) {
+						sessionCounts[s.dataset_name] = (sessionCounts[s.dataset_name] || 0) + 1
+					}
+				})
+			}
+		} catch {
+			// Ignore session count errors
+		}
+
 		for (const entry of datasets) {
 			const { dataset, assets } = entry
-			const tr = document.createElement('tr')
 			const assetCount = assets?.length ?? 0
 
 			// Check actual published state on filesystem
@@ -1003,36 +1119,151 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				isPublished = false
 			}
 
-			const assetTags = (assets || [])
-				.slice(0, 3)
-				.map((a) => `<span class="chip">${a.asset_key}</span>`)
-				.join(' ')
-			const extraAssets = assetCount > 3 ? `+${assetCount - 3}` : ''
+			// Check if assets have mock data (needed for network preview)
+			const hasMockData = (assets || []).some((a) => a.mock_ref || a.mock_path || a.mock_file_id)
 
-			tr.innerHTML = `
-				<td>${dataset.name}</td>
-				<td>${dataset.version}</td>
-				<td>${dataset.author}</td>
-				<td>${dataset.schema}</td>
-				<td>${assetTags} ${extraAssets}</td>
-				<td>${isPublished ? 'Yes' : 'No'}</td>
-				<td class="actions-cell">
-					<button class="btn-icon edit-dataset-btn" data-name="${dataset.name}" title="Edit dataset">
-						<img src="assets/icons/pencil.svg" width="14" height="14" alt="Edit" />
-					</button>
-					<button class="btn-icon publish-toggle-btn" data-name="${dataset.name}" data-published="${isPublished}" title="${isPublished ? 'Unpublish' : 'Publish'} dataset">
-						<img src="assets/icons/${isPublished ? 'x-circle' : 'upload'}.svg" width="14" height="14" alt="${isPublished ? 'Unpublish' : 'Publish'}" />
-					</button>
-					<button class="btn-icon open-folder-btn" data-name="${dataset.name}" data-public="${dataset.public_url || ''}" title="Open datasets folder">
-						<img src="assets/icons/folder-open.svg" width="14" height="14" alt="Open" />
-					</button>
-					<button class="btn-icon delete-dataset-btn" data-name="${dataset.name}" title="Delete dataset">
-						<img src="assets/icons/trash.svg" width="14" height="14" alt="Delete" />
-					</button>
-				</td>
+			const sessionCount = sessionCounts[dataset.name] || 0
+
+			// Build asset chips
+			const maxVisibleAssets = 3
+			const visibleAssets = (assets || []).slice(0, maxVisibleAssets)
+			const remainingAssets = assetCount - maxVisibleAssets
+
+			const assetChipsHtml = visibleAssets
+				.map(
+					(a) => `
+					<span class="dataset-asset-chip">
+						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+						</svg>
+						${a.asset_key}
+					</span>
+				`,
+				)
+				.join('')
+			const moreChipHtml =
+				remainingAssets > 0
+					? `<span class="dataset-asset-chip dataset-asset-more">+${remainingAssets} more</span>`
+					: ''
+
+			const card = document.createElement('div')
+			card.className = 'dataset-card'
+			card.dataset.name = dataset.name
+
+			// Build visibility tooltip
+			const visibilityTooltip = isPublished
+				? hasMockData
+					? 'Visible on network with preview data'
+					: 'Visible on network (no preview data)'
+				: 'Not visible on network. Click Publish to make discoverable.'
+
+			card.innerHTML = `
+				<div class="dataset-card-header">
+					<div class="dataset-card-info">
+						<h4 class="dataset-card-name">
+							<svg class="dataset-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+							</svg>
+							${dataset.name}
+						</h4>
+						<div class="dataset-card-meta">
+							<span>v${dataset.version || '1.0.0'}</span>
+							<span>•</span>
+							<span>${dataset.author || 'Unknown'}</span>
+							<span>•</span>
+							<span>${assetCount} asset${assetCount !== 1 ? 's' : ''}</span>
+						</div>
+					</div>
+					<div class="dataset-card-status" title="${visibilityTooltip}">
+						<span class="dataset-status-badge ${isPublished ? 'published' : 'draft'}">
+							${isPublished ? 'Published' : 'Draft'}
+						</span>
+						${
+							isPublished && hasMockData
+								? '<span class="dataset-mock-badge" title="Has preview data">Preview</span>'
+								: ''
+						}
+					</div>
+				</div>
+				<div class="dataset-card-body">
+					${dataset.description ? `<p class="dataset-card-description">${dataset.description}</p>` : ''}
+					<div class="dataset-card-assets">
+						${assetChipsHtml}
+						${moreChipHtml}
+					</div>
+				</div>
+				<div class="dataset-card-footer">
+					<div class="dataset-card-sessions">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+							<circle cx="9" cy="7" r="4"></circle>
+							<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+							<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+						</svg>
+						${sessionCount > 0 ? `${sessionCount} session${sessionCount !== 1 ? 's' : ''}` : 'No sessions'}
+					</div>
+					<div class="dataset-card-actions">
+						<button class="dataset-action-btn btn-start-session" data-name="${
+							dataset.name
+						}" title="Start new session with this dataset">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<polygon points="5 3 19 12 5 21 5 3"></polygon>
+							</svg>
+						</button>
+						<button class="dataset-action-btn ${isPublished ? 'btn-unpublish' : 'btn-publish'}" data-name="${
+				dataset.name
+			}" data-published="${isPublished}" title="${
+				isPublished ? 'Unpublish from datasite' : 'Publish to datasite'
+			}">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								${
+									isPublished
+										? '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line>'
+										: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line>'
+								}
+							</svg>
+						</button>
+						<button class="dataset-action-btn btn-edit" data-name="${dataset.name}" title="Edit dataset">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+							</svg>
+						</button>
+						<button class="dataset-action-btn btn-folder" data-name="${dataset.name}" data-public="${
+				dataset.public_url || ''
+			}" title="Open folder">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+							</svg>
+						</button>
+						<button class="dataset-action-btn btn-delete" data-name="${dataset.name}" title="Delete dataset">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<polyline points="3 6 5 6 21 6"></polyline>
+								<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+							</svg>
+						</button>
+					</div>
+				</div>
 			`
 
-			tr.querySelector('.publish-toggle-btn')?.addEventListener('click', async (e) => {
+			// Start Session button
+			card.querySelector('.btn-start-session')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				// Navigate to sessions and pre-fill with this dataset
+				if (window.__sessionsModule?.openCreateSessionWithDataset) {
+					window.__sessionsModule.openCreateSessionWithDataset({
+						name: dataset.name,
+						owner: dataset.author || currentUserEmail,
+					})
+				}
+				// Navigate to sessions tab
+				if (window.navigateTo) {
+					window.navigateTo('sessions')
+				}
+			})
+
+			// Publish/Unpublish button
+			card.querySelector('.btn-publish, .btn-unpublish')?.addEventListener('click', async (e) => {
 				e.stopPropagation()
 				const btn = e.currentTarget
 				const name = btn?.dataset?.name
@@ -1057,7 +1288,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					}
 				} else {
 					const confirmed = await dialog.confirm(
-						`Publish dataset "${name}" to your datasite? Public assets only are copied.`,
+						`Publish dataset "${name}" to your datasite? Public mock files will be copied.`,
 						{ title: 'Publish Dataset', type: 'info' },
 					)
 					if (!confirmed) return
@@ -1082,24 +1313,14 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 
-			tr.querySelector('.delete-dataset-btn')?.addEventListener('click', async () => {
-				const confirmed = await dialog.confirm(
-					`Delete dataset "${dataset.name}"? This removes it from the local catalog.`,
-					{ title: 'Delete Dataset', type: 'warning' },
-				)
-				if (!confirmed) return
-				try {
-					await invoke('delete_dataset', { name: dataset.name })
-					await loadDatasets()
-				} catch (error) {
-					await dialog.message(`Error deleting dataset: ${error}`, {
-						title: 'Delete Error',
-						type: 'error',
-					})
-				}
+			// Edit button
+			card.querySelector('.btn-edit')?.addEventListener('click', (e) => {
+				e.stopPropagation()
+				openDatasetEditor(entry)
 			})
 
-			tr.querySelector('.open-folder-btn')?.addEventListener('click', async (e) => {
+			// Folder button
+			card.querySelector('.btn-folder')?.addEventListener('click', async (e) => {
 				e.stopPropagation()
 				const pubUrl = e.currentTarget?.dataset?.public
 				try {
@@ -1118,12 +1339,136 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 
-			tr.querySelector('.edit-dataset-btn')?.addEventListener('click', () => {
-				openDatasetEditor(entry)
+			// Delete button
+			card.querySelector('.btn-delete')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				const confirmed = await dialog.confirm(
+					`Delete dataset "${dataset.name}"? This removes it from the local catalog.`,
+					{ title: 'Delete Dataset', type: 'warning' },
+				)
+				if (!confirmed) return
+				try {
+					await invoke('delete_dataset', { name: dataset.name })
+					await loadDatasets()
+				} catch (error) {
+					await dialog.message(`Error deleting dataset: ${error}`, {
+						title: 'Delete Error',
+						type: 'error',
+					})
+				}
 			})
 
-			tbody.appendChild(tr)
+			// Make card clickable to edit
+			card.addEventListener('click', () => {
+				openDatasetEditor(entry)
+			})
+			card.style.cursor = 'pointer'
+
+			grid.appendChild(card)
 		}
+	}
+
+	// Create dataset from selected files
+	async function createDatasetFromSelection() {
+		if (selectedFileIds.length === 0) {
+			await dialog.message('Please select at least one file to create a dataset from.', {
+				title: 'No Files Selected',
+				type: 'info',
+			})
+			return
+		}
+
+		// Gather selected files
+		const selectedFiles = allFiles.filter((f) => selectedFileIds.includes(f.id))
+
+		// Switch to datasets view and open editor
+		await refreshCurrentUserEmail()
+
+		const editor = document.getElementById('dataset-editor-section')
+		const list = document.getElementById('dataset-data-section')
+		const participantSection = document.getElementById('participant-data-section')
+
+		if (editor && list && participantSection) {
+			participantSection.style.display = 'none'
+			list.style.display = 'none'
+			editor.style.display = 'flex'
+		}
+
+		// Update toggle to show datasets as active
+		const toggleButtons = document.querySelectorAll('#data-view-toggle .pill-button')
+		toggleButtons.forEach((btn) => {
+			btn.classList.toggle('active', btn.dataset.view === 'datasets')
+		})
+		viewMode = 'datasets'
+
+		resetDatasetEditor()
+
+		document.getElementById('dataset-editor-title').textContent = 'Create Dataset from Selection'
+		document.querySelector('.dataset-editor-subtitle').textContent = `Packaging ${
+			selectedFiles.length
+		} selected file${selectedFiles.length !== 1 ? 's' : ''} into a shareable dataset`
+
+		// Pre-fill author
+		const authorInput = document.getElementById('dataset-form-author')
+		if (authorInput) {
+			authorInput.value = currentUserEmail || ''
+		}
+
+		// Auto-generate name suggestion from file types or participant
+		const fileTypes = [...new Set(selectedFiles.map((f) => f.data_type).filter(Boolean))]
+		const participants = [...new Set(selectedFiles.map((f) => f.participant_id).filter(Boolean))]
+
+		let suggestedName = 'my_dataset'
+		if (participants.length === 1) {
+			suggestedName = participants[0].toLowerCase().replace(/[^a-z0-9_]/g, '_')
+		} else if (fileTypes.length > 0) {
+			suggestedName = fileTypes
+				.join('_')
+				.toLowerCase()
+				.replace(/[^a-z0-9_]/g, '')
+		}
+
+		const nameInput = document.getElementById('dataset-form-name')
+		if (nameInput) {
+			nameInput.value = suggestedName
+		}
+
+		// Add description
+		const descInput = document.getElementById('dataset-form-description')
+		if (descInput) {
+			const fileTypesList = fileTypes.length > 0 ? ` (${fileTypes.join(', ')})` : ''
+			descInput.value = `Dataset containing ${selectedFiles.length} file${
+				selectedFiles.length !== 1 ? 's' : ''
+			}${fileTypesList}`
+		}
+
+		// Create asset rows for each selected file
+		const assetsContainer = document.getElementById('dataset-form-assets')
+		if (assetsContainer) {
+			assetsContainer.innerHTML = ''
+		}
+
+		selectedFiles.forEach((file, idx) => {
+			const fileName = file.file_path.split('/').pop()
+			const assetKey = fileName
+				.replace(/\.[^.]+$/, '')
+				.toLowerCase()
+				.replace(/[^a-z0-9_]/g, '_')
+			addAssetRow({
+				asset_key: assetKey || `file_${idx + 1}`,
+				kind: 'twin',
+				private_path: file.file_path,
+				resolved_private_path: file.file_path,
+				private_file_id: file.id,
+			})
+		})
+
+		// Set up preview listeners
+		nameInput?.addEventListener('input', updateEditorPreview)
+		descInput?.addEventListener('input', updateEditorPreview)
+		document.getElementById('dataset-form-version')?.addEventListener('input', updateEditorPreview)
+
+		updateEditorPreview()
 	}
 
 	async function loadData() {
@@ -1147,18 +1492,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				fileCountEl.textContent = `${count} file${count === 1 ? '' : 's'}`
 			}
 
-			const pendingCount = files.filter((f) => f.status === 'pending').length
-			const processingCount = files.filter((f) => f.status === 'processing').length
+			const _pendingCount = files.filter((f) => f.status === 'pending').length
+			const _processingCount = files.filter((f) => f.status === 'processing').length
 			// Update status indicator will be handled by updateQueueInfo when it refreshes
-
-			// Queue button is always visible (to pause/resume)
-			// Status indicator only shows when there are pending files
-
-			const clearQueueBtn = document.getElementById('clear-queue-btn')
-			if (clearQueueBtn) {
-				// Show button if there are pending OR processing files
-				clearQueueBtn.style.display = pendingCount + processingCount > 0 ? 'flex' : 'none'
-			}
+			// Queue bar visibility is handled by updateQueueButton
 
 			// Update queue UI
 			await updateQueueButton()
@@ -1208,6 +1545,26 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// INITIALIZATION
 	// ============================================================================
 
+	function setupDatasetInfoDismiss() {
+		const dismissBtn = document.getElementById('dismiss-dataset-info')
+		if (!dismissBtn) return
+
+		const infoBox = dismissBtn.closest('.dataset-visibility-info')
+		if (!infoBox) return
+
+		const storageKey = 'dataset-visibility-info-dismissed'
+
+		// Check if already dismissed
+		if (localStorage.getItem(storageKey) === 'true') {
+			infoBox.classList.add('hidden')
+		}
+
+		dismissBtn.addEventListener('click', () => {
+			infoBox.classList.add('hidden')
+			localStorage.setItem(storageKey, 'true')
+		})
+	}
+
 	function initializeDataTab() {
 		void refreshCurrentUserEmail()
 		setViewMode(viewMode)
@@ -1223,6 +1580,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		if (refreshDatasetsBtn) {
 			refreshDatasetsBtn.addEventListener('click', () => loadDatasets())
 		}
+
+		// Set up dataset visibility info dismiss
+		setupDatasetInfoDismiss()
 		const newDatasetBtn = document.getElementById('new-dataset-btn')
 		if (newDatasetBtn) {
 			newDatasetBtn.addEventListener('click', () => openDatasetEditor(null))
@@ -1321,6 +1681,22 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 				renderFilesPanel()
 				syncSelectionToSessionStorage()
+			})
+		}
+
+		// Create Dataset from Selection button
+		const createDatasetBtn = document.getElementById('create-dataset-from-selection-btn')
+		if (createDatasetBtn) {
+			createDatasetBtn.addEventListener('click', () => {
+				createDatasetFromSelection()
+			})
+		}
+
+		// Clear selection button
+		const clearSelectionBtn = document.getElementById('clear-selection-btn')
+		if (clearSelectionBtn) {
+			clearSelectionBtn.addEventListener('click', () => {
+				clearAllSelections()
 			})
 		}
 
@@ -1528,12 +1904,14 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 	return {
 		loadData,
+		loadDatasets,
 		renderDataTable: renderFilesPanel, // Alias for compatibility
 		initializeDataTab,
 		refreshExistingFilePaths,
 		isFileAlreadyImported: (filePath) => existingFilePaths.has(filePath),
 		getExistingFilePaths: () => new Set(existingFilePaths),
 		getSelectedFileIds: () => [...selectedFileIds],
+		getSelectedFiles: () => allFiles.filter((f) => selectedFileIds.includes(f.id)),
 		getSelectedParticipants: () => {
 			// Get unique participant IDs from selected files
 			const participantIds = new Set()
@@ -1549,5 +1927,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		},
 		syncSelectionToSessionStorage,
 		clearAllSelections,
+		createDatasetFromSelection,
+		openDatasetEditor,
+		setViewMode,
 	}
 }

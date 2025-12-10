@@ -1,8 +1,20 @@
 /**
- * Messages Module - Modern Messaging Interface
+ * Messages Module - Messaging Interface
  * Handles secure peer-to-peer messaging via SyftBox
  */
 import { createContactAutocomplete } from './contact-autocomplete.js'
+import {
+	escapeHtml,
+	formatFullDateTime,
+	formatThreadDateTime,
+	formatDateSeparator,
+	getDateKey,
+	normalizeEmail,
+	emailsMatch,
+	getInitials,
+	confirmWithDialog,
+	normalizeMetadata,
+} from './utils.js'
 
 export function createMessagesModule({
 	invoke,
@@ -42,128 +54,12 @@ export function createMessagesModule({
 	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	// ============================================================================
-	// UTILITIES
+	// UTILITIES (module-specific helpers)
 	// ============================================================================
 
-	async function confirmWithDialog(message, options = {}) {
-		if (dialog?.confirm) {
-			return await dialog.confirm(message, options)
-		}
-		return window.confirm(message)
-	}
-
-	function escapeHtml(value) {
-		if (value === undefined || value === null) return ''
-		const div = document.createElement('div')
-		div.textContent = value
-		return div.innerHTML
-	}
-
-	function formatDateTime(value) {
-		if (!value) return ''
-		const date = new Date(value)
-		if (Number.isNaN(date.getTime())) return value
-
-		const now = new Date()
-		const diff = now - date
-		const oneDay = 24 * 60 * 60 * 1000
-
-		// Today - show time only
-		if (diff < oneDay && date.getDate() === now.getDate()) {
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		}
-
-		// Yesterday
-		const yesterday = new Date(now - oneDay)
-		if (date.getDate() === yesterday.getDate()) {
-			return 'Yesterday'
-		}
-
-		// Within a week - show day name
-		if (diff < 7 * oneDay) {
-			return date.toLocaleDateString([], { weekday: 'short' })
-		}
-
-		// Older - show date
-		return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-	}
-
-	function formatFullDateTime(value) {
-		if (!value) return ''
-		const date = new Date(value)
-		if (Number.isNaN(date.getTime())) return value
-		return date.toLocaleString([], {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		})
-	}
-
-	function formatDateSeparator(value) {
-		if (!value) return ''
-		const date = new Date(value)
-		if (Number.isNaN(date.getTime())) return ''
-
-		const now = new Date()
-		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-		const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000)
-		const msgDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-
-		if (msgDate.getTime() === today.getTime()) {
-			return 'Today'
-		}
-		if (msgDate.getTime() === yesterday.getTime()) {
-			return 'Yesterday'
-		}
-
-		// Within last week
-		const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
-		if (msgDate >= weekAgo) {
-			return date.toLocaleDateString([], { weekday: 'long' })
-		}
-
-		// Older
-		return date.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
-	}
-
-	function getDateKey(value) {
-		if (!value) return ''
-		const date = new Date(value)
-		if (Number.isNaN(date.getTime())) return ''
-		return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
-	}
-
-	function normalizeMetadata(value) {
-		if (!value) return null
-		if (typeof value === 'string') {
-			try {
-				return JSON.parse(value)
-			} catch (error) {
-				console.warn('Failed to parse metadata string', error)
-				return null
-			}
-		}
-		return value
-	}
-
-	function getInitials(email) {
-		if (!email) return '?'
-		const name = email.split('@')[0]
-		const parts = name.split(/[._-]/)
-		if (parts.length >= 2) {
-			return (parts[0][0] + parts[1][0]).toUpperCase()
-		}
-		return name.slice(0, 2).toUpperCase()
-	}
-
-	function normalizeEmail(email) {
-		if (!email) return ''
-		return String(email).toLowerCase().trim()
-	}
-
-	function emailsMatch(email1, email2) {
-		return normalizeEmail(email1) === normalizeEmail(email2)
+	// Wrapper for confirmWithDialog that passes the dialog object
+	async function confirm(message, options = {}) {
+		return confirmWithDialog(dialog, message, options)
 	}
 
 	function getSessionInviteFromMessage(msg) {
@@ -259,7 +155,9 @@ export function createMessagesModule({
 
 			const header = document.createElement('div')
 			header.className = 'message-thread-header'
-			header.innerHTML = `<span class="failed-icon">⚠️</span> ${escapeHtml(failed.sender_identity || 'Unknown sender')}`
+			header.innerHTML = `<span class="failed-icon">⚠️</span> ${escapeHtml(
+				failed.sender_identity || 'Unknown sender',
+			)}`
 			topRow.appendChild(header)
 
 			const errorTag = document.createElement('span')
@@ -281,7 +179,7 @@ export function createMessagesModule({
 
 			const metaRow = document.createElement('div')
 			metaRow.className = 'message-thread-meta'
-			metaRow.textContent = failed.created_at ? formatDateTime(failed.created_at) : ''
+			metaRow.textContent = failed.created_at ? formatThreadDateTime(failed.created_at) : ''
 			item.appendChild(metaRow)
 
 			item.addEventListener('click', () => {
@@ -348,26 +246,38 @@ export function createMessagesModule({
 						}
 						<div class="info-row">
 							<span class="info-label">Received:</span>
-							<span class="info-value">${failed.created_at ? formatDateTime(failed.created_at) : 'Unknown'}</span>
+							<span class="info-value">${
+								failed.created_at ? formatThreadDateTime(failed.created_at) : 'Unknown'
+							}</span>
 						</div>
 					</div>
 
 					<div class="failed-message-suggestion">
 						<h4>Suggested Action</h4>
-						<p>${escapeHtml(failed.suggested_action || 'Contact the sender or check your key configuration.')}</p>
+						<p>${escapeHtml(
+							failed.suggested_action || 'Contact the sender or check your key configuration.',
+						)}</p>
 					</div>
 
 					<div class="failed-message-actions">
-						<button class="message-cta" onclick="window.__messagesModule?.handleImportSenderKey?.('${escapeHtml(failed.sender_identity)}')">
+						<button class="message-cta" onclick="window.__messagesModule?.handleImportSenderKey?.('${escapeHtml(
+							failed.sender_identity,
+						)}')">
 							Import Sender's Key
 						</button>
-						<button class="message-secondary" onclick="window.__messagesModule?.startNewMessage?.('${escapeHtml(failed.sender_identity)}')">
+						<button class="message-secondary" onclick="window.__messagesModule?.startNewMessage?.('${escapeHtml(
+							failed.sender_identity,
+						)}')">
 							Compose Message to Sender
 						</button>
-						<button class="message-secondary danger" onclick="window.__messagesModule?.dismissFailedMessage?.('${escapeHtml(failed.id)}')">
+						<button class="message-secondary danger" onclick="window.__messagesModule?.dismissFailedMessage?.('${escapeHtml(
+							failed.id,
+						)}')">
 							Dismiss
 						</button>
-						<button class="message-secondary danger" onclick="window.__messagesModule?.deleteFailedMessage?.('${escapeHtml(failed.id)}')">
+						<button class="message-secondary danger" onclick="window.__messagesModule?.deleteFailedMessage?.('${escapeHtml(
+							failed.id,
+						)}')">
 							Delete
 						</button>
 					</div>
@@ -419,7 +329,7 @@ export function createMessagesModule({
 
 	async function deleteFailedMessage(id) {
 		if (!id) return
-		const confirmed = await confirmWithDialog('Delete this failed message record?', {
+		const confirmed = await confirm('Delete this failed message record?', {
 			title: 'Delete Failed Message',
 			type: 'warning',
 		})
@@ -489,8 +399,9 @@ export function createMessagesModule({
 		}
 	}
 
-	function updateConversationAvatar(participants, isSelfThread = false) {
+	function updateConversationAvatar(participants, isSelfThread = false, isSessionThread = false) {
 		const avatarEl = document.getElementById('msg-conv-avatar')
+		const headerEl = document.querySelector('.msg-conv-header')
 		if (!avatarEl) return
 
 		const currentUserEmail = getCurrentUserEmail()
@@ -499,18 +410,29 @@ export function createMessagesModule({
 
 		const span = avatarEl.querySelector('span')
 		if (span) {
-			if (isSelfThread) {
+			if (isSessionThread) {
+				span.textContent = '🔐'
+			} else if (isSelfThread) {
 				span.textContent = '📝'
 			} else {
 				span.textContent = getInitials(primaryEmail)
 			}
 		}
 
-		// Update avatar style for self-threads
-		if (isSelfThread) {
+		// Clear all special avatar classes first
+		avatarEl.classList.remove('self-avatar', 'session-avatar')
+		if (headerEl) {
+			headerEl.classList.remove('session-header')
+		}
+
+		// Apply appropriate styling
+		if (isSessionThread) {
+			avatarEl.classList.add('session-avatar')
+			if (headerEl) {
+				headerEl.classList.add('session-header')
+			}
+		} else if (isSelfThread) {
 			avatarEl.classList.add('self-avatar')
-		} else {
-			avatarEl.classList.remove('self-avatar')
 		}
 	}
 
@@ -1003,11 +925,20 @@ export function createMessagesModule({
 			// Check if this is a self-message thread (only participant is current user)
 			const isSelfThread =
 				participants.length === 1 && emailsMatch(participants[0], currentUserEmail)
-			const displayName = isSelfThread
-				? '📝 Note to Self'
-				: others.length > 0
-					? others.join(', ')
-					: participants.join(', ')
+
+			// Check if this is a session thread
+			const isSessionThread = !!thread.session_id
+
+			// Display name varies by thread type
+			let displayName
+			if (isSessionThread) {
+				// For sessions, show session name prominently with lock icon
+				displayName = `🔐 ${thread.session_name || 'Secure Session'}`
+			} else if (isSelfThread) {
+				displayName = '📝 Note to Self'
+			} else {
+				displayName = others.length > 0 ? others.join(', ') : participants.join(', ')
+			}
 
 			const displaySubject =
 				thread.subject && thread.subject.trim().length > 0 ? thread.subject : NO_SUBJECT_PLACEHOLDER
@@ -1015,28 +946,33 @@ export function createMessagesModule({
 			if (isSelfThread) {
 				item.classList.add('self-thread')
 			}
-			if (thread.session_id) {
+			if (isSessionThread) {
 				item.classList.add('session-thread')
 			}
 
-			// Session badge takes priority if present
+			// Session badge takes priority if present - uses distinct amber/lock icon
 			const sessionBadge = thread.session_id
 				? `<span class="message-thread-session" title="${escapeHtml(
-						thread.session_name || 'Session',
+						thread.session_name || 'Secure Session',
 					)}">
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-						<circle cx="9" cy="7" r="4"></circle>
-						<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-						<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-					</svg>
-					Session
-				</span>`
+				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+					<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+					<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+				</svg>
+				Session
+			</span>`
 				: ''
 			const projectBadge =
 				!thread.session_id && thread.has_project
 					? '<span class="message-thread-project">Project</span>'
 					: ''
+
+			// For session threads, show participants in subject line
+			const sessionParticipantsLine = isSessionThread
+				? `<div class="message-thread-subject">With ${
+						others.length > 0 ? escapeHtml(others.join(', ')) : 'participants'
+					}</div>`
+				: `<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>`
 
 			item.innerHTML = `
 				<div class="message-thread-top">
@@ -1051,10 +987,10 @@ export function createMessagesModule({
 					${sessionBadge}
 					${projectBadge}
 				</div>
-				<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>
+				${sessionParticipantsLine}
 				<div class="message-thread-preview">${escapeHtml(thread.last_message_preview || '')}</div>
 				<div class="message-thread-meta">${
-					thread.last_message_at ? formatDateTime(thread.last_message_at) : ''
+					thread.last_message_at ? formatThreadDateTime(thread.last_message_at) : ''
 				}</div>
 			`
 
@@ -1140,10 +1076,16 @@ export function createMessagesModule({
 			const isSelfThread =
 				participants.length === 1 && emailsMatch(participants[0], currentUserEmail)
 
+			// Check if this is a session thread
+			const isSessionThread = !!(summary && summary.session_id)
+
 			const subjectText = resolveSubject(summary, messages)
 			const subjectEl = document.getElementById('message-thread-subject')
 			if (subjectEl) {
-				if (isSelfThread) {
+				if (isSessionThread) {
+					// Show session name prominently
+					subjectEl.textContent = `🔐 ${summary.session_name || 'Secure Session'}`
+				} else if (isSelfThread) {
 					subjectEl.textContent = '📝 Note to Self'
 				} else {
 					subjectEl.textContent =
@@ -1153,7 +1095,12 @@ export function createMessagesModule({
 
 			const participantsEl = document.getElementById('message-thread-participants')
 			if (participantsEl) {
-				if (isSelfThread) {
+				if (isSessionThread) {
+					const formatted = formatParticipants(participants)
+					participantsEl.textContent = formatted
+						? `Session with ${formatted}`
+						: 'Secure collaborative session'
+				} else if (isSelfThread) {
 					participantsEl.textContent =
 						subjectText && subjectText !== NO_SUBJECT_PLACEHOLDER ? subjectText : 'Personal notes'
 				} else {
@@ -1162,7 +1109,7 @@ export function createMessagesModule({
 				}
 			}
 
-			updateConversationAvatar(participants, isSelfThread)
+			updateConversationAvatar(participants, isSelfThread, isSessionThread)
 
 			const recipientInput = document.getElementById('message-recipient-input')
 			if (recipientInput) {
@@ -1203,7 +1150,8 @@ export function createMessagesModule({
 		const participantsEl = document.getElementById('message-thread-participants')
 		if (participantsEl) participantsEl.textContent = 'Start a new conversation'
 
-		updateConversationAvatar([], false)
+		// Reset to normal styling (not self or session)
+		updateConversationAvatar([], false, false)
 
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {
@@ -1305,7 +1253,7 @@ export function createMessagesModule({
 	async function deleteMessage(messageId) {
 		if (!messageId) return
 
-		const confirmed = await confirmWithDialog('Delete this message?', {
+		const confirmed = await confirm('Delete this message?', {
 			title: 'Delete Message',
 			type: 'warning',
 		})
@@ -1352,7 +1300,7 @@ export function createMessagesModule({
 			return
 		}
 
-		const confirmed = await confirmWithDialog('Delete this entire conversation?', {
+		const confirmed = await confirm('Delete this entire conversation?', {
 			title: 'Delete Conversation',
 			type: 'warning',
 		})
@@ -1537,7 +1485,7 @@ export function createMessagesModule({
 						if (invite.created_at) metaParts.push(formatFullDateTime(invite.created_at))
 
 						inviteCard.innerHTML = `
-							<h5>📋 ${escapeHtml(invite.session_name)}</h5>
+							<h5>🔐 ${escapeHtml(invite.session_name)}<span class="invite-label">Session Invite</span></h5>
 							${metaParts.length ? `<p class="invite-meta">${escapeHtml(metaParts.join(' • '))}</p>` : ''}
 							${invite.description ? `<p class="invite-meta">"${escapeHtml(invite.description)}"</p>` : ''}
 						`
