@@ -74,5 +74,8 @@ ignore = [
     "**/.git/**",
     "**/__pycache__/**",
     "**/.ipynb_checkpoints/**",
-    "**/resources/templates/**"
+    "**/resources/templates/**",
+    "src-tauri/resources/templates/**",
+    "**/templates/*.ipynb",
+    "**/demo_ds.ipynb"
 ]

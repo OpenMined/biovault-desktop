@@ -1,0 +1,30 @@
+# Tauri CLI configuration
+# This file configures the tauri dev command behavior
+
+[build]
+# Watcher configuration
+[build.watcher]
+ignore = [
+    "**/*.ipynb",
+    "**/*.beaver",
+    "**/*.bin",
+    "**/*.h5ad",
+    "**/*.parquet",
+    "**/*.request",
+    "**/*.response",
+    "**/biovault/**",
+    "**/sandbox/**",
+    "**/sessions/**",
+    "**/datasites/**",
+    "**/unencrypted/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/__pycache__/**",
+    "**/.ipynb_checkpoints/**",
+    "**/resources/templates/**",
+    "**/templates/**",
+    "**/demo_ds.ipynb",
+    "resources/**",
+]
