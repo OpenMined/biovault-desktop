@@ -24,8 +24,6 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const publishingDatasets = new Set()
 	const datasetProgressTimers = new Map()
 
-	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
 	function setDatasetProgress(name, progress, text) {
 		const row = document.querySelector(`.dataset-progress[data-dataset="${CSS.escape(name)}"]`)
 		if (!row) return

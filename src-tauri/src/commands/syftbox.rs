@@ -273,7 +273,7 @@ fn normalize_sync_status(sync: &mut SyftBoxSyncStatus) {
     }
 }
 
-fn normalize_uploads(list: &mut Vec<SyftBoxUploadInfo>) {
+fn normalize_uploads(list: &mut [SyftBoxUploadInfo]) {
     for upload in list.iter_mut() {
         upload.progress = normalize_percent(upload.progress);
     }
