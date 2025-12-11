@@ -233,6 +233,36 @@
 }
 
 /* ============================================================================
+   INVITE BUTTON - Special highlight
+   ============================================================================ */
+
+.nav-item.invite-nav-btn {
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(20, 184, 166, 0.08) 100%);
+	border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.nav-item.invite-nav-btn svg {
+	width: 22px;
+	height: 22px;
+	stroke: #10b981;
+	opacity: 0.8;
+}
+
+.nav-item.invite-nav-btn .nav-label {
+	color: #059669;
+}
+
+.nav-item.invite-nav-btn:hover {
+	background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(20, 184, 166, 0.15) 100%);
+	border-color: rgba(16, 185, 129, 0.35);
+	box-shadow: 0 2px 12px rgba(16, 185, 129, 0.2);
+}
+
+.nav-item.invite-nav-btn:hover svg {
+	opacity: 1;
+}
+
+/* ============================================================================
    RESPONSIVE
    ============================================================================ */
 

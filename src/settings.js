@@ -8,6 +8,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	let defaultServerPromise = null
 	let keyStatus = null
 	let vaultPath = ''
+	let syftboxQueueTimer = null
 
 	async function getDefaultServer() {
 		if (defaultServerPromise) return defaultServerPromise
@@ -63,6 +64,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			bindKeyButtons()
 			refreshKeyStatus()
 			loadContacts()
+			setupSyftboxQueue()
 
 			// Auto-start SyftBox daemon if authenticated
 			autoStartSyftBoxDaemon()
@@ -1139,6 +1141,366 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 
 	function setSyftboxStatus(status) {
 		syftboxStatus = status
+	}
+
+	function setupSyftboxQueue() {
+		const refreshBtn = document.getElementById('syftbox-queue-refresh')
+		if (refreshBtn && !refreshBtn.dataset.listenerAttached) {
+			refreshBtn.addEventListener('click', () => refreshSyftboxQueue(true))
+			refreshBtn.dataset.listenerAttached = 'true'
+		}
+		const filterEl = document.getElementById('syftbox-queue-filter')
+		if (filterEl && !filterEl.dataset.listenerAttached) {
+			filterEl.addEventListener('click', (e) => {
+				const btn = e.target.closest('.queue-filter-btn')
+				if (!btn) return
+				const filter = btn.dataset.filter
+				if (filter) {
+					document
+						.querySelectorAll('#syftbox-queue-filter .queue-filter-btn')
+						.forEach((b) => b.classList.toggle('active', b === btn))
+					queueStore.filter = filter
+					renderSyftboxQueue()
+				}
+			})
+			filterEl.dataset.listenerAttached = 'true'
+		}
+		refreshSyftboxQueue(true)
+		if (syftboxQueueTimer) clearInterval(syftboxQueueTimer)
+		// Aggressive polling while Settings is open to keep progress snappy
+		syftboxQueueTimer = setInterval(refreshSyftboxQueue, 500)
+	}
+
+	function formatBytes(bytes) {
+		if (!bytes && bytes !== 0) return null
+		const units = ['B', 'KB', 'MB', 'GB', 'TB']
+		let b = bytes
+		let u = 0
+		while (b >= 1024 && u < units.length - 1) {
+			b /= 1024
+			u++
+		}
+		return `${b.toFixed(b >= 10 || u === 0 ? 0 : 1)}${units[u]}`
+	}
+
+	function formatEta(seconds) {
+		if (!isFinite(seconds) || seconds <= 0) return null
+		if (seconds > 48 * 3600) return '>48h'
+		const m = Math.floor(seconds / 60)
+		const s = Math.floor(seconds % 60)
+		if (m > 90) return `${Math.round(m / 60)}h`
+		if (m > 0) return `${m}m ${s.toString().padStart(2, '0')}s`
+		return `${s}s`
+	}
+
+	function renderQueueList(container, items) {
+		if (!container) return
+		container.innerHTML = ''
+		if (!items || items.length === 0) {
+			container.classList.add('empty')
+			container.textContent = `No active items`
+			return
+		}
+		container.classList.remove('empty')
+		items.slice(0, 50).forEach((item) => {
+			const row = document.createElement('div')
+			row.className = 'queue-item'
+			const header = document.createElement('div')
+			header.className = 'queue-item-header'
+
+			const path = document.createElement('div')
+			path.className = 'queue-item-path'
+			path.textContent = item.path || item.key || 'unknown'
+			header.appendChild(path)
+
+			const state = document.createElement('span')
+			state.className = 'status-badge'
+			state.textContent = item.state?.toUpperCase?.() || 'PENDING'
+			header.appendChild(state)
+			row.appendChild(header)
+
+			const meta = document.createElement('div')
+			meta.className = 'queue-item-meta'
+			const pct = computeProgress(item).toFixed(1)
+			const parts = [`${pct}%`]
+			if (item.uploadedBytes && item.size) {
+				const bytesText = `${formatBytes(item.uploadedBytes)} / ${formatBytes(item.size)}`
+				parts.push(bytesText)
+				if (item.speedBytesPerSec && item.speedBytesPerSec > 1024) {
+					const remaining = Math.max(0, item.size - item.uploadedBytes)
+					const eta = formatEta(remaining / item.speedBytesPerSec)
+					if (eta) parts.push(`ETA ${eta}`)
+					parts.push(`${formatBytes(item.speedBytesPerSec)}/s`)
+				} else {
+					parts.push('Stalled')
+				}
+			}
+			if (item.conflictState && item.conflictState !== 'none') {
+				parts.push(`conflict: ${item.conflictState}`)
+			}
+			if (item.error) {
+				parts.push(`error: ${item.error}`)
+			}
+			if (item.updatedAt) {
+				parts.push(new Date(item.updatedAt).toLocaleTimeString())
+			}
+			meta.innerHTML = parts.map((p) => `<span>${p}</span>`).join('')
+			row.appendChild(meta)
+
+			const progress = document.createElement('div')
+			progress.className = 'queue-progress'
+			progress.innerHTML = `<div class="queue-progress-bar" style="width:${Math.min(
+				100,
+				computeProgress(item),
+			)}%"></div>`
+			row.appendChild(progress)
+
+			const actions = document.createElement('div')
+			actions.className = 'queue-actions'
+
+			const actionUploadId = item.id || item.lastUploadId
+			if (actionUploadId) {
+				const makeBtn = (label, action) => {
+					const btn = document.createElement('button')
+					btn.className = 'queue-action-btn'
+					btn.textContent = label
+					btn.addEventListener('click', async () => {
+						try {
+							await invoke('syftbox_upload_action', { id: actionUploadId, action })
+							await refreshSyftboxQueue()
+							console.info(`Upload action ${action} sent for ${item.id}`)
+						} catch (err) {
+							console.error(`Upload ${action} failed:`, err)
+						}
+					})
+					return btn
+				}
+				actions.appendChild(makeBtn('Pause', 'pause'))
+				actions.appendChild(makeBtn('Resume', 'resume'))
+				actions.appendChild(makeBtn('Restart', 'restart'))
+				actions.appendChild(makeBtn('Cancel', 'cancel'))
+			}
+
+			if (item.localPath || item.path) {
+				const openBtn = document.createElement('button')
+				openBtn.className = 'queue-action-btn'
+				openBtn.textContent = 'Open'
+				openBtn.addEventListener('click', async () => {
+					try {
+						const absPath = await resolveAbsolutePath(item)
+						if (absPath) {
+							await invoke('open_path_in_file_manager', { path: absPath })
+						}
+					} catch (err) {
+						console.error('Open path failed:', err)
+					}
+				})
+				actions.appendChild(openBtn)
+			}
+
+			if (actions.childElementCount > 0) {
+				row.appendChild(actions)
+			}
+
+			container.appendChild(row)
+		})
+	}
+
+	async function resolveAbsolutePath(item) {
+		// Prefer explicit localPath from upload registry
+		if (item.localPath) return item.localPath
+
+		// Fall back to constructing from data_dir + datasites + path/key
+		const queueStatus = window.__lastSyftboxQueueStatus
+		const base = queueStatus?.data_dir
+		const rel = item.path || item.key
+		if (!base || !rel) return null
+		return `${base.replace(/\/$/, '')}/datasites/${rel.replace(/^[/\\]?/, '')}`
+	}
+
+	function computeProgress(item, fallback = 0) {
+		const size = typeof item.size === 'number' ? item.size : null
+		const uploaded = typeof item.uploadedBytes === 'number' ? item.uploadedBytes : null
+		if (size && uploaded !== null && size > 0) {
+			return Math.min(100, Math.max(0, (uploaded / size) * 100))
+		}
+		if (typeof item.progress === 'number') return Math.min(100, Math.max(0, item.progress))
+		return fallback
+	}
+
+	const queueStore = {
+		map: new Map(),
+		filter: 'active',
+		upsert(item, source) {
+			const key = queueKey(item)
+			if (!key) return
+
+			const existing = this.map.get(key) || {
+				sources: [],
+				firstSeenAt: Date.now(),
+				uploadIds: [],
+			}
+			const sources = new Set(existing.sources || [])
+			if (source) sources.add(source)
+			const uploadIds = new Set(existing.uploadIds || [])
+			if (item.id) uploadIds.add(item.id)
+
+			const updatedAt =
+				item.updatedAt || item.startedAt || existing.updatedAt || new Date().toISOString()
+			const now = Date.now()
+			const size =
+				Math.max(
+					typeof existing.size === 'number' ? existing.size : 0,
+					typeof item.size === 'number' ? item.size : 0,
+				) || undefined
+			const uploaded = Math.max(
+				typeof existing.uploadedBytes === 'number' ? existing.uploadedBytes : 0,
+				typeof item.uploadedBytes === 'number' ? item.uploadedBytes : 0,
+			)
+			const effectiveProgress = computeProgress(
+				{ ...item, size, uploadedBytes: uploaded },
+				existing.progress || 0,
+			)
+			const progress = Math.max(effectiveProgress, existing.progress || 0)
+
+			let speedBytesPerSec = existing.speedBytesPerSec
+			if (
+				typeof uploaded === 'number' &&
+				typeof existing.lastBytes === 'number' &&
+				existing.lastSeenAt
+			) {
+				const dt = (now - existing.lastSeenAt) / 1000
+				const db = uploaded - existing.lastBytes
+				if (dt > 0 && db > 0) {
+					const inst = db / dt
+					speedBytesPerSec = speedBytesPerSec ? speedBytesPerSec * 0.6 + inst * 0.4 : inst
+				}
+			}
+			if (speedBytesPerSec && speedBytesPerSec < 1024) {
+				speedBytesPerSec = null
+			}
+
+			let state = item.state || existing.state || 'pending'
+			// Error always wins
+			if (item.state === 'error' || existing.state === 'error') {
+				state = 'error'
+			} else if (item.state === 'completed' || existing.state === 'completed') {
+				// Keep completed once reached
+				state = 'completed'
+			}
+
+			// If completed but bytes/progress aren't 100%, snap to complete
+			let adjustedUploaded = uploaded
+			let adjustedProgress = progress
+			if (state === 'completed') {
+				if (size && typeof adjustedUploaded === 'number' && adjustedUploaded < size) {
+					adjustedUploaded = size
+				}
+				adjustedProgress = 100
+				speedBytesPerSec = null
+			}
+
+			const merged = {
+				...existing,
+				...item,
+				sources: Array.from(sources),
+				uploadIds: Array.from(uploadIds),
+				lastUploadId: item.id || existing.lastUploadId,
+				progress: adjustedProgress,
+				state,
+				updatedAt,
+				lastSeen: Date.now(),
+				firstSeenAt: existing.firstSeenAt || now,
+				lastSeenAt: now,
+				lastBytes: typeof adjustedUploaded === 'number' ? adjustedUploaded : existing.lastBytes,
+				speedBytesPerSec,
+				size,
+				uploadedBytes: adjustedUploaded,
+			}
+			this.map.set(key, merged)
+		},
+		all() {
+			let items = Array.from(this.map.values())
+			if (this.filter === 'completed') {
+				items = items.filter((i) => i.state === 'completed')
+			} else {
+				items = items.filter((i) => i.state !== 'completed')
+			}
+			// Stable order by firstSeenAt (queue order)
+			items.sort((a, b) => (a.firstSeenAt || 0) - (b.firstSeenAt || 0))
+			return items
+		},
+	}
+
+	function queueKey(item) {
+		// Deduplicate primarily by path/key so sync+upload entries collapse together
+		return (
+			item.path ||
+			item.key ||
+			item.localPath ||
+			item.id ||
+			JSON.stringify({ path: item.path, key: item.key })
+		)
+	}
+
+	async function refreshSyftboxQueue(showErrors = false) {
+		const statusEl = document.getElementById('syftbox-queue-status')
+		if (statusEl) statusEl.textContent = 'Loading...'
+		try {
+			const data = await invoke('syftbox_queue_status')
+			window.__lastSyftboxQueueStatus = data
+			const sync = data?.sync || { files: [], summary: null }
+			const uploads = data?.uploads || []
+
+			;(sync.files || []).forEach((f) => queueStore.upsert(f, 'sync'))
+			;(uploads || []).forEach((u) => queueStore.upsert(u, 'upload'))
+
+			if (statusEl) {
+				statusEl.textContent = data?.control_plane_url
+					? `Connected: ${data.control_plane_url}`
+					: 'Connected'
+			}
+
+			const summary = sync?.summary || { pending: 0, syncing: 0, completed: 0, error: 0 }
+			const setText = (id, val) => {
+				const el = document.getElementById(id)
+				if (el) el.textContent = val
+			}
+			setText('syftbox-summary-pending', summary.pending || 0)
+			setText('syftbox-summary-syncing', summary.syncing || 0)
+			setText('syftbox-summary-completed', summary.completed || 0)
+			setText('syftbox-summary-error', summary.error || 0)
+
+			renderSyftboxQueue()
+		} catch (error) {
+			console.error('Failed to load SyftBox queue:', error)
+			if (statusEl) statusEl.textContent = 'Unavailable'
+			if (showErrors) {
+				await dialog.message(
+					'SyftBox control plane is unavailable. Start the daemon and try again.',
+					{ title: 'SyftBox', type: 'warning' },
+				)
+			}
+			const empty = (id, msg) => {
+				const el = document.getElementById(id)
+				if (el) {
+					el.classList.add('empty')
+					el.textContent = msg
+				}
+			}
+			empty('syftbox-queue-list', 'No data')
+		}
+	}
+
+	function renderSyftboxQueue() {
+		const combined = queueStore.all()
+		const countLabel =
+			queueStore.filter === 'completed'
+				? `${combined.length} completed`
+				: `${combined.length} in progress`
+		const countEl = document.getElementById('syftbox-queue-count')
+		if (countEl) countEl.textContent = countLabel
+		renderQueueList(document.getElementById('syftbox-queue-list'), combined)
 	}
 
 	return {

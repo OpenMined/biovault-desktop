@@ -594,6 +594,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .plugin(tauri_plugin_deep_link::init())
         .manage(app_state)
         .setup(move |app| {
             // Surface bundled binaries (java/nextflow/uv) to the environment so dependency
@@ -766,6 +767,29 @@ pub fn run() {
                 });
             }
 
+            // Handle deep link URLs (biovault://...)
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+
+                // Check if app was opened via deep link
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        crate::desktop_log!("🔗 App opened with deep link: {}", url);
+                        let _ = handle.emit("deep-link", url.to_string());
+                    }
+                }
+
+                // Listen for deep links while app is running
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        crate::desktop_log!("🔗 Deep link received: {}", url);
+                        let _ = handle.emit("deep-link", url.to_string());
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -891,6 +915,7 @@ pub fn run() {
             key_restore,
             key_republish,
             key_list_contacts,
+            key_check_contact,
             key_refresh_contacts,
             // Network commands
             network_scan_datasites,
@@ -934,6 +959,9 @@ pub fn run() {
             get_syftbox_state,
             start_syftbox_client,
             stop_syftbox_client,
+            syftbox_queue_status,
+            syftbox_upload_action,
+            open_path_in_file_manager,
             test_notification,
             test_notification_applescript,
             // Sessions commands

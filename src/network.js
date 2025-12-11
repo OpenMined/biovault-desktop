@@ -349,6 +349,28 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const addPeerBtn = row.querySelector('.add-peer-btn')
 		const messagePeerBtn = row.querySelector('.message-peer-btn')
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
+		const statusContainer = row.querySelector('.dataset-row-status')
+
+		// Availability badge (Available vs Downloading)
+		if (statusContainer) {
+			let availability = statusContainer.querySelector('.status-badge.availability')
+			if (!availability) {
+				availability = document.createElement('span')
+				availability.className = 'status-badge availability'
+				statusContainer.appendChild(availability)
+			}
+			const have = dataset.present_assets ?? 0
+			const total = dataset.total_assets ?? 0
+			if (dataset.available) {
+				availability.textContent = total ? `Available (${have}/${total})` : 'Available'
+				availability.classList.add('status-available')
+				availability.classList.remove('status-downloading')
+			} else {
+				availability.textContent = total ? `Downloading (${have}/${total})` : 'Downloading'
+				availability.classList.add('status-downloading')
+				availability.classList.remove('status-available')
+			}
+		}
 
 		// For own datasets: hide new session, add peer, and message buttons
 		if (dataset.is_own) {

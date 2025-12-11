@@ -34,6 +34,28 @@
 					</svg>
 					<span>Sync</span>
 				</button>
+				<button
+					id="invite-via-email-msg-btn"
+					class="btn-secondary"
+					title="Invite someone to BioVault via email"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path
+							d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+						></path>
+						<polyline points="22,6 12,13 2,6"></polyline>
+					</svg>
+					<span>Invite</span>
+				</button>
 				<button id="new-message-btn" class="btn-primary">
 					<svg
 						width="14"
@@ -274,22 +296,42 @@
 					</div>
 					<h3>No conversation selected</h3>
 					<p>Select a thread or compose a new message</p>
-					<button id="msg-empty-compose" class="msg-empty-btn">
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-						</svg>
-						Compose
-					</button>
+					<div class="msg-empty-actions">
+						<button id="msg-empty-compose" class="msg-empty-btn">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+							</svg>
+							Compose
+						</button>
+						<button id="msg-empty-invite" class="msg-empty-btn msg-invite-btn">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<path
+									d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+								></path>
+								<polyline points="22,6 12,13 2,6"></polyline>
+							</svg>
+							Invite to BioVault
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>

@@ -39,6 +39,7 @@ export function setupEventHandlers({
 	handleDeleteThread,
 	setSyftboxTarget,
 	getSyftboxStatus,
+	showMessagesInviteOptions,
 	// Projects
 	showCreateProjectModal,
 	hideCreateProjectModal,
@@ -125,6 +126,22 @@ export function setupEventHandlers({
 	if (newMessageBtn) {
 		newMessageBtn.addEventListener('click', () => {
 			ensureMessagesAuthorizationAndStartNew()
+		})
+	}
+
+	// Messages - Invite via email (header button)
+	const inviteViaMsgBtn = document.getElementById('invite-via-email-msg-btn')
+	if (inviteViaMsgBtn) {
+		inviteViaMsgBtn.addEventListener('click', () => {
+			showMessagesInviteOptions()
+		})
+	}
+
+	// Messages - Invite (empty state button)
+	const msgEmptyInvite = document.getElementById('msg-empty-invite')
+	if (msgEmptyInvite) {
+		msgEmptyInvite.addEventListener('click', () => {
+			showMessagesInviteOptions()
 		})
 	}
 

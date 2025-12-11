@@ -390,6 +390,21 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Copy notebooks from biovault-beaver submodule
+        if: matrix.build_kind == 'tauri'
+        run: |
+          NOTEBOOKS_SRC="biovault/biovault-beaver/notebooks"
+          TEMPLATES_DEST="src-tauri/resources/templates"
+          if [[ -d "$NOTEBOOKS_SRC" ]]; then
+            cp "$NOTEBOOKS_SRC/notebooks.yaml" "$TEMPLATES_DEST/" 2>/dev/null || true
+            for nb in "$NOTEBOOKS_SRC"/*.ipynb; do
+              [[ -f "$nb" ]] && cp "$nb" "$TEMPLATES_DEST/"
+            done
+            echo "Copied notebooks from $NOTEBOOKS_SRC"
+          else
+            echo "Warning: $NOTEBOOKS_SRC not found, using existing templates"
+          fi
+
       - name: Clear quarantine on bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
         run: |

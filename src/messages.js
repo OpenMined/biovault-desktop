@@ -893,7 +893,7 @@ export function createMessagesModule({
 					const preview = (thread.last_message_preview || '').toLowerCase()
 					const participants = (thread.participants || []).join(' ').toLowerCase()
 					return subject.includes(term) || preview.includes(term) || participants.includes(term)
-			  })
+				})
 			: messageThreads
 
 		if (filteredThreads.length === 0) {
@@ -954,7 +954,7 @@ export function createMessagesModule({
 			const sessionBadge = thread.session_id
 				? `<span class="message-thread-session" title="${escapeHtml(
 						thread.session_name || 'Secure Session',
-				  )}">
+					)}">
 				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 					<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
 					<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -971,7 +971,7 @@ export function createMessagesModule({
 			const sessionParticipantsLine = isSessionThread
 				? `<div class="message-thread-subject">With ${
 						others.length > 0 ? escapeHtml(others.join(', ')) : 'participants'
-				  }</div>`
+					}</div>`
 				: `<div class="message-thread-subject">${escapeHtml(displaySubject)}</div>`
 
 			item.innerHTML = `
@@ -981,7 +981,7 @@ export function createMessagesModule({
 						thread.unread_count > 0
 							? `<span class="message-thread-unread">${
 									thread.unread_count > 9 ? '9+' : thread.unread_count
-							  }</span>`
+								}</span>`
 							: ''
 					}
 					${sessionBadge}
@@ -1225,6 +1225,46 @@ export function createMessagesModule({
 				return
 			}
 
+			// Check if recipient has a key in our contacts
+			const contactCheck = await invoke('key_check_contact', { email: recipient })
+
+			if (!contactCheck.has_key) {
+				// No key locally - check if they're on the network
+				if (contactCheck.is_on_network) {
+					// They're on network but not trusted - prompt to add them first
+					const goToNetwork = await dialog.ask(
+						`${recipient} is on the BioVault network but you haven't added them to your contacts yet.\n\nGo to Network tab to add and verify their key before messaging.`,
+						{
+							title: 'Contact Not Added',
+							kind: 'warning',
+							okLabel: 'Go to Network',
+							cancelLabel: 'Cancel',
+						},
+					)
+					if (goToNetwork) {
+						// Navigate to network tab
+						const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'network' } })
+						window.dispatchEvent(event)
+					}
+					return
+				} else {
+					// Not on network at all - show invite modal
+					const sendInvite = await dialog.ask(
+						`${recipient} doesn't appear to be on the BioVault network yet.\n\nWould you like to invite them?`,
+						{
+							title: 'Recipient Not Found',
+							kind: 'info',
+							okLabel: 'Send Invite',
+							cancelLabel: 'Cancel',
+						},
+					)
+					if (sendInvite) {
+						await showInviteOptions('message')
+					}
+					return
+				}
+			}
+
 			const sent = await invoke('send_message', {
 				request: {
 					to: recipient,
@@ -1357,6 +1397,169 @@ export function createMessagesModule({
 			subject: 'Test Notification',
 			last_message_preview: 'This is a test notification from BioVault.',
 			participants: ['demo@sandbox.local'],
+		})
+	}
+
+	async function getInviteData(type = 'message') {
+		const currentUserEmail = getCurrentUserEmail?.() || ''
+		let fingerprint = ''
+		try {
+			const keyStatus = await invoke('key_get_status')
+			fingerprint = keyStatus?.vault_fingerprint || keyStatus?.export_fingerprint || ''
+		} catch (e) {
+			console.warn('Could not get key fingerprint for invite:', e)
+		}
+		return {
+			from: currentUserEmail,
+			fingerprint,
+			type,
+		}
+	}
+
+	async function getInviteUrl(type = 'message') {
+		const data = await getInviteData(type)
+		const params = new URLSearchParams({
+			from: data.from,
+			fp: data.fingerprint,
+			type: data.type,
+		})
+		return `https://app.biovault.net/invite?${params.toString()}`
+	}
+
+	async function getInviteMessage(type = 'message') {
+		const inviteUrl = await getInviteUrl(type)
+		const typeDesc =
+			type === 'session'
+				? 'an end-to-end encrypted collaborative session'
+				: type === 'dataset'
+					? 'secure dataset sharing'
+					: 'secure messaging'
+		return `Hi!\n\nI'd like to invite you to ${typeDesc} on BioVault - a platform for private data analysis.\n\nGet started here:\n${inviteUrl}\n\nLearn more:\n- https://biovault.net\n- https://openmined.org\n\nLooking forward to working together!`
+	}
+
+	async function openInviteUrl(url) {
+		if (invoke) {
+			invoke('open_url', { url }).catch(() => window.open(url, '_blank'))
+		} else {
+			window.open(url, '_blank')
+		}
+	}
+
+	async function openInvite(provider, type = 'message') {
+		const subject = encodeURIComponent('Join me on BioVault!')
+		const body = encodeURIComponent(await getInviteMessage(type))
+		const message = encodeURIComponent(await getInviteMessage(type))
+
+		const urls = {
+			gmail: `https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`,
+			outlook: `https://outlook.live.com/mail/0/deeplink/compose?subject=${subject}&body=${body}`,
+			yahoo: `https://compose.mail.yahoo.com/?subject=${subject}&body=${body}`,
+			email: `mailto:?subject=${subject}&body=${body}`,
+			whatsapp: `https://wa.me/?text=${message}`,
+		}
+
+		if (urls[provider]) {
+			await openInviteUrl(urls[provider])
+		}
+	}
+
+	async function showInviteOptions(type = 'message') {
+		const existingModal = document.getElementById('invite-options-modal')
+		if (existingModal) existingModal.remove()
+
+		const inviteUrl = await getInviteUrl(type)
+
+		const modal = document.createElement('div')
+		modal.id = 'invite-options-modal'
+		modal.innerHTML = `
+			<div class="invite-modal-backdrop"></div>
+			<div class="invite-modal-content">
+				<h3>Invite to BioVault</h3>
+				<p>Share this link to invite someone:</p>
+				<div class="invite-link-box">
+					<input type="text" class="invite-link-input" value="${inviteUrl}" readonly />
+					<button class="invite-copy-btn" title="Copy to clipboard">📋</button>
+				</div>
+				<div class="invite-copy-status"></div>
+				<p class="invite-share-label">Or share via:</p>
+				<div class="invite-options-grid">
+					<button class="invite-option-btn" data-provider="gmail">
+						<span class="invite-icon">📧</span>
+						<span>Gmail</span>
+					</button>
+					<button class="invite-option-btn" data-provider="outlook">
+						<span class="invite-icon">📬</span>
+						<span>Outlook</span>
+					</button>
+					<button class="invite-option-btn" data-provider="yahoo">
+						<span class="invite-icon">✉️</span>
+						<span>Yahoo</span>
+					</button>
+					<button class="invite-option-btn" data-provider="email">
+						<span class="invite-icon">💌</span>
+						<span>Email App</span>
+					</button>
+					<button class="invite-option-btn" data-provider="whatsapp">
+						<span class="invite-icon">💬</span>
+						<span>WhatsApp</span>
+					</button>
+				</div>
+				<button class="invite-cancel-btn">Close</button>
+			</div>
+		`
+
+		const style = document.createElement('style')
+		style.textContent = `
+			#invite-options-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; }
+			.invite-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+			.invite-modal-content { position: relative; background: var(--bg-primary, #fff); border-radius: 12px; padding: 24px; max-width: 420px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
+			.invite-modal-content h3 { margin: 0 0 8px; font-size: 18px; }
+			.invite-modal-content p { margin: 0 0 12px; color: var(--text-secondary, #666); font-size: 14px; }
+			.invite-link-box { display: flex; gap: 8px; margin-bottom: 4px; }
+			.invite-link-input { flex: 1; padding: 10px 12px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; font-size: 12px; font-family: monospace; background: var(--bg-secondary, #f5f5f5); color: var(--text-primary, #333); }
+			.invite-copy-btn { padding: 10px 14px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; background: var(--accent-color, #10b981); color: white; cursor: pointer; font-size: 16px; transition: all 0.2s; }
+			.invite-copy-btn:hover { opacity: 0.9; }
+			.invite-copy-status { font-size: 12px; color: var(--accent-color, #10b981); height: 18px; margin-bottom: 8px; }
+			.invite-share-label { margin-top: 16px !important; font-weight: 500; }
+			.invite-options-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+			.invite-option-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; background: var(--bg-secondary, #f5f5f5); cursor: pointer; transition: all 0.2s; font-size: 11px; }
+			.invite-option-btn:hover { background: var(--bg-hover, #e8e8e8); border-color: var(--accent-color, #10b981); }
+			.invite-icon { font-size: 20px; }
+			.invite-cancel-btn { width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary, #666); cursor: pointer; font-size: 14px; }
+			.invite-cancel-btn:hover { background: var(--bg-secondary, #f5f5f5); }
+		`
+		modal.appendChild(style)
+		document.body.appendChild(modal)
+
+		const copyBtn = modal.querySelector('.invite-copy-btn')
+		const copyStatus = modal.querySelector('.invite-copy-status')
+		const linkInput = modal.querySelector('.invite-link-input')
+
+		copyBtn.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(inviteUrl)
+				copyStatus.textContent = '✓ Copied to clipboard!'
+				copyBtn.textContent = '✓'
+				setTimeout(() => {
+					copyStatus.textContent = ''
+					copyBtn.textContent = '📋'
+				}, 2000)
+			} catch (e) {
+				linkInput.select()
+				document.execCommand('copy')
+				copyStatus.textContent = '✓ Copied!'
+			}
+		})
+
+		linkInput.addEventListener('click', () => linkInput.select())
+
+		modal.querySelector('.invite-modal-backdrop').addEventListener('click', () => modal.remove())
+		modal.querySelector('.invite-cancel-btn').addEventListener('click', () => modal.remove())
+		modal.querySelectorAll('.invite-option-btn').forEach((btn) => {
+			btn.addEventListener('click', async () => {
+				const provider = btn.dataset.provider
+				await openInvite(provider, type)
+			})
 		})
 	}
 
@@ -1558,6 +1761,9 @@ export function createMessagesModule({
 		getMessagesInitialized: () => messagesInitialized,
 		getMessagesAuthorized: () => messagesAuthorized,
 		triggerTestNotification,
+		// Invite functions
+		showInviteOptions,
+		openInvite,
 		// Failed messages
 		loadFailedMessages,
 		updateFailedMessagesBadge,
