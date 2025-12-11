@@ -249,6 +249,21 @@
 	letter-spacing: 0.02em;
 }
 
+.network-section .status-badge.availability {
+	background: #f1f5f9;
+	color: #0f172a;
+}
+
+.network-section .status-badge.availability.status-available {
+	background: #dcfce7;
+	color: #166534;
+}
+
+.network-section .status-badge.availability.status-downloading {
+	background: #e0f2fe;
+	color: #075985;
+}
+
 /* ============================================================================
    ACTION BUTTONS
    ============================================================================ */

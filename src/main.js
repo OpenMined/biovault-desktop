@@ -175,6 +175,7 @@ const {
 	setActiveMessageFilterButton,
 	getMessagesInitialized,
 	getMessagesAuthorized,
+	showInviteOptions: showMessagesInviteOptions,
 } = messagesModule
 
 // Expose messages module globally for test actions (e.g., notification test button wiring)
@@ -200,7 +201,12 @@ sessionsModule = createSessionsModule({
 	listen,
 	getMessagesModule: () => messagesModule,
 })
-const { initializeSessionsTab, activateSessionsTab, deactivateSessionsTab } = sessionsModule
+const {
+	initializeSessionsTab,
+	activateSessionsTab,
+	deactivateSessionsTab,
+	showInviteOptions: showSessionsInviteOptions,
+} = sessionsModule
 
 // Create network module
 const networkModule = createNetworkModule({ invoke, shellApi })
@@ -291,6 +297,33 @@ window.clearAllDataSelections = clearAllSelections
 window.__NAV_HANDLERS_READY__ = false
 window.__EVENT_HANDLERS_READY__ = false
 
+async function checkKeyFingerprintMismatchOnStartup() {
+	try {
+		const email = await getCurrentUserEmail()
+		if (!email) return
+
+		const status = await invoke('key_get_status', { email })
+		if (status && status.exists && status.export_fingerprint && status.export_matches === false) {
+			const message = [
+				'Your local vault key differs from the key in your published DID (did.json).',
+				`Local fingerprint: ${status.vault_fingerprint || 'unknown'}`,
+				`Published fingerprint: ${status.export_fingerprint}`,
+				'Open Settings to recover the old key or re-publish your current DID?',
+			].join('\n')
+
+			const openSettings = await dialog.confirm(message, {
+				title: 'Key mismatch detected',
+				type: 'warning',
+			})
+			if (openSettings) {
+				navigateTo('settings')
+			}
+		}
+	} catch (error) {
+		console.warn('⚠️ Key mismatch check failed:', error)
+	}
+}
+
 // Now set the real functions for module placeholders
 projectsNavigateTo = navigateTo
 messagesGetActiveView = getActiveView
@@ -371,7 +404,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 		loadData()
 		loadProjects()
 		refreshLogs({ force: true })
-		loadSettings()
+		await loadSettings()
+		await checkKeyFingerprintMismatchOnStartup()
 		updateSelectedFileCount()
 
 		// Initialize WhatsApp module (checks status and sets up event listeners)
@@ -390,6 +424,20 @@ window.addEventListener('DOMContentLoaded', async () => {
 	pipelinesModule.initialize()
 	initializeSessionsTab()
 	networkModule.init()
+
+	// Setup sidebar invite button
+	const sidebarInviteBtn = document.getElementById('sidebar-invite-btn')
+	if (sidebarInviteBtn) {
+		sidebarInviteBtn.addEventListener('click', () => showSessionsInviteOptions('session'))
+	}
+
+	// Listen for navigation events from other modules (e.g., messages wanting to go to network tab)
+	window.addEventListener('navigate-to-tab', (event) => {
+		const tab = event.detail?.tab
+		if (tab) {
+			navigateTo(tab)
+		}
+	})
 
 	// Setup all event handlers
 	setupEventHandlers({
@@ -429,6 +477,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		handleDeleteThread,
 		setSyftboxTarget,
 		getSyftboxStatus,
+		showMessagesInviteOptions,
 		showCreateProjectModal,
 		hideCreateProjectModal,
 		createProjectFromModal,
@@ -476,4 +525,37 @@ window.addEventListener('DOMContentLoaded', async () => {
 			console.warn('Update check failed:', err)
 		})
 	}, 3000) // Delay 3s to avoid blocking startup
+
+	// Listen for deep link events (biovault://...)
+	listen('deep-link', (event) => {
+		console.log('🔗 Deep link received:', event.payload)
+		handleDeepLink(event.payload)
+	})
 })
+
+// Handle deep link URLs
+function handleDeepLink(url) {
+	try {
+		const parsed = new URL(url)
+		console.log('🔗 Parsing deep link:', parsed)
+
+		// Handle biovault://invite?from=...&fp=...&type=...
+		if (parsed.pathname === 'invite' || parsed.pathname === '/invite' || parsed.host === 'invite') {
+			const from = parsed.searchParams.get('from')
+			const fingerprint = parsed.searchParams.get('fp')
+			const type = parsed.searchParams.get('type') || 'session'
+
+			console.log('🔗 Invite deep link:', { from, fingerprint, type })
+
+			// Show a dialog with the invite info
+			dialog.message(
+				`You received an invite from:\n${from || 'Unknown'}\n\nType: ${type}\n\nTo connect, add them as a contact in the Network tab.`,
+				{ title: 'BioVault Invite', kind: 'info' },
+			)
+
+			// Could also automatically navigate to Network tab or pre-fill contact
+		}
+	} catch (e) {
+		console.error('Failed to parse deep link:', e)
+	}
+}

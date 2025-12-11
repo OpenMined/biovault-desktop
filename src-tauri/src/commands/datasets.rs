@@ -541,6 +541,12 @@ pub struct DiscoveredDataset {
     pub assets: Vec<DiscoveredDatasetAsset>,
     pub is_trusted: bool,
     pub is_own: bool,
+    pub available: bool,
+    pub present_assets: usize,
+    pub total_assets: usize,
+    pub missing_assets: usize,
+    pub downloaded_bytes: u64,
+    pub expected_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -667,6 +673,11 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
 
             // Build assets list with mock info
             let mut discovered_assets = Vec::new();
+            let mut missing_assets: usize = 0;
+            let mut present_assets: usize = 0;
+            let mut downloaded_bytes: u64 = 0;
+            let mut expected_bytes: u64 = 0;
+
             for (key, asset) in &manifest.assets {
                 let mock_url = asset.mock.as_ref().and_then(|m| match m {
                     serde_yaml::Value::String(s) => Some(s.clone()),
@@ -693,6 +704,53 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
                     (None, None)
                 };
 
+                // Resolve local asset path to check availability/size
+                let mut found = false;
+                let mut size_bytes: Option<u64> = None;
+
+                // 1) Prefer resolved mock_path
+                if let Some(ref mp) = mock_path {
+                    if let Ok(metadata) = std::fs::metadata(mp) {
+                        found = true;
+                        size_bytes = Some(metadata.len());
+                    }
+                }
+                // 2) If no mock_path hit, try deriving from mock_url filename
+                if !found {
+                    if let Some(ref url) = mock_url {
+                        if let Some(filename) = url.split('/').next_back() {
+                            let candidate = dataset_dir.join("assets").join(filename);
+                            if let Ok(metadata) = std::fs::metadata(&candidate) {
+                                found = true;
+                                size_bytes = Some(metadata.len());
+                            }
+                        }
+                    }
+                }
+                // 3) Fallback to key-based path
+                if !found {
+                    let asset_path = dataset_dir.join(key);
+                    if let Ok(metadata) = std::fs::metadata(&asset_path) {
+                        found = true;
+                        size_bytes = Some(metadata.len());
+                    }
+                }
+
+                if found {
+                    present_assets += 1;
+                    if let Some(sz) = size_bytes {
+                        downloaded_bytes = downloaded_bytes.saturating_add(sz);
+                    }
+                } else {
+                    missing_assets += 1;
+                }
+
+                if let Some(ms) = mock_size {
+                    expected_bytes = expected_bytes.saturating_add(ms);
+                } else if let Some(sz) = size_bytes {
+                    expected_bytes = expected_bytes.saturating_add(sz);
+                }
+
                 discovered_assets.push(DiscoveredDatasetAsset {
                     key: key.clone(),
                     kind: asset.kind.clone(),
@@ -715,6 +773,16 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
                 assets: discovered_assets,
                 is_trusted,
                 is_own,
+                available: missing_assets == 0 && !manifest.assets.is_empty(),
+                present_assets,
+                total_assets: manifest.assets.len(),
+                missing_assets,
+                downloaded_bytes,
+                expected_bytes: if expected_bytes > 0 {
+                    Some(expected_bytes)
+                } else {
+                    None
+                },
             });
         }
     }

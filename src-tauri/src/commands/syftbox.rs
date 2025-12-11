@@ -1,8 +1,14 @@
 use crate::types::{SyftBoxConfigInfo, SyftBoxState};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use syftbox_sdk::syftbox::control as syftctl;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -131,6 +137,175 @@ fn fallback_log_path() -> Option<String> {
         .map(|d| d.join(".syftbox").join("logs").join("syftbox.log"))
         .map(|p| p.to_string_lossy().to_string())
 }
+
+#[derive(Debug, Clone, Deserialize)]
+struct SyftBoxClientConfigFile {
+    client_url: Option<String>,
+    client_token: Option<String>,
+    data_dir: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SyftBoxClientConfig {
+    client_url: String,
+    client_token: String,
+    data_dir: Option<String>,
+}
+
+fn load_syftbox_client_config() -> Result<SyftBoxClientConfig, String> {
+    let config = biovault::config::Config::load()
+        .map_err(|e| format!("SyftBox not configured yet: {}", e))?;
+    let config_path = config
+        .get_syftbox_config_path()
+        .map_err(|e| format!("Failed to resolve syftbox config path: {}", e))?;
+    let cfg_raw = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read syftbox config: {}", e))?;
+    let cfg: SyftBoxClientConfigFile = serde_json::from_str(&cfg_raw)
+        .map_err(|e| format!("Failed to parse syftbox config: {}", e))?;
+
+    let client_url = cfg
+        .client_url
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "SyftBox client_url missing from syftbox/config.json".to_string())?;
+    let client_token = cfg
+        .client_token
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "SyftBox client_token missing from syftbox/config.json".to_string())?;
+
+    Ok(SyftBoxClientConfig {
+        client_url,
+        client_token,
+        data_dir: cfg.data_dir,
+    })
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyftBoxSyncFileStatus {
+    pub path: String,
+    pub state: String,
+    #[serde(default)]
+    pub conflict_state: Option<String>,
+    #[serde(default)]
+    pub progress: f64,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyftBoxSyncSummary {
+    #[serde(default)]
+    pub pending: i32,
+    #[serde(default)]
+    pub syncing: i32,
+    #[serde(default)]
+    pub completed: i32,
+    #[serde(default)]
+    pub error: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyftBoxSyncStatus {
+    #[serde(default)]
+    pub files: Vec<SyftBoxSyncFileStatus>,
+    #[serde(default)]
+    pub summary: Option<SyftBoxSyncSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyftBoxUploadInfo {
+    pub id: String,
+    pub key: String,
+    #[serde(default)]
+    pub local_path: Option<String>,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub size: i64,
+    #[serde(default)]
+    pub uploaded_bytes: i64,
+    #[serde(default)]
+    pub part_size: Option<i64>,
+    #[serde(default)]
+    pub part_count: Option<i32>,
+    #[serde(default)]
+    pub completed_parts: Option<Vec<i32>>,
+    #[serde(default)]
+    pub progress: f64,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SyftBoxQueueStatus {
+    pub control_plane_url: Option<String>,
+    pub data_dir: Option<String>,
+    pub sync: Option<SyftBoxSyncStatus>,
+    pub uploads: Option<Vec<SyftBoxUploadInfo>>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SyftBoxUploadList {
+    uploads: Vec<SyftBoxUploadInfo>,
+}
+
+fn normalize_percent(value: f64) -> f64 {
+    if value <= 1.0 {
+        (value * 100.0).min(100.0)
+    } else {
+        value
+    }
+}
+
+fn normalize_sync_status(sync: &mut SyftBoxSyncStatus) {
+    for file in &mut sync.files {
+        file.progress = normalize_percent(file.progress);
+    }
+}
+
+fn normalize_uploads(list: &mut [SyftBoxUploadInfo]) {
+    for upload in list.iter_mut() {
+        upload.progress = normalize_percent(upload.progress);
+    }
+}
+
+async fn cp_get<T: for<'de> Deserialize<'de>>(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+    token: &str,
+) -> Result<T, String> {
+    let url = format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Request to {} failed: {}", url, e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Request to {} failed: HTTP {}", url, resp.status()));
+    }
+
+    resp.json::<T>()
+        .await
+        .map_err(|e| format!("Failed to decode response from {}: {}", url, e))
+}
+
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     crate::desktop_log!("🌐 Opening URL: {}", url);
@@ -418,4 +593,147 @@ pub fn stop_syftbox_client() -> Result<SyftBoxState, String> {
             Err(e.to_string())
         }
     }
+}
+
+#[tauri::command]
+pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
+    let cfg = load_syftbox_client_config()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let mut sync: Option<SyftBoxSyncStatus> = None;
+    let mut uploads: Option<Vec<SyftBoxUploadInfo>> = None;
+    let mut errors: Vec<String> = Vec::new();
+
+    match cp_get::<SyftBoxSyncStatus>(
+        &client,
+        &cfg.client_url,
+        "/v1/sync/status",
+        &cfg.client_token,
+    )
+    .await
+    {
+        Ok(mut status) => {
+            normalize_sync_status(&mut status);
+            sync = Some(status);
+        }
+        Err(e) => {
+            crate::desktop_log!("⚠️ syftbox_queue_status sync: {}", e);
+            errors.push(e);
+        }
+    }
+
+    match cp_get::<SyftBoxUploadList>(&client, &cfg.client_url, "/v1/uploads/", &cfg.client_token)
+        .await
+    {
+        Ok(mut list) => {
+            normalize_uploads(&mut list.uploads);
+            uploads = Some(list.uploads);
+        }
+        Err(e) => {
+            crate::desktop_log!("⚠️ syftbox_queue_status uploads: {}", e);
+            errors.push(e);
+        }
+    }
+
+    let sync_count = sync.as_ref().map(|s| s.files.len()).unwrap_or(0);
+    let upload_count = uploads.as_ref().map(|u| u.len()).unwrap_or(0);
+    let err_msg = if errors.is_empty() {
+        "none".to_string()
+    } else {
+        errors.join("; ")
+    };
+    let sample_sync: Vec<String> = sync
+        .as_ref()
+        .map(|s| {
+            s.files
+                .iter()
+                .take(2)
+                .map(|f| format!("{} [{}% {}]", f.path, f.progress, f.state))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sample_uploads: Vec<String> = uploads
+        .as_ref()
+        .map(|u| {
+            u.iter()
+                .take(2)
+                .map(|f| format!("{} [{}% {}]", f.key, f.progress, f.state))
+                .collect()
+        })
+        .unwrap_or_default();
+    crate::desktop_log!(
+        "📡 SyftBox queue poll → sync: {} upload: {} errors: {} | sample sync: [{}] uploads: [{}]",
+        sync_count,
+        upload_count,
+        err_msg,
+        sample_sync.join(" | "),
+        sample_uploads.join(" | ")
+    );
+
+    Ok(SyftBoxQueueStatus {
+        control_plane_url: Some(cfg.client_url),
+        data_dir: cfg.data_dir,
+        sync,
+        uploads,
+        error: if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn syftbox_upload_action(id: String, action: String) -> Result<(), String> {
+    let cfg = load_syftbox_client_config()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let path = match action.as_str() {
+        "pause" => format!("/v1/uploads/{}/pause", id),
+        "resume" => format!("/v1/uploads/{}/resume", id),
+        "restart" => format!("/v1/uploads/{}/restart", id),
+        "cancel" => format!("/v1/uploads/{}", id),
+        _ => return Err("Unsupported upload action".to_string()),
+    };
+
+    let url = format!(
+        "{}/{}",
+        cfg.client_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
+
+    let request = match action.as_str() {
+        "cancel" => client.delete(&url),
+        _ => client.post(&url),
+    }
+    .bearer_auth(&cfg.client_token);
+
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Upload action failed: HTTP {}", resp.status()))
+    }
+}
+
+#[tauri::command]
+pub fn open_path_in_file_manager(app_handle: AppHandle, path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err("Path does not exist".to_string());
+    }
+    app_handle
+        .opener()
+        .reveal_item_in_dir(p)
+        .map_err(|e| format!("Failed to open path: {}", e))
 }

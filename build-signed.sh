@@ -78,6 +78,21 @@ chmod +x scripts/build-syftbox-prod-signed.sh scripts/fetch-bundled-deps.sh scri
 ./scripts/fetch-bundled-deps.sh
 ./scripts/sign-bundled-deps.sh
 
+# Copy tutorial notebooks from biovault-beaver submodule to templates for bundling
+echo "Copying notebooks from biovault-beaver submodule..."
+NOTEBOOKS_SRC="biovault/biovault-beaver/notebooks"
+TEMPLATES_DEST="src-tauri/resources/templates"
+if [[ -d "$NOTEBOOKS_SRC" ]]; then
+  # Copy notebooks.yaml and all .ipynb files
+  cp "$NOTEBOOKS_SRC/notebooks.yaml" "$TEMPLATES_DEST/" 2>/dev/null || true
+  for nb in "$NOTEBOOKS_SRC"/*.ipynb; do
+    [[ -f "$nb" ]] && cp "$nb" "$TEMPLATES_DEST/"
+  done
+  echo "  Copied notebooks from $NOTEBOOKS_SRC"
+else
+  echo "  Warning: $NOTEBOOKS_SRC not found, using existing templates"
+fi
+
 # Build with Tauri
 echo "Running tauri build..."
 bun run tauri build

@@ -293,6 +293,55 @@
 							</div>
 						</div>
 					</div>
+					<div class="status-card status-card-stacked syftbox-queue-card">
+						<div class="status-card-header">
+							<div>
+								<div class="status-card-title">SyftBox Sync Queue</div>
+								<p class="status-card-description">
+									Live view of sync/upload progress from the SyftBox control plane
+								</p>
+							</div>
+							<div class="syftbox-queue-actions">
+								<button id="syftbox-queue-refresh" class="settings-btn settings-btn-secondary">
+									Refresh
+								</button>
+								<span id="syftbox-queue-status" class="queue-status-text">Connecting…</span>
+							</div>
+						</div>
+						<div class="syftbox-queue-summary">
+							<div class="summary-pill">
+								<span class="label">Pending</span>
+								<span id="syftbox-summary-pending" class="value">0</span>
+							</div>
+							<div class="summary-pill">
+								<span class="label">Syncing</span>
+								<span id="syftbox-summary-syncing" class="value">0</span>
+							</div>
+							<div class="summary-pill">
+								<span class="label">Completed</span>
+								<span id="syftbox-summary-completed" class="value">0</span>
+							</div>
+							<div class="summary-pill error">
+								<span class="label">Errors</span>
+								<span id="syftbox-summary-error" class="value">0</span>
+							</div>
+						</div>
+						<div class="syftbox-queue-lists">
+							<div class="queue-column">
+								<div class="queue-column-header">
+									<div>Sync & Uploads</div>
+									<div class="queue-filter" id="syftbox-queue-filter">
+										<button class="queue-filter-btn active" data-filter="active">
+											In Progress
+										</button>
+										<button class="queue-filter-btn" data-filter="completed">Completed</button>
+									</div>
+								</div>
+								<small id="syftbox-queue-count"></small>
+								<div id="syftbox-queue-list" class="queue-list empty">No active items</div>
+							</div>
+						</div>
+					</div>
 				</div>
 
 				<!-- Updates -->

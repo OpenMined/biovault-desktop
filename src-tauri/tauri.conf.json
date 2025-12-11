@@ -75,6 +75,11 @@
 			"endpoints": [
 				"https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json"
 			]
+		},
+		"deep-link": {
+			"desktop": {
+				"schemes": ["biovault"]
+			}
 		}
 	}
 }

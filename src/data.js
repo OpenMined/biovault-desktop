@@ -22,6 +22,63 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let currentEditingOriginalName = null
 	let currentEditingWasPublished = false
 	const publishingDatasets = new Set()
+	const datasetProgressTimers = new Map()
+
+	function setDatasetProgress(name, progress, text) {
+		const row = document.querySelector(`.dataset-progress[data-dataset="${CSS.escape(name)}"]`)
+		if (!row) return
+		row.style.display = 'block'
+		const bar = row.querySelector('.dataset-progress-fill')
+		if (bar) bar.style.width = `${Math.min(100, Math.max(0, progress || 0))}%`
+		const label = row.querySelector('.dataset-progress-text')
+		if (label) label.textContent = text || `Syncing via SyftBox… ${Math.round(progress || 0)}%`
+	}
+
+	function clearDatasetProgress(name) {
+		const row = document.querySelector(`.dataset-progress[data-dataset="${CSS.escape(name)}"]`)
+		if (row) row.style.display = 'none'
+		if (datasetProgressTimers.has(name)) {
+			clearTimeout(datasetProgressTimers.get(name))
+			datasetProgressTimers.delete(name)
+		}
+	}
+
+	async function monitorDatasetSync(name) {
+		// Avoid multiple monitors per dataset
+		if (datasetProgressTimers.has(name)) return
+
+		const loop = async () => {
+			let shouldStop = false
+			try {
+				const data = await invoke('syftbox_queue_status')
+				const uploads = data?.uploads || []
+				const syncFiles = data?.sync?.files || []
+				const matchesUpload = uploads.filter(
+					(u) => u.key?.includes(`/datasets/${name}`) || u.key?.includes(name),
+				)
+				const matchesSync = syncFiles.filter((f) => f.path?.includes(`/datasets/${name}`))
+				const progresses = [...matchesUpload, ...matchesSync]
+				if (progresses.length === 0) {
+					clearDatasetProgress(name)
+					shouldStop = true
+				} else {
+					const maxProgress = Math.max(...progresses.map((p) => p.progress || 0))
+					setDatasetProgress(name, maxProgress, `Syncing via SyftBox… ${maxProgress.toFixed(1)}%`)
+				}
+			} catch (err) {
+				console.warn('Dataset sync monitor error:', err)
+			} finally {
+				if (!shouldStop) {
+					const handle = setTimeout(loop, 2000)
+					datasetProgressTimers.set(name, handle)
+				} else {
+					datasetProgressTimers.delete(name)
+				}
+			}
+		}
+
+		loop()
+	}
 
 	async function refreshCurrentUserEmail() {
 		try {
@@ -1195,6 +1252,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						${assetChipsHtml}
 						${moreChipHtml}
 					</div>
+					<div class="dataset-progress" data-dataset="${dataset.name}" style="display:none">
+						<div class="dataset-progress-bar">
+							<div class="dataset-progress-fill" style="width: 0%"></div>
+						</div>
+						<div class="dataset-progress-text">Syncing via SyftBox…</div>
+					</div>
 				</div>
 				<div class="dataset-card-footer">
 					<div class="dataset-card-sessions">
@@ -1306,6 +1369,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 							copyMock: true,
 						})
 						await loadDatasets()
+						monitorDatasetSync(name)
 					} catch (error) {
 						await dialog.message(`Error publishing dataset: ${error}`, {
 							title: 'Publish Error',
@@ -1617,6 +1681,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 								name: manifest.name,
 								copyMock: true,
 							})
+							monitorDatasetSync(manifest.name)
 						} catch (pubErr) {
 							console.warn('Auto-republish failed:', pubErr)
 						}

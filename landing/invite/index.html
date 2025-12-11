@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Join BioVault</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				min-height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 20px;
+			}
+			.card {
+				background: white;
+				border-radius: 16px;
+				padding: 40px;
+				max-width: 520px;
+				width: 100%;
+				box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+			}
+			.header {
+				text-align: center;
+				margin-bottom: 24px;
+			}
+			.logo {
+				width: 80px;
+				height: 80px;
+				background: linear-gradient(135deg, #10b981, #059669);
+				border-radius: 20px;
+				margin: 0 auto 20px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 40px;
+			}
+			h1 {
+				color: #1e293b;
+				font-size: 26px;
+				margin-bottom: 8px;
+			}
+			.invite-type {
+				display: inline-block;
+				background: linear-gradient(135deg, #f59e0b, #d97706);
+				color: white;
+				padding: 4px 12px;
+				border-radius: 20px;
+				font-size: 12px;
+				font-weight: 700;
+				text-transform: uppercase;
+				letter-spacing: 0.5px;
+				margin-bottom: 12px;
+			}
+			.invite-from {
+				color: #10b981;
+				font-weight: 600;
+				font-size: 16px;
+				margin-bottom: 8px;
+			}
+			.invite-desc {
+				color: #64748b;
+				font-size: 14px;
+				line-height: 1.5;
+			}
+
+			/* Fingerprint section */
+			.fingerprint-section {
+				background: #f8fafc;
+				border: 1px solid #e2e8f0;
+				border-radius: 12px;
+				padding: 16px;
+				margin: 20px 0;
+				text-align: center;
+			}
+			.fingerprint-label {
+				font-size: 11px;
+				color: #64748b;
+				text-transform: uppercase;
+				letter-spacing: 0.5px;
+				margin-bottom: 8px;
+			}
+			.fingerprint-visual {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				gap: 12px;
+			}
+			.identicon {
+				width: 48px;
+				height: 48px;
+				border-radius: 12px;
+				overflow: hidden;
+			}
+			.fingerprint-text {
+				font-family: 'SF Mono', Monaco, Consolas, monospace;
+				font-size: 11px;
+				color: #6366f1;
+				background: #eef2ff;
+				padding: 6px 10px;
+				border-radius: 6px;
+				word-break: break-all;
+				max-width: 280px;
+			}
+
+			/* Download section */
+			.download-section {
+				margin-top: 24px;
+			}
+			.download-btn {
+				display: block;
+				width: 100%;
+				background: linear-gradient(135deg, #10b981, #059669);
+				color: white;
+				padding: 16px 24px;
+				border-radius: 12px;
+				text-decoration: none;
+				font-weight: 600;
+				font-size: 16px;
+				text-align: center;
+				transition:
+					transform 0.2s,
+					box-shadow 0.2s;
+				margin-bottom: 12px;
+			}
+			.download-btn:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
+			}
+			.download-btn .platform-icon {
+				margin-right: 8px;
+			}
+			.download-btn .arch {
+				font-size: 12px;
+				opacity: 0.9;
+				font-weight: 400;
+			}
+			.other-platforms {
+				margin-top: 16px;
+			}
+			.other-platforms-title {
+				font-size: 12px;
+				color: #94a3b8;
+				text-align: center;
+				margin-bottom: 12px;
+			}
+			.platform-grid {
+				display: grid;
+				grid-template-columns: repeat(2, 1fr);
+				gap: 8px;
+			}
+			.platform-btn {
+				padding: 10px 12px;
+				background: #f1f5f9;
+				border-radius: 8px;
+				color: #475569;
+				text-decoration: none;
+				font-size: 13px;
+				text-align: center;
+				transition: background 0.2s;
+			}
+			.platform-btn:hover {
+				background: #e2e8f0;
+			}
+			.platform-btn .os {
+				font-weight: 600;
+			}
+			.platform-btn .arch {
+				font-size: 11px;
+				color: #94a3b8;
+			}
+
+			/* Footer */
+			.footer {
+				margin-top: 24px;
+				padding-top: 20px;
+				border-top: 1px solid #e2e8f0;
+				text-align: center;
+			}
+			.footer-links {
+				display: flex;
+				justify-content: center;
+				gap: 20px;
+				margin-bottom: 12px;
+				flex-wrap: wrap;
+			}
+			.footer-links a {
+				color: #64748b;
+				text-decoration: none;
+				font-size: 13px;
+				transition: color 0.2s;
+			}
+			.footer-links a:hover {
+				color: #10b981;
+			}
+			.footer-credit {
+				color: #94a3b8;
+				font-size: 12px;
+			}
+			.footer-credit a {
+				color: #64748b;
+				text-decoration: none;
+			}
+			.footer-credit a:hover {
+				color: #10b981;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<div class="header">
+				<div class="logo">🔐</div>
+				<div class="invite-type" id="inviteType">Collaboration Invite</div>
+				<h1>You're Invited to BioVault</h1>
+				<div class="invite-from" id="inviteFrom"></div>
+				<p class="invite-desc" id="inviteDesc">
+					BioVault is a secure platform for private data analysis and end-to-end encrypted
+					collaboration.
+				</p>
+			</div>
+
+			<div class="fingerprint-section" id="fingerprintSection" style="display: none">
+				<div class="fingerprint-label">Inviter's Key Fingerprint</div>
+				<div class="fingerprint-visual">
+					<div class="identicon" id="identicon"></div>
+					<div class="fingerprint-text" id="fingerprintText"></div>
+				</div>
+			</div>
+
+			<div class="download-section">
+				<a href="#" class="download-btn" id="primaryDownload">
+					<span class="platform-icon" id="platformIcon"></span>
+					<span id="downloadText">Download BioVault</span>
+					<span class="arch" id="downloadArch"></span>
+				</a>
+
+				<div class="other-platforms">
+					<div class="other-platforms-title">Other platforms</div>
+					<div class="platform-grid" id="platformGrid">
+						<!-- Filled by JS -->
+					</div>
+				</div>
+			</div>
+
+			<div class="footer">
+				<div class="footer-links">
+					<a href="https://biovault.net">biovault.net</a>
+					<a href="https://openmined.org">openmined.org</a>
+					<a href="https://github.com/OpenMined/biovault-desktop">GitHub</a>
+					<a href="https://slack.openmined.org">Slack</a>
+				</div>
+				<div class="footer-credit">Powered by <a href="https://openmined.org">OpenMined</a></div>
+			</div>
+		</div>
+
+		<script>
+			// Download URLs
+			const downloads = {
+				macos_arm64:
+					'https://github.com/OpenMined/biovault-desktop/releases/latest/download/BioVault-Desktop-aarch64-apple-darwin.dmg',
+				macos_x64:
+					'https://github.com/OpenMined/biovault-desktop/releases/latest/download/BioVault-Desktop-x86_64-apple-darwin.dmg',
+				linux_x64:
+					'https://github.com/OpenMined/biovault-desktop/releases/latest/download/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage',
+				linux_arm64:
+					'https://github.com/OpenMined/biovault-desktop/releases/latest/download/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage',
+				windows_x64:
+					'https://github.com/OpenMined/biovault-desktop/releases/latest/download/BioVault-Desktop-x86_64-pc-windows-msvc.exe',
+			}
+
+			// Detect OS and architecture
+			function detectPlatform() {
+				const ua = navigator.userAgent.toLowerCase()
+				const platform = navigator.platform.toLowerCase()
+
+				if (ua.includes('mac') || platform.includes('mac')) {
+					// Default to ARM since most new Macs are Apple Silicon
+					return { os: 'macos', arch: 'arm64', display: 'macOS', archDisplay: 'Apple Silicon' }
+				} else if (ua.includes('win') || platform.includes('win')) {
+					return { os: 'windows', arch: 'x64', display: 'Windows', archDisplay: 'x86_64' }
+				} else if (ua.includes('linux')) {
+					return { os: 'linux', arch: 'x64', display: 'Linux', archDisplay: 'x86_64' }
+				}
+				return { os: 'macos', arch: 'arm64', display: 'macOS', archDisplay: 'Apple Silicon' }
+			}
+
+			// Build identicon SVG (same algorithm as BioVault app)
+			function buildIdenticon(seed, displaySize = 48) {
+				let hash = 0
+				for (let i = 0; i < seed.length; i++) {
+					hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+				}
+				const hue = hash % 360
+				const fg = `hsl(${hue}, 65%, 45%)`
+				const bg = '#f3f4f6'
+				const cells = 5
+				const size = 15
+				const padding = 6
+				let bits = hash || 1
+				let rects = ''
+				for (let y = 0; y < cells; y++) {
+					for (let x = 0; x < Math.ceil(cells / 2); x++) {
+						const on = bits & 1
+						bits = (bits >> 1) | ((bits & 1) << 31)
+						if (on) {
+							const rx = padding + x * size
+							const ry = padding + y * size
+							const mirrorX = padding + (cells - x - 1) * size
+							rects += `<rect x="${rx}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
+							if (mirrorX !== rx) {
+								rects += `<rect x="${mirrorX}" y="${ry}" width="${size}" height="${size}" fill="${fg}" rx="3" ry="3"/>`
+							}
+						}
+					}
+				}
+				const dim = padding * 2 + cells * size
+				return `<svg width="${displaySize}" height="${displaySize}" viewBox="0 0 ${dim} ${dim}" xmlns="http://www.w3.org/2000/svg"><rect width="${dim}" height="${dim}" fill="${bg}" rx="12" ry="12"/>${rects}</svg>`
+			}
+
+			// Parse URL params
+			const params = new URLSearchParams(window.location.search)
+			const from = params.get('from')
+			const fingerprint = params.get('fp')
+			const type = params.get('type') || 'collaboration'
+
+			// Update invite type badge
+			const inviteTypeEl = document.getElementById('inviteType')
+			const typeLabels = {
+				session: 'Encrypted Session Invite',
+				dataset: 'Dataset Sharing Invite',
+				message: 'Secure Messaging Invite',
+				collaboration: 'Collaboration Invite',
+			}
+			inviteTypeEl.textContent = typeLabels[type] || typeLabels.collaboration
+
+			// Update invite from
+			const inviteFromEl = document.getElementById('inviteFrom')
+			if (from) {
+				inviteFromEl.textContent = `${from} wants to collaborate with you`
+			} else {
+				inviteFromEl.style.display = 'none'
+			}
+
+			// Update description based on type
+			const inviteDescEl = document.getElementById('inviteDesc')
+			const typeDescs = {
+				session: 'Join an end-to-end encrypted collaborative session for secure data analysis.',
+				dataset: 'Securely share and analyze datasets with privacy-preserving computation.',
+				message: 'Exchange secure, encrypted messages on the BioVault platform.',
+				collaboration: 'BioVault is a secure platform for private data analysis and collaboration.',
+			}
+			inviteDescEl.textContent = typeDescs[type] || typeDescs.collaboration
+
+			// Show fingerprint if available
+			const fingerprintSection = document.getElementById('fingerprintSection')
+			if (fingerprint && fingerprint.length > 0) {
+				fingerprintSection.style.display = 'block'
+				document.getElementById('identicon').innerHTML = buildIdenticon(fingerprint, 48)
+				document.getElementById('fingerprintText').textContent = fingerprint
+			}
+
+			// Set up download buttons
+			const platform = detectPlatform()
+			const primaryDownload = document.getElementById('primaryDownload')
+			const downloadText = document.getElementById('downloadText')
+			const downloadArch = document.getElementById('downloadArch')
+			const platformIcon = document.getElementById('platformIcon')
+
+			// Platform icons
+			const icons = {
+				macos: '🍎',
+				windows: '🪟',
+				linux: '🐧',
+			}
+
+			// Set primary download
+			const primaryKey = `${platform.os}_${platform.arch}`
+			primaryDownload.href = downloads[primaryKey] || downloads.macos_arm64
+			platformIcon.textContent = icons[platform.os] || '📥'
+			downloadText.textContent = `Download for ${platform.display}`
+			downloadArch.textContent = `(${platform.archDisplay})`
+
+			// Build other platforms grid
+			const platformGrid = document.getElementById('platformGrid')
+			const allPlatforms = [
+				{ key: 'macos_arm64', os: 'macOS', arch: 'Apple Silicon' },
+				{ key: 'macos_x64', os: 'macOS', arch: 'Intel' },
+				{ key: 'linux_x64', os: 'Linux', arch: 'x86_64' },
+				{ key: 'linux_arm64', os: 'Linux', arch: 'arm64' },
+				{ key: 'windows_x64', os: 'Windows', arch: 'x86_64' },
+			]
+
+			// Show all platforms except the primary one
+			allPlatforms
+				.filter((p) => p.key !== primaryKey)
+				.forEach((p) => {
+					const link = document.createElement('a')
+					link.href = downloads[p.key]
+					link.className = 'platform-btn'
+					link.innerHTML = `<span class="os">${p.os}</span><br><span class="arch">${p.arch}</span>`
+					platformGrid.appendChild(link)
+				})
+		</script>
+	</body>
+</html>

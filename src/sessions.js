@@ -1112,6 +1112,169 @@ export function createSessionsModule({
 		}
 	}
 
+	async function getInviteData(type = 'session') {
+		const currentUserEmail = getCurrentUserEmail?.() || ''
+		let fingerprint = ''
+		try {
+			const keyStatus = await invoke('key_get_status')
+			fingerprint = keyStatus?.vault_fingerprint || keyStatus?.export_fingerprint || ''
+		} catch (e) {
+			console.warn('Could not get key fingerprint for invite:', e)
+		}
+		return {
+			from: currentUserEmail,
+			fingerprint,
+			type,
+		}
+	}
+
+	async function getInviteUrl(type = 'session') {
+		const data = await getInviteData(type)
+		const params = new URLSearchParams({
+			from: data.from,
+			fp: data.fingerprint,
+			type: data.type,
+		})
+		return `https://app.biovault.net/invite?${params.toString()}`
+	}
+
+	async function getInviteMessage(type = 'session') {
+		const inviteUrl = await getInviteUrl(type)
+		const typeDesc =
+			type === 'session'
+				? 'an end-to-end encrypted collaborative session'
+				: type === 'dataset'
+					? 'secure dataset sharing'
+					: 'secure collaboration'
+		return `Hi!\n\nI'd like to invite you to ${typeDesc} on BioVault - a platform for private data analysis.\n\nGet started here:\n${inviteUrl}\n\nLearn more:\n- https://biovault.net\n- https://openmined.org\n\nLooking forward to working together!`
+	}
+
+	async function openInviteUrl(url) {
+		if (invoke) {
+			invoke('open_url', { url }).catch(() => window.open(url, '_blank'))
+		} else {
+			window.open(url, '_blank')
+		}
+	}
+
+	async function openInvite(provider, type = 'session') {
+		const subject = encodeURIComponent('Join me on BioVault!')
+		const body = encodeURIComponent(await getInviteMessage(type))
+		const message = encodeURIComponent(await getInviteMessage(type))
+
+		const urls = {
+			gmail: `https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`,
+			outlook: `https://outlook.live.com/mail/0/deeplink/compose?subject=${subject}&body=${body}`,
+			yahoo: `https://compose.mail.yahoo.com/?subject=${subject}&body=${body}`,
+			email: `mailto:?subject=${subject}&body=${body}`,
+			whatsapp: `https://wa.me/?text=${message}`,
+		}
+
+		if (urls[provider]) {
+			await openInviteUrl(urls[provider])
+		}
+	}
+
+	async function showInviteOptions(type = 'session') {
+		const existingModal = document.getElementById('invite-options-modal')
+		if (existingModal) existingModal.remove()
+
+		const inviteUrl = await getInviteUrl(type)
+
+		const modal = document.createElement('div')
+		modal.id = 'invite-options-modal'
+		modal.innerHTML = `
+			<div class="invite-modal-backdrop"></div>
+			<div class="invite-modal-content">
+				<h3>Invite to BioVault</h3>
+				<p>Share this link to invite someone:</p>
+				<div class="invite-link-box">
+					<input type="text" class="invite-link-input" value="${inviteUrl}" readonly />
+					<button class="invite-copy-btn" title="Copy to clipboard">📋</button>
+				</div>
+				<div class="invite-copy-status"></div>
+				<p class="invite-share-label">Or share via:</p>
+				<div class="invite-options-grid">
+					<button class="invite-option-btn" data-provider="gmail">
+						<span class="invite-icon">📧</span>
+						<span>Gmail</span>
+					</button>
+					<button class="invite-option-btn" data-provider="outlook">
+						<span class="invite-icon">📬</span>
+						<span>Outlook</span>
+					</button>
+					<button class="invite-option-btn" data-provider="yahoo">
+						<span class="invite-icon">✉️</span>
+						<span>Yahoo</span>
+					</button>
+					<button class="invite-option-btn" data-provider="email">
+						<span class="invite-icon">💌</span>
+						<span>Email App</span>
+					</button>
+					<button class="invite-option-btn" data-provider="whatsapp">
+						<span class="invite-icon">💬</span>
+						<span>WhatsApp</span>
+					</button>
+				</div>
+				<button class="invite-cancel-btn">Close</button>
+			</div>
+		`
+
+		const style = document.createElement('style')
+		style.textContent = `
+			#invite-options-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; }
+			.invite-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+			.invite-modal-content { position: relative; background: var(--bg-primary, #fff); border-radius: 12px; padding: 24px; max-width: 420px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
+			.invite-modal-content h3 { margin: 0 0 8px; font-size: 18px; }
+			.invite-modal-content p { margin: 0 0 12px; color: var(--text-secondary, #666); font-size: 14px; }
+			.invite-link-box { display: flex; gap: 8px; margin-bottom: 4px; }
+			.invite-link-input { flex: 1; padding: 10px 12px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; font-size: 12px; font-family: monospace; background: var(--bg-secondary, #f5f5f5); color: var(--text-primary, #333); }
+			.invite-copy-btn { padding: 10px 14px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; background: var(--accent-color, #10b981); color: white; cursor: pointer; font-size: 16px; transition: all 0.2s; }
+			.invite-copy-btn:hover { opacity: 0.9; }
+			.invite-copy-status { font-size: 12px; color: var(--accent-color, #10b981); height: 18px; margin-bottom: 8px; }
+			.invite-share-label { margin-top: 16px !important; font-weight: 500; }
+			.invite-options-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+			.invite-option-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; background: var(--bg-secondary, #f5f5f5); cursor: pointer; transition: all 0.2s; font-size: 11px; }
+			.invite-option-btn:hover { background: var(--bg-hover, #e8e8e8); border-color: var(--accent-color, #10b981); }
+			.invite-icon { font-size: 20px; }
+			.invite-cancel-btn { width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary, #666); cursor: pointer; font-size: 14px; }
+			.invite-cancel-btn:hover { background: var(--bg-secondary, #f5f5f5); }
+		`
+		modal.appendChild(style)
+		document.body.appendChild(modal)
+
+		const copyBtn = modal.querySelector('.invite-copy-btn')
+		const copyStatus = modal.querySelector('.invite-copy-status')
+		const linkInput = modal.querySelector('.invite-link-input')
+
+		copyBtn.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(inviteUrl)
+				copyStatus.textContent = '✓ Copied to clipboard!'
+				copyBtn.textContent = '✓'
+				setTimeout(() => {
+					copyStatus.textContent = ''
+					copyBtn.textContent = '📋'
+				}, 2000)
+			} catch (e) {
+				linkInput.select()
+				document.execCommand('copy')
+				copyStatus.textContent = '✓ Copied!'
+			}
+		})
+
+		linkInput.addEventListener('click', () => linkInput.select())
+
+		modal.querySelector('.invite-modal-backdrop').addEventListener('click', () => modal.remove())
+		modal.querySelector('.invite-cancel-btn').addEventListener('click', () => modal.remove())
+		modal.querySelectorAll('.invite-option-btn').forEach((btn) => {
+			btn.addEventListener('click', async () => {
+				const provider = btn.dataset.provider
+				await openInvite(provider, type)
+			})
+		})
+	}
+
 	function initializeSessionsTab() {
 		// Preload contact suggestions for peer inputs
 		contactAutocomplete.attachToInputs(['session-peer-input', 'peer-email-input'])
@@ -1124,6 +1287,9 @@ export function createSessionsModule({
 
 		const newBtn = document.getElementById('new-session-btn')
 		if (newBtn) newBtn.addEventListener('click', showCreateSessionModal)
+
+		const inviteEmailBtn = document.getElementById('invite-via-email-btn')
+		if (inviteEmailBtn) inviteEmailBtn.addEventListener('click', showInviteOptions)
 
 		const refreshBtn = document.getElementById('refresh-sessions-btn')
 		if (refreshBtn) refreshBtn.addEventListener('click', refreshSessionsAndInvites)
@@ -1306,5 +1472,6 @@ export function createSessionsModule({
 		deactivateSessionsTab,
 		openCreateSessionWithDataset,
 		addDatasetToSession,
+		showInviteOptions,
 	}
 }

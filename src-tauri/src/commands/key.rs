@@ -398,6 +398,55 @@ pub fn key_list_contacts(current_email: Option<String>) -> Result<Vec<ContactInf
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct ContactCheckResult {
+    pub email: String,
+    pub has_key: bool,
+    pub is_on_network: bool,
+    pub fingerprint: Option<String>,
+}
+
+/// Check if a contact exists in the local vault or is visible on the network
+#[tauri::command]
+pub fn key_check_contact(email: String) -> Result<ContactCheckResult, String> {
+    let config = load_config(None).unwrap_or_else(|_| Config::new(String::new()));
+    let (data_root, vault_path) = resolve_paths(&config, None, None)?;
+
+    // Check local vault for the bundle
+    let slug = syftbox_sdk::sanitize_identity(&email);
+    let bundle_path = vault_path.join("bundles").join(format!("{slug}.json"));
+
+    let has_key = bundle_path.exists();
+    let fingerprint = if has_key {
+        biovault::syftbox::syc::parse_public_bundle_file(&bundle_path)
+            .ok()
+            .map(|info| info.fingerprint)
+    } else {
+        None
+    };
+
+    // Check if they're visible on the network (their datasite has a did.json)
+    let datasites_dir = if data_root
+        .file_name()
+        .map(|n| n == "datasites")
+        .unwrap_or(false)
+    {
+        data_root.clone()
+    } else {
+        data_root.join("datasites")
+    };
+
+    let did_path = datasites_dir.join(&email).join("public/crypto/did.json");
+    let is_on_network = did_path.exists();
+
+    Ok(ContactCheckResult {
+        email,
+        has_key,
+        is_on_network,
+        fingerprint,
+    })
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct RefreshResult {
     pub updated: Vec<String>,
     pub added: Vec<String>,

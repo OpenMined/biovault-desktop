@@ -233,7 +233,13 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
     let notebooks: Vec<NotebookEntry> = config.prod;
 
     #[cfg(debug_assertions)]
-    let templates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let submodule_notebooks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("biovault")
+        .join("biovault-beaver")
+        .join("notebooks");
+    #[cfg(debug_assertions)]
+    let templates_dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("templates-dev");
 
@@ -246,7 +252,15 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
         #[cfg(debug_assertions)]
         {
             // Dev mode: create symlink to source file
-            let source = templates_dir.join(&entry.source);
+            // Check submodule first (tutorial notebooks), then templates-dev (demo notebooks)
+            let source = {
+                let submodule_path = submodule_notebooks.join(&entry.source);
+                if submodule_path.exists() {
+                    submodule_path
+                } else {
+                    templates_dev.join(&entry.source)
+                }
+            };
             if source.exists() {
                 #[cfg(unix)]
                 {
