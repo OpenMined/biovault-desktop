@@ -37,3 +37,6 @@ artifacts/*
 .cache/
 test-results/*
 sandbox/*
+
+# Generated notebooks (build artifacts)
+templates-dev/
