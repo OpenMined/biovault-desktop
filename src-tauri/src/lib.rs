@@ -735,6 +735,10 @@ pub fn run() {
                             }
                         }
                         "quit" => {
+                            // Attempt to stop SyftBox before exiting
+                            if let Err(e) = crate::stop_syftbox_client() {
+                                crate::desktop_log!("⚠️ Failed to stop SyftBox on quit: {}", e);
+                            }
                             app.exit(0);
                         }
                         _ => {}
@@ -959,6 +963,7 @@ pub fn run() {
             get_syftbox_state,
             start_syftbox_client,
             stop_syftbox_client,
+            get_syftbox_diagnostics,
             syftbox_queue_status,
             syftbox_upload_action,
             open_path_in_file_manager,

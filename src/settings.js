@@ -9,6 +9,9 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	let keyStatus = null
 	let vaultPath = ''
 	let syftboxQueueTimer = null
+	let syftboxStatusTimer = null
+	let lastIndicatorTotals = { url: null, txTotal: null, rxTotal: null }
+	let lastRuntimeTotals = { url: null, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
 
 	async function getDefaultServer() {
 		if (defaultServerPromise) return defaultServerPromise
@@ -65,9 +68,20 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			refreshKeyStatus()
 			loadContacts()
 			setupSyftboxQueue()
+			setupSyftboxDiagnostics()
+			refreshSyftboxDiagnostics()
 
 			// Auto-start SyftBox daemon if authenticated
 			autoStartSyftBoxDaemon()
+
+			// Poll diagnostics more frequently while on settings
+			if (syftboxStatusTimer) clearInterval(syftboxStatusTimer)
+			syftboxStatusTimer = setInterval(() => {
+				// Only poll when settings tab is visible
+				const settingsRoot = document.getElementById('settings')
+				if (!settingsRoot || settingsRoot.style.display === 'none') return
+				refreshSyftboxDiagnostics(false)
+			}, 2000)
 		} catch (error) {
 			console.error('Error loading settings:', error)
 		}
@@ -1167,8 +1181,267 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		}
 		refreshSyftboxQueue(true)
 		if (syftboxQueueTimer) clearInterval(syftboxQueueTimer)
-		// Aggressive polling while Settings is open to keep progress snappy
-		syftboxQueueTimer = setInterval(refreshSyftboxQueue, 500)
+		// Poll frequently but avoid UI jank
+		syftboxQueueTimer = setInterval(refreshSyftboxQueue, 1000)
+	}
+
+	function setupSyftboxDiagnostics() {
+		const refreshBtn = document.getElementById('syftbox-diagnostics-refresh')
+		if (refreshBtn && !refreshBtn.dataset.listenerAttached) {
+			refreshBtn.addEventListener('click', () => refreshSyftboxDiagnostics(true))
+			refreshBtn.dataset.listenerAttached = 'true'
+		}
+		const tokenIds = ['syftbox-client-token', 'syftbox-refresh-token']
+		tokenIds.forEach((id) => {
+			const el = document.getElementById(id)
+			if (el && !el.dataset.listenerAttached) {
+				el.addEventListener('click', () => {
+					const text = el.dataset.copyValue
+					if (text) {
+						copyTextToClipboard(text)
+					}
+				})
+				el.title = 'Click to copy'
+				el.dataset.listenerAttached = 'true'
+			}
+		})
+	}
+
+	function refreshSyftboxDiagnostics(logErrors = false) {
+		invoke('get_syftbox_diagnostics')
+			.then((diag) => {
+				const status = diag?.status || window.__lastSyftboxQueueStatus?.status
+				renderSyftboxDiagnostics({ ...diag, status })
+				const cpUrl = resolveControlPlaneUrl(diag, status)
+				if (status) {
+					updateSidebarSyftboxIndicator(status, cpUrl, diag?.running)
+				}
+				// Cache for dataset ETA calc
+				window.__lastSyftboxStatus = status
+			})
+			.catch((err) => {
+				if (logErrors) console.error('SyftBox diagnostics failed', err)
+			})
+	}
+
+	function renderSyftboxDiagnostics(diag) {
+		const status = diag?.status || window.__lastSyftboxQueueStatus?.status
+		const setText = (id, value) => {
+			const el = document.getElementById(id)
+			if (el) el.textContent = value ?? '—'
+		}
+		setText('syftbox-pids', diag?.pids?.length ? diag.pids.join(', ') : 'Not running')
+		setText('syftbox-mode', diag?.mode || 'Unknown')
+		setText('syftbox-client-url', diag?.client_url || '—')
+		setText('syftbox-server-url', diag?.server_url || '—')
+		setText('syftbox-config-path-diag', diag?.config_path || '—')
+		setText('syftbox-log-path', diag?.log_path || '—')
+		const clientTokenEl = document.getElementById('syftbox-client-token')
+		if (clientTokenEl) {
+			clientTokenEl.textContent = diag?.client_token || '—'
+			clientTokenEl.dataset.copyValue = diag?.client_token || ''
+		}
+		const refreshTokenEl = document.getElementById('syftbox-refresh-token')
+		if (refreshTokenEl) {
+			refreshTokenEl.textContent = diag?.refresh_token || '—'
+			refreshTokenEl.dataset.copyValue = diag?.refresh_token || ''
+		}
+		renderSyftboxRuntime(status)
+		renderControlPlaneLog(diag?.control_plane_requests || [])
+		renderCurlHelper(diag, status)
+	}
+
+	function renderSyftboxRuntime(status) {
+		const fmtDate = (s) => {
+			if (!s) return '-'
+			const d = new Date(s)
+			return isNaN(d.getTime()) ? s : d.toLocaleString()
+		}
+		const deltaOrTotal = (delta, total) => {
+			if (delta && delta > 0) return humanBytes(delta)
+			if (total && total > 0) return `${humanBytes(total)} total`
+			return '-'
+		}
+		const setText = (id, val) => {
+			const el = document.getElementById(id)
+			if (el) el.textContent = val ?? '—'
+		}
+		setText('syftbox-runtime-status', status?.status || 'Unknown')
+		setText('syftbox-runtime-last-contact', fmtDate(status?.ts))
+
+		const http = status?.runtime?.http || {}
+		const ws = status?.runtime?.websocket || {}
+		const uploads = status?.runtime?.uploads || {}
+		const sync = status?.runtime?.sync || {}
+
+		const cpUrl =
+			status?.runtime?.client?.client_url ||
+			status?.client_url ||
+			window.__lastSyftboxQueueStatus?.control_plane_url
+		if (cpUrl && cpUrl !== lastRuntimeTotals.url) {
+			lastRuntimeTotals = { url: cpUrl, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
+		}
+
+		const httpTxTotal = Number(http.bytes_sent_total || 0)
+		const httpRxTotal = Number(http.bytes_recv_total || 0)
+		const wsTxTotal = Number(ws.bytes_sent_total || 0)
+		const wsRxTotal = Number(ws.bytes_recv_total || 0)
+
+		const httpTxDelta =
+			lastRuntimeTotals.httpTx === null ? 0 : Math.max(0, httpTxTotal - lastRuntimeTotals.httpTx)
+		const httpRxDelta =
+			lastRuntimeTotals.httpRx === null ? 0 : Math.max(0, httpRxTotal - lastRuntimeTotals.httpRx)
+		const wsTxDelta =
+			lastRuntimeTotals.wsTx === null ? 0 : Math.max(0, wsTxTotal - lastRuntimeTotals.wsTx)
+		const wsRxDelta =
+			lastRuntimeTotals.wsRx === null ? 0 : Math.max(0, wsRxTotal - lastRuntimeTotals.wsRx)
+
+		lastRuntimeTotals = {
+			url: cpUrl || lastRuntimeTotals.url,
+			httpTx: httpTxTotal,
+			httpRx: httpRxTotal,
+			wsTx: wsTxTotal,
+			wsRx: wsRxTotal,
+		}
+
+		const httpStr = `${deltaOrTotal(httpTxDelta, httpTxTotal)} ↑ / ${deltaOrTotal(
+			httpRxDelta,
+			httpRxTotal,
+		)} ↓`
+		const wsStr = `${deltaOrTotal(wsTxDelta, wsTxTotal)} ↑ / ${deltaOrTotal(
+			wsRxDelta,
+			wsRxTotal,
+		)} ↓`
+		const uploadsStr = `total ${uploads.total ?? 0}, uploading ${uploads.uploading ?? 0}, pending ${uploads.pending ?? 0}`
+		const syncStr = `tracked ${sync.tracked_files ?? 0}, syncing ${sync.syncing_files ?? 0}, conflicts ${sync.conflicted_files ?? 0}`
+
+		setText('syftbox-runtime-http', httpStr)
+		setText('syftbox-runtime-ws', wsStr)
+		setText('syftbox-runtime-uploads', uploadsStr)
+		setText('syftbox-runtime-sync', syncStr)
+	}
+
+	function renderCurlHelper(diag, status) {
+		const box = document.getElementById('syftbox-curl-helper')
+		if (!box) return
+		const url = resolveControlPlaneUrl(diag, status)
+		const token =
+			diag?.client_token ||
+			status?.runtime?.client?.client_token ||
+			window.__lastSyftboxQueueStatus?.client_token
+		if (url && token) {
+			const normalized = url.replace(/\/$/, '')
+			box.textContent = `curl -s -H "Authorization: Bearer ${token}" "${normalized}/v1/status" | jq`
+		} else {
+			box.textContent = 'Control plane URL or token not available yet.'
+		}
+	}
+
+	function updateSidebarSyftboxIndicator(status, cpUrl, diagRunning = false) {
+		const dot = document.getElementById('syftbox-indicator-dot')
+		const txEl = document.getElementById('syftbox-indicator-tx')
+		const rxEl = document.getElementById('syftbox-indicator-rx')
+		if (!dot) return
+		if (cpUrl && cpUrl !== lastIndicatorTotals.url) {
+			lastIndicatorTotals = { url: cpUrl, txTotal: null, rxTotal: null }
+		}
+		const runtime = status?.runtime || {}
+		const http = runtime.http || {}
+		const ws = runtime.websocket || {}
+		const online =
+			(status?.status || '').toLowerCase() === 'ok' ||
+			runtime.websocket?.connected === true ||
+			!!runtime.http ||
+			status?.running === true ||
+			diagRunning === true
+		dot.dataset.state = online ? 'online' : 'offline'
+		const txTotal = Number(http.bytes_sent_total || 0) + Number(ws.bytes_sent_total || 0)
+		const rxTotal = Number(http.bytes_recv_total || 0) + Number(ws.bytes_recv_total || 0)
+
+		// Show deltas since last poll to avoid giant cumulative numbers
+		const txDelta =
+			lastIndicatorTotals.txTotal !== null ? Math.max(0, txTotal - lastIndicatorTotals.txTotal) : 0
+		const rxDelta =
+			lastIndicatorTotals.rxTotal !== null ? Math.max(0, rxTotal - lastIndicatorTotals.rxTotal) : 0
+
+		lastIndicatorTotals = { url: cpUrl || lastIndicatorTotals.url, txTotal, rxTotal }
+
+		const deltaOrTotal = (delta, total) => {
+			if (delta && delta > 0) return humanBytes(delta)
+			if (total && total > 0) return humanBytes(total)
+			return '-'
+		}
+
+		if (txEl) {
+			txEl.textContent = deltaOrTotal(txDelta, txTotal)
+			txEl.title = `Total sent: ${humanBytes(txTotal)}`
+		}
+		if (rxEl) {
+			rxEl.textContent = deltaOrTotal(rxDelta, rxTotal)
+			rxEl.title = `Total recv: ${humanBytes(rxTotal)}`
+		}
+	}
+
+	function humanBytes(n) {
+		if (typeof n !== 'number') return '-'
+		if (n < 1024) return `${n} B`
+		const units = ['KB', 'MB', 'GB', 'TB']
+		let v = n
+		let u = 0
+		while (v >= 1024 && u < units.length - 1) {
+			v /= 1024
+			u++
+		}
+		return `${v.toFixed(v >= 10 || u === 0 ? 0 : 1)} ${units[u]}`
+	}
+
+	function renderControlPlaneLog(entries) {
+		const container = document.getElementById('syftbox-cp-log')
+		if (!container) return
+		container.innerHTML = ''
+		if (!entries || entries.length === 0) {
+			container.textContent = 'No requests yet'
+			return
+		}
+		entries
+			.slice(-40)
+			.reverse()
+			.forEach((entry) => {
+				const row = document.createElement('div')
+				row.className = 'cp-log-entry'
+				const ts = document.createElement('div')
+				ts.textContent = entry.timestamp?.replace('T', ' ').replace('Z', '') || '-'
+				const method = document.createElement('div')
+				method.textContent = entry.method || ''
+				const url = document.createElement('div')
+				url.textContent = entry.url || ''
+				const status = document.createElement('div')
+				if (entry.error) {
+					status.textContent = entry.error
+					status.className = 'cp-log-status-error'
+				} else {
+					status.textContent = entry.status || '—'
+					status.className =
+						entry.status && Number(entry.status) >= 200 && Number(entry.status) < 300
+							? 'cp-log-status-ok'
+							: 'cp-log-status-error'
+				}
+				row.appendChild(ts)
+				row.appendChild(method)
+				row.appendChild(url)
+				row.appendChild(status)
+				container.appendChild(row)
+			})
+	}
+
+	function resolveControlPlaneUrl(diag, status) {
+		return (
+			diag?.client_url ||
+			status?.runtime?.client?.client_url ||
+			status?.client_url ||
+			window.__lastSyftboxQueueStatus?.control_plane_url ||
+			window.__lastSyftboxQueueStatus?.client_url
+		)
 	}
 
 	function formatBytes(bytes) {

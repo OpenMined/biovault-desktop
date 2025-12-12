@@ -342,6 +342,103 @@
 							</div>
 						</div>
 					</div>
+
+					<div class="status-card status-card-stacked syftbox-diagnostics-card">
+						<div class="syftbox-sidebar-indicator">
+							<div id="syftbox-indicator-dot" class="indicator-dot" data-state="offline"></div>
+							<div class="indicator-metrics">
+								<div><small>TX</small> <span id="syftbox-indicator-tx">-</span></div>
+								<div><small>RX</small> <span id="syftbox-indicator-rx">-</span></div>
+							</div>
+						</div>
+						<div class="status-card-header">
+							<div>
+								<div class="status-card-title">SyftBox Diagnostics</div>
+								<p class="status-card-description">
+									Runtime details to debug the local daemon and control plane calls
+								</p>
+							</div>
+							<div class="syftbox-queue-actions">
+								<button
+									id="syftbox-diagnostics-refresh"
+									class="settings-btn settings-btn-secondary"
+								>
+									Refresh
+								</button>
+							</div>
+						</div>
+						<div class="syftbox-diagnostics-grid">
+							<div>
+								<div class="diag-label">Daemon PID(s)</div>
+								<div id="syftbox-pids" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Mode</div>
+								<div id="syftbox-mode" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Client URL</div>
+								<div id="syftbox-client-url" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Server URL</div>
+								<div id="syftbox-server-url" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Client Token</div>
+								<div id="syftbox-client-token" class="path-value monospace wrap">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Refresh Token</div>
+								<div id="syftbox-refresh-token" class="path-value monospace wrap">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Config path</div>
+								<div id="syftbox-config-path-diag" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Log file</div>
+								<div id="syftbox-log-path" class="path-value monospace">-</div>
+							</div>
+						</div>
+						<div class="curl-helper">
+							<div class="diag-label">cURL for /v1/status</div>
+							<pre id="syftbox-curl-helper" class="code-box">-</pre>
+						</div>
+						<div class="cp-log-section">
+							<div class="cp-log-header">
+								<div class="diag-label">Control plane requests (latest)</div>
+							</div>
+							<div id="syftbox-cp-log" class="cp-log-list">No requests yet</div>
+						</div>
+
+						<div class="status-card-content syftbox-runtime-card">
+							<div class="runtime-pill">
+								<span class="pill-label">Status</span>
+								<span id="syftbox-runtime-status" class="pill-value">Unknown</span>
+							</div>
+							<div class="runtime-pill">
+								<span class="pill-label">Last contact</span>
+								<span id="syftbox-runtime-last-contact" class="pill-value">-</span>
+							</div>
+							<div class="runtime-pill">
+								<span class="pill-label">HTTP tx/rx</span>
+								<span id="syftbox-runtime-http" class="pill-value">-</span>
+							</div>
+							<div class="runtime-pill">
+								<span class="pill-label">WS tx/rx</span>
+								<span id="syftbox-runtime-ws" class="pill-value">-</span>
+							</div>
+							<div class="runtime-pill">
+								<span class="pill-label">Uploads</span>
+								<span id="syftbox-runtime-uploads" class="pill-value">-</span>
+							</div>
+							<div class="runtime-pill">
+								<span class="pill-label">Sync</span>
+								<span id="syftbox-runtime-sync" class="pill-value">-</span>
+							</div>
+						</div>
+					</div>
 				</div>
 
 				<!-- Updates -->
