@@ -88,7 +88,6 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          import json
           import os
           import re
           from pathlib import Path
@@ -116,6 +115,21 @@ jobs:
               fh.write(f"version={version}\n")
               fh.write(f"tag={tag}\n")
           PY
+
+      - name: Check if release tag already exists
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" &>/dev/null; then
+            echo "::error::Release $TAG already exists! Either delete it first or bump the version."
+            echo ""
+            echo "To delete: gh release delete $TAG --yes && git push origin :refs/tags/$TAG"
+            echo "To bump: update version in src-tauri/Cargo.toml"
+            exit 1
+          fi
+          echo "✅ Release $TAG does not exist, proceeding..."
 
   configure-build-matrix:
     name: Determine build targets
