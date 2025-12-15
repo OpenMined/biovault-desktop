@@ -247,6 +247,12 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
             .ok_or_else(|| format!("Original message not found: {}", reply_id))?;
         let mut reply =
             VaultMessage::reply_to(&original, config.email.clone(), request.body.clone());
+        // Allow callers to override the recipient even when sending a reply.
+        // This is important for "threaded" app messages (e.g. session chat/accept/reject)
+        // where we want to reply in-thread but still direct the message to the peer.
+        if let Some(recipient) = request.to.clone().filter(|s| !s.trim().is_empty()) {
+            reply.to = recipient;
+        }
         if let Some(subject) = request.subject.as_ref().filter(|s| !s.trim().is_empty()) {
             reply.subject = Some(subject.clone());
         }
@@ -266,6 +272,33 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
 
     if let Some(metadata) = request.metadata.clone() {
         message.metadata = Some(metadata);
+    }
+
+    // Keep session-related messages grouped consistently by session_id.
+    if let Some(meta) = message.metadata.as_ref() {
+        let session_id = meta
+            .get("session_chat")
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                meta.get("session_invite")
+                    .and_then(|v| v.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                meta.get("session_invite_response")
+                    .and_then(|v| v.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_string)
+            });
+        if let Some(session_id) = session_id {
+            message.thread_id = Some(session_id);
+        }
     }
 
     if let Some(kind) = request
