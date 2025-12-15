@@ -47,7 +47,9 @@ export function createMessagesModule({
 	let searchTerm = ''
 	let messageFilter = 'inbox'
 
-	const AUTO_REFRESH_MS = 10000
+	// Instant refresh in dev/test mode (500ms), normal refresh in production (10s)
+	const isDevMode = window.__DEV_WS_BRIDGE_PORT__ || window.location.search.includes('ws=')
+	const AUTO_REFRESH_MS = isDevMode ? 500 : 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
 	let failedMessages = []
 	let failedMessagesCount = 0

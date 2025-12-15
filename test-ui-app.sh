@@ -76,6 +76,7 @@ export BIOVAULT_PATH="$BV_PATH"
 
 # Enable WebSocket bridge for browser mode
 export DEV_WS_BRIDGE=1
+export DEV_WS_BRIDGE_PORT="${DEV_WS_BRIDGE_PORT:-3333}"
 
 info "Starting Tauri dev server with WebSocket bridge"
 info "Tauri logs: $TAURI_LOG"
@@ -85,22 +86,30 @@ TAURI_PID=$!
 # Wait for WebSocket server to be ready
 info "Waiting for WebSocket server (port 3333)"
 WS_READY=0
-for i in {1..60}; do
+MAX_WS_WAIT=300
+for ((i = 1; i <= MAX_WS_WAIT; i++)); do
+    if ! kill -0 "$TAURI_PID" >/dev/null 2>&1; then
+        echo "❌ Tauri dev server exited before WebSocket was ready" >&2
+        echo "Check logs: tail -f $TAURI_LOG" >&2
+        exit 1
+    fi
+
     if lsof -Pi :3333 -sTCP:LISTEN -t >/dev/null 2>&1; then
         info "WebSocket server ready"
         WS_READY=1
         break
     fi
-    if [ $i -eq 60 ]; then
-        echo "❌ WebSocket server not ready (timeout)" >&2
-        echo "Check logs: tail -f $TAURI_LOG" >&2
-        exit 1
+
+    if ((i % 30 == 0)); then
+        info "Still waiting for WebSocket server... (${i}s elapsed)"
     fi
-    sleep 0.5
+
+    sleep 1
 done
 
 if [[ "$WS_READY" -ne 1 ]]; then
-    echo "❌ WebSocket server failed to start" >&2
+    echo "❌ WebSocket server not ready after ${MAX_WS_WAIT}s" >&2
+    echo "Check logs: tail -f $TAURI_LOG" >&2
     exit 1
 fi
 

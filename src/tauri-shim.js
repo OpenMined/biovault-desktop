@@ -56,9 +56,80 @@ if (console.info) {
 	}
 }
 
+function ensureProcessEnv() {
+	if (typeof window === 'undefined') return null
+	const w = /** @type {any} */ window
+	w.process = w.process || {}
+	w.process.env = w.process.env || {}
+	return w.process.env
+}
+
+function getQueryParam(name) {
+	if (typeof window === 'undefined') return null
+	try {
+		const value = new URLSearchParams(window.location.search).get(name)
+		return value && value.trim() ? value.trim() : null
+	} catch (_err) {
+		return null
+	}
+}
+
+// Allow manual browser runs to opt into real backend mode:
+// - `?real=1` forces real invoke (throws if WS is unavailable)
+// - `?ws=3333` (or `?wsPort=3333`) selects which backend instance to talk to
+// eslint-disable-next-line no-extra-semi
+;(() => {
+	const real = getQueryParam('real')
+	if (real === '1' || real === 'true') {
+		const env = ensureProcessEnv()
+		if (env) env.USE_REAL_INVOKE = 'true'
+		// A window-scoped flag is also supported in case `process` is polyfilled differently.
+		window.__PREFER_REAL_INVOKE__ = true
+	}
+	const ws = getQueryParam('ws') || getQueryParam('wsPort') || getQueryParam('devWsPort')
+	if (ws) {
+		const n = Number.parseInt(ws, 10)
+		if (Number.isFinite(n) && n > 0) {
+			window.__DEV_WS_BRIDGE_PORT__ = n
+			try {
+				window.localStorage.setItem('DEV_WS_BRIDGE_PORT', String(n))
+			} catch (_err) {
+				// ignore
+			}
+		}
+	}
+})()
+
+const defaultWsPort = (() => {
+	const fromWindow = typeof window !== 'undefined' ? window.__DEV_WS_BRIDGE_PORT__ : null
+	const fromQuery =
+		typeof window !== 'undefined'
+			? getQueryParam('ws') || getQueryParam('wsPort') || getQueryParam('devWsPort')
+			: null
+	const fromLocalStorage =
+		typeof window !== 'undefined'
+			? (() => {
+					try {
+						return window.localStorage.getItem('DEV_WS_BRIDGE_PORT')
+					} catch (_err) {
+						return null
+					}
+				})()
+			: null
+	const fromEnv =
+		typeof process !== 'undefined' && process?.env
+			? process.env.DEV_WS_BRIDGE_PORT
+			: typeof window !== 'undefined' && window.process?.env
+				? window.process.env.DEV_WS_BRIDGE_PORT
+				: null
+
+	const port = Number.parseInt(fromWindow || fromQuery || fromLocalStorage || fromEnv || '3333', 10)
+	return Number.isFinite(port) && port > 0 ? port : 3333
+})()
+
 // WebSocket connection manager for browser mode
 class WsBridge {
-	constructor(url = 'ws://localhost:3333') {
+	constructor(url = `ws://localhost:${defaultWsPort}`) {
 		this.url = url
 		this.ws = null
 		this.requestId = 0
@@ -181,7 +252,9 @@ async function wsInvoke(cmd, args = {}) {
 		return mockInvoke(cmd, args)
 	}
 
-	const preferReal = typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true'
+	const preferReal =
+		(typeof window !== 'undefined' && window.__PREFER_REAL_INVOKE__ === true) ||
+		(typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true')
 	if (preferReal) {
 		console.log('[WS] Using real backend mode - will throw on WebSocket failure')
 	}

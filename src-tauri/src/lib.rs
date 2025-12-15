@@ -583,8 +583,14 @@ pub fn run() {
         }
     });
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let mut builder = tauri::Builder::default();
+
+    // Only add updater plugin if not disabled (for testing)
+    if std::env::var("DISABLE_UPDATER").is_err() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -762,9 +768,13 @@ pub fn run() {
 
             // Start WebSocket bridge for browser development if enabled
             if std::env::var("DEV_WS_BRIDGE").is_ok() {
+                let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
+                    .ok()
+                    .and_then(|v| v.parse::<u16>().ok())
+                    .unwrap_or(3333);
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = ws_bridge::start_ws_server(app_handle, 3333).await {
+                    if let Err(e) = ws_bridge::start_ws_server(app_handle, bridge_port).await {
                         crate::desktop_log!("❌ Failed to start WebSocket server: {}", e);
                     }
                 });
@@ -927,6 +937,7 @@ pub fn run() {
             network_trust_changed_key,
             // Dev mode commands
             is_dev_mode,
+            is_updater_disabled,
             is_dev_syftbox_enabled,
             get_dev_syftbox_server_url,
             check_dev_syftbox_server,

@@ -200,3 +200,72 @@ jobs:
           find src-tauri/target/x86_64-unknown-linux-gnu/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
           echo "Dumping tauri-linux.log (if present)..."
           sed -n '1,400p' tauri-linux.log || true
+
+  scenario-tests:
+    name: Multi-client scenario tests
+    runs-on: macos-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.1.38'
+
+      - name: Setup Go (syftbox)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx --bun playwright install --with-deps chromium
+
+      - name: Build Tauri binary (release)
+        run: |
+          cd src-tauri
+          cargo build --release
+
+      - name: Run multi-client scenario tests
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ./test-scenario.sh --all
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-test-results
+          path: |
+            logs/
+            test-results/
+            artifacts/
