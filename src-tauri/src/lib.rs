@@ -262,7 +262,173 @@ fn expose_bundled_binaries(app: &tauri::App) {
 }
 
 #[cfg(target_os = "windows")]
-fn expose_bundled_binaries(_app: &tauri::App) {}
+fn expose_bundled_binaries(app: &tauri::App) {
+    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    crate::desktop_log!("🔍 Exposing bundled binaries for platform: {}", platform);
+
+    let bundles = [
+        (
+            "BIOVAULT_BUNDLED_JAVA",
+            format!("bundled/java/{}/bin/java.exe", platform),
+        ),
+        (
+            "BIOVAULT_BUNDLED_NEXTFLOW",
+            format!("bundled/nextflow/{}/nextflow.exe", platform),
+        ),
+        (
+            "BIOVAULT_BUNDLED_UV",
+            format!("bundled/uv/{}/uv.exe", platform),
+        ),
+    ];
+
+    for (env_key, relative_path) in bundles {
+        crate::desktop_log!("🔍 Checking bundled binary: {} at {}", env_key, relative_path);
+
+        let resource_path_candidates = [
+            relative_path.clone(),
+            format!("resources/{}", relative_path),
+        ];
+
+        let mut candidate = resource_path_candidates
+            .iter()
+            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+            .filter(|p| p.exists());
+
+        // Dev mode: try workspace paths when not running from installed bundle.
+        // We don't have a reliable production marker like macOS .app; just try a few likely paths.
+        if candidate.is_none() {
+            let possible_paths = if let Ok(cwd) = std::env::current_dir() {
+                vec![
+                    cwd.join("src-tauri").join("resources").join(&relative_path),
+                    cwd.join("resources").join(&relative_path),
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join(&relative_path),
+                    cwd.join("src-tauri")
+                        .join("resources")
+                        .join("resources")
+                        .join(&relative_path),
+                ]
+            } else {
+                vec![]
+            };
+
+            for path in possible_paths {
+                if path.exists() {
+                    crate::desktop_log!("🔍 Found in dev resources: {}", path.display());
+                    candidate = Some(path);
+                    break;
+                }
+            }
+        }
+
+        let mut use_path: Option<std::path::PathBuf> = candidate.filter(|p| p.exists());
+
+        if use_path.is_none() {
+            // As a last resort, scan the resources directory for the binary name
+            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                let binary_name = if env_key.contains("JAVA") {
+                    "java.exe"
+                } else if env_key.contains("NEXTFLOW") {
+                    "nextflow.exe"
+                } else if env_key.contains("UV") {
+                    "uv.exe"
+                } else {
+                    ""
+                };
+
+                if let Some(found) = find_bundled_binary(&resource_dir, binary_name) {
+                    use_path = Some(found);
+                }
+            }
+        }
+
+        if use_path.is_none() {
+            // Only if no bundled option exists, honor an existing env var
+            if let Ok(existing) = std::env::var(env_key) {
+                let existing_path = std::path::PathBuf::from(existing.trim());
+                if existing_path.exists() {
+                    crate::desktop_log!(
+                        "⚠️  {} using pre-set path (no bundled override found): {}",
+                        env_key,
+                        existing_path.display()
+                    );
+                    use_path = Some(existing_path);
+                } else {
+                    crate::desktop_log!(
+                        "⚠️  {} was set to a missing path ({}); no bundled alternative found",
+                        env_key,
+                        existing_path.display()
+                    );
+                }
+            }
+        }
+
+        match use_path {
+            Some(path) if path.exists() => {
+                let candidate_str = path.to_string_lossy().to_string();
+                std::env::set_var(env_key, &candidate_str);
+                crate::desktop_log!("🔧 Using bundled {}: {}", env_key, candidate_str);
+
+                if env_key == "BIOVAULT_BUNDLED_JAVA" {
+                    if let Some(parent) = path.parent() {
+                        if let Some(home) = parent.parent() {
+                            std::env::set_var(
+                                "BIOVAULT_BUNDLED_JAVA_HOME",
+                                home.to_string_lossy().to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {
+                crate::desktop_log!(
+                    "⚠️ Bundled binary not found for {}: {}",
+                    env_key,
+                    relative_path
+                );
+            }
+        }
+    }
+
+    // Expose bundled syftbox as well (used by dependency check + runtime).
+    let syftbox_candidates = [
+        "syftbox/syftbox.exe".to_string(),
+        "resources/syftbox/syftbox.exe".to_string(),
+    ];
+    let mut syftbox_path = syftbox_candidates
+        .iter()
+        .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+        .filter(|p| p.exists());
+
+    if syftbox_path.is_none() {
+        if let Ok(cwd) = std::env::current_dir() {
+            let dev_paths = [
+                cwd.join("src-tauri")
+                    .join("resources")
+                    .join("syftbox")
+                    .join("syftbox.exe"),
+                cwd.join("resources").join("syftbox").join("syftbox.exe"),
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("resources")
+                    .join("syftbox")
+                    .join("syftbox.exe"),
+            ];
+            for p in dev_paths {
+                if p.exists() {
+                    syftbox_path = Some(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(p) = syftbox_path.filter(|p| p.exists()) {
+        let s = p.to_string_lossy().to_string();
+        std::env::set_var("SYFTBOX_BINARY", &s);
+        crate::desktop_log!("🔧 Using bundled SYFTBOX_BINARY: {}", s);
+    }
+}
 
 fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) {
     if new_message_ids.is_empty() {
