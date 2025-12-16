@@ -9,7 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if ([string]::IsNullOrWhiteSpace($Tag)) { $Tag = 'biovault/nextflow-runner:25.10.2' }
+if ([string]::IsNullOrWhiteSpace($Tag)) { $Tag = 'ghcr.io/openmined/nextflow-runner:25.10.2' }
 if ([string]::IsNullOrWhiteSpace($Base)) { $Base = 'nextflow/nextflow:25.10.2' }
 if ([string]::IsNullOrWhiteSpace($DockerCliVersion)) { $DockerCliVersion = '28.0.1' }
 

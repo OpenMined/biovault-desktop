@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-IMAGE_NAME="${IMAGE_NAME:-biovault/nextflow-runner:25.10.2}"
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/openmined/nextflow-runner:25.10.2}"
 NEXTFLOW_BASE_IMAGE="${NEXTFLOW_BASE_IMAGE:-nextflow/nextflow:25.10.2}"
 DOCKER_CLI_VERSION="${DOCKER_CLI_VERSION:-28.0.1}"
 

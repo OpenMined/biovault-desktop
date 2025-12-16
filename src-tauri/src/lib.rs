@@ -282,7 +282,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
     ];
 
     for (env_key, relative_path) in bundles {
-        crate::desktop_log!("🔍 Checking bundled binary: {} at {}", env_key, relative_path);
+        crate::desktop_log!(
+            "🔍 Checking bundled binary: {} at {}",
+            env_key,
+            relative_path
+        );
 
         let resource_path_candidates = [
             relative_path.clone(),

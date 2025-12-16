@@ -169,7 +169,9 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
         // Fill missing paths from config
         for dep in &mut saved_result.dependencies {
             if dep.path.is_none() {
-                dep.path = config.as_ref().and_then(|cfg| cfg.get_binary_path(&dep.name));
+                dep.path = config
+                    .as_ref()
+                    .and_then(|cfg| cfg.get_binary_path(&dep.name));
             }
         }
 
@@ -183,7 +185,11 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
                 .iter()
                 .find(|d| d.name == dep_name)
                 .and_then(|d| d.path.clone())
-                .or_else(|| config.as_ref().and_then(|cfg| cfg.get_binary_path(dep_name)));
+                .or_else(|| {
+                    config
+                        .as_ref()
+                        .and_then(|cfg| cfg.get_binary_path(dep_name))
+                });
 
             if let Ok(dep_result) =
                 biovault::cli::commands::check::check_single_dependency(dep_name, hint)
@@ -273,7 +279,8 @@ pub async fn check_docker_running() -> Result<bool, String> {
     cmd.stderr(Stdio::null());
     configure_child_process(&mut cmd);
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))?;
 
     Ok(status.success())
