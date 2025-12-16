@@ -15,6 +15,7 @@ dist-ssr
 # Rust build artifacts
 target/
 src-tauri/resources/syftbox/syftbox
+src-tauri/resources/syftbox/syftbox.exe
 src-tauri/resources/bundled/
 
 # Editor directories and files

@@ -954,6 +954,19 @@ pub async fn syftbox_submit_otp(
         }
     }
 
+    // After auth, ensure `syftbox/config.json` exists so queue polling + control plane startup
+    // have the local client_url/token config available (matches macOS onboarding behavior).
+    match load_runtime_config() {
+        Ok(runtime) => {
+            if let Err(e) = ensure_syftbox_config(&runtime) {
+                crate::desktop_log!("⚠️ Failed to write syftbox/config.json after auth: {}", e);
+            }
+        }
+        Err(e) => {
+            crate::desktop_log!("⚠️ Could not load runtime config after auth: {}", e);
+        }
+    }
+
     crate::desktop_log!("✅ OTP verified and credentials stored");
     Ok(())
 }

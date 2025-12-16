@@ -812,8 +812,8 @@ export function createSessionsModule({
 		containerEl.scrollTop = containerEl.scrollHeight
 	}
 
-		function trackArtifactNotifications(sessionId, artifacts) {
-			const existing = seenArtifactIds.get(sessionId)
+	function trackArtifactNotifications(sessionId, artifacts) {
+		const existing = seenArtifactIds.get(sessionId)
 
 		if (!existing) {
 			// First load: seed set, no notifications
