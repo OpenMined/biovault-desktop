@@ -744,6 +744,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+      UPDATER_MANIFESTS_TAG: updater-manifests
     steps:
       - name: Download release artifacts
         run: |
@@ -751,6 +752,28 @@ jobs:
             --repo ${{ github.repository }} \
             --pattern '*.sig' \
             --dir signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Ensure updater manifests release exists
+        run: |
+          if ! gh release view "${UPDATER_MANIFESTS_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${UPDATER_MANIFESTS_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Updater manifests" \
+              --notes "Auto-managed per-platform updater manifests for BioVault Desktop." \
+              --prerelease
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download existing releases index (if any)
+        run: |
+          mkdir -p existing
+          gh release download "${UPDATER_MANIFESTS_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'releases-index.json' \
+            --dir existing || true
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -763,11 +786,15 @@ jobs:
 
           version = os.environ['RELEASE_VERSION']
           tag = os.environ['RELEASE_TAG']
+          manifests_tag = os.environ.get('UPDATER_MANIFESTS_TAG', 'updater-manifests')
           repo = os.environ['GITHUB_REPOSITORY']
+          pub_date = os.environ.get('RELEASE_DATE', '')
 
           sig_dir = Path('signatures')
 
           platforms = {}
+
+          per_platform = []
 
           # macOS aarch64
           sig_file = sig_dir / 'BioVault-Desktop-aarch64-apple-darwin.app.tar.gz.sig'
@@ -776,6 +803,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz'
               }
+              per_platform.append((
+                  'release-darwin-aarch64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz',
+                  sig_file.read_text().strip(),
+              ))
 
           # macOS x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-apple-darwin.app.tar.gz.sig'
@@ -784,6 +816,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz'
               }
+              per_platform.append((
+                  'release-darwin-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz',
+                  sig_file.read_text().strip(),
+              ))
 
           # Windows x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-pc-windows-msvc.exe.sig'
@@ -792,6 +829,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-pc-windows-msvc.exe'
               }
+              per_platform.append((
+                  'release-windows-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-pc-windows-msvc.exe',
+                  sig_file.read_text().strip(),
+              ))
 
           # Linux x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage.sig'
@@ -800,6 +842,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage'
               }
+              per_platform.append((
+                  'release-linux-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage',
+                  sig_file.read_text().strip(),
+              ))
 
           # Linux aarch64
           sig_file = sig_dir / 'BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage.sig'
@@ -808,20 +855,89 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage'
               }
+              per_platform.append((
+                  'release-linux-aarch64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage',
+                  sig_file.read_text().strip(),
+              ))
 
           release_data = {
               'version': tag,
               'notes': f'Release {tag}',
-              'pub_date': os.environ.get('RELEASE_DATE', ''),
+              'pub_date': pub_date,
               'platforms': platforms
           }
 
           Path('release.json').write_text(json.dumps(release_data, indent=2))
           print(f'Generated release.json with {len(platforms)} platforms')
+
+          # Per-platform "dynamic" updater manifests (one file per platform).
+          # These are uploaded to a stable release tag so partial releases do not break other platforms.
+          for filename, url, signature in per_platform:
+              data = {
+                  'version': tag,
+                  'notes': f'Release {tag}',
+                  'pub_date': pub_date,
+                  'url': url,
+                  'signature': signature,
+              }
+              Path(filename).write_text(json.dumps(data, indent=2))
+              print(f'Generated {filename} for {url}')
+
+          # Website-friendly index manifest: accumulates all published versions and exposes
+          # "latest per platform" pointers. Stored on the stable updater-manifests release.
+          index_path = Path('existing') / 'releases-index.json'
+          if index_path.exists():
+              try:
+                  index = json.loads(index_path.read_text())
+              except Exception:
+                  index = {}
+          else:
+              index = {}
+
+          index.setdefault('schema', 'biovault-desktop/releases-index-v1')
+          index['updated_at'] = pub_date
+          index.setdefault('latest', {})
+          index.setdefault('releases', {})
+
+          # Ensure release entry exists, and merge only platforms built for this tag.
+          release_entry = index['releases'].get(tag, {})
+          release_entry.setdefault('version', tag)
+          release_entry.setdefault('pub_date', pub_date)
+          release_entry.setdefault('platforms', {})
+
+          for platform_key, info in platforms.items():
+              release_entry['platforms'][platform_key] = {
+                  'url': info['url'],
+                  'signature': info['signature'],
+                  'manifest_url': f'https://github.com/{repo}/releases/download/{manifests_tag}/release-{platform_key}.json',
+              }
+              # Update latest pointer for this platform to the newest release that actually built it.
+              index['latest'][platform_key] = {
+                  'version': tag,
+                  'url': info['url'],
+                  'signature': info['signature'],
+                  'manifest_url': f'https://github.com/{repo}/releases/download/{manifests_tag}/release-{platform_key}.json',
+                  'pub_date': pub_date,
+              }
+
+          index['releases'][tag] = release_entry
+
+          # Maintain a stable ordering hint for consumers (newest first).
+          # Tags are not guaranteed semver-sortable; preserve insertion order via this list.
+          order = index.get('order', [])
+          if tag in order:
+              order.remove(tag)
+          order.insert(0, tag)
+          index['order'] = order[:500]
+
+          Path('releases-index.json').write_text(json.dumps(index, indent=2))
+          print(f'Generated releases-index.json with {len(index[\"releases\"])} releases')
           PY
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_DATE: ${{ github.event.repository.updated_at }}
+          UPDATER_MANIFESTS_TAG: ${{ env.UPDATER_MANIFESTS_TAG }}
 
       - name: Upload release.json to release
         run: |
@@ -830,6 +946,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Upload per-platform manifests
+        run: |
+          shopt -s nullglob
+          files=(release-*.json releases-index.json)
+          if ((${#files[@]})); then
+            gh release upload "${UPDATER_MANIFESTS_TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            echo "No per-platform manifests generated; skipping upload."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
   build-nextflow-runner:
     name: Build and push nextflow-runner image
     needs:

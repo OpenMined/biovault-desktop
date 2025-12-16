@@ -811,6 +811,28 @@ info "Running Playwright scenario: $SCENARIO"
 PLAYWRIGHT_OPTS=()
 [[ "$TRACE" == "1" ]] && PLAYWRIGHT_OPTS+=(--trace on)
 
+sanitize_playwright_args() {
+	# If a user accidentally passes an empty --grep-invert pattern, Playwright will exclude everything
+	# (empty regex matches all) and report "No tests found". Drop that footgun.
+	local -a cleaned=()
+	local i=0
+	while [[ "$i" -lt "${#FORWARD_ARGS[@]}" ]]; do
+		local arg="${FORWARD_ARGS[$i]}"
+		if [[ "$arg" == "--grep-invert" ]]; then
+			local next="${FORWARD_ARGS[$((i + 1))]:-}"
+			if [[ -z "${next:-}" ]]; then
+				info "Warning: dropping empty --grep-invert argument"
+				i=$((i + 2))
+				continue
+			fi
+		fi
+		cleaned+=("$arg")
+		i=$((i + 1))
+	done
+	FORWARD_ARGS=("${cleaned[@]}")
+}
+sanitize_playwright_args
+
 # Warm cache if requested (useful for first-time Jupyter tests)
 if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
