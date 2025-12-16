@@ -17,8 +17,11 @@ DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 
 # Parse arguments
 declare -a FORWARD_ARGS=()
+declare -a NOTEBOOK_CONFIGS=()
 SCENARIO=""
 WARM_CACHE=1  # Default to warming cache (skips quickly if already warm)
+INTERACTIVE_MODE=0  # Headed browsers for visibility
+WAIT_MODE=0  # Keep everything running after test completes
 
 show_usage() {
 	cat <<EOF
@@ -30,11 +33,15 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
-  --jupyter            Run onboarding + Jupyter session test
+  --jupyter            Run onboarding + Jupyter session test (single client)
+  --jupyter-collab [config1.json config2.json ...]
+                       Run two-client Jupyter collaboration tests
+                       Accepts multiple notebook config files (runs all in sequence)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
   --headed             Run playwright with headed browser
+  --wait               Keep servers running after test completes (for inspection)
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
@@ -72,6 +79,16 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="jupyter"
 			shift
 			;;
+		--jupyter-collab)
+			SCENARIO="jupyter-collab"
+			shift
+			# Collect all JSON config files that follow
+			NOTEBOOK_CONFIGS=()
+			while [[ -n "${1:-}" && "$1" == *.json ]]; do
+				NOTEBOOK_CONFIGS+=("$1")
+				shift
+			done
+			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
 			shift
@@ -79,6 +96,12 @@ while [[ $# -gt 0 ]]; do
 		--interactive|-i)
 			# Interactive = headed browser (visible windows)
 			FORWARD_ARGS+=(--headed)
+			INTERACTIVE_MODE=1
+			shift
+			;;
+		--wait)
+			# Keep servers running after test completes
+			WAIT_MODE=1
 			shift
 			;;
 		--warm-cache)
@@ -132,6 +155,23 @@ mkdir -p "$(dirname "$LOG_FILE")"
 : >"$LOG_FILE"
 
 info() { printf "\033[1;36m[scenario]\033[0m %s\n" "$1"; }
+
+# Kill dangling Jupyter processes from this workspace
+kill_workspace_jupyter() {
+	local count=0
+	# Find jupyter/ipykernel processes with this workspace in their path
+	while IFS= read -r pid; do
+		if [[ -n "$pid" ]]; then
+			kill "$pid" 2>/dev/null && ((count++)) || true
+		fi
+	done < <(pgrep -f "jupyter.*$ROOT_DIR|ipykernel.*$ROOT_DIR" 2>/dev/null || true)
+	if [[ "$count" -gt 0 ]]; then
+		info "Killed $count dangling Jupyter process(es) from this workspace"
+	fi
+}
+
+# Kill any dangling Jupyter processes from previous runs
+kill_workspace_jupyter
 
 # Find an available UI port
 while lsof -Pi ":${UI_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; do
@@ -202,6 +242,8 @@ cleanup() {
 		info "Stopping unified logger"
 		kill "$LOGGER_PID" 2>/dev/null || true
 	fi
+	# Clean up any Jupyter processes spawned during this run
+	kill_workspace_jupyter
 }
 trap cleanup EXIT INT TERM
 
@@ -209,7 +251,12 @@ trap cleanup EXIT INT TERM
 info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
 DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
 # Stop any existing stack for this sandbox to avoid state conflicts
-bash "$DEVSTACK_SCRIPT" --sandbox "$SANDBOX_ROOT" --stop >/dev/null 2>&1 || true
+# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
+STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
+if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+	STOP_ARGS+=(--reset)
+fi
+bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
 DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
 if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
 	DEVSTACK_ARGS+=(--reset)
@@ -598,6 +645,35 @@ PY
 		# Run Jupyter session test (includes onboarding in the test itself)
 		info "=== Jupyter Session Test ==="
 		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		;;
+	jupyter-collab)
+		start_static_server
+		start_tauri_instances
+
+		# Onboarding is now handled inline by the jupyter-collab test
+		# This allows running with the same browser instance (no restart)
+
+		# Run Jupyter collaboration tests
+		# If multiple configs provided, run each in sequence (Tauri stays running)
+		if [[ ${#NOTEBOOK_CONFIGS[@]} -gt 0 ]]; then
+			config_num=1
+			total_configs=${#NOTEBOOK_CONFIGS[@]}
+			for config in "${NOTEBOOK_CONFIGS[@]}"; do
+				info "=== Jupyter Test $config_num/$total_configs: $config ==="
+				NOTEBOOK_CONFIG="$config" INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+				((config_num++))
+			done
+		else
+			# No configs provided, run with defaults
+			info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
+			INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
 		;;
 	*)
 		echo "Unknown SCENARIO: $SCENARIO" >&2

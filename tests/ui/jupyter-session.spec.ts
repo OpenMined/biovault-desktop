@@ -91,7 +91,6 @@ async function connectBackend(port: number): Promise<Backend> {
 	return { invoke, close }
 }
 
-
 test.describe('Jupyter Session @jupyter-session', () => {
 	test('create solo session and run notebook cell', async ({ browser }) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
@@ -190,7 +189,9 @@ test.describe('Jupyter Session @jupyter-session', () => {
 
 		// Wait for JupyterLab to fully load
 		console.log('Waiting for JupyterLab to load...')
-		await jupyterPage.waitForSelector('.jp-Launcher, .jp-NotebookPanel, .jp-DirListing', { timeout: 30_000 })
+		await jupyterPage.waitForSelector('.jp-Launcher, .jp-NotebookPanel, .jp-DirListing', {
+			timeout: 30_000,
+		})
 		console.log('JupyterLab loaded!')
 
 		// Dismiss any notification popups (like "Would you like to get notified about official Jupyter news?")
@@ -208,7 +209,10 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		console.log('File browser visible!')
 
 		// Find the notebook item - it shows as truncated text like "01-hello-beaver.i..."
-		const helloNotebook = fileBrowser.locator('.jp-DirListing-item').filter({ hasText: /01-hello-beaver/i }).first()
+		const helloNotebook = fileBrowser
+			.locator('.jp-DirListing-item')
+			.filter({ hasText: /01-hello-beaver/i })
+			.first()
 
 		if (await helloNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
 			console.log('Found 01-hello-beaver notebook, double-clicking to open...')
@@ -218,7 +222,10 @@ test.describe('Jupyter Session @jupyter-session', () => {
 			console.log('Notebook panel opened!')
 		} else {
 			console.log('WARNING: 01-hello-beaver not found, falling back to creating new notebook...')
-			const pythonNotebook = jupyterPage.locator('.jp-LauncherCard').filter({ hasText: /Python 3/ }).first()
+			const pythonNotebook = jupyterPage
+				.locator('.jp-LauncherCard')
+				.filter({ hasText: /Python 3/ })
+				.first()
 			if (await pythonNotebook.isVisible({ timeout: 2000 }).catch(() => false)) {
 				console.log('Clicking Python 3 launcher card...')
 				await pythonNotebook.click()
@@ -308,7 +315,8 @@ test.describe('Jupyter Session @jupyter-session', () => {
 
 		// Check for evidence that beaver imported successfully
 		// The notebook should show BeaverContext or session info
-		const hasBeaverOutput = combinedOutput.includes('BeaverContext') ||
+		const hasBeaverOutput =
+			combinedOutput.includes('BeaverContext') ||
 			combinedOutput.includes('Session') ||
 			combinedOutput.includes('datasets') ||
 			combinedOutput.includes('client1@sandbox') ||
@@ -337,7 +345,9 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		// ============================================================
 		// Check for cell errors and log them
 		// ============================================================
-		const errorOutputs = jupyterPage.locator('[data-mime-type="application/vnd.jupyter.stderr"], .jp-OutputArea-output .jp-RenderedText[data-mime-type="application/vnd.jupyter.stderr"]')
+		const errorOutputs = jupyterPage.locator(
+			'[data-mime-type="application/vnd.jupyter.stderr"], .jp-OutputArea-output .jp-RenderedText[data-mime-type="application/vnd.jupyter.stderr"]',
+		)
 		const errorCount = await errorOutputs.count()
 
 		if (errorCount > 0) {
@@ -358,7 +368,9 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		}
 
 		// Check for Python tracebacks/exceptions
-		const tracebackOutputs = jupyterPage.locator('.jp-OutputArea-output pre:has-text("Traceback"), .jp-OutputArea-output pre:has-text("Error:")')
+		const tracebackOutputs = jupyterPage.locator(
+			'.jp-OutputArea-output pre:has-text("Traceback"), .jp-OutputArea-output pre:has-text("Error:")',
+		)
 		const tracebackCount = await tracebackOutputs.count()
 
 		if (tracebackCount > 0) {
@@ -376,7 +388,9 @@ test.describe('Jupyter Session @jupyter-session', () => {
 
 			// Fail the test if there are Python errors
 			console.log('\n' + '='.repeat(60))
-			throw new Error(`Notebook execution failed with ${tracebackCount} Python error(s). See output above.`)
+			throw new Error(
+				`Notebook execution failed with ${tracebackCount} Python error(s). See output above.`,
+			)
 		}
 
 		// Pause at the end so user can inspect the outputs

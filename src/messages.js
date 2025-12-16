@@ -820,11 +820,15 @@ export function createMessagesModule({
 		if (messagesRefreshInterval) return
 		if (!messagesAuthorized) return
 
-		messagesRefreshInterval = setInterval(() => {
+		messagesRefreshInterval = setInterval(async () => {
 			if (!messagesAuthorized) return
 			const syftboxStatus = getSyftboxStatus()
 			if (!syftboxStatus.running) return
-			loadMessageThreads(true, { emitToasts: true }).catch(console.error)
+			await loadMessageThreads(true, { emitToasts: true }).catch(console.error)
+			// Also refresh the active conversation if one is open
+			if (activeThreadId && !isComposingNewMessage) {
+				await openThread(activeThreadId, { preserveComposeDraft: true }).catch(console.error)
+			}
 		}, AUTO_REFRESH_MS)
 
 		if (immediate) {

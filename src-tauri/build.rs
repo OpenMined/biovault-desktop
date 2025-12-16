@@ -44,9 +44,9 @@ fn main() {
                 }
                 None
             })
-            .unwrap_or_else(|| "0.1.24".to_string()) // Fallback
+            .unwrap_or_else(|| "0.1.30".to_string()) // Fallback
     } else {
-        "0.1.24".to_string() // Fallback if submodule not present
+        "0.1.30".to_string() // Fallback if submodule not present
     };
 
     // Make version available to Rust code

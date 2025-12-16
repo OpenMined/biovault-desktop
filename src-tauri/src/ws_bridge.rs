@@ -637,6 +637,113 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "list_session_datasets" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::list_session_datasets(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_session_beaver_summaries" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result =
+                crate::get_session_beaver_summaries(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_messages" => {
+            let result = crate::sync_messages().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        // --------------------------------------------------------------------
+        // Misc commands (for full UI compatibility)
+        // --------------------------------------------------------------------
+        "get_app_version" => {
+            let result = crate::get_app_version();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_desktop_log_dir" => {
+            let result = crate::get_desktop_log_dir().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "key_check_vault_debug" => {
+            let result = crate::key_check_vault_debug().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "network_scan_datasites" => {
+            let result = crate::network_scan_datasites().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_queue_info" => {
+            let file_id: Option<i64> = args
+                .get("fileId")
+                .or_else(|| args.get("file_id"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let state = app.state::<crate::AppState>();
+            let result = crate::get_queue_info(state, file_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_pipelines" => {
+            let state = app.state::<crate::AppState>();
+            let result = crate::get_pipelines(state).await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_autostart_enabled" => {
+            let result = crate::get_autostart_enabled((*app).clone()).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_syftbox_diagnostics" => {
+            let result = crate::get_syftbox_diagnostics().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_database_path" => {
+            let result = crate::commands::settings::get_database_path()?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sql_list_tables" => {
+            let result = crate::commands::sql::sql_list_tables(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_desktop_log_text" => {
+            let max_bytes = args.get("maxBytes").and_then(|v| v.as_u64());
+            let result = crate::commands::logs::get_desktop_log_text(max_bytes)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "network_scan_datasets" => {
+            let result = crate::commands::datasets::network_scan_datasets()?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "is_dev_syftbox_enabled" => {
+            let result = crate::commands::settings::is_dev_syftbox_enabled();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "check_dev_syftbox_server" => {
+            let result = crate::commands::settings::check_dev_syftbox_server()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "check_single_dependency" => {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name' argument")?
+                .to_string();
+            let path = args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let result = crate::commands::dependencies::check_single_dependency(name, path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))
