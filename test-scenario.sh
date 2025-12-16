@@ -811,6 +811,38 @@ info "Running Playwright scenario: $SCENARIO"
 PLAYWRIGHT_OPTS=()
 [[ "$TRACE" == "1" ]] && PLAYWRIGHT_OPTS+=(--trace on)
 
+append_array_items() {
+	# Usage: append_array_items <dst_array_name> <src_array_name>
+	# Appends elements from src into dst without expanding empty arrays (bash 3.2 + set -u safe).
+	local dst_name="$1"
+	local src_name="$2"
+	eval "local n=\${#${src_name}[@]}"
+	local i=0
+	while [[ "$i" -lt "$n" ]]; do
+		eval "${dst_name}+=(\"\${${src_name}[$i]}\")"
+		i=$((i + 1))
+	done
+}
+
+run_ui_grep() {
+	# Usage: run_ui_grep "<grep>" [EXTRA_ENV_KV...]
+	# EXTRA_ENV_KV are strings like "INCLUDE_JUPYTER_TESTS=1" that will be passed via `env`.
+	local grep_pat="$1"
+	shift
+
+	local -a cmd=(env "UI_PORT=$UI_PORT" "UI_BASE_URL=$UI_BASE_URL")
+	while [[ $# -gt 0 ]]; do
+		cmd+=("$1")
+		shift
+	done
+
+	cmd+=(bun run test:ui --grep "$grep_pat")
+	append_array_items cmd PLAYWRIGHT_OPTS
+	append_array_items cmd FORWARD_ARGS
+
+	"${cmd[@]}" | tee -a "$LOG_FILE"
+}
+
 sanitize_playwright_args() {
 	# If a user accidentally passes an empty --grep-invert pattern, Playwright will exclude everything
 	# (empty regex matches all) and report "No tests found". Drop that footgun.
@@ -820,7 +852,8 @@ sanitize_playwright_args() {
 		local arg="${FORWARD_ARGS[$i]}"
 		if [[ "$arg" == "--grep-invert" ]]; then
 			local next="${FORWARD_ARGS[$((i + 1))]:-}"
-			if [[ -z "${next:-}" ]]; then
+			# Treat a missing value (end of args) or an immediately-following flag as empty.
+			if [[ -z "${next:-}" || "$next" == --* ]]; then
 				info "Warning: dropping empty --grep-invert argument"
 				i=$((i + 2))
 				continue
@@ -829,7 +862,16 @@ sanitize_playwright_args() {
 		cleaned+=("$arg")
 		i=$((i + 1))
 	done
-	FORWARD_ARGS=("${cleaned[@]}")
+
+	# Bash 3.2 + `set -u` treats `${arr[@]}` expansion of empty arrays as an error.
+	# Rebuild FORWARD_ARGS element-by-element to avoid that footgun.
+	FORWARD_ARGS=()
+	local j=0
+	local n="${#cleaned[@]}"
+	while [[ "$j" -lt "$n" ]]; do
+		FORWARD_ARGS+=("${cleaned[$j]}")
+		j=$((j + 1))
+	done
 }
 sanitize_playwright_args
 
@@ -839,70 +881,70 @@ if [[ "$WARM_CACHE" == "1" ]]; then
 fi
 
 	case "$SCENARIO" in
-		onboarding)
-			start_static_server
-			start_tauri_instances
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		messaging)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys), then wait for peer sync, then messaging
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# After onboarding, keys exist - wait for them to sync via the network
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
+			onboarding)
+				start_static_server
+				start_tauri_instances
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				;;
+			messaging)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys), then wait for peer sync, then messaging
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# After onboarding, keys exist - wait for them to sync via the network
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
+				preflight_peer_sync
+				timer_pop
+				timer_push "Playwright: @messages-two"
+				run_ui_grep "@messages-two"
+				timer_pop
+				;;
+			messaging-sessions)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# After onboarding, keys exist - wait for them to sync via the network
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
+				preflight_peer_sync
+				timer_pop
+				# Run comprehensive messaging + sessions test
+				timer_push "Playwright: @messaging-sessions"
+				run_ui_grep "@messaging-sessions"
+				timer_pop
+				;;
+			all)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys)
+				info "=== Phase 1: Onboarding ==="
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# Wait for peer sync
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
 			timer_pop
-			timer_push "Playwright: @messages-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		messaging-sessions)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# After onboarding, keys exist - wait for them to sync via the network
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
-			preflight_peer_sync
-			timer_pop
-			# Run comprehensive messaging + sessions test
-			timer_push "Playwright: @messaging-sessions"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		all)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys)
-			info "=== Phase 1: Onboarding ==="
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# Wait for peer sync
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
-			preflight_peer_sync
-			timer_pop
-			# Run basic messaging test
-			info "=== Phase 2: Basic Messaging ==="
-			timer_push "Playwright: @messages-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# Run comprehensive messaging + sessions test
-			info "=== Phase 3: Messaging + Sessions ==="
-			timer_push "Playwright: @messaging-sessions"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
+				# Run basic messaging test
+				info "=== Phase 2: Basic Messaging ==="
+				timer_push "Playwright: @messages-two"
+				run_ui_grep "@messages-two"
+				timer_pop
+				# Run comprehensive messaging + sessions test
+				info "=== Phase 3: Messaging + Sessions ==="
+				timer_push "Playwright: @messaging-sessions"
+				run_ui_grep "@messaging-sessions"
+				timer_pop
+				;;
 	messaging-core)
 		# Reuse the biovault YAML scenario logic (CLI-level) without restarting devstack.
 		SCENARIO_SRC="$BIOVAULT_DIR/tests/scenarios/messaging-core.yaml"
@@ -948,11 +990,11 @@ PY
 		start_static_server
 		start_tauri_instances
 
-		info "Opening UI for inspection"
-		timer_push "Playwright: @messaging-core-ui"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-core-ui" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-		timer_pop
-		;;
+			info "Opening UI for inspection"
+			timer_push "Playwright: @messaging-core-ui"
+			run_ui_grep "@messaging-core-ui"
+			timer_pop
+			;;
 	jupyter)
 		start_static_server
 		# Jupyter test only needs one client
@@ -968,12 +1010,12 @@ PY
 		export USE_REAL_INVOKE=true
 		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 
-		# Run Jupyter session test (includes onboarding in the test itself)
-		info "=== Jupyter Session Test ==="
-		timer_push "Playwright: @jupyter-session"
-		INCLUDE_JUPYTER_TESTS=1 UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-		timer_pop
-		;;
+			# Run Jupyter session test (includes onboarding in the test itself)
+			info "=== Jupyter Session Test ==="
+			timer_push "Playwright: @jupyter-session"
+			run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"
+			timer_pop
+			;;
 	jupyter-collab)
 		start_static_server
 		start_tauri_instances
@@ -986,20 +1028,20 @@ PY
 		if [[ ${#NOTEBOOK_CONFIGS[@]} -gt 0 ]]; then
 			config_num=1
 			total_configs=${#NOTEBOOK_CONFIGS[@]}
-			for config in "${NOTEBOOK_CONFIGS[@]}"; do
-				info "=== Jupyter Test $config_num/$total_configs: $config ==="
-				timer_push "Playwright: @jupyter-collab ($config)"
-				INCLUDE_JUPYTER_TESTS=1 NOTEBOOK_CONFIG="$config" INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-				timer_pop
-				((config_num++))
-			done
+				for config in "${NOTEBOOK_CONFIGS[@]}"; do
+					info "=== Jupyter Test $config_num/$total_configs: $config ==="
+					timer_push "Playwright: @jupyter-collab ($config)"
+					run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "NOTEBOOK_CONFIG=$config" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+					timer_pop
+					((config_num++))
+				done
 		else
-			# No configs provided, run with defaults
-			info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
-			timer_push "Playwright: @jupyter-collab"
-			INCLUDE_JUPYTER_TESTS=1 INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-		fi
+				# No configs provided, run with defaults
+				info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
+				timer_push "Playwright: @jupyter-collab"
+				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+				timer_pop
+			fi
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then

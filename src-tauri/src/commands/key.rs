@@ -6,6 +6,30 @@ use std::path::{Path, PathBuf};
 use crate::types::AppState;
 use biovault::config::Config;
 
+fn load_config_best_effort() -> Config {
+    if let Ok(cfg) = Config::load() {
+        return cfg;
+    }
+
+    // UI can legitimately call network scans before `bv init` has been run.
+    // In that case, fall back to SyftBox's config (which exists in devstack) to
+    // discover the current identity and data dir without failing.
+    let fallback = Config::new(String::new());
+    let syftbox_email = fallback
+        .get_syftbox_config_path()
+        .ok()
+        .and_then(|path| syftbox_sdk::syftbox::config::SyftBoxConfigFile::load(&path).ok())
+        .map(|cfg| cfg.email)
+        .unwrap_or_default();
+
+    let trimmed = syftbox_email.trim();
+    if trimmed.is_empty() {
+        fallback
+    } else {
+        Config::new(trimmed.to_string())
+    }
+}
+
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct KeyStatus {
     identity: String,
@@ -583,7 +607,7 @@ pub struct NetworkScanResult {
 /// Does NOT auto-import - just reports what's found
 #[tauri::command]
 pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
-    let config = load_config(None)?;
+    let config = load_config_best_effort();
     let current_email = config.email.clone();
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");

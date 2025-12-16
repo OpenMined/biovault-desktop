@@ -6,6 +6,29 @@ use serde_yaml;
 use std::path::Path;
 use uuid::Uuid;
 
+fn load_config_best_effort() -> biovault::config::Config {
+    if let Ok(cfg) = biovault::config::Config::load() {
+        return cfg;
+    }
+
+    // UI can legitimately call dataset/network scans before `bv init` has been run.
+    // Use SyftBox's config (present in devstack) to discover the current identity.
+    let fallback = biovault::config::Config::new(String::new());
+    let syftbox_email = fallback
+        .get_syftbox_config_path()
+        .ok()
+        .and_then(|path| syftbox_sdk::syftbox::config::SyftBoxConfigFile::load(&path).ok())
+        .map(|cfg| cfg.email)
+        .unwrap_or_default();
+
+    let trimmed = syftbox_email.trim();
+    if trimmed.is_empty() {
+        fallback
+    } else {
+        biovault::config::Config::new(trimmed.to_string())
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct DatasetSaveResult {
     pub dataset_id: i64,
@@ -557,8 +580,7 @@ pub struct NetworkDatasetScanResult {
 
 #[tauri::command]
 pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
-    let config =
-        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let config = load_config_best_effort();
     let current_email = config.email.clone();
     let data_dir = config
         .get_syftbox_data_dir()
