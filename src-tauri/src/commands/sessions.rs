@@ -122,29 +122,16 @@ fn send_session_invite_message(
     description: &Option<String>,
 ) {
     let created_at = chrono::Utc::now().to_rfc3339();
-    let metadata = serde_json::json!({
-        "session_invite": {
-            "session_id": session_id,
-            "session_name": session_name,
-            "from": owner,
-            "description": description,
-            "created_at": &created_at,
-        },
-        // Also include session_chat metadata so this message appears in the session thread
-        "session_chat": {
-            "session_id": session_id,
-            "session_name": session_name,
-            "from": owner,
-            "created_at": &created_at,
-        }
-    });
-
-    let body = format!(
-        "{} invited you to the session \"{}\" (ID: {}).",
-        owner, session_name, session_id
+    let metadata = biovault::messages::session::invite_metadata(
+        session_id,
+        session_name,
+        owner,
+        description,
+        &created_at,
     );
-    // Use consistent subject format for all session messages (helps thread grouping)
-    let subject = format!("Session: {}", session_name);
+
+    let body = biovault::messages::session::invite_body(owner, session_name, session_id);
+    let subject = biovault::messages::session::subject(session_name);
 
     if let Err(e) = messages::send_message(MessageSendRequest {
         to: Some(peer_email.to_string()),
@@ -166,43 +153,25 @@ fn send_session_invite_response_message(
     reason: &Option<String>,
     session_name: &str,
 ) {
-    let status = if accepted { "accepted" } else { "rejected" };
-    let metadata = serde_json::json!({
-        "session_invite_response": {
-            "session_id": session_id,
-            "status": status,
-            "responder": responder,
-            "reason": reason,
-            "session_name": session_name,
-            "responded_at": chrono::Utc::now().to_rfc3339(),
-        },
-        // Also include session_chat metadata so this message appears in the session thread
-        "session_chat": {
-            "session_id": session_id,
-            "session_name": session_name,
-            "from": responder,
-            "created_at": chrono::Utc::now().to_rfc3339(),
-        }
-    });
+    let now = chrono::Utc::now().to_rfc3339();
+    let metadata = biovault::messages::session::invite_response_metadata(
+        session_id,
+        session_name,
+        responder,
+        accepted,
+        reason,
+        &now,
+        &now,
+    );
 
-    let body = if accepted {
-        format!(
-            "{} accepted your session invite for \"{}\" (ID: {}).",
-            responder, session_name, session_id
-        )
-    } else {
-        format!(
-            "{} declined your session invite for \"{}\" (ID: {}).{}",
-            responder,
-            session_name,
-            session_id,
-            reason
-                .as_ref()
-                .map(|r| format!(" Reason: {}", r))
-                .unwrap_or_default()
-        )
-    };
-    let subject = format!("Session: {}", session_name);
+    let body = biovault::messages::session::invite_response_body(
+        responder,
+        session_name,
+        session_id,
+        accepted,
+        reason,
+    );
+    let subject = biovault::messages::session::subject(session_name);
 
     // Find the original session invite message to reply to (keeps all session messages in one thread)
     let reply_to = find_session_thread_message(session_id);
@@ -1562,15 +1531,14 @@ pub fn send_session_chat_message(session_id: String, body: String) -> Result<Vau
         .clone()
         .ok_or_else(|| "No peer set for this session".to_string())?;
 
-    let subject = format!("Session: {}", session.name);
-    let metadata = serde_json::json!({
-        "session_chat": {
-            "session_id": session_id.clone(),
-            "session_name": session.name,
-            "from": get_owner_email(),
-            "created_at": chrono::Utc::now().to_rfc3339(),
-        }
-    });
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let subject = biovault::messages::session::subject(&session.name);
+    let metadata = biovault::messages::session::chat_metadata(
+        &session_id,
+        &session.name,
+        &get_owner_email(),
+        &created_at,
+    );
 
     // Find the last message in this session's thread to chain messages together
     // This ensures all session chat messages appear in the same thread in Messages tab

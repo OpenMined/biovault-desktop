@@ -580,14 +580,6 @@ export function createMessagesModule({
 		if (thread.last_message_preview) bodyParts.push(thread.last_message_preview)
 		const body = bodyParts.join(' • ')
 
-		// WhatsApp notification (silent fail if not configured)
-		try {
-			const subject = thread.subject || 'New BioVault message'
-			await invoke('whatsapp_send_notification', { message: `📬 ${subject}\n${body}` })
-		} catch (_) {
-			// Ignore
-		}
-
 		const identifier = thread.thread_id || thread.subject || 'biovault-message'
 
 		// AppleScript notification - most reliable in dev mode on macOS
@@ -1453,7 +1445,6 @@ export function createMessagesModule({
 		const urls = {
 			gmail: `https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`,
 			outlook: `https://outlook.live.com/mail/0/deeplink/compose?subject=${subject}&body=${body}`,
-			yahoo: `https://compose.mail.yahoo.com/?subject=${subject}&body=${body}`,
 			email: `mailto:?subject=${subject}&body=${body}`,
 			whatsapp: `https://wa.me/?text=${message}`,
 		}
@@ -1487,26 +1478,22 @@ export function createMessagesModule({
 						<span class="invite-icon">📧</span>
 						<span>Gmail</span>
 					</button>
-					<button class="invite-option-btn" data-provider="outlook">
-						<span class="invite-icon">📬</span>
-						<span>Outlook</span>
-					</button>
-					<button class="invite-option-btn" data-provider="yahoo">
-						<span class="invite-icon">✉️</span>
-						<span>Yahoo</span>
-					</button>
-					<button class="invite-option-btn" data-provider="email">
-						<span class="invite-icon">💌</span>
-						<span>Email App</span>
-					</button>
-					<button class="invite-option-btn" data-provider="whatsapp">
-						<span class="invite-icon">💬</span>
-						<span>WhatsApp</span>
-					</button>
+						<button class="invite-option-btn" data-provider="outlook">
+							<span class="invite-icon">📬</span>
+							<span>Outlook</span>
+						</button>
+						<button class="invite-option-btn" data-provider="email">
+							<span class="invite-icon">💌</span>
+							<span>Email App</span>
+						</button>
+						<button class="invite-option-btn" data-provider="whatsapp">
+							<span class="invite-icon">💬</span>
+							<span>WhatsApp</span>
+						</button>
+					</div>
+					<button class="invite-cancel-btn">Close</button>
 				</div>
-				<button class="invite-cancel-btn">Close</button>
-			</div>
-		`
+			`
 
 		const style = document.createElement('style')
 		style.textContent = `

@@ -80,7 +80,8 @@ fn ensure_syftbox_config(
         .server_url
         .clone()
         .unwrap_or_else(|| "https://syftbox.net".to_string());
-    let client_url = resolve_or_assign_client_url(&creds, &runtime.config_path)?;
+    let client_url =
+        resolve_or_assign_client_url(&creds, &runtime.config_path, Some(&runtime.data_dir))?;
 
     let existing_client_token = load_existing_client_token(&runtime.config_path);
     let client_token = creds
@@ -139,6 +140,7 @@ fn ensure_syftbox_config(
 fn resolve_or_assign_client_url(
     creds: &biovault::config::SyftboxCredentials,
     config_path: &Path,
+    data_dir: Option<&Path>,
 ) -> Result<String, String> {
     // 1) Start from explicit value in creds
     let mut candidate = creds
@@ -147,15 +149,31 @@ fn resolve_or_assign_client_url(
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
 
+    // Also get token from creds
+    let mut token = creds
+        .access_token
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+
     // 2) Fallback to existing syftbox config.json
-    if candidate.is_none() && config_path.exists() {
+    if config_path.exists() {
         if let Ok(existing) = fs::read_to_string(config_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&existing) {
-                candidate = val
-                    .get("client_url")
-                    .and_then(|u| u.as_str())
-                    .map(|u| u.trim().to_string())
-                    .filter(|u| !u.is_empty());
+                if candidate.is_none() {
+                    candidate = val
+                        .get("client_url")
+                        .and_then(|u| u.as_str())
+                        .map(|u| u.trim().to_string())
+                        .filter(|u| !u.is_empty());
+                }
+                if token.is_none() {
+                    token = val
+                        .get("client_token")
+                        .and_then(|t| t.as_str())
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty());
+                }
             }
         }
     }
@@ -164,7 +182,11 @@ fn resolve_or_assign_client_url(
     let candidate = candidate.unwrap_or_else(|| "http://127.0.0.1:7938".to_string());
 
     // Try to bind chosen address; if busy, pick random free port.
-    if let Some(bound) = try_bind_or_ephemeral(&candidate) {
+    // Pass token to verify we can access an existing daemon.
+    // Pass config_path and data_dir to identify and kill orphaned daemons.
+    if let Some(bound) =
+        try_bind_or_ephemeral(&candidate, token.as_deref(), Some(config_path), data_dir)
+    {
         if bound != candidate {
             crate::desktop_log!("🔧 Requested SyftBox port busy, assigned {}", bound);
         }
@@ -532,7 +554,12 @@ fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, erro
     }
 }
 
-fn try_bind_or_ephemeral(url: &str) -> Option<String> {
+fn try_bind_or_ephemeral(
+    url: &str,
+    token: Option<&str>,
+    config_path: Option<&Path>,
+    data_dir: Option<&Path>,
+) -> Option<String> {
     // Normalize to host:port
     let mut trimmed = url.trim().to_string();
     trimmed = trimmed
@@ -552,9 +579,51 @@ fn try_bind_or_ephemeral(url: &str) -> Option<String> {
         format!("{}:7938", host_port)
     };
 
-    // First try binding the requested host:port
-    if TcpListener::bind(&host_port).is_ok() {
-        return Some(format!("http://{}", host_port));
+    let base_url = format!("http://{}", host_port);
+
+    // Check if something is listening and if we can authenticate to it
+    match check_control_plane_access(&base_url, token) {
+        ControlPlaneStatus::Free => {
+            // Nothing listening, try to bind
+            if TcpListener::bind(&host_port).is_ok() {
+                return Some(base_url);
+            }
+        }
+        ControlPlaneStatus::OurDaemon => {
+            // Our daemon is already running on this port, reuse it
+            crate::desktop_log!("🔧 Port {} has our daemon running, reusing", host_port);
+            return Some(base_url);
+        }
+        ControlPlaneStatus::DifferentDaemon => {
+            // Check if this is an orphaned daemon from our BioVault home
+            if let Some(pids) = find_our_syftbox_pids(config_path, data_dir) {
+                if !pids.is_empty() {
+                    crate::desktop_log!(
+                        "🔧 Found orphaned daemon(s) for our config: {:?}, killing",
+                        pids
+                    );
+                    for pid in &pids {
+                        let _ = Command::new("kill")
+                            .arg("-TERM")
+                            .arg(pid.to_string())
+                            .status();
+                    }
+                    // Wait a bit for processes to die
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+
+                    // Retry - port should be free now
+                    if TcpListener::bind(&host_port).is_ok() {
+                        crate::desktop_log!("🔧 Port {} now free after killing orphan", host_port);
+                        return Some(base_url);
+                    }
+                }
+            }
+            // Different daemon or couldn't kill, need ephemeral port
+            crate::desktop_log!(
+                "🔧 Port {} is used by different daemon, selecting ephemeral",
+                host_port
+            );
+        }
     }
 
     // Fallback to an ephemeral port
@@ -566,6 +635,108 @@ fn try_bind_or_ephemeral(url: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn find_our_syftbox_pids(config_path: Option<&Path>, data_dir: Option<&Path>) -> Option<Vec<u32>> {
+    let output = Command::new("ps").arg("aux").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let ps_output = String::from_utf8_lossy(&output.stdout);
+    let config_str = config_path.map(|p| p.to_string_lossy().to_string());
+    let data_dir_str = data_dir.map(|p| p.to_string_lossy().to_string());
+
+    // Need at least one identifier to match
+    if config_str.is_none() && data_dir_str.is_none() {
+        return None;
+    }
+
+    let mut pids = Vec::new();
+    for line in ps_output.lines() {
+        if !line.contains("syftbox") {
+            continue;
+        }
+        // Skip grep/ps itself
+        if line.contains("grep") || line.contains("ps aux") {
+            continue;
+        }
+
+        let matches = config_str
+            .as_ref()
+            .map(|s| line.contains(s.as_str()))
+            .unwrap_or(false)
+            || data_dir_str
+                .as_ref()
+                .map(|s| line.contains(s.as_str()))
+                .unwrap_or(false);
+
+        if matches {
+            // Parse PID from ps aux output (second column)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 1 {
+                if let Ok(pid) = parts[1].parse::<u32>() {
+                    pids.push(pid);
+                }
+            }
+        }
+    }
+
+    Some(pids)
+}
+
+#[derive(Debug)]
+enum ControlPlaneStatus {
+    Free,            // Nothing listening on port
+    OurDaemon,       // Our daemon with matching token
+    DifferentDaemon, // Different daemon or auth failed
+}
+
+fn check_control_plane_access(base_url: &str, token: Option<&str>) -> ControlPlaneStatus {
+    use std::time::Duration;
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return ControlPlaneStatus::Free,
+    };
+
+    let status_url = format!("{}/v1/status", base_url.trim_end_matches('/'));
+
+    // First check if anything is listening (without auth)
+    let request = client.get(&status_url);
+    let request = if let Some(t) = token {
+        request.bearer_auth(t)
+    } else {
+        request
+    };
+
+    match request.send() {
+        Ok(resp) => {
+            let status_code = resp.status().as_u16();
+            if status_code == 200 {
+                // Successfully authenticated - this is our daemon (or compatible)
+                ControlPlaneStatus::OurDaemon
+            } else if status_code == 401 || status_code == 403 {
+                // Auth failed - different daemon with different token
+                ControlPlaneStatus::DifferentDaemon
+            } else {
+                // Other response (maybe no auth required?) - treat as different daemon
+                ControlPlaneStatus::DifferentDaemon
+            }
+        }
+        Err(e) => {
+            // Connection failed - port is likely free
+            if e.is_connect() {
+                ControlPlaneStatus::Free
+            } else {
+                // Timeout or other error - assume something is there
+                ControlPlaneStatus::DifferentDaemon
+            }
+        }
+    }
 }
 
 async fn cp_get<T: for<'de> Deserialize<'de>>(

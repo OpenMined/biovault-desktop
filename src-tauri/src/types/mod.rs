@@ -30,7 +30,6 @@ pub struct Settings {
     pub ai_api_token: String,
     pub ai_model: String,
     pub syftbox_server_url: String,
-    pub whatsapp_phone: String,
 }
 
 impl Default for Settings {
@@ -45,7 +44,6 @@ impl Default for Settings {
             ai_api_token: String::new(),
             ai_model: "openrouter/auto".to_string(),
             syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
-            whatsapp_phone: String::new(),
         }
     }
 }
