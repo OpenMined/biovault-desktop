@@ -889,6 +889,7 @@ export function initOnboarding({
 				installSingleBtn.addEventListener('click', async () => {
 					const proceedWithInstall = async () => {
 						markDependencyAsInstalling(dep.name)
+						disableDetailsPanelButtons()
 
 						const normalizedName =
 							dep.name
@@ -928,6 +929,8 @@ export function initOnboarding({
 							}
 
 							await checkDependencies()
+							clearDependencyInstallingState(dep.name)
+							restoreDetailsPanelButtons()
 						} catch (error) {
 							const errorMessage = typeof error === 'string' ? error : error?.message || `${error}`
 
@@ -936,6 +939,8 @@ export function initOnboarding({
 								message: `Failed to install ${dep.name}`,
 							})
 							clearButtonLoading(installSingleBtn)
+							clearDependencyInstallingState(dep.name)
+							restoreDetailsPanelButtons()
 
 							await dialog.message(`Failed to install ${dep.name}: ${errorMessage}`, {
 								title: 'Installation Failed',
@@ -1393,6 +1398,22 @@ export function initOnboarding({
 		}
 	}
 
+	// Helper function to clear the installing spinner from the details panel heading
+	function clearDependencyInstallingState(depName) {
+		if (!depName) return
+
+		const heading = Array.from(
+			document.querySelectorAll('#dep-details-panel h3[data-dep-name]'),
+		).find((el) => (el.dataset.depName || '').toLowerCase() === depName.toLowerCase())
+
+		if (heading) {
+			const displayName = heading.dataset.depName || depName
+			// Remove spinner, just show the name
+			heading.innerHTML = displayName
+			heading.style.color = '' // Reset color
+		}
+	}
+
 	// Install Missing button - installs all missing dependencies
 	const installMissingBtn = document.getElementById('install-missing-deps-btn')
 	if (installMissingBtn) {
@@ -1534,6 +1555,7 @@ export function initOnboarding({
 
 						// Refresh dependencies panel after each install to show live progress
 						await checkDependencies()
+						clearDependencyInstallingState(dep.name)
 					}
 				} finally {
 					setDependencyPanelsLocked(false)

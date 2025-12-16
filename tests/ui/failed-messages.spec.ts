@@ -115,7 +115,7 @@ test.describe('Failed Messages', () => {
 		)
 
 		await page.goto('/')
-		await page.waitForLoadState('networkidle')
+		await page.waitForLoadState('domcontentloaded')
 	})
 
 	test('shows failed messages badge count', async ({ page }) => {

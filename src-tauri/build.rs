@@ -10,7 +10,28 @@ fn main() {
         .map(|mut it| it.next().is_none())
         .unwrap_or(false)
     {
-        let _ = fs::write(bundled_dir.join(".keep"), b"placeholder");
+        // Note: glob patterns like `resources/**` and `resources/*` often do not match dotfiles.
+        // Use a non-dot placeholder filename to satisfy bundler globs on all platforms.
+        let _ = fs::write(bundled_dir.join("placeholder.txt"), b"placeholder");
+    }
+
+    // Ensure templates resource path exists as a directory.
+    // On Windows with `core.symlinks=false`, the repo's `resources/templates` symlink may be checked out as a plain file.
+    // Tauri expects this to be a directory when bundling resources.
+    let templates_dir: PathBuf = ["resources", "templates"].iter().collect();
+    if let Ok(meta) = fs::symlink_metadata(&templates_dir) {
+        if meta.file_type().is_file() {
+            let _ = fs::remove_file(&templates_dir);
+        }
+    }
+    let _ = fs::create_dir_all(&templates_dir);
+    if templates_dir
+        .read_dir()
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false)
+    {
+        // Note: glob patterns like `resources/templates/*` often do not match dotfiles.
+        let _ = fs::write(templates_dir.join("placeholder.txt"), b"placeholder");
     }
 
     // Extract biovault-beaver version from submodule's __init__.py
@@ -54,6 +75,12 @@ fn main() {
 
     // Rerun if beaver __init__.py changes
     println!("cargo:rerun-if-changed=../biovault/biovault-beaver/python/src/beaver/__init__.py");
+
+    // Windows defaults to a small thread stack reserve (commonly 1MB), which can overflow during
+    // PQXDH/Kyber crypto operations (e.g. when sending an encrypted message). Increase the stack
+    // reserve for the desktop executable to prevent STATUS_STACK_OVERFLOW crashes.
+    #[cfg(target_os = "windows")]
+    println!("cargo:rustc-link-arg-bin=bv-desktop=/STACK:8388608");
 
     tauri_build::build()
 }

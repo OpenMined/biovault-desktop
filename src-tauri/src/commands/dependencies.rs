@@ -5,6 +5,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[cfg(target_os = "windows")]
+fn configure_child_process(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_child_process(_cmd: &mut Command) {}
+
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
 pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckResult, String> {
     eprintln!("DEBUG: save_dependency_states() CALLED");
@@ -144,7 +154,8 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     let biovault_path = PathBuf::from(&biovault_home);
     let states_path = biovault_path.join("dependency_states.json");
 
-    // Try to load saved states first
+    // Try to load saved states first, but always refresh by re-checking with the current
+    // environment (bundled binaries, PATH changes, etc.).
     if states_path.exists() {
         crate::desktop_log!("  Loading from: {}", states_path.display());
         let json_str = fs::read_to_string(&states_path)
@@ -153,19 +164,58 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
         let mut saved_result: DependencyCheckResult = serde_json::from_str(&json_str)
             .map_err(|e| format!("Failed to parse dependency states: {}", e))?;
 
-        if let Ok(config) = biovault::config::Config::load() {
-            for dep in &mut saved_result.dependencies {
-                if dep.path.is_none() {
-                    dep.path = config.get_binary_path(&dep.name);
-                }
+        let config = biovault::config::Config::load().ok();
+
+        // Fill missing paths from config
+        for dep in &mut saved_result.dependencies {
+            if dep.path.is_none() {
+                dep.path = config
+                    .as_ref()
+                    .and_then(|cfg| cfg.get_binary_path(&dep.name));
             }
+        }
+
+        // Re-check each dependency using the saved/configured path as a hint.
+        // This allows bundled binaries (set via env vars at runtime) to be detected even if
+        // an older dependency_states.json was persisted when they were missing.
+        let mut dependencies = Vec::new();
+        for dep_name in ["java", "docker", "nextflow", "syftbox", "uv"] {
+            let hint = saved_result
+                .dependencies
+                .iter()
+                .find(|d| d.name == dep_name)
+                .and_then(|d| d.path.clone())
+                .or_else(|| {
+                    config
+                        .as_ref()
+                        .and_then(|cfg| cfg.get_binary_path(dep_name))
+                });
+
+            if let Ok(dep_result) =
+                biovault::cli::commands::check::check_single_dependency(dep_name, hint)
+            {
+                dependencies.push(dep_result);
+            }
+        }
+
+        let all_satisfied = dependencies
+            .iter()
+            .all(|dep| dep.found && (dep.running.is_none() || dep.running == Some(true)));
+
+        let refreshed_result = DependencyCheckResult {
+            dependencies,
+            all_satisfied,
+        };
+
+        if let Ok(json) = serde_json::to_string_pretty(&refreshed_result) {
+            let _ = fs::write(&states_path, json);
         }
 
         crate::desktop_log!(
             "  Loaded {} saved dependencies",
             saved_result.dependencies.len()
         );
-        return Ok(saved_result);
+        return Ok(refreshed_result);
     }
 
     // If no saved states, check with current config paths
@@ -223,10 +273,13 @@ pub async fn check_docker_running() -> Result<bool, String> {
         .unwrap_or_else(|| "docker".to_string());
 
     // Run a quick health check
-    let status = Command::new(&docker_bin)
-        .arg("info")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+    let mut cmd = Command::new(&docker_bin);
+    cmd.arg("info");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    configure_child_process(&mut cmd);
+
+    let status = cmd
         .status()
         .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))?;
 
