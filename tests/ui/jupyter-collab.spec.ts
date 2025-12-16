@@ -190,6 +190,10 @@ async function runAllCellsAndWait(
 ): Promise<{ outputs: string; errorCount: number }> {
 	console.log(`[${notebookName}] Running all cells...`)
 
+	// Count cells before running
+	const cellCount = await jupyterPage.locator('.jp-CodeCell').count()
+	console.log(`[${notebookName}] Found ${cellCount} code cells`)
+
 	// Click on the Run menu
 	const runMenu = jupyterPage.locator('div.lm-MenuBar-itemLabel:has-text("Run")')
 	await runMenu.click()
@@ -201,24 +205,36 @@ async function runAllCellsAndWait(
 
 	console.log(`[${notebookName}] Executing all cells...`)
 
-	// Wait for execution to complete
-	await jupyterPage.waitForTimeout(5000)
+	// Wait for execution to start (at least one cell should show running)
+	await jupyterPage.waitForTimeout(2000)
 
-	// Wait for kernel to become idle
+	// Wait for kernel to become idle - check both indicator and cell execution counts
+	const startTime = Date.now()
 	try {
 		await jupyterPage.waitForFunction(
 			() => {
+				// Check kernel status indicator
 				const status = document.querySelector('.jp-Notebook-ExecutionIndicator')
-				return status?.textContent?.includes('Idle') || !status?.textContent?.includes('Busy')
+				const isIdle =
+					status?.textContent?.includes('Idle') || !status?.textContent?.includes('Busy')
+
+				// Also check if any cells still show execution in progress
+				const runningCells = document.querySelectorAll('.jp-Cell.jp-mod-running')
+				const noRunningCells = runningCells.length === 0
+
+				return isIdle && noRunningCells
 			},
-			{ timeout: 120_000 },
+			{ timeout: 180_000 }, // 3 minutes max
 		)
 	} catch {
-		console.log(`[${notebookName}] Could not detect kernel idle, waiting 30s...`)
+		console.log(
+			`[${notebookName}] Could not detect kernel idle after ${Math.round((Date.now() - startTime) / 1000)}s, waiting 30s...`,
+		)
 		await jupyterPage.waitForTimeout(30_000)
 	}
 
-	console.log(`[${notebookName}] All cells executed!`)
+	const execTime = Math.round((Date.now() - startTime) / 1000)
+	console.log(`[${notebookName}] All cells executed! (took ${execTime}s)`)
 
 	// Collect outputs
 	const allOutputText = await jupyterPage.locator('.jp-OutputArea').allTextContents()
@@ -430,50 +446,65 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		// Client2 Jupyter promise - will be set after invitation acceptance
 		let jupyterPromise2: Promise<any> = Promise.resolve(null)
 
-		// Helper to click on a session and open its detail panel
+		// Helper to click on a session and open its detail panel (with retries)
 		async function clickSessionItem(
 			page: Page,
 			clientName: string,
 			sessName: string,
+			maxRetries = 3,
 		): Promise<boolean> {
-			// Reload and navigate to sessions tab
-			await page.reload()
-			await waitForAppReady(page, { timeout: 10_000 })
-			await page.locator('.nav-item[data-tab="sessions"]').click()
-			await expect(page.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
-			await page.waitForTimeout(1000)
+			for (let attempt = 1; attempt <= maxRetries; attempt++) {
+				console.log(`${clientName}: Attempt ${attempt}/${maxRetries} to find session...`)
 
-			// Debug: list all session items
-			const allItems = await page.locator('.session-list-item').all()
-			console.log(`${clientName}: Found ${allItems.length} session items`)
-			for (let i = 0; i < allItems.length; i++) {
-				const text = await allItems[i].textContent()
-				console.log(`  [${i}] ${text?.substring(0, 50)}...`)
-			}
+				// Reload and navigate to sessions tab
+				await page.reload()
+				await waitForAppReady(page, { timeout: 10_000 })
+				await page.locator('.nav-item[data-tab="sessions"]').click()
+				await expect(page.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
 
-			// Try to find session by name
-			let sessionItem = page.locator('.session-list-item').filter({ hasText: sessName }).first()
-			if (!(await sessionItem.isVisible({ timeout: 2000 }).catch(() => false))) {
-				// If not found by exact name, try first session item
-				console.log(`${clientName}: Session "${sessName}" not found, trying first item...`)
-				sessionItem = page.locator('.session-list-item').first()
-			}
+				// Wait a bit for sessions to load from backend
+				await page.waitForTimeout(2000)
 
-			if (await sessionItem.isVisible({ timeout: 3000 }).catch(() => false)) {
-				console.log(`${clientName}: Clicking on session item...`)
-				await sessionItem.click()
-				await page.waitForTimeout(500)
-
-				// Wait for session detail panel to appear
-				const sessionsMain = page.locator('#sessions-main')
-				if (await sessionsMain.isVisible({ timeout: 5000 }).catch(() => false)) {
-					console.log(`${clientName}: Session detail panel is visible!`)
-					return true
-				} else {
-					console.log(`${clientName}: Session detail panel NOT visible after click`)
+				// Debug: list all session items
+				const allItems = await page.locator('.session-list-item').all()
+				console.log(`${clientName}: Found ${allItems.length} session items`)
+				for (let i = 0; i < Math.min(allItems.length, 3); i++) {
+					const text = await allItems[i].textContent()
+					console.log(`  [${i}] ${text?.substring(0, 50)}...`)
 				}
-			} else {
-				console.log(`${clientName}: No session items visible`)
+
+				if (allItems.length === 0) {
+					if (attempt < maxRetries) {
+						console.log(`${clientName}: No sessions yet, waiting before retry...`)
+						await page.waitForTimeout(2000)
+						continue
+					}
+					console.log(`${clientName}: No session items visible after ${maxRetries} attempts`)
+					return false
+				}
+
+				// Try to find session by name
+				let sessionItem = page.locator('.session-list-item').filter({ hasText: sessName }).first()
+				if (!(await sessionItem.isVisible({ timeout: 2000 }).catch(() => false))) {
+					// If not found by exact name, try first session item
+					console.log(`${clientName}: Session "${sessName}" not found, trying first item...`)
+					sessionItem = page.locator('.session-list-item').first()
+				}
+
+				if (await sessionItem.isVisible({ timeout: 3000 }).catch(() => false)) {
+					console.log(`${clientName}: Clicking on session item...`)
+					await sessionItem.click()
+					await page.waitForTimeout(500)
+
+					// Wait for session detail panel to appear
+					const sessionsMain = page.locator('#sessions-main')
+					if (await sessionsMain.isVisible({ timeout: 5000 }).catch(() => false)) {
+						console.log(`${clientName}: Session detail panel is visible!`)
+						return true
+					} else {
+						console.log(`${clientName}: Session detail panel NOT visible after click`)
+					}
+				}
 			}
 			return false
 		}

@@ -20,7 +20,8 @@ TIMING="${TIMING:-1}"
 declare -a FORWARD_ARGS=()
 declare -a NOTEBOOK_CONFIGS=()
 SCENARIO=""
-WARM_CACHE=1  # Default to warming cache (skips quickly if already warm)
+WARM_CACHE=0  # Set after arg parsing (scenario-dependent default)
+WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 
@@ -107,10 +108,12 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--warm-cache)
 			WARM_CACHE=1
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--no-warm-cache)
 			WARM_CACHE=0
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--help|-h)
@@ -139,6 +142,14 @@ done
 if [[ -z "$SCENARIO" ]]; then
 	# Support legacy SCENARIO env var
 	SCENARIO="${SCENARIO:-all}"
+fi
+
+# Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
+if [[ "$WARM_CACHE_SET" == "0" ]]; then
+	case "$SCENARIO" in
+		jupyter|jupyter-collab) WARM_CACHE=1 ;;
+		*) WARM_CACHE=0 ;;
+	esac
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
