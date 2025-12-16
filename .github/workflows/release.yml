@@ -411,6 +411,8 @@ jobs:
           NOTEBOOKS_SRC="biovault/biovault-beaver/notebooks"
           TEMPLATES_DEST="src-tauri/resources/templates"
           if [[ -d "$NOTEBOOKS_SRC" ]]; then
+            # Remove existing notebooks first to avoid "same file" errors with hardlinks
+            rm -f "$TEMPLATES_DEST"/*.ipynb "$TEMPLATES_DEST/notebooks.yaml" 2>/dev/null || true
             cp "$NOTEBOOKS_SRC/notebooks.yaml" "$TEMPLATES_DEST/" 2>/dev/null || true
             for nb in "$NOTEBOOKS_SRC"/*.ipynb; do
               [[ -f "$nb" ]] && cp "$nb" "$TEMPLATES_DEST/"
