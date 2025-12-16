@@ -18,6 +18,7 @@ DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 # Parse arguments
 declare -a FORWARD_ARGS=()
 SCENARIO=""
+WARM_CACHE=1  # Default to warming cache (skips quickly if already warm)
 
 show_usage() {
 	cat <<EOF
@@ -29,10 +30,12 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --jupyter            Run onboarding + Jupyter session test
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
   --headed             Run playwright with headed browser
+  --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
 Examples:
@@ -65,6 +68,10 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="messaging-core"
 			shift
 			;;
+		--jupyter)
+			SCENARIO="jupyter"
+			shift
+			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
 			shift
@@ -72,6 +79,14 @@ while [[ $# -gt 0 ]]; do
 		--interactive|-i)
 			# Interactive = headed browser (visible windows)
 			FORWARD_ARGS+=(--headed)
+			shift
+			;;
+		--warm-cache)
+			WARM_CACHE=1
+			shift
+			;;
+		--no-warm-cache)
+			WARM_CACHE=0
 			shift
 			;;
 		--help|-h)
@@ -417,9 +432,68 @@ start_tauri_instances() {
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
 }
 
+warm_jupyter_cache() {
+	# Pre-build the Jupyter venv to warm syftbox-sdk compilation cache.
+	# This installs all Python dependencies including syftbox-sdk (which has Rust bindings).
+	local cache_dir="$CLIENT1_HOME/sessions/_cache_warmup"
+	info "Warming Jupyter venv cache (this may take a few minutes on first run)..."
+
+	mkdir -p "$cache_dir"
+
+	# Use uv to create venv and install packages
+	local uv_bin
+	uv_bin="$(which uv 2>/dev/null || echo "")"
+	if [[ -z "$uv_bin" ]]; then
+		info "uv not found in PATH, skipping cache warmup"
+		return 0
+	fi
+
+	# Create venv if it doesn't exist
+	if [[ ! -d "$cache_dir/.venv" ]]; then
+		info "Creating cache warmup venv..."
+		"$uv_bin" venv --python 3.12 "$cache_dir/.venv" >>"$LOG_FILE" 2>&1 || {
+			info "Failed to create venv, skipping cache warmup"
+			return 0
+		}
+	fi
+
+	# Get beaver version from __init__.py (same as build.rs does)
+	local beaver_version
+	beaver_version="$(grep '^__version__' "$ROOT_DIR/biovault/biovault-beaver/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
+
+	# Install PyPI packages first
+	info "Installing PyPI packages (jupyterlab, biovault-beaver==$beaver_version)..."
+	"$uv_bin" pip install --python "$cache_dir/.venv" -U jupyterlab cleon "biovault-beaver[lib-support]==$beaver_version" >>"$LOG_FILE" 2>&1 || true
+
+	# Install local editable syftbox-sdk if available
+	local syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
+	if [[ -d "$syftbox_path" ]]; then
+		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
+		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path" >>"$LOG_FILE" 2>&1 || {
+			info "Warning: Failed to install syftbox-sdk from local path"
+		}
+	fi
+
+	# Install local editable beaver if available
+	local beaver_path="$ROOT_DIR/biovault/biovault-beaver/python"
+	if [[ -d "$beaver_path" ]]; then
+		info "Installing beaver from local source..."
+		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$beaver_path[lib-support]" >>"$LOG_FILE" 2>&1 || {
+			info "Warning: Failed to install beaver from local path"
+		}
+	fi
+
+	info "Cache warmup complete!"
+}
+
 info "Running Playwright scenario: $SCENARIO"
 PLAYWRIGHT_OPTS=()
 [[ "$TRACE" == "1" ]] && PLAYWRIGHT_OPTS+=(--trace on)
+
+# Warm cache if requested (useful for first-time Jupyter tests)
+if [[ "$WARM_CACHE" == "1" ]]; then
+	warm_jupyter_cache
+fi
 
 	case "$SCENARIO" in
 		onboarding)
@@ -507,6 +581,23 @@ PY
 
 		info "Opening UI for inspection"
 		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-core-ui" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		;;
+	jupyter)
+		start_static_server
+		# Jupyter test only needs one client
+		assert_tauri_binary_present
+		assert_tauri_binary_fresh
+		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+		info "Waiting for WS bridge..."
+		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		export USE_REAL_INVOKE=true
+		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+
+		# Run Jupyter session test (includes onboarding in the test itself)
+		info "=== Jupyter Session Test ==="
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		;;
 	*)
 		echo "Unknown SCENARIO: $SCENARIO" >&2

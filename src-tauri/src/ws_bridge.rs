@@ -567,6 +567,76 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_session_chat_messages(session_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        // --------------------------------------------------------------------
+        // Session Jupyter (required for Jupyter session management)
+        // --------------------------------------------------------------------
+        "get_session_jupyter_status" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::get_session_jupyter_status(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "launch_session_jupyter" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let python_version: Option<String> = args
+                .get("pythonVersion")
+                .or_else(|| args.get("python_version"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let copy_examples: Option<bool> = args
+                .get("copyExamples")
+                .or_else(|| args.get("copy_examples"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::launch_session_jupyter(
+                (*app).clone(),
+                session_id,
+                python_version,
+                copy_examples,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "stop_session_jupyter" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::stop_session_jupyter(session_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "reset_session_jupyter" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let python_version: Option<String> = args
+                .get("pythonVersion")
+                .or_else(|| args.get("python_version"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::reset_session_jupyter(session_id, python_version)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))

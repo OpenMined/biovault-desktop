@@ -1,6 +1,9 @@
 /**
  * Comprehensive Messaging and Sessions UI Test
  * @tag messaging-sessions
+ *
+ * NOTE: When adding new backend commands to tests, remember to also add them
+ * to src-tauri/src/ws_bridge.rs for the WebSocket bridge to work in browser mode.
  */
 import { expect, test } from '@playwright/test'
 import WebSocket from 'ws'
