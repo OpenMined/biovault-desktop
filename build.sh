@@ -24,20 +24,9 @@ chmod +x scripts/build-syftbox-prod.sh scripts/fetch-bundled-deps.sh
 ./scripts/build-syftbox-prod.sh
 ./scripts/fetch-bundled-deps.sh
 
-# Copy tutorial notebooks from biovault-beaver submodule to templates for bundling
-echo "Copying notebooks from biovault-beaver submodule..."
-NOTEBOOKS_SRC="biovault/biovault-beaver/notebooks"
-TEMPLATES_DEST="src-tauri/resources/templates"
-if [[ -d "$NOTEBOOKS_SRC" ]]; then
-  # Copy notebooks.yaml and all .ipynb files
-  cp "$NOTEBOOKS_SRC/notebooks.yaml" "$TEMPLATES_DEST/" 2>/dev/null || true
-  for nb in "$NOTEBOOKS_SRC"/*.ipynb; do
-    [[ -f "$nb" ]] && cp "$nb" "$TEMPLATES_DEST/"
-  done
-  echo "  Copied notebooks from $NOTEBOOKS_SRC"
-else
-  echo "  Warning: $NOTEBOOKS_SRC not found, using existing templates"
-fi
+# Materialize notebooks into a real templates directory for bundling
+chmod +x scripts/materialize-templates.sh
+./scripts/materialize-templates.sh
 
 # On macOS, strip quarantine and ad-hoc sign for local testing
 if [[ "$(uname)" == "Darwin" ]]; then

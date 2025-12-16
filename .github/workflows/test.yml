@@ -184,6 +184,8 @@ jobs:
       - name: Build app
         run: |
           set -o pipefail
+          chmod +x scripts/materialize-templates.sh
+          ./scripts/materialize-templates.sh
           tauri build --target x86_64-unknown-linux-gnu --verbose 2>&1 | tee tauri-linux.log
 
       - name: Verify artifacts
