@@ -195,33 +195,45 @@ fn send_session_invite_response_message(
 /// In dev mode, creates symlinks so edits are written back to source
 /// In release mode, copies bytes from bundled resources
 fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
+    let dev_mode = crate::is_dev_mode();
     let config = load_notebook_config(app);
-    #[cfg(debug_assertions)]
-    let notebooks: Vec<NotebookEntry> = config.dev;
-    #[cfg(not(debug_assertions))]
-    let notebooks: Vec<NotebookEntry> = config.prod;
+    let notebooks: Vec<NotebookEntry> = if dev_mode { config.dev } else { config.prod };
 
-    #[cfg(debug_assertions)]
     let submodule_notebooks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("biovault")
         .join("biovault-beaver")
         .join("notebooks");
-    #[cfg(debug_assertions)]
     let templates_dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("templates-dev");
 
     for entry in notebooks.iter() {
         let dest = session_path.join(&entry.dest);
+        let force_link = std::env::var("BIOVAULT_DEV_NOTEBOOKS_FORCE_LINK")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(true);
+
         if dest.exists() {
-            continue;
+            // In dev mode we prefer symlinks to avoid stale copies. Replace existing regular files
+            // unless explicitly disabled.
+            if !dev_mode || !force_link {
+                continue;
+            }
+            let meta = fs::symlink_metadata(&dest).ok();
+            let is_symlink = meta
+                .as_ref()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_symlink {
+                continue;
+            }
+            let _ = fs::remove_file(&dest);
         }
 
-        #[cfg(debug_assertions)]
-        {
-            // Dev mode: create symlink to source file
-            // Check submodule first (tutorial notebooks), then templates-dev (demo notebooks)
+        if dev_mode {
+            // Dev mode: create symlink to source file so notebooks stay up-to-date.
+            // Check submodule first (tutorial notebooks), then templates-dev (demo notebooks).
             let source = {
                 let submodule_path = submodule_notebooks.join(&entry.source);
                 if submodule_path.exists() {
@@ -230,11 +242,16 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
                     templates_dev.join(&entry.source)
                 }
             };
+
             if source.exists() {
                 #[cfg(unix)]
                 {
                     if let Err(e) = std::os::unix::fs::symlink(&source, &dest) {
                         eprintln!("Warning: Failed to symlink notebook {}: {}", entry.dest, e);
+                        // Fall back to a direct copy so users aren't blocked.
+                        if let Ok(bytes) = fs::read(&source) {
+                            let _ = fs::write(&dest, bytes);
+                        }
                     } else {
                         eprintln!(
                             "[Sessions] Symlinked demo notebook: {} -> {}",
@@ -245,8 +262,8 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
                 }
                 #[cfg(windows)]
                 {
-                    // Windows symlinks require admin or dev mode, fall back to copy
-                    if let Some(bytes) = read_template_bytes(app, &entry.source) {
+                    // Windows symlinks require admin or developer mode; fall back to a direct copy.
+                    if let Ok(bytes) = fs::read(&source) {
                         if let Err(e) = fs::write(&dest, bytes) {
                             eprintln!("Warning: Failed to copy notebook {}: {}", entry.dest, e);
                         } else {
@@ -296,12 +313,13 @@ fn load_notebook_config(app: &tauri::AppHandle) -> NotebookConfig {
 fn template_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    #[cfg(debug_assertions)]
-    paths.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("templates-dev"),
-    );
+    if crate::is_dev_mode() {
+        paths.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("templates-dev"),
+        );
+    }
 
     if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
         paths.push(resource_dir.join("resources").join("templates"));
@@ -751,8 +769,9 @@ pub async fn launch_session_jupyter(
     // Write session.json for beaver active_session() detection
     write_session_json(&private_session_path, &session)?;
 
-    // Copy example notebooks if requested
-    if copy_examples.unwrap_or(false) {
+    // In dev mode, always link demo notebooks so the workspace isn't empty.
+    // In production, only provision demos when explicitly requested.
+    if crate::is_dev_mode() || copy_examples.unwrap_or(false) {
         copy_example_notebooks(&private_session_path, &app);
     }
 

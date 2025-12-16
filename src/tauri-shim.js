@@ -161,6 +161,9 @@ class WsBridge {
 					const pending = this.pendingRequests.get(response.id)
 					if (pending) {
 						this.pendingRequests.delete(response.id)
+						if (pending.timeout) {
+							clearTimeout(pending.timeout)
+						}
 						if (response.error) {
 							pending.reject(new Error(response.error))
 						} else {
@@ -192,6 +195,9 @@ class WsBridge {
 					this.connectPromise = null
 					// Reject all pending requests
 					for (const [_id, pending] of this.pendingRequests.entries()) {
+						if (pending.timeout) {
+							clearTimeout(pending.timeout)
+						}
 						pending.reject(new Error('WebSocket connection closed'))
 					}
 					this.pendingRequests.clear()
@@ -224,20 +230,67 @@ class WsBridge {
 			throw new Error('WebSocket not connected')
 		}
 
+		// Allow per-call timeouts without sending control fields to the backend.
+		const rawArgs = args && typeof args === 'object' ? args : {}
+		const timeoutOverride =
+			typeof rawArgs.__wsTimeoutMs === 'number'
+				? rawArgs.__wsTimeoutMs
+				: typeof rawArgs.__timeoutMs === 'number'
+					? rawArgs.__timeoutMs
+					: null
+		const cleanArgs = (() => {
+			if (!rawArgs || (rawArgs.__wsTimeoutMs === undefined && rawArgs.__timeoutMs === undefined))
+				return rawArgs
+			const { __wsTimeoutMs: _a, __timeoutMs: _b, ...rest } = rawArgs
+			return rest
+		})()
+
+		const defaultTimeoutMs = Number.parseInt(
+			(typeof process !== 'undefined' && process?.env?.WS_REQUEST_TIMEOUT_MS) || '30000',
+			10,
+		)
+		const longTimeoutMs = Number.parseInt(
+			(typeof process !== 'undefined' && process?.env?.WS_LONG_REQUEST_TIMEOUT_MS) || '180000',
+			10,
+		)
+		const longRunning = new Set([
+			'launch_session_jupyter',
+			'stop_session_jupyter',
+			'reset_session_jupyter',
+			'launch_jupyter',
+			'stop_jupyter',
+			'reset_jupyter',
+			'syftbox_queue_status',
+			'syftbox_upload_action',
+			'sync_messages',
+			'sync_messages_with_failures',
+			'install_dependencies',
+			'install_dependency',
+			'install_brew',
+			'install_command_line_tools',
+		])
+		const timeoutMs = Math.max(
+			1000,
+			Number.isFinite(timeoutOverride)
+				? timeoutOverride
+				: longRunning.has(cmd)
+					? longTimeoutMs
+					: defaultTimeoutMs,
+		)
+
 		const id = ++this.requestId
-		const request = { id, cmd, args }
+		const request = { id, cmd, args: cleanArgs }
 
 		return new Promise((resolve, reject) => {
-			this.pendingRequests.set(id, { resolve, reject })
-			this.ws.send(JSON.stringify(request))
-
-			// Timeout after 30 seconds
-			setTimeout(() => {
+			const timeout = setTimeout(() => {
 				if (this.pendingRequests.has(id)) {
 					this.pendingRequests.delete(id)
 					reject(new Error(`Request timeout: ${cmd}`))
 				}
-			}, 30000)
+			}, timeoutMs)
+
+			this.pendingRequests.set(id, { resolve, reject, timeout })
+			this.ws.send(JSON.stringify(request))
 		})
 	}
 }

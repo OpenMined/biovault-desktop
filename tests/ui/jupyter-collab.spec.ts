@@ -27,18 +27,15 @@ import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
 import { waitForAppReady } from './test-helpers.js'
-import {
-	setWsPort,
-	completeOnboarding,
-	ensureLogSocket,
-	log,
-} from './onboarding-helper.js'
+import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
 const TEST_TIMEOUT = 300_000 // 5 minutes max
 const UI_TIMEOUT = 10_000
 const JUPYTER_STARTUP_TIMEOUT = 120_000 // 2 minutes for Jupyter startup
 const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
-const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS ? Number.parseInt(process.env.CHAT_PAUSE_MS, 10) : 250
+const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
+	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
+	: 250
 
 // Config file interface
 interface NotebookRun {
@@ -393,7 +390,11 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		console.log(`Session created with ID: ${sessionId}`)
 
 		// Helper to click on a session and open its detail panel
-		async function clickSessionItem(page: Page, clientName: string, sessName: string): Promise<boolean> {
+		async function clickSessionItem(
+			page: Page,
+			clientName: string,
+			sessName: string,
+		): Promise<boolean> {
 			// Reload and navigate to sessions tab
 			await page.reload()
 			await waitForAppReady(page, { timeout: 10_000 })
@@ -501,7 +502,10 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		await page2.waitForTimeout(1000)
 
 		// Click on the session to select it
-		const sessionItem2 = page2.locator('.session-list-item').filter({ hasText: sessionName }).first()
+		const sessionItem2 = page2
+			.locator('.session-list-item')
+			.filter({ hasText: sessionName })
+			.first()
 		if (await sessionItem2.isVisible({ timeout: 5000 }).catch(() => false)) {
 			console.log('Clicking on session in Client2 UI...')
 			await sessionItem2.click()
@@ -522,7 +526,6 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			// Scroll to the chat panel first (it's at the bottom of session detail)
 			const chatPanel = page.locator('.session-chat-panel')
 			await chatPanel.scrollIntoViewIfNeeded()
-			await page.waitForTimeout(300)
 
 			const messageInput = page.locator('#session-message-input')
 			const sendBtn = page.locator('#send-session-message-btn')
@@ -530,11 +533,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			// Wait for chat input to be visible
 			await expect(messageInput).toBeVisible({ timeout: 5000 })
 
-			// Click on the input to focus it
-			await messageInput.click()
-			await page.waitForTimeout(200)
-
 			// Clear any existing text and type the message
+			await messageInput.click()
 			await messageInput.fill(message)
 			console.log(`${clientName} typing: "${message}"`)
 
@@ -542,8 +542,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			await sendBtn.click()
 			console.log(`${clientName} sent message!`)
 
-			// Wait for the message to appear in the chat
-			await page.waitForTimeout(1000)
+			// Reactive waits: input clears and message appears in timeline.
+			await expect(messageInput).toHaveValue('', { timeout: 5000 })
+			await expect(page.locator('#session-messages')).toContainText(message, { timeout: 5000 })
 		}
 
 		// Verify session detail panel is visible on both clients before sending messages
@@ -553,7 +554,10 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const sessionsMain1 = page1.locator('#sessions-main')
 		if (!(await sessionsMain1.isVisible().catch(() => false))) {
 			console.log('Client1 session detail not visible, clicking session again...')
-			const reSessionItem1 = page1.locator('.session-list-item').filter({ hasText: sessionName }).first()
+			const reSessionItem1 = page1
+				.locator('.session-list-item')
+				.filter({ hasText: sessionName })
+				.first()
 			if (await reSessionItem1.isVisible({ timeout: 3000 }).catch(() => false)) {
 				await reSessionItem1.click()
 				await expect(sessionsMain1).toBeVisible({ timeout: 5000 })
@@ -564,7 +568,10 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const sessionsMain2 = page2.locator('#sessions-main')
 		if (!(await sessionsMain2.isVisible().catch(() => false))) {
 			console.log('Client2 session detail not visible, clicking session again...')
-			const reSessionItem2 = page2.locator('.session-list-item').filter({ hasText: sessionName }).first()
+			const reSessionItem2 = page2
+				.locator('.session-list-item')
+				.filter({ hasText: sessionName })
+				.first()
 			if (await reSessionItem2.isVisible({ timeout: 3000 }).catch(() => false)) {
 				await reSessionItem2.click()
 				await expect(sessionsMain2).toBeVisible({ timeout: 5000 })
@@ -646,13 +653,13 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('Clicking "Launch Jupyter" on Client2 (UI)...')
 		}
 
-		await Promise.all([
-			launchBtn1.click(),
-			canLaunch2 ? launchBtn2.click() : Promise.resolve(),
-		])
+		await Promise.all([launchBtn1.click(), canLaunch2 ? launchBtn2.click() : Promise.resolve()])
 
 		// Confirm the spinner/disabled state shows up quickly (what you expected to see).
 		await expect(launchBtn1).toBeDisabled({ timeout: 5_000 })
+		await expect(page1.locator('#launch-session-jupyter-btn .btn-spinner')).toBeVisible({
+			timeout: 5_000,
+		})
 
 		// Wait for the UI to show the Jupyter link (sessions.js updates it from get_session_jupyter_status()).
 		const link1 = page1.locator('#session-jupyter-link')
@@ -666,7 +673,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		let jupyterUrl2: string | null = null
 		if (canLaunch2) {
 			const link2 = page2.locator('#session-jupyter-link')
-			const visible2 = await link2.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT }).catch(() => false)
+			const visible2 = await link2
+				.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
+				.catch(() => false)
 			if (visible2) {
 				jupyterUrl2 = await link2.getAttribute('href')
 				if (jupyterUrl2) console.log(`Client2 Jupyter URL: ${jupyterUrl2}`)

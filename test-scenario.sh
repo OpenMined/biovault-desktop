@@ -193,6 +193,20 @@ is_port_free() {
 	! lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1
 }
 
+pick_free_port() {
+	local start="$1"
+	local max="${2:-65535}"
+	local port="$start"
+	while [[ "$port" -le "$max" ]]; do
+		if is_port_free "$port"; then
+			echo "$port"
+			return 0
+		fi
+		port=$((port + 1))
+	done
+	return 1
+}
+
 pick_ws_port_base() {
 	local start="$1"
 	local max="${2:-3499}"
@@ -221,12 +235,53 @@ SERVER_PID=""
 TAURI1_PID=""
 TAURI2_PID=""
 
+# Pick a free unified logger port unless explicitly configured
+if [[ -n "${UNIFIED_LOG_PORT+x}" ]]; then
+	if ! is_port_free "$LOG_PORT"; then
+		echo "UNIFIED_LOG_PORT=$LOG_PORT is already in use; choose a different port" >&2
+		exit 1
+	fi
+else
+	LOG_PORT_MAX="${UNIFIED_LOG_PORT_MAX:-9856}"
+	LOG_PORT="$(pick_free_port "$LOG_PORT" "$LOG_PORT_MAX" || true)"
+	if [[ -z "$LOG_PORT" ]]; then
+		echo "No available unified logger port between ${UNIFIED_LOG_PORT:-9756} and ${LOG_PORT_MAX}" >&2
+		exit 1
+	fi
+fi
+
 # Start unified logger
 info "Starting unified logger on port ${LOG_PORT} (file: ${LOG_FILE})"
 UNIFIED_LOG_WS_URL="ws://localhost:${LOG_PORT}"
 UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
 node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
+
+wait_for_listener() {
+	local port="$1"
+	local pid="${2:-}"
+	local label="${3:-port}"
+	local timeout_s="${4:-15}"
+	local waited_ms=0
+	local max_ms=$((timeout_s * 1000))
+	while [[ "$waited_ms" -lt "$max_ms" ]]; do
+		if lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+			return 0
+		fi
+		if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+			echo "${label} process exited before listening on :${port} (pid=${pid})" >&2
+			return 1
+		fi
+		sleep 0.2
+		waited_ms=$((waited_ms + 200))
+	done
+	return 1
+}
+
+wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT_S:-5}" || {
+	echo "Unified logger failed to start on :${LOG_PORT}" >&2
+	exit 1
+}
 
 cleanup() {
 	if [[ -n "${SERVER_PID:-}" ]]; then
@@ -444,12 +499,20 @@ launch_instance() {
 
 wait_ws() {
 	local port="$1"
-	for i in {1..60}; do
-		if lsof -Pi :"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
-			return 0
-		fi
-		sleep 0.5
-	done
+	local pid="${2:-}"
+	local label="${3:-ws bridge}"
+	local timeout_s="${WS_BRIDGE_WAIT_S:-60}"
+
+	if wait_for_listener "$port" "$pid" "$label" "$timeout_s"; then
+		return 0
+	fi
+
+	echo "Timed out waiting for ${label} to listen on :${port} (timeout=${timeout_s}s)" >&2
+	if [[ -f "$LOG_FILE" ]]; then
+		echo "---- recent unified log (${LOG_FILE}) ----" >&2
+		tail -n 120 "$LOG_FILE" >&2 || true
+		echo "---- end recent unified log ----" >&2
+	fi
 	return 1
 }
 
@@ -465,12 +528,16 @@ start_tauri_instances() {
 
 	info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
 	TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+	info "Waiting for client1 WS bridge..."
+	wait_ws "$WS_PORT_BASE" "$TAURI1_PID" "$CLIENT1_EMAIL" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+
 	info "Launching Tauri for client2 on WS port $((WS_PORT_BASE + 1))"
 	TAURI2_PID=$(launch_instance "$CLIENT2_EMAIL" "$CLIENT2_HOME" "$CLIENT2_CFG" "$((WS_PORT_BASE + 1))")
-
-	info "Waiting for WS bridges..."
-	wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
-	wait_ws "$((WS_PORT_BASE + 1))" || { echo "WS $((WS_PORT_BASE + 1)) not ready" >&2; exit 1; }
+	info "Waiting for client2 WS bridge..."
+	wait_ws "$((WS_PORT_BASE + 1))" "$TAURI2_PID" "$CLIENT2_EMAIL" || {
+		echo "WS $((WS_PORT_BASE + 1)) not ready" >&2
+		exit 1
+	}
 
 	export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 	export USE_REAL_INVOKE=true

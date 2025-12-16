@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[derive(Deserialize)]
@@ -43,6 +44,17 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
 
     let (mut write, mut read) = ws_stream.split();
 
+    // Writer task so long-running commands don't block reads.
+    let (tx, mut rx) = mpsc::channel::<String>(256);
+    let writer = tokio::spawn(async move {
+        while let Some(text) = rx.recv().await {
+            if let Err(e) = write.send(Message::Text(text)).await {
+                crate::desktop_log!("❌ WebSocket write error: {}", e);
+                break;
+            }
+        }
+    });
+
     while let Some(msg) = read.next().await {
         let msg = match msg {
             Ok(m) => m,
@@ -67,28 +79,33 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
 
         crate::desktop_log!("📨 WS Request: {} (id: {})", request.cmd, request.id);
 
-        // Execute the Tauri command
-        let response = execute_command(&app, &request.cmd, request.args).await;
+        // Execute each request concurrently so a slow command doesn't stall the bridge.
+        let app = Arc::clone(&app);
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let response = execute_command(&app, &request.cmd, request.args).await;
+            let ws_response = match response {
+                Ok(result) => WsResponse {
+                    id: request.id,
+                    result: Some(result),
+                    error: None,
+                },
+                Err(error) => WsResponse {
+                    id: request.id,
+                    result: None,
+                    error: Some(error),
+                },
+            };
 
-        let ws_response = match response {
-            Ok(result) => WsResponse {
-                id: request.id,
-                result: Some(result),
-                error: None,
-            },
-            Err(error) => WsResponse {
-                id: request.id,
-                result: None,
-                error: Some(error),
-            },
-        };
-
-        let response_text = serde_json::to_string(&ws_response).unwrap();
-        if let Err(e) = write.send(Message::Text(response_text)).await {
-            crate::desktop_log!("❌ WebSocket write error: {}", e);
-            break;
-        }
+            if let Ok(response_text) = serde_json::to_string(&ws_response) {
+                let _ = tx.send(response_text).await;
+            }
+        });
     }
+
+    // Stop writer and drain.
+    drop(tx);
+    let _ = writer.await;
 
     crate::desktop_log!("🔌 WebSocket connection closed: {}", addr);
 }
@@ -578,7 +595,8 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing sessionId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
-            let result = crate::get_session_jupyter_status(session_id).map_err(|e| e.to_string())?;
+            let result =
+                crate::get_session_jupyter_status(session_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "launch_session_jupyter" => {
@@ -694,7 +712,9 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "get_pipelines" => {
             let state = app.state::<crate::AppState>();
-            let result = crate::get_pipelines(state).await.map_err(|e| e.to_string())?;
+            let result = crate::get_pipelines(state)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_autostart_enabled" => {
@@ -738,7 +758,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .and_then(|v| v.as_str())
                 .ok_or("Missing 'name' argument")?
                 .to_string();
-            let path = args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let result = crate::commands::dependencies::check_single_dependency(name, path)
                 .await
                 .map_err(|e| e.to_string())?;
