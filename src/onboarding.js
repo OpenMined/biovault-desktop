@@ -1190,6 +1190,14 @@ export function initOnboarding({
 		const installBtn = isSettings
 			? document.getElementById('settings-install-missing-deps-btn')
 			: document.getElementById('install-missing-deps-btn')
+		const currentPlatform = typeof detectPlatform === 'function' ? detectPlatform() : 'unknown'
+
+		const shouldHideDependencyForPlatform = (dep) => {
+			if (currentPlatform !== 'windows') return false
+			const name = (dep?.name || '').toLowerCase()
+			// Deprecated on Windows (no longer used by BioVault)
+			return name === 'java' || name === 'nextflow'
+		}
 
 		const isBundledDep = (dep) => {
 			// Normalize path so macOS "Resources" casing and Windows backslashes are handled
@@ -1208,6 +1216,8 @@ export function initOnboarding({
 		const depEntries = result.dependencies
 			.map((dep, index) => ({ dep, index }))
 			.filter(({ dep }) => (isSettings ? true : !isBundledDep(dep)))
+			.filter(({ dep }) => !shouldHideDependencyForPlatform(dep))
+		const depsForStatus = depEntries.map(({ dep }) => dep)
 
 		let html = ''
 
@@ -1269,11 +1279,11 @@ export function initOnboarding({
 
 		// Enable/disable buttons based on dependencies
 		// Check if there are actually missing dependencies (not just not running)
-		const actuallyMissing = result.dependencies.some((dep) => !dep.found)
+		const actuallyMissing = depsForStatus.some((dep) => !dep.found)
 
 		// For onboarding, we allow proceeding if all deps are FOUND (installed)
 		// even if some services like Docker aren't running
-		const allDepsFound = result.dependencies.every((dep) => dep.found)
+		const allDepsFound = depsForStatus.every((dep) => dep.found)
 
 		if (allDepsFound) {
 			if (nextBtn) nextBtn.disabled = false
@@ -1423,10 +1433,18 @@ export function initOnboarding({
 			const dependencyResults = getDependencyResults()
 			if (!dependencyResults) return
 
+			const currentPlatform = detectPlatform()
+			const shouldHideDependencyForPlatform = (dep) => {
+				if (currentPlatform !== 'windows') return false
+				const name = (dep?.name || '').toLowerCase()
+				// Deprecated on Windows (no longer used by BioVault)
+				return name === 'java' || name === 'nextflow'
+			}
+
 			// Find all missing dependencies (only check if found, not if running)
 			// Docker Desktop can be installed but not running - that's OK for onboarding
 			const missingDeps = dependencyResults.dependencies.filter((dep) => {
-				return !dep.found
+				return !dep.found && !shouldHideDependencyForPlatform(dep)
 			})
 
 			if (missingDeps.length === 0) return
@@ -1441,7 +1459,6 @@ export function initOnboarding({
 				installCancelled = false
 
 				// Check if any missing dependencies require Homebrew (on macOS)
-				const currentPlatform = detectPlatform()
 				const homebrewDeps = ['java', 'nextflow'] // Dependencies that need Homebrew on macOS
 				const needsHomebrew = missingDeps.some((dep) =>
 					homebrewDeps.includes(dep.name.toLowerCase()),
