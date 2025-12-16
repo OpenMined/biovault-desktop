@@ -293,6 +293,28 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
 
 fn load_notebook_config(app: &tauri::AppHandle) -> NotebookConfig {
     const CONFIG_NAME: &str = "notebooks.yaml";
+
+    // Dev mode: prefer reading from the biovault-beaver submodule directly so notebooks don't go stale
+    // and we don't need to copy files into resources during local development.
+    if crate::is_dev_mode() {
+        let submodule_config = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("biovault")
+            .join("biovault-beaver")
+            .join("notebooks")
+            .join(CONFIG_NAME);
+        if let Ok(bytes) = fs::read(&submodule_config) {
+            return serde_yaml::from_slice(&bytes).unwrap_or_else(|e| {
+                eprintln!(
+                    "Warning: Failed to parse notebook config ({}): {}",
+                    submodule_config.display(),
+                    e
+                );
+                NotebookConfig::default()
+            });
+        }
+    }
+
     if let Some(bytes) = read_template_bytes(app, CONFIG_NAME) {
         serde_yaml::from_slice(&bytes).unwrap_or_else(|e| {
             eprintln!(

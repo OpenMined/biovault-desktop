@@ -10,12 +10,18 @@ const isHeadless = (() => {
 
 const slowMo = Number.parseInt(process.env.PLAYWRIGHT_SLOWMO ?? '0', 10)
 
+// Skip jupyter tests by default unless INCLUDE_JUPYTER_TESTS is set
+const grepInvert = process.env.INCLUDE_JUPYTER_TESTS
+	? undefined
+	: /@jupyter-session|@jupyter-collab/
+
 export default defineConfig({
 	testDir: './tests/ui',
 	timeout: 10_000, // Reduced to 10s - tests should fail much faster
 	expect: {
 		timeout: 2_000, // Reduced to 2s for element expectations
 	},
+	grepInvert,
 	use: {
 		headless: isHeadless,
 		slowMo,

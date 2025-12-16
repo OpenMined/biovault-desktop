@@ -14,6 +14,7 @@ UI_PORT="${UI_PORT:-8082}"
 MAX_PORT=8092
 TRACE=${TRACE:-0}
 DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
+TIMING="${TIMING:-1}"
 
 # Parse arguments
 declare -a FORWARD_ARGS=()
@@ -155,6 +156,66 @@ mkdir -p "$(dirname "$LOG_FILE")"
 : >"$LOG_FILE"
 
 info() { printf "\033[1;36m[scenario]\033[0m %s\n" "$1"; }
+
+timing_enabled() {
+	[[ "$TIMING" == "1" || "$TIMING" == "true" || "$TIMING" == "yes" ]]
+}
+
+now_ms() {
+	python3 -c 'import time; print(int(time.time() * 1000))'
+}
+
+format_ms() {
+	local ms="$1"
+	if [[ "$ms" -lt 1000 ]]; then
+		printf "%dms" "$ms"
+	else
+		python3 - "$ms" <<'PY'
+import sys
+ms = int(sys.argv[1])
+print(f"{ms/1000:.2f}s")
+PY
+	fi
+}
+
+declare -a TIMER_LABEL_STACK=()
+declare -a TIMER_START_STACK=()
+declare -a TIMER_SUMMARY=()
+
+SCRIPT_START_MS=""
+if timing_enabled; then
+	SCRIPT_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+fi
+
+timer_push() {
+	local label="$1"
+	[[ -z "$label" ]] && return 0
+	if ! timing_enabled; then
+		return 0
+	fi
+	TIMER_LABEL_STACK+=("$label")
+	TIMER_START_STACK+=("$(now_ms)")
+	info "⏱️  START: $label"
+}
+
+timer_pop() {
+	if ! timing_enabled; then
+		return 0
+	fi
+	local n="${#TIMER_LABEL_STACK[@]}"
+	if [[ "$n" -le 0 ]]; then
+		return 0
+	fi
+	local label="${TIMER_LABEL_STACK[$((n - 1))]}"
+	local start_ms="${TIMER_START_STACK[$((n - 1))]}"
+	unset 'TIMER_LABEL_STACK[$((n - 1))]'
+	unset 'TIMER_START_STACK[$((n - 1))]'
+	local end_ms
+	end_ms="$(now_ms)"
+	local dur_ms=$((end_ms - start_ms))
+	TIMER_SUMMARY+=("${label}"$'\t'"${dur_ms}")
+	info "⏱️  END:   $label ($(format_ms "$dur_ms"))"
+}
 
 # Kill dangling Jupyter processes from this workspace
 kill_workspace_jupyter() {
@@ -299,6 +360,31 @@ cleanup() {
 	fi
 	# Clean up any Jupyter processes spawned during this run
 	kill_workspace_jupyter
+
+	# Close out any in-progress timers so failures still report partial durations.
+	if timing_enabled; then
+		while [[ "${#TIMER_LABEL_STACK[@]}" -gt 0 ]]; do
+			timer_pop
+		done
+	fi
+
+	# Print timing summary (even on failure) to help spot slow steps.
+	if timing_enabled && { [[ "${#TIMER_SUMMARY[@]}" -gt 0 ]] || [[ -n "${SCRIPT_START_MS}" ]]; }; then
+		info "=== Timing Summary ==="
+		if [[ "${#TIMER_SUMMARY[@]}" -gt 0 ]]; then
+			local row label ms
+			for row in "${TIMER_SUMMARY[@]}"; do
+				label="${row%%$'\t'*}"
+				ms="${row##*$'\t'}"
+				printf "[timing] %-42s %s\n" "$label" "$(format_ms "$ms")"
+			done
+		fi
+		if [[ -n "${SCRIPT_START_MS}" ]]; then
+			local total_ms
+			total_ms="$(( $(now_ms) - SCRIPT_START_MS ))"
+			printf "[timing] %-42s %s\n" "Total" "$(format_ms "$total_ms")"
+		fi
+	fi
 }
 trap cleanup EXIT INT TERM
 
@@ -311,7 +397,9 @@ STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
 if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
 	STOP_ARGS+=(--reset)
 fi
+timer_push "Devstack stop"
 bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
+timer_pop
 DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
 if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
 	DEVSTACK_ARGS+=(--reset)
@@ -319,7 +407,9 @@ fi
 if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
 	DEVSTACK_ARGS+=(--skip-keys)
 fi
+timer_push "Devstack start"
 bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
+timer_pop
 
 # Read devstack state for client configs
 find_state_file() {
@@ -403,11 +493,17 @@ preflight_peer_sync() {
 
 start_static_server() {
 	# Start static server
+	timer_push "Static server start"
 	info "Starting static server on port ${UI_PORT}"
 	pushd "$ROOT_DIR/src" >/dev/null
 	python3 -m http.server "$UI_PORT" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 	popd >/dev/null
+	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
+		echo "Static server failed to start on :${UI_PORT}" >&2
+		exit 1
+	}
+	timer_pop
 }
 
 assert_tauri_binary_present() {
@@ -451,7 +547,9 @@ assert_tauri_binary_fresh() {
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
 			echo "Rebuilding (cd src-tauri && cargo build --release)..." >&2
+			timer_push "Cargo build (tauri release)"
 			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			timer_pop
 			return 0
 		fi
 		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
@@ -502,8 +600,17 @@ wait_ws() {
 	local pid="${2:-}"
 	local label="${3:-ws bridge}"
 	local timeout_s="${WS_BRIDGE_WAIT_S:-60}"
+	local start_ms=""
+	if timing_enabled; then
+		start_ms="$(now_ms)"
+	fi
 
 	if wait_for_listener "$port" "$pid" "$label" "$timeout_s"; then
+		if timing_enabled; then
+			local end_ms
+			end_ms="$(now_ms)"
+			info "⏱️  READY: ${label} on :${port} ($(format_ms "$((end_ms - start_ms))"))"
+		fi
 		return 0
 	fi
 
@@ -523,9 +630,12 @@ start_tauri_instances() {
 	# For CLI-based scenarios (messaging-core) where devstack creates keys, ensure sync before UI.
 	# For UI scenarios (messaging, onboarding), keys are created during onboarding - skip preflight here.
 	if [[ "$SCENARIO" == "messaging-core" ]]; then
+		timer_push "Peer key sync (preflight)"
 		preflight_peer_sync
+		timer_pop
 	fi
 
+	timer_push "Tauri instances start"
 	info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
 	TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
 	info "Waiting for client1 WS bridge..."
@@ -544,12 +654,14 @@ start_tauri_instances() {
 
 	info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+	timer_pop
 }
 
 warm_jupyter_cache() {
 	# Pre-build the Jupyter venv to warm syftbox-sdk compilation cache.
 	# This installs all Python dependencies including syftbox-sdk (which has Rust bindings).
 	local cache_dir="$CLIENT1_HOME/sessions/_cache_warmup"
+	timer_push "Jupyter cache warmup"
 	info "Warming Jupyter venv cache (this may take a few minutes on first run)..."
 
 	mkdir -p "$cache_dir"
@@ -564,11 +676,15 @@ warm_jupyter_cache() {
 
 	# Create venv if it doesn't exist
 	if [[ ! -d "$cache_dir/.venv" ]]; then
+		timer_push "Jupyter cache: create venv"
 		info "Creating cache warmup venv..."
 		"$uv_bin" venv --python 3.12 "$cache_dir/.venv" >>"$LOG_FILE" 2>&1 || {
 			info "Failed to create venv, skipping cache warmup"
+			timer_pop
+			timer_pop
 			return 0
 		}
+		timer_pop
 	fi
 
 	# Get beaver version from __init__.py (same as build.rs does)
@@ -576,28 +692,35 @@ warm_jupyter_cache() {
 	beaver_version="$(grep '^__version__' "$ROOT_DIR/biovault/biovault-beaver/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
 
 	# Install PyPI packages first
+	timer_push "Jupyter cache: pip install (pypi)"
 	info "Installing PyPI packages (jupyterlab, biovault-beaver==$beaver_version)..."
 	"$uv_bin" pip install --python "$cache_dir/.venv" -U jupyterlab cleon "biovault-beaver[lib-support]==$beaver_version" >>"$LOG_FILE" 2>&1 || true
+	timer_pop
 
 	# Install local editable syftbox-sdk if available
 	local syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
 	if [[ -d "$syftbox_path" ]]; then
+		timer_push "Jupyter cache: pip install (syftbox-sdk)"
 		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
 		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path" >>"$LOG_FILE" 2>&1 || {
 			info "Warning: Failed to install syftbox-sdk from local path"
 		}
+		timer_pop
 	fi
 
 	# Install local editable beaver if available
 	local beaver_path="$ROOT_DIR/biovault/biovault-beaver/python"
 	if [[ -d "$beaver_path" ]]; then
+		timer_push "Jupyter cache: pip install (beaver)"
 		info "Installing beaver from local source..."
 		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$beaver_path[lib-support]" >>"$LOG_FILE" 2>&1 || {
 			info "Warning: Failed to install beaver from local path"
 		}
+		timer_pop
 	fi
 
 	info "Cache warmup complete!"
+	timer_pop
 }
 
 info "Running Playwright scenario: $SCENARIO"
@@ -613,44 +736,66 @@ fi
 		onboarding)
 			start_static_server
 			start_tauri_instances
+			timer_push "Playwright: @onboarding-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			;;
 		messaging)
 			start_static_server
 			start_tauri_instances
 			# Run onboarding first (creates keys), then wait for peer sync, then messaging
+			timer_push "Playwright: @onboarding-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			# After onboarding, keys exist - wait for them to sync via the network
+			timer_push "Peer key sync"
 			info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
+			timer_pop
+			timer_push "Playwright: @messages-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			;;
 		messaging-sessions)
 			start_static_server
 			start_tauri_instances
 			# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
+			timer_push "Playwright: @onboarding-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			# After onboarding, keys exist - wait for them to sync via the network
+			timer_push "Peer key sync"
 			info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
+			timer_pop
 			# Run comprehensive messaging + sessions test
+			timer_push "Playwright: @messaging-sessions"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			;;
 		all)
 			start_static_server
 			start_tauri_instances
 			# Run onboarding first (creates keys)
 			info "=== Phase 1: Onboarding ==="
+			timer_push "Playwright: @onboarding-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			# Wait for peer sync
+			timer_push "Peer key sync"
 			info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
+			timer_pop
 			# Run basic messaging test
 			info "=== Phase 2: Basic Messaging ==="
+			timer_push "Playwright: @messages-two"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			# Run comprehensive messaging + sessions test
 			info "=== Phase 3: Messaging + Sessions ==="
+			timer_push "Playwright: @messaging-sessions"
 			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 			;;
 	messaging-core)
 		# Reuse the biovault YAML scenario logic (CLI-level) without restarting devstack.
@@ -668,7 +813,9 @@ fi
 		' "$SCENARIO_SRC" >"$SCENARIO_NO_SETUP"
 
 		info "Building BioVault CLI (release) for messaging-core"
+		timer_push "Cargo build (biovault cli release)"
 		(cd "$BIOVAULT_DIR/cli" && cargo build --release) >>"$LOG_FILE" 2>&1
+		timer_pop
 
 		# Give devstack sync a bit more breathing room than the upstream default 30s.
 		MESSAGING_CORE_WAIT_TIMEOUT="${MESSAGING_CORE_WAIT_TIMEOUT:-120}"
@@ -688,30 +835,38 @@ open(path, "w", encoding="utf-8").write("".join(out))
 PY
 
 		info "Running core messaging scenario via $SCENARIO_NO_SETUP (timeout=${MESSAGING_CORE_WAIT_TIMEOUT}s)"
+		timer_push "Core scenario (run_scenario.py)"
 		python3 "$BIOVAULT_DIR/scripts/run_scenario.py" "$SCENARIO_NO_SETUP" 2>&1 | tee -a "$LOG_FILE"
+		timer_pop
 
 		start_static_server
 		start_tauri_instances
 
 		info "Opening UI for inspection"
+		timer_push "Playwright: @messaging-core-ui"
 		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-core-ui" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
 		;;
 	jupyter)
 		start_static_server
 		# Jupyter test only needs one client
 		assert_tauri_binary_present
 		assert_tauri_binary_fresh
+		timer_push "Tauri instance start (single)"
 		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
 		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
 		info "Waiting for WS bridge..."
 		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		timer_pop
 		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 		export USE_REAL_INVOKE=true
 		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 
 		# Run Jupyter session test (includes onboarding in the test itself)
 		info "=== Jupyter Session Test ==="
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_push "Playwright: @jupyter-session"
+		INCLUDE_JUPYTER_TESTS=1 UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
 		;;
 	jupyter-collab)
 		start_static_server
@@ -727,13 +882,17 @@ PY
 			total_configs=${#NOTEBOOK_CONFIGS[@]}
 			for config in "${NOTEBOOK_CONFIGS[@]}"; do
 				info "=== Jupyter Test $config_num/$total_configs: $config ==="
-				NOTEBOOK_CONFIG="$config" INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+				timer_push "Playwright: @jupyter-collab ($config)"
+				INCLUDE_JUPYTER_TESTS=1 NOTEBOOK_CONFIG="$config" INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+				timer_pop
 				((config_num++))
 			done
 		else
 			# No configs provided, run with defaults
 			info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
-			INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_push "Playwright: @jupyter-collab"
+			INCLUDE_JUPYTER_TESTS=1 INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+			timer_pop
 		fi
 
 		# In wait mode, keep everything running

@@ -321,6 +321,17 @@ jobs:
       - name: Install Playwright browsers
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Build syftbox client
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
       - name: Build Tauri binary (release)
         run: |
           cd src-tauri
