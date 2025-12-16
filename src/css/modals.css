@@ -13,6 +13,10 @@
 	z-index: 1000;
 }
 
+.modal[hidden] {
+	display: none;
+}
+
 .modal.hidden {
 	display: none;
 }

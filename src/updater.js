@@ -1,5 +1,41 @@
+function isUpdaterDisabledSync() {
+	try {
+		if (typeof window !== 'undefined' && window.__DISABLE_UPDATER__) return true
+		if (typeof process !== 'undefined' && process?.env) {
+			const flag = process.env.DISABLE_UPDATER ?? process.env.PLAYWRIGHT_DISABLE_UPDATER
+			if (flag && ['1', 'true', 'yes'].includes(flag.toLowerCase())) return true
+		}
+	} catch (_err) {
+		// ignore env inspection errors
+	}
+	return false
+}
+
+async function isUpdaterDisabled() {
+	// Check sync flags first
+	if (isUpdaterDisabledSync()) return true
+
+	// Check via Tauri backend (for env vars passed to binary)
+	try {
+		if (typeof window !== 'undefined' && window.__TAURI__?.core?.invoke) {
+			const disabled = await window.__TAURI__.core.invoke('is_updater_disabled')
+			if (disabled) return true
+		}
+	} catch (_err) {
+		// ignore invoke errors
+	}
+	return false
+}
+
 export function createUpdaterModule() {
 	async function checkUpdates(silent = false) {
+		if (await isUpdaterDisabled()) {
+			if (!silent) {
+				console.log('[Updater] Disabled by env/flag, skipping check')
+			}
+			return
+		}
+
 		// Only works in Tauri mode, not browser dev mode
 		// Check at runtime, not module load time (for testing)
 		const isTauri = typeof window !== 'undefined' && window.__TAURI__
@@ -93,6 +129,10 @@ export function createUpdaterModule() {
 	}
 
 	async function checkUpdatesOnStartup() {
+		if (await isUpdaterDisabled()) {
+			console.log('[Updater] Startup check disabled by env/flag')
+			return
+		}
 		await checkUpdates(true)
 	}
 

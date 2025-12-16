@@ -33,6 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIOVAULT_DIR="$SCRIPT_DIR/biovault"
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
+WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
 
 # Default clients (can be overridden via flags or env)
 DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
@@ -339,6 +340,7 @@ launch_desktop_instance() {
   local email="$1"
   local instance_num="$2"
   local background="$3"
+  local ws_port=$((WS_PORT_BASE + instance_num - 1))
 
   local home config server data_dir
   home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
@@ -357,6 +359,8 @@ launch_desktop_instance() {
   export SYFTBOX_CONFIG_PATH="$config"
   export SYFTBOX_DATA_DIR="$data_dir"
   export SYC_VAULT="$home/.syc"
+  export DEV_WS_BRIDGE=1
+  export DEV_WS_BRIDGE_PORT="$ws_port"
 
   local pkg_cmd="npm"
   if command -v bun >/dev/null 2>&1; then
@@ -372,6 +376,7 @@ launch_desktop_instance() {
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
   echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
+  echo -e "${YELLOW}  WS Bridge Port:    $DEV_WS_BRIDGE_PORT${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
 
   if [[ "$background" == "bg" ]]; then

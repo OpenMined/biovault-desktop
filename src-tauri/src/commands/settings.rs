@@ -704,6 +704,14 @@ pub fn is_dev_mode() -> bool {
         .unwrap_or(false)
 }
 
+/// Check if updater is disabled (DISABLE_UPDATER=1)
+#[tauri::command]
+pub fn is_updater_disabled() -> bool {
+    env::var("DISABLE_UPDATER")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
 /// Check if dev syftbox mode is enabled (BIOVAULT_DEV_SYFTBOX=1)
 #[tauri::command]
 pub fn is_dev_syftbox_enabled() -> bool {

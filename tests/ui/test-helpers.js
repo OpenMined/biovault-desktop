@@ -29,10 +29,21 @@ export async function waitForAppReady(page, options) {
 			() => {
 				const nav = window.__NAV_HANDLERS_READY__
 				const event = window.__EVENT_HANDLERS_READY__
-				// If both are undefined, app might not have initialized them yet
-				// If both are true, we're ready
-				// If one is false, still initializing
-				return (nav === undefined && event === undefined) || (nav === true && event === true)
+				const onboarding = document.getElementById('onboarding-view')
+				const onboardingVisible =
+					!!onboarding &&
+					onboarding.classList.contains('active') &&
+					typeof window.getComputedStyle === 'function' &&
+					window.getComputedStyle(onboarding).display !== 'none'
+
+				// In onboarding, allow the app to proceed even if the handler readiness flags
+				// haven't been initialized yet. In the main app, require them to be true so
+				// navigation clicks work reliably after reloads.
+				if (onboardingVisible) {
+					return true
+				}
+
+				return nav === true && event === true
 			},
 			{ timeout: timeout / 2 },
 		)
