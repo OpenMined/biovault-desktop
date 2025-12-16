@@ -11,8 +11,8 @@ test.describe('Updater', () => {
 			}
 		})
 
-		await page.goto('/')
-		await page.waitForLoadState('networkidle')
+		await page.goto('/', { timeout: 15_000 })
+		await page.waitForLoadState('domcontentloaded')
 	})
 
 	test('should show version in Settings', async ({ page }) => {

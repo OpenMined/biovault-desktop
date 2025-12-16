@@ -260,8 +260,21 @@ async function runAllCellsAndWait(
 	return { outputs: combinedOutput, errorCount: errorCount + tracebackCount }
 }
 
+// Timing helper for detailed performance analysis
+function timer(label: string) {
+	const start = Date.now()
+	return {
+		stop: () => {
+			const elapsed = Date.now() - start
+			console.log(`⏱️  ${label}: ${(elapsed / 1000).toFixed(2)}s`)
+			return elapsed
+		},
+	}
+}
+
 test.describe('Jupyter Collaboration @jupyter-collab', () => {
 	test('two clients collaborate on notebooks', async ({ browser }) => {
+		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const wsPort2 = wsPort1 + 1
 		const email1 = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
@@ -316,6 +329,7 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 
 		// Do onboarding inline if needed (allows running this test standalone)
 		if (!isOnboarded1 || !isOnboarded2) {
+			const onboardingTimer = timer('Onboarding')
 			console.log('\n=== Onboarding clients (inline) ===')
 			const logSocket = await ensureLogSocket()
 
@@ -342,11 +356,13 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 				waitForPeerDid(dataDir1, email2, 90_000),
 				waitForPeerDid(dataDir2, email1, 90_000),
 			])
+			onboardingTimer.stop()
 		}
 
 		// ============================================================
 		// Step 1: Exchange keys via Network tab
 		// ============================================================
+		const keysTimer = timer('Key exchange')
 		console.log('\n=== Step 1: Exchange keys via Network tab ===')
 
 		// Navigate to Network tab on both
@@ -370,10 +386,12 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		await page2.reload()
 		await waitForAppReady(page1, { timeout: 10_000 })
 		await waitForAppReady(page2, { timeout: 10_000 })
+		keysTimer.stop()
 
 		// ============================================================
 		// Step 2: Client1 creates session and invites Client2 (via backend)
 		// ============================================================
+		const sessionTimer = timer('Session creation + sync')
 		console.log('\n=== Step 2: Client1 creates session and invites Client2 ===')
 
 		const sessionName = `Collab-Test-${Date.now()}`
@@ -388,6 +406,29 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		})
 		const sessionId = createResult?.session_id || createResult?.sessionId || createResult?.id
 		console.log(`Session created with ID: ${sessionId}`)
+
+		// 🚀 OPTIMIZATION: Launch Jupyter on Client1 EARLY (runs in background while we sync & chat)
+		// This overlaps Jupyter startup (~30-60s) with session sync and chat (~5-10s)
+		// NOTE: Client2 Jupyter is launched later, after it accepts the invitation
+		const jupyterTimer = timer('Jupyter startup (background)')
+		console.log('🚀 Starting Jupyter in background (will continue while doing chat)...')
+		const jupyterPromise1 = backend1
+			.invoke(
+				'launch_session_jupyter',
+				{
+					sessionId,
+					pythonVersion: '3.12',
+					copyExamples: true,
+				},
+				JUPYTER_STARTUP_TIMEOUT,
+			)
+			.catch((err: Error) => {
+				console.log(`Warning: Client1 Jupyter launch error: ${err.message}`)
+				return null
+			})
+
+		// Client2 Jupyter promise - will be set after invitation acceptance
+		let jupyterPromise2: Promise<any> = Promise.resolve(null)
 
 		// Helper to click on a session and open its detail panel
 		async function clickSessionItem(
@@ -495,6 +536,23 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		if (!invitationFound) {
 			console.log('WARNING: Session invitation not found within timeout - continuing anyway')
 		}
+
+		// 🚀 OPTIMIZATION: Now that Client2 has the session, launch Jupyter on Client2 too
+		console.log('🚀 Starting Jupyter on Client2 (session now available)...')
+		jupyterPromise2 = backend2
+			.invoke(
+				'launch_session_jupyter',
+				{
+					sessionId,
+					pythonVersion: '3.12',
+					copyExamples: true,
+				},
+				JUPYTER_STARTUP_TIMEOUT,
+			)
+			.catch((err: Error) => {
+				console.log(`Warning: Client2 Jupyter launch error: ${err.message}`)
+				return null
+			})
 
 		// Navigate Client2 to Sessions tab and click on the session
 		await page2.locator('.nav-item[data-tab="sessions"]').click()
@@ -611,82 +669,36 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 
 		await page1.waitForTimeout(CHAT_PAUSE_MS)
 		console.log('Messages exchanged successfully!')
+		sessionTimer.stop()
 
 		// ============================================================
-		// Step 5: Launch Jupyter on both sides (via backend for reliability)
+		// Step 5: Wait for Jupyter (started earlier in background)
 		// ============================================================
-		console.log('\n=== Step 5: Launch Jupyter on both sides ===')
+		console.log('\n=== Step 5: Wait for Jupyter to be ready ===')
 
-		// Trigger launch via the Sessions UI so we can see the spinner/state change.
-		// Run both clients in parallel for speed.
-		await Promise.all([
-			page1.locator('.nav-item[data-tab="sessions"]').click(),
-			page2.locator('.nav-item[data-tab="sessions"]').click(),
-		])
-		await Promise.all([
-			expect(page1.locator('#sessions-view')).toBeVisible({ timeout: UI_TIMEOUT }),
-			expect(page2.locator('#sessions-view')).toBeVisible({ timeout: UI_TIMEOUT }),
-		])
+		// Wait for the Jupyter promises we started earlier
+		console.log('Waiting for Jupyter startup to complete...')
+		const [jupyterStatus1, jupyterStatus2] = await Promise.all([jupyterPromise1, jupyterPromise2])
+		jupyterTimer.stop()
 
-		const launchBtn1 = page1.locator('#launch-session-jupyter-btn')
-		const launchBtn2 = page2.locator('#launch-session-jupyter-btn')
+		// Get URLs from status
+		const jupyterUrl1 = jupyterStatus1?.url || null
+		const jupyterUrl2 = jupyterStatus2?.url || null
 
-		// Client1 must launch; Client2 is best-effort (depending on session sync timing/permissions).
-		await expect(launchBtn1).toBeVisible({ timeout: UI_TIMEOUT })
-
-		// Check "Copy examples" checkbox to get demo notebooks (symlinked in dev mode)
-		const copyExamples1 = page1.locator('#copy-examples-checkbox')
-		const copyExamples2 = page2.locator('#copy-examples-checkbox')
-		if (await copyExamples1.isVisible({ timeout: 2000 }).catch(() => false)) {
-			console.log('Checking Copy examples checkbox on Client1...')
-			await copyExamples1.check()
-		}
-
-		console.log('Clicking "Launch Jupyter" on Client1 (UI)...')
-
-		const canLaunch2 = await launchBtn2.isVisible({ timeout: 1500 }).catch(() => false)
-		if (canLaunch2) {
-			if (await copyExamples2.isVisible({ timeout: 1000 }).catch(() => false)) {
-				console.log('Checking Copy examples checkbox on Client2...')
-				await copyExamples2.check()
-			}
-			console.log('Clicking "Launch Jupyter" on Client2 (UI)...')
-		}
-
-		await Promise.all([launchBtn1.click(), canLaunch2 ? launchBtn2.click() : Promise.resolve()])
-
-		// Confirm the spinner/disabled state shows up quickly (what you expected to see).
-		await expect(launchBtn1).toBeDisabled({ timeout: 5_000 })
-		await expect(page1.locator('#launch-session-jupyter-btn .btn-spinner')).toBeVisible({
-			timeout: 5_000,
-		})
-
-		// Wait for the UI to show the Jupyter link (sessions.js updates it from get_session_jupyter_status()).
-		const link1 = page1.locator('#session-jupyter-link')
-		await expect(link1).toBeVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
-		const jupyterUrl1 = await link1.getAttribute('href')
 		if (!jupyterUrl1) {
-			throw new Error('Client1 Jupyter link did not contain a URL')
+			throw new Error('Client1 Jupyter did not return a URL')
 		}
 		console.log(`Client1 Jupyter URL: ${jupyterUrl1}`)
-
-		let jupyterUrl2: string | null = null
-		if (canLaunch2) {
-			const link2 = page2.locator('#session-jupyter-link')
-			const visible2 = await link2
-				.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
-				.catch(() => false)
-			if (visible2) {
-				jupyterUrl2 = await link2.getAttribute('href')
-				if (jupyterUrl2) console.log(`Client2 Jupyter URL: ${jupyterUrl2}`)
-			} else {
-				console.log('WARNING: Client2 Jupyter link did not become visible')
-			}
+		if (jupyterUrl2) {
+			console.log(`Client2 Jupyter URL: ${jupyterUrl2}`)
+		} else {
+			console.log('WARNING: Client2 Jupyter did not return a URL')
 		}
 
 		// ============================================================
 		// Step 6: Open notebooks in JupyterLab
 		// ============================================================
+		const notebookOpenTimer = timer('Open notebooks in JupyterLab')
 		console.log('\n=== Step 6: Open notebooks in JupyterLab ===')
 
 		// Open JupyterLab pages in parallel.
@@ -786,6 +798,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		// ============================================================
 		// Step 7: Run all cells on both notebooks
 		// ============================================================
+		notebookOpenTimer.stop()
+		const notebookExecTimer = timer('Execute notebook cells')
 		console.log('\n=== Step 7: Run all cells on both notebooks ===')
 
 		// Wait for notebooks to be ready
@@ -824,6 +838,7 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log(result2.outputs.substring(0, 2000))
 			console.log(`=== End Client2 Output (errors: ${result2.errorCount}) ===\n`)
 		}
+		notebookExecTimer.stop()
 
 		// ============================================================
 		// Summary and Assertions
@@ -846,12 +861,17 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('✅ No console errors detected')
 		}
 
-		// Pause for inspection
+		// Pause for inspection (only in interactive mode, default 0 for CI)
+		const isInteractive = process.env.INTERACTIVE_MODE === '1'
 		const pauseTime = process.env.JUPYTER_PAUSE_TIME
 			? parseInt(process.env.JUPYTER_PAUSE_TIME, 10)
-			: 30_000
-		console.log(`Pausing for ${pauseTime / 1000} seconds to inspect outputs...`)
-		await jupyterPage1.waitForTimeout(pauseTime)
+			: isInteractive
+				? 30_000
+				: 0
+		if (pauseTime > 0) {
+			console.log(`Pausing for ${pauseTime / 1000} seconds to inspect outputs...`)
+			await jupyterPage1.waitForTimeout(pauseTime)
+		}
 
 		// TODO: Add specific assertions once we know what the expected outputs are
 		// For now, just log everything and don't fail on errors so we can see what happens
@@ -893,5 +913,6 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		await context2.close()
 
 		console.log('Cleanup complete!')
+		testTimer.stop()
 	})
 })

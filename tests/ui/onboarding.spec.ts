@@ -176,7 +176,7 @@ test.describe('Onboarding flow', () => {
 		)
 
 		sendUnifiedLog({ event: 'test-start', name: 'onboarding' })
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000 })
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window
 			w.__INIT_TEST_STATE__?.({ resetSession: true })

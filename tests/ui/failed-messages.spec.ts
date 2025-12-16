@@ -114,7 +114,7 @@ test.describe('Failed Messages', () => {
 			{ mockFailedMessages },
 		)
 
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000 })
 		await page.waitForLoadState('domcontentloaded')
 	})
 
