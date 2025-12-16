@@ -409,7 +409,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 			},
 		)
 
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000 })
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 

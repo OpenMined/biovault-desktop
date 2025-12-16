@@ -20,7 +20,8 @@ TIMING="${TIMING:-1}"
 declare -a FORWARD_ARGS=()
 declare -a NOTEBOOK_CONFIGS=()
 SCENARIO=""
-WARM_CACHE=1  # Default to warming cache (skips quickly if already warm)
+WARM_CACHE=0  # Set after arg parsing (scenario-dependent default)
+WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 
@@ -107,10 +108,12 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--warm-cache)
 			WARM_CACHE=1
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--no-warm-cache)
 			WARM_CACHE=0
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--help|-h)
@@ -139,6 +142,14 @@ done
 if [[ -z "$SCENARIO" ]]; then
 	# Support legacy SCENARIO env var
 	SCENARIO="${SCENARIO:-all}"
+fi
+
+# Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
+if [[ "$WARM_CACHE_SET" == "0" ]]; then
+	case "$SCENARIO" in
+		jupyter|jupyter-collab) WARM_CACHE=1 ;;
+		*) WARM_CACHE=0 ;;
+	esac
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
@@ -231,27 +242,23 @@ kill_workspace_jupyter() {
 	fi
 }
 
-# Kill any dangling Jupyter processes from previous runs
-kill_workspace_jupyter
-
-# Find an available UI port
-while lsof -Pi ":${UI_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; do
-	if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
-		echo "No available port between ${UI_PORT:-8082} and ${MAX_PORT}" >&2
-		exit 1
-	fi
-	UI_PORT=$((UI_PORT + 1))
-	info "UI port in use, trying ${UI_PORT}"
-done
-
-export UI_PORT
-export UI_BASE_URL="http://localhost:${UI_PORT}"
-export DISABLE_UPDATER=1
-export DEV_WS_BRIDGE=1
-
 is_port_free() {
 	local port="$1"
-	! lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1
+	python3 - "$port" >/dev/null 2>&1 <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(0)
+PY
 }
 
 pick_free_port() {
@@ -281,6 +288,54 @@ pick_ws_port_base() {
 	done
 	return 1
 }
+
+detect_platform() {
+	local os arch
+	case "$(uname -s)" in
+		Darwin) os="macos" ;;
+		Linux) os="linux" ;;
+		MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows" ;;
+		*) os="unknown" ;;
+	esac
+
+	arch="$(uname -m)"
+	case "$arch" in
+		x86_64|amd64) arch="x86_64" ;;
+		arm64|aarch64) arch="aarch64" ;;
+		*) arch="unknown" ;;
+	esac
+
+	echo "$os" "$arch"
+}
+
+find_bundled_uv() {
+	local os arch
+	read -r os arch <<<"$(detect_platform)"
+	local candidate="$ROOT_DIR/src-tauri/resources/bundled/uv/${os}-${arch}/uv"
+	if [[ -x "$candidate" ]]; then
+		echo "$candidate"
+		return 0
+	fi
+	return 1
+}
+
+# Kill any dangling Jupyter processes from previous runs
+kill_workspace_jupyter
+
+# Find an available UI port
+while ! is_port_free "$UI_PORT"; do
+	if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
+		echo "No available port between ${UI_PORT:-8082} and ${MAX_PORT}" >&2
+		exit 1
+	fi
+	UI_PORT=$((UI_PORT + 1))
+	info "UI port in use, trying ${UI_PORT}"
+done
+
+export UI_PORT
+export UI_BASE_URL="http://localhost:${UI_PORT}"
+export DISABLE_UPDATER=1
+export DEV_WS_BRIDGE=1
 
 WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" || true)"
 if [[ -z "$WS_PORT_BASE" ]]; then
@@ -326,7 +381,23 @@ wait_for_listener() {
 	local waited_ms=0
 	local max_ms=$((timeout_s * 1000))
 	while [[ "$waited_ms" -lt "$max_ms" ]]; do
-		if lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+		if python3 - "$port" >/dev/null 2>&1 <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(0.2)
+try:
+    s.connect(("127.0.0.1", port))
+except Exception:
+    sys.exit(1)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(0)
+PY
+		then
 			return 0
 		fi
 		if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
@@ -496,11 +567,16 @@ start_static_server() {
 	timer_push "Static server start"
 	info "Starting static server on port ${UI_PORT}"
 	pushd "$ROOT_DIR/src" >/dev/null
-	python3 -m http.server "$UI_PORT" >>"$LOG_FILE" 2>&1 &
+	python3 -m http.server --bind 127.0.0.1 "$UI_PORT" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 	popd >/dev/null
 	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
 		echo "Static server failed to start on :${UI_PORT}" >&2
+		if [[ -f "$LOG_FILE" ]]; then
+			echo "---- recent unified log (${LOG_FILE}) ----" >&2
+			tail -n 120 "$LOG_FILE" >&2 || true
+			echo "---- end recent unified log ----" >&2
+		fi
 		exit 1
 	}
 	timer_pop
@@ -589,6 +665,10 @@ launch_instance() {
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
+		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
+			export JUPYTER_SKIP_BROWSER=1
+		fi
 		echo "[scenario] $email: starting bv-desktop (BIOVAULT_HOME=$BIOVAULT_HOME DEV_WS_BRIDGE_PORT=$DEV_WS_BRIDGE_PORT)" >&2
 		exec "$TAURI_BINARY"
 	) >>"$LOG_FILE" 2>&1 &
@@ -668,9 +748,13 @@ warm_jupyter_cache() {
 
 	# Use uv to create venv and install packages
 	local uv_bin
-	uv_bin="$(which uv 2>/dev/null || echo "")"
+	uv_bin="$(command -v uv 2>/dev/null || echo "")"
 	if [[ -z "$uv_bin" ]]; then
-		info "uv not found in PATH, skipping cache warmup"
+		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		info "uv not found (PATH or bundled), skipping cache warmup"
+		timer_pop
 		return 0
 	fi
 
@@ -726,6 +810,28 @@ warm_jupyter_cache() {
 info "Running Playwright scenario: $SCENARIO"
 PLAYWRIGHT_OPTS=()
 [[ "$TRACE" == "1" ]] && PLAYWRIGHT_OPTS+=(--trace on)
+
+sanitize_playwright_args() {
+	# If a user accidentally passes an empty --grep-invert pattern, Playwright will exclude everything
+	# (empty regex matches all) and report "No tests found". Drop that footgun.
+	local -a cleaned=()
+	local i=0
+	while [[ "$i" -lt "${#FORWARD_ARGS[@]}" ]]; do
+		local arg="${FORWARD_ARGS[$i]}"
+		if [[ "$arg" == "--grep-invert" ]]; then
+			local next="${FORWARD_ARGS[$((i + 1))]:-}"
+			if [[ -z "${next:-}" ]]; then
+				info "Warning: dropping empty --grep-invert argument"
+				i=$((i + 2))
+				continue
+			fi
+		fi
+		cleaned+=("$arg")
+		i=$((i + 1))
+	done
+	FORWARD_ARGS=("${cleaned[@]}")
+}
+sanitize_playwright_args
 
 # Warm cache if requested (useful for first-time Jupyter tests)
 if [[ "$WARM_CACHE" == "1" ]]; then

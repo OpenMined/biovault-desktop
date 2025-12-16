@@ -289,7 +289,7 @@ test.describe('Import Data workflow', () => {
 			{ storageKey: STORAGE_KEY, testData: { folderPath: folderPathPosix, files: preparedFiles } },
 		)
 
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000 })
 
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window

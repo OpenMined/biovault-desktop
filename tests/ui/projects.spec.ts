@@ -169,10 +169,10 @@ test.beforeEach(async ({ page, context }) => {
 			}
 		}
 	}, STORAGE_KEY)
-	await page.goto('/')
+	await page.goto('/', { timeout: 15_000 })
 
 	// Wait for main JS to load and execute
-	await page.waitForLoadState('networkidle')
+	await page.waitForLoadState('domcontentloaded')
 	// Wait for app layout to be visible (contains the sidebar)
 	await page.waitForSelector('.app-layout', { state: 'visible', timeout: 5000 })
 })
