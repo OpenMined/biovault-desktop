@@ -1,38 +1,143 @@
+use std::env;
 use std::fs;
+use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 
-fn main() {
-    // Ensure bundled resources directory exists so glob in tauri.conf.json always matches.
-    let bundled_dir: PathBuf = ["resources", "bundled"].iter().collect();
-    let _ = fs::create_dir_all(&bundled_dir);
-    if bundled_dir
+fn ensure_placeholder_dir(dir: &Path, placeholder_name: &str) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let is_empty = dir
         .read_dir()
         .map(|mut it| it.next().is_none())
-        .unwrap_or(false)
-    {
-        // Note: glob patterns like `resources/**` and `resources/*` often do not match dotfiles.
-        // Use a non-dot placeholder filename to satisfy bundler globs on all platforms.
-        let _ = fs::write(bundled_dir.join("placeholder.txt"), b"placeholder");
+        .unwrap_or(true);
+    if is_empty {
+        fs::write(dir.join(placeholder_name), b"placeholder")?;
     }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_link_like_dir(start: &Path, max_depth: usize) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+
+    for _ in 0..max_depth {
+        if current.is_dir() {
+            return Some(current);
+        }
+
+        let meta = fs::symlink_metadata(&current).ok()?;
+
+        // Follow real symlinks if present.
+        if meta.file_type().is_symlink() {
+            let link = fs::read_link(&current).ok()?;
+            current = if link.is_absolute() {
+                link
+            } else {
+                current.parent()?.join(link)
+            };
+            continue;
+        }
+
+        // On Windows without symlink support, git checks out symlinks as plain text files
+        // containing the target path. Follow those too.
+        if meta.is_file() {
+            let raw = fs::read_to_string(&current).ok()?;
+            let target = raw.trim();
+            if target.is_empty() {
+                return None;
+            }
+            let target_path = PathBuf::from(target);
+            current = if target_path.is_absolute() {
+                target_path
+            } else {
+                current.parent()?.join(target_path)
+            };
+            continue;
+        }
+
+        return None;
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn materialize_windows_templates_dir(manifest_dir: &Path) -> io::Result<()> {
+    let templates_path = manifest_dir.join("resources").join("templates");
+    if templates_path.is_dir() {
+        return Ok(());
+    }
+
+    // Resolve the current link/symlink chain to an actual directory to copy from.
+    // Prefer starting from the templates path itself, then fall back to known repo targets.
+    let source_dir = resolve_link_like_dir(&templates_path, 8)
+        .or_else(|| {
+            resolve_link_like_dir(&manifest_dir.join("..").join("..").join("templates-dev"), 8)
+        })
+        .or_else(|| {
+            resolve_link_like_dir(
+                &manifest_dir
+                    .join("..")
+                    .join("biovault")
+                    .join("biovault-beaver")
+                    .join("notebooks"),
+                1,
+            )
+        });
+
+    // Remove link-like file/symlink so we can create a real directory for bundling.
+    if fs::symlink_metadata(&templates_path).is_ok() {
+        let _ = fs::remove_file(&templates_path);
+        let _ = fs::remove_dir_all(&templates_path);
+    }
+    fs::create_dir_all(&templates_path)?;
+
+    if let Some(src) = source_dir {
+        // Copy actual templates into the materialized directory so Tauri bundling works on Windows.
+        // If copy fails, keep the directory (and a placeholder below) so builds don't hard-fail.
+        let _ = copy_dir_recursive(&src, &templates_path);
+    }
+
+    ensure_placeholder_dir(&templates_path, "placeholder.txt")?;
+    Ok(())
+}
+
+fn main() {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
+
+    // Ensure bundled resources directory exists so glob in tauri.conf.json always matches.
+    let bundled_dir = manifest_dir.join("resources").join("bundled");
+    ensure_placeholder_dir(&bundled_dir, "placeholder.txt")
+        .expect("failed to ensure resources/bundled");
 
     // Ensure templates resource path exists as a directory.
     // On Windows with `core.symlinks=false`, the repo's `resources/templates` symlink may be checked out as a plain file.
     // Tauri expects this to be a directory when bundling resources.
-    let templates_dir: PathBuf = ["resources", "templates"].iter().collect();
-    if let Ok(meta) = fs::symlink_metadata(&templates_dir) {
-        if meta.file_type().is_file() {
-            let _ = fs::remove_file(&templates_dir);
-        }
-    }
-    let _ = fs::create_dir_all(&templates_dir);
-    if templates_dir
-        .read_dir()
-        .map(|mut it| it.next().is_none())
-        .unwrap_or(false)
-    {
-        // Note: glob patterns like `resources/templates/*` often do not match dotfiles.
-        let _ = fs::write(templates_dir.join("placeholder.txt"), b"placeholder");
-    }
+    #[cfg(target_os = "windows")]
+    materialize_windows_templates_dir(&manifest_dir)
+        .expect("failed to materialize resources/templates for Windows bundling");
 
     // Extract biovault-beaver version from submodule's __init__.py
     let beaver_init_path: PathBuf = [
