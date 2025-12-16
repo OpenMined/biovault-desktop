@@ -360,6 +360,14 @@ jobs:
           cache: true
           cache-dependency-path: biovault/syftbox/go.sum
 
+      - name: Setup Go (syftbox, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
         uses: actions/cache@v4
@@ -373,6 +381,26 @@ jobs:
           key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             ${{ matrix.args }}-cargo-
+
+      - name: Bundle dependencies (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Ensure templates is a directory on Windows even when the repo symlink is checked out as a file.
+          $templatesDest = "src-tauri/resources/templates"
+          $templatesSrc = "templates-dev"
+          if (Test-Path $templatesDest -PathType Leaf) {
+            Remove-Item -Force $templatesDest
+          }
+          if (-not (Test-Path $templatesDest -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $templatesDest | Out-Null
+          }
+          if (Test-Path $templatesSrc -PathType Container) {
+            Copy-Item -Path (Join-Path $templatesSrc "*") -Destination $templatesDest -Recurse -Force
+          }
+
+          # Download uv + build syftbox.exe, and create placeholder dirs for java/nextflow (Docker mode).
+          .\scripts\windows\bundle-deps.ps1
 
       - name: Fetch bundled dependencies
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
@@ -450,23 +478,6 @@ jobs:
           touch src-tauri/resources/bundled/java/.placeholder
           touch src-tauri/resources/bundled/nextflow/.placeholder
           touch src-tauri/resources/bundled/uv/.placeholder
-
-      - name: Create placeholder resources (Windows no-bundle build)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Create placeholder directories and files for resources that tauri.conf.json expects
-          New-Item -Path "src-tauri/resources/syftbox" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/java" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
-
-          # Create placeholder files (syftbox without extension - matches tauri.conf.json)
-          New-Item -Path "src-tauri/resources/syftbox/syftbox" -ItemType File -Force
-          "Placeholder - bundled deps not included in Windows build" | Out-File -FilePath "src-tauri/resources/bundled/README.txt"
-          New-Item -Path "src-tauri/resources/bundled/java/.placeholder" -ItemType File -Force
-          New-Item -Path "src-tauri/resources/bundled/nextflow/.placeholder" -ItemType File -Force
-          New-Item -Path "src-tauri/resources/bundled/uv/.placeholder" -ItemType File -Force
 
       - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
