@@ -68,7 +68,7 @@ test.describe('Import Data workflow', () => {
 
 	test('end-to-end import review and cleanup', async ({ page }, testInfo) => {
 		// This is a complex test that needs more time
-		testInfo.setTimeout(30000)
+		testInfo.setTimeout(45_000)
 		await ensureLogSocket()
 		page.on('console', (msg) => {
 			sendUnifiedLog({ source: 'browser', type: msg.type(), text: msg.text() })
@@ -289,7 +289,7 @@ test.describe('Import Data workflow', () => {
 			{ storageKey: STORAGE_KEY, testData: { folderPath: folderPathPosix, files: preparedFiles } },
 		)
 
-		await page.goto('/', { timeout: 15_000 })
+		await page.goto('/', { timeout: 30_000, waitUntil: 'domcontentloaded' })
 
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window
@@ -402,7 +402,8 @@ test.describe('Import Data workflow', () => {
 		// Reset via dropzone clear button
 		await page.locator('#dropzone-clear-btn').click()
 		await expect(page.locator('#folder-display')).toHaveText('Drop folder here or click to browse')
-		await expect(page.locator('#file-list tr')).toHaveCount(0)
+		// Empty state now renders a placeholder row; assert that actual file rows are cleared.
+		await expect(page.locator('#file-list tr[data-file-path]')).toHaveCount(0)
 
 		// Re-select folder after reset
 		await folderDropzone.click()

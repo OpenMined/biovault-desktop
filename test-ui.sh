@@ -38,6 +38,19 @@ if [[ "${SKIP_PLAYWRIGHT_INSTALL:-0}" != "1" ]]; then
 	bunx --bun playwright install --with-deps chromium >/dev/null
 fi
 
+# Kill any leftover static servers from previous runs on our target ports
+for p in $(seq 8082 $MAX_PORT); do
+    pid=$(lsof -Pi ":${p}" -sTCP:LISTEN -t 2>/dev/null || true)
+    if [[ -n "$pid" ]]; then
+        cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+        if [[ "$cmd" == *python* ]] || [[ "$cmd" == *node* ]] || [[ "$cmd" == *serve* ]]; then
+            info "Killing leftover server on port ${p} (PID $pid, $cmd)"
+            kill "$pid" 2>/dev/null || true
+            sleep 0.3
+        fi
+    fi
+done
+
 # Find an available port if the requested one is taken
 while lsof -Pi ":${PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; do
     if [[ "${PORT}" -ge "${MAX_PORT}" ]]; then
