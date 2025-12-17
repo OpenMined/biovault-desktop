@@ -377,12 +377,22 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             target
             src-tauri/target
           key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             ${{ matrix.args }}-cargo-
+
+      - name: Verify Rust toolchain
+        if: matrix.build_kind == 'tauri'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PATH=$PATH"
+          command -v rustc
+          command -v cargo
+          rustc --version
+          cargo --version
 
       - name: Bundle dependencies (Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
