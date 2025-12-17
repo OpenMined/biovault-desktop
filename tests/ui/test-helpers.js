@@ -2,57 +2,60 @@ import { expect } from '@playwright/test'
 
 export async function waitForAppReady(page, options) {
 	const timeout = options?.timeout ?? 2000 // Reduced to 2s default
+	const start = Date.now()
 
-	// Wait for either the app layout OR onboarding view to be visible
-	// Check both separately to handle when one exists but is hidden
+	const remaining = () => Math.max(0, timeout - (Date.now() - start))
+
+	// Wait for either the app layout OR onboarding view to exist in the DOM.
 	const appLayout = page.locator('.app-layout')
 	const onboardingView = page.locator('#onboarding-view')
 
-	// Wait for either one to become visible
 	await Promise.race([
-		appLayout.waitFor({ state: 'visible', timeout }).catch(() => null),
-		onboardingView.waitFor({ state: 'visible', timeout }).catch(() => null),
+		appLayout.waitFor({ state: 'attached', timeout }).catch(() => null),
+		onboardingView.waitFor({ state: 'attached', timeout }).catch(() => null),
 	])
 
-	// Verify at least one is visible
-	const appVisible = await appLayout.isVisible().catch(() => false)
-	const onboardingVisible = await onboardingView.isVisible().catch(() => false)
-
-	if (!appVisible && !onboardingVisible) {
-		throw new Error('Neither app layout nor onboarding view became visible')
-	}
-
-	// Try to wait for handlers, but don't fail if they're not set
-	// (e.g., during onboarding they might not be needed)
 	try {
 		await page.waitForFunction(
 			() => {
-				const nav = window.__NAV_HANDLERS_READY__
-				const event = window.__EVENT_HANDLERS_READY__
 				const onboarding = document.getElementById('onboarding-view')
-				const onboardingVisible =
+				const onboardingActive =
 					!!onboarding &&
 					onboarding.classList.contains('active') &&
 					typeof window.getComputedStyle === 'function' &&
 					window.getComputedStyle(onboarding).display !== 'none'
 
-				// In onboarding, allow the app to proceed even if the handler readiness flags
-				// haven't been initialized yet. In the main app, require them to be true so
-				// navigation clicks work reliably after reloads.
-				if (onboardingVisible) {
-					return true
-				}
+				if (onboardingActive) return true
 
-				return nav === true && event === true
+				return window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true
 			},
-			{ timeout: timeout / 2 },
+			{ timeout: remaining() },
 		)
 	} catch {
-		// If wait times out, check if we're in onboarding
-		const onboardingVisible = await page.locator('#onboarding-view').isVisible()
-		if (!onboardingVisible) {
-			console.warn('Handler readiness check failed, but not in onboarding')
-		}
+		const details = await page
+			.evaluate(() => {
+				const onboarding = document.getElementById('onboarding-view')
+				const appLayout = document.querySelector('.app-layout')
+				const onboardingDisplay =
+					onboarding && typeof window.getComputedStyle === 'function'
+						? window.getComputedStyle(onboarding).display
+						: null
+				const appLayoutDisplay =
+					appLayout && typeof window.getComputedStyle === 'function'
+						? window.getComputedStyle(appLayout).display
+						: null
+				return {
+					url: window.location.href,
+					navReady: window.__NAV_HANDLERS_READY__ === true,
+					eventReady: window.__EVENT_HANDLERS_READY__ === true,
+					onboardingActive: onboarding ? onboarding.classList.contains('active') : false,
+					onboardingDisplay,
+					appLayoutDisplay,
+				}
+			})
+			.catch(() => null)
+
+		throw new Error(`App did not become ready within ${timeout}ms: ${JSON.stringify(details)}`)
 	}
 }
 
