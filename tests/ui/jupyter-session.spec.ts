@@ -394,10 +394,10 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		}
 
 		// Pause at the end so user can inspect the outputs
-		// Use a longer timeout for interactive viewing (default 30s for inspection)
+		// Use a longer timeout for interactive viewing (default 10s for inspection)
 		const pauseTime = process.env.JUPYTER_PAUSE_TIME
 			? parseInt(process.env.JUPYTER_PAUSE_TIME, 10)
-			: 30_000
+			: 10_000
 		console.log(`Pausing for ${pauseTime / 1000} seconds to view outputs...`)
 		await jupyterPage.waitForTimeout(pauseTime)
 

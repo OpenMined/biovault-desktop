@@ -2,7 +2,7 @@
  * Pipelines Solo Test
  * Tests the complete pipeline workflow:
  * 1. Import synthetic genotype data
- * 2. Create HERC2 pipeline
+ * 2. Create Thalassemia pipeline
  * 3. Select all data and run pipeline
  * 4. Wait for run to complete with success
  * 5. Verify results in SQL Query tab
@@ -128,7 +128,7 @@ async function waitForRunCompletion(
 }
 
 test.describe('Pipelines Solo @pipelines-solo', () => {
-	test('import data, create HERC2 pipeline, run and verify results', async ({ browser }) => {
+	test('import data, create Thalassemia pipeline, run and verify results', async ({ browser }) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const email = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
 		const syntheticDataDir = process.env.SYNTHETIC_DATA_DIR || ''
@@ -270,10 +270,10 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		expect(importedCount).toBeGreaterThan(0)
 
 		// ============================================================
-		// Step 2: Create HERC2 Pipeline
+		// Step 2: Create Thalassemia Pipeline
 		// ============================================================
 		log(logSocket, { event: 'step-2', action: 'create-pipeline' })
-		console.log('\n=== Step 2: Create HERC2 Pipeline ===')
+		console.log('\n=== Step 2: Create Thalassemia Pipeline ===')
 
 		// Navigate to Pipelines tab
 		await page.locator('.nav-item[data-tab="run"]').click()
@@ -300,10 +300,12 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 			}
 		})
 
-		// Click HERC2 Classifier template
-		const herc2Card = page.locator('button.new-pipeline-template-card:has-text("HERC2")')
-		await expect(herc2Card).toBeVisible()
-		await herc2Card.click()
+		// Click Thalassemia Classifier template
+		const thalassemiaCard = page.locator(
+			'button.new-pipeline-template-card:has-text("Thalassemia")',
+		)
+		await expect(thalassemiaCard).toBeVisible()
+		await thalassemiaCard.click()
 
 		// Wait for pipeline import to complete
 		await page.waitForTimeout(5000)
@@ -327,8 +329,8 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 
 		// Verify pipeline was created
 		const pipelinesGrid = page.locator('#pipelines-grid')
-		await expect(pipelinesGrid).toContainText(/HERC2/i, { timeout: 10_000 })
-		console.log('HERC2 pipeline created!')
+		await expect(pipelinesGrid).toContainText(/thalassemia/i, { timeout: 10_000 })
+		console.log('Thalassemia pipeline created!')
 
 		// ============================================================
 		// Step 3: Select all data and run pipeline
@@ -359,10 +361,10 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		const dataRunModal = page.locator('#data-run-modal')
 		await expect(dataRunModal).toBeVisible({ timeout: 5000 })
 
-		// Select HERC2 pipeline
-		const herc2Option = dataRunModal.locator('label').filter({ hasText: /HERC2/i })
-		if ((await herc2Option.count()) > 0) {
-			await herc2Option.click()
+		// Select Thalassemia pipeline
+		const thalassemiaOption = dataRunModal.locator('label').filter({ hasText: /thalassemia/i })
+		if ((await thalassemiaOption.count()) > 0) {
+			await thalassemiaOption.click()
 		} else {
 			// Fallback: select first pipeline
 			const pipelineRadios = dataRunModal.locator('input[type="radio"][name="data-run-pipeline"]')
@@ -416,7 +418,7 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		// Verify success in UI
 		const runCards = page.locator('.pipeline-run-card')
 		await expect(runCards.first()).toBeVisible()
-		await expect(runCards.first()).toContainText(/HERC2/i)
+		await expect(runCards.first()).toContainText(/thalassemia/i)
 
 		// Refresh the UI to see updated status
 		await page.reload()
@@ -445,7 +447,7 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 			await page.waitForTimeout(2000)
 		}
 
-		// Look for z_results_herc2 table in the tables list
+		// Look for thalassemia results table in the tables list
 		const tablesList = page.locator('#sql-table-list')
 		await expect(tablesList).toBeVisible()
 
@@ -455,46 +457,39 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		const tableCount = await tablesListItems.count()
 		console.log(`Found ${tableCount} tables in SQL view`)
 
-		// Look for herc2 results table
-		const herc2ResultsTable = page.locator('#sql-table-list li:has-text("herc2")')
-		const herc2TableCount = await herc2ResultsTable.count()
-		console.log(`Found ${herc2TableCount} HERC2 results table(s)`)
+		// Look for thalassemia results table
+		const thalassemiaResultsTable = page.locator('#sql-table-list li:has-text("thalassemia")')
+		const thalassemiaTableCount = await thalassemiaResultsTable.count()
+		console.log(`Found ${thalassemiaTableCount} Thalassemia results table(s)`)
 
-		if (herc2TableCount > 0) {
-			// Click on the results table to select it
-			await herc2ResultsTable.first().click()
-			await page.waitForTimeout(1000)
+		// The test MUST find thalassemia results to verify the pipeline works
+		expect(thalassemiaTableCount).toBeGreaterThan(0)
+		console.log('✓ Found Thalassemia results table')
 
-			// Run a simple SELECT query
-			const sqlEditor = page.locator('#sql-editor textarea, .sql-editor-textarea')
-			if ((await sqlEditor.count()) > 0) {
-				// Clear and type query
-				await sqlEditor.click()
-				await page.keyboard.press('Control+a')
-				await page.keyboard.type('SELECT * FROM z_results_herc2 LIMIT 10;')
+		// Click on the results table to select it - this auto-fills a SELECT query
+		await thalassemiaResultsTable.first().click()
+		await page.waitForTimeout(1000)
 
-				// Run query
-				const runQueryBtn = page.locator('#sql-run-btn')
-				await runQueryBtn.click()
-				await page.waitForTimeout(2000)
+		// Click run button to execute the auto-filled query
+		const runQueryBtn = page.locator('#sql-run-btn')
+		await expect(runQueryBtn).toBeVisible()
+		await runQueryBtn.click()
+		await page.waitForTimeout(2000)
 
-				// Check for results
-				const resultsTable = page.locator('#sql-results-table, .sql-results-table')
-				if ((await resultsTable.count()) > 0) {
-					const resultRows = resultsTable.locator('tr')
-					const rowCount = await resultRows.count()
-					console.log(`Query returned ${rowCount} rows`)
-					expect(rowCount).toBeGreaterThan(0)
-				}
-			}
-		} else {
-			// If no specific herc2 table, just verify tables exist
-			console.log('No specific HERC2 results table found, checking for any results tables...')
-			const resultsTableItems = page.locator('#sql-table-list li:has-text("results")')
-			if ((await resultsTableItems.count()) > 0) {
-				console.log('Found results table(s)')
-			}
-		}
+		// Check for results - this verifies that the overlay_variants.json
+		// contains variants that match the synthetic genotype data
+		const resultsTable = page.locator('#sql-result-table')
+		await expect(resultsTable).toBeVisible({ timeout: 5000 })
+
+		const resultRows = resultsTable.locator('tbody tr')
+		const rowCount = await resultRows.count()
+		console.log(`Query returned ${rowCount} variant match rows`)
+
+		// CRITICAL: Verify that variant matches were found
+		// This confirms the thalassemia RSIDs in overlay_variants.json
+		// are being properly detected in the synthetic data
+		expect(rowCount).toBeGreaterThan(0)
+		console.log('✓ Verified variant matches found in thalassemia results')
 
 		// ============================================================
 		// Step 6: Verify Nextflow used bundled Java in logs

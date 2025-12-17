@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { waitForAppReady } from './test-helpers.js'
 
 test.describe('Updater', () => {
 	test.beforeEach(async ({ page }) => {
@@ -11,8 +12,8 @@ test.describe('Updater', () => {
 			}
 		})
 
-		await page.goto('/', { timeout: 15_000 })
-		await page.waitForLoadState('domcontentloaded')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
+		await waitForAppReady(page, { timeout: 8000 })
 	})
 
 	test('should show version in Settings', async ({ page }) => {
