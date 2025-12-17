@@ -1,13 +1,18 @@
 use crate::init_db;
 use crate::types::{AppState, Settings, DEFAULT_SYFTBOX_SERVER_URL};
 use biovault::cli::commands::init;
+use biovault::cli::commands::jupyter as jupyter_cli;
 use biovault::config::SyftboxCredentials;
+use biovault::data::BioVaultDb;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::env;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
 
 const PLACEHOLDER_EMAIL: &str = "setup@pending";
@@ -19,6 +24,230 @@ fn normalize_server_url(url: &str) -> String {
     }
 
     trimmed.trim_end_matches('/').to_string()
+}
+
+fn remove_dir_all_with_retry(path: &std::path::Path, max_wait: Duration) -> io::Result<()> {
+    let deadline = SystemTime::now() + max_wait;
+    let mut last_err: Option<io::Error> = None;
+
+    while SystemTime::now() < deadline {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                let raw = err.raw_os_error();
+                let retryable = matches!(raw, Some(5) | Some(32) | Some(145))
+                    || err.kind() == io::ErrorKind::PermissionDenied;
+                if !retryable {
+                    return Err(err);
+                }
+                last_err = Some(err);
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            "Timed out while removing directory",
+        )
+    }))
+}
+
+fn stop_all_jupyter_best_effort() {
+    let db = match BioVaultDb::new() {
+        Ok(db) => db,
+        Err(err) => {
+            crate::desktop_log!("⚠️ RESET: Failed to open BioVault DB to stop Jupyter: {}", err);
+            return;
+        }
+    };
+
+    let envs = match db.list_dev_envs() {
+        Ok(envs) => envs,
+        Err(err) => {
+            crate::desktop_log!("⚠️ RESET: Failed to list dev envs to stop Jupyter: {}", err);
+            return;
+        }
+    };
+
+    for env in envs {
+        if env.jupyter_pid.is_none() && env.jupyter_port.is_none() {
+            continue;
+        }
+
+        let project_path = env.project_path.clone();
+        crate::desktop_log!("RESET: Stopping Jupyter for project: {}", project_path);
+        match tauri::async_runtime::block_on(jupyter_cli::stop(&project_path)) {
+            Ok(_) => {}
+            Err(err) => crate::desktop_log!(
+                "⚠️ RESET: Failed to stop Jupyter for {}: {}",
+                project_path,
+                err
+            ),
+        }
+    }
+}
+
+fn best_effort_stop_syftbox_for_reset() {
+    match crate::stop_syftbox_client() {
+        Ok(_) => return,
+        Err(err) => {
+            crate::desktop_log!("⚠️ RESET: Failed to stop SyftBox via API: {}", err);
+        }
+    }
+
+    // Fallback for partially configured states (e.g. before onboarding) where runtime config can't be loaded.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/IM", "syftbox.exe", "/T", "/F"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.status();
+    }
+}
+
+fn reset_all_data_impl(state: &AppState, preserve_keys: bool) -> Result<(), String> {
+    crate::desktop_log!(
+        "dY-`‹,? RESET: Deleting all BioVault data (preserve_keys={})",
+        preserve_keys
+    );
+
+    state.queue_processor_paused.store(true, Ordering::SeqCst);
+    struct PauseGuard<'a> {
+        flag: &'a std::sync::atomic::AtomicBool,
+    }
+    impl<'a> Drop for PauseGuard<'a> {
+        fn drop(&mut self) {
+            self.flag.store(false, Ordering::SeqCst);
+        }
+    }
+    let _pause_guard = PauseGuard {
+        flag: &state.queue_processor_paused,
+    };
+
+    // Stop background processes (to prevent Windows file locks and unblock updates/deletes).
+    crate::desktop_log!("RESET: Stopping SyftBox...");
+    best_effort_stop_syftbox_for_reset();
+    stop_all_jupyter_best_effort();
+
+    let biovault_path = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+
+    // Close the legacy desktop connection (unused but kept for compatibility)
+    {
+        let placeholder = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
+        let mut desktop_conn = state
+            .db
+            .lock()
+            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
+        let _ = std::mem::replace(&mut *desktop_conn, placeholder);
+    }
+
+    // Close the shared BioVault database connection so we can delete the files
+    {
+        let placeholder = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
+        let mut shared_db = state
+            .biovault_db
+            .lock()
+            .map_err(|_| "Failed to lock BioVault database".to_string())?;
+        let _ = std::mem::replace(&mut shared_db.conn, placeholder);
+    }
+
+    if biovault_path.exists() {
+        let syc_path = biovault_path.join(".syc");
+        let mut syc_backup: Option<PathBuf> = None;
+
+        if preserve_keys && syc_path.exists() {
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let backup_path = biovault_path
+                .parent()
+                .unwrap_or(&biovault_path)
+                .join(format!(".syc-backup-{}", ts));
+
+            fs::rename(&syc_path, &backup_path).map_err(|e| {
+                format!(
+                    "Failed to move .syc out of BIOVAULT_HOME ({} -> {}): {}",
+                    syc_path.display(),
+                    backup_path.display(),
+                    e
+                )
+            })?;
+            syc_backup = Some(backup_path);
+        }
+
+        let delete_result = remove_dir_all_with_retry(&biovault_path, Duration::from_secs(15))
+            .map_err(|e| format!("Failed to delete {}: {}", biovault_path.display(), e));
+
+        // Attempt to restore keys even if deletion failed.
+        if let Some(backup_path) = &syc_backup {
+            if !biovault_path.exists() {
+                let _ = fs::create_dir_all(&biovault_path);
+            }
+            let restore_target = biovault_path.join(".syc");
+            if let Err(err) = fs::rename(backup_path, &restore_target) {
+                crate::desktop_log!(
+                    "⚠️ RESET: Failed to restore .syc ({} -> {}): {}",
+                    backup_path.display(),
+                    restore_target.display(),
+                    err
+                );
+            }
+        }
+
+        delete_result?;
+    }
+
+    // Also delete the pointer file that stores the BioVault home location
+    if let Some(config_dir) = dirs::config_dir() {
+        let pointer_path = config_dir.join("BioVault").join("home_path");
+        if pointer_path.exists() {
+            fs::remove_file(&pointer_path)
+                .map_err(|e| format!("Failed to delete pointer file: {}", e))?;
+            crate::desktop_log!("   Deleted pointer: {}", pointer_path.display());
+        }
+
+        // Best-effort removal of the directory if now empty
+        let biovault_config_dir = config_dir.join("BioVault");
+        if biovault_config_dir.exists() {
+            let _ = fs::remove_dir(&biovault_config_dir);
+        }
+    }
+
+    // Recreate the BioVault home and connections so the running app sees a clean state
+    let new_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to recreate BioVault home: {}", e))?;
+
+    {
+        let mut desktop_conn = state
+            .db
+            .lock()
+            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
+        let new_conn = Connection::open(new_home.join("biovault.db"))
+            .map_err(|e| format!("Failed to open desktop database: {}", e))?;
+        init_db(&new_conn).map_err(|e| format!("Failed to initialize desktop database: {}", e))?;
+        *desktop_conn = new_conn;
+    }
+
+    {
+        let new_db = biovault::data::BioVaultDb::new()
+            .map_err(|e| format!("Failed to initialize BioVault database: {}", e))?;
+        let mut shared_db = state
+            .biovault_db
+            .lock()
+            .map_err(|_| "Failed to lock BioVault database".to_string())?;
+        *shared_db = new_db;
+    }
+
+    crate::desktop_log!("バ. RESET: All data deleted successfully");
+    Ok(())
 }
 
 #[tauri::command]
@@ -86,115 +315,12 @@ pub fn check_is_onboarded() -> Result<bool, String> {
 
 #[tauri::command]
 pub fn reset_all_data(state: tauri::State<AppState>) -> Result<(), String> {
-    crate::desktop_log!("🗑️ RESET: Deleting all BioVault data");
+    reset_all_data_impl(&state, true)
+}
 
-    let biovault_path = biovault::config::get_biovault_home()
-        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
-
-    state.queue_processor_paused.store(true, Ordering::SeqCst);
-    struct PauseGuard<'a> {
-        flag: &'a std::sync::atomic::AtomicBool,
-    }
-    impl<'a> Drop for PauseGuard<'a> {
-        fn drop(&mut self) {
-            self.flag.store(false, Ordering::SeqCst);
-        }
-    }
-    let _pause_guard = PauseGuard {
-        flag: &state.queue_processor_paused,
-    };
-
-    // Close the legacy desktop connection (unused but kept for compatibility)
-    {
-        let placeholder = Connection::open_in_memory()
-            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
-        let mut desktop_conn = state
-            .db
-            .lock()
-            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
-        let _ = std::mem::replace(&mut *desktop_conn, placeholder);
-    }
-
-    // Close the shared BioVault database connection so we can delete the files
-    {
-        let placeholder = Connection::open_in_memory()
-            .map_err(|e| format!("Failed to create placeholder connection: {}", e))?;
-        let mut shared_db = state
-            .biovault_db
-            .lock()
-            .map_err(|_| "Failed to lock BioVault database".to_string())?;
-        let _ = std::mem::replace(&mut shared_db.conn, placeholder);
-    }
-
-    if biovault_path.exists() {
-        // Delete everything EXCEPT .syc folder (preserve crypto keys)
-        let entries = fs::read_dir(&biovault_path)
-            .map_err(|e| format!("Failed to read BIOVAULT_HOME: {}", e))?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-            // Skip .syc folder to preserve keys
-            if file_name == ".syc" {
-                crate::desktop_log!("   Preserving: {}", path.display());
-                continue;
-            }
-
-            if path.is_dir() {
-                fs::remove_dir_all(&path)
-                    .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
-            } else {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
-            }
-            crate::desktop_log!("   Deleted: {}", path.display());
-        }
-    }
-
-    // Also delete the pointer file that stores the BioVault home location
-    if let Some(config_dir) = dirs::config_dir() {
-        let pointer_path = config_dir.join("BioVault").join("home_path");
-        if pointer_path.exists() {
-            fs::remove_file(&pointer_path)
-                .map_err(|e| format!("Failed to delete pointer file: {}", e))?;
-            crate::desktop_log!("   Deleted pointer: {}", pointer_path.display());
-        }
-
-        // Best-effort removal of the directory if now empty
-        let biovault_config_dir = config_dir.join("BioVault");
-        if biovault_config_dir.exists() {
-            let _ = fs::remove_dir(&biovault_config_dir);
-        }
-    }
-
-    // Recreate the BioVault home and connections so the running app sees a clean state
-    let new_home = biovault::config::get_biovault_home()
-        .map_err(|e| format!("Failed to recreate BioVault home: {}", e))?;
-
-    {
-        let mut desktop_conn = state
-            .db
-            .lock()
-            .map_err(|_| "Failed to lock desktop database connection".to_string())?;
-        let new_conn = Connection::open(new_home.join("biovault.db"))
-            .map_err(|e| format!("Failed to open desktop database: {}", e))?;
-        init_db(&new_conn).map_err(|e| format!("Failed to initialize desktop database: {}", e))?;
-        *desktop_conn = new_conn;
-    }
-
-    {
-        let new_db = biovault::data::BioVaultDb::new()
-            .map_err(|e| format!("Failed to initialize BioVault database: {}", e))?;
-        let mut shared_db = state
-            .biovault_db
-            .lock()
-            .map_err(|_| "Failed to lock BioVault database".to_string())?;
-        *shared_db = new_db;
-    }
-
-    crate::desktop_log!("✅ RESET: All data deleted successfully");
-    Ok(())
+#[tauri::command]
+pub fn reset_everything(state: tauri::State<AppState>) -> Result<(), String> {
+    reset_all_data_impl(&state, false)
 }
 
 #[tauri::command]
@@ -610,7 +736,10 @@ pub fn open_in_vscode(path: String) -> Result<(), String> {
 
     crate::desktop_log!("📂 Opening in VSCode: {}", target_path);
 
-    Command::new("code").arg(target_path).spawn().map_err(|e| {
+    let mut cmd = Command::new("code");
+    cmd.arg(target_path);
+    super::hide_console_window(&mut cmd);
+    cmd.spawn().map_err(|e| {
         format!(
             "Failed to open VSCode: {}. Make sure the 'code' command is installed.",
             e
@@ -632,10 +761,10 @@ pub fn open_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(&path);
+        super::hide_console_window(&mut cmd);
+        cmd.spawn().map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "linux")]
@@ -673,11 +802,10 @@ pub fn show_in_folder(file_path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(&file_path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg("/select,").arg(&file_path);
+        super::hide_console_window(&mut cmd);
+        cmd.spawn().map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "linux")]

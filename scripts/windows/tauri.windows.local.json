@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": [
+      "resources/syftbox",
+      "resources/templates",
+      "resources/bundled/README.txt",
+      "resources/bundled/uv"
+    ]
+  }
+}

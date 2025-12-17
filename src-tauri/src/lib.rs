@@ -760,7 +760,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -1089,6 +1089,7 @@ pub fn run() {
             check_is_onboarded,
             complete_onboarding,
             reset_all_data,
+            reset_everything,
             get_autostart_enabled,
             set_autostart_enabled,
             // Key management
@@ -1174,6 +1175,77 @@ pub fn run() {
             remove_dataset_from_session,
             list_session_datasets,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    fn best_effort_stop_syftbox_for_exit() {
+        if crate::stop_syftbox_client().is_ok() {
+            return;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let mut cmd = std::process::Command::new("taskkill");
+            cmd.args(["/IM", "syftbox.exe", "/T", "/F"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            let _ = cmd.status();
+        }
+    }
+
+    fn best_effort_stop_all_jupyter_for_exit() {
+        let db = match biovault::data::BioVaultDb::new() {
+            Ok(db) => db,
+            Err(err) => {
+                crate::desktop_log!("⚠️ Exit: Failed to open BioVault DB to stop Jupyter: {}", err);
+                return;
+            }
+        };
+
+        let envs = match db.list_dev_envs() {
+            Ok(envs) => envs,
+            Err(err) => {
+                crate::desktop_log!("⚠️ Exit: Failed to list dev envs to stop Jupyter: {}", err);
+                return;
+            }
+        };
+
+        for env in envs {
+            if env.jupyter_pid.is_none() && env.jupyter_port.is_none() {
+                continue;
+            }
+            let project_path = env.project_path.clone();
+            crate::desktop_log!("Exit: Stopping Jupyter for project: {}", project_path);
+            if let Err(err) = tauri::async_runtime::block_on(biovault::cli::commands::jupyter::stop(
+                &project_path,
+            )) {
+                crate::desktop_log!(
+                    "⚠️ Exit: Failed to stop Jupyter for {}: {}",
+                    project_path,
+                    err
+                );
+            }
+        }
+    }
+
+    let mut exit_cleanup_started = false;
+    app.run(move |app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if exit_cleanup_started {
+                return;
+            }
+            exit_cleanup_started = true;
+            api.prevent_exit();
+
+            let app_handle = app_handle.clone();
+            std::thread::spawn(move || {
+                crate::desktop_log!("Exit: stopping background processes...");
+                best_effort_stop_syftbox_for_exit();
+                best_effort_stop_all_jupyter_for_exit();
+                crate::desktop_log!("Exit: background processes stopped; exiting.");
+                app_handle.exit(0);
+            });
+        }
+    });
 }
