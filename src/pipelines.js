@@ -4295,6 +4295,7 @@ steps:${
 			openVSCodeForStep,
 			editParameter,
 			resetParameter,
+			loadPipelines,
 		}
 
 		// Load pipelines after setting up global handlers
