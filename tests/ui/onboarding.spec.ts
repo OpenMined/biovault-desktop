@@ -124,6 +124,7 @@ test.describe('Onboarding flow', () => {
 						case 'check_single_dependency':
 						case 'save_custom_path':
 						case 'reset_all_data':
+						case 'reset_everything':
 						case 'get_participants':
 						case 'get_files':
 						case 'get_projects':

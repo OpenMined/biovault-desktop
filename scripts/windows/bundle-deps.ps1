@@ -253,9 +253,12 @@ Write-Host "== Skipping Java (runs via Docker container on Windows) ==" -Foregro
 Write-Host "== Skipping Nextflow (runs via Docker container on Windows) ==" -ForegroundColor Yellow
 Write-Host ""
 
-# Create placeholder directories so Tauri build doesn't fail
+# Remove any previously-bundled payloads to avoid shipping ~200MB of unused binaries on Windows.
+# Then create placeholder directories so any code expecting these paths won't crash.
 $javaDest = Join-Path $outBundled ("java\\$platform")
 $nxfDest = Join-Path $outBundled ("nextflow\\$platform")
+Remove-Item -Recurse -Force $javaDest -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $nxfDest -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $javaDest | Out-Null
 New-Item -ItemType Directory -Force -Path $nxfDest | Out-Null
 Set-Content -Path (Join-Path $javaDest "README.txt") -Value "Java runs via Docker container on Windows" -Encoding UTF8

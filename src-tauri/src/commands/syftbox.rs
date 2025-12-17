@@ -603,10 +603,10 @@ fn try_bind_or_ephemeral(
                         pids
                     );
                     for pid in &pids {
-                        let _ = Command::new("kill")
-                            .arg("-TERM")
-                            .arg(pid.to_string())
-                            .status();
+                        let mut cmd = Command::new("kill");
+                        cmd.arg("-TERM").arg(pid.to_string());
+                        super::hide_console_window(&mut cmd);
+                        let _ = cmd.status();
                     }
                     // Wait a bit for processes to die
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -638,7 +638,10 @@ fn try_bind_or_ephemeral(
 }
 
 fn find_our_syftbox_pids(config_path: Option<&Path>, data_dir: Option<&Path>) -> Option<Vec<u32>> {
-    let output = Command::new("ps").arg("aux").output().ok()?;
+    let mut cmd = Command::new("ps");
+    cmd.arg("aux");
+    super::hide_console_window(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -834,7 +837,10 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
 
 fn find_syftbox_pids(runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig) -> Vec<u32> {
     let mut pids = Vec::new();
-    if let Ok(output) = Command::new("ps").arg("aux").output() {
+    let mut cmd = Command::new("ps");
+    cmd.arg("aux");
+    super::hide_console_window(&mut cmd);
+    if let Ok(output) = cmd.output() {
         if output.status.success() {
             let ps_output = String::from_utf8_lossy(&output.stdout);
             let config_str = runtime.config_path.to_string_lossy();
@@ -873,9 +879,10 @@ pub fn open_url(url: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", &url])
-            .spawn()
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "start", "", &url]);
+        super::hide_console_window(&mut cmd);
+        cmd.spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
     }
 

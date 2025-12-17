@@ -418,8 +418,10 @@ pub async fn delete_pipeline(
 pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidationResult, String> {
     use std::process::Command as ProcessCommand;
 
-    let output = ProcessCommand::new("bv")
-        .args(["pipeline", "validate", "--diagram", &pipeline_path])
+    let mut cmd = ProcessCommand::new("bv");
+    cmd.args(["pipeline", "validate", "--diagram", &pipeline_path]);
+    super::hide_console_window(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run bv validate: {}", e))?;
 
