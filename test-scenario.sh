@@ -573,8 +573,64 @@ preflight_peer_sync() {
 	}
 }
 
+start_static_server_python() {
+	# Try to start Python http.server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Python http.server on port $port"
+	pushd "$src_dir" >/dev/null
+	python3 -m http.server --bind 127.0.0.1 "$port" >>"$LOG_FILE" 2>&1 &
+	SERVER_PID=$!
+	popd >/dev/null
+
+	sleep 0.5
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Python server process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "python http.server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Python http.server is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
+start_static_server_node() {
+	# Try to start Node.js http-server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Node.js npx serve on port $port"
+	npx --yes serve -l "$port" -s "$src_dir" >>"$LOG_FILE" 2>&1 &
+	SERVER_PID=$!
+
+	sleep 1
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Node serve process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "node serve" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Node serve is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
 start_static_server() {
-	# Start static server
+	# Start static server with fallback options
 	timer_push "Static server start"
 	info "[DEBUG] start_static_server: initial UI_PORT=$UI_PORT"
 
@@ -596,46 +652,36 @@ start_static_server() {
 	export UI_BASE_URL="http://localhost:${UI_PORT}"
 
 	info "Starting static server on port ${UI_PORT}"
-	info "[DEBUG] Changing to $ROOT_DIR/src"
-	pushd "$ROOT_DIR/src" >/dev/null
-	info "[DEBUG] Running: python3 -m http.server --bind 127.0.0.1 $UI_PORT"
-	python3 -m http.server --bind 127.0.0.1 "$UI_PORT" >>"$LOG_FILE" 2>&1 &
-	SERVER_PID=$!
-	popd >/dev/null
-	info "[DEBUG] Static server started with PID=$SERVER_PID"
+	local src_dir="$ROOT_DIR/src"
+	local timeout_s="${STATIC_SERVER_WAIT_S:-10}"
 
-	# Give the server a moment to start or fail
-	sleep 0.5
-	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		echo "[DEBUG] Static server process died immediately after launch!" >&2
-		echo "[DEBUG] Last 30 lines of unified log:" >&2
-		tail -30 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file" >&2
+	# Try Python first (faster, no dependencies)
+	if start_static_server_python "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Python) is ready on port $UI_PORT"
+		return 0
 	fi
 
-	info "[DEBUG] Waiting for static server to listen on port $UI_PORT (timeout=${STATIC_SERVER_WAIT_S:-5}s)"
-	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
-		echo "[DEBUG] Static server failed to start on :${UI_PORT}" >&2
-		# Check if process is still alive
-		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-			echo "[DEBUG] Static server process (PID $SERVER_PID) exited prematurely" >&2
-		else
-			echo "[DEBUG] Static server process (PID $SERVER_PID) is still running but not listening" >&2
-		fi
-		# Check what's using the port
-		echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
-		lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
-		# Check nearby ports too
-		echo "[DEBUG] Checking nearby ports:" >&2
-		lsof -i :$((UI_PORT - 1)):$((UI_PORT + 2)) 2>&1 || echo "(lsof unavailable)" >&2
-		if [[ -f "$LOG_FILE" ]]; then
-			echo "---- recent unified log (${LOG_FILE}) ----" >&2
-			tail -n 120 "$LOG_FILE" >&2 || true
-			echo "---- end recent unified log ----" >&2
-		fi
-		exit 1
-	}
+	info "[DEBUG] Python http.server failed, trying Node.js fallback..."
+
+	# Try Node.js serve as fallback
+	if start_static_server_node "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Node) is ready on port $UI_PORT"
+		return 0
+	fi
+
+	# Both failed
+	echo "[DEBUG] All static server methods failed on port ${UI_PORT}" >&2
+	echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
+	lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
+	if [[ -f "$LOG_FILE" ]]; then
+		echo "---- recent unified log (${LOG_FILE}) ----" >&2
+		tail -n 120 "$LOG_FILE" >&2 || true
+		echo "---- end recent unified log ----" >&2
+	fi
 	timer_pop
-	info "[DEBUG] Static server is ready and listening on port $UI_PORT"
+	exit 1
 }
 
 assert_tauri_binary_present() {
