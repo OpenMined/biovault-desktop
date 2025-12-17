@@ -39,6 +39,7 @@ Scenario Options (pick one):
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
                        Accepts multiple notebook config files (runs all in sequence)
+  --pipelines-solo     Run pipeline test with synthetic data (single client)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
@@ -47,11 +48,17 @@ Other Options:
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
+Environment Variables (pipelines-solo):
+  FORCE_REGEN_SYNTHETIC=1   Force regenerate synthetic data even if it exists
+  CLEANUP_SYNTHETIC=1       Remove synthetic data after test (default: keep for reuse)
+
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
   ./test-scenario.sh --messaging        # Run just messaging scenario
   ./test-scenario.sh --interactive      # Run all with visible browser
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
+  ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
+  FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
 EOF
 }
 
@@ -90,6 +97,10 @@ while [[ $# -gt 0 ]]; do
 				NOTEBOOK_CONFIGS+=("$1")
 				shift
 			done
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
+			shift
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
@@ -565,13 +576,57 @@ preflight_peer_sync() {
 start_static_server() {
 	# Start static server
 	timer_push "Static server start"
+	info "[DEBUG] start_static_server: initial UI_PORT=$UI_PORT"
+
+	# Re-check port availability (may have changed since early check due to devstack startup)
+	local port_check_count=0
+	while ! is_port_free "$UI_PORT"; do
+		if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
+			echo "No available port between 8082 and ${MAX_PORT}" >&2
+			exit 1
+		fi
+		info "UI port ${UI_PORT} now in use, trying $((UI_PORT + 1))"
+		UI_PORT=$((UI_PORT + 1))
+		port_check_count=$((port_check_count + 1))
+	done
+	if [[ "$port_check_count" -gt 0 ]]; then
+		info "[DEBUG] Had to try $port_check_count additional ports, settled on $UI_PORT"
+	fi
+	export UI_PORT
+	export UI_BASE_URL="http://localhost:${UI_PORT}"
+
 	info "Starting static server on port ${UI_PORT}"
+	info "[DEBUG] Changing to $ROOT_DIR/src"
 	pushd "$ROOT_DIR/src" >/dev/null
+	info "[DEBUG] Running: python3 -m http.server --bind 127.0.0.1 $UI_PORT"
 	python3 -m http.server --bind 127.0.0.1 "$UI_PORT" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 	popd >/dev/null
+	info "[DEBUG] Static server started with PID=$SERVER_PID"
+
+	# Give the server a moment to start or fail
+	sleep 0.5
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		echo "[DEBUG] Static server process died immediately after launch!" >&2
+		echo "[DEBUG] Last 30 lines of unified log:" >&2
+		tail -30 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file" >&2
+	fi
+
+	info "[DEBUG] Waiting for static server to listen on port $UI_PORT (timeout=${STATIC_SERVER_WAIT_S:-5}s)"
 	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
-		echo "Static server failed to start on :${UI_PORT}" >&2
+		echo "[DEBUG] Static server failed to start on :${UI_PORT}" >&2
+		# Check if process is still alive
+		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+			echo "[DEBUG] Static server process (PID $SERVER_PID) exited prematurely" >&2
+		else
+			echo "[DEBUG] Static server process (PID $SERVER_PID) is still running but not listening" >&2
+		fi
+		# Check what's using the port
+		echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
+		lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
+		# Check nearby ports too
+		echo "[DEBUG] Checking nearby ports:" >&2
+		lsof -i :$((UI_PORT - 1)):$((UI_PORT + 2)) 2>&1 || echo "(lsof unavailable)" >&2
 		if [[ -f "$LOG_FILE" ]]; then
 			echo "---- recent unified log (${LOG_FILE}) ----" >&2
 			tail -n 120 "$LOG_FILE" >&2 || true
@@ -580,18 +635,30 @@ start_static_server() {
 		exit 1
 	}
 	timer_pop
+	info "[DEBUG] Static server is ready and listening on port $UI_PORT"
 }
 
 assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
+		echo "[DEBUG] ERROR: Tauri binary not found or not executable at $TAURI_BINARY" >&2
+		echo "[DEBUG] Listing release directory:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
+		echo "[DEBUG] Checking if target directory exists:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
 		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
 		exit 1
 	fi
+	info "[DEBUG] Tauri binary found and executable"
 }
 
 assert_tauri_binary_fresh() {
 	# Guardrail: stale binaries silently break harness assumptions (e.g. env var parsing).
+	info "[DEBUG] assert_tauri_binary_fresh: checking if binary is up to date"
+	info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+	info "[DEBUG] Binary mtime: $(stat -f '%Sm' "$TAURI_BINARY" 2>/dev/null || stat -c '%y' "$TAURI_BINARY" 2>/dev/null || echo 'unknown')"
+
 	local newer=""
 	local candidates=(
 		"$ROOT_DIR/src-tauri/src"
@@ -608,19 +675,22 @@ assert_tauri_binary_fresh() {
 		if [[ -f "$p" ]]; then
 			if [[ "$p" -nt "$TAURI_BINARY" ]]; then
 				newer="$p"
+				info "[DEBUG] Found newer file: $p"
 				break
 			fi
 		elif [[ -d "$p" ]]; then
 			newer="$(find "$p" -type f -newer "$TAURI_BINARY" -print -quit 2>/dev/null || true)"
 			if [[ -n "$newer" ]]; then
+				info "[DEBUG] Found newer file in directory $p: $newer"
 				break
 			fi
 		fi
 	done
 	if [[ -n "$newer" ]]; then
-		echo "Tauri binary is older than sources (e.g. $newer)." >&2
+		echo "[DEBUG] Tauri binary is older than sources (e.g. $newer)." >&2
 		# Default to rebuilding; set AUTO_REBUILD_TAURI=0/false/no to disable.
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
+		info "[DEBUG] AUTO_REBUILD_TAURI=$auto_rebuild"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
 			echo "Rebuilding (cd src-tauri && cargo build --release)..." >&2
 			timer_push "Cargo build (tauri release)"
@@ -628,10 +698,12 @@ assert_tauri_binary_fresh() {
 			timer_pop
 			return 0
 		fi
+		echo "[DEBUG] ERROR: Rebuild required but AUTO_REBUILD_TAURI=$auto_rebuild prevents it" >&2
 		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
 		echo "Tip: set AUTO_REBUILD_TAURI=1 to auto-rebuild." >&2
 		exit 1
 	fi
+	info "[DEBUG] Tauri binary is up to date (no newer source files found)"
 }
 
 launch_instance() {
@@ -996,26 +1068,86 @@ PY
 			timer_pop
 			;;
 	jupyter)
+		info "[DEBUG] Starting jupyter scenario"
+		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
+		info "[DEBUG] WS_PORT_BASE=$WS_PORT_BASE"
+		info "[DEBUG] CLIENT1_HOME=$CLIENT1_HOME"
+
 		start_static_server
+		info "[DEBUG] Static server started successfully on port $UI_PORT"
+
 		# Jupyter test only needs one client
+		info "[DEBUG] Checking Tauri binary..."
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+		if [[ -f "$TAURI_BINARY" ]]; then
+			info "[DEBUG] Tauri binary exists, size: $(ls -lh "$TAURI_BINARY" | awk '{print $5}')"
+			info "[DEBUG] Tauri binary permissions: $(ls -l "$TAURI_BINARY" | awk '{print $1}')"
+		else
+			info "[DEBUG] ERROR: Tauri binary does not exist at $TAURI_BINARY"
+			ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -20 || echo "Cannot list release dir"
+		fi
+
 		assert_tauri_binary_present
+		info "[DEBUG] assert_tauri_binary_present passed"
+
 		assert_tauri_binary_fresh
+		info "[DEBUG] assert_tauri_binary_fresh passed"
+
 		timer_push "Tauri instance start (single)"
 		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		info "[DEBUG] CLIENT1_EMAIL=$CLIENT1_EMAIL"
+		info "[DEBUG] CLIENT1_CFG=$CLIENT1_CFG"
+
 		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
-		info "Waiting for WS bridge..."
-		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		info "[DEBUG] Tauri launched with PID=$TAURI1_PID"
+
+		# Check if process is still running after launch
+		sleep 1
+		if kill -0 "$TAURI1_PID" 2>/dev/null; then
+			info "[DEBUG] Tauri process $TAURI1_PID is running"
+		else
+			info "[DEBUG] ERROR: Tauri process $TAURI1_PID died immediately after launch!"
+			info "[DEBUG] Dumping last 50 lines of unified log:"
+			tail -50 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file"
+		fi
+
+		info "Waiting for WS bridge on port $WS_PORT_BASE..."
+		wait_ws "$WS_PORT_BASE" "$TAURI1_PID" "$CLIENT1_EMAIL" || {
+			echo "[DEBUG] WS bridge failed to come up on port $WS_PORT_BASE" >&2
+			echo "[DEBUG] Checking if Tauri process is still alive..." >&2
+			if kill -0 "$TAURI1_PID" 2>/dev/null; then
+				echo "[DEBUG] Tauri process $TAURI1_PID is still running" >&2
+			else
+				echo "[DEBUG] Tauri process $TAURI1_PID has exited" >&2
+			fi
+			echo "[DEBUG] Checking what's listening on nearby ports:" >&2
+			lsof -i :$((WS_PORT_BASE - 1)):$((WS_PORT_BASE + 2)) 2>&1 || echo "lsof unavailable" >&2
+			echo "[DEBUG] Last 100 lines of unified log:" >&2
+			tail -100 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file" >&2
+			exit 1
+		}
 		timer_pop
+		info "[DEBUG] WS bridge ready on port $WS_PORT_BASE"
+
 		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 		export USE_REAL_INVOKE=true
 		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 
-			# Run Jupyter session test (includes onboarding in the test itself)
-			info "=== Jupyter Session Test ==="
-			timer_push "Playwright: @jupyter-session"
-			run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"
-			timer_pop
-			;;
+		# Run Jupyter session test (includes onboarding in the test itself)
+		info "=== Jupyter Session Test ==="
+		info "[DEBUG] About to run Playwright with grep @jupyter-session"
+		timer_push "Playwright: @jupyter-session"
+		run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"
+		PLAYWRIGHT_EXIT=$?
+		timer_pop
+		info "[DEBUG] Playwright exited with code $PLAYWRIGHT_EXIT"
+		if [[ "$PLAYWRIGHT_EXIT" -ne 0 ]]; then
+			info "[DEBUG] Playwright test failed, dumping last 200 lines of log:"
+			tail -200 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file"
+		fi
+		exit $PLAYWRIGHT_EXIT
+		;;
 	jupyter-collab)
 		start_static_server
 		start_tauri_instances
@@ -1042,6 +1174,116 @@ PY
 				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 				timer_pop
 			fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-solo)
+		start_static_server
+		# Pipelines test only needs one client
+		assert_tauri_binary_present
+		assert_tauri_binary_fresh
+
+		# Synthetic data configuration
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+		CLEANUP_SYNTHETIC="${CLEANUP_SYNTHETIC:-0}"
+
+		# Check if synthetic data already exists and is valid
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			# Generate synthetic data using biosynth (bvs)
+			info "=== Generating synthetic genotype data ==="
+			timer_push "Synthetic data generation"
+
+			# Clean up any partial/old data
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			# Check if bvs (biosynth) is available
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			# Generate synthetic genotype files with HERC2 variant overlay
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (no overlay file found)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
+			timer_pop
+
+			# Verify generated count
+			SYNTH_FILE_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" | wc -l | tr -d ' ')
+			info "Generated $SYNTH_FILE_COUNT synthetic genotype files"
+		else
+			info "=== Reusing existing synthetic data ($EXISTING_COUNT files) ==="
+			SYNTH_FILE_COUNT=$EXISTING_COUNT
+		fi
+
+		# Start Tauri instance with intentionally bad JAVA_HOME to test bundled Java override
+		timer_push "Tauri instance start (single)"
+		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		# Set bad JAVA_HOME and JAVA_CMD to verify bundled Java is used
+		export JAVA_HOME="/tmp/bad-java-home"
+		export JAVA_CMD="/tmp/bad-java-cmd"
+		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+		info "Waiting for WS bridge..."
+		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		timer_pop
+
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		export USE_REAL_INVOKE=true
+		export SYNTHETIC_DATA_DIR
+		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "Synthetic data dir: $SYNTHETIC_DATA_DIR"
+
+		# Run pipelines solo test
+		info "=== Pipelines Solo Test ==="
+		timer_push "Playwright: @pipelines-solo"
+		run_ui_grep "@pipelines-solo" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# Cleanup synthetic data (optional, disabled by default for caching)
+		if [[ "$CLEANUP_SYNTHETIC" == "1" ]] && [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			info "Cleaning up synthetic data..."
+			rm -rf "$SYNTHETIC_DATA_DIR"
+		else
+			info "Keeping synthetic data for reuse (set CLEANUP_SYNTHETIC=1 to remove)"
+		fi
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then
