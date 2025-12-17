@@ -223,7 +223,8 @@ try {
   if (-not $rev) { $rev = "HEAD" }
   $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-  $ldflags = "-s -w " +
+  # Build as a GUI subsystem binary to avoid console windows flashing when spawned from the desktop app.
+  $ldflags = "-s -w -H=windowsgui " +
     "-X github.com/openmined/syftbox/internal/version.Version=$version " +
     "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
     "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
