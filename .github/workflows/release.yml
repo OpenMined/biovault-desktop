@@ -168,8 +168,8 @@ jobs:
 
           if is_enabled('BUILD_MACOS_X64'):
               entries.append({
-                  # macos-13 runners are Intel (x86_64)
-                  'runs-on': 'macos-13',
+                  # Use the dedicated Intel runner label; macos-13 is retired.
+                  'runs-on': 'macos-15-intel',
                   'args': 'x86_64-apple-darwin',
                   'build_kind': 'tauri',
                   'target': 'macos-x64',
@@ -430,6 +430,8 @@ jobs:
 
       - name: Build syftbox client
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
