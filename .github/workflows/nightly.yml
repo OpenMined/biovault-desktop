@@ -417,7 +417,7 @@ jobs:
           cd src-tauri
           cargo build --release
 
-      - name: Run jupyter session tests
+      - name: Run jupyter session tests (solo)
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
@@ -429,6 +429,114 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jupyter-test-results-${{ matrix.platform }}
+          path: |
+            logs/
+            test-results/
+            artifacts/
+
+  test-jupyter-collab:
+    name: Jupyter Collab Tests (${{ matrix.platform }})
+    needs: [lint, build]
+    if: ${{ !inputs.skip_tests }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64
+          - platform: macos-arm64
+            runner: macos-14
+
+          # Linux x86_64
+          - platform: linux-x86
+            runner: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+          path: ./artifacts
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.1.38'
+
+      - name: Setup Go (syftbox)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Linux-specific dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx --bun playwright install --with-deps chromium
+
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Build syftbox client
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
+      - name: Build Tauri binary (release)
+        run: |
+          cd src-tauri
+          cargo build --release
+
+      - name: Run jupyter collab tests (2-client)
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          INCLUDE_JUPYTER_TESTS: "1"
+        run: ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jupyter-collab-test-results-${{ matrix.platform }}
           path: |
             logs/
             test-results/
@@ -546,7 +654,7 @@ jobs:
   # ============================================================================
   nightly-summary:
     name: Nightly Summary
-    needs: [lint, build, test-pipelines, test-jupyter, test-multi-client]
+    needs: [lint, build, test-pipelines, test-jupyter, test-jupyter-collab, test-multi-client]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -559,7 +667,8 @@ jobs:
           echo "| Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Pipeline Tests | ${{ needs.test-pipelines.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Jupyter Tests | ${{ needs.test-jupyter.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Jupyter Tests (Solo) | ${{ needs.test-jupyter.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Jupyter Tests (Collab) | ${{ needs.test-jupyter-collab.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Multi-Client Tests | ${{ needs.test-multi-client.result }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Fail if any job failed

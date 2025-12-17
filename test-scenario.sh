@@ -603,23 +603,23 @@ start_static_server_python() {
 }
 
 start_static_server_node() {
-	# Try to start Node.js http-server, return 0 on success, 1 on failure
+	# Try to start a minimal Node.js static server, return 0 on success, 1 on failure
 	local port="$1"
 	local src_dir="$2"
 	local timeout_s="${3:-10}"
 
-	info "[DEBUG] Trying Node.js npx serve on port $port"
-	npx --yes serve -l "$port" -s "$src_dir" >>"$LOG_FILE" 2>&1 &
+	info "[DEBUG] Trying Node.js static server on port $port"
+	node "$ROOT_DIR/tests/static-server.js" "$src_dir" "$port" "127.0.0.1" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 
 	sleep 1
 	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		info "[DEBUG] Node serve process died immediately"
+		info "[DEBUG] Node static server process died immediately"
 		return 1
 	fi
 
-	if wait_for_listener "$port" "$SERVER_PID" "node serve" "$timeout_s" 2>/dev/null; then
-		info "[DEBUG] Node serve is listening"
+	if wait_for_listener "$port" "$SERVER_PID" "node static server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Node static server is listening"
 		return 0
 	fi
 
@@ -1197,6 +1197,25 @@ PY
 
 		# Run Jupyter session test (includes onboarding in the test itself)
 		info "=== Jupyter Session Test ==="
+
+		# Verify static server is still alive before running Playwright
+		info "[DEBUG] Verifying static server before Playwright..."
+		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+			info "[DEBUG] ERROR: Static server process $SERVER_PID has died!"
+			info "[DEBUG] Checking what's on port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+			info "[DEBUG] Last 50 lines of log:"
+			tail -50 "$LOG_FILE" 2>/dev/null || echo "Cannot read log"
+			exit 1
+		fi
+		if ! curl -s -o /dev/null -w "" --connect-timeout 2 "http://127.0.0.1:$UI_PORT/" 2>/dev/null; then
+			info "[DEBUG] WARNING: Static server process alive but not responding to HTTP"
+			info "[DEBUG] Checking lsof for port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+		else
+			info "[DEBUG] Static server responding OK on port $UI_PORT"
+		fi
+
 		info "[DEBUG] About to run Playwright with grep @jupyter-session"
 		timer_push "Playwright: @jupyter-session"
 		run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"

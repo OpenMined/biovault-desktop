@@ -897,7 +897,7 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const pauseTime = process.env.JUPYTER_PAUSE_TIME
 			? parseInt(process.env.JUPYTER_PAUSE_TIME, 10)
 			: isInteractive
-				? 30_000
+				? 10_000
 				: 0
 		if (pauseTime > 0) {
 			console.log(`Pausing for ${pauseTime / 1000} seconds to inspect outputs...`)
