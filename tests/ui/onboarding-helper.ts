@@ -62,17 +62,23 @@ export async function completeOnboarding(
 	// Step 1: Welcome
 	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 5000 })
 	await page.locator('#onboarding-next-1').click()
+	// Wait for step 1 to be hidden before checking step 2
+	await expect(page.locator('#onboarding-step-1')).toBeHidden({ timeout: 5000 })
 
 	// Step 2: Dependencies - skip
 	await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#skip-dependencies-btn').click()
+	// Wait for step 2 to be hidden before checking step 3
+	await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 5000 })
 
 	// Step 3: Email
 	await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
 	await page.fill('#onboarding-email', email)
 	await expect(page.locator('#onboarding-next-3')).toBeEnabled()
 	await page.locator('#onboarding-next-3').click()
+	// Wait for step 3 to be hidden before checking step 3-key
+	await expect(page.locator('#onboarding-step-3')).toBeHidden({ timeout: 5000 })
 
 	// Step 3-key: Key setup
 	await expect(page.locator('#onboarding-step-3-key')).toBeVisible({ timeout: 5000 })
@@ -84,6 +90,8 @@ export async function completeOnboarding(
 	await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#onboarding-next-3-key').click()
+	// Wait for step 3-key to be hidden before checking step 4
+	await expect(page.locator('#onboarding-step-3-key')).toBeHidden({ timeout: 5000 })
 
 	// Step 4: SyftBox - skip
 	await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
