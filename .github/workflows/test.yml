@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # jupyter-collab runs on all 3 platforms
+          # jupyter-collab runs on all 3 platforms (macOS ARM for speed)
           - scenario: jupyter-collab
             platform: linux-x86_64
             runner: ubuntu-latest
@@ -58,12 +58,17 @@ jobs:
             runner: windows-latest
             tauri_binary: src-tauri/target/release/bv-desktop.exe
             run_prefix: ""
-          # pipelines-solo runs on Linux only (requires Docker, macOS runners don't support it)
+          # pipelines-solo runs on Linux and macOS (Intel Mac for Docker support)
           - scenario: pipelines-solo
             platform: linux-x86_64
             runner: ubuntu-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
+          - scenario: pipelines-solo
+            platform: macos-x86_64
+            runner: macos-13
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
 
     defaults:
       run:
@@ -148,6 +153,10 @@ jobs:
             build-essential \
             pkg-config
 
+      - name: Setup Docker (macOS Intel - for pipelines-solo)
+        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        uses: docker/setup-docker-action@v4
+
       - name: Install npm dependencies
         run: npm ci
 
@@ -197,7 +206,7 @@ jobs:
       - name: Install biosynth CLI (macOS)
         if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
         run: |
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 

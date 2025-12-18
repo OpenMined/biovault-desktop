@@ -115,12 +115,23 @@ async function waitForPeerDid(
 	dataDir: string,
 	peerEmail: string,
 	timeoutMs = 60_000,
+	backend?: Backend,
 ): Promise<string> {
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
 	const didPath = path.join(datasitesRoot, peerEmail, 'public', 'crypto', 'did.json')
 	const start = Date.now()
+	let syncTriggerCount = 0
 	while (Date.now() - start < timeoutMs) {
 		if (fs.existsSync(didPath)) return didPath
+		// Trigger sync every ~2 seconds to accelerate DID file discovery
+		if (backend && syncTriggerCount % 4 === 0) {
+			try {
+				await backend.invoke('trigger_syftbox_sync')
+			} catch {
+				// Ignore sync trigger errors - client may not be ready yet
+			}
+		}
+		syncTriggerCount++
 		await new Promise((r) => setTimeout(r, 500))
 	}
 	throw new Error(`Timed out waiting for peer DID file: ${didPath}`)
@@ -365,12 +376,13 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('Onboarding complete!')
 
 			// Give SyftBox time to write/publish DID files and sync them between clients
+			// We trigger sync on both clients to accelerate the discovery
 			console.log('Waiting for peer DID files to sync...')
 			const dataDir1 = await getSyftboxDataDir(backend1)
 			const dataDir2 = await getSyftboxDataDir(backend2)
 			await Promise.all([
-				waitForPeerDid(dataDir1, email2, 90_000),
-				waitForPeerDid(dataDir2, email1, 90_000),
+				waitForPeerDid(dataDir1, email2, 90_000, backend1),
+				waitForPeerDid(dataDir2, email1, 90_000, backend2),
 			])
 			onboardingTimer.stop()
 		}
