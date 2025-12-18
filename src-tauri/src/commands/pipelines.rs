@@ -61,7 +61,7 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
     Ok(home.join("pipelines"))
 }
 
-fn append_pipeline_log(window: &tauri::Window, log_path: &Path, message: &str) {
+fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
             crate::desktop_log!(
@@ -414,8 +414,10 @@ pub async fn delete_pipeline(
 pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidationResult, String> {
     use std::process::Command as ProcessCommand;
 
-    let output = ProcessCommand::new("bv")
-        .args(["pipeline", "validate", "--diagram", &pipeline_path])
+    let mut cmd = ProcessCommand::new("bv");
+    cmd.args(["pipeline", "validate", "--diagram", &pipeline_path]);
+    super::hide_console_window(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run bv validate: {}", e))?;
 
@@ -454,7 +456,7 @@ pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidati
 #[tauri::command]
 pub async fn run_pipeline(
     state: tauri::State<'_, AppState>,
-    window: tauri::Window,
+    window: tauri::WebviewWindow,
     pipeline_id: i64,
     mut input_overrides: HashMap<String, String>,
     results_dir: Option<String>,

@@ -90,8 +90,7 @@ test.describe('SQL tab', () => {
 			}
 		})
 
-		await page.goto('/')
-		await page.waitForLoadState('networkidle')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 	})
 
 	test('displays tables, schema, and query results', async ({ page }) => {

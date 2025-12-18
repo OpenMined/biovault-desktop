@@ -70,7 +70,7 @@ test.describe('Chaos fuzzing @chaos @fuzz', () => {
 		const log = (payload: Record<string, unknown>) => logToSocket(logSocket, payload)
 		log({ event: 'chaos-start', seed, iterations, scenario: chaosScenario })
 
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 		await waitForAppReady(page, { timeout: 10_000 })
 		await ensureNotInOnboarding(page)
 

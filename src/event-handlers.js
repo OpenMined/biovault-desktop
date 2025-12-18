@@ -491,22 +491,38 @@ export function setupEventHandlers({
 	if (resetAllBtn) {
 		resetAllBtn.addEventListener('click', async () => {
 			const confirmed = await dialog.confirm(
-				'This will DELETE ALL DATA including participants, files, projects, and runs. This cannot be undone!\n\nAre you sure?',
-				{ title: 'Reset All Data', type: 'warning' },
+				'This will DELETE ALL DATA including participants, files, projects, and runs. It will also stop any running Jupyter sessions and the SyftBox background process.\n\nThis cannot be undone.\n\nAre you sure?',
+				{ title: 'Reset BioVault Data', type: 'warning' },
 			)
 
 			if (!confirmed) {
 				return
 			}
 
+			const wipeKeys = await dialog.confirm(
+				'Do you also want to delete your identity keys (.syc)?\n\nIf you delete keys you will need to onboard/sign in again, and any encrypted session registry files may no longer be readable.\n\nChoose YES to fully reset everything.\nChoose NO to reset data but keep your keys.',
+				{ title: 'Reset Everything?', type: 'warning' },
+			)
+
+			const originalText = resetAllBtn.textContent
+
 			try {
+				resetAllBtn.disabled = true
+				resetAllBtn.textContent = 'Resetting...'
 				console.log('🗑️ Resetting all data...')
-				await invoke('reset_all_data')
+				if (wipeKeys) {
+					await invoke('reset_everything')
+				} else {
+					await invoke('reset_all_data')
+				}
 				console.log('✅ Data reset complete')
 
-				await dialog.message('All data has been reset. The app will now reload.', {
-					title: 'Reset Complete',
-				})
+				await dialog.message(
+					wipeKeys
+						? 'All data and keys have been reset. The app will now reload.'
+						: 'All data has been reset (keys preserved). The app will now reload.',
+					{ title: 'Reset Complete' },
+				)
 
 				console.log('🔄 Reloading window...')
 				// Reload the window to restart fresh
@@ -516,6 +532,11 @@ export function setupEventHandlers({
 					title: 'Error',
 					type: 'error',
 				})
+			} finally {
+				resetAllBtn.disabled = false
+				if (originalText != null) {
+					resetAllBtn.textContent = originalText
+				}
 			}
 		})
 	}

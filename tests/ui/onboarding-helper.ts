@@ -46,9 +46,12 @@ export async function completeOnboarding(
 
 	await waitForAppReady(page, { timeout: 30_000 })
 
-	// Check if already onboarded
-	const runView = page.locator('#run-view')
-	if (await runView.isVisible({ timeout: 1000 }).catch(() => false)) {
+	// The initial HTML ships with the main app layout visible (Run tab active) before the onboarding
+	// check completes. Only treat onboarding as "already complete" once the onboarding view is not
+	// active/visible.
+	const onboardingView = page.locator('#onboarding-view')
+	const onboardingActive = await onboardingView.isVisible({ timeout: 1000 }).catch(() => false)
+	if (!onboardingActive) {
 		log(logSocket, { event: 'onboarding-already-complete', email })
 		console.log(`${email}: Already onboarded, skipping`)
 		return false // Already onboarded

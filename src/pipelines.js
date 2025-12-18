@@ -1349,6 +1349,17 @@ export function createPipelinesModule({
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('thalassemia')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Thalassemia Classifier</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Blood disorder variants</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -1522,6 +1533,8 @@ export function createPipelinesModule({
 			brca: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/pipeline.yaml',
 			herc2:
 				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/pipeline.yaml',
+			thalassemia:
+				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/pipeline.yaml',
 		}
 
 		const url = templateUrls[templateName]
@@ -4295,6 +4308,7 @@ steps:${
 			openVSCodeForStep,
 			editParameter,
 			resetParameter,
+			loadPipelines,
 		}
 
 		// Load pipelines after setting up global handlers

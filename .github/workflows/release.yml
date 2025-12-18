@@ -68,13 +68,17 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   prepare-version:
     name: Determine release version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.final-version.outputs.version }}
+      tag: ${{ steps.final-version.outputs.tag }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -116,20 +120,57 @@ jobs:
               fh.write(f"tag={tag}\n")
           PY
 
-      - name: Check if release tag already exists
+      - name: Check if release tag already exists and auto-resolve
+        id: check-release
         if: ${{ inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$TAG" &>/dev/null; then
-            echo "::error::Release $TAG already exists! Either delete it first or bump the version."
-            echo ""
-            echo "To delete: gh release delete $TAG --yes && git push origin :refs/tags/$TAG"
-            echo "To bump: update version in src-tauri/Cargo.toml"
+            echo "⚠️  Release $TAG already exists. Finding next available version..."
+
+            # Start from current version and find next available
+            current_version="$VERSION"
+
+            # Parse version parts
+            IFS='.' read -r major minor patch <<< "$current_version"
+
+            # Try incrementing patch until we find an unreleased version
+            max_attempts=20
+            for ((i=1; i<=max_attempts; i++)); do
+              next_patch=$((patch + i))
+              next_version="${major}.${minor}.${next_patch}"
+              next_tag="v${next_version}"
+
+              if ! gh release view "$next_tag" &>/dev/null; then
+                echo "✅ Found available version: $next_version (tag: $next_tag)"
+                echo "version=$next_version" >> "$GITHUB_OUTPUT"
+                echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+                echo "updated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  Tag $next_tag also exists, trying next..."
+            done
+
+            echo "::error::Could not find available version after $max_attempts attempts"
             exit 1
+          else
+            echo "✅ Release $TAG does not exist, proceeding..."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✅ Release $TAG does not exist, proceeding..."
+
+      - name: Update version outputs if needed
+        id: final-version
+        run: |
+          if [[ "${{ steps.check-release.outputs.updated }}" == "true" ]]; then
+            echo "version=${{ steps.check-release.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.check-release.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
 
   configure-build-matrix:
     name: Determine build targets
@@ -159,6 +200,7 @@ jobs:
 
           if is_enabled('BUILD_MACOS_ARM64'):
               entries.append({
+                  # GitHub-hosted "macos-latest" is Apple Silicon; keep this on latest for arm64.
                   'runs-on': 'macos-latest',
                   'args': 'aarch64-apple-darwin',
                   'build_kind': 'tauri',
@@ -167,7 +209,8 @@ jobs:
 
           if is_enabled('BUILD_MACOS_X64'):
               entries.append({
-                  'runs-on': 'macos-latest',
+                  # Use the dedicated Intel runner label; macos-13 is retired.
+                  'runs-on': 'macos-15-intel',
                   'args': 'x86_64-apple-darwin',
                   'build_kind': 'tauri',
                   'target': 'macos-x64',
@@ -360,6 +403,14 @@ jobs:
           cache: true
           cache-dependency-path: biovault/syftbox/go.sum
 
+      - name: Setup Go (syftbox, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
         uses: actions/cache@v4
@@ -367,12 +418,42 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             target
             src-tauri/target
           key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             ${{ matrix.args }}-cargo-
+
+      - name: Verify Rust toolchain
+        if: matrix.build_kind == 'tauri'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PATH=$PATH"
+          command -v rustc
+          command -v cargo
+          rustc --version
+          cargo --version
+
+      - name: Bundle dependencies (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Ensure templates is a directory on Windows even when the repo symlink is checked out as a file.
+          $templatesDest = "src-tauri/resources/templates"
+          $templatesSrc = "templates-dev"
+          if (Test-Path $templatesDest -PathType Leaf) {
+            Remove-Item -Force $templatesDest
+          }
+          if (-not (Test-Path $templatesDest -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $templatesDest | Out-Null
+          }
+          if (Test-Path $templatesSrc -PathType Container) {
+            Copy-Item -Path (Join-Path $templatesSrc "*") -Destination $templatesDest -Recurse -Force
+          }
+
+          # Download uv + build syftbox.exe, and create placeholder dirs for java/nextflow (Docker mode).
+          .\scripts\windows\bundle-deps.ps1
 
       - name: Fetch bundled dependencies
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
@@ -400,25 +481,139 @@ jobs:
 
       - name: Build syftbox client
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
-      - name: Copy notebooks from biovault-beaver submodule
-        if: matrix.build_kind == 'tauri'
+      - name: Verify syftbox binary architecture + smoke run
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         shell: bash
         run: |
-          NOTEBOOKS_SRC="biovault/biovault-beaver/notebooks"
-          TEMPLATES_DEST="src-tauri/resources/templates"
-          if [[ -d "$NOTEBOOKS_SRC" ]]; then
-            cp "$NOTEBOOKS_SRC/notebooks.yaml" "$TEMPLATES_DEST/" 2>/dev/null || true
-            for nb in "$NOTEBOOKS_SRC"/*.ipynb; do
-              [[ -f "$nb" ]] && cp "$nb" "$TEMPLATES_DEST/"
-            done
-            echo "Copied notebooks from $NOTEBOOKS_SRC"
-          else
-            echo "Warning: $NOTEBOOKS_SRC not found, using existing templates"
+          set -euo pipefail
+
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ ! -f "$SYFTBOX_BIN" ]]; then
+            echo "❌ syftbox binary not found at $SYFTBOX_BIN" >&2
+            exit 1
           fi
+
+          chmod +x "$SYFTBOX_BIN" || true
+
+          echo "syftbox file info:"
+          file "$SYFTBOX_BIN"
+
+          case "${{ matrix.target }}" in
+            macos-x64) expected_arch="x86_64" ;;
+            macos-arm64) expected_arch="arm64" ;;
+            linux-x64) expected_arch="x86-64" ;;
+            *) expected_arch="" ;;
+          esac
+
+          if [[ -n "$expected_arch" ]]; then
+            if ! file "$SYFTBOX_BIN" | grep -q "$expected_arch"; then
+              echo "❌ syftbox has wrong architecture (expected: $expected_arch)" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            echo "syftbox ELF header (readelf):"
+            readelf -h "$SYFTBOX_BIN" | sed -n '1,60p'
+
+            case "${{ matrix.target }}" in
+              linux-x64)
+                if ! readelf -h "$SYFTBOX_BIN" | grep -q "X86-64"; then
+                  echo "❌ syftbox ELF header is not x86_64 as expected" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          fi
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            echo "syftbox Mach-O min macOS metadata (otool):"
+            otool -l "$SYFTBOX_BIN" | awk '
+              /^Load command/ { keep=0 }
+              $1=="cmd" && ($2=="LC_BUILD_VERSION" || $2=="LC_VERSION_MIN_MACOSX") { keep=1 }
+              keep { print }
+            '
+
+            minos="$(
+              otool -l "$SYFTBOX_BIN" | awk '
+                $1=="cmd" && ($2=="LC_BUILD_VERSION" || $2=="LC_VERSION_MIN_MACOSX") { in_cmd=1; next }
+                in_cmd && ($1=="minos" || $1=="version") { print $2; exit }
+                in_cmd && $1=="cmd" { in_cmd=0 }
+              '
+            )"
+
+            if [[ -z "${minos:-}" ]]; then
+              echo "❌ Unable to detect minimum macOS version from Mach-O headers" >&2
+              exit 1
+            fi
+
+            case "${{ matrix.target }}" in
+              macos-x64) max_minos="13.99" ;; # ensure Intel builds stay compatible with Ventura+
+              macos-arm64) max_minos="14.99" ;; # ensure Apple Silicon builds stay compatible with Sonoma+
+              *) max_minos="" ;;
+            esac
+
+            if [[ -n "${max_minos:-}" ]]; then
+              MINOS="$minos" MAX_MINOS="$max_minos" python -c 'import os, sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); minos=os.environ["MINOS"]; max_minos=os.environ["MAX_MINOS"]; sys.exit(f"❌ syftbox min macOS too high: {minos} (max allowed: {max_minos})") if parse(minos)>parse(max_minos) else print(f"✅ syftbox min macOS OK: {minos} (<= {max_minos})")'
+            fi
+          fi
+
+          echo "syftbox smoke run:"
+          "$SYFTBOX_BIN" --help >/dev/null
+
+      - name: Verify syftbox binary architecture + smoke run (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $syftboxBin = "src-tauri\\resources\\syftbox\\syftbox.exe"
+          if (-not (Test-Path $syftboxBin)) {
+            throw "syftbox binary not found at $syftboxBin"
+          }
+
+          Write-Host "syftbox file info:"
+          Get-Item $syftboxBin | Format-List FullName,Length,LastWriteTime
+
+          function Get-PeMachine([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              $mz = $br.ReadUInt16()
+              if ($mz -ne 0x5A4D) { throw "Missing MZ header" }
+              $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $peOffset = $br.ReadUInt32()
+              $fs.Seek($peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $sig = $br.ReadUInt32()
+              if ($sig -ne 0x00004550) { throw "Missing PE\\0\\0 signature" }
+              return $br.ReadUInt16()
+            } finally {
+              $fs.Dispose()
+            }
+          }
+
+          $machine = Get-PeMachine $syftboxBin
+          "{0} PE machine: 0x{1:X4}" -f $syftboxBin, $machine
+
+          # 0x8664 = AMD64, 0xAA64 = ARM64
+          if ($machine -ne 0x8664) {
+            throw ("syftbox has wrong CPU architecture (expected AMD64/0x8664, got 0x{0:X4})" -f $machine)
+          }
+
+          Write-Host "syftbox smoke run:"
+          & $syftboxBin --help | Out-Null
+
+      - name: Materialize notebooks for bundling
+        shell: bash
+        run: |
+          chmod +x scripts/materialize-templates.sh
+          ./scripts/materialize-templates.sh
 
       - name: Clear quarantine on bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
@@ -450,23 +645,6 @@ jobs:
           touch src-tauri/resources/bundled/java/.placeholder
           touch src-tauri/resources/bundled/nextflow/.placeholder
           touch src-tauri/resources/bundled/uv/.placeholder
-
-      - name: Create placeholder resources (Windows no-bundle build)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Create placeholder directories and files for resources that tauri.conf.json expects
-          New-Item -Path "src-tauri/resources/syftbox" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/java" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/nextflow" -ItemType Directory -Force
-          New-Item -Path "src-tauri/resources/bundled/uv" -ItemType Directory -Force
-
-          # Create placeholder files (syftbox without extension - matches tauri.conf.json)
-          New-Item -Path "src-tauri/resources/syftbox/syftbox" -ItemType File -Force
-          "Placeholder - bundled deps not included in Windows build" | Out-File -FilePath "src-tauri/resources/bundled/README.txt"
-          New-Item -Path "src-tauri/resources/bundled/java/.placeholder" -ItemType File -Force
-          New-Item -Path "src-tauri/resources/bundled/nextflow/.placeholder" -ItemType File -Force
-          New-Item -Path "src-tauri/resources/bundled/uv/.placeholder" -ItemType File -Force
 
       - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
@@ -742,6 +920,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
+      UPDATER_MANIFESTS_TAG: updater-manifests
     steps:
       - name: Download release artifacts
         run: |
@@ -749,6 +928,28 @@ jobs:
             --repo ${{ github.repository }} \
             --pattern '*.sig' \
             --dir signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Ensure updater manifests release exists
+        run: |
+          if ! gh release view "${UPDATER_MANIFESTS_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${UPDATER_MANIFESTS_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Updater manifests" \
+              --notes "Auto-managed per-platform updater manifests for BioVault Desktop." \
+              --prerelease
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download existing releases index (if any)
+        run: |
+          mkdir -p existing
+          gh release download "${UPDATER_MANIFESTS_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'releases-index.json' \
+            --dir existing || true
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -761,11 +962,15 @@ jobs:
 
           version = os.environ['RELEASE_VERSION']
           tag = os.environ['RELEASE_TAG']
+          manifests_tag = os.environ.get('UPDATER_MANIFESTS_TAG', 'updater-manifests')
           repo = os.environ['GITHUB_REPOSITORY']
+          pub_date = os.environ.get('RELEASE_DATE', '')
 
           sig_dir = Path('signatures')
 
           platforms = {}
+
+          per_platform = []
 
           # macOS aarch64
           sig_file = sig_dir / 'BioVault-Desktop-aarch64-apple-darwin.app.tar.gz.sig'
@@ -774,6 +979,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz'
               }
+              per_platform.append((
+                  'release-darwin-aarch64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-apple-darwin.app.tar.gz',
+                  sig_file.read_text().strip(),
+              ))
 
           # macOS x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-apple-darwin.app.tar.gz.sig'
@@ -782,6 +992,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz'
               }
+              per_platform.append((
+                  'release-darwin-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-apple-darwin.app.tar.gz',
+                  sig_file.read_text().strip(),
+              ))
 
           # Windows x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-pc-windows-msvc.exe.sig'
@@ -790,6 +1005,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-pc-windows-msvc.exe'
               }
+              per_platform.append((
+                  'release-windows-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-pc-windows-msvc.exe',
+                  sig_file.read_text().strip(),
+              ))
 
           # Linux x86_64
           sig_file = sig_dir / 'BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage.sig'
@@ -798,6 +1018,11 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage'
               }
+              per_platform.append((
+                  'release-linux-x86_64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-x86_64-unknown-linux-gnu.AppImage',
+                  sig_file.read_text().strip(),
+              ))
 
           # Linux aarch64
           sig_file = sig_dir / 'BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage.sig'
@@ -806,20 +1031,89 @@ jobs:
                   'signature': sig_file.read_text().strip(),
                   'url': f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage'
               }
+              per_platform.append((
+                  'release-linux-aarch64.json',
+                  f'https://github.com/{repo}/releases/download/{tag}/BioVault-Desktop-aarch64-unknown-linux-gnu.AppImage',
+                  sig_file.read_text().strip(),
+              ))
 
           release_data = {
               'version': tag,
               'notes': f'Release {tag}',
-              'pub_date': os.environ.get('RELEASE_DATE', ''),
+              'pub_date': pub_date,
               'platforms': platforms
           }
 
           Path('release.json').write_text(json.dumps(release_data, indent=2))
           print(f'Generated release.json with {len(platforms)} platforms')
+
+          # Per-platform "dynamic" updater manifests (one file per platform).
+          # These are uploaded to a stable release tag so partial releases do not break other platforms.
+          for filename, url, signature in per_platform:
+              data = {
+                  'version': tag,
+                  'notes': f'Release {tag}',
+                  'pub_date': pub_date,
+                  'url': url,
+                  'signature': signature,
+              }
+              Path(filename).write_text(json.dumps(data, indent=2))
+              print(f'Generated {filename} for {url}')
+
+          # Website-friendly index manifest: accumulates all published versions and exposes
+          # "latest per platform" pointers. Stored on the stable updater-manifests release.
+          index_path = Path('existing') / 'releases-index.json'
+          if index_path.exists():
+              try:
+                  index = json.loads(index_path.read_text())
+              except Exception:
+                  index = {}
+          else:
+              index = {}
+
+          index.setdefault('schema', 'biovault-desktop/releases-index-v1')
+          index['updated_at'] = pub_date
+          index.setdefault('latest', {})
+          index.setdefault('releases', {})
+
+          # Ensure release entry exists, and merge only platforms built for this tag.
+          release_entry = index['releases'].get(tag, {})
+          release_entry.setdefault('version', tag)
+          release_entry.setdefault('pub_date', pub_date)
+          release_entry.setdefault('platforms', {})
+
+          for platform_key, info in platforms.items():
+              release_entry['platforms'][platform_key] = {
+                  'url': info['url'],
+                  'signature': info['signature'],
+                  'manifest_url': f'https://github.com/{repo}/releases/download/{manifests_tag}/release-{platform_key}.json',
+              }
+              # Update latest pointer for this platform to the newest release that actually built it.
+              index['latest'][platform_key] = {
+                  'version': tag,
+                  'url': info['url'],
+                  'signature': info['signature'],
+                  'manifest_url': f'https://github.com/{repo}/releases/download/{manifests_tag}/release-{platform_key}.json',
+                  'pub_date': pub_date,
+              }
+
+          index['releases'][tag] = release_entry
+
+          # Maintain a stable ordering hint for consumers (newest first).
+          # Tags are not guaranteed semver-sortable; preserve insertion order via this list.
+          order = index.get('order', [])
+          if tag in order:
+              order.remove(tag)
+          order.insert(0, tag)
+          index['order'] = order[:500]
+
+          Path('releases-index.json').write_text(json.dumps(index, indent=2))
+          print(f"Generated releases-index.json with {len(index['releases'])} releases")
           PY
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_DATE: ${{ github.event.repository.updated_at }}
+          UPDATER_MANIFESTS_TAG: ${{ env.UPDATER_MANIFESTS_TAG }}
 
       - name: Upload release.json to release
         run: |
@@ -828,6 +1122,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Upload per-platform manifests
+        run: |
+          shopt -s nullglob
+          files=(release-*.json releases-index.json)
+          if ((${#files[@]})); then
+            gh release upload "${UPDATER_MANIFESTS_TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            echo "No per-platform manifests generated; skipping upload."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
   build-nextflow-runner:
     name: Build and push nextflow-runner image
     needs:
@@ -882,6 +1187,7 @@ jobs:
     needs:
       - prepare-version
       - build
+      - create-updater-json
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     permissions:
@@ -895,7 +1201,43 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Preflight version bump branch
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF:-}" != refs/heads/* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Not on a branch ref ($GITHUB_REF); skipping commit-version."
+            exit 0
+          fi
+
+          branch="${GITHUB_REF_NAME}"
+
+          git fetch origin "$branch"
+
+          remote_version="$(
+            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+          )"
+
+          if [[ -z "${remote_version:-}" ]]; then
+            echo "❌ Unable to determine remote version from origin/$branch:src-tauri/Cargo.toml" >&2
+            exit 1
+          fi
+
+          echo "Remote version on origin/$branch: $remote_version"
+          echo "Release version for this run: $RELEASE_VERSION"
+
+          if [[ "$remote_version" != "$RELEASE_VERSION" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Remote branch version differs; skipping commit-version to avoid downgrading or racing bumps."
+            exit 0
+          fi
+
+          git checkout -B "$branch" "origin/$branch"
+
       - name: Sync version metadata
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -934,7 +1276,40 @@ jobs:
           PY
 
       - name: Commit and push changes
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           if git diff --quiet; then
             echo "No version changes to commit."
             exit 0
@@ -944,10 +1319,43 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
           git commit -m "chore: release ${RELEASE_TAG}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${RELEASE_VERSION}"
 
       - name: Bump to next version
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           python - <<'PY'
           import json
           import re
@@ -992,5 +1400,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+          if git diff --quiet; then
+            echo "No bump changes to commit."
+            exit 0
+          fi
+
           git commit -m "chore: bump version to ${NEXT_VERSION}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${NEXT_VERSION}"

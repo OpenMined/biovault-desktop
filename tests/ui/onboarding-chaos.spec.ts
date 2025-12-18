@@ -16,7 +16,7 @@ test.describe('Onboarding chaos smoke @chaos @onboarding', () => {
 
 		page.on('dialog', (dlg) => dlg.accept().catch(() => {}))
 
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 
 		const step1 = page.locator('#onboarding-step-1')
 		await expect(step1).toBeVisible({ timeout: 10_000 })

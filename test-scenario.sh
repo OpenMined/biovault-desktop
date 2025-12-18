@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+# GitHub Actions Windows runners often provide `python` but not `python3` on PATH.
+# Normalize so the rest of the script can keep using `python3`.
+if ! command -v python3 >/dev/null 2>&1; then
+	if command -v python >/dev/null 2>&1; then
+		python3() { python "$@"; }
+	else
+		echo "Missing required tool: python3 (or python)" >&2
+		exit 1
+	fi
+fi
+
 # Scenario runner for multi-app UI+backend tests (e.g., messaging between two clients)
 # This mirrors dev-two.sh but drives Playwright specs.
 
@@ -20,7 +31,8 @@ TIMING="${TIMING:-1}"
 declare -a FORWARD_ARGS=()
 declare -a NOTEBOOK_CONFIGS=()
 SCENARIO=""
-WARM_CACHE=1  # Default to warming cache (skips quickly if already warm)
+WARM_CACHE=0  # Set after arg parsing (scenario-dependent default)
+WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 
@@ -34,11 +46,11 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
-  --pipelines-solo     Run pipeline UI test only (single client)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
                        Accepts multiple notebook config files (runs all in sequence)
+  --pipelines-solo     Run pipeline test with synthetic data (single client)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
@@ -47,11 +59,17 @@ Other Options:
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
+Environment Variables (pipelines-solo):
+  FORCE_REGEN_SYNTHETIC=1   Force regenerate synthetic data even if it exists
+  CLEANUP_SYNTHETIC=1       Remove synthetic data after test (default: keep for reuse)
+
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
   ./test-scenario.sh --messaging        # Run just messaging scenario
   ./test-scenario.sh --interactive      # Run all with visible browser
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
+  ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
+  FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
 EOF
 }
 
@@ -77,10 +95,6 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="messaging-core"
 			shift
 			;;
-		--pipelines-solo)
-			SCENARIO="pipelines-solo"
-			shift
-			;;
 		--jupyter)
 			SCENARIO="jupyter"
 			shift
@@ -94,6 +108,10 @@ while [[ $# -gt 0 ]]; do
 				NOTEBOOK_CONFIGS+=("$1")
 				shift
 			done
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
+			shift
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
@@ -112,10 +130,12 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--warm-cache)
 			WARM_CACHE=1
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--no-warm-cache)
 			WARM_CACHE=0
+			WARM_CACHE_SET=1
 			shift
 			;;
 		--help|-h)
@@ -144,6 +164,14 @@ done
 if [[ -z "$SCENARIO" ]]; then
 	# Support legacy SCENARIO env var
 	SCENARIO="${SCENARIO:-all}"
+fi
+
+# Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
+if [[ "$WARM_CACHE_SET" == "0" ]]; then
+	case "$SCENARIO" in
+		jupyter|jupyter-collab) WARM_CACHE=1 ;;
+		*) WARM_CACHE=0 ;;
+	esac
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
@@ -236,27 +264,23 @@ kill_workspace_jupyter() {
 	fi
 }
 
-# Kill any dangling Jupyter processes from previous runs
-kill_workspace_jupyter
-
-# Find an available UI port
-while lsof -Pi ":${UI_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; do
-	if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
-		echo "No available port between ${UI_PORT:-8082} and ${MAX_PORT}" >&2
-		exit 1
-	fi
-	UI_PORT=$((UI_PORT + 1))
-	info "UI port in use, trying ${UI_PORT}"
-done
-
-export UI_PORT
-export UI_BASE_URL="http://localhost:${UI_PORT}"
-export DISABLE_UPDATER=1
-export DEV_WS_BRIDGE=1
-
 is_port_free() {
 	local port="$1"
-	! lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1
+	python3 - "$port" >/dev/null 2>&1 <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(0)
+PY
 }
 
 pick_free_port() {
@@ -286,6 +310,54 @@ pick_ws_port_base() {
 	done
 	return 1
 }
+
+detect_platform() {
+	local os arch
+	case "$(uname -s)" in
+		Darwin) os="macos" ;;
+		Linux) os="linux" ;;
+		MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows" ;;
+		*) os="unknown" ;;
+	esac
+
+	arch="$(uname -m)"
+	case "$arch" in
+		x86_64|amd64) arch="x86_64" ;;
+		arm64|aarch64) arch="aarch64" ;;
+		*) arch="unknown" ;;
+	esac
+
+	echo "$os" "$arch"
+}
+
+find_bundled_uv() {
+	local os arch
+	read -r os arch <<<"$(detect_platform)"
+	local candidate="$ROOT_DIR/src-tauri/resources/bundled/uv/${os}-${arch}/uv"
+	if [[ -x "$candidate" ]]; then
+		echo "$candidate"
+		return 0
+	fi
+	return 1
+}
+
+# Kill any dangling Jupyter processes from previous runs
+kill_workspace_jupyter
+
+# Find an available UI port
+while ! is_port_free "$UI_PORT"; do
+	if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
+		echo "No available port between ${UI_PORT:-8082} and ${MAX_PORT}" >&2
+		exit 1
+	fi
+	UI_PORT=$((UI_PORT + 1))
+	info "UI port in use, trying ${UI_PORT}"
+done
+
+export UI_PORT
+export UI_BASE_URL="http://localhost:${UI_PORT}"
+export DISABLE_UPDATER=1
+export DEV_WS_BRIDGE=1
 
 WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" || true)"
 if [[ -z "$WS_PORT_BASE" ]]; then
@@ -331,7 +403,23 @@ wait_for_listener() {
 	local waited_ms=0
 	local max_ms=$((timeout_s * 1000))
 	while [[ "$waited_ms" -lt "$max_ms" ]]; do
-		if lsof -Pi ":${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+		if python3 - "$port" >/dev/null 2>&1 <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(0.2)
+try:
+    s.connect(("127.0.0.1", port))
+except Exception:
+    sys.exit(1)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(0)
+PY
+		then
 			return 0
 		fi
 		if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
@@ -496,31 +584,153 @@ preflight_peer_sync() {
 	}
 }
 
-start_static_server() {
-	# Start static server
-	timer_push "Static server start"
-	info "Starting static server on port ${UI_PORT}"
-	pushd "$ROOT_DIR/src" >/dev/null
-	python3 -m http.server "$UI_PORT" >>"$LOG_FILE" 2>&1 &
+start_static_server_python() {
+	# Try to start Python http.server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Python http.server on port $port"
+	pushd "$src_dir" >/dev/null
+	python3 -m http.server --bind 127.0.0.1 "$port" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 	popd >/dev/null
-	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
-		echo "Static server failed to start on :${UI_PORT}" >&2
-		exit 1
-	}
+
+	sleep 0.5
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Python server process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "python http.server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Python http.server is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
+start_static_server_node() {
+	# Try to start a minimal Node.js static server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Node.js static server on port $port"
+	node "$ROOT_DIR/tests/static-server.js" "$src_dir" "$port" "127.0.0.1" >>"$LOG_FILE" 2>&1 &
+	SERVER_PID=$!
+
+	sleep 1
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Node static server process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "node static server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Node static server is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
+start_static_server() {
+	# Start static server with fallback options
+	timer_push "Static server start"
+	info "[DEBUG] start_static_server: initial UI_PORT=$UI_PORT"
+
+	# Re-check port availability (may have changed since early check due to devstack startup)
+	local port_check_count=0
+	while ! is_port_free "$UI_PORT"; do
+		if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
+			echo "No available port between 8082 and ${MAX_PORT}" >&2
+			exit 1
+		fi
+		info "UI port ${UI_PORT} now in use, trying $((UI_PORT + 1))"
+		UI_PORT=$((UI_PORT + 1))
+		port_check_count=$((port_check_count + 1))
+	done
+	if [[ "$port_check_count" -gt 0 ]]; then
+		info "[DEBUG] Had to try $port_check_count additional ports, settled on $UI_PORT"
+	fi
+	export UI_PORT
+	export UI_BASE_URL="http://localhost:${UI_PORT}"
+
+	info "Starting static server on port ${UI_PORT}"
+	local src_dir="$ROOT_DIR/src"
+	local timeout_s="${STATIC_SERVER_WAIT_S:-10}"
+
+	# Try Python first (faster, no dependencies)
+	if start_static_server_python "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Python) is ready on port $UI_PORT"
+		return 0
+	fi
+
+	info "[DEBUG] Python http.server failed, trying Node.js fallback..."
+
+	# Try Node.js serve as fallback
+	if start_static_server_node "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Node) is ready on port $UI_PORT"
+		return 0
+	fi
+
+	# Both failed
+	echo "[DEBUG] All static server methods failed on port ${UI_PORT}" >&2
+	echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
+	lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
+	if [[ -f "$LOG_FILE" ]]; then
+		echo "---- recent unified log (${LOG_FILE}) ----" >&2
+		tail -n 120 "$LOG_FILE" >&2 || true
+		echo "---- end recent unified log ----" >&2
+	fi
 	timer_pop
+	exit 1
 }
 
 assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
+		# Binary doesn't exist - auto-build if AUTO_REBUILD_TAURI is enabled (default)
+		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
+		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
+			info "Tauri binary not found, building (cd src-tauri && cargo build --release)..."
+			timer_push "Cargo build (tauri release - initial)"
+			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			timer_pop
+			# Verify build succeeded
+			if [[ ! -x "$TAURI_BINARY" ]]; then
+				echo "Build failed: binary still not found at $TAURI_BINARY" >&2
+				exit 1
+			fi
+			info "[DEBUG] Tauri binary built successfully"
+			return 0
+		fi
+		echo "[DEBUG] ERROR: Tauri binary not found or not executable at $TAURI_BINARY" >&2
+		echo "[DEBUG] Listing release directory:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
+		echo "[DEBUG] Checking if target directory exists:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
 		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
 		exit 1
 	fi
+	info "[DEBUG] Tauri binary found and executable"
 }
 
 assert_tauri_binary_fresh() {
 	# Guardrail: stale binaries silently break harness assumptions (e.g. env var parsing).
+	info "[DEBUG] assert_tauri_binary_fresh: checking if binary is up to date"
+	info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+	info "[DEBUG] Binary mtime: $(stat -f '%Sm' "$TAURI_BINARY" 2>/dev/null || stat -c '%y' "$TAURI_BINARY" 2>/dev/null || echo 'unknown')"
+
 	local newer=""
 	local candidates=(
 		"$ROOT_DIR/src-tauri/src"
@@ -537,19 +747,22 @@ assert_tauri_binary_fresh() {
 		if [[ -f "$p" ]]; then
 			if [[ "$p" -nt "$TAURI_BINARY" ]]; then
 				newer="$p"
+				info "[DEBUG] Found newer file: $p"
 				break
 			fi
 		elif [[ -d "$p" ]]; then
 			newer="$(find "$p" -type f -newer "$TAURI_BINARY" -print -quit 2>/dev/null || true)"
 			if [[ -n "$newer" ]]; then
+				info "[DEBUG] Found newer file in directory $p: $newer"
 				break
 			fi
 		fi
 	done
 	if [[ -n "$newer" ]]; then
-		echo "Tauri binary is older than sources (e.g. $newer)." >&2
+		echo "[DEBUG] Tauri binary is older than sources (e.g. $newer)." >&2
 		# Default to rebuilding; set AUTO_REBUILD_TAURI=0/false/no to disable.
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
+		info "[DEBUG] AUTO_REBUILD_TAURI=$auto_rebuild"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
 			echo "Rebuilding (cd src-tauri && cargo build --release)..." >&2
 			timer_push "Cargo build (tauri release)"
@@ -557,10 +770,12 @@ assert_tauri_binary_fresh() {
 			timer_pop
 			return 0
 		fi
+		echo "[DEBUG] ERROR: Rebuild required but AUTO_REBUILD_TAURI=$auto_rebuild prevents it" >&2
 		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
 		echo "Tip: set AUTO_REBUILD_TAURI=1 to auto-rebuild." >&2
 		exit 1
 	fi
+	info "[DEBUG] Tauri binary is up to date (no newer source files found)"
 }
 
 launch_instance() {
@@ -600,6 +815,10 @@ launch_instance() {
 			if [[ -x "$bundled_uv" ]]; then
 				export BIOVAULT_BUNDLED_UV="$bundled_uv"
 			fi
+		fi
+		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
+		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
+			export JUPYTER_SKIP_BROWSER=1
 		fi
 		echo "[scenario] $email: starting bv-desktop (BIOVAULT_HOME=$BIOVAULT_HOME DEV_WS_BRIDGE_PORT=$DEV_WS_BRIDGE_PORT)" >&2
 		exec "$TAURI_BINARY"
@@ -678,19 +897,26 @@ warm_jupyter_cache() {
 
 	mkdir -p "$cache_dir"
 
-	# Use uv to create venv and install packages
+# Use uv to create venv and install packages
 	local uv_bin="${UV_BIN:-}"
 	if [[ -z "$uv_bin" ]]; then
-		uv_bin="$(command -v uv 2>/dev/null || true)"
+		uv_bin="$(command -v uv 2>/dev/null || echo "")"
 	fi
 	if [[ -z "$uv_bin" ]]; then
-		local bundled_uv="${BIOVAULT_BUNDLED_UV:-$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv}"
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-}"
+		if [[ -z "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv 2>/dev/null || echo "")"
+		fi
 		if [[ -x "$bundled_uv" ]]; then
 			uv_bin="$bundled_uv"
 		fi
 	fi
 	if [[ -z "$uv_bin" ]]; then
-		info "uv not found in PATH, skipping cache warmup"
+		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		info "uv not found (PATH or bundled), skipping cache warmup"
+		timer_pop
 		return 0
 	fi
 
@@ -747,76 +973,140 @@ info "Running Playwright scenario: $SCENARIO"
 PLAYWRIGHT_OPTS=()
 [[ "$TRACE" == "1" ]] && PLAYWRIGHT_OPTS+=(--trace on)
 
+append_array_items() {
+	# Usage: append_array_items <dst_array_name> <src_array_name>
+	# Appends elements from src into dst without expanding empty arrays (bash 3.2 + set -u safe).
+	local dst_name="$1"
+	local src_name="$2"
+	eval "local n=\${#${src_name}[@]}"
+	local i=0
+	while [[ "$i" -lt "$n" ]]; do
+		eval "${dst_name}+=(\"\${${src_name}[$i]}\")"
+		i=$((i + 1))
+	done
+}
+
+run_ui_grep() {
+	# Usage: run_ui_grep "<grep>" [EXTRA_ENV_KV...]
+	# EXTRA_ENV_KV are strings like "INCLUDE_JUPYTER_TESTS=1" that will be passed via `env`.
+	local grep_pat="$1"
+	shift
+
+	local -a cmd=(env "UI_PORT=$UI_PORT" "UI_BASE_URL=$UI_BASE_URL")
+	while [[ $# -gt 0 ]]; do
+		cmd+=("$1")
+		shift
+	done
+
+	cmd+=(bun run test:ui --grep "$grep_pat")
+	append_array_items cmd PLAYWRIGHT_OPTS
+	append_array_items cmd FORWARD_ARGS
+
+	"${cmd[@]}" | tee -a "$LOG_FILE"
+}
+
+sanitize_playwright_args() {
+	# If a user accidentally passes an empty --grep-invert pattern, Playwright will exclude everything
+	# (empty regex matches all) and report "No tests found". Drop that footgun.
+	local -a cleaned=()
+	local i=0
+	while [[ "$i" -lt "${#FORWARD_ARGS[@]}" ]]; do
+		local arg="${FORWARD_ARGS[$i]}"
+		if [[ "$arg" == "--grep-invert" ]]; then
+			local next="${FORWARD_ARGS[$((i + 1))]:-}"
+			# Treat a missing value (end of args) or an immediately-following flag as empty.
+			if [[ -z "${next:-}" || "$next" == --* ]]; then
+				info "Warning: dropping empty --grep-invert argument"
+				i=$((i + 2))
+				continue
+			fi
+		fi
+		cleaned+=("$arg")
+		i=$((i + 1))
+	done
+
+	# Bash 3.2 + `set -u` treats `${arr[@]}` expansion of empty arrays as an error.
+	# Rebuild FORWARD_ARGS element-by-element to avoid that footgun.
+	FORWARD_ARGS=()
+	local j=0
+	local n="${#cleaned[@]}"
+	while [[ "$j" -lt "$n" ]]; do
+		FORWARD_ARGS+=("${cleaned[$j]}")
+		j=$((j + 1))
+	done
+}
+sanitize_playwright_args
+
 # Warm cache if requested (useful for first-time Jupyter tests)
 if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
 fi
 
 	case "$SCENARIO" in
-		onboarding)
-			start_static_server
-			start_tauri_instances
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		messaging)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys), then wait for peer sync, then messaging
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# After onboarding, keys exist - wait for them to sync via the network
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
+			onboarding)
+				start_static_server
+				start_tauri_instances
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				;;
+			messaging)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys), then wait for peer sync, then messaging
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# After onboarding, keys exist - wait for them to sync via the network
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
+				preflight_peer_sync
+				timer_pop
+				timer_push "Playwright: @messages-two"
+				run_ui_grep "@messages-two"
+				timer_pop
+				;;
+			messaging-sessions)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# After onboarding, keys exist - wait for them to sync via the network
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
+				preflight_peer_sync
+				timer_pop
+				# Run comprehensive messaging + sessions test
+				timer_push "Playwright: @messaging-sessions"
+				run_ui_grep "@messaging-sessions"
+				timer_pop
+				;;
+			all)
+				start_static_server
+				start_tauri_instances
+				# Run onboarding first (creates keys)
+				info "=== Phase 1: Onboarding ==="
+				timer_push "Playwright: @onboarding-two"
+				run_ui_grep "@onboarding-two"
+				timer_pop
+				# Wait for peer sync
+				timer_push "Peer key sync"
+				info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
 			timer_pop
-			timer_push "Playwright: @messages-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		messaging-sessions)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# After onboarding, keys exist - wait for them to sync via the network
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
-			preflight_peer_sync
-			timer_pop
-			# Run comprehensive messaging + sessions test
-			timer_push "Playwright: @messaging-sessions"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
-		all)
-			start_static_server
-			start_tauri_instances
-			# Run onboarding first (creates keys)
-			info "=== Phase 1: Onboarding ==="
-			timer_push "Playwright: @onboarding-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@onboarding-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# Wait for peer sync
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
-			preflight_peer_sync
-			timer_pop
-			# Run basic messaging test
-			info "=== Phase 2: Basic Messaging ==="
-			timer_push "Playwright: @messages-two"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messages-two" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			# Run comprehensive messaging + sessions test
-			info "=== Phase 3: Messaging + Sessions ==="
-			timer_push "Playwright: @messaging-sessions"
-			UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-sessions" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-			timer_pop
-			;;
+				# Run basic messaging test
+				info "=== Phase 2: Basic Messaging ==="
+				timer_push "Playwright: @messages-two"
+				run_ui_grep "@messages-two"
+				timer_pop
+				# Run comprehensive messaging + sessions test
+				info "=== Phase 3: Messaging + Sessions ==="
+				timer_push "Playwright: @messaging-sessions"
+				run_ui_grep "@messaging-sessions"
+				timer_pop
+				;;
 	messaging-core)
 		# Reuse the biovault YAML scenario logic (CLI-level) without restarting devstack.
 		SCENARIO_SRC="$BIOVAULT_DIR/tests/scenarios/messaging-core.yaml"
@@ -864,54 +1154,108 @@ PY
 
 		info "Opening UI for inspection"
 		timer_push "Playwright: @messaging-core-ui"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@messaging-core-ui" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-		timer_pop
-		;;
-	pipelines-solo)
-		start_static_server
-		# Pipelines tests only need a single client; keep it lightweight.
-		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
-		if [[ -x "$TAURI_BINARY" ]]; then
-			assert_tauri_binary_fresh
-			timer_push "Tauri instance start (single)"
-			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
-			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
-			info "Waiting for WS bridge..."
-			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
-			timer_pop
-			export USE_REAL_INVOKE=true
-			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
-		else
-			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
-			export USE_REAL_INVOKE=false
-		fi
-		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
-
-		# Run pipelines UI flow (APOL1 pipeline e2e)
-		timer_push "Playwright: pipelines-solo"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/apol1-pipeline.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		run_ui_grep "@messaging-core-ui"
 		timer_pop
 		;;
 	jupyter)
+		info "[DEBUG] Starting jupyter scenario"
+		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
+		info "[DEBUG] WS_PORT_BASE=$WS_PORT_BASE"
+		info "[DEBUG] CLIENT1_HOME=$CLIENT1_HOME"
+
 		start_static_server
+		info "[DEBUG] Static server started successfully on port $UI_PORT"
+
 		# Jupyter test only needs one client
+		info "[DEBUG] Checking Tauri binary..."
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+		if [[ -f "$TAURI_BINARY" ]]; then
+			info "[DEBUG] Tauri binary exists, size: $(ls -lh "$TAURI_BINARY" | awk '{print $5}')"
+			info "[DEBUG] Tauri binary permissions: $(ls -l "$TAURI_BINARY" | awk '{print $1}')"
+		else
+			info "[DEBUG] ERROR: Tauri binary does not exist at $TAURI_BINARY"
+			ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -20 || echo "Cannot list release dir"
+		fi
+
 		assert_tauri_binary_present
+		info "[DEBUG] assert_tauri_binary_present passed"
+
 		assert_tauri_binary_fresh
+		info "[DEBUG] assert_tauri_binary_fresh passed"
+
 		timer_push "Tauri instance start (single)"
 		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		info "[DEBUG] CLIENT1_EMAIL=$CLIENT1_EMAIL"
+		info "[DEBUG] CLIENT1_CFG=$CLIENT1_CFG"
+
 		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
-		info "Waiting for WS bridge..."
-		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		info "[DEBUG] Tauri launched with PID=$TAURI1_PID"
+
+		# Check if process is still running after launch
+		sleep 1
+		if kill -0 "$TAURI1_PID" 2>/dev/null; then
+			info "[DEBUG] Tauri process $TAURI1_PID is running"
+		else
+			info "[DEBUG] ERROR: Tauri process $TAURI1_PID died immediately after launch!"
+			info "[DEBUG] Dumping last 50 lines of unified log:"
+			tail -50 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file"
+		fi
+
+		info "Waiting for WS bridge on port $WS_PORT_BASE..."
+		wait_ws "$WS_PORT_BASE" "$TAURI1_PID" "$CLIENT1_EMAIL" || {
+			echo "[DEBUG] WS bridge failed to come up on port $WS_PORT_BASE" >&2
+			echo "[DEBUG] Checking if Tauri process is still alive..." >&2
+			if kill -0 "$TAURI1_PID" 2>/dev/null; then
+				echo "[DEBUG] Tauri process $TAURI1_PID is still running" >&2
+			else
+				echo "[DEBUG] Tauri process $TAURI1_PID has exited" >&2
+			fi
+			echo "[DEBUG] Checking what's listening on nearby ports:" >&2
+			lsof -i :$((WS_PORT_BASE - 1)):$((WS_PORT_BASE + 2)) 2>&1 || echo "lsof unavailable" >&2
+			echo "[DEBUG] Last 100 lines of unified log:" >&2
+			tail -100 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file" >&2
+			exit 1
+		}
 		timer_pop
+		info "[DEBUG] WS bridge ready on port $WS_PORT_BASE"
+
 		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 		export USE_REAL_INVOKE=true
 		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 
 		# Run Jupyter session test (includes onboarding in the test itself)
 		info "=== Jupyter Session Test ==="
+
+		# Verify static server is still alive before running Playwright
+		info "[DEBUG] Verifying static server before Playwright..."
+		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+			info "[DEBUG] ERROR: Static server process $SERVER_PID has died!"
+			info "[DEBUG] Checking what's on port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+			info "[DEBUG] Last 50 lines of log:"
+			tail -50 "$LOG_FILE" 2>/dev/null || echo "Cannot read log"
+			exit 1
+		fi
+		if ! curl -s -o /dev/null -w "" --connect-timeout 2 "http://127.0.0.1:$UI_PORT/" 2>/dev/null; then
+			info "[DEBUG] WARNING: Static server process alive but not responding to HTTP"
+			info "[DEBUG] Checking lsof for port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+		else
+			info "[DEBUG] Static server responding OK on port $UI_PORT"
+		fi
+
+		info "[DEBUG] About to run Playwright with grep @jupyter-session"
 		timer_push "Playwright: @jupyter-session"
-		INCLUDE_JUPYTER_TESTS=1 UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-session" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"
+		PLAYWRIGHT_EXIT=$?
 		timer_pop
+		info "[DEBUG] Playwright exited with code $PLAYWRIGHT_EXIT"
+		if [[ "$PLAYWRIGHT_EXIT" -ne 0 ]]; then
+			info "[DEBUG] Playwright test failed, dumping last 200 lines of log:"
+			tail -200 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file"
+		fi
+		exit $PLAYWRIGHT_EXIT
 		;;
 	jupyter-collab)
 		start_static_server
@@ -925,19 +1269,129 @@ PY
 		if [[ ${#NOTEBOOK_CONFIGS[@]} -gt 0 ]]; then
 			config_num=1
 			total_configs=${#NOTEBOOK_CONFIGS[@]}
-			for config in "${NOTEBOOK_CONFIGS[@]}"; do
-				info "=== Jupyter Test $config_num/$total_configs: $config ==="
-				timer_push "Playwright: @jupyter-collab ($config)"
-				INCLUDE_JUPYTER_TESTS=1 NOTEBOOK_CONFIG="$config" INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-				timer_pop
-				((config_num++))
-			done
+				for config in "${NOTEBOOK_CONFIGS[@]}"; do
+					info "=== Jupyter Test $config_num/$total_configs: $config ==="
+					timer_push "Playwright: @jupyter-collab ($config)"
+					run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "NOTEBOOK_CONFIG=$config" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+					timer_pop
+					((config_num++))
+				done
 		else
-			# No configs provided, run with defaults
-			info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
-			timer_push "Playwright: @jupyter-collab"
-			INCLUDE_JUPYTER_TESTS=1 INTERACTIVE_MODE="$INTERACTIVE_MODE" UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui --grep "@jupyter-collab" ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+				# No configs provided, run with defaults
+				info "=== Phase 2: Jupyter Collaboration Test (default notebooks) ==="
+				timer_push "Playwright: @jupyter-collab"
+				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+				timer_pop
+			fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-solo)
+		start_static_server
+		# Pipelines test only needs one client
+		assert_tauri_binary_present
+		assert_tauri_binary_fresh
+
+		# Synthetic data configuration
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+		CLEANUP_SYNTHETIC="${CLEANUP_SYNTHETIC:-0}"
+
+		# Check if synthetic data already exists and is valid
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			# Generate synthetic data using biosynth (bvs)
+			info "=== Generating synthetic genotype data ==="
+			timer_push "Synthetic data generation"
+
+			# Clean up any partial/old data
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			# Check if bvs (biosynth) is available
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			# Generate synthetic genotype files with HERC2 variant overlay
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (no overlay file found)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
 			timer_pop
+
+			# Verify generated count
+			SYNTH_FILE_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" | wc -l | tr -d ' ')
+			info "Generated $SYNTH_FILE_COUNT synthetic genotype files"
+		else
+			info "=== Reusing existing synthetic data ($EXISTING_COUNT files) ==="
+			SYNTH_FILE_COUNT=$EXISTING_COUNT
+		fi
+
+		# Start Tauri instance with intentionally bad JAVA_HOME to test bundled Java override
+		timer_push "Tauri instance start (single)"
+		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		# Set bad JAVA_HOME and JAVA_CMD to verify bundled Java is used
+		export JAVA_HOME="/tmp/bad-java-home"
+		export JAVA_CMD="/tmp/bad-java-cmd"
+		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+		info "Waiting for WS bridge..."
+		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		timer_pop
+
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		export USE_REAL_INVOKE=true
+		export SYNTHETIC_DATA_DIR
+		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "Synthetic data dir: $SYNTHETIC_DATA_DIR"
+
+		# Run pipelines solo test
+		info "=== Pipelines Solo Test ==="
+		timer_push "Playwright: @pipelines-solo"
+		run_ui_grep "@pipelines-solo" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# Cleanup synthetic data (optional, disabled by default for caching)
+		if [[ "$CLEANUP_SYNTHETIC" == "1" ]] && [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			info "Cleaning up synthetic data..."
+			rm -rf "$SYNTHETIC_DATA_DIR"
+		else
+			info "Keeping synthetic data for reuse (set CLEANUP_SYNTHETIC=1 to remove)"
 		fi
 
 		# In wait mode, keep everything running

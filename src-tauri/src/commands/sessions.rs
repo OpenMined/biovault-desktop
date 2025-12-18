@@ -956,9 +956,10 @@ pub fn open_session_folder(session_id: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(&session.session_path)
-            .spawn()
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(&session.session_path);
+        super::hide_console_window(&mut cmd);
+        cmd.spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
