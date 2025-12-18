@@ -66,7 +66,7 @@ jobs:
             run_prefix: "xvfb-run -a"
           - scenario: pipelines-solo
             platform: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
 

@@ -100,6 +100,7 @@ fn best_effort_stop_syftbox_for_reset() {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
+        use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut cmd = Command::new("taskkill");
         cmd.args(["/IM", "syftbox.exe", "/T", "/F"]);
