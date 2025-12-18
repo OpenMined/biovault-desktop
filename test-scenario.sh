@@ -737,14 +737,19 @@ assert_tauri_binary_present() {
 			timer_push "Cargo build (tauri release - initial)"
 			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
 			timer_pop
+			# Verify build succeeded
 			if [[ ! -x "$TAURI_BINARY" ]]; then
-				echo "[DEBUG] ERROR: Build completed but binary still not found at $TAURI_BINARY" >&2
+				echo "Build failed: binary still not found at $TAURI_BINARY" >&2
 				exit 1
 			fi
 			info "[DEBUG] Tauri binary built successfully"
 			return 0
 		fi
-		echo "[DEBUG] ERROR: Tauri binary not found and AUTO_REBUILD_TAURI=$auto_rebuild prevents building" >&2
+		echo "[DEBUG] ERROR: Tauri binary not found or not executable at $TAURI_BINARY" >&2
+		echo "[DEBUG] Listing release directory:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
+		echo "[DEBUG] Checking if target directory exists:" >&2
+		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
 		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
 		exit 1
 	fi
@@ -835,6 +840,13 @@ launch_instance() {
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
+		fi
 		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
 		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
 			export JUPYTER_SKIP_BROWSER=1
@@ -926,10 +938,13 @@ warm_jupyter_cache() {
 	# Use uv to create venv and install packages
 	local uv_bin="${UV_BIN:-}"
 	if [[ -z "$uv_bin" ]]; then
-		uv_bin="$(command -v uv 2>/dev/null || true)"
+		uv_bin="$(command -v uv 2>/dev/null || echo "")"
 	fi
 	if [[ -z "$uv_bin" ]]; then
-		local bundled_uv="${BIOVAULT_BUNDLED_UV:-$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv}"
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-}"
+		if [[ -z "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv 2>/dev/null || echo "")"
+		fi
 		if [[ -x "$bundled_uv" ]]; then
 			uv_bin="$bundled_uv"
 		fi
