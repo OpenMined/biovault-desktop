@@ -46,6 +46,7 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --pipelines-solo     Run pipeline UI test only (single client)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -93,6 +94,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-core)
 			SCENARIO="messaging-core"
+			shift
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
 			shift
 			;;
 		--jupyter)
@@ -923,7 +928,7 @@ warm_jupyter_cache() {
 
 	mkdir -p "$cache_dir"
 
-# Use uv to create venv and install packages
+	# Use uv to create venv and install packages
 	local uv_bin="${UV_BIN:-}"
 	if [[ -z "$uv_bin" ]]; then
 		uv_bin="$(command -v uv 2>/dev/null || echo "")"
