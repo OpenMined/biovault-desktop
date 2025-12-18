@@ -458,7 +458,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "biovault"
-version = "0.1.121"
+version = "0.1.125"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -663,7 +663,7 @@ checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "bv-desktop"
-version = "0.1.28"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "biovault",

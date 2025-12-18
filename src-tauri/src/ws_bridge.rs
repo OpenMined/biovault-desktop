@@ -767,6 +767,214 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        // --------------------------------------------------------------------
+        // Import / scan commands
+        // --------------------------------------------------------------------
+        "get_extensions" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result =
+                crate::commands::files::scan::get_extensions(path).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "search_txt_files" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let extensions: Vec<String> = serde_json::from_value(
+                args.get("extensions")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse extensions: {}", e))?;
+            let result = crate::commands::files::scan::search_txt_files(path, extensions)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "suggest_patterns" => {
+            let files: Vec<String> = serde_json::from_value(
+                args.get("files")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse files: {}", e))?;
+            let result =
+                crate::commands::files::scan::suggest_patterns(files).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "extract_ids_for_files" => {
+            let files: Vec<String> = serde_json::from_value(
+                args.get("files")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse files: {}", e))?;
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            let result = crate::commands::files::scan::extract_ids_for_files(files, pattern)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "detect_file_types" => {
+            let files: Vec<String> = serde_json::from_value(
+                args.get("files")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse files: {}", e))?;
+            let result = crate::commands::files::analyze::detect_file_types(state.clone(), files)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_files_pending" => {
+            let file_metadata: std::collections::HashMap<
+                String,
+                crate::commands::files::FileMetadata,
+            > = serde_json::from_value(
+                args.get("fileMetadata")
+                    .cloned()
+                    .ok_or_else(|| "Missing fileMetadata".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse fileMetadata: {}", e))?;
+            let result = crate::commands::files::import::import_files_pending(state, file_metadata)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        // --------------------------------------------------------------------
+        // Pipeline commands
+        // --------------------------------------------------------------------
+        "get_runs_base_dir" => {
+            let result = crate::commands::pipelines::get_runs_base_dir()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "check_docker_running" => {
+            let result = crate::commands::dependencies::check_docker_running()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_pipeline_runs" => {
+            let result = crate::commands::pipelines::get_pipeline_runs(state.clone())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_pipeline_with_deps" => {
+            let url: String = serde_json::from_value(
+                args.get("url")
+                    .cloned()
+                    .ok_or_else(|| "Missing url".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse url: {}", e))?;
+            let name_override: Option<String> = args
+                .get("nameOverride")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let overwrite: bool = args
+                .get("overwrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let result =
+                crate::commands::projects::import_pipeline_with_deps(url, name_override, overwrite)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "run_pipeline" => {
+            // Get the main window for event emission
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| "Main window not found".to_string())?;
+
+            let pipeline_id: i64 = serde_json::from_value(
+                args.get("pipelineId")
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelineId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineId: {}", e))?;
+
+            let input_overrides: std::collections::HashMap<String, String> =
+                serde_json::from_value(
+                    args.get("inputOverrides")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({})),
+                )
+                .map_err(|e| format!("Failed to parse inputOverrides: {}", e))?;
+
+            let results_dir: Option<String> = args
+                .get("resultsDir")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            let selection: Option<crate::commands::pipelines::PipelineRunSelection> = args
+                .get("selection")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            let result = crate::commands::pipelines::run_pipeline(
+                state.clone(),
+                window,
+                pipeline_id,
+                input_overrides,
+                results_dir,
+                selection,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        // --------------------------------------------------------------------
+        // Folder/file operations
+        // --------------------------------------------------------------------
+        "open_folder" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::settings::open_folder(path)?;
+            Ok(serde_json::Value::Null)
+        }
+        // --------------------------------------------------------------------
+        // SQL commands
+        // --------------------------------------------------------------------
+        "sql_get_table_schema" => {
+            let table: String = serde_json::from_value(
+                args.get("table")
+                    .cloned()
+                    .ok_or_else(|| "Missing table".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse table: {}", e))?;
+            let result = crate::commands::sql::sql_get_table_schema(state.clone(), table)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sql_run_query" => {
+            let query: String = serde_json::from_value(
+                args.get("query")
+                    .cloned()
+                    .ok_or_else(|| "Missing query".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse query: {}", e))?;
+            let options: Option<crate::commands::sql::SqlQueryOptions> = args
+                .get("options")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::sql::sql_run_query(state.clone(), query, options)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))

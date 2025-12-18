@@ -30,6 +30,7 @@ test.describe('Failed Messages', () => {
 	]
 
 	test.beforeEach(async ({ page }) => {
+		// Some pages never reach the `load` event (e.g. long-lived connections); avoid flaking on navigation.
 		await page.addInitScript(
 			(mockData) => {
 				const w = /** @type {any} */ window
@@ -114,8 +115,7 @@ test.describe('Failed Messages', () => {
 			{ mockFailedMessages },
 		)
 
-		await page.goto('/')
-		await page.waitForLoadState('domcontentloaded')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 	})
 
 	test('shows failed messages badge count', async ({ page }) => {

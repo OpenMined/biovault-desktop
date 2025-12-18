@@ -41,3 +41,7 @@ sandbox/*
 
 # Generated notebooks (build artifacts)
 templates-dev/
+
+# Test data (synthetic genotypes)
+test-data/
+data/*

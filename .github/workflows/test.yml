@@ -184,6 +184,8 @@ jobs:
       - name: Build app
         run: |
           set -o pipefail
+          chmod +x scripts/materialize-templates.sh
+          ./scripts/materialize-templates.sh
           tauri build --target x86_64-unknown-linux-gnu --verbose 2>&1 | tee tauri-linux.log
 
       - name: Verify artifacts
@@ -248,6 +250,17 @@ jobs:
 
       - name: Install Playwright browsers
         run: bunx --bun playwright install --with-deps chromium
+
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Build syftbox client
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
 
       - name: Build Tauri binary (release)
         run: |
@@ -354,6 +367,111 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jupyter-test-results
+          path: |
+            logs/
+            test-results/
+            artifacts/
+
+  pipelines-tests:
+    name: Pipeline execution tests
+    runs-on: macos-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.1.38'
+
+      - name: Setup Go (syftbox)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx --bun playwright install --with-deps chromium
+
+      - name: Install biosynth CLI (pre-built binary)
+        run: |
+          # Download pre-built binary for macOS ARM64
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
+          sudo mv bvs /usr/local/bin/
+          bvs --version
+
+      - name: Cache genostats database
+        id: cache-genostats
+        uses: actions/cache@v4
+        with:
+          path: data/genostats.sqlite
+          key: genostats-v1
+
+      - name: Download genostats database
+        if: steps.cache-genostats.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data
+          # Download from biovault-desktop releases (needs to be uploaded there)
+          curl -fsSL -o data/genostats.sqlite \
+            "https://github.com/OpenMined/biovault-desktop/releases/download/data-v1/genostats.sqlite" || {
+            echo "Warning: Could not download genostats.sqlite - synthetic data generation may fail"
+          }
+
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Build syftbox client
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
+      - name: Build Tauri binary (release)
+        run: |
+          cd src-tauri
+          cargo build --release
+
+      - name: Run pipeline solo tests
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          CLEANUP_SYNTHETIC: "1"
+        run: ./test-scenario.sh --pipelines-solo
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipelines-test-results
           path: |
             logs/
             test-results/

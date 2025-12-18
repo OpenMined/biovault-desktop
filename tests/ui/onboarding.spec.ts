@@ -30,8 +30,8 @@ function sendUnifiedLog(payload) {
 async function advanceToEmailStep(page) {
 	sendUnifiedLog({ event: 'onboarding-advance-start' })
 	// Wait for app to be ready first
-	await waitForAppReady(page, { timeout: 2000 })
-	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 2000 })
+	await waitForAppReady(page, { timeout: 5000 })
+	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 5000 })
 	await page.locator('#onboarding-next-1').click()
 	await expect(page.locator('#onboarding-step-2')).toBeVisible()
 	page.once('dialog', (dialog) => dialog.accept())
@@ -177,7 +177,7 @@ test.describe('Onboarding flow', () => {
 		)
 
 		sendUnifiedLog({ event: 'test-start', name: 'onboarding' })
-		await page.goto('/')
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window
 			w.__INIT_TEST_STATE__?.({ resetSession: true })

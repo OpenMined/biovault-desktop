@@ -49,9 +49,7 @@ export function createUpdaterModule() {
 		try {
 			console.log('[Updater] Starting update check...')
 			console.log('[Updater] Current version:', window.__TAURI_INTERNALS__)
-			console.log(
-				'[Updater] Configured endpoint: https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json',
-			)
+			console.log('[Updater] Configured endpoints: updater-manifests + releases/latest')
 
 			// Use Tauri v2 APIs from window.__TAURI__
 			const { check: checkForUpdate } = window.__TAURI__.updater
