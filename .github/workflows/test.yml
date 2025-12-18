@@ -133,6 +133,22 @@ jobs:
             build-essential \
             pkg-config
 
+      - name: Install Docker (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install docker colima
+          colima start --cpu 2 --memory 4 --disk 10
+          # Wait for Docker to be ready
+          for i in {1..30}; do
+            if docker info >/dev/null 2>&1; then
+              echo "Docker is ready"
+              break
+            fi
+            echo "Waiting for Docker... ($i/30)"
+            sleep 2
+          done
+          docker info
+
       - name: Install npm dependencies
         run: npm ci
 
