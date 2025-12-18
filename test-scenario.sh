@@ -346,6 +346,32 @@ find_bundled_uv() {
 	return 1
 }
 
+ensure_playwright_browsers() {
+	# If browsers are already cached, skip install. Otherwise install Chromium (with deps on Linux).
+	local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+	if compgen -G "$browsers_path/chromium*" >/dev/null 2>&1; then
+		return 0
+	}
+
+	info "Playwright browsers not found; installing Chromium..."
+	if command -v bun >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			bunx --bun playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			bunx --bun playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	elif command -v npx >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			npx playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			npx playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	else
+		echo "Neither bun nor npx available to install Playwright browsers" >&2
+		return 1
+	fi
+}
+
 # Kill any dangling Jupyter processes from previous runs
 kill_workspace_jupyter
 
@@ -1038,6 +1064,9 @@ sanitize_playwright_args
 if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
 fi
+
+# Ensure Playwright browsers are present (CI may skip install or have empty cache)
+ensure_playwright_browsers
 
 	case "$SCENARIO" in
 			onboarding)
