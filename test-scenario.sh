@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+# GitHub Actions Windows runners often provide `python` but not `python3` on PATH.
+# Normalize so the rest of the script can keep using `python3`.
+if ! command -v python3 >/dev/null 2>&1; then
+	if command -v python >/dev/null 2>&1; then
+		python3() { python "$@"; }
+	else
+		echo "Missing required tool: python3 (or python)" >&2
+		exit 1
+	fi
+fi
+
 # Scenario runner for multi-app UI+backend tests (e.g., messaging between two clients)
 # This mirrors dev-two.sh but drives Playwright specs.
 
