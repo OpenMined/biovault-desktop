@@ -603,10 +603,7 @@ fn try_bind_or_ephemeral(
                         pids
                     );
                     for pid in &pids {
-                        let _ = Command::new("kill")
-                            .arg("-TERM")
-                            .arg(pid.to_string())
-                            .status();
+                        terminate_pid_best_effort(*pid);
                     }
                     // Wait a bit for processes to die
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -637,8 +634,83 @@ fn try_bind_or_ephemeral(
     None
 }
 
+fn terminate_pid_best_effort(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        super::hide_console_window(&mut cmd);
+        let _ = cmd.status();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = Command::new("kill");
+        cmd.arg("-TERM").arg(pid.to_string());
+        super::hide_console_window(&mut cmd);
+        let _ = cmd.status();
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn find_our_syftbox_pids(config_path: Option<&Path>, data_dir: Option<&Path>) -> Option<Vec<u32>> {
-    let output = Command::new("ps").arg("aux").output().ok()?;
+    let config_str = config_path.map(|p| p.to_string_lossy().to_string());
+    let data_dir_str = data_dir.map(|p| p.to_string_lossy().to_string());
+
+    if config_str.is_none() && data_dir_str.is_none() {
+        return None;
+    }
+
+    let ps_script = r#"Get-CimInstance Win32_Process -Filter "Name='syftbox.exe'" | ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }"#;
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", ps_script]);
+    super::hide_console_window(&mut cmd);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut pids = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.splitn(2, '|');
+        let pid_str = parts.next().unwrap_or("").trim();
+        let cmdline = parts.next().unwrap_or("").trim();
+        if pid_str.is_empty() {
+            continue;
+        }
+
+        let matches = config_str
+            .as_ref()
+            .map(|s| !cmdline.is_empty() && cmdline.contains(s.as_str()))
+            .unwrap_or(false)
+            || data_dir_str
+                .as_ref()
+                .map(|s| !cmdline.is_empty() && cmdline.contains(s.as_str()))
+                .unwrap_or(false);
+
+        if !matches {
+            continue;
+        }
+
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            pids.push(pid);
+        }
+    }
+
+    Some(pids)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn find_our_syftbox_pids(config_path: Option<&Path>, data_dir: Option<&Path>) -> Option<Vec<u32>> {
+    let mut cmd = Command::new("ps");
+    cmd.arg("aux");
+    super::hide_console_window(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -833,29 +905,41 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
 }
 
 fn find_syftbox_pids(runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig) -> Vec<u32> {
-    let mut pids = Vec::new();
-    if let Ok(output) = Command::new("ps").arg("aux").output() {
-        if output.status.success() {
-            let ps_output = String::from_utf8_lossy(&output.stdout);
-            let config_str = runtime.config_path.to_string_lossy();
-            let data_dir_str = runtime.data_dir.to_string_lossy();
-            for line in ps_output.lines() {
-                if !line.contains("syftbox") {
-                    continue;
-                }
-                if !(line.contains(&*config_str) || line.contains(&*data_dir_str)) {
-                    continue;
-                }
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 1 {
-                    if let Ok(pid) = parts[1].parse::<u32>() {
-                        pids.push(pid);
+    #[cfg(target_os = "windows")]
+    {
+        return find_our_syftbox_pids(Some(&runtime.config_path), Some(&runtime.data_dir))
+            .unwrap_or_default();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut pids = Vec::new();
+        let mut cmd = Command::new("ps");
+        cmd.arg("aux");
+        super::hide_console_window(&mut cmd);
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                let ps_output = String::from_utf8_lossy(&output.stdout);
+                let config_str = runtime.config_path.to_string_lossy();
+                let data_dir_str = runtime.data_dir.to_string_lossy();
+                for line in ps_output.lines() {
+                    if !line.contains("syftbox") {
+                        continue;
+                    }
+                    if !(line.contains(&*config_str) || line.contains(&*data_dir_str)) {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() > 1 {
+                        if let Ok(pid) = parts[1].parse::<u32>() {
+                            pids.push(pid);
+                        }
                     }
                 }
             }
         }
+        pids
     }
-    pids
 }
 
 #[tauri::command]
@@ -873,9 +957,10 @@ pub fn open_url(url: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", &url])
-            .spawn()
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "start", "", &url]);
+        super::hide_console_window(&mut cmd);
+        cmd.spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
     }
 
