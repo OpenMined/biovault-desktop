@@ -735,7 +735,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 
 		if (canLaunch2 && !jupyterUrl2) {
 			const link2 = page2.locator('#session-jupyter-link')
-			const visible2 = await link2.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT }).catch(() => false)
+			const visible2 = await link2
+				.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
+				.catch(() => false)
 			if (visible2) {
 				jupyterUrl2 = await link2.getAttribute('href')
 			}
