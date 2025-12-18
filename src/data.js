@@ -1424,6 +1424,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		// Navigate to pipelines and pre-select this dataset
 		if (window.__pipelinesModule?.openRunPipelineWithDataset) {
+			// openRunPipelineWithDataset handles navigation internally
 			window.__pipelinesModule.openRunPipelineWithDataset({
 				name: datasetName,
 				dataType: selectedType,
@@ -1438,9 +1439,6 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					dataType: selectedType,
 				}),
 			)
-		}
-
-		if (window.navigateTo) {
 			window.navigateTo('pipelines')
 		}
 	}
@@ -2535,6 +2533,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					let localPath
 					if (pubUrl) {
 						localPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: pubUrl })
+						// Get parent directory (remove filename from path)
+						const lastSlash = localPath.lastIndexOf('/')
+						if (lastSlash > 0) {
+							localPath = localPath.substring(0, lastSlash)
+						}
 					} else {
 						localPath = await invoke('get_datasets_folder_path')
 					}

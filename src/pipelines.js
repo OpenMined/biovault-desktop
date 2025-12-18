@@ -257,8 +257,15 @@ export function createPipelinesModule({
 			try {
 				const parsedUrls = JSON.parse(urlsRaw)
 				if (Array.isArray(parsedUrls)) {
+					// Accept syft://, file://, and absolute paths (starting with /)
 					urls = [
-						...new Set(parsedUrls.filter((u) => typeof u === 'string' && u.startsWith('syft://'))),
+						...new Set(
+							parsedUrls.filter(
+								(u) =>
+									typeof u === 'string' &&
+									(u.startsWith('syft://') || u.startsWith('file://') || u.startsWith('/')),
+							),
+						),
 					]
 				}
 			} catch (error) {
@@ -5839,16 +5846,24 @@ steps:${
 	// Open run pipeline modal with dataset context
 	// Called from Data tab when user clicks "Run Pipeline" on a dataset card
 	async function openRunPipelineWithDataset({ name, dataType, entry }) {
-		console.log('openRunPipelineWithDataset:', { name, dataType, entry })
+		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry })
 
 		try {
 			// Get dataset from database to extract file IDs
 			// list_datasets_with_assets returns: [{ dataset: {..., name}, assets: [...] }, ...]
-			const datasetsWithAssets = await invoke('get_datasets')
+			console.log('Fetching datasets with list_datasets_with_assets...')
+			const datasetsWithAssets = await invoke('list_datasets_with_assets')
+			console.log('Got datasets:', datasetsWithAssets)
 			const datasetEntry = datasetsWithAssets.find((d) => d.dataset?.name === name)
+			console.log('Found dataset entry:', datasetEntry)
 
 			if (!datasetEntry) {
-				console.error('Dataset not found:', name)
+				console.error(
+					'Dataset not found:',
+					name,
+					'Available:',
+					datasetsWithAssets.map((d) => d.dataset?.name),
+				)
 				if (dialog?.message) {
 					await dialog.message(`Dataset "${name}" not found`, { title: 'Error', type: 'error' })
 				}
@@ -5857,6 +5872,7 @@ steps:${
 
 			// Assets are included in the response
 			const assets = datasetEntry.assets || []
+			console.log('Dataset assets:', assets)
 			if (assets.length === 0) {
 				console.error('Dataset has no assets:', name)
 				if (dialog?.message) {
@@ -5956,13 +5972,25 @@ steps:${
 
 			// Wait for navigation and then show modal
 			setTimeout(async () => {
-				await loadPipelines()
-				await showDataRunModalDirect()
+				try {
+					await loadPipelines()
+					await showDataRunModalDirect()
+				} catch (err) {
+					console.error('Error showing data run modal:', err)
+					const errMsg = err?.message || String(err) || 'Unknown error'
+					if (dialog?.message) {
+						await dialog.message('Failed to show pipeline selection: ' + errMsg, {
+							title: 'Error',
+							type: 'error',
+						})
+					}
+				}
 			}, 100)
 		} catch (error) {
 			console.error('Error in openRunPipelineWithDataset:', error)
+			const errorMsg = error?.message || String(error) || 'Unknown error'
 			if (dialog?.message) {
-				await dialog.message('Failed to prepare pipeline run: ' + error.message, {
+				await dialog.message('Failed to prepare pipeline run: ' + errorMsg, {
 					title: 'Error',
 					type: 'error',
 				})

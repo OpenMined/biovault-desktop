@@ -200,166 +200,28 @@ jobs:
           cd biovault/syftbox-sdk/python
           maturin build --release
 
-      - name: Run Jupyter session tests
+      - name: Run Jupyter collab scenario
+        if: matrix.scenario == 'jupyter-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           JUPYTER_PAUSE_TIME: "5000"
-        run: ./test-scenario.sh --jupyter
-
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: jupyter-test-results
-          path: |
-            logs/
-            test-results/
-            artifacts/
-
-  pipelines-tests:
-    name: Pipeline execution tests
-    runs-on: macos-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.38'
-
-      - name: Setup Go (syftbox)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Install bun dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: bunx --bun playwright install --with-deps chromium
-
-      - name: Install biosynth CLI (pre-built binary)
-        run: |
-          # Download pre-built binary for macOS ARM64 (macos-latest is Apple Silicon)
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
-          sudo mv bvs /usr/local/bin/
-          bvs --version
-
-      - name: Cache genostats database
-        if: matrix.scenario == 'pipelines-solo'
-        id: cache-genostats
-        uses: actions/cache@v4
-        with:
-          path: data/genostats.sqlite
-          key: genostats-v1
-
-      - name: Download genostats database
-        if: matrix.scenario == 'pipelines-solo' && steps.cache-genostats.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data
-          curl -fsSL -o data/genostats.sqlite \
-            "https://github.com/OpenMined/biovault-desktop/releases/download/data-v1/genostats.sqlite" || {
-            echo "Warning: Could not download genostats.sqlite"
-          }
-
-      - name: Install biosynth CLI (Linux)
-        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
-        run: |
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
-          sudo mv bvs /usr/local/bin/
-          bvs --version
-
-      - name: Install biosynth CLI (macOS)
-        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
-        run: |
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-apple-darwin.tar.gz | tar -xz
-          sudo mv bvs /usr/local/bin/
-          bvs --version
-
-      - name: Setup Java (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Install uv (Windows)
-        if: runner.os == 'Windows'
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: '0.9.14'
-
-      - name: Set bundled paths (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          UV_PATH="$(which uv)"
-          echo "BIOVAULT_BUNDLED_UV=$UV_PATH" >> "$GITHUB_ENV"
-          echo "BIOVAULT_BUNDLED_JAVA=$JAVA_HOME/bin/java.exe" >> "$GITHUB_ENV"
-
-      - name: Fetch bundled dependencies
-        run: |
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
-
-      - name: Build syftbox client
-        run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
-
-      # Build step commented out - test-scenario.sh handles build with AUTO_REBUILD_TAURI=1
-      # - name: Build Tauri binary (release)
-      #   run: |
-      #     (cd src-tauri && cargo build --release)
-      #     chmod +x "${{ matrix.tauri_binary }}" 2>/dev/null || true
-
-      - name: Run Jupyter collab scenario
-        if: matrix.scenario == 'jupyter-collab'
-        env:
-          TAURI_BINARY: ${{ github.workspace }}/${{ matrix.tauri_binary }}
-        run: |
-          ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines solo scenario
         if: matrix.scenario == 'pipelines-solo'
         env:
-          TAURI_BINARY: ${{ github.workspace }}/${{ matrix.tauri_binary }}
-        run: |
-          ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: scenario-test-results-${{ matrix.platform }}
+          name: ${{ matrix.scenario }}-${{ matrix.platform }}-test-results
           path: |
             logs/
             test-results/
             artifacts/
+
