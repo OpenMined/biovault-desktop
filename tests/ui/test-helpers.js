@@ -27,7 +27,15 @@ export async function waitForAppReady(page, options) {
 
 				if (onboardingActive) return true
 
-				return window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true
+				const onboardingCheckComplete =
+					// Older builds won't define this; treat as "complete" to preserve behavior.
+					window.__ONBOARDING_CHECK_COMPLETE__ === undefined || window.__ONBOARDING_CHECK_COMPLETE__ === true
+
+				return (
+					onboardingCheckComplete &&
+					window.__NAV_HANDLERS_READY__ === true &&
+					window.__EVENT_HANDLERS_READY__ === true
+				)
 			},
 			{ timeout: remaining() },
 		)
@@ -48,6 +56,10 @@ export async function waitForAppReady(page, options) {
 					url: window.location.href,
 					navReady: window.__NAV_HANDLERS_READY__ === true,
 					eventReady: window.__EVENT_HANDLERS_READY__ === true,
+					onboardingCheckComplete:
+						window.__ONBOARDING_CHECK_COMPLETE__ === undefined
+							? null
+							: window.__ONBOARDING_CHECK_COMPLETE__ === true,
 					onboardingActive: onboarding ? onboarding.classList.contains('active') : false,
 					onboardingDisplay,
 					appLayoutDisplay,
