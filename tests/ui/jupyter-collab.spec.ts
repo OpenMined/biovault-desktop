@@ -733,7 +733,7 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		}
 		console.log(`Client1 Jupyter URL: ${jupyterUrl1}`)
 
-		if (canLaunch2 && !jupyterUrl2) {
+		if (jupyterStatus2 && !jupyterUrl2) {
 			const link2 = page2.locator('#session-jupyter-link')
 			const visible2 = await link2
 				.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
