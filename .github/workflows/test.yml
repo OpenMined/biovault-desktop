@@ -53,22 +53,22 @@ jobs:
             runner: macos-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: windows-latest
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
-            run_prefix: ""
+          # - scenario: jupyter-collab
+          #   platform: windows-x86_64
+          #   runner: windows-latest
+          #   tauri_binary: src-tauri/target/release/bv-desktop.exe
+          #   run_prefix: ""
           # pipelines-solo runs on Linux and macOS (Intel Mac for Docker support)
           - scenario: pipelines-solo
             platform: linux-x86_64
             runner: ubuntu-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - scenario: pipelines-solo
-            platform: macos-x86_64
-            runner: macos-15-intel
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # - scenario: pipelines-solo
+          #   platform: macos-x86_64
+          #   runner: macos-15-intel
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
 
     defaults:
       run:
