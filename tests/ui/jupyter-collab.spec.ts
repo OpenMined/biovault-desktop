@@ -33,6 +33,7 @@ const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fr
 const UI_TIMEOUT = 10_000
 const JUPYTER_STARTUP_TIMEOUT = 240_000 // Allow more time for venv install + server start
 const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
+const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync (CI can be slow)
 const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
 	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
 	: 250
@@ -114,7 +115,7 @@ async function getSyftboxDataDir(backend: Backend): Promise<string> {
 async function waitForPeerDid(
 	dataDir: string,
 	peerEmail: string,
-	timeoutMs = 60_000,
+	timeoutMs = PEER_DID_TIMEOUT_MS,
 	backend?: Backend,
 ): Promise<string> {
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
@@ -381,8 +382,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			const dataDir1 = await getSyftboxDataDir(backend1)
 			const dataDir2 = await getSyftboxDataDir(backend2)
 			await Promise.all([
-				waitForPeerDid(dataDir1, email2, 180_000, backend1),
-				waitForPeerDid(dataDir2, email1, 180_000, backend2),
+				waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1),
+				waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2),
 			])
 			onboardingTimer.stop()
 		}
