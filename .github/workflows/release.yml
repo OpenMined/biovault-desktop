@@ -1217,7 +1217,7 @@ jobs:
           git fetch origin "$branch"
 
           remote_version="$(
-            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
           )"
 
           if [[ -z "${remote_version:-}" ]]; then
@@ -1299,7 +1299,7 @@ jobs:
 
             git fetch origin "$branch" || true
             remote_version="$(
-              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
             )"
 
             if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
@@ -1345,7 +1345,7 @@ jobs:
 
             git fetch origin "$branch" || true
             remote_version="$(
-              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
             )"
 
             if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
