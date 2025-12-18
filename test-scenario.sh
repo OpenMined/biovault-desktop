@@ -1203,9 +1203,9 @@ PY
 		fi
 		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 
-		# Run pipelines UI flow (APOL1 pipeline e2e)
+		# Run pipelines UI flow (dataset + pipeline e2e)
 		timer_push "Playwright: pipelines-solo"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/apol1-pipeline.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		timer_pop
 		;;
 	jupyter)
