@@ -210,26 +210,16 @@ jobs:
 
       - name: Install uv (Windows)
         if: runner.os == 'Windows'
-        env:
-          UV_VERSION: '0.9.14'
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: '0.9.14'
+
+      - name: Set bundled paths (Windows)
+        if: runner.os == 'Windows'
         run: |
-          set -euo pipefail
-          BIN_DIR="$RUNNER_TEMP/bv-bin"
-          mkdir -p "$BIN_DIR"
-
-          # uv (used by Jupyter sessions)
-          curl -fsSL -o "$BIN_DIR/uv.zip" \
-            "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
-          tar -xf "$BIN_DIR/uv.zip" -C "$BIN_DIR"
-          UV_EXE="$(find "$BIN_DIR" -type f -iname 'uv.exe' -print -quit)"
-          test -n "${UV_EXE:-}"
-          cp -f "$UV_EXE" "$BIN_DIR/uv.exe"
-
-          echo "$BIN_DIR" >> "$GITHUB_PATH"
-          {
-            echo "BIOVAULT_BUNDLED_UV=$BIN_DIR/uv.exe"
-            echo "BIOVAULT_BUNDLED_JAVA=$JAVA_HOME/bin/java.exe"
-          } >> "$GITHUB_ENV"
+          UV_PATH="$(which uv)"
+          echo "BIOVAULT_BUNDLED_UV=$UV_PATH" >> "$GITHUB_ENV"
+          echo "BIOVAULT_BUNDLED_JAVA=$JAVA_HOME/bin/java.exe" >> "$GITHUB_ENV"
 
       - name: Fetch bundled dependencies
         run: |
