@@ -123,6 +123,23 @@ try {
             foreach ($installer in $installers) {
                 Write-Host "   $($installer.FullName)" -ForegroundColor White
             }
+
+            $latestInstaller = $installers | Select-Object -First 1
+            if ($latestInstaller) {
+                try {
+                    $desktopDir = [Environment]::GetFolderPath("Desktop")
+                    if (-not $desktopDir) { throw "Could not resolve Desktop directory." }
+
+                    $desktopInstaller = Join-Path $desktopDir "BioVault_latest_x64-setup.exe"
+                    Copy-Item -LiteralPath $latestInstaller.FullName -Destination $desktopInstaller -Force -ErrorAction Stop
+                    Write-Host ""
+                    Write-Host "Copied latest installer to Desktop:" -ForegroundColor Cyan
+                    Write-Host "   $desktopInstaller" -ForegroundColor White
+                } catch {
+                    Write-Host ""
+                    Write-Host "Warning: could not copy installer to Desktop: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
         }
 
         # Also show MSI if it exists
