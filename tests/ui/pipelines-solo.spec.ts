@@ -381,8 +381,21 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		await expect(modalRunBtn).toBeEnabled()
 		await modalRunBtn.click()
 
+		// Handle Docker warning modal if Docker is not available (common in CI)
+		// Wait a bit for either the modal to close (Docker available) or warning to appear (no Docker)
+		const dockerWarningModal = page.locator('#docker-warning-modal')
+		try {
+			await dockerWarningModal.waitFor({ state: 'visible', timeout: 3000 })
+			console.log('Docker warning modal appeared, clicking "Run anyway"...')
+			const runAnywayBtn = dockerWarningModal.locator('#docker-run-anyway')
+			await runAnywayBtn.click()
+		} catch {
+			// Docker warning didn't appear - Docker is running, modal should close automatically
+			console.log('Docker is available, proceeding...')
+		}
+
 		// Wait for modal to close
-		await expect(dataRunModal).toBeHidden({ timeout: 10_000 })
+		await expect(dataRunModal).toBeHidden({ timeout: 30_000 })
 		console.log('Pipeline run started!')
 
 		// ============================================================

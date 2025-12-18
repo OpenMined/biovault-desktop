@@ -1147,6 +1147,7 @@ pub fn run() {
             get_syftbox_diagnostics,
             syftbox_queue_status,
             syftbox_upload_action,
+            trigger_syftbox_sync,
             open_path_in_file_manager,
             test_notification,
             test_notification_applescript,
