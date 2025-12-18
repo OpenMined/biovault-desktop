@@ -1181,8 +1181,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     fn best_effort_stop_syftbox_for_exit() {
-        if crate::stop_syftbox_client().is_ok() {
-        }
+        if crate::stop_syftbox_client().is_ok() {}
 
         #[cfg(target_os = "windows")]
         {

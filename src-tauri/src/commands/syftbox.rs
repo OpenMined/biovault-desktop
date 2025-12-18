@@ -1559,10 +1559,7 @@ pub async fn trigger_syftbox_sync() -> Result<(), String> {
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let url = format!(
-        "{}/v1/sync/now",
-        cfg.client_url.trim_end_matches('/')
-    );
+    let url = format!("{}/v1/sync/now", cfg.client_url.trim_end_matches('/'));
 
     let resp = client
         .post(&url)
