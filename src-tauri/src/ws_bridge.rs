@@ -475,6 +475,12 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "trigger_syftbox_sync" => {
+            crate::trigger_syftbox_sync()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "mark_thread_as_read" => {
             let thread_id: String = serde_json::from_value(
                 args.get("threadId")
