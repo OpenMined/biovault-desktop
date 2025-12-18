@@ -117,24 +117,124 @@ async function waitForPeerDid(
 	peerEmail: string,
 	timeoutMs = PEER_DID_TIMEOUT_MS,
 	backend?: Backend,
+	clientLabel?: string,
 ): Promise<string> {
+	const label = clientLabel || 'client'
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
 	const didPath = path.join(datasitesRoot, peerEmail, 'public', 'crypto', 'did.json')
+	const peerDatasiteDir = path.join(datasitesRoot, peerEmail)
+	const peerPublicDir = path.join(peerDatasiteDir, 'public')
+	const peerCryptoDir = path.join(peerPublicDir, 'crypto')
+
+	// Also check our own DID to verify onboarding worked
+	const ownEmail = path.basename(dataDir)
+	const ownDidPath = path.join(dataDir, 'public', 'crypto', 'did.json')
+
+	console.log(`[${label}] waitForPeerDid started:`)
+	console.log(`[${label}]   dataDir: ${dataDir}`)
+	console.log(`[${label}]   datasitesRoot: ${datasitesRoot}`)
+	console.log(`[${label}]   looking for peer: ${peerEmail}`)
+	console.log(`[${label}]   target didPath: ${didPath}`)
+	console.log(`[${label}]   own DID path: ${ownDidPath}`)
+	console.log(`[${label}]   own DID exists: ${fs.existsSync(ownDidPath)}`)
+
 	const start = Date.now()
 	let syncTriggerCount = 0
+	let lastLogTime = 0
+
 	while (Date.now() - start < timeoutMs) {
-		if (fs.existsSync(didPath)) return didPath
+		const elapsed = Math.round((Date.now() - start) / 1000)
+
+		if (fs.existsSync(didPath)) {
+			console.log(`[${label}] ✓ Found peer DID after ${elapsed}s: ${didPath}`)
+			return didPath
+		}
+
+		// Log progress every 10 seconds
+		if (elapsed - lastLogTime >= 10) {
+			lastLogTime = elapsed
+			console.log(`[${label}] [${elapsed}s] Still waiting for peer DID...`)
+
+			// Check what directories exist in the sync path
+			const datasitesExists = fs.existsSync(datasitesRoot)
+			const peerDatasiteExists = fs.existsSync(peerDatasiteDir)
+			const peerPublicExists = fs.existsSync(peerPublicDir)
+			const peerCryptoExists = fs.existsSync(peerCryptoDir)
+
+			console.log(`[${label}]   datasites/ exists: ${datasitesExists}`)
+			if (datasitesExists) {
+				try {
+					const datasitesDirs = fs.readdirSync(datasitesRoot)
+					console.log(`[${label}]   datasites/ contents: [${datasitesDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   datasites/ read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   datasites/${peerEmail}/ exists: ${peerDatasiteExists}`)
+			if (peerDatasiteExists) {
+				try {
+					const peerDirs = fs.readdirSync(peerDatasiteDir)
+					console.log(`[${label}]   datasites/${peerEmail}/ contents: [${peerDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   peer dir read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   .../public/ exists: ${peerPublicExists}`)
+			if (peerPublicExists) {
+				try {
+					const publicDirs = fs.readdirSync(peerPublicDir)
+					console.log(`[${label}]   .../public/ contents: [${publicDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   public dir read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   .../crypto/ exists: ${peerCryptoExists}`)
+			if (peerCryptoExists) {
+				try {
+					const cryptoFiles = fs.readdirSync(peerCryptoDir)
+					console.log(`[${label}]   .../crypto/ contents: [${cryptoFiles.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   crypto dir read error: ${e}`)
+				}
+			}
+		}
+
 		// Trigger sync every ~2 seconds to accelerate DID file discovery
 		if (backend && syncTriggerCount % 4 === 0) {
 			try {
 				await backend.invoke('trigger_syftbox_sync')
-			} catch {
-				// Ignore sync trigger errors - client may not be ready yet
+				if (syncTriggerCount === 0 || elapsed - lastLogTime < 2) {
+					console.log(`[${label}] [${elapsed}s] Triggered sync #${syncTriggerCount / 4 + 1}`)
+				}
+			} catch (err) {
+				console.log(`[${label}] [${elapsed}s] Sync trigger failed: ${err}`)
 			}
 		}
 		syncTriggerCount++
 		await new Promise((r) => setTimeout(r, 500))
 	}
+
+	// Final diagnostic dump before throwing
+	const elapsed = Math.round((Date.now() - start) / 1000)
+	console.log(`[${label}] TIMEOUT after ${elapsed}s - final state:`)
+	console.log(`[${label}]   own DID exists: ${fs.existsSync(ownDidPath)}`)
+	console.log(`[${label}]   datasites/ exists: ${fs.existsSync(datasitesRoot)}`)
+	if (fs.existsSync(datasitesRoot)) {
+		try {
+			const dirs = fs.readdirSync(datasitesRoot)
+			console.log(`[${label}]   datasites/ contents: [${dirs.join(', ')}]`)
+			for (const dir of dirs) {
+				const subdir = path.join(datasitesRoot, dir)
+				if (fs.statSync(subdir).isDirectory()) {
+					const subdirContents = fs.readdirSync(subdir)
+					console.log(`[${label}]     ${dir}/: [${subdirContents.join(', ')}]`)
+				}
+			}
+		} catch (e) {
+			console.log(`[${label}]   final dump error: ${e}`)
+		}
+	}
+
 	throw new Error(`Timed out waiting for peer DID file: ${didPath}`)
 }
 
@@ -381,9 +481,11 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('Waiting for peer DID files to sync...')
 			const dataDir1 = await getSyftboxDataDir(backend1)
 			const dataDir2 = await getSyftboxDataDir(backend2)
+			console.log(`Client1 dataDir: ${dataDir1}`)
+			console.log(`Client2 dataDir: ${dataDir2}`)
 			await Promise.all([
-				waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1),
-				waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2),
+				waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1, 'client1'),
+				waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2, 'client2'),
 			])
 			onboardingTimer.stop()
 		}
