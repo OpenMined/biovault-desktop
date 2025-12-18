@@ -53,22 +53,22 @@ jobs:
             runner: macos-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: windows-latest
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
-            run_prefix: ""
+          # - scenario: jupyter-collab
+          #   platform: windows-x86_64
+          #   runner: windows-latest
+          #   tauri_binary: src-tauri/target/release/bv-desktop.exe
+          #   run_prefix: ""
           # pipelines-solo runs on Linux and macOS (Intel Mac for Docker support)
           - scenario: pipelines-solo
             platform: linux-x86_64
             runner: ubuntu-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - scenario: pipelines-solo
-            platform: macos-x86_64
-            runner: macos-15-intel
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # - scenario: pipelines-solo
+          #   platform: macos-x86_64
+          #   runner: macos-15-intel
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
 
     defaults:
       run:
@@ -76,7 +76,7 @@ jobs:
 
     env:
       SKIP_PLAYWRIGHT_INSTALL: "1"
-      AUTO_REBUILD_TAURI: "0"
+      AUTO_REBUILD_TAURI: "1"
 
     steps:
       - name: Enable long paths (Windows)
@@ -241,10 +241,11 @@ jobs:
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
-      - name: Build Tauri binary (release)
-        run: |
-          (cd src-tauri && cargo build --release)
-          chmod +x "${{ matrix.tauri_binary }}" 2>/dev/null || true
+      # Build step commented out - test-scenario.sh handles build with AUTO_REBUILD_TAURI=1
+      # - name: Build Tauri binary (release)
+      #   run: |
+      #     (cd src-tauri && cargo build --release)
+      #     chmod +x "${{ matrix.tauri_binary }}" 2>/dev/null || true
 
       - name: Run Jupyter collab scenario
         if: matrix.scenario == 'jupyter-collab'

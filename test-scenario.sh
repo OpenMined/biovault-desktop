@@ -46,6 +46,7 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --pipelines-solo     Run pipeline UI test only (single client)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -93,6 +94,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-core)
 			SCENARIO="messaging-core"
+			shift
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
 			shift
 			;;
 		--jupyter)
@@ -339,6 +344,32 @@ find_bundled_uv() {
 		return 0
 	fi
 	return 1
+}
+
+ensure_playwright_browsers() {
+	# If browsers are already cached, skip install. Otherwise install Chromium (with deps on Linux).
+	local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+	if compgen -G "$browsers_path/chromium*" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	info "Playwright browsers not found; installing Chromium..."
+	if command -v bun >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			bunx --bun playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			bunx --bun playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	elif command -v npx >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			npx playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			npx playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	else
+		echo "Neither bun nor npx available to install Playwright browsers" >&2
+		return 1
+	fi
 }
 
 # Kill any dangling Jupyter processes from previous runs
@@ -809,6 +840,13 @@ launch_instance() {
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
+		fi
 		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
 		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
 			export JUPYTER_SKIP_BROWSER=1
@@ -891,8 +929,19 @@ warm_jupyter_cache() {
 	mkdir -p "$cache_dir"
 
 	# Use uv to create venv and install packages
-	local uv_bin
-	uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	local uv_bin="${UV_BIN:-}"
+	if [[ -z "$uv_bin" ]]; then
+		uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-}"
+		if [[ -z "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv 2>/dev/null || echo "")"
+		fi
+		if [[ -x "$bundled_uv" ]]; then
+			uv_bin="$bundled_uv"
+		fi
+	fi
 	if [[ -z "$uv_bin" ]]; then
 		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
 	fi
@@ -1024,6 +1073,9 @@ if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
 fi
 
+# Ensure Playwright browsers are present (CI may skip install or have empty cache)
+ensure_playwright_browsers
+
 	case "$SCENARIO" in
 			onboarding)
 				start_static_server
@@ -1134,11 +1186,11 @@ PY
 		start_static_server
 		start_tauri_instances
 
-			info "Opening UI for inspection"
-			timer_push "Playwright: @messaging-core-ui"
-			run_ui_grep "@messaging-core-ui"
-			timer_pop
-			;;
+		info "Opening UI for inspection"
+		timer_push "Playwright: @messaging-core-ui"
+		run_ui_grep "@messaging-core-ui"
+		timer_pop
+		;;
 	jupyter)
 		info "[DEBUG] Starting jupyter scenario"
 		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
