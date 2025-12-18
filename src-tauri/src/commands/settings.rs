@@ -10,7 +10,6 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
@@ -47,10 +46,7 @@ fn remove_dir_all_with_retry(path: &std::path::Path, max_wait: Duration) -> io::
     }
 
     Err(last_err.unwrap_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "Timed out while removing directory",
-        )
+        io::Error::other("Timed out while removing directory")
     }))
 }
 
@@ -58,7 +54,10 @@ fn stop_all_jupyter_best_effort() {
     let db = match BioVaultDb::new() {
         Ok(db) => db,
         Err(err) => {
-            crate::desktop_log!("⚠️ RESET: Failed to open BioVault DB to stop Jupyter: {}", err);
+            crate::desktop_log!(
+                "⚠️ RESET: Failed to open BioVault DB to stop Jupyter: {}",
+                err
+            );
             return;
         }
     };
@@ -91,7 +90,7 @@ fn stop_all_jupyter_best_effort() {
 
 fn best_effort_stop_syftbox_for_reset() {
     match crate::stop_syftbox_client() {
-        Ok(_) => return,
+        Ok(_) => (),
         Err(err) => {
             crate::desktop_log!("⚠️ RESET: Failed to stop SyftBox via API: {}", err);
         }
