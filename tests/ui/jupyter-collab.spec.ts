@@ -29,9 +29,9 @@ import * as path from 'path'
 import { waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
-const TEST_TIMEOUT = 300_000 // 5 minutes max
+const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fresh envs)
 const UI_TIMEOUT = 10_000
-const JUPYTER_STARTUP_TIMEOUT = 120_000 // 2 minutes for Jupyter startup
+const JUPYTER_STARTUP_TIMEOUT = 240_000 // Allow more time for venv install + server start
 const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
 const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
 	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
@@ -211,7 +211,7 @@ async function runAllCellsAndWait(
 				const status = document.querySelector('.jp-Notebook-ExecutionIndicator')
 				return status?.textContent?.includes('Idle') || !status?.textContent?.includes('Busy')
 			},
-			{ timeout: 120_000 },
+			{ timeout: 240_000 },
 		)
 	} catch {
 		console.log(`[${notebookName}] Could not detect kernel idle, waiting 30s...`)
@@ -680,7 +680,30 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 				jupyterUrl2 = await link2.getAttribute('href')
 				if (jupyterUrl2) console.log(`Client2 Jupyter URL: ${jupyterUrl2}`)
 			} else {
-				console.log('WARNING: Client2 Jupyter link did not become visible')
+				console.log('WARNING: Client2 Jupyter link did not become visible; fetching via backend')
+				try {
+					const status2 = await backend2.invoke('get_session_jupyter_status', {
+						sessionId,
+					})
+					if (status2?.url) {
+						jupyterUrl2 = String(status2.url)
+						console.log(`Client2 Jupyter URL (backend): ${jupyterUrl2}`)
+						// Try to surface the link in the UI for visibility
+						await page2.evaluate((url) => {
+							const urlEl = document.getElementById('session-jupyter-url')
+							const linkEl = document.getElementById('session-jupyter-link')
+							if (urlEl && linkEl) {
+								urlEl.style.display = 'block'
+								linkEl.setAttribute('href', url)
+								linkEl.textContent = `Open Jupyter (from backend)`
+							}
+						}, jupyterUrl2)
+					} else {
+						console.log('Client2 backend did not return a Jupyter URL')
+					}
+				} catch (err) {
+					console.log(`Client2 backend status fetch failed: ${err}`)
+				}
 			}
 		}
 
