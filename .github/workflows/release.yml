@@ -68,6 +68,10 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   prepare-version:
     name: Determine release version
@@ -1146,6 +1150,7 @@ jobs:
     needs:
       - prepare-version
       - build
+      - create-updater-json
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     permissions:
@@ -1159,7 +1164,43 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Preflight version bump branch
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF:-}" != refs/heads/* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Not on a branch ref ($GITHUB_REF); skipping commit-version."
+            exit 0
+          fi
+
+          branch="${GITHUB_REF_NAME}"
+
+          git fetch origin "$branch"
+
+          remote_version="$(
+            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+          )"
+
+          if [[ -z "${remote_version:-}" ]]; then
+            echo "❌ Unable to determine remote version from origin/$branch:src-tauri/Cargo.toml" >&2
+            exit 1
+          fi
+
+          echo "Remote version on origin/$branch: $remote_version"
+          echo "Release version for this run: $RELEASE_VERSION"
+
+          if [[ "$remote_version" != "$RELEASE_VERSION" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Remote branch version differs; skipping commit-version to avoid downgrading or racing bumps."
+            exit 0
+          fi
+
+          git checkout -B "$branch" "origin/$branch"
+
       - name: Sync version metadata
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -1198,7 +1239,40 @@ jobs:
           PY
 
       - name: Commit and push changes
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           if git diff --quiet; then
             echo "No version changes to commit."
             exit 0
@@ -1208,10 +1282,43 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
           git commit -m "chore: release ${RELEASE_TAG}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${RELEASE_VERSION}"
 
       - name: Bump to next version
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           python - <<'PY'
           import json
           import re
@@ -1256,5 +1363,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+          if git diff --quiet; then
+            echo "No bump changes to commit."
+            exit 0
+          fi
+
           git commit -m "chore: bump version to ${NEXT_VERSION}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${NEXT_VERSION}"
