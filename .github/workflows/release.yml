@@ -126,30 +126,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$TAG" &>/dev/null; then
-            echo "⚠️  Release $TAG already exists. Fetching latest version from remote..."
-            git fetch origin "${{ github.ref_name }}"
+            echo "⚠️  Release $TAG already exists. Finding next available version..."
 
-            # Get version from remote branch
-            remote_version=$(git show "origin/${{ github.ref_name }}:src-tauri/Cargo.toml" | grep -m1 '^version' | sed 's/.*"\(.*\)"/\1/')
+            # Start from current version and find next available
+            current_version="$VERSION"
 
-            if [[ -z "$remote_version" ]]; then
-              echo "::error::Failed to fetch remote version"
-              exit 1
-            fi
+            # Parse version parts
+            IFS='.' read -r major minor patch <<< "$current_version"
 
-            remote_tag="v${remote_version}"
+            # Try incrementing patch until we find an unreleased version
+            max_attempts=20
+            for ((i=1; i<=max_attempts; i++)); do
+              next_patch=$((patch + i))
+              next_version="${major}.${minor}.${next_patch}"
+              next_tag="v${next_version}"
 
-            if gh release view "$remote_tag" &>/dev/null; then
-              echo "::error::Remote version $remote_tag also already released. Something is wrong."
-              exit 1
-            fi
+              if ! gh release view "$next_tag" &>/dev/null; then
+                echo "✅ Found available version: $next_version (tag: $next_tag)"
+                echo "version=$next_version" >> "$GITHUB_OUTPUT"
+                echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+                echo "updated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  Tag $next_tag also exists, trying next..."
+            done
 
-            echo "✅ Using remote version: $remote_version (tag: $remote_tag)"
-            echo "version=$remote_version" >> "$GITHUB_OUTPUT"
-            echo "tag=$remote_tag" >> "$GITHUB_OUTPUT"
-            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Could not find available version after $max_attempts attempts"
+            exit 1
           else
             echo "✅ Release $TAG does not exist, proceeding..."
             echo "updated=false" >> "$GITHUB_OUTPUT"
