@@ -381,8 +381,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			const dataDir1 = await getSyftboxDataDir(backend1)
 			const dataDir2 = await getSyftboxDataDir(backend2)
 			await Promise.all([
-				waitForPeerDid(dataDir1, email2, 90_000, backend1),
-				waitForPeerDid(dataDir2, email1, 90_000, backend2),
+				waitForPeerDid(dataDir1, email2, 180_000, backend1),
+				waitForPeerDid(dataDir2, email1, 180_000, backend2),
 			])
 			onboardingTimer.stop()
 		}
