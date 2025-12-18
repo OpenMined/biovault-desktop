@@ -29,7 +29,8 @@ export async function waitForAppReady(page, options) {
 
 				const onboardingCheckComplete =
 					// Older builds won't define this; treat as "complete" to preserve behavior.
-					window.__ONBOARDING_CHECK_COMPLETE__ === undefined || window.__ONBOARDING_CHECK_COMPLETE__ === true
+					window.__ONBOARDING_CHECK_COMPLETE__ === undefined ||
+					window.__ONBOARDING_CHECK_COMPLETE__ === true
 
 				return (
 					onboardingCheckComplete &&

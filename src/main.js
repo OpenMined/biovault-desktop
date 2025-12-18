@@ -292,10 +292,10 @@ window.navigateTo = navigateTo
 // Expose clearAllSelections globally for pipelines module
 window.clearAllDataSelections = clearAllSelections
 
-	// Expose readiness markers for automated tests
-	window.__NAV_HANDLERS_READY__ = false
-	window.__EVENT_HANDLERS_READY__ = false
-	window.__ONBOARDING_CHECK_COMPLETE__ = false
+// Expose readiness markers for automated tests
+window.__NAV_HANDLERS_READY__ = false
+window.__EVENT_HANDLERS_READY__ = false
+window.__ONBOARDING_CHECK_COMPLETE__ = false
 
 async function checkKeyFingerprintMismatchOnStartup() {
 	try {
@@ -511,12 +511,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 	})
 	window.__EVENT_HANDLERS_READY__ = true
 
-		// Show onboarding view if user is not onboarded
-		try {
-			await onboarding.checkOnboarding()
-		} finally {
-			window.__ONBOARDING_CHECK_COMPLETE__ = true
-		}
+	// Show onboarding view if user is not onboarded
+	try {
+		await onboarding.checkOnboarding()
+	} finally {
+		window.__ONBOARDING_CHECK_COMPLETE__ = true
+	}
 
 	// Check for updates after app initialization (silent check)
 	setTimeout(() => {
