@@ -35,24 +35,39 @@ jobs:
         run: ./lint.sh
 
   scenario-tests:
-    name: Scenario tests (${{ matrix.platform }})
+    name: ${{ matrix.scenario }} (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-arm64
-            runner: macos-latest
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          - platform: linux-x86_64
+          # jupyter-collab runs on all 3 platforms
+          - scenario: jupyter-collab
+            platform: linux-x86_64
             runner: ubuntu-latest
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - platform: windows-x86_64
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: macos-latest
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          - scenario: jupyter-collab
+            platform: windows-x86_64
             runner: windows-latest
             tauri_binary: src-tauri/target/release/bv-desktop.exe
+            run_prefix: ""
+          # pipelines-solo runs on Linux and macOS (requires Docker)
+          - scenario: pipelines-solo
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: pipelines-solo
+            platform: macos-arm64
+            runner: macos-latest
+            tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
 
     defaults:
@@ -133,11 +148,12 @@ jobs:
             build-essential \
             pkg-config
 
-      - name: Install Docker (macOS)
-        if: runner.os == 'macOS'
+      - name: Install Docker (macOS - for pipelines-solo)
+        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
         run: |
-          brew install docker colima
-          colima start --cpu 2 --memory 4 --disk 10
+          brew install docker colima qemu
+          # Use QEMU instead of VZ (Virtualization.framework doesn't work in CI)
+          colima start --cpu 2 --memory 4 --disk 10 --vm-type qemu --arch aarch64
           # Wait for Docker to be ready
           for i in {1..30}; do
             if docker info >/dev/null 2>&1; then
@@ -172,7 +188,7 @@ jobs:
         run: bunx --bun playwright install chromium
 
       - name: Cache genostats database
-        if: runner.os != 'Windows'
+        if: matrix.scenario == 'pipelines-solo'
         id: cache-genostats
         uses: actions/cache@v4
         with:
@@ -180,7 +196,7 @@ jobs:
           key: genostats-v1
 
       - name: Download genostats database
-        if: runner.os != 'Windows' && steps.cache-genostats.outputs.cache-hit != 'true'
+        if: matrix.scenario == 'pipelines-solo' && steps.cache-genostats.outputs.cache-hit != 'true'
         run: |
           mkdir -p data
           curl -fsSL -o data/genostats.sqlite \
@@ -189,14 +205,14 @@ jobs:
           }
 
       - name: Install biosynth CLI (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Install biosynth CLI (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
@@ -249,13 +265,14 @@ jobs:
           chmod +x "${{ matrix.tauri_binary }}" 2>/dev/null || true
 
       - name: Run Jupyter collab scenario
+        if: matrix.scenario == 'jupyter-collab'
         env:
           TAURI_BINARY: ${{ github.workspace }}/${{ matrix.tauri_binary }}
         run: |
           ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines solo scenario
-        if: runner.os != 'Windows'
+        if: matrix.scenario == 'pipelines-solo'
         env:
           TAURI_BINARY: ${{ github.workspace }}/${{ matrix.tauri_binary }}
         run: |
