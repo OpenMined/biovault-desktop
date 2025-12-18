@@ -46,6 +46,7 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --pipelines-solo     Run pipeline UI test only (single client)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -93,6 +94,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-core)
 			SCENARIO="messaging-core"
+			shift
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
 			shift
 			;;
 		--jupyter)
@@ -808,6 +813,13 @@ launch_instance() {
 		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
 			export JUPYTER_SKIP_BROWSER=1
 		fi
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
+		fi
 		echo "[scenario] $email: starting bv-desktop (BIOVAULT_HOME=$BIOVAULT_HOME DEV_WS_BRIDGE_PORT=$DEV_WS_BRIDGE_PORT)" >&2
 		exec "$TAURI_BINARY"
 	) >>"$LOG_FILE" 2>&1 &
@@ -886,8 +898,16 @@ warm_jupyter_cache() {
 	mkdir -p "$cache_dir"
 
 	# Use uv to create venv and install packages
-	local uv_bin
-	uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	local uv_bin="${UV_BIN:-}"
+	if [[ -z "$uv_bin" ]]; then
+		uv_bin="$(command -v uv 2>/dev/null || true)"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv}"
+		if [[ -x "$bundled_uv" ]]; then
+			uv_bin="$bundled_uv"
+		fi
+	fi
 	if [[ -z "$uv_bin" ]]; then
 		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
 	fi
@@ -1129,11 +1149,36 @@ PY
 		start_static_server
 		start_tauri_instances
 
-			info "Opening UI for inspection"
-			timer_push "Playwright: @messaging-core-ui"
-			run_ui_grep "@messaging-core-ui"
+		info "Opening UI for inspection"
+		timer_push "Playwright: @messaging-core-ui"
+		run_ui_grep "@messaging-core-ui"
+		timer_pop
+		;;
+	pipelines-solo)
+		start_static_server
+		# Pipelines tests only need a single client; keep it lightweight.
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ -x "$TAURI_BINARY" ]]; then
+			assert_tauri_binary_fresh
+			timer_push "Tauri instance start (single)"
+			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+			info "Waiting for WS bridge..."
+			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
 			timer_pop
-			;;
+			export USE_REAL_INVOKE=true
+			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		else
+			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
+			export USE_REAL_INVOKE=false
+		fi
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+
+		# Run pipelines UI flow (APOL1 pipeline e2e)
+		timer_push "Playwright: pipelines-solo"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/apol1-pipeline.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
+		;;
 	jupyter)
 		info "[DEBUG] Starting jupyter scenario"
 		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
