@@ -351,7 +351,7 @@ ensure_playwright_browsers() {
 	local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 	if compgen -G "$browsers_path/chromium*" >/dev/null 2>&1; then
 		return 0
-	}
+	fi
 
 	info "Playwright browsers not found; installing Chromium..."
 	if command -v bun >/dev/null 2>&1; then
