@@ -1181,7 +1181,6 @@ pub fn run() {
 
     fn best_effort_stop_syftbox_for_exit() {
         if crate::stop_syftbox_client().is_ok() {
-            return;
         }
 
         #[cfg(target_os = "windows")]
@@ -1199,7 +1198,10 @@ pub fn run() {
         let db = match biovault::data::BioVaultDb::new() {
             Ok(db) => db,
             Err(err) => {
-                crate::desktop_log!("⚠️ Exit: Failed to open BioVault DB to stop Jupyter: {}", err);
+                crate::desktop_log!(
+                    "⚠️ Exit: Failed to open BioVault DB to stop Jupyter: {}",
+                    err
+                );
                 return;
             }
         };
@@ -1218,9 +1220,9 @@ pub fn run() {
             }
             let project_path = env.project_path.clone();
             crate::desktop_log!("Exit: Stopping Jupyter for project: {}", project_path);
-            if let Err(err) = tauri::async_runtime::block_on(biovault::cli::commands::jupyter::stop(
-                &project_path,
-            )) {
+            if let Err(err) = tauri::async_runtime::block_on(
+                biovault::cli::commands::jupyter::stop(&project_path),
+            ) {
                 crate::desktop_log!(
                     "⚠️ Exit: Failed to stop Jupyter for {}: {}",
                     project_path,
