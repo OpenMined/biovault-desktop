@@ -26,10 +26,14 @@ pub struct PipelineCreateRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunSelection {
+    /// Legacy: database file IDs (deprecated, use urls instead)
     #[serde(default)]
     pub file_ids: Vec<i64>,
+    /// Syft URLs to resolve to local file paths
     #[serde(default)]
-    pub participant_ids: Vec<i64>,
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub participant_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -521,7 +525,113 @@ pub async fn run_pipeline(
     }
 
     if let Some(sel) = selection {
-        if !sel.file_ids.is_empty() {
+        // Prefer URLs over file_ids (URLs are the new way, file_ids are legacy)
+        let use_urls = !sel.urls.is_empty();
+        let use_file_ids = !sel.file_ids.is_empty() && !use_urls;
+
+        if use_urls {
+            // Resolve syft:// URLs to local paths
+            let config = biovault::config::Config::load()
+                .map_err(|e| format!("Failed to load config: {}", e))?;
+            let data_dir = config
+                .get_syftbox_data_dir()
+                .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+
+            let mut seen_urls = HashSet::new();
+            let mut unique_urls = Vec::new();
+            for url in sel.urls {
+                if seen_urls.insert(url.clone()) {
+                    unique_urls.push(url);
+                }
+            }
+
+            if unique_urls.is_empty() {
+                return Err("No valid URLs were provided for the pipeline run.".to_string());
+            }
+
+            let mut rows = Vec::new();
+            let mut participant_labels_set: HashSet<String> = HashSet::new();
+            let mut resolved_count = 0;
+
+            for (idx, url) in unique_urls.iter().enumerate() {
+                let local_path = biovault::data::resolve_syft_url(&data_dir, url)
+                    .map_err(|e| format!("Failed to resolve URL '{}': {}", url, e))?;
+
+                if !local_path.exists() {
+                    append_pipeline_log(
+                        &window,
+                        &log_path,
+                        &format!("⚠️  File not found for URL: {} -> {:?}", url, local_path),
+                    );
+                    continue;
+                }
+
+                resolved_count += 1;
+                let file_path = local_path.to_string_lossy().to_string();
+
+                // Use participant_id from selection if provided, otherwise extract from filename
+                let participant =
+                    if idx < sel.participant_ids.len() && !sel.participant_ids[idx].is_empty() {
+                        sel.participant_ids[idx].clone()
+                    } else {
+                        local_path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    };
+
+                participant_labels_set.insert(participant.clone());
+                rows.push((participant, file_path));
+            }
+
+            if rows.is_empty() {
+                return Err("No files could be resolved from the provided URLs.".to_string());
+            }
+
+            let inputs_dir = results_path.join("inputs");
+            fs::create_dir_all(&inputs_dir).map_err(|e| {
+                format!("Failed to prepare inputs directory for samplesheet: {}", e)
+            })?;
+            let sheet_path = inputs_dir.join("selected_participants.csv");
+
+            let mut writer = csv::Writer::from_path(&sheet_path)
+                .map_err(|e| format!("Failed to create samplesheet: {}", e))?;
+            writer
+                .write_record(["participant_id", "genotype_file"])
+                .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
+
+            for (participant, file_path) in &rows {
+                writer
+                    .write_record([participant, file_path])
+                    .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
+            }
+            writer
+                .flush()
+                .map_err(|e| format!("Failed to finalize samplesheet: {}", e))?;
+
+            let mut participant_labels: Vec<String> = participant_labels_set.into_iter().collect();
+            participant_labels.sort();
+
+            let participant_total = participant_labels.len();
+            selection_counts = Some((resolved_count, participant_total));
+
+            input_overrides.insert(
+                "inputs.samplesheet".to_string(),
+                sheet_path.to_string_lossy().to_string(),
+            );
+
+            generated_samplesheet_path = Some(sheet_path.to_string_lossy().to_string());
+
+            selection_metadata = Some(serde_json::json!({
+                "urls": unique_urls,
+                "participant_ids": sel.participant_ids,
+                "participant_labels": participant_labels,
+                "samplesheet_path": sheet_path.to_string_lossy(),
+                "participant_count": participant_total,
+            }));
+        } else if use_file_ids {
+            // Legacy: use file_ids (deprecated)
             let mut seen_files = HashSet::new();
             let mut unique_file_ids = Vec::new();
             for id in sel.file_ids {
@@ -564,15 +674,13 @@ pub async fn run_pipeline(
                 rows.push((participant, record.file_path));
             }
 
-            let mut dedup_participant_ids = Vec::new();
-            if !sel.participant_ids.is_empty() {
+            let dedup_participant_ids: Vec<String> = {
                 let mut seen = HashSet::new();
-                dedup_participant_ids = sel
-                    .participant_ids
+                sel.participant_ids
                     .into_iter()
-                    .filter(|id| seen.insert(*id))
-                    .collect::<Vec<_>>();
-            }
+                    .filter(|id| seen.insert(id.clone()))
+                    .collect()
+            };
 
             let inputs_dir = results_path.join("inputs");
             fs::create_dir_all(&inputs_dir).map_err(|e| {

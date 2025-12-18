@@ -422,8 +422,8 @@ jobs:
 
       - name: Install biosynth CLI (pre-built binary)
         run: |
-          # Download pre-built binary instead of compiling
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          # Download pre-built binary for macOS ARM64 (macos-latest is Apple Silicon)
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 

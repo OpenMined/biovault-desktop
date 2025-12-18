@@ -704,9 +704,13 @@ pub fn is_dev_mode() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if updater is disabled (DISABLE_UPDATER=1)
+/// Check if updater is disabled (DISABLE_UPDATER=1 or in dev mode)
 #[tauri::command]
 pub fn is_updater_disabled() -> bool {
+    // Disable updater in dev mode
+    if is_dev_mode() {
+        return true;
+    }
     env::var("DISABLE_UPDATER")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)

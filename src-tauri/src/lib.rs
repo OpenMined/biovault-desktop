@@ -516,7 +516,7 @@ pub fn run() {
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
 
-    let queue_processor_paused = Arc::new(AtomicBool::new(false)); // Start running
+    let queue_processor_paused = Arc::new(AtomicBool::new(true)); // Start paused - user can enable via UI
 
     let app_state = AppState {
         db: Mutex::new(conn),
@@ -1006,6 +1006,7 @@ pub fn run() {
             is_dataset_published,
             get_datasets_folder_path,
             resolve_syft_url_to_local_path,
+            resolve_syft_urls_batch,
             network_scan_datasets,
             // Participants commands
             get_participants,

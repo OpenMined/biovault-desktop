@@ -642,11 +642,22 @@ assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
 	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
-		echo "[DEBUG] ERROR: Tauri binary not found or not executable at $TAURI_BINARY" >&2
-		echo "[DEBUG] Listing release directory:" >&2
-		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
-		echo "[DEBUG] Checking if target directory exists:" >&2
-		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
+		echo "[DEBUG] Tauri binary not found at $TAURI_BINARY - building..." >&2
+		# Auto-build if binary doesn't exist (can disable with AUTO_BUILD_TAURI=0)
+		local auto_build="${AUTO_BUILD_TAURI:-1}"
+		if [[ "$auto_build" != "0" && "$auto_build" != "false" && "$auto_build" != "no" ]]; then
+			echo "Building Tauri binary (cd src-tauri && cargo build --release)..." >&2
+			timer_push "Cargo build (tauri release)"
+			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			timer_pop
+			if [[ ! -x "$TAURI_BINARY" ]]; then
+				echo "[DEBUG] ERROR: Build completed but binary still not found at $TAURI_BINARY" >&2
+				exit 1
+			fi
+			info "[DEBUG] Tauri binary built successfully"
+			return 0
+		fi
+		echo "[DEBUG] ERROR: Tauri binary not found and AUTO_BUILD_TAURI=$auto_build prevents building" >&2
 		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
 		exit 1
 	fi
