@@ -100,6 +100,7 @@ fn best_effort_stop_syftbox_for_reset() {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
+        use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut cmd = Command::new("taskkill");
         cmd.args(["/IM", "syftbox.exe", "/T", "/F"]);
@@ -831,9 +832,13 @@ pub fn is_dev_mode() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if updater is disabled (DISABLE_UPDATER=1)
+/// Check if updater is disabled (DISABLE_UPDATER=1 or in dev mode)
 #[tauri::command]
 pub fn is_updater_disabled() -> bool {
+    // Disable updater in dev mode
+    if is_dev_mode() {
+        return true;
+    }
     env::var("DISABLE_UPDATER")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)

@@ -77,8 +77,8 @@ jobs:
     name: Determine release version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.final-version.outputs.version }}
+      tag: ${{ steps.final-version.outputs.tag }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -120,20 +120,57 @@ jobs:
               fh.write(f"tag={tag}\n")
           PY
 
-      - name: Check if release tag already exists
+      - name: Check if release tag already exists and auto-resolve
+        id: check-release
         if: ${{ inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$TAG" &>/dev/null; then
-            echo "::error::Release $TAG already exists! Either delete it first or bump the version."
-            echo ""
-            echo "To delete: gh release delete $TAG --yes && git push origin :refs/tags/$TAG"
-            echo "To bump: update version in src-tauri/Cargo.toml"
+            echo "⚠️  Release $TAG already exists. Finding next available version..."
+
+            # Start from current version and find next available
+            current_version="$VERSION"
+
+            # Parse version parts
+            IFS='.' read -r major minor patch <<< "$current_version"
+
+            # Try incrementing patch until we find an unreleased version
+            max_attempts=20
+            for ((i=1; i<=max_attempts; i++)); do
+              next_patch=$((patch + i))
+              next_version="${major}.${minor}.${next_patch}"
+              next_tag="v${next_version}"
+
+              if ! gh release view "$next_tag" &>/dev/null; then
+                echo "✅ Found available version: $next_version (tag: $next_tag)"
+                echo "version=$next_version" >> "$GITHUB_OUTPUT"
+                echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+                echo "updated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  Tag $next_tag also exists, trying next..."
+            done
+
+            echo "::error::Could not find available version after $max_attempts attempts"
             exit 1
+          else
+            echo "✅ Release $TAG does not exist, proceeding..."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✅ Release $TAG does not exist, proceeding..."
+
+      - name: Update version outputs if needed
+        id: final-version
+        run: |
+          if [[ "${{ steps.check-release.outputs.updated }}" == "true" ]]; then
+            echo "version=${{ steps.check-release.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.check-release.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
 
   configure-build-matrix:
     name: Determine build targets
@@ -1246,7 +1283,7 @@ jobs:
           git fetch origin "$branch"
 
           remote_version="$(
-            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
           )"
 
           if [[ -z "${remote_version:-}" ]]; then
@@ -1328,7 +1365,7 @@ jobs:
 
             git fetch origin "$branch" || true
             remote_version="$(
-              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
             )"
 
             if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
@@ -1374,7 +1411,7 @@ jobs:
 
             git fetch origin "$branch" || true
             remote_version="$(
-              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", text); print(m.group(1) if m else "")'
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
             )"
 
             if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then

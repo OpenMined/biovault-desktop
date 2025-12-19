@@ -1,7 +1,6 @@
 use crate::types::{AppState, FileRecord, ImportResult};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 
 // Re-export FileMetadata from parent module
 use super::FileMetadata;
@@ -121,14 +120,8 @@ pub async fn import_files_pending(
     let lib_result = biovault::data::import_files_as_pending(&db, csv_imports)
         .map_err(|e| format!("Failed to import files as pending: {}", e))?;
 
-    // Auto-resume queue if paused and files were imported
-    if lib_result.imported > 0 && state.queue_processor_paused.load(Ordering::SeqCst) {
-        state.queue_processor_paused.store(false, Ordering::SeqCst);
-        crate::desktop_log!(
-            "▶️  Auto-resumed queue processor after importing {} files",
-            lib_result.imported
-        );
-    }
+    // Queue processor is paused by default - user can enable via UI when ready
+    // (auto-resume disabled to prevent unexpected background processing)
 
     crate::desktop_log!(
         "✅ Added {} files to queue, skipped {} (using library)",

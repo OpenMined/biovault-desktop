@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+# GitHub Actions Windows runners often provide `python` but not `python3` on PATH.
+# Normalize so the rest of the script can keep using `python3`.
+if ! command -v python3 >/dev/null 2>&1; then
+	if command -v python >/dev/null 2>&1; then
+		python3() { python "$@"; }
+	else
+		echo "Missing required tool: python3 (or python)" >&2
+		exit 1
+	fi
+fi
+
 # Scenario runner for multi-app UI+backend tests (e.g., messaging between two clients)
 # This mirrors dev-two.sh but drives Playwright specs.
 
@@ -35,6 +46,7 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --pipelines-solo     Run pipeline UI test only (single client)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -82,6 +94,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-core)
 			SCENARIO="messaging-core"
+			shift
+			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
 			shift
 			;;
 		--jupyter)
@@ -328,6 +344,32 @@ find_bundled_uv() {
 		return 0
 	fi
 	return 1
+}
+
+ensure_playwright_browsers() {
+	# If browsers are already cached, skip install. Otherwise install Chromium (with deps on Linux).
+	local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+	if compgen -G "$browsers_path/chromium*" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	info "Playwright browsers not found; installing Chromium..."
+	if command -v bun >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			bunx --bun playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			bunx --bun playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	elif command -v npx >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			npx playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			npx playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	else
+		echo "Neither bun nor npx available to install Playwright browsers" >&2
+		return 1
+	fi
 }
 
 # Kill any dangling Jupyter processes from previous runs
@@ -798,9 +840,23 @@ launch_instance() {
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
+		fi
 		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
 		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
 			export JUPYTER_SKIP_BROWSER=1
+		fi
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
 		fi
 		echo "[scenario] $email: starting bv-desktop (BIOVAULT_HOME=$BIOVAULT_HOME DEV_WS_BRIDGE_PORT=$DEV_WS_BRIDGE_PORT)" >&2
 		exec "$TAURI_BINARY"
@@ -880,8 +936,19 @@ warm_jupyter_cache() {
 	mkdir -p "$cache_dir"
 
 	# Use uv to create venv and install packages
-	local uv_bin
-	uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	local uv_bin="${UV_BIN:-}"
+	if [[ -z "$uv_bin" ]]; then
+		uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-}"
+		if [[ -z "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv 2>/dev/null || echo "")"
+		fi
+		if [[ -x "$bundled_uv" ]]; then
+			uv_bin="$bundled_uv"
+		fi
+	fi
 	if [[ -z "$uv_bin" ]]; then
 		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
 	fi
@@ -1013,6 +1080,9 @@ if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
 fi
 
+# Ensure Playwright browsers are present (CI may skip install or have empty cache)
+ensure_playwright_browsers
+
 	case "$SCENARIO" in
 			onboarding)
 				start_static_server
@@ -1123,11 +1193,36 @@ PY
 		start_static_server
 		start_tauri_instances
 
-			info "Opening UI for inspection"
-			timer_push "Playwright: @messaging-core-ui"
-			run_ui_grep "@messaging-core-ui"
+		info "Opening UI for inspection"
+		timer_push "Playwright: @messaging-core-ui"
+		run_ui_grep "@messaging-core-ui"
+		timer_pop
+		;;
+	pipelines-solo)
+		start_static_server
+		# Pipelines tests only need a single client; keep it lightweight.
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ -x "$TAURI_BINARY" ]]; then
+			assert_tauri_binary_fresh
+			timer_push "Tauri instance start (single)"
+			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+			info "Waiting for WS bridge..."
+			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
 			timer_pop
-			;;
+			export USE_REAL_INVOKE=true
+			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		else
+			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
+			export USE_REAL_INVOKE=false
+		fi
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+
+		# Run pipelines UI flow (dataset + pipeline e2e)
+		timer_push "Playwright: pipelines-solo"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
+		;;
 	jupyter)
 		info "[DEBUG] Starting jupyter scenario"
 		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"

@@ -1613,6 +1613,38 @@ pub async fn syftbox_upload_action(id: String, action: String) -> Result<(), Str
 }
 
 #[tauri::command]
+pub async fn trigger_syftbox_sync() -> Result<(), String> {
+    let cfg = load_syftbox_client_config()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let url = format!("{}/v1/sync/now", cfg.client_url.trim_end_matches('/'));
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&cfg.client_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to trigger sync: {}", e))?;
+
+    if resp.status().is_success() {
+        record_control_plane_event("POST", &url, Some(resp.status().as_u16()), None);
+        Ok(())
+    } else {
+        let err = format!("Trigger sync failed: HTTP {}", resp.status());
+        record_control_plane_event(
+            "POST",
+            &url,
+            Some(resp.status().as_u16()),
+            Some(err.clone()),
+        );
+        Err(err)
+    }
+}
+
+#[tauri::command]
 pub fn open_path_in_file_manager(app_handle: AppHandle, path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() {

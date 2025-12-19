@@ -531,7 +531,7 @@ pub fn run() {
     let conn = Connection::open(&db_path).expect("Could not open database");
     init_db(&conn).expect("Could not initialize database");
 
-    let queue_processor_paused = Arc::new(AtomicBool::new(false)); // Start running
+    let queue_processor_paused = Arc::new(AtomicBool::new(true)); // Start paused - user can enable via UI
 
     let app_state = AppState {
         db: Mutex::new(conn),
@@ -1021,6 +1021,7 @@ pub fn run() {
             is_dataset_published,
             get_datasets_folder_path,
             resolve_syft_url_to_local_path,
+            resolve_syft_urls_batch,
             network_scan_datasets,
             // Participants commands
             get_participants,
@@ -1162,6 +1163,7 @@ pub fn run() {
             get_syftbox_diagnostics,
             syftbox_queue_status,
             syftbox_upload_action,
+            trigger_syftbox_sync,
             open_path_in_file_manager,
             test_notification,
             test_notification_applescript,
@@ -1195,8 +1197,6 @@ pub fn run() {
 
     fn best_effort_stop_syftbox_for_exit() {
         let _ = crate::stop_syftbox_client();
-
-        if crate::syftbox_backend_is_embedded() {}
 
         #[cfg(target_os = "windows")]
         {

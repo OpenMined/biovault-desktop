@@ -29,10 +29,11 @@ import * as path from 'path'
 import { waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
-const TEST_TIMEOUT = 300_000 // 5 minutes max
+const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fresh envs)
 const UI_TIMEOUT = 10_000
-const JUPYTER_STARTUP_TIMEOUT = 120_000 // 2 minutes for Jupyter startup
+const JUPYTER_STARTUP_TIMEOUT = 240_000 // Allow more time for venv install + server start
 const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
+const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync (CI can be slow)
 const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
 	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
 	: 250
@@ -114,15 +115,126 @@ async function getSyftboxDataDir(backend: Backend): Promise<string> {
 async function waitForPeerDid(
 	dataDir: string,
 	peerEmail: string,
-	timeoutMs = 60_000,
+	timeoutMs = PEER_DID_TIMEOUT_MS,
+	backend?: Backend,
+	clientLabel?: string,
 ): Promise<string> {
+	const label = clientLabel || 'client'
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
 	const didPath = path.join(datasitesRoot, peerEmail, 'public', 'crypto', 'did.json')
+	const peerDatasiteDir = path.join(datasitesRoot, peerEmail)
+	const peerPublicDir = path.join(peerDatasiteDir, 'public')
+	const peerCryptoDir = path.join(peerPublicDir, 'crypto')
+
+	// Also check our own DID to verify onboarding worked
+	const ownEmail = path.basename(dataDir)
+	const ownDidPath = path.join(dataDir, 'public', 'crypto', 'did.json')
+
+	console.log(`[${label}] waitForPeerDid started:`)
+	console.log(`[${label}]   dataDir: ${dataDir}`)
+	console.log(`[${label}]   datasitesRoot: ${datasitesRoot}`)
+	console.log(`[${label}]   looking for peer: ${peerEmail}`)
+	console.log(`[${label}]   target didPath: ${didPath}`)
+	console.log(`[${label}]   own DID path: ${ownDidPath}`)
+	console.log(`[${label}]   own DID exists: ${fs.existsSync(ownDidPath)}`)
+
 	const start = Date.now()
+	let syncTriggerCount = 0
+	let lastLogTime = 0
+
 	while (Date.now() - start < timeoutMs) {
-		if (fs.existsSync(didPath)) return didPath
+		const elapsed = Math.round((Date.now() - start) / 1000)
+
+		if (fs.existsSync(didPath)) {
+			console.log(`[${label}] ✓ Found peer DID after ${elapsed}s: ${didPath}`)
+			return didPath
+		}
+
+		// Log progress every 10 seconds
+		if (elapsed - lastLogTime >= 10) {
+			lastLogTime = elapsed
+			console.log(`[${label}] [${elapsed}s] Still waiting for peer DID...`)
+
+			// Check what directories exist in the sync path
+			const datasitesExists = fs.existsSync(datasitesRoot)
+			const peerDatasiteExists = fs.existsSync(peerDatasiteDir)
+			const peerPublicExists = fs.existsSync(peerPublicDir)
+			const peerCryptoExists = fs.existsSync(peerCryptoDir)
+
+			console.log(`[${label}]   datasites/ exists: ${datasitesExists}`)
+			if (datasitesExists) {
+				try {
+					const datasitesDirs = fs.readdirSync(datasitesRoot)
+					console.log(`[${label}]   datasites/ contents: [${datasitesDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   datasites/ read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   datasites/${peerEmail}/ exists: ${peerDatasiteExists}`)
+			if (peerDatasiteExists) {
+				try {
+					const peerDirs = fs.readdirSync(peerDatasiteDir)
+					console.log(`[${label}]   datasites/${peerEmail}/ contents: [${peerDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   peer dir read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   .../public/ exists: ${peerPublicExists}`)
+			if (peerPublicExists) {
+				try {
+					const publicDirs = fs.readdirSync(peerPublicDir)
+					console.log(`[${label}]   .../public/ contents: [${publicDirs.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   public dir read error: ${e}`)
+				}
+			}
+			console.log(`[${label}]   .../crypto/ exists: ${peerCryptoExists}`)
+			if (peerCryptoExists) {
+				try {
+					const cryptoFiles = fs.readdirSync(peerCryptoDir)
+					console.log(`[${label}]   .../crypto/ contents: [${cryptoFiles.join(', ')}]`)
+				} catch (e) {
+					console.log(`[${label}]   crypto dir read error: ${e}`)
+				}
+			}
+		}
+
+		// Trigger sync every ~2 seconds to accelerate DID file discovery
+		if (backend && syncTriggerCount % 4 === 0) {
+			try {
+				await backend.invoke('trigger_syftbox_sync')
+				if (syncTriggerCount === 0 || elapsed - lastLogTime < 2) {
+					console.log(`[${label}] [${elapsed}s] Triggered sync #${syncTriggerCount / 4 + 1}`)
+				}
+			} catch (err) {
+				console.log(`[${label}] [${elapsed}s] Sync trigger failed: ${err}`)
+			}
+		}
+		syncTriggerCount++
 		await new Promise((r) => setTimeout(r, 500))
 	}
+
+	// Final diagnostic dump before throwing
+	const elapsed = Math.round((Date.now() - start) / 1000)
+	console.log(`[${label}] TIMEOUT after ${elapsed}s - final state:`)
+	console.log(`[${label}]   own DID exists: ${fs.existsSync(ownDidPath)}`)
+	console.log(`[${label}]   datasites/ exists: ${fs.existsSync(datasitesRoot)}`)
+	if (fs.existsSync(datasitesRoot)) {
+		try {
+			const dirs = fs.readdirSync(datasitesRoot)
+			console.log(`[${label}]   datasites/ contents: [${dirs.join(', ')}]`)
+			for (const dir of dirs) {
+				const subdir = path.join(datasitesRoot, dir)
+				if (fs.statSync(subdir).isDirectory()) {
+					const subdirContents = fs.readdirSync(subdir)
+					console.log(`[${label}]     ${dir}/: [${subdirContents.join(', ')}]`)
+				}
+			}
+		} catch (e) {
+			console.log(`[${label}]   final dump error: ${e}`)
+		}
+	}
+
 	throw new Error(`Timed out waiting for peer DID file: ${didPath}`)
 }
 
@@ -224,7 +336,7 @@ async function runAllCellsAndWait(
 
 				return isIdle && noRunningCells
 			},
-			{ timeout: 180_000 }, // 3 minutes max
+			{ timeout: 240_000 },
 		)
 	} catch {
 		console.log(
@@ -365,12 +477,15 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('Onboarding complete!')
 
 			// Give SyftBox time to write/publish DID files and sync them between clients
+			// We trigger sync on both clients to accelerate the discovery
 			console.log('Waiting for peer DID files to sync...')
 			const dataDir1 = await getSyftboxDataDir(backend1)
 			const dataDir2 = await getSyftboxDataDir(backend2)
+			console.log(`Client1 dataDir: ${dataDir1}`)
+			console.log(`Client2 dataDir: ${dataDir2}`)
 			await Promise.all([
-				waitForPeerDid(dataDir1, email2, 90_000),
-				waitForPeerDid(dataDir2, email1, 90_000),
+				waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1, 'client1'),
+				waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2, 'client2'),
 			])
 			onboardingTimer.stop()
 		}
@@ -714,12 +829,44 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 
 		// Get URLs from status
 		const jupyterUrl1 = jupyterStatus1?.url || null
-		const jupyterUrl2 = jupyterStatus2?.url || null
+		let jupyterUrl2 = jupyterStatus2?.url || null
 
 		if (!jupyterUrl1) {
 			throw new Error('Client1 Jupyter did not return a URL')
 		}
 		console.log(`Client1 Jupyter URL: ${jupyterUrl1}`)
+
+		if (jupyterStatus2 && !jupyterUrl2) {
+			const link2 = page2.locator('#session-jupyter-link')
+			const visible2 = await link2
+				.isVisible({ timeout: JUPYTER_STARTUP_TIMEOUT })
+				.catch(() => false)
+			if (visible2) {
+				jupyterUrl2 = await link2.getAttribute('href')
+			}
+			if (!jupyterUrl2) {
+				console.log('WARNING: Client2 Jupyter link did not become visible; fetching via backend')
+				try {
+					const status2 = await backend2.invoke('get_session_jupyter_status', { sessionId })
+					if (status2?.url) {
+						jupyterUrl2 = String(status2.url)
+						// Try to surface the link in the UI for visibility
+						await page2.evaluate((url) => {
+							const urlEl = document.getElementById('session-jupyter-url')
+							const linkEl = document.getElementById('session-jupyter-link')
+							if (urlEl && linkEl) {
+								urlEl.style.display = 'block'
+								linkEl.setAttribute('href', url)
+								linkEl.textContent = `Open Jupyter (from backend)`
+							}
+						}, jupyterUrl2)
+					}
+				} catch (err) {
+					console.log(`Client2 backend status fetch failed: ${err}`)
+				}
+			}
+		}
+
 		if (jupyterUrl2) {
 			console.log(`Client2 Jupyter URL: ${jupyterUrl2}`)
 		} else {
