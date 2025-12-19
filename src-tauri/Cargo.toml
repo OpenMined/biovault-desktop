@@ -48,6 +48,7 @@ libc = "0.2"
 image = "0.25"
 rand = "0.8"
 hex = "0.4"
+base64 = "0.22"
 anyhow = "1.0"
 syftbox-sdk = { path = "../biovault/syftbox-sdk", features = ["crypto", "process", "auth"] }
 uuid = "1"

@@ -3,10 +3,16 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
+use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
+use biovault::types::SyftPermissions;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
+use walkdir::WalkDir;
 
 fn load_config() -> Result<biovault::config::Config, String> {
     biovault::config::Config::load().map_err(|e| format!("Failed to load BioVault config: {}", e))
@@ -20,6 +26,134 @@ fn parse_thread_filter(scope: Option<&str>) -> Result<MessageFilterScope, String
         "all" | "threads" => Ok(MessageFilterScope::All),
         other => Err(format!("Unknown message filter: {}", other)),
     }
+}
+
+fn syftbox_storage(config: &biovault::config::Config) -> Result<SyftBoxStorage, String> {
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to resolve SyftBox data dir: {}", e))?;
+    Ok(SyftBoxStorage::new(&data_dir))
+}
+
+fn should_skip_pipeline_path(rel: &Path) -> bool {
+    if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+        return true;
+    }
+
+    let skip_dirs = [
+        ".git",
+        ".nextflow",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "target",
+        "results",
+        "runs",
+    ];
+
+    rel.components().any(|component| {
+        component.as_os_str().to_str().map_or(false, |name| {
+            skip_dirs.iter().any(|skip| skip == &name)
+        })
+    })
+}
+
+fn copy_pipeline_folder(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+    recipient: &str,
+) -> Result<(), String> {
+    storage
+        .ensure_dir(dest)
+        .map_err(|e| format!("Failed to create pipeline submission folder: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve pipeline path: {}", e))?;
+
+        if should_skip_pipeline_path(rel) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            storage
+                .ensure_dir(&dest_path)
+                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            continue;
+        }
+
+        let bytes = fs::read(path)
+            .map_err(|e| format!("Failed to read pipeline file {}: {}", path.display(), e))?;
+        let hint = rel.to_string_lossy().to_string();
+        let policy = WritePolicy::Envelope {
+            recipients: vec![recipient.to_string()],
+            hint: Some(hint),
+        };
+
+        storage
+            .write_with_shadow(&dest_path, &bytes, policy, true)
+            .map_err(|e| format!("Failed to write pipeline file {}: {}", dest_path.display(), e))?;
+    }
+
+    Ok(())
+}
+
+fn copy_results_folder(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+    recipient: &str,
+) -> Result<(), String> {
+    storage
+        .ensure_dir(dest)
+        .map_err(|e| format!("Failed to create results folder: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            storage
+                .ensure_dir(&dest_path)
+                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            continue;
+        }
+
+        let bytes = fs::read(path)
+            .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+        let hint = rel.to_string_lossy().to_string();
+        let policy = WritePolicy::Envelope {
+            recipients: vec![recipient.to_string()],
+            hint: Some(hint),
+        };
+
+        storage
+            .write_with_shadow(&dest_path, &bytes, policy, true)
+            .map_err(|e| format!("Failed to write results file {}: {}", dest_path.display(), e))?;
+    }
+
+    Ok(())
 }
 
 pub fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
@@ -541,4 +675,366 @@ pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
         new_failed,
         total_failed,
     })
+}
+
+/// Send a pipeline request to a peer asking them to run it on their private data
+#[tauri::command]
+pub fn send_pipeline_request(
+    pipeline_name: String,
+    pipeline_version: String,
+    dataset_name: String,
+    recipient: String,
+    message: String,
+) -> Result<VaultMessage, String> {
+    let config = load_config()?;
+    let (db, sync) = init_message_system(&config)
+        .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
+    let storage = syftbox_storage(&config)?;
+
+    // Look up the pipeline path from the database
+    let biovault_db = biovault::data::BioVaultDb::new()
+        .map_err(|e| format!("Failed to open BioVault database: {}", e))?;
+
+    let pipelines = biovault_db
+        .list_pipelines()
+        .map_err(|e| format!("Failed to list pipelines: {}", e))?;
+
+    let pipeline = pipelines
+        .iter()
+        .find(|p| p.name == pipeline_name)
+        .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
+
+    let pipeline_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
+    if !pipeline_yaml_path.exists() {
+        return Err(format!(
+            "Pipeline '{}' not found at {:?}",
+            pipeline_name, pipeline_yaml_path
+        ));
+    }
+
+    // Read pipeline spec
+    let pipeline_content = fs::read_to_string(&pipeline_yaml_path)
+        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+
+    // Parse to validate it's valid YAML
+    let pipeline_spec: serde_yaml::Value = serde_yaml::from_str(&pipeline_content)
+        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
+
+    let submission_root = config
+        .get_shared_submissions_path()
+        .map_err(|e| format!("Failed to resolve submissions folder: {}", e))?;
+
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let mut hasher = Sha256::new();
+    hasher.update(pipeline_content.as_bytes());
+    let pipeline_hash = hex::encode(hasher.finalize());
+    let short_hash = pipeline_hash
+        .get(0..8)
+        .unwrap_or(&pipeline_hash)
+        .to_string();
+    let submission_folder_name = format!("{}-{}-{}", pipeline_name, timestamp, short_hash);
+
+    let submission_path = submission_root.join(&submission_folder_name);
+    copy_pipeline_folder(
+        &storage,
+        Path::new(&pipeline.pipeline_path),
+        &submission_path,
+        &recipient,
+    )?;
+
+    // Write permissions file for recipient access and results write-back
+    let perms = SyftPermissions::new_for_datasite(&recipient);
+    let perms_yaml = serde_yaml::to_string(&perms)
+        .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
+    let perms_path = submission_path.join("syft.pub.yaml");
+    storage
+        .write_with_shadow(&perms_path, perms_yaml.as_bytes(), WritePolicy::Plaintext, true)
+        .map_err(|e| format!("Failed to write permissions: {}", e))?;
+
+    let datasite_root = config
+        .get_datasite_path()
+        .map_err(|e| format!("Failed to resolve datasite root: {}", e))?;
+    let rel_from_datasite = submission_path
+        .strip_prefix(&datasite_root)
+        .map_err(|e| format!("Failed to compute submission path: {}", e))?
+        .to_string_lossy()
+        .to_string();
+    let submission_syft_url = format!("syft://{}/{}", config.email, rel_from_datasite);
+    let sender_local_path = submission_path.to_string_lossy().to_string();
+    let receiver_local_path_template = format!(
+        "$SYFTBOX_DATA_DIR/datasites/{}/shared/biovault/submissions/{}",
+        config.email, submission_folder_name
+    );
+
+    // Create the message with pipeline request metadata
+    let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), message);
+
+    msg.subject = Some(format!("Pipeline Request: {}", pipeline_name));
+
+    // Set metadata with pipeline info
+    msg.metadata = Some(serde_json::json!({
+        "pipeline_request": {
+            "pipeline_name": pipeline_name,
+            "pipeline_version": pipeline_version,
+            "dataset_name": dataset_name,
+            "sender": config.email,
+            "pipeline_spec": pipeline_spec,
+            "pipeline_location": submission_syft_url,
+            "submission_id": submission_folder_name,
+            "sender_local_path": sender_local_path,
+            "receiver_local_path_template": receiver_local_path_template,
+        }
+    }));
+
+    // Use thread_id based on pipeline + dataset for grouping related messages
+    msg.thread_id = Some(format!("pipeline-{}:{}", pipeline_name, dataset_name));
+
+    // Insert and send
+    db.insert_message(&msg)
+        .map_err(|e| format!("Failed to store message: {}", e))?;
+
+    sync.send_message(&msg.id)
+        .map_err(|e| format!("Failed to send message: {}", e))?;
+
+    let updated = db
+        .get_message(&msg.id)
+        .map_err(|e| format!("Failed to reload message: {}", e))?
+        .unwrap_or(msg);
+
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn send_pipeline_request_results(
+    request_id: String,
+    run_id: i64,
+    message: Option<String>,
+) -> Result<VaultMessage, String> {
+    let config = load_config()?;
+    let (db, sync) = init_message_system(&config)
+        .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
+    let storage = syftbox_storage(&config)?;
+
+    let original = db
+        .get_message(&request_id)
+        .map_err(|e| format!("Failed to load request message: {}", e))?
+        .ok_or_else(|| format!("Request message {} not found", request_id))?;
+
+    let meta = original
+        .metadata
+        .as_ref()
+        .ok_or_else(|| "Pipeline request metadata not found".to_string())?;
+    let pipeline_request = meta
+        .get("pipeline_request")
+        .ok_or_else(|| "Pipeline request metadata missing".to_string())?;
+
+    let pipeline_name = pipeline_request
+        .get("pipeline_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pipeline")
+        .to_string();
+    let pipeline_location = pipeline_request
+        .get("pipeline_location")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Pipeline location missing from request".to_string())?;
+    let sender = pipeline_request
+        .get("sender")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&original.from)
+        .to_string();
+    let submission_id = pipeline_request
+        .get("submission_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let biovault_db = biovault::data::BioVaultDb::new()
+        .map_err(|e| format!("Failed to open BioVault database: {}", e))?;
+    let run = biovault_db
+        .get_pipeline_run(run_id)
+        .map_err(|e| format!("Failed to load pipeline run: {}", e))?
+        .ok_or_else(|| format!("Pipeline run {} not found", run_id))?;
+
+    let results_source = run
+        .results_dir
+        .clone()
+        .unwrap_or_else(|| run.work_dir.clone());
+    let results_source_path = PathBuf::from(&results_source);
+    if !results_source_path.exists() {
+        return Err(format!(
+            "Pipeline results not found at {}",
+            results_source_path.display()
+        ));
+    }
+
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    let submission_root = biovault::data::resolve_syft_url(&data_dir, pipeline_location)
+        .map_err(|e| format!("Failed to resolve pipeline location: {}", e))?;
+    let results_dest_root = submission_root.join("results");
+    let results_dest = results_dest_root.join(format!("run_{}", run_id));
+
+    copy_results_folder(&storage, &results_source_path, &results_dest, &sender)?;
+
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&results_dest)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(&results_dest)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        files.push(serde_json::json!({
+            "file_name": rel,
+            "size_bytes": size,
+        }));
+    }
+
+    let datasite_root = config
+        .get_datasite_path()
+        .map_err(|e| format!("Failed to resolve datasite root: {}", e))?;
+    let rel_results = results_dest
+        .strip_prefix(&datasite_root)
+        .map_err(|e| format!("Failed to compute results path: {}", e))?
+        .to_string_lossy()
+        .to_string();
+    let results_location = format!("syft://{}/{}", config.email, rel_results);
+
+    let body = message.unwrap_or_else(|| {
+        format!(
+            "Pipeline results for {} are ready. You can find them under {}.",
+            pipeline_name, results_location
+        )
+    });
+
+    let mut reply = VaultMessage::reply_to(&original, config.email.clone(), body);
+    reply.subject = Some(format!("Pipeline Results: {}", pipeline_name));
+    reply.metadata = Some(serde_json::json!({
+        "pipeline_results": {
+            "pipeline_name": pipeline_name,
+            "run_id": run_id,
+            "sender": config.email,
+            "results_location": results_location,
+            "files": files,
+            "submission_id": submission_id,
+        }
+    }));
+
+    db.insert_message(&reply)
+        .map_err(|e| format!("Failed to store message: {}", e))?;
+    sync.send_message(&reply.id)
+        .map_err(|e| format!("Failed to send message: {}", e))?;
+
+    let updated = db
+        .get_message(&reply.id)
+        .map_err(|e| format!("Failed to reload message: {}", e))?
+        .unwrap_or(reply);
+
+    Ok(updated)
+}
+
+#[derive(serde::Deserialize)]
+pub struct OutputFile {
+    pub path: String,
+    #[serde(rename = "fileName")]
+    pub file_name: String,
+}
+
+/// Send pipeline results (published outputs) to a recipient
+#[tauri::command]
+pub fn send_pipeline_results(
+    recipient: String,
+    pipeline_name: String,
+    run_id: i64,
+    outputs: Vec<OutputFile>,
+    message: String,
+) -> Result<VaultMessage, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let config = load_config()?;
+    let (db, sync) = init_message_system(&config)
+        .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
+
+    // Read output files and encode as base64
+    let mut results_data: Vec<serde_json::Value> = vec![];
+    for output in &outputs {
+        let path = std::path::Path::new(&output.path);
+        if path.exists() {
+            // Read file content
+            let content = fs::read(path)
+                .map_err(|e| format!("Failed to read output file {}: {}", output.file_name, e))?;
+
+            // Encode as base64 for safe JSON transmission
+            let base64_content = STANDARD.encode(&content);
+
+            // Detect if it's text or binary
+            let is_text = output.file_name.ends_with(".csv")
+                || output.file_name.ends_with(".tsv")
+                || output.file_name.ends_with(".txt")
+                || output.file_name.ends_with(".json")
+                || output.file_name.ends_with(".yaml")
+                || output.file_name.ends_with(".yml");
+
+            results_data.push(serde_json::json!({
+                "file_name": output.file_name,
+                "content_base64": base64_content,
+                "size_bytes": content.len(),
+                "is_text": is_text,
+            }));
+        } else {
+            return Err(format!("Output file not found: {}", output.file_name));
+        }
+    }
+
+    // Create the message with pipeline results metadata
+    let body = if message.is_empty() {
+        format!(
+            "Pipeline results from '{}' (Run #{}) - {} file(s)",
+            pipeline_name,
+            run_id,
+            results_data.len()
+        )
+    } else {
+        message
+    };
+
+    let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), body);
+
+    msg.subject = Some(format!("Pipeline Results: {}", pipeline_name));
+
+    // Set metadata with results
+    msg.metadata = Some(serde_json::json!({
+        "pipeline_results": {
+            "pipeline_name": pipeline_name,
+            "run_id": run_id,
+            "sender": config.email,
+            "files": results_data,
+        }
+    }));
+
+    // Use thread_id based on pipeline + run for grouping
+    msg.thread_id = Some(format!("pipeline-results-{}:{}", pipeline_name, run_id));
+
+    // Insert and send
+    db.insert_message(&msg)
+        .map_err(|e| format!("Failed to store message: {}", e))?;
+
+    sync.send_message(&msg.id)
+        .map_err(|e| format!("Failed to send message: {}", e))?;
+
+    let updated = db
+        .get_message(&msg.id)
+        .map_err(|e| format!("Failed to reload message: {}", e))?
+        .unwrap_or(msg);
+
+    Ok(updated)
 }

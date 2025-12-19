@@ -750,6 +750,9 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
             for (key, asset) in &manifest.assets {
                 let mock_url = asset.mock.as_ref().and_then(|m| match m {
                     serde_yaml::Value::String(s) => Some(s.clone()),
+                    serde_yaml::Value::Mapping(map) => map
+                        .get(&serde_yaml::Value::String("url".to_string()))
+                        .and_then(|v| v.as_str().map(|s| s.to_string())),
                     _ => None,
                 });
 

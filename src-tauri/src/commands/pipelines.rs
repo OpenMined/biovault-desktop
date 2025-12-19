@@ -5,6 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
+use walkdir::WalkDir;
 
 // Use CLI library types and functions
 use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
@@ -930,6 +931,205 @@ pub async fn delete_pipeline_run(
 pub async fn preview_pipeline_spec(spec: PipelineSpec) -> Result<String, String> {
     // Convert spec to YAML for preview
     serde_yaml::to_string(&spec).map_err(|e| format!("Failed to generate pipeline preview: {}", e))
+}
+
+/// Import a pipeline from a message (received via pipeline request)
+#[tauri::command]
+pub async fn import_pipeline_from_message(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    _version: String,
+    spec: serde_json::Value,
+) -> Result<i64, String> {
+    let pipelines_dir = get_pipelines_dir()?;
+    let pipeline_dir = pipelines_dir.join(&name);
+
+    // Check if pipeline already exists
+    if pipeline_dir.exists() {
+        // For now, we'll overwrite - in the future could prompt user
+        // or rename with version suffix
+        fs::remove_dir_all(&pipeline_dir)
+            .map_err(|e| format!("Failed to remove existing pipeline: {}", e))?;
+    }
+
+    // Create pipeline directory
+    fs::create_dir_all(&pipeline_dir)
+        .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+
+    // Convert JSON spec to YAML
+    // The spec from the message is a serde_json::Value, convert to YAML
+    let yaml_content = serde_yaml::to_string(&spec)
+        .map_err(|e| format!("Failed to convert pipeline spec to YAML: {}", e))?;
+
+    // Write pipeline.yaml
+    let pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
+    fs::write(&pipeline_yaml_path, &yaml_content)
+        .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+
+    // Register in database
+    let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let pipeline_dir_str = pipeline_dir.to_string_lossy().to_string();
+
+    // Check if pipeline with same name exists in DB - delete then re-register
+    let existing = db.list_pipelines().map_err(|e| e.to_string())?;
+    if let Some(existing_pipeline) = existing.iter().find(|p| p.name == name) {
+        db.delete_pipeline(existing_pipeline.id)
+            .map_err(|e| format!("Failed to remove existing pipeline from database: {}", e))?;
+    }
+
+    // Register pipeline
+    let pipeline_id = db
+        .register_pipeline(&name, &pipeline_dir_str)
+        .map_err(|e| format!("Failed to register pipeline in database: {}", e))?;
+
+    Ok(pipeline_id)
+}
+
+fn should_skip_request_path(rel: &Path) -> bool {
+    if rel.file_name().map(|n| n == "syft.pub.yaml").unwrap_or(false) {
+        return true;
+    }
+
+    let skip_dirs = [
+        ".git",
+        ".nextflow",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "target",
+        "results",
+        "runs",
+    ];
+
+    rel.components().any(|component| {
+        component.as_os_str().to_str().map_or(false, |name| {
+            skip_dirs.iter().any(|skip| skip == &name)
+        })
+    })
+}
+
+fn copy_pipeline_request_dir(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest)
+        .map_err(|e| format!("Failed to create destination: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve path: {}", e))?;
+
+        if should_skip_request_path(rel) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest_path)
+                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            continue;
+        }
+
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        fs::copy(path, &dest_path)
+            .map_err(|e| format!("Failed to copy {}: {}", dest_path.display(), e))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn import_pipeline_from_request(
+    state: tauri::State<'_, AppState>,
+    name: Option<String>,
+    pipeline_location: String,
+    overwrite: bool,
+) -> Result<Pipeline, String> {
+    let config = biovault::config::Config::load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &pipeline_location)
+        .map_err(|e| format!("Failed to resolve pipeline location: {}", e))?;
+    if !source_root.exists() {
+        return Err(format!(
+            "Pipeline source folder not found at {}",
+            source_root.display()
+        ));
+    }
+
+    let pipeline_yaml = source_root.join("pipeline.yaml");
+    if !pipeline_yaml.exists() {
+        return Err(format!(
+            "pipeline.yaml not found in {}",
+            source_root.display()
+        ));
+    }
+
+    let spec = PipelineSpec::load(&pipeline_yaml)
+        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+    let resolved_name = name.filter(|n| !n.trim().is_empty()).unwrap_or(spec.name.clone());
+
+    let pipelines_dir = get_pipelines_dir()?;
+    fs::create_dir_all(&pipelines_dir)
+        .map_err(|e| format!("Failed to create pipelines directory: {}", e))?;
+
+    let dest_dir = pipelines_dir.join(&resolved_name);
+    if dest_dir.exists() {
+        if overwrite {
+            fs::remove_dir_all(&dest_dir)
+                .map_err(|e| format!("Failed to remove existing pipeline: {}", e))?;
+        } else {
+            return Err(format!(
+                "Pipeline '{}' already exists at {}. Use overwrite to replace.",
+                resolved_name,
+                dest_dir.display()
+            ));
+        }
+    }
+
+    copy_pipeline_request_dir(&source_root, &dest_dir)?;
+
+    let pipeline_dir_str = dest_dir.to_string_lossy().to_string();
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+    if overwrite {
+        let existing = biovault_db
+            .list_pipelines()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|p| p.name == resolved_name || p.pipeline_path == pipeline_dir_str);
+        if let Some(existing_pipeline) = existing {
+            biovault_db
+                .delete_pipeline(existing_pipeline.id)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    let id = biovault_db
+        .register_pipeline(&resolved_name, &pipeline_dir_str)
+        .map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Local::now().to_rfc3339();
+
+    Ok(Pipeline {
+        id,
+        name: resolved_name,
+        pipeline_path: pipeline_dir_str,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        spec: Some(spec),
+    })
 }
 
 // ============================================================================

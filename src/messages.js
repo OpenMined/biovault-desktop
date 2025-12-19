@@ -64,6 +64,15 @@ export function createMessagesModule({
 		return confirmWithDialog(dialog, message, options)
 	}
 
+	// Format file size in human readable format
+	function formatFileSize(bytes) {
+		if (bytes === 0) return '0 Bytes'
+		const k = 1024
+		const sizes = ['Bytes', 'KB', 'MB', 'GB']
+		const i = Math.floor(Math.log(bytes) / Math.log(k))
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+	}
+
 	function getSessionInviteFromMessage(msg) {
 		if (!msg) return null
 		const meta = normalizeMetadata(msg.metadata)
@@ -76,6 +85,40 @@ export function createMessagesModule({
 			from: invite.from || msg.from,
 			description: invite.description,
 			created_at: invite.created_at,
+		}
+	}
+
+	function getPipelineRequestFromMessage(msg) {
+		if (!msg) return null
+		const meta = normalizeMetadata(msg.metadata)
+		if (!meta || !meta.pipeline_request) return null
+		const request = meta.pipeline_request
+		if (!request.pipeline_name) return null
+		return {
+			pipeline_name: request.pipeline_name,
+			pipeline_version: request.pipeline_version || '1.0.0',
+			dataset_name: request.dataset_name,
+			sender: request.sender || msg.from,
+			pipeline_spec: request.pipeline_spec,
+			pipeline_location: request.pipeline_location,
+			submission_id: request.submission_id,
+			sender_local_path: request.sender_local_path,
+			receiver_local_path_template: request.receiver_local_path_template,
+		}
+	}
+
+	function getPipelineResultsFromMessage(msg) {
+		if (!msg) return null
+		const meta = normalizeMetadata(msg.metadata)
+		if (!meta || !meta.pipeline_results) return null
+		const results = meta.pipeline_results
+		if (!results.pipeline_name) return null
+		return {
+			pipeline_name: results.pipeline_name,
+			run_id: results.run_id,
+			sender: results.sender || msg.from,
+			results_location: results.results_location,
+			files: results.files || [],
 		}
 	}
 
@@ -1705,6 +1748,254 @@ export function createMessagesModule({
 						inviteCard.appendChild(actions)
 						msgDiv.appendChild(inviteCard)
 					}
+				}
+
+				// Pipeline request card
+				const pipelineRequest = getPipelineRequestFromMessage(msg)
+				if (pipelineRequest) {
+					const requestCard = document.createElement('div')
+					requestCard.className = 'message-pipeline-request'
+
+					requestCard.innerHTML = `
+						<h5>🔧 ${escapeHtml(pipelineRequest.pipeline_name)} <span class="version-badge">v${escapeHtml(pipelineRequest.pipeline_version)}</span><span class="invite-label">Pipeline Request</span></h5>
+						<p class="invite-meta">Run on dataset: <strong>${escapeHtml(pipelineRequest.dataset_name || 'your data')}</strong></p>
+						<p class="invite-meta">From: ${escapeHtml(pipelineRequest.sender)}</p>
+					`
+
+					const actions = document.createElement('div')
+					actions.className = 'invite-actions'
+
+					const importBtn = document.createElement('button')
+					importBtn.textContent = 'Import Pipeline'
+					importBtn.addEventListener('click', async () => {
+						try {
+							if (!pipelineRequest.pipeline_location) {
+								await dialog.message('Pipeline folder not found in request', {
+									title: 'Import Error',
+									type: 'error',
+								})
+								return
+							}
+
+							await invoke('import_pipeline_from_request', {
+								name: pipelineRequest.pipeline_name,
+								pipelineLocation: pipelineRequest.pipeline_location,
+								overwrite: false,
+							})
+
+							await dialog.message(
+								`Pipeline "${pipelineRequest.pipeline_name}" imported successfully!\n\nGo to Pipelines tab to view and run it.`,
+								{ title: 'Pipeline Imported', type: 'info' },
+							)
+						} catch (error) {
+							console.error('Failed to import pipeline:', error)
+							await dialog.message('Failed to import pipeline: ' + (error?.message || error), {
+								title: 'Import Error',
+								type: 'error',
+							})
+						}
+					})
+					actions.appendChild(importBtn)
+
+					const openBtn = document.createElement('button')
+					openBtn.className = 'secondary'
+					openBtn.textContent = 'Open in Finder'
+					openBtn.addEventListener('click', async () => {
+						try {
+							if (!pipelineRequest.pipeline_location) {
+								await dialog.message('Pipeline folder not found in request', {
+									title: 'Open Folder Error',
+									type: 'error',
+								})
+								return
+							}
+							const folderPath = await invoke('resolve_syft_url_to_local_path', {
+								syftUrl: pipelineRequest.pipeline_location,
+							})
+							await invoke('open_folder', { path: folderPath })
+						} catch (error) {
+							console.error('Failed to open pipeline folder:', error)
+							await dialog.message(`Failed to open folder: ${error?.message || error}`, {
+								title: 'Open Folder Error',
+								type: 'error',
+							})
+						}
+					})
+					actions.appendChild(openBtn)
+
+					requestCard.appendChild(actions)
+
+					if (!group.isOutgoing) {
+						const resultsActions = document.createElement('div')
+						resultsActions.className = 'invite-actions'
+
+						const runSelect = document.createElement('select')
+						runSelect.className = 'form-control'
+						runSelect.style.flex = '1'
+						runSelect.innerHTML = '<option value="">Loading runs...</option>'
+						runSelect.disabled = true
+
+						const sendBtn = document.createElement('button')
+						sendBtn.textContent = 'Send Back'
+						sendBtn.disabled = true
+						sendBtn.addEventListener('click', async () => {
+							const runId = parseInt(runSelect.value, 10)
+							if (!runId) return
+
+							try {
+								sendBtn.disabled = true
+								await invoke('send_pipeline_request_results', {
+									requestId: msg.id,
+									runId,
+								})
+								await dialog.message('Results sent back to the shared folder.', {
+									title: 'Results Sent',
+									type: 'info',
+								})
+							} catch (error) {
+								console.error('Failed to send pipeline results:', error)
+								await dialog.message(`Failed to send results: ${error?.message || error}`, {
+									title: 'Send Results Error',
+									type: 'error',
+								})
+							} finally {
+								sendBtn.disabled = false
+							}
+						})
+
+						resultsActions.appendChild(runSelect)
+						resultsActions.appendChild(sendBtn)
+						requestCard.appendChild(resultsActions)
+						;(async () => {
+							try {
+								const [pipelines, runs] = await Promise.all([
+									invoke('get_pipelines'),
+									invoke('get_pipeline_runs'),
+								])
+								const pipeline = (pipelines || []).find(
+									(p) => p?.name === pipelineRequest.pipeline_name,
+								)
+								if (!pipeline) {
+									runSelect.innerHTML = '<option value="">Import pipeline first</option>'
+									return
+								}
+
+								const matchingRuns = (runs || []).filter(
+									(run) => run.pipeline_id === pipeline.id && run.status === 'success',
+								)
+								if (matchingRuns.length === 0) {
+									runSelect.innerHTML = '<option value="">No completed runs yet</option>'
+									return
+								}
+
+								runSelect.innerHTML = matchingRuns
+									.map((run) => `<option value="${run.id}">Run #${run.id}</option>`)
+									.join('')
+								runSelect.disabled = false
+								sendBtn.disabled = false
+							} catch (error) {
+								console.error('Failed to load pipeline runs:', error)
+								runSelect.innerHTML = '<option value="">Failed to load runs</option>'
+							}
+						})()
+					}
+
+					msgDiv.appendChild(requestCard)
+				}
+
+				// Pipeline results card
+				const pipelineResults = getPipelineResultsFromMessage(msg)
+				if (pipelineResults) {
+					const resultsCard = document.createElement('div')
+					resultsCard.className = 'message-pipeline-results'
+
+					const filesHtml = pipelineResults.files
+						.map(
+							(file, idx) => `
+						<div class="result-file" data-file-idx="${idx}">
+							<span class="file-icon">📄</span>
+							<span class="file-name">${escapeHtml(file.file_name)}</span>
+							<span class="file-size">${formatFileSize(file.size_bytes)}</span>
+						</div>
+					`,
+						)
+						.join('')
+
+					resultsCard.innerHTML = `
+						<h5>📊 ${escapeHtml(pipelineResults.pipeline_name)} <span class="results-label">Pipeline Results</span></h5>
+						<p class="invite-meta">Run #${pipelineResults.run_id} • ${pipelineResults.files.length} file(s)</p>
+						<p class="invite-meta">From: ${escapeHtml(pipelineResults.sender)}</p>
+						<div class="results-files-list">${filesHtml}</div>
+					`
+
+					const actions = document.createElement('div')
+					actions.className = 'invite-actions'
+
+					const hasInlineContent = pipelineResults.files.some((file) => file.content_base64)
+
+					if (pipelineResults.results_location) {
+						const openBtn = document.createElement('button')
+						openBtn.textContent = 'Open Results Folder'
+						openBtn.addEventListener('click', async () => {
+							try {
+								const folderPath = await invoke('resolve_syft_url_to_local_path', {
+									syftUrl: pipelineResults.results_location,
+								})
+								await invoke('open_folder', { path: folderPath })
+							} catch (error) {
+								console.error('Failed to open results folder:', error)
+								await dialog.message(`Failed to open results folder: ${error?.message || error}`, {
+									title: 'Open Folder Error',
+									type: 'error',
+								})
+							}
+						})
+						actions.appendChild(openBtn)
+					}
+
+					if (hasInlineContent) {
+						const saveBtn = document.createElement('button')
+						saveBtn.textContent = 'Save All Files'
+						saveBtn.addEventListener('click', async () => {
+							try {
+								// Save each file using save dialog
+								for (const file of pipelineResults.files) {
+									if (!file.content_base64) continue
+									const destPath = await dialog.save({
+										title: `Save ${file.file_name}`,
+										defaultPath: file.file_name,
+									})
+									if (!destPath) continue // User cancelled
+
+									// Decode base64 and save
+									const content = atob(file.content_base64)
+									const bytes = new Uint8Array(content.length)
+									for (let i = 0; i < content.length; i++) {
+										bytes[i] = content.charCodeAt(i)
+									}
+									await invoke('save_file_bytes', {
+										path: destPath,
+										content: Array.from(bytes),
+									})
+								}
+
+								await dialog.message(`Saved ${pipelineResults.files.length} file(s)`, {
+									title: 'Files Saved',
+									type: 'info',
+								})
+							} catch (error) {
+								console.error('Failed to save files:', error)
+								await dialog.message('Failed to save files: ' + (error?.message || error), {
+									title: 'Save Error',
+									type: 'error',
+								})
+							}
+						})
+						actions.appendChild(saveBtn)
+					}
+
+					resultsCard.appendChild(actions)
+					msgDiv.appendChild(resultsCard)
 				}
 
 				// Timestamp - show on last message of group

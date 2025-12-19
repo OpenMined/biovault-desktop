@@ -776,6 +776,24 @@ pub fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Save raw bytes to a file
+#[tauri::command]
+pub fn save_file_bytes(path: String, content: Vec<u8>) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    let path = Path::new(&path);
+
+    // Create parent directories if needed
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directories: {}", e))?;
+    }
+
+    fs::write(path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn show_in_folder(file_path: String) -> Result<(), String> {
     crate::desktop_log!("📁 show_in_folder called with: {}", file_path);
