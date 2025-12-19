@@ -1195,9 +1195,7 @@ pub fn run() {
     fn best_effort_stop_syftbox_for_exit() {
         let _ = crate::stop_syftbox_client();
 
-        if crate::syftbox_backend_is_embedded() {
-            return;
-        }
+        if crate::syftbox_backend_is_embedded() {}
 
         #[cfg(target_os = "windows")]
         {
