@@ -4,7 +4,7 @@ set -euo pipefail
 # Launch two BioVault Desktop instances against hosted dev.syftbox.net.
 # - Builds syftbox prod binary into resources.
 # - For each email, provisions an sbenv client (init + daemon). Keys are generated during onboarding.
-# - Starts two bun dev instances with per-user SyftBox env and debug banner.
+# - Starts two npm dev instances with per-user SyftBox env and debug banner.
 # - Cleans up sbenv daemons on exit.
 
 # Usage:
@@ -201,7 +201,7 @@ launch_instance() {
     SYFTBOX_DATA_DIR="$data_dir" \
     SYC_VAULT="$home/.syc" \
     BIOVAULT_DEBUG_BANNER=1 \
-    bun run dev
+    npm run dev
   )
 }
 

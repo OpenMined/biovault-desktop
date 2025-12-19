@@ -61,7 +61,6 @@
 		},
 		"targets": ["app", "appimage", "dmg", "nsis"],
 		"resources": [
-			"resources/syftbox",
 			"resources/templates",
 			"resources/bundled/README.txt",
 			"resources/bundled/java",

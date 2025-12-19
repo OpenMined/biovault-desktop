@@ -708,7 +708,7 @@ assert_tauri_binary_present() {
 		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
 		echo "[DEBUG] Checking if target directory exists:" >&2
 		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
-		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
+		echo "Tauri binary not found at $TAURI_BINARY - run 'npm run build' first" >&2
 		exit 1
 	fi
 	info "[DEBUG] Tauri binary found and executable"
@@ -760,7 +760,7 @@ assert_tauri_binary_fresh() {
 			return 0
 		fi
 		echo "[DEBUG] ERROR: Rebuild required but AUTO_REBUILD_TAURI=$auto_rebuild prevents it" >&2
-		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
+		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'npm run build'." >&2
 		echo "Tip: set AUTO_REBUILD_TAURI=1 to auto-rebuild." >&2
 		exit 1
 	fi
@@ -969,7 +969,7 @@ run_ui_grep() {
 		shift
 	done
 
-	cmd+=(bun run test:ui --grep "$grep_pat")
+	cmd+=(npm run test:ui -- --grep "$grep_pat")
 	append_array_items cmd PLAYWRIGHT_OPTS
 	append_array_items cmd FORWARD_ARGS
 
