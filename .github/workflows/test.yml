@@ -35,40 +35,55 @@ jobs:
         run: ./lint.sh
 
   scenario-tests:
-    name: ${{ matrix.scenario }} (${{ matrix.platform }})
+    name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     strategy:
       fail-fast: false
       matrix:
         include:
-          # jupyter-collab runs on all 3 platforms (macOS ARM for speed)
+          # jupyter-collab on Linux - rust
           - scenario: jupyter-collab
             platform: linux-x86_64
             runner: ubuntu-latest
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
+          # jupyter-collab on Linux - go
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # jupyter-collab on macOS ARM - rust
           - scenario: jupyter-collab
             platform: macos-arm64
             runner: macos-latest
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # - scenario: jupyter-collab
-          #   platform: windows-x86_64
-          #   runner: windows-latest
-          #   tauri_binary: src-tauri/target/release/bv-desktop.exe
-          #   run_prefix: ""
-          # pipelines-solo runs on Linux and macOS (Intel Mac for Docker support)
+          # jupyter-collab on macOS ARM - go
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # pipelines-solo on Linux - rust
           - scenario: pipelines-solo
             platform: linux-x86_64
             runner: ubuntu-latest
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # - scenario: pipelines-solo
-          #   platform: macos-x86_64
-          #   runner: macos-15-intel
-          #   tauri_binary: src-tauri/target/release/bv-desktop
-          #   run_prefix: ""
+          # pipelines-solo on Linux - go
+          - scenario: pipelines-solo
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
 
     defaults:
       run:
@@ -77,6 +92,7 @@ jobs:
     env:
       SKIP_PLAYWRIGHT_INSTALL: "1"
       AUTO_REBUILD_TAURI: "1"
+      BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
 
     steps:
       - name: Enable long paths (Windows)
@@ -123,9 +139,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -219,7 +235,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.scenario }}-${{ matrix.platform }}-test-results
+          name: ${{ matrix.scenario }}-${{ matrix.platform }}-${{ matrix.client_mode }}-test-results
           path: |
             logs/
             test-results/
