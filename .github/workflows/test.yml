@@ -204,9 +204,15 @@ jobs:
           sed -n '1,400p' tauri-linux.log || true
 
   scenario-tests:
-    name: Multi-client scenario tests
+    name: Multi-client scenario tests${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: macos-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        client_mode: [rust, go]
+    env:
+      BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -277,16 +283,73 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: scenario-test-results
+          name: scenario-test-results-${{ matrix.client_mode }}
+          path: |
+            logs/
+            test-results/
+            artifacts/
+
+  sync-permissions-scenario:
+    name: Sync permissions scenario (${{ matrix.client_mode }})
+    runs-on: macos-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        client_mode: [go, rust]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go (syftbox)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Run sync permissions scenario
+        run: |
+          ./biovault/test-scenario.sh \
+            --client-mode "${{ matrix.client_mode }}" \
+            --sandbox "biovault/sandbox-${{ matrix.client_mode }}" \
+            tests/scenarios/sync-permissions.yaml
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-permissions-${{ matrix.client_mode }}-artifacts
           path: |
             logs/
             test-results/
             artifacts/
 
   jupyter-tests:
-    name: Jupyter session tests
+    name: Jupyter session tests${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: macos-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        client_mode: [rust, go]
+    env:
+      BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -366,16 +429,22 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: jupyter-test-results
+          name: jupyter-test-results-${{ matrix.client_mode }}
           path: |
             logs/
             test-results/
             artifacts/
 
   pipelines-tests:
-    name: Pipeline execution tests
+    name: Pipeline execution tests${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: macos-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        client_mode: [rust, go]
+    env:
+      BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -471,7 +540,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pipelines-test-results
+          name: pipelines-test-results-${{ matrix.client_mode }}
           path: |
             logs/
             test-results/

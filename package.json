@@ -8,6 +8,7 @@
 		"dev": "bash -lc 'set -euo pipefail; ./scripts/ensure-bundled-deps.sh; npm run tauri -- dev'",
 		"dev:config": "bash -lc 'set -euo pipefail; BIOVAULT_HOME=${BIOVAULT_CONFIG} ./scripts/ensure-bundled-deps.sh; npm run tauri -- dev'",
 		"build": "bash -lc 'set -euo pipefail; ./scripts/fetch-bundled-deps.sh; bash ./scripts/materialize-templates.sh; npm run tauri -- build'",
+		"build:go": "bash -lc 'set -euo pipefail; ./build-go.sh'",
 		"test:ui": "playwright test"
 	},
 	"devDependencies": {

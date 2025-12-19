@@ -463,7 +463,8 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
 
     if std::env::var("BV_SYFTBOX_BACKEND").is_err() {
-        std::env::set_var("BV_SYFTBOX_BACKEND", "embedded");
+        let default_backend = option_env!("BV_SYFTBOX_DEFAULT_BACKEND").unwrap_or("embedded");
+        std::env::set_var("BV_SYFTBOX_BACKEND", default_backend);
     }
 
     // Desktop app defaults to Desktop/BioVault if not specified via env or args

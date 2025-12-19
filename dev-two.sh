@@ -23,7 +23,7 @@ set -euo pipefail
 #   --skip-sync-check  Skip the sbdev sync probe
 #   --client EMAIL     Add a client (repeatable, defaults to client1/client2)
 #   --clients a,b,c    Comma-separated client list
-#   --path DIR         Override sandbox root (default: biovault/syftbox/sandbox)
+#   --path DIR         Override sandbox root (default: biovault/sandbox)
 #   --single [EMAIL]   Launch only one desktop (defaults to first client)
 #   --stop             Stop devstack and any desktop processes
 #
@@ -165,7 +165,8 @@ ensure_bv_cli() {
 }
 
 sbdev_tool() {
-  (cd "$BIOVAULT_DIR/syftbox" && GOCACHE="$BIOVAULT_DIR/syftbox/.gocache" go run ./cmd/devstack "$@")
+  local syftbox_dir="$BIOVAULT_DIR/syftbox-sdk/syftbox"
+  (cd "$syftbox_dir" && GOCACHE="$syftbox_dir/.gocache" go run ./cmd/devstack "$@")
 }
 
 find_state_file() {

@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # Launch two BioVault Desktop instances against hosted dev.syftbox.net.
-# - Builds syftbox prod binary into resources.
-# - For each email, provisions an sbenv client (init + daemon). Keys are generated during onboarding.
+# - Embedded (syftbox-rs) is default.
+# - Use --process/--go to run the external syftbox daemon via sbenv.
 # - Starts two npm dev instances with per-user SyftBox env and debug banner.
-# - Cleans up sbenv daemons on exit.
+# - Cleans up sbenv daemons on exit when process mode is used.
 
 # Usage:
-#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]
+#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]
 # Defaults: client1=client1@sandbox.local, client2=client2@sandbox.local
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,6 +21,7 @@ SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
 LOG_DIR="$ROOT_DIR/logs"
 SBENV_LAUNCH_PIDS=()
 CLIENTS=()
+BACKEND="${BV_SYFTBOX_BACKEND:-embedded}"
 SINGLE_MODE=0
 SINGLE_TARGET=""
 STOP_ONLY=0
@@ -60,6 +61,9 @@ PY
 }
 
 start_sbenv_client() {
+  if [[ "$BACKEND" != "process" ]]; then
+    return
+  fi
   local email="$1"
   local client_dir="$SANDBOX_DIR/$email"
   local config_file="$client_dir/.syftbox/config.json"
@@ -97,6 +101,9 @@ start_sbenv_client() {
 }
 
 stop_sbenv_client() {
+  if [[ "$BACKEND" != "process" ]]; then
+    return
+  fi
   local email="$1"
   local client_dir="$SANDBOX_DIR/$email"
   local pid_file="$client_dir/.syftbox/syftbox.pid"
@@ -111,8 +118,17 @@ stop_sbenv_client() {
 
 provision_client() {
   local email="$1"
-  start_sbenv_client "$email"
-  wait_for_sbenv_daemon "$email"
+  if [[ "$BACKEND" == "process" ]]; then
+    start_sbenv_client "$email"
+    wait_for_sbenv_daemon "$email"
+  else
+    local client_dir="$SANDBOX_DIR/$email"
+    if (( RESET_FLAG )) && [[ -d "$client_dir" ]]; then
+      echo "[live] Resetting client $email (--reset flag)"
+      rm -rf "$client_dir"
+    fi
+    mkdir -p "$client_dir"
+  fi
   # Do not pre-provision keys/bundles; onboarding in-app will handle identity.
 }
 
@@ -186,19 +202,34 @@ launch_instance() {
   local tag="$1"; shift
   local email="$1"; shift
   echo "[live] Launching BioVault ($tag) with BIOVAULT_HOME=$home email=$email" >&2
+  local backend="${BACKEND}"
   (
     cd "$ROOT_DIR"
     local config_path="$home/.syftbox/config.json"
-    local data_dir
-    data_dir="$(read_data_dir "$config_path")"
+    local data_dir=""
+    local default_config="$home/syftbox/config.json"
+    local default_data="$home"
+    local env_config=""
+    local env_data=""
+    local env_binary=""
+    if [[ "$backend" == "process" ]]; then
+      data_dir="$(read_data_dir "$config_path")"
+      env_config="$config_path"
+      env_data="$data_dir"
+      env_binary="$SYFTBOX_BIN_RES"
+    else
+      env_config="$default_config"
+      env_data="$default_data"
+    fi
     BIOVAULT_HOME="$home" \
+    BV_SYFTBOX_BACKEND="$backend" \
     SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
-    SYFTBOX_BINARY="$SYFTBOX_BIN_RES" \
+    SYFTBOX_BINARY="$env_binary" \
     SYFTBOX_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
     SYFTBOX_EMAIL="$email" \
     SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
-    SYFTBOX_CONFIG_PATH="$config_path" \
-    SYFTBOX_DATA_DIR="$data_dir" \
+    SYFTBOX_CONFIG_PATH="$env_config" \
+    SYFTBOX_DATA_DIR="$env_data" \
     SYC_VAULT="$home/.syc" \
     BIOVAULT_DEBUG_BANNER=1 \
     npm run dev
@@ -206,7 +237,9 @@ launch_instance() {
 }
 
 cleanup() {
-  echo "[live] Cleaning up sbenv clients"
+  if [[ "$BACKEND" == "process" ]]; then
+    echo "[live] Cleaning up sbenv clients"
+  fi
   for pid in "${SBENV_LAUNCH_PIDS[@]:-}"; do
     if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
       kill "$pid" >/dev/null 2>&1 || true
@@ -231,6 +264,12 @@ main() {
   # Parse args (align with dev-two.sh style)
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --embedded)
+        BACKEND="embedded"
+        ;;
+      --process|--go)
+        BACKEND="process"
+        ;;
       --client)
         CLIENTS+=("${2:?--client requires an email}")
         shift
@@ -258,7 +297,7 @@ main() {
         shift
         ;;
       -h|--help)
-        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]"
+        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]"
         exit 0
         ;;
       *)
@@ -291,8 +330,10 @@ main() {
     fi
   fi
 
-  build_syftbox
-  ensure_cli
+  if [[ "$BACKEND" == "process" ]]; then
+    build_syftbox
+    ensure_cli
+  fi
 
   # Provision all requested clients
   declare -a PROVISIONED=()
@@ -317,7 +358,9 @@ main() {
     echo "[live] client PID: $pid1"
   fi
 
-  echo "[live] Use 'tail -f logs/sbenv-*.log' for daemon logs."
+  if [[ "$BACKEND" == "process" ]]; then
+    echo "[live] Use 'tail -f logs/sbenv-*.log' for daemon logs."
+  fi
   wait
 }
 

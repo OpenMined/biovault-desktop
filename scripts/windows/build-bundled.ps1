@@ -11,6 +11,11 @@ Write-Host "== Production build (bundled) ==" -ForegroundColor Blue
 Write-Host "This creates an installable .exe with bundled UV + Syftbox" -ForegroundColor Green
 Write-Host ""
 
+# Bundle syftbox for the Go-backend build.
+$env:BV_BUNDLE_SYFTBOX = "1"
+$env:BV_SYFTBOX_DEFAULT_BACKEND = "process"
+$env:TAURI_CONFIG = (Join-Path $repoRoot "src-tauri\\tauri.conf.go.json")
+
 # Run the bundle-deps script first
 Write-Host "Running bundle-deps.ps1 to download dependencies..." -ForegroundColor Yellow
 & (Join-Path $scriptDir "bundle-deps.ps1")
