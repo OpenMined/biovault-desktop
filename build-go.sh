@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local dev build with ad-hoc signing (no notarization)
-# For production builds use: ./build-signed.sh
+# Local dev build with ad-hoc signing (no notarization) for the process (Go) SyftBox backend.
 
 # Parse flags
 CLEAN=false
@@ -19,8 +18,9 @@ if [[ "$CLEAN" == "true" ]]; then
   cargo clean --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
 fi
 
-# Fetch bundled deps
-chmod +x scripts/fetch-bundled-deps.sh
+# Build syftbox and fetch bundled deps
+chmod +x scripts/build-syftbox-prod.sh scripts/fetch-bundled-deps.sh
+./scripts/build-syftbox-prod.sh
 ./scripts/fetch-bundled-deps.sh
 
 # Materialize notebooks into a real templates directory for bundling
@@ -31,6 +31,7 @@ chmod +x scripts/materialize-templates.sh
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "Stripping extended attributes..."
   for root in \
+    src-tauri/resources/syftbox \
     src-tauri/resources/bundled/uv \
     src-tauri/resources/bundled/java \
     src-tauri/resources/bundled/nextflow; do
@@ -43,7 +44,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
   # Ad-hoc sign all bundled executables and dylibs
   echo "Ad-hoc signing bundled executables..."
-  find src-tauri/resources/bundled -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+  find src-tauri/resources/bundled src-tauri/resources/syftbox -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
     codesign --force --sign - "$f" 2>/dev/null || true
   done || true
 
@@ -54,8 +55,11 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 # Build without notarization (local dev)
-echo "Running tauri build (dev mode, no notarization)..."
-APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" npm run tauri -- build
+echo "Running tauri build (go backend, no notarization)..."
+BV_SYFTBOX_DEFAULT_BACKEND=process \
+TAURI_CONFIG=src-tauri/tauri.conf.go.json \
+APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" \
+npm run tauri -- build
 
 # Clear quarantine on output artifacts
 if [[ "$(uname)" == "Darwin" ]]; then
@@ -66,5 +70,5 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 echo ""
-echo "✅ Dev build complete (ad-hoc signed, not notarized)"
-echo "   For production builds use: ./build-signed.sh"
+echo "✅ Go-backend build complete (ad-hoc signed, not notarized)"
+echo "   For production builds use: ./build-go-signed.sh"

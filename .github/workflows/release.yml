@@ -240,8 +240,16 @@ jobs:
                   'target': 'linux-arm64',
               })
 
-          matrix = {'include': entries}
-          has_targets = 'true' if entries else 'false'
+          syftbox_impls = ['rust', 'go']
+          matrix_entries = []
+          for entry in entries:
+              for impl in syftbox_impls:
+                  item = dict(entry)
+                  item['syftbox_impl'] = impl
+                  matrix_entries.append(item)
+
+          matrix = {'include': matrix_entries}
+          has_targets = 'true' if matrix_entries else 'false'
 
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
               fh.write(f"matrix={json.dumps(matrix)}\n")
@@ -249,7 +257,7 @@ jobs:
           PY
 
   build:
-    name: Build app bundle
+    name: Build app bundle (${{ matrix.target }}-${{ matrix.syftbox_impl }})
     needs:
       - prepare-version
       - configure-build-matrix
@@ -271,6 +279,8 @@ jobs:
       LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
       LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
       APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
+      SYFTBOX_IMPL: ${{ matrix.syftbox_impl }}
+      SYFTBOX_SUFFIX: ${{ matrix.syftbox_impl == 'go' && '-go' || '' }}
     steps:
       - name: Enable Windows long paths
         if: runner.os == 'Windows'
@@ -396,7 +406,7 @@ jobs:
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Setup Go (syftbox)
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         uses: actions/setup-go@v5
         with:
           go-version-file: biovault/syftbox/go.mod
@@ -479,16 +489,108 @@ jobs:
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
 
-      - name: Build syftbox client
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+
+      - name: Materialize notebooks for bundling
+        shell: bash
+        run: |
+          chmod +x scripts/materialize-templates.sh
+          ./scripts/materialize-templates.sh
+
+      - name: Clear quarantine on bundled binaries (macOS)
+        if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
+        run: |
+          for root in \
+            src-tauri/resources/syftbox \
+            src-tauri/resources/bundled/uv \
+            src-tauri/resources/bundled/java \
+            src-tauri/resources/bundled/nextflow; do
+            if [[ -d "$root" ]]; then
+              xattr -r -c "$root" 2>/dev/null || true
+            elif [[ -f "$root" ]]; then
+              xattr -c "$root" 2>/dev/null || true
+            fi
+          done
+
+      - name: Create placeholder resources (arm64 no-bundle build)
+        if: matrix.target == 'linux-arm64'
+        run: |
+          # Create placeholder directories and files for resources that tauri.conf.json expects
+          mkdir -p src-tauri/resources/syftbox
+          mkdir -p src-tauri/resources/bundled/java
+          mkdir -p src-tauri/resources/bundled/nextflow
+          mkdir -p src-tauri/resources/bundled/uv
+
+          # Create placeholder files
+          touch src-tauri/resources/syftbox/syftbox
+          echo "Placeholder - bundled deps not included in arm64 build" > src-tauri/resources/bundled/README.txt
+          touch src-tauri/resources/bundled/java/.placeholder
+          touch src-tauri/resources/bundled/nextflow/.placeholder
+          touch src-tauri/resources/bundled/uv/.placeholder
+
+      - name: Build syftbox client (Rust)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'rust'
+        env:
+          SYFTBOX_RUST_TARGET: ${{ matrix.args }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
+        run: |
+          chmod +x scripts/build-syftbox-rust.sh
+          ./scripts/build-syftbox-rust.sh
+
+      - name: Build syftbox client (Go)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
+      - name: Build syftbox client (Rust, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $rustDir = Join-Path $repoRoot "biovault\\syftbox-sdk\\syftbox\\rust"
+          cargo build --release --manifest-path "$rustDir\\Cargo.toml" --target ${{ matrix.args }}
+          $bin = Join-Path $rustDir "target\\${{ matrix.args }}\\release\\syftbox-rs.exe"
+          if (-not (Test-Path $bin)) {
+            throw "Rust syftbox binary not found at $bin"
+          }
+          $outDir = Join-Path $repoRoot "src-tauri\\resources\\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item -Force $bin (Join-Path $outDir "syftbox.exe")
+
+      - name: Build syftbox client (Go, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'go'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $syftboxDir = Join-Path $repoRoot "biovault\\syftbox-sdk\\syftbox"
+          $outDir = Join-Path $repoRoot "src-tauri\\resources\\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $syftboxExe = Join-Path $outDir "syftbox.exe"
+          $version = (git describe --tags --always --dirty 2>$null)
+          if (-not $version) { $version = "dev" }
+          $rev = (git rev-parse --short HEAD 2>$null)
+          if (-not $rev) { $rev = "HEAD" }
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X github.com/openmined/syftbox/internal/version.Version=$version " +
+            "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
+            "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
+          $env:GO111MODULE = "on"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          Push-Location $syftboxDir
+          try {
+            & go build "-ldflags=$ldflags" -o $syftboxExe ".\\cmd\\client"
+          } finally {
+            Pop-Location
+          }
+
       - name: Verify syftbox binary architecture + smoke run
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -609,43 +711,6 @@ jobs:
           Write-Host "syftbox smoke run:"
           & $syftboxBin --help | Out-Null
 
-      - name: Materialize notebooks for bundling
-        shell: bash
-        run: |
-          chmod +x scripts/materialize-templates.sh
-          ./scripts/materialize-templates.sh
-
-      - name: Clear quarantine on bundled binaries (macOS)
-        if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
-        run: |
-          for root in \
-            src-tauri/resources/syftbox \
-            src-tauri/resources/bundled/uv \
-            src-tauri/resources/bundled/java \
-            src-tauri/resources/bundled/nextflow; do
-            if [[ -d "$root" ]]; then
-              xattr -r -c "$root" 2>/dev/null || true
-            elif [[ -f "$root" ]]; then
-              xattr -c "$root" 2>/dev/null || true
-            fi
-          done
-
-      - name: Create placeholder resources (arm64 no-bundle build)
-        if: matrix.target == 'linux-arm64'
-        run: |
-          # Create placeholder directories and files for resources that tauri.conf.json expects
-          mkdir -p src-tauri/resources/syftbox
-          mkdir -p src-tauri/resources/bundled/java
-          mkdir -p src-tauri/resources/bundled/nextflow
-          mkdir -p src-tauri/resources/bundled/uv
-
-          # Create placeholder files
-          touch src-tauri/resources/syftbox/syftbox
-          echo "Placeholder - bundled deps not included in arm64 build" > src-tauri/resources/bundled/README.txt
-          touch src-tauri/resources/bundled/java/.placeholder
-          touch src-tauri/resources/bundled/nextflow/.placeholder
-          touch src-tauri/resources/bundled/uv/.placeholder
-
       - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
         run: |
@@ -759,9 +824,9 @@ jobs:
 
           mkdir -p artifacts
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}.dmg || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.dmg || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.app.tar.gz || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.app.tar.gz.sig || true
 
       - name: Clear quarantine on macOS artifacts
         if: runner.os == 'macOS'
@@ -777,8 +842,9 @@ jobs:
 
           New-Item -Path artifacts -ItemType Directory -Force
 
-          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe -ErrorAction SilentlyContinue
-          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
+          $suffix = $env:SYFTBOX_SUFFIX
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination ("artifacts\\BioVault-Desktop-${{ matrix.args }}$suffix.exe") -ErrorAction SilentlyContinue
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination ("artifacts\\BioVault-Desktop-${{ matrix.args }}$suffix.exe.sig") -ErrorAction SilentlyContinue
 
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
@@ -788,14 +854,14 @@ jobs:
 
           mkdir -p artifacts
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb.sig || true
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm.sig || true
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage.sig || true
 
       - name: Dump linuxdeploy logs on failure
         if: failure() && runner.os == 'Linux' && matrix.build_kind == 'tauri'
@@ -823,22 +889,22 @@ jobs:
           sudo chown -R $(id -u):$(id -g) src-tauri/target/${{ matrix.args }}/release/bundle/ || true
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb.sig
           else
             echo "Warning: No .deb artifacts found"
           fi
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm.sig
           else
             echo "Warning: No .rpm artifacts found"
           fi
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage.sig
           else
             echo "Error: No .AppImage artifacts found - build may have failed"
             exit 1

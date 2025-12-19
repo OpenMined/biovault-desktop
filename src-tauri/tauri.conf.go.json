@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "BioVault",
+	"productName": "BioVault-go",
 	"version": "0.1.39",
-	"identifier": "org.openmined.biovault-desktop",
+	"identifier": "org.openmined.biovault-desktop-go",
 	"build": {
 		"frontendDist": "../src"
 	},
@@ -61,6 +61,7 @@
 		},
 		"targets": ["app", "appimage", "dmg", "nsis"],
 		"resources": [
+			"resources/syftbox",
 			"resources/templates",
 			"resources/bundled/README.txt",
 			"resources/bundled/java",

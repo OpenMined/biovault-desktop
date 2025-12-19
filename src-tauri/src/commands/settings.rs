@@ -94,6 +94,8 @@ fn best_effort_stop_syftbox_for_reset() {
         }
     }
 
+    if crate::syftbox_backend_is_embedded() {}
+
     // Fallback for partially configured states (e.g. before onboarding) where runtime config can't be loaded.
     #[cfg(target_os = "windows")]
     {
@@ -403,7 +405,7 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
             match biovault::config::Config::load() {
                 Ok(config) => {
                     println!("✓ Dependency binaries detected and saved:");
-                    for binary in ["java", "docker", "nextflow", "syftbox", "uv"] {
+                    for binary in super::dependencies::dependency_names() {
                         match config.get_binary_path(binary) {
                             Some(path) => {
                                 println!("  - {}: {}", binary, path);

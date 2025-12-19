@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build with proper Developer ID signing (mirrors CI behavior)
+# Build with proper Developer ID signing (mirrors CI behavior) for the process (Go) SyftBox backend.
 # Requires .env with: APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
 TRAP_P12=""
 cleanup() {
@@ -70,8 +70,11 @@ if [[ "$CLEAN" == "true" ]]; then
   cargo clean --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
 fi
 
+# Build syftbox with Developer ID signing
+chmod +x scripts/build-syftbox-prod-signed.sh scripts/fetch-bundled-deps.sh scripts/sign-bundled-deps.sh
+./scripts/build-syftbox-prod-signed.sh
+
 # Fetch bundled deps then sign them
-chmod +x scripts/fetch-bundled-deps.sh scripts/sign-bundled-deps.sh
 ./scripts/fetch-bundled-deps.sh
 ./scripts/sign-bundled-deps.sh
 
@@ -81,6 +84,8 @@ chmod +x scripts/materialize-templates.sh
 
 # Build with Tauri
 echo "Running tauri build..."
+BV_SYFTBOX_DEFAULT_BACKEND=process \
+TAURI_CONFIG=src-tauri/tauri.conf.go.json \
 npm run tauri -- build
 
 # Clear quarantine on output artifacts
@@ -90,5 +95,6 @@ find src-tauri/target -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.tar.
 done || true
 
 echo ""
-echo "✅ Build complete. Test with:"
+echo "✅ Go-backend build complete."
+echo "   Test with:"
 echo "   ./check-gatekeeper.sh ./src-tauri/target/release/bundle/dmg/*.dmg"
