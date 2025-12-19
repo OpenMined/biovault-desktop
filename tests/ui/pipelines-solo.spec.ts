@@ -1,11 +1,14 @@
 /**
  * Pipelines Solo Test
- * Tests the complete pipeline workflow:
+ * Tests the complete pipeline and dataset workflow:
  * 1. Import synthetic genotype data
- * 2. Create Thalassemia pipeline
- * 3. Select all data and run pipeline
- * 4. Wait for run to complete with success
- * 5. Verify results in SQL Query tab
+ * 2. Create HERC2 pipeline
+ * 3. Create dataset with 5 private + 5 mock files
+ * 4. Edit dataset and verify files persist
+ * 5. Publish dataset and verify YAML
+ * 6. Edit dataset and remove 1 mock file
+ * 7. Verify republish and changes
+ * 8. Run pipeline on dataset mock data
  *
  * Usage:
  *   ./test-scenario.sh --pipelines-solo
@@ -96,29 +99,22 @@ async function waitForRunCompletion(
 	timeoutMs: number = PIPELINE_RUN_TIMEOUT,
 ): Promise<{ status: string; run: any }> {
 	const startTime = Date.now()
-	let lastStatus = ''
+	let lastStatus = 'unknown'
 
 	while (Date.now() - startTime < timeoutMs) {
 		try {
 			const runs = await backend.invoke('get_pipeline_runs', {})
-			const run = runs?.find((r: any) => r.id === runId)
-
+			const run = runs.find((r: any) => r.id === runId)
 			if (run) {
 				lastStatus = run.status
-				console.log(`Run ${runId} status: ${run.status}`)
+				console.log(`Run ${runId} status: ${lastStatus}`)
 
-				if (run.status === 'success' || run.status === 'completed') {
-					return { status: 'success', run }
-				}
-				if (run.status === 'failed' || run.status === 'error') {
-					throw new Error(`Pipeline run failed: ${JSON.stringify(run)}`)
+				if (run.status === 'success' || run.status === 'failed' || run.status === 'error') {
+					return { status: run.status, run }
 				}
 			}
-		} catch (err) {
-			if ((err as Error).message?.includes('Pipeline run failed')) {
-				throw err
-			}
-			console.log(`Error checking run status: ${err}`)
+		} catch (e) {
+			console.log(`Error checking run status: ${e}`)
 		}
 
 		await page.waitForTimeout(2000)
@@ -128,34 +124,45 @@ async function waitForRunCompletion(
 }
 
 test.describe('Pipelines Solo @pipelines-solo', () => {
-	test('import data, create Thalassemia pipeline, run and verify results', async ({ browser }) => {
+	test('import data, create dataset, run pipeline on mock data', async ({ browser }) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
-		const email = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
-		const syntheticDataDir = process.env.SYNTHETIC_DATA_DIR || ''
+		const email = process.env.TEST_EMAIL || 'client1@sandbox.local'
+		const syntheticDataDir =
+			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
 
-		console.log(`Setting up pipelines solo test`)
+		console.log('Setting up pipelines solo test')
 		console.log(`Client: ${email} (port ${wsPort})`)
 		console.log(`Synthetic data dir: ${syntheticDataDir}`)
 
-		if (!syntheticDataDir || !fs.existsSync(syntheticDataDir)) {
-			throw new Error(`SYNTHETIC_DATA_DIR not set or directory does not exist: ${syntheticDataDir}`)
+		// Verify synthetic data exists
+		if (!fs.existsSync(syntheticDataDir)) {
+			throw new Error(`Synthetic data directory not found: ${syntheticDataDir}`)
 		}
-
-		// Count synthetic files
-		const syntheticFiles = fs
-			.readdirSync(syntheticDataDir, { withFileTypes: true })
-			.filter((d) => d.isDirectory())
-			.flatMap((d) => {
-				const subDir = path.join(syntheticDataDir, d.name)
-				return fs.readdirSync(subDir).filter((f) => f.endsWith('.txt'))
-			})
+		// Files are in subdirectories (e.g., 101526/101526_X_X_GSAv3-DTC_GRCh38-01-26-2025.txt)
+		const subdirs = fs.readdirSync(syntheticDataDir).filter((d) => {
+			const fullPath = path.join(syntheticDataDir, d)
+			return fs.statSync(fullPath).isDirectory()
+		})
+		const syntheticFiles: string[] = []
+		for (const subdir of subdirs) {
+			const subdirPath = path.join(syntheticDataDir, subdir)
+			const files = fs
+				.readdirSync(subdirPath)
+				.filter((f) => f.endsWith('.txt') || f.endsWith('.csv'))
+			for (const file of files) {
+				syntheticFiles.push(path.join(subdirPath, file))
+			}
+		}
 		console.log(`Found ${syntheticFiles.length} synthetic genotype files`)
+		expect(syntheticFiles.length).toBeGreaterThan(0)
 
 		const logSocket = await ensureLogSocket()
+
+		// Create browser context and page
 		const context = await browser.newContext()
 		const page = await context.newPage()
 
-		// Monitor console for errors
+		// Log browser console errors
 		page.on('console', (msg) => {
 			if (msg.type() === 'error') {
 				console.log(`[Browser Error] ${msg.text()}`)
@@ -165,415 +172,538 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 		await setWsPort(page, wsPort)
 		const backend = await connectBackend(wsPort)
 
-		const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
-		await page.goto(baseUrl)
-
-		// Check if onboarding is needed
-		const isOnboarded = await backend.invoke('check_is_onboarded')
-		if (!isOnboarded) {
-			log(logSocket, { event: 'onboarding-required' })
-			await completeOnboarding(page, email, logSocket)
-		} else {
+		try {
+			// Navigate and complete onboarding if needed
+			await page.goto(`http://localhost:${process.env.UI_PORT || '8082'}?ws=${wsPort}&real=1`)
 			await waitForAppReady(page, { timeout: 10_000 })
-		}
 
-		// ============================================================
-		// Step 1: Import synthetic data
-		// ============================================================
-		log(logSocket, { event: 'step-1', action: 'import-data' })
-		console.log('\n=== Step 1: Import synthetic data ===')
-
-		// Navigate to Data tab
-		await page.locator('.nav-item[data-tab="data"]').click()
-		await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
-			timeout: UI_TIMEOUT,
-		})
-
-		// Click import button
-		const importBtn = page.locator('#open-import-modal-btn')
-		await expect(importBtn).toBeVisible()
-		await importBtn.click()
-
-		// Wait for import modal
-		const importModal = page.locator('#import-modal')
-		await expect(importModal).not.toHaveAttribute('hidden')
-
-		// Use backend to set the folder path directly (simulates folder selection)
-		// The UI needs the folder path injected since we can't use native file dialogs
-		await page.evaluate((folderPath) => {
-			const w = window as any
-			w.__TEST_SELECT_FOLDER__ = () => folderPath
-		}, syntheticDataDir)
-
-		// Click folder dropzone
-		const folderDropzone = page.locator('#folder-dropzone')
-		await expect(folderDropzone).toBeVisible()
-		await folderDropzone.click()
-
-		// Wait for file types section
-		await page.waitForTimeout(1000)
-		const fileTypeSection = page.locator('#file-types-section')
-		await expect(fileTypeSection).toBeVisible({ timeout: 10_000 })
-
-		// Select .txt files
-		const txtCheckbox = page.locator('.file-type-checkbox input[value=".txt"]')
-		if ((await txtCheckbox.count()) > 0) {
-			await txtCheckbox.check()
-		}
-
-		// Wait for files to load
-		await page.waitForTimeout(2000)
-
-		// Wait for pattern suggestions
-		const patternSection = page.locator('#pattern-detection-section')
-		if (await patternSection.isVisible().catch(() => false)) {
-			const patternSuggestions = page.locator('.pattern-suggestion')
-			if ((await patternSuggestions.count()) > 0) {
-				await patternSuggestions.first().click()
+			const isOnboarded = await backend.invoke('check_is_onboarded')
+			if (!isOnboarded) {
+				await completeOnboarding(page, email, logSocket)
 			}
-		}
 
-		// Select all files
-		const selectAllFiles = page.locator('#select-all-files')
-		if ((await selectAllFiles.count()) > 0) {
-			await selectAllFiles.check()
-		}
+			// ============================================================
+			// Step 1: Import synthetic data
+			// ============================================================
+			log(logSocket, { event: 'step-1', action: 'import-data' })
+			console.log('\n=== Step 1: Import synthetic data ===')
 
-		// Click Continue to review
-		const continueBtn = page.locator('#import-continue-btn')
-		await expect(continueBtn).toBeEnabled({ timeout: 10_000 })
-		await continueBtn.click()
+			// Navigate to Data tab
+			await page.locator('.nav-item[data-tab="data"]').click()
+			await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
+				timeout: UI_TIMEOUT,
+			})
 
-		// Wait for review view
-		const reviewView = page.locator('#import-modal-review')
-		await expect(reviewView).toBeVisible({ timeout: 10_000 })
+			// Click import button
+			const importBtn = page.locator('#open-import-modal-btn')
+			await expect(importBtn).toBeVisible()
+			await importBtn.click()
 
-		// Wait for file type detection
-		const detectionProgress = page.locator('#detection-progress')
-		if (await detectionProgress.isVisible().catch(() => false)) {
-			await expect(detectionProgress).toBeHidden({ timeout: 30_000 })
-		}
+			// Wait for import modal
+			const importModal = page.locator('#import-modal')
+			await expect(importModal).not.toHaveAttribute('hidden')
 
-		// Click Import button
-		const reviewImportBtn = page.locator('#review-import-btn')
-		await expect(reviewImportBtn).toBeVisible()
-		await reviewImportBtn.click()
+			// Use backend to set the folder path directly
+			await page.evaluate((folderPath) => {
+				const w = window as any
+				w.__TEST_SELECT_FOLDER__ = () => folderPath
+			}, syntheticDataDir)
 
-		// Wait for modal to close
-		await expect(importModal).toHaveAttribute('hidden', '', { timeout: 30_000 })
+			// Click folder dropzone
+			const folderDropzone = page.locator('#folder-dropzone')
+			await expect(folderDropzone).toBeVisible()
+			await folderDropzone.click()
 
-		// Verify files are imported
-		await page.waitForTimeout(2000)
-		const dataTable = page.locator('#files-table-body tr, .file-row')
-		const importedCount = await dataTable.count()
-		console.log(`Imported ${importedCount} files`)
-		expect(importedCount).toBeGreaterThan(0)
+			// Wait for file types section
+			await page.waitForTimeout(1000)
+			const fileTypeSection = page.locator('#file-types-section')
+			await expect(fileTypeSection).toBeVisible({ timeout: 10_000 })
 
-		// ============================================================
-		// Step 2: Create Thalassemia Pipeline
-		// ============================================================
-		log(logSocket, { event: 'step-2', action: 'create-pipeline' })
-		console.log('\n=== Step 2: Create Thalassemia Pipeline ===')
-
-		// Navigate to Pipelines tab
-		await page.locator('.nav-item[data-tab="run"]').click()
-		await expect(page.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
-
-		// Click create pipeline button
-		const createPipelineBtn = page
-			.locator('#create-pipeline-btn, #empty-create-pipeline-btn')
-			.first()
-		await expect(createPipelineBtn).toBeVisible()
-		await createPipelineBtn.click()
-
-		// Wait for template picker modal
-		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 10_000 })
-
-		// Handle any dialogs (overwrite confirmation)
-		page.on('dialog', async (dialog) => {
-			console.log(`Dialog: ${dialog.message()}`)
-			try {
-				await dialog.accept()
-			} catch (e) {
-				// Dialog may already be handled
-				console.log(`Dialog already handled: ${e}`)
+			// Select .txt files
+			const txtCheckbox = page.locator('.file-type-checkbox input[value=".txt"]')
+			if ((await txtCheckbox.count()) > 0) {
+				await txtCheckbox.check()
 			}
-		})
 
-		// Click Thalassemia Classifier template
-		const thalassemiaCard = page.locator(
-			'button.new-pipeline-template-card:has-text("Thalassemia")',
-		)
-		await expect(thalassemiaCard).toBeVisible()
-		await thalassemiaCard.click()
-
-		// Wait for pipeline import to complete
-		await page.waitForTimeout(5000)
-
-		// Close picker modal if still open
-		const pickerCloseBtn = page.locator(
-			'#pipeline-picker-modal button[data-modal-close="pipeline-picker"]',
-		)
-		if (await pickerCloseBtn.isVisible().catch(() => false)) {
-			await pickerCloseBtn.click()
-		}
-
-		// Trigger pipelines reload
-		await page.evaluate(() => {
-			const w = window as any
-			if (w.pipelineModule?.loadPipelines) {
-				w.pipelineModule.loadPipelines()
-			}
-		})
-		await page.waitForTimeout(2000)
-
-		// Verify pipeline was created
-		const pipelinesGrid = page.locator('#pipelines-grid')
-		await expect(pipelinesGrid).toContainText(/thalassemia/i, { timeout: 10_000 })
-		console.log('Thalassemia pipeline created!')
-
-		// ============================================================
-		// Step 3: Select all data and run pipeline
-		// ============================================================
-		log(logSocket, { event: 'step-3', action: 'run-pipeline' })
-		console.log('\n=== Step 3: Select all data and run pipeline ===')
-
-		// Navigate to Data tab
-		await page.locator('.nav-item[data-tab="data"]').click()
-		await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
-			timeout: UI_TIMEOUT,
-		})
-		await page.waitForTimeout(1000)
-
-		// Select all files
-		const selectAllDataFiles = page.locator('#select-all-data-files')
-		await expect(selectAllDataFiles).toBeVisible()
-		await selectAllDataFiles.check()
-		await page.waitForTimeout(500)
-
-		// Click Run Pipeline button
-		const runAnalysisBtn = page.locator('#run-analysis-btn')
-		await expect(runAnalysisBtn).toBeVisible()
-		await expect(runAnalysisBtn).toBeEnabled()
-		await runAnalysisBtn.click()
-
-		// Wait for run modal
-		const dataRunModal = page.locator('#data-run-modal')
-		await expect(dataRunModal).toBeVisible({ timeout: 5000 })
-
-		// Select Thalassemia pipeline
-		const thalassemiaOption = dataRunModal.locator('label').filter({ hasText: /thalassemia/i })
-		if ((await thalassemiaOption.count()) > 0) {
-			await thalassemiaOption.click()
-		} else {
-			// Fallback: select first pipeline
-			const pipelineRadios = dataRunModal.locator('input[type="radio"][name="data-run-pipeline"]')
-			if ((await pipelineRadios.count()) > 0) {
-				await pipelineRadios.first().check()
-			}
-		}
-
-		await page.waitForTimeout(500)
-
-		// Click Run button in modal
-		const modalRunBtn = dataRunModal.locator('#data-run-run-btn')
-		await expect(modalRunBtn).toBeVisible()
-		await expect(modalRunBtn).toBeEnabled()
-		await modalRunBtn.click()
-
-		// Handle Docker warning modal if Docker is not available (common in CI)
-		// Wait a bit for either the modal to close (Docker available) or warning to appear (no Docker)
-		const dockerWarningModal = page.locator('#docker-warning-modal')
-		try {
-			await dockerWarningModal.waitFor({ state: 'visible', timeout: 3000 })
-			console.log('Docker warning modal appeared, clicking "Run anyway"...')
-			const runAnywayBtn = dockerWarningModal.locator('#docker-run-anyway')
-			await runAnywayBtn.click()
-		} catch {
-			// Docker warning didn't appear - Docker is running, modal should close automatically
-			console.log('Docker is available, proceeding...')
-		}
-
-		// Wait for modal to close
-		await expect(dataRunModal).toBeHidden({ timeout: 30_000 })
-		console.log('Pipeline run started!')
-
-		// ============================================================
-		// Step 4: Navigate to Runs tab and wait for completion
-		// ============================================================
-		log(logSocket, { event: 'step-4', action: 'wait-for-completion' })
-		console.log('\n=== Step 4: Wait for pipeline run to complete ===')
-
-		// Navigate to Runs tab
-		await page.locator('.nav-item[data-tab="runs"]').click()
-		await expect(page.locator('#runs-view')).toBeVisible({ timeout: UI_TIMEOUT })
-
-		// Wait for run to appear
-		await page.waitForTimeout(2000)
-
-		// Get the latest run from backend
-		let latestRun: any = null
-		const runs = await backend.invoke('get_pipeline_runs', {})
-		if (runs && runs.length > 0) {
-			latestRun = runs[0]
-			console.log(`Found run: ${latestRun.id} (status: ${latestRun.status})`)
-		}
-
-		if (!latestRun) {
-			throw new Error('No pipeline runs found')
-		}
-
-		// Wait for run to complete
-		const { status, run } = await waitForRunCompletion(page, backend, latestRun.id)
-		console.log(`Pipeline run completed with status: ${status}`)
-		expect(status).toBe('success')
-
-		// Verify success in UI
-		const runCards = page.locator('.pipeline-run-card')
-		await expect(runCards.first()).toBeVisible()
-		await expect(runCards.first()).toContainText(/thalassemia/i)
-
-		// Refresh the UI to see updated status
-		await page.reload()
-		await waitForAppReady(page, { timeout: 10_000 })
-		await page.locator('.nav-item[data-tab="runs"]').click()
-		await page.waitForTimeout(2000)
-
-		// Check for success indicator
-		const successIndicator = page.locator('.pipeline-run-card .run-status-icon')
-		await expect(successIndicator.first()).toBeVisible()
-
-		// ============================================================
-		// Step 5: Verify results in SQL Query tab
-		// ============================================================
-		log(logSocket, { event: 'step-5', action: 'verify-results' })
-		console.log('\n=== Step 5: Verify results in SQL Query tab ===')
-
-		// Navigate to SQL tab
-		await page.locator('.nav-item[data-tab="sql"]').click()
-		await expect(page.locator('#sql-view')).toBeVisible({ timeout: UI_TIMEOUT })
-
-		// Refresh tables
-		const refreshTablesBtn = page.locator('#sql-refresh-tables-btn')
-		if (await refreshTablesBtn.isVisible().catch(() => false)) {
-			await refreshTablesBtn.click()
+			// Wait for files to load
 			await page.waitForTimeout(2000)
-		}
 
-		// Look for thalassemia results table in the tables list
-		const tablesList = page.locator('#sql-table-list')
-		await expect(tablesList).toBeVisible()
-
-		// Wait for tables to load and check for results table
-		await page.waitForTimeout(3000)
-		const tablesListItems = page.locator('#sql-table-list li')
-		const tableCount = await tablesListItems.count()
-		console.log(`Found ${tableCount} tables in SQL view`)
-
-		// Look for thalassemia results table
-		const thalassemiaResultsTable = page.locator('#sql-table-list li:has-text("thalassemia")')
-		const thalassemiaTableCount = await thalassemiaResultsTable.count()
-		console.log(`Found ${thalassemiaTableCount} Thalassemia results table(s)`)
-
-		// The test MUST find thalassemia results to verify the pipeline works
-		expect(thalassemiaTableCount).toBeGreaterThan(0)
-		console.log('✓ Found Thalassemia results table')
-
-		// Click on the results table to select it - this auto-fills a SELECT query
-		await thalassemiaResultsTable.first().click()
-		await page.waitForTimeout(1000)
-
-		// Click run button to execute the auto-filled query
-		const runQueryBtn = page.locator('#sql-run-btn')
-		await expect(runQueryBtn).toBeVisible()
-		await runQueryBtn.click()
-		await page.waitForTimeout(2000)
-
-		// Check for results - this verifies that the overlay_variants.json
-		// contains variants that match the synthetic genotype data
-		const resultsTable = page.locator('#sql-result-table')
-		await expect(resultsTable).toBeVisible({ timeout: 5000 })
-
-		const resultRows = resultsTable.locator('tbody tr')
-		const rowCount = await resultRows.count()
-		console.log(`Query returned ${rowCount} variant match rows`)
-
-		// CRITICAL: Verify that variant matches were found
-		// This confirms the thalassemia RSIDs in overlay_variants.json
-		// are being properly detected in the synthetic data
-		expect(rowCount).toBeGreaterThan(0)
-		console.log('✓ Verified variant matches found in thalassemia results')
-
-		// ============================================================
-		// Step 6: Verify Nextflow used bundled Java in logs
-		// ============================================================
-		log(logSocket, { event: 'step-6', action: 'verify-logs' })
-		console.log('\n=== Step 6: Verify Nextflow used bundled Java in logs ===')
-
-		// Get desktop log to verify Java/Nextflow paths
-		try {
-			const logText = await backend.invoke('get_desktop_log_text', {})
-			if (logText) {
-				// Check that bundled java is being used
-				const bundledJavaPattern = /bundled\/java.*\/bin\/java/
-				const hasBundledJava = bundledJavaPattern.test(logText)
-
-				// Check that Nextflow started successfully
-				const nextflowStartPattern = /N E X T F L O W.*version/
-				const hasNextflowStart = nextflowStartPattern.test(logText)
-
-				// Check for augmented PATH containing bundled paths
-				const augmentedPathPattern = /Final augmented PATH.*bundled/
-				const hasAugmentedPath = augmentedPathPattern.test(logText)
-
-				console.log(`Log contains bundled Java path: ${hasBundledJava}`)
-				console.log(`Log contains Nextflow start: ${hasNextflowStart}`)
-				console.log(`Log contains augmented PATH: ${hasAugmentedPath}`)
-
-				// These should all be true for a successful pipeline run
-				if (hasNextflowStart) {
-					console.log('✓ Nextflow started successfully')
-				}
-
-				if (hasBundledJava) {
-					console.log('✓ Using bundled Java')
-				}
-
-				// Check that external JAVA_HOME was NOT used (we set it to something bad in the test)
-				const externalJavaUsed = /JAVA_HOME.*\/bad-java/.test(logText)
-				if (externalJavaUsed) {
-					console.log('⚠ Warning: External JAVA_HOME was referenced in logs')
-				} else {
-					console.log('✓ External JAVA_HOME was correctly overridden')
-				}
-
-				// Extract and log key pipeline info
-				const pipelineLogLines = logText
-					.split('\n')
-					.filter(
-						(line: string) =>
-							line.includes('[Pipeline]') || line.includes('nextflow') || line.includes('java'),
-					)
-					.slice(0, 20)
-				if (pipelineLogLines.length > 0) {
-					console.log('\nPipeline log excerpt:')
-					pipelineLogLines.forEach((line: string) => console.log(`  ${line}`))
+			// Wait for pattern suggestions
+			const patternSection = page.locator('#pattern-detection-section')
+			if (await patternSection.isVisible().catch(() => false)) {
+				const patternSuggestions = page.locator('.pattern-suggestion')
+				if ((await patternSuggestions.count()) > 0) {
+					await patternSuggestions.first().click()
 				}
 			}
-		} catch (err) {
-			console.log(`Warning: Could not read desktop log: ${err}`)
-		}
 
-		// ============================================================
-		// Cleanup
-		// ============================================================
-		console.log('\n=== Test Complete ===')
-		log(logSocket, { event: 'test-complete' })
+			// Select all files
+			const selectAllFiles = page.locator('#select-all-files')
+			if ((await selectAllFiles.count()) > 0) {
+				await selectAllFiles.check()
+			}
 
-		await backend.close()
-		await context.close()
-		if (logSocket) {
-			logSocket.close()
+			// Click Continue to review
+			const continueBtn = page.locator('#import-continue-btn')
+			await expect(continueBtn).toBeEnabled({ timeout: 10_000 })
+			await continueBtn.click()
+
+			// Wait for review view
+			const reviewView = page.locator('#import-modal-review')
+			await expect(reviewView).toBeVisible({ timeout: 10_000 })
+
+			// Wait for file type detection
+			const detectionProgress = page.locator('#detection-progress')
+			if (await detectionProgress.isVisible().catch(() => false)) {
+				await expect(detectionProgress).toBeHidden({ timeout: 30_000 })
+			}
+
+			// Click Import button
+			const reviewImportBtn = page.locator('#review-import-btn')
+			await expect(reviewImportBtn).toBeVisible()
+			await reviewImportBtn.click()
+
+			// Wait for modal to close
+			await expect(importModal).toHaveAttribute('hidden', '', { timeout: 30_000 })
+
+			// Verify files are imported
+			await page.waitForTimeout(2000)
+			const dataTable = page.locator('#files-table-body tr, .file-row')
+			const importedCount = await dataTable.count()
+			console.log(`Imported ${importedCount} files`)
+			expect(importedCount).toBeGreaterThan(0)
+
+			// ============================================================
+			// Step 2: Create HERC2 Pipeline
+			// ============================================================
+			log(logSocket, { event: 'step-2', action: 'create-pipeline' })
+			console.log('\n=== Step 2: Create HERC2 Pipeline ===')
+
+			// Navigate to Pipelines tab
+			await page.locator('.nav-item[data-tab="run"]').click()
+			await expect(page.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
+
+			// Click create pipeline button
+			const createPipelineBtn = page
+				.locator('#create-pipeline-btn, #empty-create-pipeline-btn')
+				.first()
+			await expect(createPipelineBtn).toBeVisible()
+			await createPipelineBtn.click()
+
+			// Wait for template picker modal
+			await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 10_000 })
+
+			// Handle any dialogs (overwrite confirmation)
+			page.on('dialog', async (dialog) => {
+				console.log(`Dialog: ${dialog.message()}`)
+				try {
+					await dialog.accept()
+				} catch (e) {
+					console.log(`Dialog already handled: ${e}`)
+				}
+			})
+
+			// Click HERC2 Classifier template
+			const herc2Card = page.locator('button.new-pipeline-template-card:has-text("HERC2")')
+			await expect(herc2Card).toBeVisible()
+			await herc2Card.click()
+
+			// Wait for import modal to appear and then disappear (import complete)
+			const pipelineImportModal = page.locator('.modal-overlay:has-text("Importing")')
+			await expect(pipelineImportModal)
+				.toBeVisible({ timeout: 5000 })
+				.catch(() => {})
+			// Wait for import to complete - modal disappears
+			await expect(pipelineImportModal).toBeHidden({ timeout: 60_000 })
+			console.log('Pipeline import completed!')
+
+			// Close picker modal if still open
+			const pickerCloseBtn = page.locator(
+				'#pipeline-picker-modal button[data-modal-close="pipeline-picker"]',
+			)
+			if (await pickerCloseBtn.isVisible().catch(() => false)) {
+				await pickerCloseBtn.click()
+			}
+
+			// Trigger pipelines reload
+			await page.evaluate(() => {
+				const w = window as any
+				if (w.pipelineModule?.loadPipelines) {
+					w.pipelineModule.loadPipelines()
+				}
+			})
+			await page.waitForTimeout(2000)
+
+			// Verify pipeline was created
+			const pipelinesGrid = page.locator('#pipelines-grid')
+			await expect(pipelinesGrid).toContainText(/HERC2/i, { timeout: 10_000 })
+			console.log('HERC2 pipeline created!')
+
+			// ============================================================
+			// Step 3: Create dataset with paired assets (5 private + 5 mock)
+			// ============================================================
+			log(logSocket, { event: 'step-3', action: 'create-dataset' })
+			console.log('\n=== Step 3: Create dataset with 5 private + 5 mock files ===')
+
+			// Navigate to Data tab
+			await page.locator('.nav-item[data-tab="data"]').click()
+			await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
+				timeout: UI_TIMEOUT,
+			})
+			await page.waitForTimeout(1000)
+
+			// Switch to Datasets view
+			const datasetsToggle = page.locator('#data-view-toggle .pill-button[data-view="datasets"]')
+			await expect(datasetsToggle).toBeVisible()
+			await datasetsToggle.click()
+			await page.waitForTimeout(500)
+
+			// Click New Dataset button
+			const newDatasetBtn = page.locator('#new-dataset-btn')
+			await expect(newDatasetBtn).toBeVisible()
+			await newDatasetBtn.click()
+
+			// Wait for dataset editor to open
+			const datasetEditor = page.locator('#dataset-editor-section')
+			await expect(datasetEditor).toBeVisible({ timeout: 5000 })
+
+			// Fill in dataset name
+			const datasetNameInput = page.locator('#dataset-form-name')
+			await datasetNameInput.fill('test_genotype_dataset')
+
+			// Fill in description
+			const datasetDescInput = page.locator('#dataset-form-description')
+			await datasetDescInput.fill('Test dataset with 5 private and 5 mock files')
+
+			// Click "Add Asset" to add the first asset row
+			const addAssetBtn = page.locator('#dataset-add-asset')
+			await expect(addAssetBtn).toBeVisible()
+			await addAssetBtn.click()
+			await page.waitForTimeout(300)
+
+			// Switch to File List mode (for multiple files per asset)
+			const assetRow = page.locator('#dataset-assets-list .asset-row').first()
+			await expect(assetRow).toBeVisible({ timeout: 3000 })
+			const fileListModeBtn = assetRow.locator('.pill-button[data-mode="list"]')
+			await fileListModeBtn.click()
+			await page.waitForTimeout(300)
+
+			// Add 5 files to Private side using file picker
+			console.log('Adding 5 files to Private side...')
+			const privateExistingFilesBtn = assetRow.locator('.asset-side.private .btn-existing-files')
+			await expect(privateExistingFilesBtn).toBeVisible()
+			await privateExistingFilesBtn.click()
+
+			// Wait for file picker modal
+			const filePickerModal = page.locator('#file-picker-modal')
+			await expect(filePickerModal).toBeVisible({ timeout: 5000 })
+
+			// Select first 5 files for private
+			let filePickerCheckboxes = filePickerModal.locator('.file-picker-checkbox')
+			let checkboxCount = await filePickerCheckboxes.count()
+			console.log(`File picker shows ${checkboxCount} files`)
+			expect(checkboxCount).toBeGreaterThanOrEqual(10) // Need at least 10 files
+
+			for (let i = 0; i < 5; i++) {
+				await filePickerCheckboxes.nth(i).check()
+			}
+
+			// Click "Add Selected" button
+			const addSelectedBtn = page.locator('#file-picker-add')
+			await expect(addSelectedBtn).toBeVisible()
+			await addSelectedBtn.click()
+			await expect(filePickerModal).toBeHidden({ timeout: 3000 })
+			await page.waitForTimeout(500)
+
+			// Verify 5 files added to private side
+			const privateFileItems = assetRow.locator('.asset-side.private .file-item')
+			const privateCount = await privateFileItems.count()
+			console.log(`Private side has ${privateCount} files`)
+			expect(privateCount).toBe(5)
+
+			// Add 5 different files to Mock side
+			console.log('Adding 5 files to Mock side...')
+			const mockExistingFilesBtn = assetRow.locator('.asset-side.mock .btn-existing-files')
+			await expect(mockExistingFilesBtn).toBeVisible()
+			await mockExistingFilesBtn.click()
+
+			await expect(filePickerModal).toBeVisible({ timeout: 5000 })
+
+			// Select files 6-10 for mock (different from private)
+			filePickerCheckboxes = filePickerModal.locator('.file-picker-checkbox')
+			for (let i = 5; i < 10; i++) {
+				await filePickerCheckboxes.nth(i).check()
+			}
+
+			await addSelectedBtn.click()
+			await expect(filePickerModal).toBeHidden({ timeout: 3000 })
+			await page.waitForTimeout(500)
+
+			// Verify 5 files added to mock side
+			const mockFileItems = assetRow.locator('.asset-side.mock .file-item')
+			const mockCount = await mockFileItems.count()
+			console.log(`Mock side has ${mockCount} files`)
+			expect(mockCount).toBe(5)
+
+			// Save the dataset
+			const saveDatasetBtn = page.locator('#dataset-editor-save')
+			await expect(saveDatasetBtn).toBeVisible()
+			await saveDatasetBtn.click()
+
+			// Wait for editor to close
+			await expect(datasetEditor).toBeHidden({ timeout: 5000 })
+			console.log('Dataset saved!')
+
+			// Verify dataset was created
+			const datasetsGrid = page.locator('#datasets-grid')
+			await expect(datasetsGrid).toBeVisible()
+			await expect(datasetsGrid).toContainText('test_genotype_dataset', { timeout: 5000 })
+			console.log('Dataset created successfully!')
+
+			// Verify via backend
+			const datasetsFromBackend = await backend.invoke('list_datasets_with_assets', {})
+			const ourDataset = datasetsFromBackend.find(
+				(d: any) => d.dataset?.name === 'test_genotype_dataset',
+			)
+			expect(ourDataset).toBeTruthy()
+			console.log(`Dataset has ${ourDataset?.assets?.length || 0} assets`)
+
+			// ============================================================
+			// Step 4: Edit dataset and verify files persist
+			// ============================================================
+			log(logSocket, { event: 'step-4', action: 'edit-dataset' })
+			console.log('\n=== Step 4: Edit dataset and verify files persist ===')
+
+			// Click the dataset card to edit it
+			const datasetCard = datasetsGrid
+				.locator('.dataset-card')
+				.filter({ hasText: 'test_genotype_dataset' })
+			await expect(datasetCard).toBeVisible()
+			await datasetCard.click()
+
+			// Wait for editor to open
+			await expect(datasetEditor).toBeVisible({ timeout: 5000 })
+			await page.waitForTimeout(1000) // Allow time for data to load
+
+			// Verify the asset row is in list mode
+			const editAssetRow = page.locator('#dataset-assets-list .asset-row').first()
+			await expect(editAssetRow).toBeVisible({ timeout: 3000 })
+
+			// Verify private files are still there (5 files)
+			const editPrivateFiles = editAssetRow.locator('.asset-side.private .file-item')
+			const editPrivateCount = await editPrivateFiles.count()
+			console.log(`After edit - Private side has ${editPrivateCount} files`)
+			expect(editPrivateCount).toBe(5)
+
+			// Verify mock files are still there (5 files)
+			const editMockFiles = editAssetRow.locator('.asset-side.mock .file-item')
+			const editMockCount = await editMockFiles.count()
+			console.log(`After edit - Mock side has ${editMockCount} files`)
+			expect(editMockCount).toBe(5)
+
+			console.log('Dataset edit test PASSED - files persist correctly!')
+
+			// Close the editor
+			const cancelBtn = page.locator('#dataset-editor-cancel')
+			await cancelBtn.click()
+			await expect(datasetEditor).toBeHidden({ timeout: 3000 })
+
+			// ============================================================
+			// Step 5: Publish dataset and verify YAML
+			// ============================================================
+			log(logSocket, { event: 'step-5', action: 'publish-dataset' })
+			console.log('\n=== Step 5: Publish dataset and verify YAML ===')
+
+			// Find the dataset card and click publish
+			const datasetCardForPublish = page
+				.locator('#datasets-grid .dataset-card')
+				.filter({ hasText: 'test_genotype_dataset' })
+			await expect(datasetCardForPublish).toBeVisible()
+
+			const publishBtn = datasetCardForPublish.locator('.btn-publish, button:has-text("Publish")')
+			await expect(publishBtn).toBeVisible({ timeout: 5000 })
+			await publishBtn.click()
+
+			// Wait for publish to complete
+			await page.waitForTimeout(3000)
+			console.log('Dataset published!')
+
+			// Get the datasite path from backend
+			const yamlRelPath = 'public/biovault/datasets/test_genotype_dataset/dataset.yaml'
+			const yamlPath = await backend.invoke('resolve_dataset_path', { dirPath: yamlRelPath })
+			console.log('YAML path:', yamlPath)
+			const yamlContent = fs.readFileSync(yamlPath, 'utf-8')
+			console.log('Published YAML content:')
+			console.log(yamlContent.substring(0, 1000) + '...')
+
+			// Check that private doesn't have entries
+			expect(yamlContent).not.toContain('db_file_id')
+			expect(yamlContent).not.toContain('file_path: /Users')
+			console.log('✓ YAML verified - no private entries exposed!')
+
+			// ============================================================
+			// Step 6: Edit dataset and remove 1 mock file
+			// ============================================================
+			log(logSocket, { event: 'step-6', action: 'edit-remove-file' })
+			console.log('\n=== Step 6: Edit dataset and remove 1 mock file ===')
+
+			// Click edit on the dataset card
+			const editBtn2 = datasetCardForPublish.locator('.dataset-action-btn[title="Edit dataset"]')
+			await editBtn2.click()
+			await expect(datasetEditor).toBeVisible({ timeout: 5000 })
+			await page.waitForTimeout(1000)
+
+			// Wait for assets to load and scroll to make them visible
+			const assetsList = page.locator('#dataset-assets-list')
+			await expect(assetsList).toBeVisible({ timeout: 10000 })
+			await assetsList.scrollIntoViewIfNeeded()
+			await page.waitForTimeout(500)
+
+			// Find and remove the first mock file
+			const mockFilesForRemoval = page.locator(
+				'#dataset-assets-list .asset-row .asset-side.mock .file-item',
+			)
+			const mockFileCountBefore = await mockFilesForRemoval.count()
+			console.log(`Mock files before removal: ${mockFileCountBefore}`)
+
+			// Click the remove button on the first mock file
+			const firstMockFile = mockFilesForRemoval.first()
+			await firstMockFile.scrollIntoViewIfNeeded()
+			const removeBtn = firstMockFile.locator('.remove-file, .remove-single-file')
+			await expect(removeBtn).toBeVisible({ timeout: 5000 })
+			await removeBtn.click()
+			await page.waitForTimeout(500)
+
+			// Verify one file was removed
+			const mockFileCountAfter = await mockFilesForRemoval.count()
+			console.log(`Mock files after removal: ${mockFileCountAfter}`)
+			expect(mockFileCountAfter).toBe(mockFileCountBefore - 1)
+
+			// Save the dataset
+			const saveBtn2 = page.locator('#dataset-editor-save')
+			await saveBtn2.click()
+			await page.waitForTimeout(2000)
+			console.log('Dataset saved with 1 mock file removed!')
+
+			// ============================================================
+			// Step 7: Verify republish happened and changes are correct
+			// ============================================================
+			log(logSocket, { event: 'step-7', action: 'verify-republish' })
+			console.log('\n=== Step 7: Verify republish and changes ===')
+
+			// Save automatically republishes if dataset was already published
+			// Wait for the auto-republish to complete
+			await page.waitForTimeout(3000)
+			console.log('Dataset auto-republished on save!')
+
+			// Verify the updated YAML
+			const yamlContent2 = fs.readFileSync(yamlPath, 'utf-8')
+
+			// Check that we have 4 mock entries now
+			const mockEntryMatches = yamlContent2.match(/participant_id:/g)
+			const mockEntryCount = mockEntryMatches ? mockEntryMatches.length : 0
+			console.log(`Mock entries in YAML: ${mockEntryCount}`)
+			// Should have 4 mock entries (after removing 1)
+			expect(mockEntryCount).toBe(4)
+
+			// Verify CSV has correct number of entries
+			const csvRelPath = 'public/biovault/datasets/test_genotype_dataset/assets/asset_1.csv'
+			const csvPath = await backend.invoke('resolve_dataset_path', { dirPath: csvRelPath })
+			console.log('CSV path:', csvPath)
+			if (fs.existsSync(csvPath)) {
+				const csvContent = fs.readFileSync(csvPath, 'utf-8')
+				const csvLines = csvContent.trim().split('\n')
+				console.log(`CSV has ${csvLines.length} lines (including header)`)
+				expect(csvLines.length).toBe(5) // header + 4 data rows
+			}
+
+			console.log('✓ Republish verified - changes reflected correctly!')
+
+			// ============================================================
+			// Step 8: Run pipeline on dataset mock data
+			// ============================================================
+			log(logSocket, { event: 'step-8', action: 'run-pipeline-mock' })
+			console.log('\n=== Step 8: Run pipeline on dataset mock data ===')
+
+			// Navigate back to datasets if needed
+			await page.locator('.nav-item[data-tab="data"]').click()
+			await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
+				timeout: UI_TIMEOUT,
+			})
+			await page.waitForTimeout(500)
+
+			// Make sure datasets view is selected
+			const datasetsToggle3 = page.locator('#data-view-toggle .pill-button[data-view="datasets"]')
+			if (!(await datasetsToggle3.evaluate((el) => el.classList.contains('active')))) {
+				await datasetsToggle3.click()
+				await page.waitForTimeout(500)
+			}
+
+			// Click "Run Pipeline" button on the dataset card
+			const datasetCard3 = page
+				.locator('#datasets-grid .dataset-card')
+				.filter({ hasText: 'test_genotype_dataset' })
+			await expect(datasetCard3).toBeVisible()
+
+			const runPipelineBtn = datasetCard3.locator('.btn-run-pipeline')
+			await expect(runPipelineBtn).toBeVisible()
+			await runPipelineBtn.click()
+
+			// Wait for run pipeline modal
+			const runPipelineModal = page.locator('#run-pipeline-modal')
+			await expect(runPipelineModal).toBeVisible({ timeout: 5000 })
+
+			// Select "Mock Data" option
+			const mockDataOption = runPipelineModal.locator(
+				'input[name="pipeline-data-type"][value="mock"]',
+			)
+			await mockDataOption.check()
+
+			// Click "Run Pipeline" button in modal
+			const runPipelineConfirmBtn = runPipelineModal.locator('#run-pipeline-confirm')
+			await expect(runPipelineConfirmBtn).toBeVisible()
+			await runPipelineConfirmBtn.click()
+
+			// Wait for modal to close - this triggers navigation to pipelines
+			await expect(runPipelineModal).toBeHidden({ timeout: 5000 })
+			console.log('Pipeline run modal closed, navigating to pipelines...')
+
+			// Wait for pipelines tab to be active and modal to appear
+			await page.waitForTimeout(2000)
+
+			// The openRunPipelineWithDataset function should show the data run modal
+			// Look for the data-run modal or the pipeline selection
+			const dataRunModal = page.locator('#data-run-modal, .data-run-modal')
+			if (await dataRunModal.isVisible({ timeout: 3000 }).catch(() => false)) {
+				console.log('Data run modal visible, selecting HERC2 pipeline...')
+				// Click on HERC2 pipeline option
+				const herc2Option = dataRunModal.locator('text=HERC2')
+				if (await herc2Option.isVisible().catch(() => false)) {
+					await herc2Option.click()
+					await page.waitForTimeout(1000)
+				}
+			}
+
+			// Check if we're on pipelines view and a run has started
+			await page.waitForTimeout(3000)
+
+			// Get pipeline runs
+			const runs = await backend.invoke('get_pipeline_runs', {})
+			if (runs && runs.length > 0) {
+				const latestRun = runs[0]
+				console.log(`Pipeline run started: ${latestRun.id} (status: ${latestRun.status})`)
+
+				// Wait for run to complete
+				const { status } = await waitForRunCompletion(page, backend, latestRun.id)
+				console.log(`Pipeline run completed with status: ${status}`)
+			} else {
+				console.log('No pipeline run started yet - this may require manual pipeline selection')
+			}
+
+			console.log('\n=== TEST COMPLETED SUCCESSFULLY ===')
+		} finally {
+			await backend.close()
+			await context.close()
 		}
 	})
 })

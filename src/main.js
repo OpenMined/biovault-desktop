@@ -146,6 +146,9 @@ const pipelinesModule = createPipelinesModule({
 // Wire up the callback so projects can add steps to pipelines
 pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
 
+// Expose pipelines module for data.js to call openRunPipelineWithDataset
+window.__pipelinesModule = pipelinesModule
+
 // Create messages module early with placeholder getActiveView
 let messagesGetActiveView = () => 'projects'
 const messagesModule = createMessagesModule({

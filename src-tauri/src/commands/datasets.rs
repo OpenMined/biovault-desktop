@@ -350,7 +350,7 @@ pub async fn save_dataset_with_files(
         }
 
         if let Some(mapping) = asset.mappings.as_mut() {
-            // Private
+            // Private - single file
             if let Some(priv_ep) = mapping.private.as_mut() {
                 if priv_ep.db_file_id.is_none() {
                     if let Some(path) = priv_ep.file_path.clone() {
@@ -359,8 +359,34 @@ pub async fn save_dataset_with_files(
                         priv_ep.file_path = Some(path);
                     }
                 }
+                // Handle twin_list entries
+                if let Some(entries) = priv_ep.entries.as_mut() {
+                    for entry in entries.iter_mut() {
+                        if let Some(entry_map) = entry.as_mapping_mut() {
+                            let file_path = entry_map
+                                .get(serde_yaml::Value::String("file_path".to_string()))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let has_db_id = entry_map
+                                .get(serde_yaml::Value::String("db_file_id".to_string()))
+                                .and_then(|v| v.as_i64())
+                                .is_some();
+
+                            if !has_db_id {
+                                if let Some(path) = file_path {
+                                    if let Ok(file_id) = import_file_if_needed(&db, &path) {
+                                        entry_map.insert(
+                                            serde_yaml::Value::String("db_file_id".to_string()),
+                                            serde_yaml::Value::Number(file_id.into()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            // Mock
+            // Mock - single file
             if let Some(mock_ep) = mapping.mock.as_mut() {
                 if mock_ep.db_file_id.is_none() {
                     if let Some(path) = mock_ep.file_path.clone() {
@@ -503,34 +529,55 @@ pub fn get_datasets_folder_path() -> Result<String, String> {
     Ok(datasets_dir.to_string_lossy().to_string())
 }
 
+/// Resolve a syft:// URL to a local filesystem path.
+/// Handles both public URLs (direct path resolution) and private URLs with #fragments (via mapping.yaml)
 #[tauri::command]
 pub fn resolve_syft_url_to_local_path(syft_url: String) -> Result<String, String> {
-    // Parse syft://email@domain/path/to/file.yaml -> local filesystem path
-    // Format: syft://{email}/{rest_of_path}
-    let stripped = syft_url
-        .strip_prefix("syft://")
-        .ok_or_else(|| "Invalid syft:// URL".to_string())?;
-
-    let parts: Vec<&str> = stripped.splitn(2, '/').collect();
-    if parts.len() < 2 {
-        return Err("Invalid syft:// URL format".to_string());
-    }
-
-    let email = parts[0];
-    let rest_path = parts[1];
-
-    // Get the directory (strip filename if present)
-    let dir_path = if rest_path.ends_with(".yaml") || rest_path.ends_with(".yml") {
-        Path::new(rest_path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| rest_path.to_string())
-    } else {
-        rest_path.to_string()
-    };
-
     let config =
         biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+
+    let local_path = biovault::data::resolve_syft_url(&data_dir, &syft_url)
+        .map_err(|e| format!("Failed to resolve syft URL: {}", e))?;
+
+    Ok(local_path.to_string_lossy().to_string())
+}
+
+/// Batch resolve multiple syft:// URLs to local paths.
+/// Returns a list of (url, Option<resolved_path>) tuples.
+/// The resolved_path is None if the URL couldn't be resolved or the file doesn't exist.
+#[tauri::command]
+pub fn resolve_syft_urls_batch(urls: Vec<String>) -> Result<Vec<SyftUrlResolution>, String> {
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+
+    let results = biovault::data::resolve_syft_urls(&data_dir, &urls)
+        .map_err(|e| format!("Failed to resolve syft URLs: {}", e))?;
+
+    Ok(results
+        .into_iter()
+        .map(|(url, path)| SyftUrlResolution { url, path })
+        .collect())
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SyftUrlResolution {
+    pub url: String,
+    pub path: Option<String>,
+}
+
+/// Resolve a relative path (like "public/biovault/datasets/foo/dataset.yaml")
+/// to a full local filesystem path by joining with the user's datasite directory.
+#[tauri::command]
+pub fn resolve_local_dataset_path(dir_path: String) -> Result<String, String> {
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let email = config.email.clone();
     let data_dir = config
         .get_syftbox_data_dir()
         .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;

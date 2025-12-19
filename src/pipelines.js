@@ -91,7 +91,9 @@ export function createPipelinesModule({
 		const stepCount = pipeline.spec?.steps?.length || 0
 		const description = pipeline.spec?.description || ''
 		const context = getPendingDataRunContext()
-		const hasDataSelected = context && context.fileIds && context.fileIds.length > 0
+		const hasDataSelected =
+			context &&
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
 		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
 		const canRunWithData = hasDataSelected && acceptsGenotype
 
@@ -237,53 +239,76 @@ export function createPipelinesModule({
 			return null
 		}
 
+		// Check for URLs first (new approach), then fall back to file IDs (legacy)
+		const urlsRaw = sessionStorage.getItem('preselectedUrls')
 		const fileIdsRaw = sessionStorage.getItem('preselectedFileIds')
-		if (!fileIdsRaw) {
+
+		if (!urlsRaw && !fileIdsRaw) {
 			// Explicitly clear cache if no data
 			pipelineState.pendingDataRun = null
 			return null
 		}
 
-		let parsedFileIds
-		try {
-			parsedFileIds = JSON.parse(fileIdsRaw)
-		} catch (error) {
-			console.warn('Failed to parse preselectedFileIds:', error)
-			sessionStorage.removeItem('preselectedFileIds')
-			return null
+		let urls = []
+		let fileIds = []
+
+		// Parse URLs (new approach)
+		if (urlsRaw) {
+			try {
+				const parsedUrls = JSON.parse(urlsRaw)
+				if (Array.isArray(parsedUrls)) {
+					// Accept syft://, file://, and absolute paths (starting with /)
+					urls = [
+						...new Set(
+							parsedUrls.filter(
+								(u) =>
+									typeof u === 'string' &&
+									(u.startsWith('syft://') || u.startsWith('file://') || u.startsWith('/')),
+							),
+						),
+					]
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedUrls:', error)
+				sessionStorage.removeItem('preselectedUrls')
+			}
 		}
 
-		if (!Array.isArray(parsedFileIds)) {
-			sessionStorage.removeItem('preselectedFileIds')
-			return null
+		// Parse file IDs (legacy fallback)
+		if (fileIdsRaw && urls.length === 0) {
+			try {
+				const parsedFileIds = JSON.parse(fileIdsRaw)
+				if (Array.isArray(parsedFileIds)) {
+					fileIds = Array.from(
+						new Set(
+							parsedFileIds
+								.map((value) => parseInt(value, 10))
+								.filter((value) => Number.isFinite(value)),
+						),
+					)
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedFileIds:', error)
+				sessionStorage.removeItem('preselectedFileIds')
+			}
 		}
 
-		const uniqueFileIds = Array.from(
-			new Set(
-				parsedFileIds.map((value) => parseInt(value, 10)).filter((value) => Number.isFinite(value)),
-			),
-		)
-
-		if (uniqueFileIds.length === 0) {
-			// Clear sessionStorage and cache if no valid file IDs
+		if (urls.length === 0 && fileIds.length === 0) {
+			// Clear sessionStorage and cache if no valid data
+			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			pipelineState.pendingDataRun = null
 			return null
 		}
 
+		// Parse participant IDs (strings, not ints - can be participant labels)
 		let participantIds = []
 		const participantsRaw = sessionStorage.getItem('preselectedParticipants')
 		if (participantsRaw) {
 			try {
 				const parsedParticipants = JSON.parse(participantsRaw)
 				if (Array.isArray(parsedParticipants)) {
-					participantIds = Array.from(
-						new Set(
-							parsedParticipants
-								.map((value) => parseInt(value, 10))
-								.filter((value) => Number.isFinite(value)),
-						),
-					)
+					participantIds = parsedParticipants.filter((p) => typeof p === 'string')
 				}
 			} catch (error) {
 				console.warn('Failed to parse preselectedParticipants:', error)
@@ -291,7 +316,8 @@ export function createPipelinesModule({
 		}
 
 		const context = {
-			fileIds: uniqueFileIds,
+			urls: urls.length > 0 ? urls : null,
+			fileIds: fileIds.length > 0 ? fileIds : null,
 			participantIds,
 		}
 
@@ -308,6 +334,7 @@ export function createPipelinesModule({
 		}
 
 		try {
+			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
 		} catch (error) {
@@ -323,7 +350,11 @@ export function createPipelinesModule({
 		const bannerId = 'pipelines-data-banner'
 		let banner = document.getElementById(bannerId)
 
-		if (!context || !context.fileIds || context.fileIds.length === 0) {
+		// Check for either URLs (new approach) or fileIds (legacy)
+		const hasData =
+			context &&
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		if (!hasData) {
 			if (banner) {
 				banner.remove()
 			}
@@ -369,7 +400,10 @@ export function createPipelinesModule({
 		const bannerId = 'pipeline-detail-data-banner'
 		let banner = document.getElementById(bannerId)
 
-		if (!context || !context.fileIds || context.fileIds.length === 0) {
+		const hasData =
+			context &&
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		if (!hasData) {
 			if (banner) {
 				banner.remove()
 			}
@@ -395,7 +429,8 @@ export function createPipelinesModule({
 	}
 
 	function populateMainDataRunBanner(banner, context) {
-		const fileCount = context.fileIds.length
+		const fileCount =
+			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const participantCount =
 			context.participantIds && context.participantIds.length > 0
 				? context.participantIds.length
@@ -504,7 +539,8 @@ export function createPipelinesModule({
 	}
 
 	function populateDataRunBanner(banner, context, preselectedPipelineId = null) {
-		const fileCount = context.fileIds.length
+		const fileCount =
+			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const participantCount =
 			context.participantIds && context.participantIds.length > 0
 				? context.participantIds.length
@@ -569,7 +605,10 @@ export function createPipelinesModule({
 		}
 
 		const context = getPendingDataRunContext()
-		if (!context || !context.fileIds || context.fileIds.length === 0) {
+		const hasData =
+			context &&
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		if (!hasData) {
 			return false
 		}
 
@@ -678,7 +717,10 @@ export function createPipelinesModule({
 	// Public function to show modal directly (called from Data tab)
 	async function showDataRunModalDirect() {
 		const context = getPendingDataRunContext()
-		if (!context || !context.fileIds || context.fileIds.length === 0) {
+		const hasData =
+			context &&
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		if (!hasData) {
 			return false
 		}
 
@@ -714,7 +756,10 @@ export function createPipelinesModule({
 		if (!handled) {
 			// Check why it wasn't handled
 			const context = getPendingDataRunContext()
-			const hasData = context && context.fileIds && context.fileIds.length > 0
+			const hasData =
+				context &&
+				((context.urls && context.urls.length > 0) ||
+					(context.fileIds && context.fileIds.length > 0))
 
 			if (!hasData) {
 				// No data selected - prompt user to select data first
@@ -800,11 +845,13 @@ export function createPipelinesModule({
 			console.warn('Failed to get runs base directory:', error)
 		}
 
+		const dataCount =
+			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const uniqueParticipantCount =
 			context.participantIds && context.participantIds.length > 0
-				? context.participantIds.length
-				: context.fileIds.length
-		const fileCount = context.fileIds.length
+				? context.participantIds.filter((p) => p).length // Filter out empty strings
+				: dataCount
+		const fileCount = dataCount
 
 		const pipelineOptionsHtml = pipelines
 			.map((pipeline, index) => {
@@ -1164,8 +1211,9 @@ export function createPipelinesModule({
 						inputOverrides: {},
 						resultsDir,
 						selection: {
-							fileIds: context.fileIds,
-							participantIds: context.participantIds,
+							urls: context.urls || [],
+							fileIds: context.fileIds || [],
+							participantIds: context.participantIds || [],
 						},
 					})
 
@@ -1898,7 +1946,14 @@ export function createPipelinesModule({
 			console.error('Error importing pipeline from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
-			if (errorMsg.includes('already exists')) {
+			// Only prompt for overwrite if we haven't already tried with overwrite=true
+			// and the error is specifically about the pipeline (not steps)
+			const isPipelineExists =
+				errorMsg.includes('already exists') &&
+				(errorMsg.toLowerCase().includes('pipeline') ||
+					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+
+			if (isPipelineExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorMsg}\n\nDo you want to overwrite it?`,
 					{ title: 'Overwrite Pipeline?', type: 'warning' },
@@ -2025,7 +2080,15 @@ export function createPipelinesModule({
 		} catch (error) {
 			console.error('Error importing pipeline:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
-			if (errorMsg.includes('already exists')) {
+
+			// Only prompt for overwrite if we haven't already tried with overwrite=true
+			// and the error is specifically about the pipeline (not steps)
+			const isPipelineExists =
+				errorMsg.includes('already exists') &&
+				(errorMsg.toLowerCase().includes('pipeline') ||
+					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+
+			if (isPipelineExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorMsg}\n\nDo you want to overwrite it?`,
 					{ title: 'Overwrite Pipeline?', type: 'warning' },
@@ -3618,14 +3681,11 @@ steps:${
 	async function runPipeline(pipelineId) {
 		const context = getPendingDataRunContext()
 		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-
-		if (
+		const hasData =
 			context &&
-			context.fileIds &&
-			context.fileIds.length > 0 &&
-			pipeline &&
-			pipelineAcceptsGenotypeInput(pipeline)
-		) {
+			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+
+		if (hasData && pipeline && pipelineAcceptsGenotypeInput(pipeline)) {
 			await startDataDrivenRun(pipelineId)
 			return
 		}
@@ -5783,11 +5843,167 @@ steps:${
 		}
 	}
 
+	// Open run pipeline modal with dataset context
+	// Called from Data tab when user clicks "Run Pipeline" on a dataset card
+	async function openRunPipelineWithDataset({ name, dataType, entry }) {
+		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry })
+
+		try {
+			// Get dataset from database to extract file IDs
+			// list_datasets_with_assets returns: [{ dataset: {..., name}, assets: [...] }, ...]
+			console.log('Fetching datasets with list_datasets_with_assets...')
+			const datasetsWithAssets = await invoke('list_datasets_with_assets')
+			console.log('Got datasets:', datasetsWithAssets)
+			const datasetEntry = datasetsWithAssets.find((d) => d.dataset?.name === name)
+			console.log('Found dataset entry:', datasetEntry)
+
+			if (!datasetEntry) {
+				console.error(
+					'Dataset not found:',
+					name,
+					'Available:',
+					datasetsWithAssets.map((d) => d.dataset?.name),
+				)
+				if (dialog?.message) {
+					await dialog.message(`Dataset "${name}" not found`, { title: 'Error', type: 'error' })
+				}
+				return
+			}
+
+			// Assets are included in the response
+			const assets = datasetEntry.assets || []
+			console.log('Dataset assets:', assets)
+			if (assets.length === 0) {
+				console.error('Dataset has no assets:', name)
+				if (dialog?.message) {
+					await dialog.message(`Dataset "${name}" has no assets`, { title: 'Error', type: 'error' })
+				}
+				return
+			}
+			const urls = []
+			const participantIds = []
+
+			// Extract URLs and participant IDs based on dataType
+			for (const asset of assets) {
+				// Parse the private_ref and mock_ref JSON
+				let privateRef = null
+				let mockRef = null
+
+				if (asset.private_ref) {
+					try {
+						privateRef = JSON.parse(asset.private_ref)
+					} catch (e) {
+						console.warn('Failed to parse private_ref:', e)
+					}
+				}
+
+				if (asset.mock_ref) {
+					try {
+						mockRef = JSON.parse(asset.mock_ref)
+					} catch (e) {
+						console.warn('Failed to parse mock_ref:', e)
+					}
+				}
+
+				// For twin_list assets, extract entries
+				if (dataType === 'mock' || dataType === 'both') {
+					if (mockRef?.entries) {
+						for (const mockEntry of mockRef.entries) {
+							if (mockEntry.url) {
+								urls.push(mockEntry.url)
+								// Keep participant_ids aligned with urls
+								participantIds.push(mockEntry.participant_id || '')
+							}
+						}
+					} else if (mockRef?.url) {
+						// Single mock file URL
+						urls.push(mockRef.url)
+						participantIds.push('')
+					}
+				}
+
+				if (dataType === 'real' || dataType === 'both') {
+					if (privateRef?.entries) {
+						for (const privEntry of privateRef.entries) {
+							// Private entries can have url (for remote lookup) or file_path (local path)
+							if (privEntry.url) {
+								urls.push(privEntry.url)
+								participantIds.push(privEntry.participant_id || '')
+							} else if (privEntry.file_path) {
+								// For local private files, construct a file:// URL or use path directly
+								urls.push(`file://${privEntry.file_path}`)
+								participantIds.push(privEntry.participant_id || '')
+							}
+						}
+					} else if (privateRef?.url) {
+						// Single private file - need to look up in mapping.yaml via fragment
+						urls.push(privateRef.url)
+						participantIds.push('')
+					}
+				}
+			}
+
+			console.log('Extracted URLs:', urls)
+			console.log('Extracted participant IDs:', participantIds)
+
+			if (urls.length === 0) {
+				if (dialog?.message) {
+					await dialog.message('No files found in dataset for the selected data type', {
+						title: 'No Files',
+						type: 'warning',
+					})
+				}
+				return
+			}
+
+			// Set in sessionStorage for pipeline selection (using new URLs-based approach)
+			sessionStorage.setItem('preselectedUrls', JSON.stringify(urls))
+			if (participantIds.length > 0) {
+				sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+			}
+
+			// Clear cached context to force fresh read
+			pipelineState.pendingDataRun = null
+
+			// Navigate to pipelines tab
+			if (navigateTo) {
+				navigateTo('pipelines')
+			}
+
+			// Wait for navigation and then show modal
+			setTimeout(async () => {
+				try {
+					await loadPipelines()
+					await showDataRunModalDirect()
+				} catch (err) {
+					console.error('Error showing data run modal:', err)
+					const errMsg = err?.message || String(err) || 'Unknown error'
+					if (dialog?.message) {
+						await dialog.message('Failed to show pipeline selection: ' + errMsg, {
+							title: 'Error',
+							type: 'error',
+						})
+					}
+				}
+			}, 100)
+		} catch (error) {
+			console.error('Error in openRunPipelineWithDataset:', error)
+			const errorMsg = error?.message || String(error) || 'Unknown error'
+			if (dialog?.message) {
+				await dialog.message('Failed to prepare pipeline run: ' + errorMsg, {
+					title: 'Error',
+					type: 'error',
+				})
+			}
+		}
+	}
+
 	return {
 		initialize,
 		loadPipelines,
 		showPipelineDetails,
 		backToPipelinesList,
 		addProjectAsStep, // Expose for project creation to call
+		openRunPipelineWithDataset, // Expose for dataset "Run Pipeline" button
 	}
 }

@@ -268,6 +268,8 @@ class WsBridge {
 			'install_dependency',
 			'install_brew',
 			'install_command_line_tools',
+			'import_pipeline_with_deps',
+			'import_pipeline',
 		])
 		const timeoutMs = Math.max(
 			1000,

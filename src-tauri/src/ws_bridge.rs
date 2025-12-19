@@ -981,6 +981,117 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::commands::sql::sql_run_query(state.clone(), query, options)?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        // --------------------------------------------------------------------
+        // Dataset commands
+        // --------------------------------------------------------------------
+        "get_datasets" | "list_datasets_with_assets" => {
+            let result = crate::commands::datasets::list_datasets_with_assets(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_dataset_with_files" => {
+            let manifest: biovault::cli::commands::datasets::DatasetManifest =
+                serde_json::from_value(
+                    args.get("manifest")
+                        .cloned()
+                        .ok_or_else(|| "Missing manifest".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+            let original_name: Option<String> = args
+                .get("originalName")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::datasets::save_dataset_with_files(
+                state.clone(),
+                manifest,
+                original_name,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "is_dataset_published" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let result = crate::commands::datasets::is_dataset_published(name)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_dataset" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let result = crate::commands::datasets::delete_dataset(state.clone(), name)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "publish_dataset" => {
+            let manifest_path: Option<String> = args
+                .get("manifestPath")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let name: Option<String> = args
+                .get("name")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let copy_mock: bool = args
+                .get("copyMock")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or(false);
+            crate::commands::datasets::publish_dataset(manifest_path, name, copy_mock)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "unpublish_dataset" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            crate::commands::datasets::unpublish_dataset(name)?;
+            Ok(serde_json::Value::Null)
+        }
+        "get_datasets_folder_path" => {
+            let result = crate::commands::datasets::get_datasets_folder_path()?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_dataset_path" => {
+            let dir_path: String = serde_json::from_value(
+                args.get("dirPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing dirPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse dirPath: {}", e))?;
+            let result = crate::commands::datasets::resolve_local_dataset_path(dir_path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_syft_url_to_local_path" => {
+            let syft_url: String = serde_json::from_value(
+                args.get("syftUrl")
+                    .cloned()
+                    .ok_or_else(|| "Missing syftUrl".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse syftUrl: {}", e))?;
+            let result = crate::commands::datasets::resolve_syft_url_to_local_path(syft_url)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_syft_urls_batch" => {
+            let urls: Vec<String> = serde_json::from_value(
+                args.get("urls")
+                    .cloned()
+                    .ok_or_else(|| "Missing urls".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse urls: {}", e))?;
+            let result = crate::commands::datasets::resolve_syft_urls_batch(urls)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))

@@ -44,6 +44,8 @@
 	width: 90%;
 	max-height: 90vh;
 	overflow-y: auto;
+	position: relative;
+	z-index: 10001;
 }
 
 .modal-header {

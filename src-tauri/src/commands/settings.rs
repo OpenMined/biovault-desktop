@@ -45,9 +45,7 @@ fn remove_dir_all_with_retry(path: &std::path::Path, max_wait: Duration) -> io::
         }
     }
 
-    Err(last_err.unwrap_or_else(|| {
-        io::Error::other("Timed out while removing directory")
-    }))
+    Err(last_err.unwrap_or_else(|| io::Error::other("Timed out while removing directory")))
 }
 
 fn stop_all_jupyter_best_effort() {
@@ -832,9 +830,13 @@ pub fn is_dev_mode() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if updater is disabled (DISABLE_UPDATER=1)
+/// Check if updater is disabled (DISABLE_UPDATER=1 or in dev mode)
 #[tauri::command]
 pub fn is_updater_disabled() -> bool {
+    // Disable updater in dev mode
+    if is_dev_mode() {
+        return true;
+    }
     env::var("DISABLE_UPDATER")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)

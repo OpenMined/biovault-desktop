@@ -132,8 +132,8 @@
 		</div>
 	</div>
 
-	<!-- Queue Status Bar - Appears when files are in queue -->
-	<div class="data-queue-bar" id="queue-card-container" style="display: none">
+	<!-- Queue Status Bar - Hidden for now (not using queue functionality) -->
+	<div class="data-queue-bar" id="queue-card-container" style="display: none !important">
 		<div class="queue-bar-left">
 			<button id="process-queue-btn" class="queue-bar-toggle" title="Toggle queue processing">
 				<span id="queue-btn-icon-container" class="queue-bar-icon"></span>
@@ -468,38 +468,29 @@
 								</div>
 							</div>
 
-							<!-- Assets Card -->
+							<!-- Data Files Card -->
 							<div class="editor-card">
 								<div class="editor-card-header">
 									<span class="editor-card-number">2</span>
-									<h3>Data Files</h3>
+									<h3>Data Assets</h3>
 								</div>
 								<div class="editor-card-body">
-									<div class="assets-explanation">
-										<p>Each asset has two versions:</p>
-										<div class="asset-type-grid">
-											<div class="asset-type-item">
-												<span class="asset-type-icon private">🔒</span>
-												<div>
-													<strong>Private (Real Data)</strong>
-													<span>Your actual data - never leaves your machine</span>
-												</div>
-											</div>
-											<div class="asset-type-item">
-												<span class="asset-type-icon mock">📋</span>
-												<div>
-													<strong>Mock (Sample Data)</strong>
-													<span>Safe sample shared with collaborators</span>
-												</div>
-											</div>
-										</div>
-									</div>
+									<p class="asset-intro">
+										Each asset pairs private data (stays on your machine) with mock data (shared
+										publicly).
+									</p>
 
-									<div id="dataset-form-assets" class="asset-list-modern">
+									<!-- Asset rows container -->
+									<div id="dataset-assets-list" class="assets-list">
 										<!-- Asset rows rendered here -->
 									</div>
 
-									<button id="dataset-form-add-asset" class="btn-add-asset" type="button">
+									<button
+										id="dataset-add-asset"
+										class="btn-add-asset"
+										type="button"
+										title="Add a new asset"
+									>
 										<svg
 											width="16"
 											height="16"
@@ -511,10 +502,27 @@
 											<line x1="12" y1="5" x2="12" y2="19"></line>
 											<line x1="5" y1="12" x2="19" y2="12"></line>
 										</svg>
-										Add Another File
+										Add Asset
 									</button>
 								</div>
 							</div>
+						</div>
+
+						<!-- Bottom Save Button -->
+						<div class="editor-form-footer">
+							<button id="dataset-editor-save-bottom" class="btn-primary" type="button">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+								>
+									<polyline points="20 6 9 17 4 12"></polyline>
+								</svg>
+								Save Dataset
+							</button>
 						</div>
 
 						<!-- Right: Preview -->
@@ -621,6 +629,236 @@
 						<button id="dataset-cancel" class="btn-secondary" type="button">Cancel</button>
 						<button id="dataset-save" class="btn-primary" type="button">Save Dataset</button>
 					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- File Picker Modal for Dataset Assets -->
+		<div id="file-picker-modal" class="modal" style="display: none">
+			<div class="modal-overlay"></div>
+			<div class="modal-content" style="max-width: 900px; max-height: 80vh">
+				<div class="modal-header">
+					<h3 id="file-picker-title">Select Files</h3>
+					<button id="file-picker-close" class="btn-icon" aria-label="Close">
+						<img src="assets/icons/x.svg" width="16" height="16" alt="Close" />
+					</button>
+				</div>
+				<div
+					class="modal-body"
+					style="display: flex; flex-direction: column; gap: 12px; overflow: hidden"
+				>
+					<!-- Search/Filter -->
+					<div class="file-picker-controls" style="display: flex; gap: 8px; align-items: center">
+						<input
+							id="file-picker-search"
+							type="text"
+							placeholder="Search by filename, participant, or type..."
+							style="
+								flex: 1;
+								padding: 8px 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 6px;
+							"
+						/>
+						<select
+							id="file-picker-type-filter"
+							style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px"
+						>
+							<option value="">All Types</option>
+						</select>
+						<label
+							id="file-picker-select-all-row"
+							style="
+								display: flex;
+								align-items: center;
+								gap: 4px;
+								font-size: 13px;
+								white-space: nowrap;
+							"
+						>
+							<input type="checkbox" id="file-picker-select-all" />
+							Select All
+						</label>
+					</div>
+
+					<!-- File List -->
+					<div
+						id="file-picker-list"
+						style="
+							flex: 1;
+							overflow-y: auto;
+							border: 1px solid var(--border-color);
+							border-radius: 6px;
+							min-height: 300px;
+						"
+					>
+						<!-- Files will be populated here -->
+					</div>
+
+					<!-- Selection Summary -->
+					<div id="file-picker-summary" style="font-size: 13px; color: var(--text-secondary)">
+						0 files selected
+					</div>
+				</div>
+				<div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px">
+					<button id="file-picker-cancel" class="btn-secondary" type="button">Cancel</button>
+					<button id="file-picker-add" class="btn-primary" type="button">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						<span id="file-picker-add-label">Add Selected</span>
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- URL Input Modal for mock files -->
+		<div id="url-input-modal" class="modal hidden">
+			<div class="modal-content" style="max-width: 500px">
+				<div class="modal-header">
+					<h3>Add URL</h3>
+					<button id="url-input-modal-close" class="modal-close" aria-label="Close">&times;</button>
+				</div>
+				<div class="modal-body">
+					<div class="form-field">
+						<label for="url-input-field">File URL</label>
+						<input
+							id="url-input-field"
+							type="text"
+							placeholder="https://example.com/file.txt or syft://user@domain/path"
+							style="
+								width: 100%;
+								padding: 10px 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 6px;
+								font-size: 14px;
+							"
+						/>
+						<span class="form-hint">Enter an HTTP/HTTPS URL or syft:// URL for the mock file</span>
+					</div>
+					<div id="url-validation-status" style="margin-top: 8px; font-size: 13px; display: none">
+						<span id="url-validation-text"></span>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button id="url-input-cancel" class="btn-secondary" type="button">Cancel</button>
+					<button id="url-input-add" class="btn-primary" type="button">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						Add URL
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Run Pipeline Modal -->
+		<div id="run-pipeline-modal" class="modal hidden">
+			<div class="modal-content" style="max-width: 400px">
+				<div class="modal-header">
+					<h3>Run Pipeline</h3>
+					<button id="run-pipeline-modal-close" class="modal-close" aria-label="Close">
+						&times;
+					</button>
+				</div>
+				<div class="modal-body">
+					<p style="margin-bottom: 16px; color: var(--text-secondary)">
+						Which data do you want to run the pipeline on?
+					</p>
+					<div class="pipeline-options" style="display: flex; flex-direction: column; gap: 12px">
+						<label
+							class="pipeline-option"
+							style="
+								display: flex;
+								align-items: center;
+								gap: 10px;
+								padding: 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 8px;
+								cursor: pointer;
+							"
+						>
+							<input type="radio" name="pipeline-data-type" value="mock" checked />
+							<div>
+								<div style="font-weight: 500">Mock Data</div>
+								<div style="font-size: 12px; color: var(--text-secondary)">
+									Test with preview data first
+								</div>
+							</div>
+						</label>
+						<label
+							class="pipeline-option"
+							style="
+								display: flex;
+								align-items: center;
+								gap: 10px;
+								padding: 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 8px;
+								cursor: pointer;
+							"
+						>
+							<input type="radio" name="pipeline-data-type" value="real" />
+							<div>
+								<div style="font-weight: 500">Real Data</div>
+								<div style="font-size: 12px; color: var(--text-secondary)">
+									Run on your private data
+								</div>
+							</div>
+						</label>
+						<label
+							class="pipeline-option"
+							style="
+								display: flex;
+								align-items: center;
+								gap: 10px;
+								padding: 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 8px;
+								cursor: pointer;
+							"
+						>
+							<input type="radio" name="pipeline-data-type" value="both" />
+							<div>
+								<div style="font-weight: 500">Both</div>
+								<div style="font-size: 12px; color: var(--text-secondary)">
+									Run on mock and real data
+								</div>
+							</div>
+						</label>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button id="run-pipeline-cancel" class="btn-secondary" type="button">Cancel</button>
+					<button id="run-pipeline-confirm" class="btn-primary" type="button">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+						>
+							<polygon points="5 3 19 12 5 21 5 3"></polygon>
+						</svg>
+						Run Pipeline
+					</button>
 				</div>
 			</div>
 		</div>

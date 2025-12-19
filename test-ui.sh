@@ -101,7 +101,7 @@ done
 
 info "Running Playwright tests"
 export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
-# Exclude integration tests that require devstack or special setup (use test-scenario.sh for those)
+# Exclude integration tests that require real backend or devstack (use test-scenario.sh for those)
 EXCLUDE_PATTERN="@messages-two|@messaging-core-ui|@messaging-sessions|@onboarding-two|@chaos|@pipelines-solo|@jupyter-session|@jupyter-collab"
 if ((${#FORWARD_ARGS[@]} == 0)); then
     UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui --grep-invert "$EXCLUDE_PATTERN" | tee -a "$LOG_FILE"
