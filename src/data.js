@@ -24,6 +24,19 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const publishingDatasets = new Set()
 	const datasetProgressTimers = new Map()
 
+	// Dataset editor state (paired asset model with per-asset mode)
+	// Each asset: { name, mode: 'single'|'list', private: file|files[], mock: file|files[] }
+	let datasetAssets = []
+	let currentAssetIndex = null // Which asset row is being edited
+	let currentAssetSide = null // 'private' or 'mock'
+
+	// File picker state
+	let _filePickerMode = null // 'private' or 'mock' (for current asset side)
+	let filePickerSelectedIds = new Set()
+	let filePickerSearchTerm = ''
+	let filePickerTypeFilter = ''
+	let filePickerLastClickedId = null // For shift-click range selection
+
 	function setDatasetProgress(name, progress, text) {
 		const row = document.querySelector(`.dataset-progress[data-dataset="${CSS.escape(name)}"]`)
 		if (!row) return
@@ -938,11 +951,818 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		updateEditorPreview()
 	}
 
+	// ============================================================================
+	// FILE PICKER MODAL
+	// ============================================================================
+
+	async function openFilePicker(mode = 'private') {
+		_filePickerMode = mode
+		filePickerSelectedIds = new Set()
+		filePickerSearchTerm = ''
+		filePickerTypeFilter = ''
+		filePickerLastClickedId = null
+
+		const modal = document.getElementById('file-picker-modal')
+		const title = document.getElementById('file-picker-title')
+		const searchInput = document.getElementById('file-picker-search')
+		const typeFilter = document.getElementById('file-picker-type-filter')
+		const selectAll = document.getElementById('file-picker-select-all')
+		const selectAllRow = document.getElementById('file-picker-select-all-row')
+
+		if (!modal) return
+
+		// Ensure we have the latest files
+		if (allFiles.length === 0) {
+			try {
+				const files = await invoke('list_files')
+				allFiles = files || []
+				console.log(`File picker loaded ${allFiles.length} files`)
+			} catch (err) {
+				console.error('Failed to load files for picker:', err)
+			}
+		}
+
+		// Check if current asset is in single mode
+		const asset = currentAssetIndex !== null ? datasetAssets[currentAssetIndex] : null
+		const isSingleMode = asset?.mode === 'single'
+
+		// Update title based on mode
+		if (title) {
+			const modeLabel = mode === 'private' ? 'Private' : 'Mock'
+			title.textContent = isSingleMode
+				? `Select ${modeLabel} File (Single)`
+				: `Select ${modeLabel} Files`
+		}
+
+		// Update add button label to match the side
+		const addLabel = document.getElementById('file-picker-add-label')
+		if (addLabel) {
+			addLabel.textContent = mode === 'private' ? 'Add as Private' : 'Add as Mock'
+		}
+
+		// Hide select all in single mode
+		if (selectAllRow) {
+			selectAllRow.style.display = isSingleMode ? 'none' : ''
+		}
+
+		// Reset controls
+		if (searchInput) searchInput.value = ''
+		if (selectAll) selectAll.checked = false
+
+		// Populate type filter dropdown
+		if (typeFilter) {
+			const types = [...new Set(allFiles.map((f) => f.data_type).filter(Boolean))]
+			typeFilter.innerHTML = '<option value="">All Types</option>'
+			types.forEach((type) => {
+				const opt = document.createElement('option')
+				opt.value = type
+				opt.textContent = type
+				typeFilter.appendChild(opt)
+			})
+		}
+
+		// Populate file list
+		populateFilePicker()
+
+		// Show modal
+		modal.style.display = 'flex'
+	}
+
+	function closeFilePicker() {
+		const modal = document.getElementById('file-picker-modal')
+		if (modal) {
+			modal.style.display = 'none'
+		}
+		_filePickerMode = null
+		filePickerSelectedIds = new Set()
+	}
+
+	function getFilteredPickerFiles() {
+		return allFiles.filter((file) => {
+			// Show complete files, or pending/processing if no complete files exist
+			const validStatuses = ['complete', 'pending', 'processing']
+			if (!validStatuses.includes(file.status)) return false
+
+			// Apply type filter
+			if (filePickerTypeFilter && file.data_type !== filePickerTypeFilter) return false
+
+			// Apply search filter
+			if (filePickerSearchTerm) {
+				const term = filePickerSearchTerm.toLowerCase()
+				const searchFields = [file.file_path, file.participant_id, file.data_type, file.source]
+					.filter(Boolean)
+					.map((s) => s.toLowerCase())
+				if (!searchFields.some((field) => field.includes(term))) return false
+			}
+
+			return true
+		})
+	}
+
+	function populateFilePicker() {
+		const listContainer = document.getElementById('file-picker-list')
+		const summaryEl = document.getElementById('file-picker-summary')
+
+		if (!listContainer) return
+
+		const filteredFiles = getFilteredPickerFiles()
+
+		if (filteredFiles.length === 0) {
+			listContainer.innerHTML = `
+				<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary); padding: 40px;">
+					<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5; margin-bottom: 12px;">
+						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+						<polyline points="14 2 14 8 20 8"></polyline>
+					</svg>
+					<p style="margin: 0; font-size: 14px;">No files found</p>
+					<p style="margin: 4px 0 0 0; font-size: 12px; opacity: 0.7;">Try adjusting your filters or import some files first</p>
+				</div>
+			`
+			if (summaryEl) summaryEl.textContent = '0 files selected'
+			return
+		}
+
+		// Build file list with checkboxes
+		listContainer.innerHTML = ''
+
+		const table = document.createElement('table')
+		table.className = 'file-picker-table'
+		table.style.cssText = 'width: 100%; border-collapse: collapse; font-size: 13px;'
+
+		const thead = document.createElement('thead')
+		thead.innerHTML = `
+			<tr style="background: var(--bg-secondary); position: sticky; top: 0; z-index: 1;">
+				<th style="width: 40px; padding: 8px; text-align: center;"></th>
+				<th style="padding: 8px; text-align: left;">Participant</th>
+				<th style="padding: 8px; text-align: left;">Filename</th>
+				<th style="padding: 8px; text-align: left;">Type</th>
+				<th style="padding: 8px; text-align: left;">Source</th>
+			</tr>
+		`
+		table.appendChild(thead)
+
+		const tbody = document.createElement('tbody')
+
+		filteredFiles.forEach((file) => {
+			const row = document.createElement('tr')
+			row.className = 'file-picker-row'
+			row.dataset.fileId = file.id
+			row.style.cssText = 'cursor: pointer; border-bottom: 1px solid var(--border-color);'
+
+			const isSelected = filePickerSelectedIds.has(file.id)
+			if (isSelected) row.style.background = 'var(--bg-hover)'
+
+			const fileName = file.file_path.split('/').pop()
+
+			row.innerHTML = `
+				<td style="padding: 8px; text-align: center;">
+					<input type="checkbox" class="file-picker-checkbox" data-id="${file.id}" ${isSelected ? 'checked' : ''} />
+				</td>
+				<td style="padding: 8px;">${file.participant_id || '<span style="color: var(--text-secondary); font-style: italic;">Unassigned</span>'}</td>
+				<td style="padding: 8px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${file.file_path}">${fileName}</td>
+				<td style="padding: 8px;">
+					<span class="type-badge type-${(file.data_type || 'unknown').toLowerCase()}">${file.data_type || '-'}</span>
+				</td>
+				<td style="padding: 8px;">${file.source || '-'}</td>
+			`
+
+			// Unified click handler for row and checkbox with shift-click support
+			const handleSelection = (fileId, checked, shiftKey) => {
+				const asset = currentAssetIndex !== null ? datasetAssets[currentAssetIndex] : null
+				const isSingleMode = asset?.mode === 'single'
+
+				if (checked) {
+					if (isSingleMode) {
+						// In single mode, deselect all others first
+						filePickerSelectedIds.clear()
+						listContainer.querySelectorAll('.file-picker-checkbox').forEach((cb) => {
+							cb.checked = false
+							cb.closest('tr').style.background = ''
+						})
+						filePickerSelectedIds.add(fileId)
+						row.style.background = 'var(--bg-hover)'
+						const cb = row.querySelector('.file-picker-checkbox')
+						if (cb) cb.checked = true
+					} else if (shiftKey && filePickerLastClickedId !== null) {
+						// Shift-click range selection (only in list mode)
+						const allRows = Array.from(listContainer.querySelectorAll('.file-picker-row'))
+						const lastIndex = allRows.findIndex(
+							(r) => parseInt(r.dataset.fileId) === filePickerLastClickedId,
+						)
+						const currentIndex = allRows.findIndex((r) => parseInt(r.dataset.fileId) === fileId)
+						if (lastIndex !== -1 && currentIndex !== -1) {
+							const start = Math.min(lastIndex, currentIndex)
+							const end = Math.max(lastIndex, currentIndex)
+							for (let i = start; i <= end; i++) {
+								const rowToSelect = allRows[i]
+								const idToSelect = parseInt(rowToSelect.dataset.fileId)
+								filePickerSelectedIds.add(idToSelect)
+								rowToSelect.style.background = 'var(--bg-hover)'
+								const cb = rowToSelect.querySelector('.file-picker-checkbox')
+								if (cb) cb.checked = true
+							}
+						}
+					} else {
+						filePickerSelectedIds.add(fileId)
+						row.style.background = 'var(--bg-hover)'
+					}
+					filePickerLastClickedId = fileId
+				} else {
+					filePickerSelectedIds.delete(fileId)
+					row.style.background = ''
+					const cb = row.querySelector('.file-picker-checkbox')
+					if (cb) cb.checked = false
+					filePickerLastClickedId = fileId
+				}
+				updateFilePickerSummary()
+				updateFilePickerSelectAll()
+			}
+
+			// Row click toggles selection (with shift-click support)
+			row.addEventListener('click', (e) => {
+				if (e.target.type === 'checkbox') return
+				const checkbox = row.querySelector('.file-picker-checkbox')
+				if (checkbox) {
+					const newChecked = !filePickerSelectedIds.has(file.id)
+					handleSelection(file.id, newChecked, e.shiftKey)
+				}
+			})
+
+			// Checkbox change handler
+			const checkbox = row.querySelector('.file-picker-checkbox')
+			if (checkbox) {
+				checkbox.addEventListener('click', (e) => {
+					e.stopPropagation() // Prevent row click from firing
+					const fileId = parseInt(e.target.dataset.id)
+					// The checkbox state has already toggled, so use its current checked state
+					handleSelection(fileId, e.target.checked, e.shiftKey)
+				})
+			}
+
+			tbody.appendChild(row)
+		})
+
+		table.appendChild(tbody)
+		listContainer.appendChild(table)
+
+		updateFilePickerSummary()
+		updateFilePickerSelectAll()
+	}
+
+	function updateFilePickerSummary() {
+		const summaryEl = document.getElementById('file-picker-summary')
+		if (summaryEl) {
+			const count = filePickerSelectedIds.size
+			summaryEl.textContent = `${count} file${count !== 1 ? 's' : ''} selected`
+		}
+	}
+
+	function updateFilePickerSelectAll() {
+		const selectAll = document.getElementById('file-picker-select-all')
+		if (!selectAll) return
+
+		const filteredFiles = getFilteredPickerFiles()
+		const allSelected =
+			filteredFiles.length > 0 && filteredFiles.every((f) => filePickerSelectedIds.has(f.id))
+		const someSelected = filteredFiles.some((f) => filePickerSelectedIds.has(f.id))
+
+		selectAll.checked = allSelected
+		selectAll.indeterminate = someSelected && !allSelected
+	}
+
+	function addSelectedFilesToDataset() {
+		if (filePickerSelectedIds.size === 0) return
+		if (currentAssetIndex === null || currentAssetSide === null) return
+
+		const selectedFiles = allFiles.filter((f) => filePickerSelectedIds.has(f.id))
+		const asset = datasetAssets[currentAssetIndex]
+		if (!asset) return
+
+		selectedFiles.forEach((file) => {
+			const fileEntry = {
+				id: file.id,
+				file_path: file.file_path,
+				participant_id: file.participant_id,
+				data_type: file.data_type,
+			}
+
+			if (asset.mode === 'single') {
+				// Single mode: replace the file on this side
+				asset[currentAssetSide] = fileEntry
+			} else {
+				// List mode: add to the array if not already there
+				if (!Array.isArray(asset[currentAssetSide])) {
+					asset[currentAssetSide] = []
+				}
+				if (!asset[currentAssetSide].some((f) => f.id === file.id)) {
+					asset[currentAssetSide].push(fileEntry)
+				}
+			}
+		})
+
+		closeFilePicker()
+		renderDatasetAssets()
+		updateEditorPreview()
+	}
+
+	// URL Input Modal state
+	let urlInputAsset = null
+	let _urlInputAssetIndex = null
+	let urlInputSide = null
+
+	function openUrlInputModal(asset, assetIndex, side) {
+		urlInputAsset = asset
+		_urlInputAssetIndex = assetIndex
+		urlInputSide = side
+
+		const modal = document.getElementById('url-input-modal')
+		const input = document.getElementById('url-input-field')
+		const status = document.getElementById('url-validation-status')
+
+		if (modal) modal.classList.remove('hidden')
+		if (input) {
+			input.value = ''
+			input.focus()
+		}
+		if (status) status.style.display = 'none'
+	}
+
+	function closeUrlInputModal() {
+		const modal = document.getElementById('url-input-modal')
+		if (modal) modal.classList.add('hidden')
+		urlInputAsset = null
+		_urlInputAssetIndex = null
+		urlInputSide = null
+	}
+
+	function isValidUrl(str) {
+		try {
+			if (str.startsWith('syft://')) {
+				return str.length > 7 && str.includes('@')
+			}
+			const url = new URL(str)
+			return url.protocol === 'http:' || url.protocol === 'https:'
+		} catch {
+			return false
+		}
+	}
+
+	async function validateAndAddUrl() {
+		const input = document.getElementById('url-input-field')
+		const status = document.getElementById('url-validation-status')
+		const statusText = document.getElementById('url-validation-text')
+
+		const url = input?.value?.trim()
+		if (!url) {
+			if (status) {
+				status.style.display = 'block'
+				status.style.color = 'var(--error-color, #ef4444)'
+				statusText.textContent = 'Please enter a URL'
+			}
+			return
+		}
+
+		if (!isValidUrl(url)) {
+			if (status) {
+				status.style.display = 'block'
+				status.style.color = 'var(--error-color, #ef4444)'
+				statusText.textContent = 'Invalid URL format. Use http://, https://, or syft:// URLs'
+			}
+			return
+		}
+
+		// For http/https URLs, try to check if reachable
+		if (url.startsWith('http://') || url.startsWith('https://')) {
+			if (status) {
+				status.style.display = 'block'
+				status.style.color = 'var(--text-secondary)'
+				statusText.textContent = 'Checking URL...'
+			}
+
+			try {
+				const _response = await fetch(url, { method: 'HEAD', mode: 'no-cors' })
+				// no-cors returns opaque response, so we can't check status
+				// Just proceed since the fetch didn't throw
+			} catch (err) {
+				// URL might be unreachable, but we'll still allow it with a warning
+				const confirmed = await dialog.ask(
+					`Could not verify the URL is reachable:\n${url}\n\nThis might be due to CORS restrictions. Add it anyway?`,
+					{ title: 'URL Warning', kind: 'warning' },
+				)
+				if (!confirmed) {
+					if (status) {
+						status.style.display = 'block'
+						status.style.color = 'var(--error-color, #ef4444)'
+						statusText.textContent = 'URL not added'
+					}
+					return
+				}
+			}
+		}
+
+		// Add the URL as a file entry
+		const fileEntry = {
+			id: null,
+			file_path: url,
+			participant_id: null,
+			data_type: null,
+			is_url: true,
+		}
+
+		const asset = urlInputAsset
+		const side = urlInputSide
+
+		if (asset.mode === 'single') {
+			asset[side] = fileEntry
+		} else {
+			if (!Array.isArray(asset[side])) {
+				asset[side] = []
+			}
+			if (!asset[side].some((f) => f.file_path === url)) {
+				asset[side].push(fileEntry)
+			}
+		}
+
+		closeUrlInputModal()
+		renderDatasetAssets()
+		updateEditorPreview()
+	}
+
+	// Run Pipeline Modal state
+	let runPipelineDatasetName = null
+	let runPipelineDatasetEntry = null
+
+	function openRunPipelineModal(datasetName, datasetEntry) {
+		runPipelineDatasetName = datasetName
+		runPipelineDatasetEntry = datasetEntry
+
+		const modal = document.getElementById('run-pipeline-modal')
+		if (modal) modal.classList.remove('hidden')
+
+		// Reset to mock selection
+		const mockRadio = document.querySelector('input[name="pipeline-data-type"][value="mock"]')
+		if (mockRadio) mockRadio.checked = true
+	}
+
+	function closeRunPipelineModal() {
+		const modal = document.getElementById('run-pipeline-modal')
+		if (modal) modal.classList.add('hidden')
+		runPipelineDatasetName = null
+		runPipelineDatasetEntry = null
+	}
+
+	async function confirmRunPipeline() {
+		const selectedType = document.querySelector('input[name="pipeline-data-type"]:checked')?.value
+		if (!selectedType || !runPipelineDatasetName) {
+			closeRunPipelineModal()
+			return
+		}
+
+		const datasetName = runPipelineDatasetName
+		const entry = runPipelineDatasetEntry
+		closeRunPipelineModal()
+
+		// Navigate to pipelines and pre-select this dataset
+		if (window.__pipelinesModule?.openRunPipelineWithDataset) {
+			// openRunPipelineWithDataset handles navigation internally
+			window.__pipelinesModule.openRunPipelineWithDataset({
+				name: datasetName,
+				dataType: selectedType,
+				entry,
+			})
+		} else if (window.navigateTo) {
+			// Fallback: store in sessionStorage for pipelines to pick up
+			sessionStorage.setItem(
+				'pendingPipelineRun',
+				JSON.stringify({
+					datasetName,
+					dataType: selectedType,
+				}),
+			)
+			window.navigateTo('pipelines')
+		}
+	}
+
+	function addNewAsset() {
+		const assetNum = datasetAssets.length + 1
+		const emptyAsset = {
+			name: `asset_${assetNum}`,
+			mode: 'single',
+			private: null,
+			mock: null,
+		}
+		datasetAssets.push(emptyAsset)
+		renderDatasetAssets()
+		updateEditorPreview()
+	}
+
+	function removeAsset(index) {
+		datasetAssets.splice(index, 1)
+		renderDatasetAssets()
+		updateEditorPreview()
+	}
+
+	function openAssetFilePicker(assetIndex, side) {
+		currentAssetIndex = assetIndex
+		currentAssetSide = side
+		_filePickerMode = side
+		openFilePicker(side)
+	}
+
+	function setAssetMode(index, mode) {
+		const asset = datasetAssets[index]
+		if (!asset || asset.mode === mode) return
+
+		if (mode === 'single') {
+			// Convert from list to single (take first file)
+			asset.private = Array.isArray(asset.private) ? asset.private[0] || null : asset.private
+			asset.mock = Array.isArray(asset.mock) ? asset.mock[0] || null : asset.mock
+		} else {
+			// Convert from single to list
+			asset.private = asset.private ? [asset.private] : []
+			asset.mock = asset.mock ? [asset.mock] : []
+		}
+		asset.mode = mode
+
+		renderDatasetAssets()
+		updateEditorPreview()
+	}
+
+	function updateAssetName(index, name) {
+		const asset = datasetAssets[index]
+		if (asset) {
+			asset.name = name.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+		}
+	}
+
+	function renderDatasetAssets() {
+		const container = document.getElementById('dataset-assets-list')
+		if (!container) return
+
+		if (datasetAssets.length === 0) {
+			container.innerHTML = `
+				<div class="assets-empty" style="padding: 24px; text-align: center; color: #9ca3af; font-size: 13px;">
+					No assets added yet. Click "Add Asset" below to get started.
+				</div>
+			`
+			return
+		}
+
+		container.innerHTML = ''
+
+		datasetAssets.forEach((asset, index) => {
+			const row = document.createElement('div')
+			row.className = 'asset-row'
+			row.dataset.index = index
+
+			const isSingle = asset.mode === 'single'
+
+			row.innerHTML = `
+				<div class="asset-row-header">
+					<div class="asset-row-top">
+						<div class="asset-row-name">
+							<label class="asset-name-label">Asset Name</label>
+							<input type="text" class="asset-name-input" value="${asset.name || ''}"
+								placeholder="asset_name" data-index="${index}"
+								title="Asset identifier (lowercase, underscores)"/>
+						</div>
+						<button class="asset-row-remove" type="button" title="Remove asset" data-index="${index}">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>
+					</div>
+					<div class="asset-row-mode">
+						<span class="asset-mode-label">Mode:</span>
+						<div class="pill-toggle pill-toggle-xs">
+							<button class="pill-button ${isSingle ? 'active' : ''}" data-mode="single" data-index="${index}" type="button">Single File</button>
+							<button class="pill-button ${!isSingle ? 'active' : ''}" data-mode="list" data-index="${index}" type="button">File List</button>
+						</div>
+					</div>
+				</div>
+				<div class="asset-row-content">
+					<div class="asset-side private">
+						<div class="asset-side-header">🔒 Private</div>
+						${renderAssetSide(asset, index, 'private')}
+					</div>
+					<div class="asset-side mock">
+						<div class="asset-side-header">📋 Mock</div>
+						${renderAssetSide(asset, index, 'mock')}
+					</div>
+				</div>
+			`
+
+			// Add event listeners
+			const removeBtn = row.querySelector('.asset-row-remove')
+			removeBtn.addEventListener('click', () => removeAsset(index))
+
+			// Asset name input
+			const nameInput = row.querySelector('.asset-name-input')
+			nameInput.addEventListener('input', (e) => updateAssetName(index, e.target.value))
+
+			// Mode toggle buttons
+			row.querySelectorAll('.asset-row-mode .pill-button').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const mode = btn.dataset.mode
+					setAssetMode(index, mode)
+				})
+			})
+
+			// "Existing Files" buttons - open file picker
+			row.querySelectorAll('.btn-existing-files').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const side = btn.dataset.side
+					openAssetFilePicker(index, side)
+				})
+			})
+
+			// "Browse" buttons - open file dialog
+			row.querySelectorAll('.btn-browse-files').forEach((btn) => {
+				btn.addEventListener('click', async () => {
+					const side = btn.dataset.side
+					const multiple = asset.mode === 'list'
+					const paths = await dialog.open({ multiple, directory: false })
+					if (paths) {
+						const pathList = Array.isArray(paths) ? paths : [paths]
+						pathList.forEach((filePath) => {
+							const fileEntry = {
+								id: null, // No DB id for browsed files
+								file_path: filePath,
+								participant_id: null,
+								data_type: null,
+							}
+							if (asset.mode === 'single') {
+								asset[side] = fileEntry
+							} else {
+								if (!Array.isArray(asset[side])) {
+									asset[side] = []
+								}
+								// Don't add duplicates
+								if (!asset[side].some((f) => f.file_path === filePath)) {
+									asset[side].push(fileEntry)
+								}
+							}
+						})
+						renderDatasetAssets()
+						updateEditorPreview()
+					}
+				})
+			})
+
+			// "Link" button - open URL input modal (mock side only)
+			row.querySelectorAll('.btn-add-url').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const side = btn.dataset.side
+					openUrlInputModal(asset, index, side)
+				})
+			})
+
+			// Remove file buttons in list mode
+			row.querySelectorAll('.remove-file').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const side = btn.dataset.side
+					const fileIndex = parseInt(btn.dataset.fileIndex)
+					if (Array.isArray(asset[side])) {
+						asset[side].splice(fileIndex, 1)
+						renderDatasetAssets()
+						updateEditorPreview()
+					}
+				})
+			})
+
+			// Remove single file button
+			row.querySelectorAll('.remove-single-file').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const side = btn.dataset.side
+					asset[side] = null
+					renderDatasetAssets()
+					updateEditorPreview()
+				})
+			})
+
+			container.appendChild(row)
+		})
+	}
+
+	function renderAssetSide(asset, assetIndex, side) {
+		const sideData = asset[side]
+		const isSingle = asset.mode === 'single'
+
+		// Link button only for mock side
+		const linkButton =
+			side === 'mock'
+				? `
+				<button class="btn-add-url btn-secondary-sm" type="button" data-side="${side}">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+						<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+					</svg>
+					Link
+				</button>
+			`
+				: ''
+
+		// Buttons: Existing Files (from DB), Browse (filesystem), and Link (for mock only)
+		const buttonRow = `
+			<div class="asset-side-buttons">
+				<button class="btn-existing-files btn-secondary-sm" type="button" data-side="${side}">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+						<polyline points="14 2 14 8 20 8"></polyline>
+					</svg>
+					Existing Files
+				</button>
+				<button class="btn-browse-files btn-secondary-sm" type="button" data-side="${side}">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+					</svg>
+					Browse
+				</button>
+				${linkButton}
+			</div>
+		`
+
+		// Helper to render a file entry (shows link icon for URLs)
+		const renderFileEntry = (f, index = null) => {
+			const isUrl =
+				f.is_url ||
+				f.file_path?.startsWith('http://') ||
+				f.file_path?.startsWith('https://') ||
+				f.file_path?.startsWith('syft://')
+			const displayName = isUrl ? f.file_path : f.file_path?.split('/').pop()
+			const icon = isUrl
+				? `<svg class="file-type-icon url-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+						<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+					</svg>`
+				: ''
+			const removeBtn =
+				index !== null
+					? `<button class="remove-file" type="button" data-side="${side}" data-file-index="${index}">
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>`
+					: `<button class="remove-single-file" type="button" data-side="${side}" title="Remove file">
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>`
+			return `
+				<div class="file-item${isUrl ? ' url-entry' : ''}">
+					${icon}
+					<span class="file-name${isUrl ? ' url-name' : ''}" title="${f.file_path}">${displayName}</span>
+					${removeBtn}
+				</div>
+			`
+		}
+
+		if (isSingle) {
+			// Single file mode
+			if (sideData && sideData.file_path) {
+				return `
+					<div class="asset-file-single">
+						${renderFileEntry(sideData)}
+					</div>
+					${buttonRow}
+				`
+			} else {
+				return `
+					<div class="asset-file-single">
+						<span class="file-placeholder">No file selected</span>
+					</div>
+					${buttonRow}
+				`
+			}
+		} else {
+			// List mode
+			const files = Array.isArray(sideData) ? sideData : []
+			if (files.length === 0) {
+				return `
+					<div class="asset-file-list">
+						<div class="file-list-empty">No files added</div>
+					</div>
+					${buttonRow}
+				`
+			} else {
+				const fileItems = files.map((f, i) => renderFileEntry(f, i)).join('')
+				return `
+					<div class="asset-file-list">
+						${fileItems}
+					</div>
+					${buttonRow}
+				`
+			}
+		}
+	}
+
 	function updateEditorPreview() {
 		const nameInput = document.getElementById('dataset-form-name')
 		const descInput = document.getElementById('dataset-form-description')
 		const versionInput = document.getElementById('dataset-form-version')
-		const assetsContainer = document.getElementById('dataset-form-assets')
 
 		const previewName = document.getElementById('preview-name')
 		const previewMeta = document.getElementById('preview-meta')
@@ -952,10 +1772,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			previewName.textContent = nameInput?.value?.trim() || 'your_dataset'
 		}
 
-		const assetCount = assetsContainer?.querySelectorAll('.asset-row-modern').length || 0
+		// Count total files across all assets (per-asset mode)
+		let fileCount = 0
+		datasetAssets.forEach((asset) => {
+			if (asset.mode === 'single') {
+				if (asset.private) fileCount++
+				if (asset.mock) fileCount++
+			} else {
+				fileCount += (asset.private?.length || 0) + (asset.mock?.length || 0)
+			}
+		})
+
 		if (previewMeta) {
-			previewMeta.textContent = `v${versionInput?.value || '1.0.0'} • ${assetCount} file${
-				assetCount !== 1 ? 's' : ''
+			previewMeta.textContent = `v${versionInput?.value || '1.0.0'} • ${fileCount} file${
+				fileCount !== 1 ? 's' : ''
 			}`
 		}
 
@@ -975,6 +1805,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		resetDatasetEditor()
 		list.style.display = 'none'
 		editor.style.display = 'flex'
+
+		// Reset asset state
+		datasetAssets = []
+		currentAssetIndex = null
+		currentAssetSide = null
 
 		// Set up preview update listeners
 		const nameInput = document.getElementById('dataset-form-name')
@@ -1004,11 +1839,104 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			document.getElementById('dataset-form-version').value = dataset.version || '1.0.0'
 			document.getElementById('dataset-form-schema').value =
 				dataset.schema || 'net.biovault.datasets:1.0.0'
+
+			// Convert old assets to new model (with name and mode)
 			if (assets && assets.length > 0) {
-				assets.forEach((a) => addAssetRow(a))
-			} else {
-				addAssetRow()
+				console.log('[Dataset Editor] Loading assets:', assets)
+				for (const a of assets) {
+					console.log(
+						'[Dataset Editor] Asset:',
+						a.asset_key,
+						'kind:',
+						a.kind,
+						'private_ref:',
+						a.private_ref?.substring(0, 100),
+					)
+					// Check if this is a twin_list asset
+					const isTwinList = a.kind === 'twin_list'
+
+					if (isTwinList) {
+						// Parse mock_ref to extract entries
+						let mockEntries = []
+						let privateEntries = []
+
+						if (a.mock_ref) {
+							try {
+								const mockObj = JSON.parse(a.mock_ref)
+								if (mockObj.entries && Array.isArray(mockObj.entries)) {
+									mockEntries = mockObj.entries.map((entry) => ({
+										id: entry.db_file_id || null,
+										file_path: entry.source_path || entry.url?.split('/').pop() || '',
+										participant_id: entry.participant_id || null,
+										data_type: null,
+									}))
+								}
+							} catch {
+								// Ignore parse errors
+							}
+						}
+
+						// Parse private_ref for private entries if present
+						if (a.private_ref) {
+							try {
+								const privObj = JSON.parse(a.private_ref)
+								if (privObj.entries && Array.isArray(privObj.entries)) {
+									privateEntries = privObj.entries.map((entry) => ({
+										id: entry.db_file_id || null,
+										file_path: entry.file_path || '',
+										participant_id: entry.participant_id || null,
+										data_type: null,
+									}))
+								}
+							} catch {
+								// Ignore parse errors
+							}
+						}
+
+						console.log(
+							'[Dataset Editor] twin_list: privateEntries=',
+							privateEntries.length,
+							'mockEntries=',
+							mockEntries.length,
+						)
+						datasetAssets.push({
+							name: a.asset_key || `asset_${datasetAssets.length + 1}`,
+							mode: 'list',
+							private: privateEntries.length > 0 ? privateEntries : [],
+							mock: mockEntries.length > 0 ? mockEntries : [],
+						})
+					} else {
+						// Single file mode
+						console.log('[Dataset Editor] single file mode for:', a.asset_key)
+						const privateFile =
+							a.private_path || a.resolved_private_path
+								? {
+										id: a.private_file_id || null,
+										file_path: a.resolved_private_path || a.private_path,
+										participant_id: null,
+										data_type: null,
+									}
+								: null
+						const mockFile =
+							a.mock_path || a.resolved_mock_path
+								? {
+										id: a.mock_file_id || null,
+										file_path: a.resolved_mock_path || a.mock_path,
+										participant_id: null,
+										data_type: null,
+									}
+								: null
+
+						datasetAssets.push({
+							name: a.asset_key || `asset_${datasetAssets.length + 1}`,
+							mode: 'single',
+							private: privateFile,
+							mock: mockFile,
+						})
+					}
+				}
 			}
+
 			// Check if currently published
 			try {
 				currentEditingWasPublished = await invoke('is_dataset_published', { name: dataset.name })
@@ -1019,9 +1947,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			currentEditingOriginalName = null
 			currentEditingWasPublished = false
 			document.getElementById('dataset-editor-title').textContent = 'Create New Dataset'
-			// Don't add empty row - let user click "Add File"
 		}
 
+		console.log('[Dataset Editor] Final datasetAssets:', JSON.stringify(datasetAssets, null, 2))
+		renderDatasetAssets()
 		updateEditorPreview()
 	}
 
@@ -1038,7 +1967,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		resetDatasetEditor()
 	}
 
-	function collectManifestFromForm() {
+	async function collectManifestFromForm() {
 		const name = document.getElementById('dataset-form-name')?.value?.trim()
 		const description = document.getElementById('dataset-form-description')?.value?.trim()
 		const author =
@@ -1055,66 +1984,258 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			throw new Error('Dataset name must contain only lowercase letters, numbers, and underscores')
 		}
 
-		const assetsContainer = document.getElementById('dataset-form-assets')
-		const assetRows = assetsContainer
-			? Array.from(assetsContainer.querySelectorAll('.asset-row-modern'))
-			: []
-		if (assetRows.length === 0) {
+		// Require at least one asset with at least one file
+		const hasAnyFile = datasetAssets.some((asset) => {
+			if (asset.mode === 'single') {
+				return asset.private || asset.mock
+			} else {
+				return (asset.private?.length || 0) + (asset.mock?.length || 0) > 0
+			}
+		})
+		if (!hasAnyFile) {
 			throw new Error('Add at least one file to the dataset')
 		}
 
+		// Check for overlapping files across ALL assets (same file in both private and mock anywhere)
+		const allPrivateIds = new Set()
+		const allMockIds = new Set()
+		datasetAssets.forEach((asset) => {
+			if (asset.mode === 'single') {
+				if (asset.private?.id) allPrivateIds.add(asset.private.id)
+				if (asset.mock?.id) allMockIds.add(asset.mock.id)
+			} else {
+				const privArr = asset.private || []
+				privArr.forEach((f) => {
+					if (f.id) allPrivateIds.add(f.id)
+				})
+				const mockArr = asset.mock || []
+				mockArr.forEach((f) => {
+					if (f.id) allMockIds.add(f.id)
+				})
+			}
+		})
+
+		// Find files that appear in both private and mock
+		const overlappingIds = [...allPrivateIds].filter((id) => allMockIds.has(id))
+		let hadWarning = false
+		if (overlappingIds.length > 0) {
+			// Find the file names for these IDs
+			const overlappingNames = []
+			datasetAssets.forEach((asset) => {
+				if (asset.mode === 'single') {
+					if (asset.private?.id && overlappingIds.includes(asset.private.id)) {
+						overlappingNames.push(asset.private.file_path.split('/').pop())
+					}
+					if (asset.mock?.id && overlappingIds.includes(asset.mock.id)) {
+						overlappingNames.push(asset.mock.file_path.split('/').pop())
+					}
+				} else {
+					const privFiles = asset.private || []
+					privFiles.forEach((f) => {
+						if (f.id && overlappingIds.includes(f.id)) {
+							overlappingNames.push(f.file_path.split('/').pop())
+						}
+					})
+					const mockFiles = asset.mock || []
+					mockFiles.forEach((f) => {
+						if (f.id && overlappingIds.includes(f.id)) {
+							overlappingNames.push(f.file_path.split('/').pop())
+						}
+					})
+				}
+			})
+			const uniqueNames = [...new Set(overlappingNames)]
+			const confirmed = await dialog.ask(
+				`The same file(s) appear in both Private and Mock:\n\n${uniqueNames.join('\n')}\n\nAre you sure you want to continue?`,
+				{ title: 'Duplicate Files Warning', kind: 'warning' },
+			)
+			if (!confirmed) {
+				return null // User cancelled
+			}
+			hadWarning = true
+		}
+
+		// Build assets from the paired asset model (per-asset mode)
 		const assets = {}
-		assetRows.forEach((row, idx) => {
-			const key = row.querySelector('.asset-key')?.value?.trim()
-			const kind = row.dataset.kind || 'twin'
-			const privatePath = row.querySelector('.asset-private')?.value?.trim()
-			const mockPath = row.querySelector('.asset-mock')?.value?.trim()
-			const assetFromList = currentEditingAssets.get(key)
-			const privateId = row.dataset.privateId ? parseInt(row.dataset.privateId, 10) : null
-			const mockId = row.dataset.mockId ? parseInt(row.dataset.mockId, 10) : null
-			const origPrivatePath = row.dataset.origPrivatePath || ''
-			const origMockPath = row.dataset.origMockPath || ''
-			if (!key) return
+		const privateFiles = []
+		const mockFiles = []
 
-			// Validate key format
-			if (!/^[a-z0-9_]+$/.test(key)) {
-				throw new Error(
-					`Asset name "${key}" must contain only lowercase letters, numbers, and underscores`,
-				)
-			}
+		datasetAssets.forEach((asset, idx) => {
+			// Use asset.name as the key, fallback to asset_N
+			const key = asset.name || `asset_${idx}`
+			const isSingle = asset.mode === 'single'
 
-			// Require at least private path for twin assets
-			if (kind === 'twin' && !privatePath) {
-				throw new Error(`Asset "${key}" needs a private file path`)
-			}
+			if (isSingle) {
+				// Single file mode
+				const privateFile = asset.private
+				const mockFile = asset.mock
 
-			const keepPrivateId = privateId && privatePath === origPrivatePath
-			const keepMockId = mockId && mockPath === origMockPath
-			const assetId =
-				assetFromList?.asset_uuid ||
-				(crypto?.randomUUID ? crypto.randomUUID() : `asset-${idx}-${Date.now()}`)
-			const isTwin = kind === 'twin'
-			const manifestMock = mockPath
-				? `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${mockPath
-						.split('/')
-						.pop()}`
-				: undefined
-			assets[key] = {
-				id: assetId,
-				kind,
-				url: isTwin
-					? `{root.private_url}#assets.${key}`
-					: mockPath || `{root.public_url}#assets.${key}`,
-				private: isTwin ? '{url}.private' : undefined,
-				mock: isTwin ? manifestMock : mockPath || undefined,
-				mappings: {
-					private:
-						isTwin && privatePath
-							? { file_path: privatePath, db_file_id: keepPrivateId ? privateId : null }
+				if (privateFile) {
+					privateFiles.push({
+						file_path: privateFile.file_path,
+						file_id: privateFile.id,
+						participant_id: privateFile.participant_id,
+					})
+				}
+				if (mockFile && !mockFile.is_url) {
+					mockFiles.push({
+						file_path: mockFile.file_path,
+						file_id: mockFile.id,
+						participant_id: mockFile.participant_id,
+					})
+				}
+
+				const kind = privateFile && mockFile ? 'paired' : privateFile ? 'private_only' : 'mock_only'
+
+				// For URL-based mock files, use the URL directly; otherwise generate syft:// URL
+				const mockIsUrl =
+					mockFile?.is_url ||
+					mockFile?.file_path?.startsWith('http://') ||
+					mockFile?.file_path?.startsWith('https://') ||
+					mockFile?.file_path?.startsWith('syft://')
+				const mockFileName = mockFile?.file_path.split('/').pop()
+				const manifestMock = mockFile
+					? mockIsUrl
+						? mockFile.file_path
+						: `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${mockFileName}`
+					: undefined
+
+				const assetId = crypto?.randomUUID ? crypto.randomUUID() : `asset-${idx}-${Date.now()}`
+				assets[key] = {
+					id: assetId,
+					type: kind,
+					url: manifestMock || `{root.private_url}#assets.${key}`,
+					private: privateFile ? '{url}.private' : undefined,
+					mock: manifestMock,
+					mappings: {
+						private: privateFile
+							? { file_path: privateFile.file_path, db_file_id: privateFile.id || null }
 							: null,
-					mock: mockPath ? { file_path: mockPath, db_file_id: keepMockId ? mockId : null } : null,
-				},
-				extra: undefined,
+						mock: mockFile
+							? {
+									file_path: mockFile.file_path,
+									db_file_id: mockFile.id || null,
+									is_url: mockIsUrl || false,
+								}
+							: null,
+					},
+				}
+			} else {
+				// List mode - create a twin_list asset
+				// Schema: mock entries in public YAML, private resolved via #keypath
+				const privFiles = Array.isArray(asset.private) ? asset.private : []
+				const mockFilesArr = Array.isArray(asset.mock) ? asset.mock : []
+
+				// Track files for the top-level files arrays (for backend to copy)
+				privFiles.forEach((f) =>
+					privateFiles.push({
+						file_path: f.file_path,
+						file_id: f.id,
+						participant_id: f.participant_id,
+					}),
+				)
+				mockFilesArr.forEach((f) => {
+					const isUrl =
+						f.is_url ||
+						f.file_path?.startsWith('http://') ||
+						f.file_path?.startsWith('https://') ||
+						f.file_path?.startsWith('syft://')
+					if (!isUrl) {
+						mockFiles.push({
+							file_path: f.file_path,
+							file_id: f.id,
+							participant_id: f.participant_id,
+						})
+					}
+				})
+
+				// Generate UUID for the asset
+				const assetId = crypto?.randomUUID ? crypto.randomUUID() : `asset-${idx}-${Date.now()}`
+
+				// Build mock entries for public YAML (with URLs and relative file paths)
+				const mockEntries = mockFilesArr.map((f, i) => {
+					const entryId = crypto?.randomUUID
+						? crypto.randomUUID()
+						: `mock-${idx}-${i}-${Date.now()}`
+					const isUrl =
+						f.is_url ||
+						f.file_path?.startsWith('http://') ||
+						f.file_path?.startsWith('https://') ||
+						f.file_path?.startsWith('syft://')
+					const fileName = f.file_path.split('/').pop()
+					const entry = {
+						id: entryId,
+						// Full URL for pipeline runs (resolves to local path)
+						url: isUrl
+							? f.file_path
+							: `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${fileName}`,
+					}
+					// Only include participant_id if set
+					if (f.participant_id) {
+						entry.participant_id = f.participant_id
+					}
+					// Store source path for publish to copy files (stripped before YAML write)
+					if (!isUrl) {
+						entry.source_path = f.file_path
+					}
+					return entry
+				})
+
+				// Build private entries for mappings (backend reconstructs from these)
+				const privateEntries = privFiles.map((f, i) => {
+					const entryId = crypto?.randomUUID
+						? crypto.randomUUID()
+						: `priv-${idx}-${i}-${Date.now()}`
+					const entry = {
+						id: entryId,
+						// Local file path for pipeline runs
+						file_path: f.file_path,
+					}
+					if (f.participant_id) {
+						entry.participant_id = f.participant_id
+					}
+					return entry
+				})
+
+				// twin_list schema:
+				// - url: points to the mock CSV file (for pipeline sample sheets)
+				// - private: { url, type } - declares type so consumers know structure
+				// - mock: { url, type, entries } - public entries with URLs
+				// - mappings.private.entries: stores private entries for backend
+				const mockCsvUrl =
+					mockEntries.length > 0
+						? `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${key}.csv`
+						: undefined
+
+				assets[key] = {
+					id: assetId,
+					type: 'twin_list',
+					url: mockCsvUrl,
+					private:
+						privateEntries.length > 0
+							? {
+									url: `{root.private_url}#assets.${key}.private`,
+									type: 'twin_list',
+									entries: privateEntries,
+								}
+							: undefined,
+					mock:
+						mockEntries.length > 0
+							? {
+									url: mockCsvUrl,
+									type: 'twin_list',
+									entries: mockEntries,
+								}
+							: undefined,
+					mappings: {
+						private:
+							privateEntries.length > 0
+								? {
+										entries: privateEntries,
+									}
+								: null,
+					},
+				}
 			}
 		})
 
@@ -1125,7 +2246,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			? `syft://${currentUserEmail}/private/biovault/datasets/${name}/dataset.yaml`
 			: null
 
-		return {
+		const manifest = {
 			name,
 			description: description || null,
 			author: author || null,
@@ -1135,8 +2256,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			public_url,
 			private_url,
 			assets,
-			extra: undefined,
+			private_files: privateFiles,
+			mock_files: mockFiles,
 		}
+
+		return { manifest, hadWarning }
 	}
 
 	async function renderDatasets() {
@@ -1277,6 +2401,13 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 								<polygon points="5 3 19 12 5 21 5 3"></polygon>
 							</svg>
 						</button>
+						<button class="dataset-action-btn btn-run-pipeline" data-name="${
+							dataset.name
+						}" title="Run pipeline with this dataset">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+							</svg>
+						</button>
 						<button class="dataset-action-btn ${isPublished ? 'btn-unpublish' : 'btn-publish'}" data-name="${
 							dataset.name
 						}" data-published="${isPublished}" title="${
@@ -1328,6 +2459,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				if (window.navigateTo) {
 					window.navigateTo('sessions')
 				}
+			})
+
+			// Run Pipeline button
+			card.querySelector('.btn-run-pipeline')?.addEventListener('click', (e) => {
+				e.stopPropagation()
+				openRunPipelineModal(dataset.name, entry)
 			})
 
 			// Publish/Unpublish button
@@ -1396,6 +2533,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					let localPath
 					if (pubUrl) {
 						localPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: pubUrl })
+						// Get parent directory (remove filename from path)
+						const lastSlash = localPath.lastIndexOf('/')
+						if (lastSlash > 0) {
+							localPath = localPath.substring(0, lastSlash)
+						}
 					} else {
 						localPath = await invoke('get_datasets_folder_path')
 					}
@@ -1662,36 +2804,151 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			addAssetButton.addEventListener('click', () => addAssetRow())
 		}
 
-		const saveDatasetButton = document.getElementById('dataset-editor-save')
-		if (saveDatasetButton) {
-			saveDatasetButton.addEventListener('click', async () => {
-				try {
-					const manifest = collectManifestFromForm()
-					const originalName = currentEditingOriginalName
-					const wasPublished = currentEditingWasPublished
-					await invoke('save_dataset_with_files', {
-						manifest,
-						originalName: originalName || null,
-					})
-					// Auto-republish if it was published before editing
-					if (wasPublished) {
-						try {
-							await invoke('publish_dataset', {
-								manifestPath: null,
-								name: manifest.name,
-								copyMock: true,
-							})
-							monitorDatasetSync(manifest.name)
-						} catch (pubErr) {
-							console.warn('Auto-republish failed:', pubErr)
-						}
-					}
-					await loadDatasets()
-					closeDatasetEditor()
-				} catch (error) {
-					await dialog.message(`${error}`, { title: 'Dataset Error', type: 'error' })
+		// File picker modal event handlers
+		const filePickerClose = document.getElementById('file-picker-close')
+		if (filePickerClose) {
+			filePickerClose.addEventListener('click', closeFilePicker)
+		}
+
+		const filePickerCancel = document.getElementById('file-picker-cancel')
+		if (filePickerCancel) {
+			filePickerCancel.addEventListener('click', closeFilePicker)
+		}
+
+		const filePickerOverlay = document.querySelector('#file-picker-modal .modal-overlay')
+		if (filePickerOverlay) {
+			filePickerOverlay.addEventListener('click', closeFilePicker)
+		}
+
+		const filePickerSearch = document.getElementById('file-picker-search')
+		if (filePickerSearch) {
+			filePickerSearch.addEventListener('input', (e) => {
+				filePickerSearchTerm = e.target.value.trim().toLowerCase()
+				populateFilePicker()
+			})
+		}
+
+		const filePickerTypeFilterEl = document.getElementById('file-picker-type-filter')
+		if (filePickerTypeFilterEl) {
+			filePickerTypeFilterEl.addEventListener('change', (e) => {
+				filePickerTypeFilter = e.target.value
+				populateFilePicker()
+			})
+		}
+
+		const filePickerSelectAll = document.getElementById('file-picker-select-all')
+		if (filePickerSelectAll) {
+			filePickerSelectAll.addEventListener('change', (e) => {
+				const filteredFiles = getFilteredPickerFiles()
+				if (e.target.checked) {
+					filteredFiles.forEach((f) => filePickerSelectedIds.add(f.id))
+				} else {
+					filteredFiles.forEach((f) => filePickerSelectedIds.delete(f.id))
+				}
+				populateFilePicker()
+			})
+		}
+
+		// Single "Add" button - uses filePickerMode set when picker opened
+		const filePickerAdd = document.getElementById('file-picker-add')
+		if (filePickerAdd) {
+			filePickerAdd.addEventListener('click', () => {
+				addSelectedFilesToDataset()
+			})
+		}
+
+		// Wire up the "Add Asset" button in the dataset editor
+		const addAssetBtn = document.getElementById('dataset-add-asset')
+		if (addAssetBtn) {
+			addAssetBtn.addEventListener('click', () => addNewAsset())
+		}
+
+		// URL Input modal event handlers
+		const urlInputClose = document.getElementById('url-input-modal-close')
+		if (urlInputClose) {
+			urlInputClose.addEventListener('click', closeUrlInputModal)
+		}
+
+		const urlInputCancel = document.getElementById('url-input-cancel')
+		if (urlInputCancel) {
+			urlInputCancel.addEventListener('click', closeUrlInputModal)
+		}
+
+		const urlInputAdd = document.getElementById('url-input-add')
+		if (urlInputAdd) {
+			urlInputAdd.addEventListener('click', validateAndAddUrl)
+		}
+
+		const urlInputField = document.getElementById('url-input-field')
+		if (urlInputField) {
+			urlInputField.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault()
+					validateAndAddUrl()
+				} else if (e.key === 'Escape') {
+					closeUrlInputModal()
 				}
 			})
+		}
+
+		// Run Pipeline modal event handlers
+		const runPipelineClose = document.getElementById('run-pipeline-modal-close')
+		if (runPipelineClose) {
+			runPipelineClose.addEventListener('click', closeRunPipelineModal)
+		}
+
+		const runPipelineCancel = document.getElementById('run-pipeline-cancel')
+		if (runPipelineCancel) {
+			runPipelineCancel.addEventListener('click', closeRunPipelineModal)
+		}
+
+		const runPipelineConfirm = document.getElementById('run-pipeline-confirm')
+		if (runPipelineConfirm) {
+			runPipelineConfirm.addEventListener('click', confirmRunPipeline)
+		}
+
+		// Per-asset mode toggles are wired up in renderDatasetAssets()
+
+		// Save dataset handler (shared between top and bottom save buttons)
+		async function handleSaveDataset() {
+			try {
+				const manifestResult = await collectManifestFromForm()
+				if (!manifestResult) return // User cancelled warning dialog
+				const { manifest, hadWarning: _hadWarning } = manifestResult
+				const originalName = currentEditingOriginalName
+				const wasPublished = currentEditingWasPublished
+				await invoke('save_dataset_with_files', {
+					manifest,
+					originalName: originalName || null,
+				})
+				// Auto-republish if it was published before editing
+				if (wasPublished) {
+					try {
+						await invoke('publish_dataset', {
+							manifestPath: null,
+							name: manifest.name,
+							copyMock: true,
+						})
+						monitorDatasetSync(manifest.name)
+					} catch (pubErr) {
+						console.warn('Auto-republish failed:', pubErr)
+					}
+				}
+				await loadDatasets()
+				closeDatasetEditor()
+			} catch (error) {
+				await dialog.message(`${error}`, { title: 'Dataset Error', type: 'error' })
+			}
+		}
+
+		const saveDatasetButtonBottom = document.getElementById('dataset-editor-save-bottom')
+		if (saveDatasetButtonBottom) {
+			saveDatasetButtonBottom.addEventListener('click', handleSaveDataset)
+		}
+
+		const saveDatasetButtonTop = document.getElementById('dataset-editor-save')
+		if (saveDatasetButtonTop) {
+			saveDatasetButtonTop.addEventListener('click', handleSaveDataset)
 		}
 
 		const cancelDatasetButton = document.getElementById('dataset-editor-cancel')
@@ -1821,6 +3078,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					// Store selected participant IDs and file IDs
 					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
 					sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
+					sessionStorage.setItem('preselectedDataType', 'real')
+					sessionStorage.setItem('preselectedDataSource', 'file_selection')
+					sessionStorage.removeItem('preselectedDatasetName')
+					sessionStorage.removeItem('preselectedDatasetOwner')
+					sessionStorage.removeItem('preselectedAssetKeys')
 
 					// Trigger pipeline run modal via global pipeline module
 					if (
@@ -1965,10 +3227,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			// Sync to sessionStorage so pipelines view can detect it
 			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+			sessionStorage.setItem('preselectedDataType', 'real')
+			sessionStorage.setItem('preselectedDataSource', 'file_selection')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
 		} else {
 			// Clear if nothing selected
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDataType')
+			sessionStorage.removeItem('preselectedDataSource')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
 		}
 	}
 
@@ -1999,6 +3271,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		clearAllSelections,
 		createDatasetFromSelection,
 		openDatasetEditor,
+		openFilePicker,
 		setViewMode,
 	}
 }

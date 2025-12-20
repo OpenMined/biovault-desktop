@@ -65,6 +65,13 @@ pub(crate) fn resolve_biovault_home_path() -> PathBuf {
         })
 }
 
+pub(crate) fn syftbox_backend_is_embedded() -> bool {
+    env::var("BV_SYFTBOX_BACKEND")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("embedded"))
+        .unwrap_or(false)
+}
+
 pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
     // Desktop-specific DB is deprecated - keeping for backwards compat only
@@ -74,13 +81,11 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-// Scan resources directory for a bundled binary by name (java/nextflow/uv/syftbox)
+// Scan resources directory for a bundled binary by name (java/nextflow/uv)
 fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
     let mut search_roots = vec![
         resource_dir.join("bundled"),
         resource_dir.join("resources").join("bundled"),
-        resource_dir.join("syftbox"),
-        resource_dir.join("resources").join("syftbox"),
     ];
 
     search_roots.sort();
@@ -399,6 +404,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
         }
     }
 
+    if syftbox_backend_is_embedded() {
+        crate::desktop_log!("🔧 SyftBox backend is embedded; skipping bundled binary lookup");
+        return;
+    }
+
     // Expose bundled syftbox as well (used by dependency check + runtime).
     let syftbox_candidates = [
         "syftbox/syftbox.exe".to_string(),
@@ -504,6 +514,11 @@ fn maybe_write_spawn_probe(args: &[String]) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
+
+    if std::env::var("BV_SYFTBOX_BACKEND").is_err() {
+        let default_backend = option_env!("BV_SYFTBOX_DEFAULT_BACKEND").unwrap_or("embedded");
+        std::env::set_var("BV_SYFTBOX_BACKEND", default_backend);
+    }
 
     fn resolve_home_ignoring_syftbox_env() -> Option<PathBuf> {
         let saved_data_dir = std::env::var_os("SYFTBOX_DATA_DIR");
@@ -892,7 +907,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -909,7 +924,7 @@ pub fn run() {
             expose_bundled_binaries(app);
 
             // Ensure bundled SyftBox binary is exposed if not already provided
-            if std::env::var("SYFTBOX_BINARY").is_err() {
+            if !syftbox_backend_is_embedded() && std::env::var("SYFTBOX_BINARY").is_err() {
                 // Try both legacy and nested resource paths, then fall back to a scan
                 let mut syftbox_candidates: Vec<PathBuf> = Vec::new();
                 if let Ok(p) = app
@@ -1147,6 +1162,7 @@ pub fn run() {
             is_dataset_published,
             get_datasets_folder_path,
             resolve_syft_url_to_local_path,
+            resolve_syft_urls_batch,
             network_scan_datasets,
             // Participants commands
             get_participants,
@@ -1166,10 +1182,16 @@ pub fn run() {
             dismiss_failed_message,
             delete_failed_message,
             sync_messages_with_failures,
+            send_pipeline_request,
+            send_pipeline_request_results,
+            list_results_tree,
+            import_pipeline_results,
+            send_pipeline_results,
             // Projects commands
             import_project,
             import_project_from_folder,
             import_pipeline_with_deps,
+            import_pipeline_from_request,
             get_projects,
             delete_project,
             delete_project_folder,
@@ -1213,6 +1235,7 @@ pub fn run() {
             get_pipeline_runs,
             delete_pipeline_run,
             preview_pipeline_spec,
+            import_pipeline_from_message,
             // SQL commands
             sql_list_tables,
             sql_get_table_schema,
@@ -1223,6 +1246,7 @@ pub fn run() {
             save_settings,
             get_app_version,
             open_folder,
+            save_file_bytes,
             open_in_vscode,
             show_in_folder,
             get_config_path,
@@ -1230,6 +1254,7 @@ pub fn run() {
             check_is_onboarded,
             complete_onboarding,
             reset_all_data,
+            reset_everything,
             get_autostart_enabled,
             set_autostart_enabled,
             // Profiles
@@ -1301,11 +1326,13 @@ pub fn run() {
             get_syftbox_diagnostics,
             syftbox_queue_status,
             syftbox_upload_action,
+            trigger_syftbox_sync,
             open_path_in_file_manager,
             test_notification,
             test_notification_applescript,
             // Sessions commands
             get_sessions,
+            list_sessions,
             get_session,
             create_session,
             create_session_with_datasets,
@@ -1329,6 +1356,78 @@ pub fn run() {
             remove_dataset_from_session,
             list_session_datasets,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    fn best_effort_stop_syftbox_for_exit() {
+        let _ = crate::stop_syftbox_client();
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let mut cmd = std::process::Command::new("taskkill");
+            cmd.args(["/IM", "syftbox.exe", "/T", "/F"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            let _ = cmd.status();
+        }
+    }
+
+    fn best_effort_stop_all_jupyter_for_exit() {
+        let db = match biovault::data::BioVaultDb::new() {
+            Ok(db) => db,
+            Err(err) => {
+                crate::desktop_log!(
+                    "⚠️ Exit: Failed to open BioVault DB to stop Jupyter: {}",
+                    err
+                );
+                return;
+            }
+        };
+
+        let envs = match db.list_dev_envs() {
+            Ok(envs) => envs,
+            Err(err) => {
+                crate::desktop_log!("⚠️ Exit: Failed to list dev envs to stop Jupyter: {}", err);
+                return;
+            }
+        };
+
+        for env in envs {
+            if env.jupyter_pid.is_none() && env.jupyter_port.is_none() {
+                continue;
+            }
+            let project_path = env.project_path.clone();
+            crate::desktop_log!("Exit: Stopping Jupyter for project: {}", project_path);
+            if let Err(err) = tauri::async_runtime::block_on(
+                biovault::cli::commands::jupyter::stop(&project_path),
+            ) {
+                crate::desktop_log!(
+                    "⚠️ Exit: Failed to stop Jupyter for {}: {}",
+                    project_path,
+                    err
+                );
+            }
+        }
+    }
+
+    let mut exit_cleanup_started = false;
+    app.run(move |app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if exit_cleanup_started {
+                return;
+            }
+            exit_cleanup_started = true;
+            api.prevent_exit();
+
+            let app_handle = app_handle.clone();
+            std::thread::spawn(move || {
+                crate::desktop_log!("Exit: stopping background processes...");
+                best_effort_stop_syftbox_for_exit();
+                best_effort_stop_all_jupyter_for_exit();
+                crate::desktop_log!("Exit: background processes stopped; exiting.");
+                app_handle.exit(0);
+            });
+        }
+    });
 }

@@ -30,8 +30,8 @@ function sendUnifiedLog(payload) {
 async function advanceToEmailStep(page) {
 	sendUnifiedLog({ event: 'onboarding-advance-start' })
 	// Wait for app to be ready first
-	await waitForAppReady(page, { timeout: 2000 })
-	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 2000 })
+	await waitForAppReady(page, { timeout: 5000 })
+	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 5000 })
 	await page.locator('#onboarding-next-1').click()
 	await expect(page.locator('#onboarding-step-2')).toBeVisible()
 	page.once('dialog', (dialog) => dialog.accept())
@@ -126,6 +126,7 @@ test.describe('Onboarding flow', () => {
 						case 'check_single_dependency':
 						case 'save_custom_path':
 						case 'reset_all_data':
+						case 'reset_everything':
 						case 'get_participants':
 						case 'get_files':
 						case 'get_projects':
@@ -178,7 +179,7 @@ test.describe('Onboarding flow', () => {
 		)
 
 		sendUnifiedLog({ event: 'test-start', name: 'onboarding' })
-		await page.goto('/', { timeout: 15_000 })
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 		await page.evaluate(() => {
 			const w = /** @type {any} */ window
 			w.__INIT_TEST_STATE__?.({ resetSession: true })
@@ -193,6 +194,11 @@ test.describe('Onboarding flow', () => {
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
+		const recoveryBlock = page.locator('#onboarding-recovery-block')
+		if (await recoveryBlock.isVisible().catch(() => false)) {
+			await page.locator('#onboarding-recovery-ack').check()
+		}
 		await page.locator('#onboarding-next-3-key').click()
 
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()
@@ -219,6 +225,11 @@ test.describe('Onboarding flow', () => {
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
+		const recoveryBlock = page.locator('#onboarding-recovery-block')
+		if (await recoveryBlock.isVisible().catch(() => false)) {
+			await page.locator('#onboarding-recovery-ack').check()
+		}
 		await page.locator('#onboarding-next-3-key').click()
 
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()

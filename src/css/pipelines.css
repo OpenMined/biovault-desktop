@@ -856,6 +856,19 @@
 	flex-shrink: 0;
 }
 
+/* Request pipeline modal */
+.request-pipeline-modal {
+	max-width: 520px;
+	width: min(520px, 92vw);
+	border-radius: 14px;
+	box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+}
+
+.request-pipeline-modal .modal-body p {
+	font-size: 14px;
+	line-height: 1.5;
+}
+
 /* Context Menu */
 .context-menu {
 	background: white;

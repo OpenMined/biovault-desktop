@@ -931,6 +931,295 @@
 	box-shadow: 0 3px 6px rgba(245, 158, 11, 0.4);
 }
 
+/* Pipeline Request Card */
+.message-pipeline-request {
+	margin-top: 10px;
+	padding: 14px 16px;
+	background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+	border: 2px solid #3b82f6;
+	border-left: 4px solid #2563eb;
+	border-radius: 10px;
+	position: relative;
+}
+
+.message-pipeline-request::before {
+	content: '🔧';
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	font-size: 16px;
+	opacity: 0.6;
+}
+
+.message-bubble.outgoing .message-pipeline-request {
+	background: linear-gradient(135deg, rgba(239, 246, 255, 0.95), rgba(219, 234, 254, 0.95));
+	border-color: #3b82f6;
+	color: #1e3a8a;
+}
+
+.message-pipeline-request h5 {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+	font-weight: 700;
+	color: #1e40af;
+	margin: 0 0 8px 0;
+	flex-wrap: wrap;
+}
+
+.message-pipeline-request .invite-label {
+	display: inline-block;
+	padding: 2px 6px;
+	background: #2563eb;
+	color: #fff;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.message-pipeline-request .version-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	background: rgba(37, 99, 235, 0.15);
+	color: #1e40af;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.message-pipeline-request .invite-meta {
+	font-size: 12px;
+	color: #1e40af;
+	margin: 0 0 4px 0;
+}
+
+.message-pipeline-request .invite-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid rgba(59, 130, 246, 0.3);
+	flex-wrap: wrap;
+}
+
+.message-pipeline-request .invite-actions button {
+	padding: 8px 16px;
+	background: linear-gradient(135deg, #2563eb, #1d4ed8);
+	color: #fff;
+	border: none;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.message-pipeline-request .invite-actions button:hover {
+	background: linear-gradient(135deg, #1d4ed8, #1e40af);
+	transform: translateY(-1px);
+	box-shadow: 0 3px 6px rgba(37, 99, 235, 0.4);
+}
+
+.message-pipeline-request .invite-actions button.secondary {
+	background: transparent;
+	border: 1px solid #3b82f6;
+	color: #2563eb;
+}
+
+.message-pipeline-request .invite-actions button.secondary:hover {
+	background: rgba(59, 130, 246, 0.1);
+	transform: translateY(-1px);
+}
+
+/* ============================================================================
+   PIPELINE RESULTS (received results from pipeline runs)
+   ============================================================================ */
+
+.message-pipeline-results {
+	margin-top: 10px;
+	padding: 14px 16px;
+	background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+	border: 2px solid #10b981;
+	border-left: 4px solid #059669;
+	border-radius: 10px;
+	position: relative;
+}
+
+.message-pipeline-results::before {
+	content: '📊';
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	font-size: 16px;
+	opacity: 0.6;
+}
+
+.message-bubble.outgoing .message-pipeline-results {
+	background: linear-gradient(135deg, rgba(240, 253, 244, 0.95), rgba(220, 252, 231, 0.95));
+	border-color: #10b981;
+	color: #065f46;
+}
+
+.message-pipeline-results h5 {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+	font-weight: 700;
+	color: #065f46;
+	margin: 0 0 8px 0;
+	flex-wrap: wrap;
+}
+
+.message-pipeline-results .results-label {
+	display: inline-block;
+	padding: 2px 6px;
+	background: #059669;
+	color: #fff;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.message-pipeline-results .invite-meta {
+	font-size: 12px;
+	color: #065f46;
+	margin: 0 0 4px 0;
+}
+
+.message-pipeline-results .results-files-list {
+	margin-top: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.message-pipeline-results .result-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	background: rgba(255, 255, 255, 0.7);
+	border-radius: 6px;
+	border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.message-pipeline-results .result-file .file-icon {
+	font-size: 14px;
+}
+
+.message-pipeline-results .result-file .file-name {
+	flex: 1;
+	font-size: 12px;
+	font-weight: 600;
+	color: #065f46;
+	font-family: 'SF Mono', Monaco, monospace;
+}
+
+.message-pipeline-results .result-file .file-size {
+	font-size: 11px;
+	color: #047857;
+	opacity: 0.8;
+}
+
+.message-pipeline-results .invite-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.message-pipeline-results .invite-actions button {
+	padding: 8px 16px;
+	background: linear-gradient(135deg, #10b981, #059669);
+	color: #fff;
+	border: none;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.message-pipeline-results .invite-actions button:hover {
+	background: linear-gradient(135deg, #059669, #047857);
+	transform: translateY(-1px);
+	box-shadow: 0 3px 6px rgba(16, 185, 129, 0.4);
+}
+
+/* Results selection tree */
+.results-tree {
+	margin-top: 6px;
+	padding: 10px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	max-height: 280px;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.results-tree-node {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-left: 12px;
+}
+
+.results-tree-node.root {
+	padding-left: 0;
+}
+
+.results-tree-label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	font-weight: 600;
+	color: #0f172a;
+}
+
+.results-tree-children {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-left: 16px;
+	border-left: 1px dashed #e2e8f0;
+	margin-left: 6px;
+}
+
+.results-tree-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: #ffffff;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	font-size: 12px;
+	color: #334155;
+}
+
+.results-tree-file .results-tree-name {
+	flex: 1;
+	font-weight: 600;
+	font-family: 'SF Mono', Monaco, monospace;
+	color: #0f172a;
+}
+
+.results-tree-file .results-tree-size {
+	font-size: 11px;
+	color: #64748b;
+}
+
 /* ============================================================================
    COMPOSE AREA
    ============================================================================ */

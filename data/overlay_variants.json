@@ -76,5 +76,52 @@
 				"alternates": ["A", "C", "T"]
 			}
 		]
+	},
+	"THALASSEMIA": {
+		"description": "Thalassemia-associated HBB variants from bioscript/examples/thalassemia/classify_thalassemia.py",
+		"variants": [
+			{
+				"rsid": "rs33985472",
+				"chromosome": "11",
+				"position": 5225485,
+				"reference": "T",
+				"alternates": ["C"]
+			},
+			{
+				"rsid": "rs63751128",
+				"chromosome": "11",
+				"position": 5225487,
+				"reference": "T",
+				"alternates": ["C"]
+			},
+			{
+				"rsid": "rs33978907",
+				"chromosome": "11",
+				"position": 5225488,
+				"reference": "A",
+				"alternates": ["G"]
+			},
+			{
+				"rsid": "rs34809925",
+				"chromosome": "11",
+				"position": 5225592,
+				"reference": "G",
+				"alternates": ["C"]
+			},
+			{
+				"rsid": "rs35117167",
+				"chromosome": "11",
+				"position": 5225605,
+				"reference": "T",
+				"alternates": ["C", "G"]
+			},
+			{
+				"rsid": "rs33971634",
+				"chromosome": "11",
+				"position": 5225660,
+				"reference": "G",
+				"alternates": ["A", "C"]
+			}
+		]
 	}
 }

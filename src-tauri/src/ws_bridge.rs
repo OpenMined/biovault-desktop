@@ -618,6 +618,12 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "trigger_syftbox_sync" => {
+            crate::trigger_syftbox_sync()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "mark_thread_as_read" => {
             let thread_id: String = serde_json::from_value(
                 args.get("threadId")
@@ -651,12 +657,168 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::delete_thread(thread_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "send_pipeline_request" => {
+            let pipeline_name: String = serde_json::from_value(
+                args.get("pipelineName")
+                    .cloned()
+                    .or_else(|| args.get("pipeline_name").cloned())
+                    .ok_or_else(|| "Missing pipelineName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineName: {}", e))?;
+            let pipeline_version: String = serde_json::from_value(
+                args.get("pipelineVersion")
+                    .cloned()
+                    .or_else(|| args.get("pipeline_version").cloned())
+                    .ok_or_else(|| "Missing pipelineVersion".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineVersion: {}", e))?;
+            let dataset_name: String = serde_json::from_value(
+                args.get("datasetName")
+                    .cloned()
+                    .or_else(|| args.get("dataset_name").cloned())
+                    .ok_or_else(|| "Missing datasetName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse datasetName: {}", e))?;
+            let recipient: String = serde_json::from_value(
+                args.get("recipient")
+                    .cloned()
+                    .ok_or_else(|| "Missing recipient".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse recipient: {}", e))?;
+            let message: String = serde_json::from_value(
+                args.get("message")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("")),
+            )
+            .unwrap_or_default();
+            let result = crate::send_pipeline_request(
+                pipeline_name,
+                pipeline_version,
+                dataset_name,
+                recipient,
+                message,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "send_pipeline_request_results" => {
+            let request_id: String = serde_json::from_value(
+                args.get("requestId")
+                    .cloned()
+                    .or_else(|| args.get("request_id").cloned())
+                    .ok_or_else(|| "Missing requestId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse requestId: {}", e))?;
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .cloned()
+                    .or_else(|| args.get("run_id").cloned())
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let message: Option<String> = args
+                .get("message")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let output_paths: Option<Vec<String>> = args
+                .get("outputPaths")
+                .cloned()
+                .or_else(|| args.get("output_paths").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result =
+                crate::send_pipeline_request_results(request_id, run_id, message, output_paths)
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_pipeline_results" => {
+            let results_location: String = serde_json::from_value(
+                args.get("resultsLocation")
+                    .cloned()
+                    .or_else(|| args.get("results_location").cloned())
+                    .ok_or_else(|| "Missing resultsLocation".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse resultsLocation: {}", e))?;
+            let submission_id: Option<String> = args
+                .get("submissionId")
+                .cloned()
+                .or_else(|| args.get("submission_id").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let run_id: Option<i64> = args
+                .get("runId")
+                .cloned()
+                .or_else(|| args.get("run_id").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let pipeline_name: Option<String> = args
+                .get("pipelineName")
+                .cloned()
+                .or_else(|| args.get("pipeline_name").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::import_pipeline_results(
+                results_location,
+                submission_id,
+                run_id,
+                pipeline_name,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "list_results_tree" => {
+            let root: String = serde_json::from_value(
+                args.get("root")
+                    .cloned()
+                    .ok_or_else(|| "Missing root".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse root: {}", e))?;
+            let result = crate::list_results_tree(root).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "send_pipeline_results" => {
+            let recipient: String = serde_json::from_value(
+                args.get("recipient")
+                    .cloned()
+                    .ok_or_else(|| "Missing recipient".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse recipient: {}", e))?;
+            let pipeline_name: String = serde_json::from_value(
+                args.get("pipelineName")
+                    .cloned()
+                    .or_else(|| args.get("pipeline_name").cloned())
+                    .ok_or_else(|| "Missing pipelineName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineName: {}", e))?;
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .cloned()
+                    .or_else(|| args.get("run_id").cloned())
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let outputs: Vec<crate::commands::messages::OutputFile> = serde_json::from_value(
+                args.get("outputs")
+                    .cloned()
+                    .ok_or_else(|| "Missing outputs".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse outputs: {}", e))?;
+            let message: String = serde_json::from_value(
+                args.get("message")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("")),
+            )
+            .unwrap_or_default();
+            let result =
+                crate::send_pipeline_results(recipient, pipeline_name, run_id, outputs, message)
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
 
         // --------------------------------------------------------------------
         // Sessions (required for session invite/accept/reject flows)
         // --------------------------------------------------------------------
         "get_sessions" => {
             let result = crate::get_sessions().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "list_sessions" => {
+            let result = crate::list_sessions().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_session_invitations" => {
@@ -1037,6 +1199,78 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "create_pipeline" | "import_pipeline" => {
+            let request: crate::commands::pipelines::PipelineCreateRequest = serde_json::from_value(
+                args.get("request")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        // Build request from individual args if not provided as object
+                        serde_json::json!({
+                            "name": args.get("name").cloned().unwrap_or(serde_json::json!("")),
+                            "directory": args.get("directory").cloned(),
+                            "pipelineFile": args.get("pipelineFile").or_else(|| args.get("pipeline_file")).cloned(),
+                            "overwrite": args.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false)
+                        })
+                    }),
+            )
+            .map_err(|e| format!("Failed to parse request: {}", e))?;
+            let result = crate::commands::pipelines::create_pipeline(state.clone(), request)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_pipeline_from_message" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let version: String = serde_json::from_value(
+                args.get("version")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("1.0.0")),
+            )
+            .unwrap_or_else(|_| "1.0.0".to_string());
+            let spec: serde_json::Value = args
+                .get("spec")
+                .cloned()
+                .ok_or_else(|| "Missing spec".to_string())?;
+            let result = crate::commands::pipelines::import_pipeline_from_message(
+                state.clone(),
+                name,
+                version,
+                spec,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_pipeline_from_request" => {
+            let name: Option<String> = args
+                .get("name")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let pipeline_location: String = serde_json::from_value(
+                args.get("pipelineLocation")
+                    .cloned()
+                    .or_else(|| args.get("pipeline_location").cloned())
+                    .ok_or_else(|| "Missing pipelineLocation".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineLocation: {}", e))?;
+            let overwrite: bool = args
+                .get("overwrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let result = crate::commands::pipelines::import_pipeline_from_request(
+                state.clone(),
+                name,
+                pipeline_location,
+                overwrite,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "run_pipeline" => {
             // Get the main window for event emission
             let window = app
@@ -1116,6 +1350,117 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .cloned()
                 .and_then(|v| serde_json::from_value(v).ok());
             let result = crate::commands::sql::sql_run_query(state.clone(), query, options)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        // --------------------------------------------------------------------
+        // Dataset commands
+        // --------------------------------------------------------------------
+        "get_datasets" | "list_datasets_with_assets" => {
+            let result = crate::commands::datasets::list_datasets_with_assets(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_dataset_with_files" => {
+            let manifest: biovault::cli::commands::datasets::DatasetManifest =
+                serde_json::from_value(
+                    args.get("manifest")
+                        .cloned()
+                        .ok_or_else(|| "Missing manifest".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+            let original_name: Option<String> = args
+                .get("originalName")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::datasets::save_dataset_with_files(
+                state.clone(),
+                manifest,
+                original_name,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "is_dataset_published" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let result = crate::commands::datasets::is_dataset_published(name)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_dataset" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let result = crate::commands::datasets::delete_dataset(state.clone(), name)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "publish_dataset" => {
+            let manifest_path: Option<String> = args
+                .get("manifestPath")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let name: Option<String> = args
+                .get("name")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let copy_mock: bool = args
+                .get("copyMock")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or(false);
+            crate::commands::datasets::publish_dataset(manifest_path, name, copy_mock)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "unpublish_dataset" => {
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            crate::commands::datasets::unpublish_dataset(name)?;
+            Ok(serde_json::Value::Null)
+        }
+        "get_datasets_folder_path" => {
+            let result = crate::commands::datasets::get_datasets_folder_path()?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_dataset_path" => {
+            let dir_path: String = serde_json::from_value(
+                args.get("dirPath")
+                    .cloned()
+                    .ok_or_else(|| "Missing dirPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse dirPath: {}", e))?;
+            let result = crate::commands::datasets::resolve_local_dataset_path(dir_path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_syft_url_to_local_path" => {
+            let syft_url: String = serde_json::from_value(
+                args.get("syftUrl")
+                    .cloned()
+                    .ok_or_else(|| "Missing syftUrl".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse syftUrl: {}", e))?;
+            let result = crate::commands::datasets::resolve_syft_url_to_local_path(syft_url)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_syft_urls_batch" => {
+            let urls: Vec<String> = serde_json::from_value(
+                args.get("urls")
+                    .cloned()
+                    .ok_or_else(|| "Missing urls".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse urls: {}", e))?;
+            let result = crate::commands::datasets::resolve_syft_urls_batch(urls)?;
             Ok(serde_json::to_value(result).unwrap())
         }
         _ => {

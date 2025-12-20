@@ -45,10 +45,14 @@ $platform = "windows-$arch"
 Write-Host "Building for platform: $platform" -ForegroundColor Cyan
 
 $outBundled = Join-Path $repoRoot "src-tauri\\resources\\bundled"
+$bundleSyftbox = ($env:BV_BUNDLE_SYFTBOX -eq "1")
 $outSyftbox = Join-Path $repoRoot "src-tauri\\resources\\syftbox"
 $keepTemp = ($env:BIOVAULT_KEEP_TEMP -eq "1")
 
-New-Item -ItemType Directory -Force -Path $outBundled, $outSyftbox | Out-Null
+New-Item -ItemType Directory -Force -Path $outBundled | Out-Null
+if ($bundleSyftbox) {
+  New-Item -ItemType Directory -Force -Path $outSyftbox | Out-Null
+}
 $bundledReadme = Join-Path $outBundled "README.txt"
 if (-not (Test-Path $bundledReadme)) {
   Set-Content -Path $bundledReadme -Value "Placeholder for bundled dependencies" -Encoding UTF8
@@ -213,35 +217,6 @@ function Extract-EmbeddedZipPayload([string]$sourcePath, [string]$destPath) {
   }
 }
 
-Write-Host "== Building syftbox.exe for bundling =="
-$syftboxExe = Join-Path $outSyftbox "syftbox.exe"
-Push-Location (Join-Path $repoRoot "biovault\\syftbox")
-try {
-  $version = (git describe --tags --always --dirty 2>$null)
-  if (-not $version) { $version = "dev" }
-  $rev = (git rev-parse --short HEAD 2>$null)
-  if (-not $rev) { $rev = "HEAD" }
-  $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-
-  $ldflags = "-s -w " +
-    "-X github.com/openmined/syftbox/internal/version.Version=$version " +
-    "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
-    "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
-
-  # Set Go environment for cross-compilation
-  $env:GO111MODULE = "on"
-  $env:GOOS = "windows"
-  $env:GOARCH = switch ($arch) {
-    "aarch64" { "arm64" }
-    "x86_64"  { "amd64" }
-    default   { "amd64" }
-  }
-  Write-Host "  Building for GOOS=$($env:GOOS) GOARCH=$($env:GOARCH)"
-  & go build "-ldflags=$ldflags" -o $syftboxExe ".\\cmd\\client"
-} finally {
-  Pop-Location
-}
-
 # =============================================================================
 # SKIP Java and Nextflow on Windows
 # On Windows, Nextflow runs via Docker container (nextflow/nextflow image)
@@ -253,9 +228,12 @@ Write-Host "== Skipping Java (runs via Docker container on Windows) ==" -Foregro
 Write-Host "== Skipping Nextflow (runs via Docker container on Windows) ==" -ForegroundColor Yellow
 Write-Host ""
 
-# Create placeholder directories so Tauri build doesn't fail
+# Remove any previously-bundled payloads to avoid shipping ~200MB of unused binaries on Windows.
+# Then create placeholder directories so any code expecting these paths won't crash.
 $javaDest = Join-Path $outBundled ("java\\$platform")
 $nxfDest = Join-Path $outBundled ("nextflow\\$platform")
+Remove-Item -Recurse -Force $javaDest -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $nxfDest -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $javaDest | Out-Null
 New-Item -ItemType Directory -Force -Path $nxfDest | Out-Null
 Set-Content -Path (Join-Path $javaDest "README.txt") -Value "Java runs via Docker container on Windows" -Encoding UTF8
@@ -361,6 +339,38 @@ try {
 # END DISABLED Java/Nextflow bundling
 #>
 
+if ($bundleSyftbox) {
+  Write-Host "== Building syftbox.exe for bundling =="
+  $syftboxExe = Join-Path $outSyftbox "syftbox.exe"
+  Push-Location (Join-Path $repoRoot "biovault\\syftbox")
+  try {
+    $version = (git describe --tags --always --dirty 2>$null)
+    if (-not $version) { $version = "dev" }
+    $rev = (git rev-parse --short HEAD 2>$null)
+    if (-not $rev) { $rev = "HEAD" }
+    $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+    # Build as a GUI subsystem binary to avoid console windows flashing when spawned from the desktop app.
+    $ldflags = "-s -w -H=windowsgui " +
+      "-X github.com/openmined/syftbox/internal/version.Version=$version " +
+      "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
+      "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
+
+    # Set Go environment for cross-compilation
+    $env:GO111MODULE = "on"
+    $env:GOOS = "windows"
+    $env:GOARCH = switch ($arch) {
+      "aarch64" { "arm64" }
+      "x86_64"  { "amd64" }
+      default   { "amd64" }
+    }
+    Write-Host "  Building for GOOS=$($env:GOOS) GOARCH=$($env:GOARCH)"
+    & go build "-ldflags=$ldflags" -o $syftboxExe ".\\cmd\\client"
+  } finally {
+    Pop-Location
+  }
+}
+
 Write-Host "== Fetching uv =="
 $uvVer = ([string]$cfg.uv.version).TrimStart("v")
 $uvDest = Join-Path $outBundled ("uv\\$platform")
@@ -398,12 +408,16 @@ try {
 Write-Host "== Smoke test =="
 $uvExe = Join-Path $uvDest "uv.exe"
 
-& $syftboxExe -v
+if ($bundleSyftbox -and (Test-Path $syftboxExe)) {
+  & $syftboxExe -v
+}
 & $uvExe --version
 
 Write-Host ""
 Write-Host "Done. Bundled deps at: $outBundled" -ForegroundColor Green
-Write-Host "Syftbox at: $syftboxExe" -ForegroundColor Green
+if ($bundleSyftbox -and (Test-Path $syftboxExe)) {
+  Write-Host "Syftbox at: $syftboxExe" -ForegroundColor Green
+}
 Write-Host ""
 Write-Host "Note: Java and Nextflow are NOT bundled on Windows." -ForegroundColor Yellow
 Write-Host "      Nextflow will run via Docker container (nextflow/nextflow image)." -ForegroundColor Yellow

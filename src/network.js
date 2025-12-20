@@ -339,13 +339,33 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		// Show mock data badge if dataset has mock/preview data
-		const hasMock = dataset.assets?.some((a) => a.mock_ref || a.mock_path) || dataset.has_mock
+		// Check for mock_url (from network scan), mock_path (local path), or mock_ref (from local datasets)
+		const hasMock =
+			dataset.assets?.some((a) => a.mock_url || a.mock_ref || a.mock_path) || dataset.has_mock
+
+		// Debug logging for button visibility
+		console.log('[Network Dataset Debug]', {
+			name: dataset.name,
+			owner: dataset.owner,
+			is_own: dataset.is_own,
+			is_trusted: dataset.is_trusted,
+			hasMock,
+			assets: dataset.assets?.map((a) => ({
+				key: a.key,
+				mock_url: a.mock_url,
+				mock_path: a.mock_path,
+				mock_ref: a.mock_ref,
+			})),
+		})
+
 		if (hasMockBadge) {
 			hasMockBadge.style.display = hasMock ? 'inline-block' : 'none'
 		}
 
 		// Action buttons
 		const newSessionBtn = row.querySelector('.new-session-btn')
+		const runPipelineBtn = row.querySelector('.run-pipeline-btn')
+		const requestRunBtn = row.querySelector('.request-run-btn')
 		const addPeerBtn = row.querySelector('.add-peer-btn')
 		const messagePeerBtn = row.querySelector('.message-peer-btn')
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
@@ -373,21 +393,39 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		// For own datasets: hide new session, add peer, and message buttons
+		// Show run pipeline for datasets with mock data (own or peer)
+		// Show request run for peer datasets (to request run on private data)
 		if (dataset.is_own) {
 			if (newSessionBtn) newSessionBtn.style.display = 'none'
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
+			// Own dataset: can run pipeline on mock data locally
+			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			if (requestRunBtn) requestRunBtn.style.display = 'none'
 		} else if (dataset.is_trusted) {
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'inline-flex'
+			// Peer dataset with mock data: can run pipeline locally on mock data
+			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			// Also show request run for running on their private data
+			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
 		} else {
 			if (addPeerBtn) addPeerBtn.style.display = 'inline-flex'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
+			// Untrusted peer: show request run but it will prompt to trust first
+			if (runPipelineBtn) runPipelineBtn.style.display = 'none'
+			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
 		}
 
 		// Event handlers
 		if (!dataset.is_own && newSessionBtn) {
 			newSessionBtn.addEventListener('click', () => handleNewSession(dataset))
+		}
+		if (runPipelineBtn) {
+			runPipelineBtn.addEventListener('click', () => handleRunPipeline(dataset))
+		}
+		if (requestRunBtn) {
+			requestRunBtn.addEventListener('click', () => handleRequestRun(dataset))
 		}
 		if (addPeerBtn) {
 			addPeerBtn.addEventListener('click', () => handleNavigateToPeers(dataset.owner))
@@ -765,6 +803,97 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 				if (createBtn) {
 					createBtn.click()
 				}
+			}
+		}, 200)
+	}
+
+	// Run a pipeline on mock data for own datasets
+	async function handleRunPipeline(dataset) {
+		console.log('Running pipeline on dataset:', dataset.name)
+
+		// Pre-seed selection so the pipeline run modal has data even if navigation races.
+		try {
+			const urls = []
+			const participantIds = []
+			const seen = new Set()
+			const assetKeys = []
+
+			if (Array.isArray(dataset.assets)) {
+				for (const asset of dataset.assets) {
+					if (asset?.key || asset?.asset_key || asset?.assetKey) {
+						assetKeys.push(asset.key || asset.asset_key || asset.assetKey)
+					}
+					if (Array.isArray(asset.mock_entries)) {
+						for (const entry of asset.mock_entries) {
+							if (!entry?.url || seen.has(entry.url)) continue
+							seen.add(entry.url)
+							urls.push(entry.url)
+							participantIds.push(entry.participant_id || '')
+						}
+					}
+				}
+			}
+
+			if (urls.length > 0) {
+				sessionStorage.setItem('preselectedUrls', JSON.stringify(urls))
+				sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+				sessionStorage.setItem('preselectedDatasetName', dataset.name || '')
+				sessionStorage.setItem('preselectedDatasetOwner', dataset.owner || '')
+				sessionStorage.setItem('preselectedAssetKeys', JSON.stringify(assetKeys.filter(Boolean)))
+				sessionStorage.setItem('preselectedDataType', 'mock')
+				sessionStorage.setItem('preselectedDataSource', 'network_dataset')
+			}
+		} catch (err) {
+			console.warn('Failed to pre-seed pipeline data selection:', err)
+		}
+
+		// Navigate to pipelines tab and trigger run modal with mock data
+		if (typeof window.navigateTo === 'function') {
+			window.navigateTo('run')
+		}
+
+		// Wait for navigation, then open run modal with dataset
+		setTimeout(() => {
+			if (window.__pipelinesModule?.openRunPipelineWithDataset) {
+				window.__pipelinesModule.openRunPipelineWithDataset({
+					name: dataset.name,
+					dataType: 'mock',
+					entry: dataset,
+				})
+			}
+		}, 200)
+	}
+
+	// Request a pipeline run on peer's private data
+	async function handleRequestRun(dataset) {
+		console.log('Requesting pipeline run on dataset:', dataset.name, 'from', dataset.owner)
+
+		// Navigate to pipelines tab to select which pipeline to request
+		if (typeof window.navigateTo === 'function') {
+			window.navigateTo('run')
+		}
+
+		// Wait for navigation, then open pipeline selection for request
+		setTimeout(() => {
+			if (window.__pipelinesModule?.openRequestPipelineRun) {
+				window.__pipelinesModule.openRequestPipelineRun({
+					datasetName: dataset.name,
+					datasetOwner: dataset.owner,
+					dataset: dataset,
+				})
+			} else {
+				// Fallback: store in sessionStorage for pipelines to pick up
+				sessionStorage.setItem(
+					'pendingPipelineRequest',
+					JSON.stringify({
+						datasetName: dataset.name,
+						datasetOwner: dataset.owner,
+						dataset: dataset,
+					}),
+				)
+				alert(
+					`Pipeline request flow coming soon!\n\nDataset: ${dataset.name}\nOwner: ${dataset.owner}`,
+				)
 			}
 		}, 200)
 	}

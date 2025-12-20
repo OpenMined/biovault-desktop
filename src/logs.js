@@ -381,7 +381,20 @@ export function createLogsModule({ invoke }) {
 		copyLogs,
 		openLogsFolder: async () => {
 			try {
-				const dir = await invoke('get_desktop_log_dir')
+				const dir =
+					(await invoke('get_desktop_log_dir', { __wsTimeoutMs: 5000 }).catch(() => null)) ||
+					(await invoke('get_env_var', { key: 'BIOVAULT_HOME' })
+						.then((home) => (home ? `${home}/logs` : null))
+						.catch(() => null)) ||
+					(await invoke('get_dev_mode_info')
+						.then((info) => (info?.biovault_home ? `${info.biovault_home}/logs` : null))
+						.catch(() => null)) ||
+					(await invoke('get_env_var', { key: 'HOME' })
+						.then((home) => (home ? `${home}/Desktop/BioVault/logs` : null))
+						.catch(() => null))
+				if (!dir) {
+					throw new Error('Unable to resolve logs directory')
+				}
 				await invoke('open_folder', { path: dir })
 			} catch (error) {
 				alert(`Failed to open logs folder: ${error}`)

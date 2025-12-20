@@ -610,44 +610,53 @@
 .dataset-row-actions {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	justify-content: flex-end;
 }
 
-.dataset-row-actions .btn-sm {
-	height: 28px;
-	padding: 0 10px;
-	font-size: 12px;
-	border-radius: 6px;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.dataset-row-actions .btn-icon-sm {
-	width: 28px;
-	height: 28px;
+.dataset-row-actions .btn-icon {
+	width: 32px;
+	height: 32px;
 	padding: 0;
 	border: 1px solid #e2e8f0;
-	background: #fff;
-	border-radius: 6px;
+	background: #ffffff;
+	border-radius: 8px;
 	cursor: pointer;
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+	transition: all 0.15s ease;
 }
 
-.dataset-row-actions .btn-icon-sm:hover {
+.dataset-row-actions .btn-icon:hover {
 	background: #f8fafc;
 	border-color: #cbd5e1;
+	transform: translateY(-1px);
 }
 
-.dataset-row-actions .btn-icon-sm img {
-	opacity: 0.6;
+.dataset-row-actions .btn-icon img {
+	opacity: 0.7;
 }
 
-.dataset-row-actions .btn-icon-sm:hover img {
+.dataset-row-actions .btn-icon:hover img {
 	opacity: 1;
+}
+
+.dataset-row-actions .btn-icon-primary {
+	background: #10b981;
+	border-color: #10b981;
+	box-shadow: 0 6px 14px rgba(16, 185, 129, 0.25);
+}
+
+.dataset-row-actions .btn-icon-primary:hover {
+	background: #059669;
+	border-color: #059669;
+}
+
+.dataset-row-actions .btn-icon-primary img {
+	opacity: 1;
+	filter: brightness(0) invert(1);
 }
 
 /* Assets panel (expandable) */

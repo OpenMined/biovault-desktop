@@ -34,23 +34,183 @@ jobs:
       - name: Run lint checks
         run: ./lint.sh
 
-  test-ui:
-    name: UI tests
-    runs-on: ubuntu-latest
+  scenario-tests:
+    name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
+    runs-on: ${{ matrix.runner }}
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # jupyter-collab on Linux - rust
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # jupyter-collab on Linux - go
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # jupyter-collab on macOS ARM - rust
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # jupyter-collab on macOS ARM - go
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # pipelines-solo on Linux - rust
+          - scenario: pipelines-solo
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-solo on Linux - go
+          - scenario: pipelines-solo
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-collab on Linux - rust
+          - scenario: pipelines-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-collab on Linux - go
+          - scenario: pipelines-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-collab on macOS ARM - rust
+          - scenario: pipelines-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # pipelines-collab on macOS ARM - go
+          - scenario: pipelines-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      SKIP_PLAYWRIGHT_INSTALL: "1"
+      AUTO_REBUILD_TAURI: "1"
+      BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
+
     steps:
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h /
+          # Remove unnecessary large packages to free ~10GB
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          sudo apt-get clean
+          echo "=== Disk space after cleanup ==="
+          df -h /
+
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+        shell: bash
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            biovault/syftbox-sdk
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: Setup Go (syftbox)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Linux dependencies (Tauri + headless)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libsqlite3-dev \
+            libxdo-dev \
+            build-essential \
+            pkg-config
+
+      - name: Setup Docker (macOS - pipelines scenarios)
+        if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
+        uses: docker/setup-docker-action@v4
 
       - name: Install npm dependencies
         run: npm ci
@@ -58,16 +218,99 @@ jobs:
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
+      - name: Install Playwright browsers (Linux)
+        if: runner.os == 'Linux'
         run: bunx --bun playwright install --with-deps chromium
 
-      - name: Run UI tests (headless)
+      - name: Install Playwright browsers (non-Linux)
+        if: runner.os != 'Linux'
+        run: bunx --bun playwright install chromium
+
+      - name: Fetch bundled dependencies
+        run: |
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Build syftbox client
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
+      - name: Build Tauri binary (release)
+        run: |
+          cd src-tauri
+          cargo build --release
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Pre-build syftbox-sdk wheel
+        run: |
+          cd biovault/syftbox-sdk/python
+          maturin build --release
+
+      - name: Install biosynth CLI (Linux)
+        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
+        run: |
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv bvs /usr/local/bin/
+          bvs --version
+
+      - name: Install biosynth CLI (macOS)
+        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        run: |
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
+          sudo mv bvs /usr/local/bin/
+          bvs --version
+
+      - name: Cache genostats database
+        if: matrix.scenario == 'pipelines-solo'
+        id: cache-genostats
+        uses: actions/cache@v4
+        with:
+          path: data/genostats.sqlite
+          key: genostats-v1
+
+      - name: Run Jupyter collab scenario
+        if: matrix.scenario == 'jupyter-collab'
         env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-          # Profiles real test runs via `test-scenario.sh --profiles` on PRs to main.
-          # Profiles mock test is intentionally not run in CI.
-          UI_TEST_GREP_INVERT_EXTRA: '@profiles-mock|@profiles-real'
-        run: ./test-ui.sh
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          JUPYTER_PAUSE_TIME: "5000"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+
+      - name: Run pipelines solo scenario
+        if: matrix.scenario == 'pipelines-solo'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
+
+      - name: Run pipelines collab scenario
+        if: matrix.scenario == 'pipelines-collab'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.scenario }}-${{ matrix.platform }}-${{ matrix.client_mode }}-test-results
+          path: |
+            logs/
+            test-results/
+            artifacts/
 
   profiles-e2e:
     name: Profiles E2E (real backend)
@@ -109,9 +352,9 @@ jobs:
       - name: Setup Go (syftbox devstack)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -151,23 +394,73 @@ jobs:
             test-results/
             artifacts/
 
-  linux-x64-build:
-    name: Linux x64 build
-    runs-on: ubuntu-24.04
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+  # ============================================================================
+  # Release Build Test - Validates all platform/syftbox combinations build
+  # ============================================================================
+  release-build-test:
+    name: Build ${{ matrix.target }}-${{ matrix.syftbox_impl }}
+    runs-on: ${{ matrix.runner }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'main')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64
+          - target: macos-arm64
+            runner: macos-latest
+            args: aarch64-apple-darwin
+            syftbox_impl: rust
+          - target: macos-arm64
+            runner: macos-latest
+            args: aarch64-apple-darwin
+            syftbox_impl: go
+          # macOS x64
+          - target: macos-x64
+            runner: macos-15-intel
+            args: x86_64-apple-darwin
+            syftbox_impl: rust
+          - target: macos-x64
+            runner: macos-15-intel
+            args: x86_64-apple-darwin
+            syftbox_impl: go
+          # Linux x64
+          - target: linux-x64
+            runner: ubuntu-22.04
+            args: x86_64-unknown-linux-gnu
+            syftbox_impl: rust
+          - target: linux-x64
+            runner: ubuntu-22.04
+            args: x86_64-unknown-linux-gnu
+            syftbox_impl: go
+          # Windows x64
+          - target: windows-x64
+            runner: windows-latest
+            args: x86_64-pc-windows-msvc
+            syftbox_impl: rust
+          - target: windows-x64
+            runner: windows-latest
+            args: x86_64-pc-windows-msvc
+            syftbox_impl: go
+
+    defaults:
+      run:
+        shell: bash
+
     env:
-      APPIMAGE_EXTRACT_AND_RUN: 1
-      LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
-      LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
-      APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      SYFTBOX_IMPL: ${{ matrix.syftbox_impl }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
+      - name: Checkout project
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -175,7 +468,6 @@ jobs:
             build-essential \
             pkg-config \
             curl \
-            xdg-utils \
             wget \
             file \
             libxdo-dev \
@@ -186,15 +478,20 @@ jobs:
             libfuse2 \
             patchelf \
             libgtk-3-dev \
-            squashfs-tools \
-            desktop-file-utils \
-            zsync \
-            appstream
+            squashfs-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.args }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            biovault/syftbox-sdk
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -210,354 +507,189 @@ jobs:
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Setup Go (syftbox)
+        if: runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
-      - name: Install npm dependencies
-        run: npm ci
+      - name: Setup Go (syftbox, Windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+
+      - name: Bundle dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $templatesDest = "src-tauri/resources/templates"
+          $templatesSrc = "templates-dev"
+          if (Test-Path $templatesDest -PathType Leaf) {
+            Remove-Item -Force $templatesDest
+          }
+          if (-not (Test-Path $templatesDest -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $templatesDest | Out-Null
+          }
+          if (Test-Path $templatesSrc -PathType Container) {
+            Copy-Item -Path (Join-Path $templatesSrc "*") -Destination $templatesDest -Recurse -Force
+          }
+          .\scripts\windows\bundle-deps.ps1
 
       - name: Fetch bundled dependencies
+        if: runner.os != 'Windows'
         run: |
+          case "${{ matrix.args }}" in
+            x86_64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="x86_64" ;;
+            aarch64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="aarch64" ;;
+            x86_64-unknown-linux-*) export BUNDLED_OS="linux" BUNDLED_ARCH="x86_64" ;;
+            *) echo "Unsupported target: ${{ matrix.args }}" >&2; exit 1 ;;
+          esac
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
           chmod -R u+rw src-tauri/resources/bundled/ || true
 
-      - name: Build syftbox client
+      - name: Materialize templates
         run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
+          chmod +x scripts/materialize-templates.sh || true
+          ./scripts/materialize-templates.sh || true
 
-      - name: Setup AppImage tools
-        run: |
-          APPIMAGE_ARCH="x86_64"
-
-          # linuxdeploy
-          wget -q "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-${APPIMAGE_ARCH}.AppImage" -O /tmp/linuxdeploy.AppImage
-          chmod +x /tmp/linuxdeploy.AppImage
-          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy.AppImage --appimage-extract || true
-          if [ ! -d /tmp/squashfs-root ]; then
-            OFFSET=$(readelf -h /tmp/linuxdeploy.AppImage | grep "Start of section" | awk '{print $NF}')
-            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage || \
-            unsquashfs -d /tmp/squashfs-root /tmp/linuxdeploy.AppImage
-          fi
-          mv /tmp/squashfs-root /tmp/linuxdeploy-extracted
-          chmod +x /tmp/linuxdeploy-extracted/AppRun
-
-          # linuxdeploy-plugin-appimage
-          wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-${APPIMAGE_ARCH}.AppImage" -O /tmp/plugin.AppImage
-          chmod +x /tmp/plugin.AppImage
-          cd /tmp && APPIMAGE_EXTRACT_AND_RUN=1 ./plugin.AppImage --appimage-extract || true
-          if [ ! -d /tmp/squashfs-root ]; then
-            OFFSET=$(readelf -h /tmp/plugin.AppImage | grep "Start of section" | awk '{print $NF}')
-            unsquashfs -offset $OFFSET -d /tmp/squashfs-root /tmp/plugin.AppImage || \
-            unsquashfs -d /tmp/squashfs-root /tmp/plugin.AppImage
-          fi
-          mv /tmp/squashfs-root /tmp/plugin-extracted
-          chmod +x /tmp/plugin-extracted/AppRun
-
-          echo "AppImage tools extracted successfully"
-
-          {
-            echo "LINUXDEPLOY=/tmp/linuxdeploy-extracted/usr/bin/linuxdeploy"
-            echo "LINUXDEPLOY_PLUGIN_APPIMAGE=/tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage"
-            echo "APPIMAGETOOL=/tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool"
-          } >> "$GITHUB_ENV"
-
-      - name: Build app
-        run: |
-          set -o pipefail
-          chmod +x scripts/materialize-templates.sh
-          ./scripts/materialize-templates.sh
-          tauri build --target x86_64-unknown-linux-gnu --verbose 2>&1 | tee tauri-linux.log
-
-      - name: Verify artifacts
-        run: |
-          echo "Checking for built artifacts..."
-          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/ || echo "No deb directory"
-          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/ || echo "No rpm directory"
-          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/ || echo "No appimage directory"
-
-      - name: Dump logs on failure
-        if: failure()
-        run: |
-          echo "Searching for linuxdeploy/appimage logs..."
-          find src-tauri/target/x86_64-unknown-linux-gnu/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
-          echo "Dumping tauri-linux.log (if present)..."
-          sed -n '1,400p' tauri-linux.log || true
-
-  scenario-tests:
-    name: Multi-client scenario tests
-    runs-on: macos-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.38'
-
-      - name: Setup Go (syftbox)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Install bun dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: bunx --bun playwright install --with-deps chromium
-
-      - name: Fetch bundled dependencies
-        run: |
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
-
-      - name: Build syftbox client
-        run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
-
-      - name: Build Tauri binary (release)
-        run: |
-          cd src-tauri
-          cargo build --release
-
-      - name: Run multi-client scenario tests
+      - name: Build syftbox client (Rust)
+        if: runner.os != 'Windows' && matrix.syftbox_impl == 'rust'
         env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-          AUTO_REBUILD_TAURI: '0'
-        run: ./test-scenario.sh --all
-
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scenario-test-results
-          path: |
-            logs/
-            test-results/
-            artifacts/
-
-  jupyter-tests:
-    name: Jupyter session tests
-    runs-on: macos-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.38'
-
-      - name: Setup Go (syftbox)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Install bun dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: bunx --bun playwright install --with-deps chromium
-
-      - name: Fetch bundled dependencies
+          SYFTBOX_RUST_TARGET: ${{ matrix.args }}
         run: |
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+          chmod +x scripts/build-syftbox-rust.sh
+          ./scripts/build-syftbox-rust.sh
 
-      - name: Build syftbox client
+      - name: Build syftbox client (Go)
+        if: runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
 
-      - name: Build Tauri binary (release)
+      - name: Build syftbox client (Rust, Windows)
+        if: runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
+        shell: pwsh
         run: |
-          cd src-tauri
-          cargo build --release
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $rustDir = Join-Path $repoRoot "biovault\syftbox-sdk\syftbox\rust"
+          cargo build --release --manifest-path "$rustDir\Cargo.toml" --target ${{ matrix.args }}
+          $bin = Join-Path $rustDir "target\${{ matrix.args }}\release\syftbox-rs.exe"
+          if (-not (Test-Path $bin)) {
+            throw "Rust syftbox binary not found at $bin"
+          }
+          $outDir = Join-Path $repoRoot "src-tauri\resources\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item -Force $bin (Join-Path $outDir "syftbox.exe")
 
-      - name: Pre-build syftbox-sdk wheel
+      - name: Build syftbox client (Go, Windows)
+        if: runner.os == 'Windows' && matrix.syftbox_impl == 'go'
+        shell: pwsh
         run: |
-          cd biovault/syftbox-sdk/python
-          maturin build --release
-
-      - name: Run Jupyter session tests
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-          AUTO_REBUILD_TAURI: '0'
-          JUPYTER_PAUSE_TIME: '5000'
-        run: ./test-scenario.sh --jupyter
-
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: jupyter-test-results
-          path: |
-            logs/
-            test-results/
-            artifacts/
-
-  pipelines-tests:
-    name: Pipeline execution tests
-    runs-on: macos-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.38'
-
-      - name: Setup Go (syftbox)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Install bun dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: bunx --bun playwright install --with-deps chromium
-
-      - name: Install biosynth CLI (pre-built binary)
-        run: |
-          # Download pre-built binary instead of compiling
-          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
-          sudo mv bvs /usr/local/bin/
-          bvs --version
-
-      - name: Cache genostats database
-        id: cache-genostats
-        uses: actions/cache@v4
-        with:
-          path: data/genostats.sqlite
-          key: genostats-v1
-
-      - name: Download genostats database
-        if: steps.cache-genostats.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data
-          # Download from biovault-desktop releases (needs to be uploaded there)
-          curl -fsSL -o data/genostats.sqlite \
-            "https://github.com/OpenMined/biovault-desktop/releases/download/data-v1/genostats.sqlite" || {
-            echo "Warning: Could not download genostats.sqlite - synthetic data generation may fail"
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $syftboxDir = Join-Path $repoRoot "biovault\syftbox-sdk\syftbox"
+          $outDir = Join-Path $repoRoot "src-tauri\resources\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $syftboxExe = Join-Path $outDir "syftbox.exe"
+          $version = (git describe --tags --always --dirty 2>$null)
+          if (-not $version) { $version = "dev" }
+          $rev = (git rev-parse --short HEAD 2>$null)
+          if (-not $rev) { $rev = "HEAD" }
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X github.com/openmined/syftbox/internal/version.Version=$version " +
+            "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
+            "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
+          $env:GO111MODULE = "on"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          Push-Location $syftboxDir
+          try {
+            & go build "-ldflags=$ldflags" -o $syftboxExe ".\cmd\client"
+          } finally {
+            Pop-Location
           }
 
-      - name: Fetch bundled dependencies
+      - name: Verify syftbox binary
+        if: runner.os != 'Windows'
         run: |
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ ! -f "$SYFTBOX_BIN" ]]; then
+            echo "syftbox binary not found at $SYFTBOX_BIN" >&2
+            exit 1
+          fi
+          chmod +x "$SYFTBOX_BIN"
+          file "$SYFTBOX_BIN"
+          "$SYFTBOX_BIN" --help >/dev/null
 
-      - name: Build syftbox client
+      - name: Verify syftbox binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
+          $syftboxBin = "src-tauri\resources\syftbox\syftbox.exe"
+          if (-not (Test-Path $syftboxBin)) {
+            throw "syftbox binary not found at $syftboxBin"
+          }
+          Get-Item $syftboxBin | Format-List FullName,Length
+          & $syftboxBin --help | Out-Null
 
-      - name: Build Tauri binary (release)
+      - name: Build Tauri app (macOS)
+        if: runner.os == 'macOS'
         run: |
-          cd src-tauri
-          cargo build --release
+          # Build without updater signing for PR tests
+          tauri build --target ${{ matrix.args }} --ci --bundles app,dmg || true
+          # Verify the app was actually built
+          if [[ -d "src-tauri/target/${{ matrix.args }}/release/bundle/macos/BioVault.app" ]]; then
+            echo "✅ Build successful"
+            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/dmg/ || true
+            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/macos/ || true
+          else
+            echo "❌ Build failed - app bundle not found"
+            exit 1
+          fi
 
-      - name: Run pipeline solo tests
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-          AUTO_REBUILD_TAURI: '0'
-          CLEANUP_SYNTHETIC: '1'
-        run: ./test-scenario.sh --pipelines-solo
+      - name: Build Tauri app (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Build without updater signing for PR tests
+          tauri build --target ${{ matrix.args }} --ci --bundles deb 2>&1 | tee tauri-build.log || true
+          # Verify the binary was actually built
+          if [[ -f "src-tauri/target/${{ matrix.args }}/release/bv-desktop" ]]; then
+            echo "✅ Build successful"
+            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/deb/ || true
+          else
+            echo "❌ Build failed - binary not found"
+            exit 1
+          fi
 
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipelines-test-results
-          path: |
-            logs/
-            test-results/
-            artifacts/
+      - name: Build Tauri app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Build without updater signing for PR tests
+          # Use try/catch to ignore Tauri exit code from signing errors
+          try {
+            tauri build --target ${{ matrix.args }} --ci --bundles nsis 2>&1 | Out-Null
+          } catch {
+            Write-Host "Tauri build exited with error (likely signing) - checking if binary was created..."
+          }
+          # Verify the binary was actually built
+          if (Test-Path "src-tauri\target\${{ matrix.args }}\release\bv-desktop.exe") {
+            Write-Host "✅ Build successful"
+            Get-ChildItem -Path "src-tauri\target\${{ matrix.args }}\release\bundle\nsis" -ErrorAction SilentlyContinue
+          } else {
+            Write-Host "❌ Build failed - binary not found"
+            exit 1
+          }
+
+      - name: Dump build logs on failure
+        if: failure() && runner.os == 'Linux'
+        run: |
+          echo "Build log:"
+          cat tauri-build.log || true

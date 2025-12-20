@@ -240,7 +240,7 @@ test.describe('Projects editor with Jupyter integration', () => {
 			mode: useRealInvoke ? 'real' : 'mock',
 		})
 
-		await page.goto('/', { timeout: 15_000 })
+		await page.goto('/', { timeout: 15_000, waitUntil: 'commit' })
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 

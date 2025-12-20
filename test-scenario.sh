@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+# GitHub Actions Windows runners often provide `python` but not `python3` on PATH.
+# Normalize so the rest of the script can keep using `python3`.
+if ! command -v python3 >/dev/null 2>&1; then
+	if command -v python >/dev/null 2>&1; then
+		python3() { python "$@"; }
+	else
+		echo "Missing required tool: python3 (or python)" >&2
+		exit 1
+	fi
+fi
+
 # Scenario runner for multi-app UI+backend tests (e.g., messaging between two clients)
 # This mirrors dev-two.sh but drives Playwright specs.
 
@@ -37,11 +48,12 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
+  --pipelines-solo     Run pipeline UI test only (single client)
+  --pipelines-collab   Run two-client pipeline collaboration test
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
                        Accepts multiple notebook config files (runs all in sequence)
-  --pipelines-solo     Run pipeline test with synthetic data (single client)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
@@ -96,6 +108,14 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="messaging-core"
 			shift
 			;;
+		--pipelines-solo)
+			SCENARIO="pipelines-solo"
+			shift
+			;;
+		--pipelines-collab)
+			SCENARIO="pipelines-collab"
+			shift
+			;;
 		--jupyter)
 			SCENARIO="jupyter"
 			shift
@@ -109,10 +129,6 @@ while [[ $# -gt 0 ]]; do
 				NOTEBOOK_CONFIGS+=("$1")
 				shift
 			done
-			;;
-		--pipelines-solo)
-			SCENARIO="pipelines-solo"
-			shift
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
@@ -342,6 +358,32 @@ find_bundled_uv() {
 	return 1
 }
 
+ensure_playwright_browsers() {
+	# If browsers are already cached, skip install. Otherwise install Chromium (with deps on Linux).
+	local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+	if compgen -G "$browsers_path/chromium*" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	info "Playwright browsers not found; installing Chromium..."
+	if command -v bun >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			bunx --bun playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			bunx --bun playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	elif command -v npx >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "Linux" ]]; then
+			npx playwright install --with-deps chromium >>"$LOG_FILE" 2>&1
+		else
+			npx playwright install chromium >>"$LOG_FILE" 2>&1
+		fi
+	else
+		echo "Neither bun nor npx available to install Playwright browsers" >&2
+		return 1
+	fi
+}
+
 # Kill any dangling Jupyter processes from previous runs
 kill_workspace_jupyter
 
@@ -439,6 +481,14 @@ wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT
 }
 
 cleanup() {
+	# Interactive pause before cleanup (30s timeout)
+	if [[ "${INTERACTIVE_MODE:-0}" == "1" ]]; then
+		echo ""
+		info "=== Interactive Mode: Press ENTER to finish and exit (or wait 30s) ==="
+		read -t 30 -r || true
+		echo ""
+	fi
+
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
 		kill "$SERVER_PID" 2>/dev/null || true
@@ -606,8 +656,64 @@ preflight_peer_sync() {
 	}
 }
 
+start_static_server_python() {
+	# Try to start Python http.server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Python http.server on port $port"
+	pushd "$src_dir" >/dev/null
+	python3 -m http.server --bind 127.0.0.1 "$port" >>"$LOG_FILE" 2>&1 &
+	SERVER_PID=$!
+	popd >/dev/null
+
+	sleep 0.5
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Python server process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "python http.server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Python http.server is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
+start_static_server_node() {
+	# Try to start a minimal Node.js static server, return 0 on success, 1 on failure
+	local port="$1"
+	local src_dir="$2"
+	local timeout_s="${3:-10}"
+
+	info "[DEBUG] Trying Node.js static server on port $port"
+	node "$ROOT_DIR/tests/static-server.js" "$src_dir" "$port" "127.0.0.1" >>"$LOG_FILE" 2>&1 &
+	SERVER_PID=$!
+
+	sleep 1
+	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+		info "[DEBUG] Node static server process died immediately"
+		return 1
+	fi
+
+	if wait_for_listener "$port" "$SERVER_PID" "node static server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Node static server is listening"
+		return 0
+	fi
+
+	# Kill the non-listening process
+	kill "$SERVER_PID" 2>/dev/null || true
+	SERVER_PID=""
+	return 1
+}
+
 start_static_server() {
-	# Start static server
+	# Start static server with fallback options
 	timer_push "Static server start"
 	info "[DEBUG] start_static_server: initial UI_PORT=$UI_PORT"
 
@@ -629,58 +735,63 @@ start_static_server() {
 	export UI_BASE_URL="http://localhost:${UI_PORT}"
 
 	info "Starting static server on port ${UI_PORT}"
-	info "[DEBUG] Changing to $ROOT_DIR/src"
-	pushd "$ROOT_DIR/src" >/dev/null
-	info "[DEBUG] Running: python3 -m http.server --bind 127.0.0.1 $UI_PORT"
-	python3 -m http.server --bind 127.0.0.1 "$UI_PORT" >>"$LOG_FILE" 2>&1 &
-	SERVER_PID=$!
-	popd >/dev/null
-	info "[DEBUG] Static server started with PID=$SERVER_PID"
+	local src_dir="$ROOT_DIR/src"
+	local timeout_s="${STATIC_SERVER_WAIT_S:-10}"
 
-	# Give the server a moment to start or fail
-	sleep 0.5
-	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		echo "[DEBUG] Static server process died immediately after launch!" >&2
-		echo "[DEBUG] Last 30 lines of unified log:" >&2
-		tail -30 "$LOG_FILE" 2>/dev/null || echo "Cannot read log file" >&2
+	# Try Python first (faster, no dependencies)
+	if start_static_server_python "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Python) is ready on port $UI_PORT"
+		return 0
 	fi
 
-	info "[DEBUG] Waiting for static server to listen on port $UI_PORT (timeout=${STATIC_SERVER_WAIT_S:-5}s)"
-	wait_for_listener "$UI_PORT" "$SERVER_PID" "static server" "${STATIC_SERVER_WAIT_S:-5}" || {
-		echo "[DEBUG] Static server failed to start on :${UI_PORT}" >&2
-		# Check if process is still alive
-		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-			echo "[DEBUG] Static server process (PID $SERVER_PID) exited prematurely" >&2
-		else
-			echo "[DEBUG] Static server process (PID $SERVER_PID) is still running but not listening" >&2
-		fi
-		# Check what's using the port
-		echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
-		lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
-		# Check nearby ports too
-		echo "[DEBUG] Checking nearby ports:" >&2
-		lsof -i :$((UI_PORT - 1)):$((UI_PORT + 2)) 2>&1 || echo "(lsof unavailable)" >&2
-		if [[ -f "$LOG_FILE" ]]; then
-			echo "---- recent unified log (${LOG_FILE}) ----" >&2
-			tail -n 120 "$LOG_FILE" >&2 || true
-			echo "---- end recent unified log ----" >&2
-		fi
-		exit 1
-	}
+	info "[DEBUG] Python http.server failed, trying Node.js fallback..."
+
+	# Try Node.js serve as fallback
+	if start_static_server_node "$UI_PORT" "$src_dir" "$timeout_s"; then
+		timer_pop
+		info "[DEBUG] Static server (Node) is ready on port $UI_PORT"
+		return 0
+	fi
+
+	# Both failed
+	echo "[DEBUG] All static server methods failed on port ${UI_PORT}" >&2
+	echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
+	lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
+	if [[ -f "$LOG_FILE" ]]; then
+		echo "---- recent unified log (${LOG_FILE}) ----" >&2
+		tail -n 120 "$LOG_FILE" >&2 || true
+		echo "---- end recent unified log ----" >&2
+	fi
 	timer_pop
-	info "[DEBUG] Static server is ready and listening on port $UI_PORT"
+	exit 1
 }
 
 assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
 	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
+		# Binary doesn't exist - auto-build if AUTO_REBUILD_TAURI is enabled (default)
+		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
+		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
+			info "Tauri binary not found, building (cd src-tauri && cargo build --release)..."
+			timer_push "Cargo build (tauri release - initial)"
+			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			timer_pop
+			# Verify build succeeded
+			if [[ ! -x "$TAURI_BINARY" ]]; then
+				echo "Build failed: binary still not found at $TAURI_BINARY" >&2
+				exit 1
+			fi
+			info "[DEBUG] Tauri binary built successfully"
+			return 0
+		fi
 		echo "[DEBUG] ERROR: Tauri binary not found or not executable at $TAURI_BINARY" >&2
 		echo "[DEBUG] Listing release directory:" >&2
 		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
 		echo "[DEBUG] Checking if target directory exists:" >&2
 		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
-		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
+		echo "Tauri binary not found at $TAURI_BINARY - run 'npm run build' first" >&2
 		exit 1
 	fi
 	info "[DEBUG] Tauri binary found and executable"
@@ -732,7 +843,7 @@ assert_tauri_binary_fresh() {
 			return 0
 		fi
 		echo "[DEBUG] ERROR: Rebuild required but AUTO_REBUILD_TAURI=$auto_rebuild prevents it" >&2
-		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
+		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'npm run build'." >&2
 		echo "Tip: set AUTO_REBUILD_TAURI=1 to auto-rebuild." >&2
 		exit 1
 	fi
@@ -781,9 +892,23 @@ launch_instance() {
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
+		fi
 		# Skip Jupyter auto-opening browser in non-interactive mode (Playwright controls the browser)
 		if [[ "${INTERACTIVE_MODE:-0}" != "1" ]]; then
 			export JUPYTER_SKIP_BROWSER=1
+		fi
+		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
+		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
+			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
+			if [[ -x "$bundled_uv" ]]; then
+				export BIOVAULT_BUNDLED_UV="$bundled_uv"
+			fi
 		fi
 		echo "[scenario] $email: starting bv-desktop (BIOVAULT_HOME=$BIOVAULT_HOME DEV_WS_BRIDGE_PORT=$DEV_WS_BRIDGE_PORT)" >&2
 		exec "$TAURI_BINARY"
@@ -863,8 +988,19 @@ warm_jupyter_cache() {
 	mkdir -p "$cache_dir"
 
 	# Use uv to create venv and install packages
-	local uv_bin
-	uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	local uv_bin="${UV_BIN:-}"
+	if [[ -z "$uv_bin" ]]; then
+		uv_bin="$(command -v uv 2>/dev/null || echo "")"
+	fi
+	if [[ -z "$uv_bin" ]]; then
+		local bundled_uv="${BIOVAULT_BUNDLED_UV:-}"
+		if [[ -z "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv 2>/dev/null || echo "")"
+		fi
+		if [[ -x "$bundled_uv" ]]; then
+			uv_bin="$bundled_uv"
+		fi
+	fi
 	if [[ -z "$uv_bin" ]]; then
 		uv_bin="$(find_bundled_uv 2>/dev/null || echo "")"
 	fi
@@ -952,7 +1088,7 @@ run_ui_grep() {
 		shift
 	done
 
-	cmd+=(bun run test:ui --grep "$grep_pat")
+	cmd+=(npm run test:ui -- --grep "$grep_pat")
 	append_array_items cmd PLAYWRIGHT_OPTS
 	append_array_items cmd FORWARD_ARGS
 
@@ -995,6 +1131,9 @@ sanitize_playwright_args
 if [[ "$WARM_CACHE" == "1" ]]; then
 	warm_jupyter_cache
 fi
+
+# Ensure Playwright browsers are present (CI may skip install or have empty cache)
+ensure_playwright_browsers
 
 	case "$SCENARIO" in
 			onboarding)
@@ -1136,11 +1275,11 @@ PY
 		start_static_server
 		start_tauri_instances
 
-			info "Opening UI for inspection"
-			timer_push "Playwright: @messaging-core-ui"
-			run_ui_grep "@messaging-core-ui"
-			timer_pop
-			;;
+		info "Opening UI for inspection"
+		timer_push "Playwright: @messaging-core-ui"
+		run_ui_grep "@messaging-core-ui"
+		timer_pop
+		;;
 	jupyter)
 		info "[DEBUG] Starting jupyter scenario"
 		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
@@ -1210,6 +1349,25 @@ PY
 
 		# Run Jupyter session test (includes onboarding in the test itself)
 		info "=== Jupyter Session Test ==="
+
+		# Verify static server is still alive before running Playwright
+		info "[DEBUG] Verifying static server before Playwright..."
+		if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+			info "[DEBUG] ERROR: Static server process $SERVER_PID has died!"
+			info "[DEBUG] Checking what's on port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+			info "[DEBUG] Last 50 lines of log:"
+			tail -50 "$LOG_FILE" 2>/dev/null || echo "Cannot read log"
+			exit 1
+		fi
+		if ! curl -s -o /dev/null -w "" --connect-timeout 2 "http://127.0.0.1:$UI_PORT/" 2>/dev/null; then
+			info "[DEBUG] WARNING: Static server process alive but not responding to HTTP"
+			info "[DEBUG] Checking lsof for port $UI_PORT:"
+			lsof -i ":$UI_PORT" 2>&1 || echo "lsof unavailable"
+		else
+			info "[DEBUG] Static server responding OK on port $UI_PORT"
+		fi
+
 		info "[DEBUG] About to run Playwright with grep @jupyter-session"
 		timer_push "Playwright: @jupyter-session"
 		run_ui_grep "@jupyter-session" "INCLUDE_JUPYTER_TESTS=1"
@@ -1248,6 +1406,80 @@ PY
 				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 				timer_pop
 			fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-collab)
+		start_static_server
+		start_tauri_instances
+
+		# Synthetic data configuration (same as pipelines-solo)
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+		CLEANUP_SYNTHETIC="${CLEANUP_SYNTHETIC:-0}"
+
+		# Check if synthetic data exists
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			info "=== Generating synthetic genotype data for collaboration test ==="
+			timer_push "Synthetic data generation"
+
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (without overlay)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
+			timer_pop
+		else
+			info "Using existing synthetic data ($EXISTING_COUNT files)"
+		fi
+
+		# Run pipelines collaboration test
+		info "=== Running Pipelines Collaboration Test ==="
+		timer_push "Playwright: @pipelines-collab"
+		run_ui_grep "@pipelines-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then

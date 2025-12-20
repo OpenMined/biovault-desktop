@@ -70,11 +70,8 @@ if [[ "$CLEAN" == "true" ]]; then
   cargo clean --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
 fi
 
-# Build syftbox with Developer ID signing
-chmod +x scripts/build-syftbox-prod-signed.sh scripts/fetch-bundled-deps.sh scripts/sign-bundled-deps.sh
-./scripts/build-syftbox-prod-signed.sh
-
 # Fetch bundled deps then sign them
+chmod +x scripts/fetch-bundled-deps.sh scripts/sign-bundled-deps.sh
 ./scripts/fetch-bundled-deps.sh
 ./scripts/sign-bundled-deps.sh
 
@@ -84,7 +81,7 @@ chmod +x scripts/materialize-templates.sh
 
 # Build with Tauri
 echo "Running tauri build..."
-bun run tauri build
+npm run tauri -- build
 
 # Clear quarantine on output artifacts
 echo "Clearing quarantine on artifacts..."

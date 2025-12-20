@@ -148,6 +148,9 @@ const pipelinesModule = createPipelinesModule({
 // Wire up the callback so projects can add steps to pipelines
 pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
 
+// Expose pipelines module for data.js to call openRunPipelineWithDataset
+window.__pipelinesModule = pipelinesModule
+
 // Create messages module early with placeholder getActiveView
 let messagesGetActiveView = () => 'projects'
 const messagesModule = createMessagesModule({
@@ -294,6 +297,7 @@ window.clearAllDataSelections = clearAllSelections
 // Expose readiness markers for automated tests
 window.__NAV_HANDLERS_READY__ = false
 window.__EVENT_HANDLERS_READY__ = false
+window.__ONBOARDING_CHECK_COMPLETE__ = false
 
 async function checkKeyFingerprintMismatchOnStartup() {
 	try {
@@ -538,7 +542,11 @@ window.addEventListener('DOMContentLoaded', async () => {
 	window.__EVENT_HANDLERS_READY__ = true
 
 	// Show onboarding view if user is not onboarded
-	await onboarding.checkOnboarding()
+	try {
+		await onboarding.checkOnboarding()
+	} finally {
+		window.__ONBOARDING_CHECK_COMPLETE__ = true
+	}
 
 	// Check for updates after app initialization (silent check)
 	setTimeout(() => {

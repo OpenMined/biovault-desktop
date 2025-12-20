@@ -41,4 +41,4 @@ echo -e "${BLUE}🚀 Starting Tauri dev server...${NC}"
 echo ""
 
 # Run Tauri dev
-bun run dev
+npm run dev

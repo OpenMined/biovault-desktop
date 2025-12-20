@@ -47,20 +47,6 @@ if (Test-Path $bundledDir) {
     Write-Host "   Bundled directory doesn't exist" -ForegroundColor Gray
 }
 
-# Remove syftbox binary (but keep directory)
-$syftboxBin = Join-Path $repoRoot "src-tauri\resources\syftbox\syftbox.exe"
-if (Test-Path $syftboxBin) {
-    Remove-Item -Force $syftboxBin -ErrorAction SilentlyContinue
-    Write-Host "   Removed syftbox.exe" -ForegroundColor Green
-}
-
-# Also check for dev syftbox binary
-$syftboxDevBin = Join-Path $repoRoot "biovault\syftbox\bin\syftbox-dev.exe"
-if (Test-Path $syftboxDevBin) {
-    Remove-Item -Force $syftboxDevBin -ErrorAction SilentlyContinue
-    Write-Host "   Removed syftbox-dev.exe" -ForegroundColor Green
-}
-
 Write-Host ""
 Write-Host "== Done ==" -ForegroundColor Green
 Write-Host ""

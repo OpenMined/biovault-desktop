@@ -173,6 +173,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				// Find pipeline name
 				const pipeline = pipelines.find((p) => p.id === run.pipeline_id)
 				const pipelineName = pipeline ? pipeline.name : `Pipeline #${run.pipeline_id}`
+				let runMetadata = {}
+				try {
+					runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+				} catch (error) {
+					console.warn('Failed to parse run metadata:', error)
+				}
+				const dataSelection = runMetadata.data_selection || {}
+				const titleParts = [pipelineName]
+				if (dataSelection.dataset_name) titleParts.push(dataSelection.dataset_name)
+				if (Array.isArray(dataSelection.asset_keys) && dataSelection.asset_keys.length > 0) {
+					titleParts.push(dataSelection.asset_keys.join(', '))
+				}
+				if (dataSelection.data_type) {
+					const typeLabel = dataSelection.data_type === 'private' ? 'real' : dataSelection.data_type
+					titleParts.push(typeLabel)
+				}
+				const runTitle = titleParts.join(' - ')
 				const card = document.createElement('div')
 				card.className = 'pipeline-run-card'
 				card.dataset.runId = run.id
@@ -265,7 +282,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					</div>
 					<div class="run-main-info" style="flex: 1; min-width: 0;">
 						<div class="run-title" style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px; line-height: 1.3; letter-spacing: -0.01em;">${escapeHtml(
-							pipelineName,
+							runTitle,
 						)}</div>
 						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px;">
 							<span>Run #${run.id}</span>
@@ -282,6 +299,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					</div>
 					${statusBadge}
 					<div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+						${
+							run.status === 'success'
+								? `<button class="run-share-btn" data-run-id="${run.id}" data-pipeline-name="${escapeHtml(pipelineName)}" data-results-dir="${run.results_dir || run.work_dir || ''}" title="Share results" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
+									<img src="assets/icons/send.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
+								</button>`
+								: ''
+						}
 						<button class="run-view-folder-btn" data-results-path="${
 							run.results_dir || run.work_dir || ''
 						}" title="View results folder" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f1f5f9'; this.style.color='#2563eb'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'">
@@ -399,6 +423,15 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					})
 				}
 
+				// Handle share results
+				const shareBtn = card.querySelector('.run-share-btn')
+				if (shareBtn) {
+					shareBtn.addEventListener('click', async (e) => {
+						e.stopPropagation()
+						await showShareResultsModal(run, pipeline, pipelineName)
+					})
+				}
+
 				container.appendChild(card)
 			})
 		} catch (error) {
@@ -439,9 +472,96 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			// Parse run metadata if available (stored when run was created)
-			const runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+			let runMetadata = {}
+			try {
+				runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+			} catch (error) {
+				console.warn('Failed to parse run metadata:', error)
+			}
 			const inputOverrides = runMetadata.input_overrides || {}
 			const paramOverrides = runMetadata.parameter_overrides || {}
+			const dataSelection = runMetadata.data_selection || {}
+
+			const dataSummaryParts = []
+			if (dataSelection.dataset_name) {
+				dataSummaryParts.push(`Dataset: ${dataSelection.dataset_name}`)
+			}
+			if (Array.isArray(dataSelection.asset_keys) && dataSelection.asset_keys.length > 0) {
+				dataSummaryParts.push(`Asset: ${dataSelection.asset_keys.join(', ')}`)
+			}
+			if (dataSelection.data_type) {
+				const label = dataSelection.data_type === 'private' ? 'real' : dataSelection.data_type
+				dataSummaryParts.push(`Type: ${label}`)
+			}
+			if (dataSelection.participant_count) {
+				dataSummaryParts.push(
+					`${dataSelection.participant_count} participant${
+						dataSelection.participant_count === 1 ? '' : 's'
+					}`,
+				)
+			}
+
+			const selectionFiles = Array.isArray(dataSelection.file_paths)
+				? dataSelection.file_paths
+				: Array.isArray(dataSelection.urls)
+					? dataSelection.urls
+					: []
+			const maxFiles = 6
+			const fileItems = selectionFiles.slice(0, maxFiles).map((path) => {
+				const cleaned = typeof path === 'string' ? path.replace(/^file:\/\//, '') : ''
+				const parts = cleaned.split('/')
+				const name = parts[parts.length - 1] || cleaned
+				return name || path
+			})
+
+			const dataSelectionHtml =
+				dataSummaryParts.length > 0 || fileItems.length > 0
+					? `<div class="run-data-selection" style="margin-bottom: 24px;">
+						<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #0ea5e9;">
+								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+								<polyline points="7 10 12 15 17 10"></polyline>
+								<line x1="12" y1="15" x2="12" y2="3"></line>
+							</svg>
+							<h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em;">Data Selection</h3>
+						</div>
+						${
+							dataSummaryParts.length > 0
+								? `<div style="margin-bottom: 12px; font-size: 13px; color: #475569; display: flex; flex-wrap: wrap; gap: 8px;">
+									${dataSummaryParts
+										.map(
+											(part) =>
+												`<span style="padding: 4px 8px; background: #f1f5f9; border-radius: 6px; border: 1px solid #e2e8f0;">${escapeHtml(
+													part,
+												)}</span>`,
+										)
+										.join('')}
+								</div>`
+								: ''
+						}
+						${
+							fileItems.length > 0
+								? `<div style="display: flex; flex-direction: column; gap: 6px;">
+									${fileItems
+										.map(
+											(name) =>
+												`<div style="padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace;">${escapeHtml(
+													name,
+												)}</div>`,
+										)
+										.join('')}
+									${
+										selectionFiles.length > maxFiles
+											? `<div style="font-size: 12px; color: #94a3b8;">+${
+													selectionFiles.length - maxFiles
+												} more file${selectionFiles.length - maxFiles === 1 ? '' : 's'}</div>`
+											: ''
+									}
+								</div>`
+								: ''
+						}
+					</div>`
+					: ''
 
 			// Collect all published outputs from all steps - make them prominent
 			// Only show published outputs if the run has completed successfully
@@ -588,6 +708,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						</div>`
 							: ''
 					}
+
+					${dataSelectionHtml}
 
 					${inputsHtml}
 
@@ -849,6 +971,160 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		})
 
 		updateRunButton()
+	}
+
+	// Show modal to share pipeline run results
+	async function showShareResultsModal(run, pipeline, pipelineName) {
+		const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
+		const resultsDir = run.results_dir || run.work_dir
+
+		// Collect all published outputs
+		const publishedOutputs = []
+		steps.forEach((step) => {
+			if (step.publish && Object.keys(step.publish).length > 0) {
+				Object.entries(step.publish).forEach(([name, spec]) => {
+					const fileName = spec.match(/\(([^)]+)\)/)?.[1] || name
+					const outputPath = `${resultsDir}/${step.id}/${fileName}`
+					publishedOutputs.push({
+						name,
+						fileName,
+						path: outputPath,
+						stepId: step.id,
+					})
+				})
+			}
+		})
+
+		if (publishedOutputs.length === 0) {
+			alert('This run has no published outputs to share.')
+			return
+		}
+
+		// Get known contacts for recipient selection
+		let contacts = []
+		try {
+			contacts = await invoke('key_list_contacts', { currentEmail: null })
+		} catch (error) {
+			console.error('Error loading contacts:', error)
+		}
+
+		// Create modal
+		const modal = document.createElement('div')
+		modal.id = 'share-results-modal'
+		modal.style.cssText =
+			'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;'
+
+		modal.innerHTML = `
+			<div style="background: white; border-radius: 16px; max-width: 560px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);">
+				<div style="padding: 24px 28px; border-bottom: 1px solid #e2e8f0;">
+					<div style="display: flex; align-items: center; justify-content: space-between;">
+						<h2 style="margin: 0; font-size: 20px; font-weight: 700; color: #0f172a;">Share Results</h2>
+						<button id="share-modal-close" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='transparent'">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #64748b;">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>
+					</div>
+					<p style="margin: 8px 0 0; font-size: 14px; color: #64748b;">Share pipeline results from <strong>${escapeHtml(pipelineName)}</strong> (Run #${run.id})</p>
+				</div>
+
+				<div style="padding: 24px 28px;">
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 8px;">Recipient</label>
+						<select id="share-recipient" style="width: 100%; padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 14px; background: white; cursor: pointer; transition: border-color 0.2s;" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#e2e8f0'">
+							<option value="">Select recipient...</option>
+							${contacts.map((c) => `<option value="${escapeHtml(c.identity)}">${escapeHtml(c.identity)}</option>`).join('')}
+						</select>
+					</div>
+
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 8px;">Select outputs to share</label>
+						<div id="share-outputs-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding: 4px;">
+							${publishedOutputs
+								.map(
+									(output, idx) => `
+								<label style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='#10b981'; this.style.background='#f0fdf4'" onmouseout="if(!this.querySelector('input').checked) { this.style.borderColor='#e2e8f0'; this.style.background='#f8fafc' }">
+									<input type="checkbox" id="share-output-${idx}" data-path="${escapeHtml(output.path)}" data-filename="${escapeHtml(output.fileName)}" checked style="width: 18px; height: 18px; accent-color: #10b981;" />
+									<div style="flex: 1;">
+										<div style="font-size: 14px; font-weight: 600; color: #0f172a;">${escapeHtml(output.fileName)}</div>
+										<div style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace;">${escapeHtml(output.stepId)}</div>
+									</div>
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #10b981;">
+										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+										<polyline points="17 8 12 3 7 8"></polyline>
+										<line x1="12" y1="3" x2="12" y2="15"></line>
+									</svg>
+								</label>
+							`,
+								)
+								.join('')}
+						</div>
+					</div>
+
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 8px;">Message (optional)</label>
+						<textarea id="share-message" placeholder="Add a message about the results..." style="width: 100%; padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 14px; min-height: 80px; resize: vertical; font-family: inherit; transition: border-color 0.2s;" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#e2e8f0'"></textarea>
+					</div>
+				</div>
+
+				<div style="padding: 16px 28px 24px; display: flex; gap: 12px; justify-content: flex-end;">
+					<button id="share-cancel-btn" style="padding: 12px 24px; background: #f1f5f9; color: #475569; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">Cancel</button>
+					<button id="share-send-btn" style="padding: 12px 24px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(16, 185, 129, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(16, 185, 129, 0.3)'">Send Results</button>
+				</div>
+			</div>
+		`
+
+		document.body.appendChild(modal)
+
+		// Close handlers
+		const closeModal = () => {
+			modal.remove()
+		}
+
+		modal.querySelector('#share-modal-close').addEventListener('click', closeModal)
+		modal.querySelector('#share-cancel-btn').addEventListener('click', closeModal)
+		modal.addEventListener('click', (e) => {
+			if (e.target === modal) closeModal()
+		})
+
+		// Send handler
+		modal.querySelector('#share-send-btn').addEventListener('click', async () => {
+			const recipient = modal.querySelector('#share-recipient').value
+			if (!recipient) {
+				alert('Please select a recipient.')
+				return
+			}
+
+			const selectedOutputs = []
+			modal.querySelectorAll('#share-outputs-list input[type="checkbox"]:checked').forEach((cb) => {
+				selectedOutputs.push({
+					path: cb.dataset.path,
+					fileName: cb.dataset.filename,
+				})
+			})
+
+			if (selectedOutputs.length === 0) {
+				alert('Please select at least one output to share.')
+				return
+			}
+
+			const message = modal.querySelector('#share-message').value.trim()
+
+			try {
+				await invoke('send_pipeline_results', {
+					recipient,
+					pipelineName,
+					runId: run.id,
+					outputs: selectedOutputs,
+					message,
+				})
+				closeModal()
+				alert('Results sent successfully!')
+			} catch (error) {
+				alert('Error sending results: ' + error)
+			}
+		})
 	}
 
 	async function shareCurrentRunLogs() {

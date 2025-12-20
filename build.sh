@@ -19,9 +19,8 @@ if [[ "$CLEAN" == "true" ]]; then
   cargo clean --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
 fi
 
-# Build syftbox and fetch bundled deps
-chmod +x scripts/build-syftbox-prod.sh scripts/fetch-bundled-deps.sh
-./scripts/build-syftbox-prod.sh
+# Fetch bundled deps
+chmod +x scripts/fetch-bundled-deps.sh
 ./scripts/fetch-bundled-deps.sh
 
 # Materialize notebooks into a real templates directory for bundling
@@ -32,7 +31,6 @@ chmod +x scripts/materialize-templates.sh
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "Stripping extended attributes..."
   for root in \
-    src-tauri/resources/syftbox \
     src-tauri/resources/bundled/uv \
     src-tauri/resources/bundled/java \
     src-tauri/resources/bundled/nextflow; do
@@ -45,7 +43,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
   # Ad-hoc sign all bundled executables and dylibs
   echo "Ad-hoc signing bundled executables..."
-  find src-tauri/resources/bundled src-tauri/resources/syftbox -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+  find src-tauri/resources/bundled -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
     codesign --force --sign - "$f" 2>/dev/null || true
   done || true
 
@@ -57,7 +55,7 @@ fi
 
 # Build without notarization (local dev)
 echo "Running tauri build (dev mode, no notarization)..."
-APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" bun run tauri build
+APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" npm run tauri -- build
 
 # Clear quarantine on output artifacts
 if [[ "$(uname)" == "Darwin" ]]; then

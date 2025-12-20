@@ -68,13 +68,17 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   prepare-version:
     name: Determine release version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.final-version.outputs.version }}
+      tag: ${{ steps.final-version.outputs.tag }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -116,20 +120,57 @@ jobs:
               fh.write(f"tag={tag}\n")
           PY
 
-      - name: Check if release tag already exists
+      - name: Check if release tag already exists and auto-resolve
+        id: check-release
         if: ${{ inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$TAG" &>/dev/null; then
-            echo "::error::Release $TAG already exists! Either delete it first or bump the version."
-            echo ""
-            echo "To delete: gh release delete $TAG --yes && git push origin :refs/tags/$TAG"
-            echo "To bump: update version in src-tauri/Cargo.toml"
+            echo "⚠️  Release $TAG already exists. Finding next available version..."
+
+            # Start from current version and find next available
+            current_version="$VERSION"
+
+            # Parse version parts
+            IFS='.' read -r major minor patch <<< "$current_version"
+
+            # Try incrementing patch until we find an unreleased version
+            max_attempts=20
+            for ((i=1; i<=max_attempts; i++)); do
+              next_patch=$((patch + i))
+              next_version="${major}.${minor}.${next_patch}"
+              next_tag="v${next_version}"
+
+              if ! gh release view "$next_tag" &>/dev/null; then
+                echo "✅ Found available version: $next_version (tag: $next_tag)"
+                echo "version=$next_version" >> "$GITHUB_OUTPUT"
+                echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+                echo "updated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  Tag $next_tag also exists, trying next..."
+            done
+
+            echo "::error::Could not find available version after $max_attempts attempts"
             exit 1
+          else
+            echo "✅ Release $TAG does not exist, proceeding..."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✅ Release $TAG does not exist, proceeding..."
+
+      - name: Update version outputs if needed
+        id: final-version
+        run: |
+          if [[ "${{ steps.check-release.outputs.updated }}" == "true" ]]; then
+            echo "version=${{ steps.check-release.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.check-release.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
 
   configure-build-matrix:
     name: Determine build targets
@@ -159,6 +200,7 @@ jobs:
 
           if is_enabled('BUILD_MACOS_ARM64'):
               entries.append({
+                  # GitHub-hosted "macos-latest" is Apple Silicon; keep this on latest for arm64.
                   'runs-on': 'macos-latest',
                   'args': 'aarch64-apple-darwin',
                   'build_kind': 'tauri',
@@ -167,7 +209,8 @@ jobs:
 
           if is_enabled('BUILD_MACOS_X64'):
               entries.append({
-                  'runs-on': 'macos-latest',
+                  # Use the dedicated Intel runner label; macos-13 is retired.
+                  'runs-on': 'macos-15-intel',
                   'args': 'x86_64-apple-darwin',
                   'build_kind': 'tauri',
                   'target': 'macos-x64',
@@ -197,8 +240,16 @@ jobs:
                   'target': 'linux-arm64',
               })
 
-          matrix = {'include': entries}
-          has_targets = 'true' if entries else 'false'
+          syftbox_impls = ['rust', 'go']
+          matrix_entries = []
+          for entry in entries:
+              for impl in syftbox_impls:
+                  item = dict(entry)
+                  item['syftbox_impl'] = impl
+                  matrix_entries.append(item)
+
+          matrix = {'include': matrix_entries}
+          has_targets = 'true' if matrix_entries else 'false'
 
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
               fh.write(f"matrix={json.dumps(matrix)}\n")
@@ -206,7 +257,7 @@ jobs:
           PY
 
   build:
-    name: Build app bundle
+    name: Build app bundle (${{ matrix.target }}-${{ matrix.syftbox_impl }})
     needs:
       - prepare-version
       - configure-build-matrix
@@ -228,6 +279,8 @@ jobs:
       LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
       LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
       APPIMAGETOOL: /tmp/plugin-extracted/appimagetool-prefix/usr/bin/appimagetool
+      SYFTBOX_IMPL: ${{ matrix.syftbox_impl }}
+      SYFTBOX_SUFFIX: ${{ matrix.syftbox_impl == 'go' && '-go' || '' }}
     steps:
       - name: Enable Windows long paths
         if: runner.os == 'Windows'
@@ -353,20 +406,20 @@ jobs:
         run: npm install -g @tauri-apps/cli@latest
 
       - name: Setup Go (syftbox)
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Go (syftbox, Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
@@ -375,12 +428,22 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             target
             src-tauri/target
           key: ${{ matrix.args }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             ${{ matrix.args }}-cargo-
+
+      - name: Verify Rust toolchain
+        if: matrix.build_kind == 'tauri'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PATH=$PATH"
+          command -v rustc
+          command -v cargo
+          rustc --version
+          cargo --version
 
       - name: Bundle dependencies (Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
@@ -426,11 +489,6 @@ jobs:
             chmod -R u+rw src-tauri/resources/bundled/ || true
           fi
 
-      - name: Build syftbox client
-        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
-        run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
 
       - name: Materialize notebooks for bundling
         shell: bash
@@ -468,6 +526,190 @@ jobs:
           touch src-tauri/resources/bundled/java/.placeholder
           touch src-tauri/resources/bundled/nextflow/.placeholder
           touch src-tauri/resources/bundled/uv/.placeholder
+
+      - name: Build syftbox client (Rust)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'rust'
+        env:
+          SYFTBOX_RUST_TARGET: ${{ matrix.args }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
+        run: |
+          chmod +x scripts/build-syftbox-rust.sh
+          ./scripts/build-syftbox-rust.sh
+
+      - name: Build syftbox client (Go)
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'go'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-x64' && '13.0' || matrix.target == 'macos-arm64' && '14.0' || '' }}
+        run: |
+          chmod +x scripts/build-syftbox-prod.sh
+          ./scripts/build-syftbox-prod.sh
+
+      - name: Build syftbox client (Rust, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $rustDir = Join-Path $repoRoot "biovault\\syftbox-sdk\\syftbox\\rust"
+          cargo build --release --manifest-path "$rustDir\\Cargo.toml" --target ${{ matrix.args }}
+          $bin = Join-Path $rustDir "target\\${{ matrix.args }}\\release\\syftbox-rs.exe"
+          if (-not (Test-Path $bin)) {
+            throw "Rust syftbox binary not found at $bin"
+          }
+          $outDir = Join-Path $repoRoot "src-tauri\\resources\\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item -Force $bin (Join-Path $outDir "syftbox.exe")
+
+      - name: Build syftbox client (Go, Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'go'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $syftboxDir = Join-Path $repoRoot "biovault\\syftbox-sdk\\syftbox"
+          $outDir = Join-Path $repoRoot "src-tauri\\resources\\syftbox"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $syftboxExe = Join-Path $outDir "syftbox.exe"
+          $version = (git describe --tags --always --dirty 2>$null)
+          if (-not $version) { $version = "dev" }
+          $rev = (git rev-parse --short HEAD 2>$null)
+          if (-not $rev) { $rev = "HEAD" }
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X github.com/openmined/syftbox/internal/version.Version=$version " +
+            "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
+            "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
+          $env:GO111MODULE = "on"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          Push-Location $syftboxDir
+          try {
+            & go build "-ldflags=$ldflags" -o $syftboxExe ".\\cmd\\client"
+          } finally {
+            Pop-Location
+          }
+
+      - name: Verify syftbox binary architecture + smoke run
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
+          if [[ ! -f "$SYFTBOX_BIN" ]]; then
+            echo "❌ syftbox binary not found at $SYFTBOX_BIN" >&2
+            exit 1
+          fi
+
+          chmod +x "$SYFTBOX_BIN" || true
+
+          echo "syftbox file info:"
+          file "$SYFTBOX_BIN"
+
+          case "${{ matrix.target }}" in
+            macos-x64) expected_arch="x86_64" ;;
+            macos-arm64) expected_arch="arm64" ;;
+            linux-x64) expected_arch="x86-64" ;;
+            *) expected_arch="" ;;
+          esac
+
+          if [[ -n "$expected_arch" ]]; then
+            if ! file "$SYFTBOX_BIN" | grep -q "$expected_arch"; then
+              echo "❌ syftbox has wrong architecture (expected: $expected_arch)" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            echo "syftbox ELF header (readelf):"
+            readelf -h "$SYFTBOX_BIN" | sed -n '1,60p'
+
+            case "${{ matrix.target }}" in
+              linux-x64)
+                if ! readelf -h "$SYFTBOX_BIN" | grep -q "X86-64"; then
+                  echo "❌ syftbox ELF header is not x86_64 as expected" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          fi
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            echo "syftbox Mach-O min macOS metadata (otool):"
+            otool -l "$SYFTBOX_BIN" | awk '
+              /^Load command/ { keep=0 }
+              $1=="cmd" && ($2=="LC_BUILD_VERSION" || $2=="LC_VERSION_MIN_MACOSX") { keep=1 }
+              keep { print }
+            '
+
+            minos="$(
+              otool -l "$SYFTBOX_BIN" | awk '
+                $1=="cmd" && ($2=="LC_BUILD_VERSION" || $2=="LC_VERSION_MIN_MACOSX") { in_cmd=1; next }
+                in_cmd && ($1=="minos" || $1=="version") { print $2; exit }
+                in_cmd && $1=="cmd" { in_cmd=0 }
+              '
+            )"
+
+            if [[ -z "${minos:-}" ]]; then
+              echo "❌ Unable to detect minimum macOS version from Mach-O headers" >&2
+              exit 1
+            fi
+
+            case "${{ matrix.target }}" in
+              macos-x64) max_minos="13.99" ;; # ensure Intel builds stay compatible with Ventura+
+              macos-arm64) max_minos="14.99" ;; # ensure Apple Silicon builds stay compatible with Sonoma+
+              *) max_minos="" ;;
+            esac
+
+            if [[ -n "${max_minos:-}" ]]; then
+              MINOS="$minos" MAX_MINOS="$max_minos" python -c 'import os, sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); minos=os.environ["MINOS"]; max_minos=os.environ["MAX_MINOS"]; sys.exit(f"❌ syftbox min macOS too high: {minos} (max allowed: {max_minos})") if parse(minos)>parse(max_minos) else print(f"✅ syftbox min macOS OK: {minos} (<= {max_minos})")'
+            fi
+          fi
+
+          echo "syftbox smoke run:"
+          "$SYFTBOX_BIN" --help >/dev/null
+
+      - name: Verify syftbox binary architecture + smoke run (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $syftboxBin = "src-tauri\\resources\\syftbox\\syftbox.exe"
+          if (-not (Test-Path $syftboxBin)) {
+            throw "syftbox binary not found at $syftboxBin"
+          }
+
+          Write-Host "syftbox file info:"
+          Get-Item $syftboxBin | Format-List FullName,Length,LastWriteTime
+
+          function Get-PeMachine([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              $mz = $br.ReadUInt16()
+              if ($mz -ne 0x5A4D) { throw "Missing MZ header" }
+              $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $peOffset = $br.ReadUInt32()
+              $fs.Seek($peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $sig = $br.ReadUInt32()
+              if ($sig -ne 0x00004550) { throw "Missing PE\\0\\0 signature" }
+              return $br.ReadUInt16()
+            } finally {
+              $fs.Dispose()
+            }
+          }
+
+          $machine = Get-PeMachine $syftboxBin
+          "{0} PE machine: 0x{1:X4}" -f $syftboxBin, $machine
+
+          # 0x8664 = AMD64, 0xAA64 = ARM64
+          if ($machine -ne 0x8664) {
+            throw ("syftbox has wrong CPU architecture (expected AMD64/0x8664, got 0x{0:X4})" -f $machine)
+          }
+
+          Write-Host "syftbox smoke run:"
+          & $syftboxBin --help | Out-Null
 
       - name: Sign bundled binaries (macOS)
         if: runner.os == 'macOS' && matrix.build_kind == 'tauri'
@@ -582,9 +824,9 @@ jobs:
 
           mkdir -p artifacts
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}.dmg || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}.app.tar.gz.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/dmg/*.dmg artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.dmg || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.app.tar.gz || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/macos/*.app.tar.gz.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.app.tar.gz.sig || true
 
       - name: Clear quarantine on macOS artifacts
         if: runner.os == 'macOS'
@@ -600,8 +842,9 @@ jobs:
 
           New-Item -Path artifacts -ItemType Directory -Force
 
-          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe -ErrorAction SilentlyContinue
-          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination artifacts\BioVault-Desktop-${{ matrix.args }}.exe.sig -ErrorAction SilentlyContinue
+          $suffix = $env:SYFTBOX_SUFFIX
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe -Destination ("artifacts\\BioVault-Desktop-${{ matrix.args }}$suffix.exe") -ErrorAction SilentlyContinue
+          Move-Item -Path src-tauri\target\${{ matrix.args }}\release\bundle\nsis\*.exe.sig -Destination ("artifacts\\BioVault-Desktop-${{ matrix.args }}$suffix.exe.sig") -ErrorAction SilentlyContinue
 
       - name: Build app (Linux)
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
@@ -611,20 +854,20 @@ jobs:
 
           mkdir -p artifacts
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb.sig || true
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm.sig || true
 
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage || true
-          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage || true
+          mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage.sig || true
 
       - name: Dump linuxdeploy logs on failure
         if: failure() && runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           echo "Searching for linuxdeploy/appimage logs..."
-          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
+          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \; 2>/dev/null || true
           echo "Dumping tauri-linux.log (if present)..."
           sed -n '1,400p' tauri-linux.log || true
 
@@ -646,22 +889,22 @@ jobs:
           sudo chown -R $(id -u):$(id -g) src-tauri/target/${{ matrix.args }}/release/bundle/ || true
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}.deb
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}.deb.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/deb/*.deb.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.deb.sig
           else
             echo "Warning: No .deb artifacts found"
           fi
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}.rpm
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}.rpm.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/rpm/*.rpm.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.rpm.sig
           else
             echo "Warning: No .rpm artifacts found"
           fi
 
           if ls src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage 1> /dev/null 2>&1; then
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage
-            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}.AppImage.sig
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage
+            mv src-tauri/target/${{ matrix.args }}/release/bundle/appimage/*.AppImage.sig artifacts/BioVault-Desktop-${{ matrix.args }}${SYFTBOX_SUFFIX}.AppImage.sig
           else
             echo "Error: No .AppImage artifacts found - build may have failed"
             exit 1
@@ -1010,6 +1253,7 @@ jobs:
     needs:
       - prepare-version
       - build
+      - create-updater-json
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     permissions:
@@ -1023,7 +1267,43 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Preflight version bump branch
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF:-}" != refs/heads/* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Not on a branch ref ($GITHUB_REF); skipping commit-version."
+            exit 0
+          fi
+
+          branch="${GITHUB_REF_NAME}"
+
+          git fetch origin "$branch"
+
+          remote_version="$(
+            git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
+          )"
+
+          if [[ -z "${remote_version:-}" ]]; then
+            echo "❌ Unable to determine remote version from origin/$branch:src-tauri/Cargo.toml" >&2
+            exit 1
+          fi
+
+          echo "Remote version on origin/$branch: $remote_version"
+          echo "Release version for this run: $RELEASE_VERSION"
+
+          if [[ "$remote_version" != "$RELEASE_VERSION" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Remote branch version differs; skipping commit-version to avoid downgrading or racing bumps."
+            exit 0
+          fi
+
+          git checkout -B "$branch" "origin/$branch"
+
       - name: Sync version metadata
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           python - <<'PY'
           import json
@@ -1062,7 +1342,40 @@ jobs:
           PY
 
       - name: Commit and push changes
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           if git diff --quiet; then
             echo "No version changes to commit."
             exit 0
@@ -1072,10 +1385,43 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
           git commit -m "chore: release ${RELEASE_TAG}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${RELEASE_VERSION}"
 
       - name: Bump to next version
+        if: steps.preflight.outputs.skip != 'true'
         run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+
+          push_with_retry() {
+            local desired_version="$1"
+            local tries=3
+            for i in $(seq 1 "$tries"); do
+              if git push origin HEAD:"$branch"; then
+                return 0
+              fi
+
+              echo "Push failed (attempt $i/$tries). Rebasing onto origin/$branch and retrying..."
+              git fetch origin "$branch"
+              if ! git rebase "origin/$branch"; then
+                git rebase --abort || true
+                break
+              fi
+            done
+
+            git fetch origin "$branch" || true
+            remote_version="$(
+              git show "origin/$branch:src-tauri/Cargo.toml" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", text); print(m.group(1) if m else "")'
+            )"
+
+            if REMOTE_VERSION="$remote_version" DESIRED_VERSION="$desired_version" python -c 'import os,sys; parse=lambda v: tuple(int(p) for p in (v.strip().split(".")+["0","0"])[:3]); rv=os.environ["REMOTE_VERSION"]; dv=os.environ["DESIRED_VERSION"]; sys.exit(0 if parse(rv) >= parse(dv) else 1)'; then
+              echo "⚠️ Remote already at version $remote_version (>= $desired_version); treating as success."
+              return 0
+            fi
+
+            return 1
+          }
+
           python - <<'PY'
           import json
           import re
@@ -1120,5 +1466,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+          if git diff --quiet; then
+            echo "No bump changes to commit."
+            exit 0
+          fi
+
           git commit -m "chore: bump version to ${NEXT_VERSION}"
-          git push origin HEAD:${{ github.ref_name }}
+          push_with_retry "${NEXT_VERSION}"

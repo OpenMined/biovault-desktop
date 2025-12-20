@@ -236,12 +236,39 @@ pub struct QueueFileInfo {
     pub file_path: String,
 }
 
+fn ensure_processing_columns(conn: &rusqlite::Connection) -> Result<(), String> {
+    let has_processing_started = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('files') WHERE name='processing_started_at'",
+            [],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_processing_started {
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN processing_started_at DATETIME",
+            [],
+        )
+        .map_err(|e| format!("Failed to add processing_started_at column: {}", e))?;
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN processing_completed_at DATETIME",
+            [],
+        )
+        .map_err(|e| format!("Failed to add processing_completed_at column: {}", e))?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_queue_info(
     state: tauri::State<AppState>,
     file_id: Option<i64>,
 ) -> Result<QueueInfo, String> {
     let db = state.biovault_db.lock().unwrap();
+    ensure_processing_columns(db.connection())?;
 
     // Use library function to get queue info (includes time estimates)
     let lib_info = biovault::data::get_queue_info(&db, file_id)

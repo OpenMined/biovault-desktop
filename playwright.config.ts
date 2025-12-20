@@ -9,6 +9,9 @@ const isHeadless = (() => {
 })()
 
 const slowMo = Number.parseInt(process.env.PLAYWRIGHT_SLOWMO ?? '0', 10)
+const workers = process.env.PLAYWRIGHT_WORKERS
+	? Number.parseInt(process.env.PLAYWRIGHT_WORKERS, 10)
+	: undefined
 
 // Skip jupyter tests by default unless INCLUDE_JUPYTER_TESTS is set
 const grepInvert = process.env.INCLUDE_JUPYTER_TESTS
@@ -21,6 +24,7 @@ export default defineConfig({
 	expect: {
 		timeout: 2_000, // Reduced to 2s for element expectations
 	},
+	workers,
 	grepInvert,
 	use: {
 		headless: isHeadless,
