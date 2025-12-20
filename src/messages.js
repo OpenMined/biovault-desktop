@@ -1916,26 +1916,102 @@ export function createMessagesModule({
 							}
 
 							const resultsDir = run.results_dir || run.work_dir
-							const steps = pipeline.spec?.steps || []
-							const publishOutputs = []
-							steps.forEach((step, index) => {
-								if (step.publish && Object.keys(step.publish).length > 0) {
-									Object.entries(step.publish).forEach(([name, spec]) => {
-										const fileName = spec.match(/\\(([^)]+)\\)/)?.[1] || name
-										const outputPath = `${resultsDir}/${step.id}/${fileName}`
-										publishOutputs.push({
-											stepId: step.id,
-											fileName,
-											outputPath,
-											stepIndex: index,
-										})
-									})
-								}
-							})
+							if (!resultsDir) {
+								await dialog.message('Results folder not available for this run.', {
+									title: 'Send Results Error',
+									type: 'error',
+								})
+								return
+							}
 
-							const lastPublishStepIndex = publishOutputs.reduce((latest, output) => {
-								return output.stepIndex > latest ? output.stepIndex : latest
-							}, -1)
+							let treeEntries = []
+							try {
+								treeEntries = await invoke('list_results_tree', { root: resultsDir })
+							} catch (error) {
+								await dialog.message(`Failed to load results folder: ${error?.message || error}`, {
+									title: 'Send Results Error',
+									type: 'error',
+								})
+								return
+							}
+
+							const fileEntries = (treeEntries || []).filter((entry) => !entry.is_dir)
+							if (fileEntries.length === 0) {
+								await dialog.message('No results files found to share yet.', {
+									title: 'Send Results',
+									type: 'info',
+								})
+								return
+							}
+
+							const buildTree = (files) => {
+								const root = { name: 'Results', children: new Map(), files: [] }
+								files.forEach((file) => {
+									const parts = file.path.split('/').filter(Boolean)
+									let node = root
+									parts.forEach((part, idx) => {
+										const isFile = idx === parts.length - 1
+										if (isFile) {
+											node.files.push({
+												name: part,
+												path: file.path,
+												size: file.size_bytes || 0,
+											})
+										} else {
+											if (!node.children.has(part)) {
+												node.children.set(part, {
+													name: part,
+													children: new Map(),
+													files: [],
+												})
+											}
+											node = node.children.get(part)
+										}
+									})
+								})
+								return root
+							}
+
+							const renderTree = (node, prefix = '', isRoot = false) => {
+								const dirPath = isRoot ? '' : prefix ? `${prefix}/${node.name}` : node.name
+								const childPrefix = isRoot ? '' : dirPath
+								const childDirs = Array.from(node.children.values()).sort((a, b) =>
+									a.name.localeCompare(b.name),
+								)
+								const files = [...node.files].sort((a, b) => a.name.localeCompare(b.name))
+
+								const filesHtml = files
+									.map(
+										(file) => `
+											<label class="results-tree-file">
+												<input type="checkbox" data-path="${encodeURIComponent(file.path)}" checked />
+												<span class="results-tree-name">${escapeHtml(file.name)}</span>
+												<span class="results-tree-size">${formatFileSize(file.size)}</span>
+											</label>
+										`,
+									)
+									.join('')
+
+								const childrenHtml = childDirs
+									.map((child) => renderTree(child, childPrefix, false))
+									.join('')
+
+								return `
+									<div class="results-tree-node ${isRoot ? 'root' : ''}">
+										<label class="results-tree-label">
+											<input type="checkbox" data-dir="${encodeURIComponent(dirPath)}" checked />
+											<span class="results-tree-name">${escapeHtml(node.name)}</span>
+										</label>
+										<div class="results-tree-children">
+											${filesHtml}
+											${childrenHtml}
+										</div>
+									</div>
+								`
+							}
+
+							const treeRoot = buildTree(fileEntries)
+							const treeHtml = renderTree(treeRoot, '', true)
 
 							const modal = document.createElement('div')
 							modal.style.cssText =
@@ -1945,44 +2021,67 @@ export function createMessagesModule({
 							card.style.cssText =
 								'background: #ffffff; color: #0f172a; width: min(520px, 92vw); border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,0.25); padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;'
 
-							const outputList = publishOutputs
-								.map((output) => {
-									const checked = output.stepIndex === lastPublishStepIndex
-									const encodedPath = encodeURIComponent(output.outputPath)
-									return `
-										<label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer;">
-											<input type="checkbox" data-output-path="${encodedPath}" ${
-												checked ? 'checked' : ''
-											} style="margin-top: 2px;" />
-											<div>
-												<div style="font-size: 14px; font-weight: 600; color: #0f172a;">${escapeHtml(output.fileName)}</div>
-												<div style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace;">${escapeHtml(
-													output.stepId,
-												)}</div>
-											</div>
-										</label>
-									`
-								})
-								.join('')
-
 							card.innerHTML = `
 								<div style="display:flex; align-items:center; gap:10px;">
 									<div style="font-size: 18px; font-weight: 700;">Send Results</div>
 									<div style="font-size: 12px; color: #64748b; margin-left: auto;">Run #${runId}</div>
 								</div>
-								<div style="font-size: 13px; color: #64748b;">Choose which outputs to share. Defaults to the latest published outputs.</div>
-								<div style="display: flex; flex-direction: column; gap: 10px; max-height: 240px; overflow: auto;">
-									${outputList || '<div style="font-size: 13px; color: #94a3b8;">No published outputs detected.</div>'}
+								<div style="font-size: 13px; color: #64748b;">Select which files to share from the results folder.</div>
+								<div class="results-tree">
+									${treeHtml}
 								</div>
-								<label style="display: flex; gap: 10px; align-items: center; font-size: 13px; color: #475569;">
-									<input type="checkbox" id="send-all-results" />
-									<span>Include full results folder (may include system paths)</span>
-								</label>
 								<div style="display:flex; gap:8px; justify-content:flex-end;">
 									<button id="send-results-cancel" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#0f172a; font-weight:600; cursor:pointer;">Cancel</button>
 									<button id="send-results-confirm" style="padding:10px 14px; border-radius:8px; border:none; background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; font-weight:700; cursor:pointer;">Send</button>
 								</div>
 							`
+
+							const fileChecks = Array.from(
+								card.querySelectorAll('input[type="checkbox"][data-path]'),
+							)
+							const dirChecks = Array.from(
+								card.querySelectorAll('input[type="checkbox"][data-dir]'),
+							)
+							const toggleDescendants = (dirValue, checked) => {
+								const prefix = dirValue ? `${dirValue}/` : ''
+								fileChecks.forEach((input) => {
+									const raw = input.dataset.path || ''
+									let decoded = raw
+									try {
+										decoded = decodeURIComponent(raw)
+									} catch {
+										decoded = raw
+									}
+									if (!prefix || decoded.startsWith(prefix)) {
+										input.checked = checked
+									}
+								})
+								dirChecks.forEach((input) => {
+									const raw = input.dataset.dir || ''
+									let decoded = raw
+									try {
+										decoded = decodeURIComponent(raw)
+									} catch {
+										decoded = raw
+									}
+									if (!prefix || decoded.startsWith(prefix)) {
+										input.checked = checked
+									}
+								})
+							}
+
+							dirChecks.forEach((input) => {
+								input.addEventListener('change', () => {
+									const raw = input.dataset.dir || ''
+									let decoded = raw
+									try {
+										decoded = decodeURIComponent(raw)
+									} catch {
+										decoded = raw
+									}
+									toggleDescendants(decoded, input.checked)
+								})
+							})
 
 							modal.appendChild(card)
 							document.body.appendChild(modal)
@@ -1996,11 +2095,10 @@ export function createMessagesModule({
 							})
 
 							card.querySelector('#send-results-confirm')?.addEventListener('click', async () => {
-								const includeAll = card.querySelector('#send-all-results')?.checked
 								const selected = Array.from(
-									card.querySelectorAll('input[type="checkbox"][data-output-path]:checked'),
+									card.querySelectorAll('input[type="checkbox"][data-path]:checked'),
 								)
-									.map((input) => input.dataset.outputPath)
+									.map((input) => input.dataset.path)
 									.filter(Boolean)
 									.map((value) => {
 										try {
@@ -2010,8 +2108,8 @@ export function createMessagesModule({
 										}
 									})
 
-								if (!includeAll && selected.length === 0) {
-									await dialog.message('Select at least one output or include the full results.', {
+								if (selected.length === 0) {
+									await dialog.message('Select at least one file to share.', {
 										title: 'Send Results',
 										type: 'warning',
 									})
@@ -2023,7 +2121,7 @@ export function createMessagesModule({
 									await invoke('send_pipeline_request_results', {
 										requestId: msg.id,
 										runId,
-										outputPaths: includeAll ? undefined : selected,
+										outputPaths: selected,
 									})
 									await dialog.message('Results sent back to the shared folder.', {
 										title: 'Results Sent',
@@ -2082,11 +2180,25 @@ export function createMessagesModule({
 								openBtn.style.display = ''
 								sendBtn.style.display = ''
 
-								const updateActionState = () => {
+								const updateActionState = async () => {
 									const runId = parseInt(runSelect.value, 10)
 									const hasSelection = Number.isFinite(runId)
 									openBtn.disabled = !hasSelection
-									sendBtn.disabled = !hasSelection
+									let hasResults = false
+									if (hasSelection) {
+										const run = runSelect.__runMap?.get(runId)
+										const resultsDir = run?.results_dir || run?.work_dir
+										if (resultsDir) {
+											try {
+												const entries = await invoke('list_results_tree', { root: resultsDir })
+												hasResults = (entries || []).some((entry) => !entry.is_dir)
+											} catch {
+												hasResults = false
+											}
+										}
+									}
+									sendBtn.disabled = !hasSelection || !hasResults
+									sendBtn.style.display = hasResults ? '' : 'none'
 								}
 								runSelect.addEventListener('change', updateActionState)
 								updateActionState()

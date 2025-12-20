@@ -3,6 +3,7 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
+use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
 use chrono::Utc;
@@ -113,6 +114,56 @@ fn copy_pipeline_folder(
     }
 
     Ok(())
+}
+
+fn collect_pipeline_projects(
+    spec: &PipelineSpec,
+    pipeline_root: &Path,
+    db: &biovault::data::BioVaultDb,
+) -> Result<Vec<PathBuf>, String> {
+    let mut projects = HashSet::new();
+
+    for step in &spec.steps {
+        let Some(uses) = step.uses.as_ref() else {
+            continue;
+        };
+
+        if uses.starts_with("http://")
+            || uses.starts_with("https://")
+            || uses.starts_with("syft://")
+        {
+            continue;
+        }
+
+        if uses.starts_with('/') {
+            let candidate = PathBuf::from(uses);
+            if candidate.exists() {
+                projects.insert(candidate);
+            }
+            continue;
+        }
+
+        if uses.starts_with('.') || uses.contains('/') || uses.contains('\\') {
+            let candidate = pipeline_root.join(uses);
+            if candidate.exists() {
+                let should_include = match (candidate.canonicalize(), pipeline_root.canonicalize())
+                {
+                    (Ok(candidate_path), Ok(root_path)) => !candidate_path.starts_with(root_path),
+                    _ => false,
+                };
+                if should_include {
+                    projects.insert(candidate);
+                }
+                continue;
+            }
+        }
+
+        if let Ok(Some(project)) = db.get_project(uses) {
+            projects.insert(PathBuf::from(project.project_path));
+        }
+    }
+
+    Ok(projects.into_iter().collect())
 }
 
 fn copy_results_folder_filtered(
@@ -227,6 +278,57 @@ fn copy_results_to_unencrypted(
     }
 
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct ResultsTreeEntry {
+    pub path: String,
+    pub is_dir: bool,
+    pub size_bytes: Option<u64>,
+}
+
+#[tauri::command]
+pub fn list_results_tree(root: String) -> Result<Vec<ResultsTreeEntry>, String> {
+    let root_path = PathBuf::from(&root);
+    if !root_path.exists() {
+        return Err(format!(
+            "Results folder not found at {}",
+            root_path.display()
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for entry in WalkDir::new(&root_path)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(&root_path)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let is_dir = entry.file_type().is_dir();
+        let size_bytes = if is_dir {
+            None
+        } else {
+            Some(entry.metadata().map(|m| m.len()).unwrap_or(0))
+        };
+
+        entries.push(ResultsTreeEntry {
+            path: rel.to_string_lossy().to_string(),
+            is_dir,
+            size_bytes,
+        });
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
 }
 
 pub fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
@@ -794,6 +896,9 @@ pub fn send_pipeline_request(
     let pipeline_spec: serde_yaml::Value = serde_yaml::from_str(&pipeline_content)
         .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
 
+    let pipeline_spec_struct: PipelineSpec = serde_yaml::from_str(&pipeline_content)
+        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
+
     let submission_root = config
         .get_shared_submissions_path()
         .map_err(|e| format!("Failed to resolve submissions folder: {}", e))?;
@@ -815,6 +920,27 @@ pub fn send_pipeline_request(
         &submission_path,
         &recipient,
     )?;
+
+    let project_paths = collect_pipeline_projects(
+        &pipeline_spec_struct,
+        Path::new(&pipeline.pipeline_path),
+        &biovault_db,
+    )?;
+    let projects_dest_root = submission_path.join("projects");
+    let mut included_projects: Vec<String> = Vec::new();
+    let mut seen_project_dirs = HashSet::new();
+    for project_path in project_paths {
+        let Some(project_dir_name) = project_path.file_name() else {
+            continue;
+        };
+        let project_dir_name = project_dir_name.to_string_lossy().to_string();
+        if !seen_project_dirs.insert(project_dir_name.clone()) {
+            continue;
+        }
+        let dest_path = projects_dest_root.join(&project_dir_name);
+        copy_pipeline_folder(&storage, &project_path, &dest_path, &recipient)?;
+        included_projects.push(project_dir_name);
+    }
 
     // Write permissions file for recipient access and results write-back
     let perms = SyftPermissions::new_for_datasite(&recipient);
@@ -862,6 +988,7 @@ pub fn send_pipeline_request(
             "submission_id": submission_folder_name,
             "sender_local_path": sender_local_path,
             "receiver_local_path_template": receiver_local_path_template,
+            "projects": included_projects,
         }
     }));
 

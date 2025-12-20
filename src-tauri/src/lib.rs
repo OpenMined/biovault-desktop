@@ -1043,6 +1043,7 @@ pub fn run() {
             sync_messages_with_failures,
             send_pipeline_request,
             send_pipeline_request_results,
+            list_results_tree,
             import_pipeline_results,
             send_pipeline_results,
             // Projects commands

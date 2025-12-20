@@ -6315,7 +6315,7 @@ steps:${
 		// Create modal HTML
 		const modalHtml = `
 			<div id="request-pipeline-modal" class="modal-overlay">
-				<div class="modal-container" style="max-width: 500px;">
+				<div class="modal-content request-pipeline-modal">
 					<div class="modal-header">
 						<h3>Request Pipeline Run</h3>
 						<button class="modal-close" onclick="document.getElementById('request-pipeline-modal').remove()">
@@ -6393,7 +6393,7 @@ steps:${
 		try {
 			// Send the pipeline request via messaging system
 			// This will package the pipeline and send it as a message
-			await invoke('send_pipeline_request', {
+			const sentMessage = await invoke('send_pipeline_request', {
 				pipelineName: pipeline.name,
 				pipelineVersion: pipeline.version || '1.0.0',
 				datasetName,
@@ -6413,6 +6413,15 @@ steps:${
 					{ title: 'Request Sent', type: 'info' },
 				)
 			}
+
+			const threadId = sentMessage?.thread_id || `pipeline-${pipeline.name}:${datasetName}`
+			if (typeof window.navigateTo === 'function') {
+				window.navigateTo('messages')
+			}
+			setTimeout(() => {
+				window.__messagesModule?.loadMessageThreads?.(true)
+				window.__messagesModule?.openThread?.(threadId)
+			}, 250)
 		} catch (error) {
 			console.error('Failed to send pipeline request:', error)
 			const errorMsg = error?.message || String(error) || 'Unknown error'
