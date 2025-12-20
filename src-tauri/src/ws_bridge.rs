@@ -618,6 +618,16 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "list_results_tree" => {
+            let root: String = serde_json::from_value(
+                args.get("root")
+                    .cloned()
+                    .ok_or_else(|| "Missing root".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse root: {}", e))?;
+            let result = crate::list_results_tree(root).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "send_pipeline_results" => {
             let recipient: String = serde_json::from_value(
                 args.get("recipient")

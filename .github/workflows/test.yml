@@ -84,6 +84,34 @@ jobs:
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
+          # pipelines-collab on Linux - rust
+          - scenario: pipelines-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-collab on Linux - go
+          - scenario: pipelines-collab
+            platform: linux-x86_64
+            runner: ubuntu-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # pipelines-collab on macOS ARM - rust
+          - scenario: pipelines-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # pipelines-collab on macOS ARM - go
+          - scenario: pipelines-collab
+            platform: macos-arm64
+            runner: macos-latest
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
 
     defaults:
       run:
@@ -180,8 +208,8 @@ jobs:
             build-essential \
             pkg-config
 
-      - name: Setup Docker (macOS Intel - for pipelines-solo)
-        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+      - name: Setup Docker (macOS - pipelines scenarios)
+        if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
         uses: docker/setup-docker-action@v4
 
       - name: Install npm dependencies
@@ -267,6 +295,13 @@ jobs:
           AUTO_REBUILD_TAURI: "0"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
 
+      - name: Run pipelines collab scenario
+        if: matrix.scenario == 'pipelines-collab'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
+
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -283,7 +318,7 @@ jobs:
   release-build-test:
     name: Build ${{ matrix.target }}-${{ matrix.syftbox_impl }}
     runs-on: ${{ matrix.runner }}
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'main')
     strategy:
       fail-fast: false
       matrix:
@@ -576,4 +611,3 @@ jobs:
         run: |
           echo "Build log:"
           cat tauri-build.log || true
-
