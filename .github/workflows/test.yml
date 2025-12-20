@@ -219,6 +219,28 @@ jobs:
           cd biovault/syftbox-sdk/python
           maturin build --release
 
+      - name: Install biosynth CLI (Linux)
+        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
+        run: |
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv bvs /usr/local/bin/
+          bvs --version
+
+      - name: Install biosynth CLI (macOS)
+        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        run: |
+          curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
+          sudo mv bvs /usr/local/bin/
+          bvs --version
+
+      - name: Cache genostats database
+        if: matrix.scenario == 'pipelines-solo'
+        id: cache-genostats
+        uses: actions/cache@v4
+        with:
+          path: data/genostats.sqlite
+          key: genostats-v1
+
       - name: Run Jupyter collab scenario
         if: matrix.scenario == 'jupyter-collab'
         env:
