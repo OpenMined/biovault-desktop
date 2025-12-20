@@ -52,9 +52,10 @@ fn should_skip_pipeline_path(rel: &Path) -> bool {
     ];
 
     rel.components().any(|component| {
-        component.as_os_str().to_str().map_or(false, |name| {
-            skip_dirs.iter().any(|skip| skip == &name)
-        })
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| skip_dirs.iter().any(|skip| skip == &name))
     })
 }
 
@@ -85,9 +86,9 @@ fn copy_pipeline_folder(
 
         let dest_path = dest.join(rel);
         if entry.file_type().is_dir() {
-            storage
-                .ensure_dir(&dest_path)
-                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            storage.ensure_dir(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
             continue;
         }
 
@@ -101,7 +102,13 @@ fn copy_pipeline_folder(
 
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| format!("Failed to write pipeline file {}: {}", dest_path.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to write pipeline file {}: {}",
+                    dest_path.display(),
+                    e
+                )
+            })?;
     }
 
     Ok(())
@@ -134,9 +141,9 @@ fn copy_results_folder(
 
         let dest_path = dest.join(rel);
         if entry.file_type().is_dir() {
-            storage
-                .ensure_dir(&dest_path)
-                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            storage.ensure_dir(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
             continue;
         }
 
@@ -150,7 +157,13 @@ fn copy_results_folder(
 
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| format!("Failed to write results file {}: {}", dest_path.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to write results file {}: {}",
+                    dest_path.display(),
+                    e
+                )
+            })?;
     }
 
     Ok(())
@@ -704,7 +717,8 @@ pub fn send_pipeline_request(
         .find(|p| p.name == pipeline_name)
         .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
 
-    let pipeline_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
+    let pipeline_yaml_path =
+        std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
     if !pipeline_yaml_path.exists() {
         return Err(format!(
             "Pipeline '{}' not found at {:?}",
@@ -748,7 +762,12 @@ pub fn send_pipeline_request(
         .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
     let perms_path = submission_path.join("syft.pub.yaml");
     storage
-        .write_with_shadow(&perms_path, perms_yaml.as_bytes(), WritePolicy::Plaintext, true)
+        .write_with_shadow(
+            &perms_path,
+            perms_yaml.as_bytes(),
+            WritePolicy::Plaintext,
+            true,
+        )
         .map_err(|e| format!("Failed to write permissions: {}", e))?;
 
     let datasite_root = config

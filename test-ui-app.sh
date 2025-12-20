@@ -31,6 +31,7 @@ if [[ "${INTERACTIVE}" -eq 1 ]]; then
     info "Interactive mode enabled (headed browser)"
     export PLAYWRIGHT_HEADLESS=false
     export PLAYWRIGHT_SLOWMO="${PLAYWRIGHT_SLOWMO:-100}"
+    export INTERACTIVE_MODE=1
 fi
 
 # Allow opting out of repeated browser downloads

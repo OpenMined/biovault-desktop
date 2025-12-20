@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './playwright-fixtures'
 
 test.describe('Onboarding chaos smoke @chaos @onboarding', () => {
 	test('shows onboarding and skips dependencies', async ({ page }) => {

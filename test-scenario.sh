@@ -35,6 +35,7 @@ WARM_CACHE=0  # Set after arg parsing (scenario-dependent default)
 WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
+CLEANUP_ACTIVE=0
 
 show_usage() {
 	cat <<EOF
@@ -47,6 +48,7 @@ Scenario Options (pick one):
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
+  --pipelines-gwas     Run GWAS pipeline UI test only (single client)
   --pipelines-collab   Run two-client pipeline collaboration test
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -64,12 +66,16 @@ Environment Variables (pipelines-solo):
   FORCE_REGEN_SYNTHETIC=1   Force regenerate synthetic data even if it exists
   CLEANUP_SYNTHETIC=1       Remove synthetic data after test (default: keep for reuse)
 
+Environment Variables (pipelines-gwas):
+  GWAS_DATA_DIR             GWAS dataset directory (default: /Users/madhavajay/dev/biovaults/datasets/jordan_gwas)
+
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
   ./test-scenario.sh --messaging        # Run just messaging scenario
   ./test-scenario.sh --interactive      # Run all with visible browser
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
   ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
+  ./test-scenario.sh --pipelines-gwas   # Run GWAS pipeline test
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
 EOF
 }
@@ -98,6 +104,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--pipelines-solo)
 			SCENARIO="pipelines-solo"
+			shift
+			;;
+		--pipelines-gwas)
+			SCENARIO="pipelines-gwas"
 			shift
 			;;
 		--pipelines-collab)
@@ -195,6 +205,20 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 info() { printf "\033[1;36m[scenario]\033[0m %s\n" "$1"; }
 
+pause_for_interactive_exit() {
+	if [[ "${PLAYWRIGHT_INTERACTIVE_PAUSE:-0}" == "1" ]]; then
+		return
+	fi
+	if [[ "${INTERACTIVE_MODE:-0}" == "1" && "${WAIT_MODE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "1" ]]; then
+		if [[ -t 0 ]]; then
+			printf "\n\033[1;36m[scenario]\033[0m Interactive mode: press Enter to close servers and exit.\n"
+			read -r || true
+		else
+			info "Interactive mode requested but no TTY available; proceeding to shutdown."
+		fi
+	fi
+}
+
 timing_enabled() {
 	[[ "$TIMING" == "1" || "$TIMING" == "true" || "$TIMING" == "yes" ]]
 }
@@ -223,6 +247,11 @@ declare -a TIMER_SUMMARY=()
 SCRIPT_START_MS=""
 if timing_enabled; then
 	SCRIPT_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+fi
+
+if [[ "${INTERACTIVE_MODE}" == "1" ]]; then
+	export PLAYWRIGHT_INTERACTIVE_PAUSE="${PLAYWRIGHT_INTERACTIVE_PAUSE:-1}"
+	export INTERACTIVE_MODE
 fi
 
 timer_push() {
@@ -469,6 +498,12 @@ wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT
 }
 
 cleanup() {
+	if [[ "$CLEANUP_ACTIVE" == "1" ]]; then
+		return
+	fi
+	CLEANUP_ACTIVE=1
+	pause_for_interactive_exit
+
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
 		kill "$SERVER_PID" 2>/dev/null || true
@@ -726,16 +761,32 @@ start_static_server() {
 	exit 1
 }
 
+resolve_tauri_profile() {
+	local profile="${TAURI_PROFILE:-release}"
+	if [[ "$TAURI_BINARY" == *"/target/debug/"* ]]; then
+		profile="debug"
+	fi
+	echo "$profile"
+}
+
 assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
-	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
+	local profile
+	profile="$(resolve_tauri_profile)"
+	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY (profile=$profile)"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
 		# Binary doesn't exist - auto-build if AUTO_REBUILD_TAURI is enabled (default)
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
-			info "Tauri binary not found, building (cd src-tauri && cargo build --release)..."
-			timer_push "Cargo build (tauri release - initial)"
-			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			if [[ "$profile" == "debug" ]]; then
+				info "Tauri binary not found, building debug (cd src-tauri && cargo build)..."
+				timer_push "Cargo build (tauri debug - initial)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build) >&2
+			else
+				info "Tauri binary not found, building release (cd src-tauri && cargo build --release)..."
+				timer_push "Cargo build (tauri release - initial)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			fi
 			timer_pop
 			# Verify build succeeded
 			if [[ ! -x "$TAURI_BINARY" ]]; then
@@ -760,6 +811,8 @@ assert_tauri_binary_fresh() {
 	# Guardrail: stale binaries silently break harness assumptions (e.g. env var parsing).
 	info "[DEBUG] assert_tauri_binary_fresh: checking if binary is up to date"
 	info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+	local profile
+	profile="$(resolve_tauri_profile)"
 	info "[DEBUG] Binary mtime: $(stat -f '%Sm' "$TAURI_BINARY" 2>/dev/null || stat -c '%y' "$TAURI_BINARY" 2>/dev/null || echo 'unknown')"
 
 	local newer=""
@@ -795,9 +848,15 @@ assert_tauri_binary_fresh() {
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
 		info "[DEBUG] AUTO_REBUILD_TAURI=$auto_rebuild"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
-			echo "Rebuilding (cd src-tauri && cargo build --release)..." >&2
-			timer_push "Cargo build (tauri release)"
-			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			if [[ "$profile" == "debug" ]]; then
+				echo "Rebuilding debug (cd src-tauri && cargo build)..." >&2
+				timer_push "Cargo build (tauri debug)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build) >&2
+			else
+				echo "Rebuilding release (cd src-tauri && cargo build --release)..." >&2
+				timer_push "Cargo build (tauri release)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			fi
 			timer_pop
 			return 0
 		fi
@@ -1202,6 +1261,14 @@ PY
 		start_static_server
 		# Pipelines tests only need a single client; keep it lightweight.
 		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ ! -x "$TAURI_BINARY" ]]; then
+			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
+			if [[ -x "$debug_bin" ]]; then
+				info "Release Tauri binary not found; using debug binary at $debug_bin"
+				TAURI_BINARY="$debug_bin"
+				export TAURI_PROFILE=debug
+			fi
+		fi
 		if [[ -x "$TAURI_BINARY" ]]; then
 			assert_tauri_binary_fresh
 			timer_push "Tauri instance start (single)"
@@ -1221,6 +1288,40 @@ PY
 		# Run pipelines UI flow (dataset + pipeline e2e)
 		timer_push "Playwright: pipelines-solo"
 		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
+		;;
+	pipelines-gwas)
+		start_static_server
+		# GWAS pipelines test only needs a single client; keep it lightweight.
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ ! -x "$TAURI_BINARY" ]]; then
+			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
+			if [[ -x "$debug_bin" ]]; then
+				info "Release Tauri binary not found; using debug binary at $debug_bin"
+				TAURI_BINARY="$debug_bin"
+				export TAURI_PROFILE=debug
+			fi
+		fi
+		if [[ -x "$TAURI_BINARY" ]]; then
+			assert_tauri_binary_fresh
+			timer_push "Tauri instance start (single)"
+			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+			info "Waiting for WS bridge..."
+			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+			timer_pop
+			export USE_REAL_INVOKE=true
+			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		else
+			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
+			export USE_REAL_INVOKE=false
+		fi
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		GWAS_DATA_DIR="${GWAS_DATA_DIR:-/Users/madhavajay/dev/biovaults/datasets/jordan_gwas}"
+		export GWAS_DATA_DIR
+
+		timer_push "Playwright: pipelines-gwas"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" GWAS_DATA_DIR="$GWAS_DATA_DIR" bun run test:ui tests/ui/pipelines-gwas.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		timer_pop
 		;;
 	jupyter)

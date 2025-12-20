@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './playwright-fixtures'
 import WebSocket from 'ws'
 import { waitForAppReady, navigateToTab, ensureNotInOnboarding } from './test-helpers.js'
 

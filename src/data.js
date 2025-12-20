@@ -1967,6 +1967,64 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		resetDatasetEditor()
 	}
 
+	function extractAssetFilename(filePath) {
+		if (!filePath) return null
+		const trimmed = filePath.split('#')[0].replace(/\/+$/, '')
+		const parts = trimmed.split('/')
+		const name = parts[parts.length - 1]
+		return name || null
+	}
+
+	function inferDatasetShapeFromAssets(assets) {
+		if (!Array.isArray(assets) || assets.length === 0) return null
+		if (assets.some((asset) => asset.mode === 'list')) {
+			return 'List[GenotypeRecord]'
+		}
+
+		const filePaths = []
+		assets.forEach((asset) => {
+			if (!asset) return
+			if (asset.mode === 'single') {
+				if (asset.private?.file_path) filePaths.push(asset.private.file_path)
+				if (asset.mock?.file_path) filePaths.push(asset.mock.file_path)
+			} else {
+				const privateFiles = asset.private || []
+				const mockFiles = asset.mock || []
+				privateFiles.forEach((f) => f?.file_path && filePaths.push(f.file_path))
+				mockFiles.forEach((f) => f?.file_path && filePaths.push(f.file_path))
+			}
+		})
+
+		if (filePaths.length === 0) return null
+
+		const groups = new Map()
+		filePaths.forEach((path) => {
+			const filename = extractAssetFilename(path)
+			if (!filename) return
+			const dot = filename.lastIndexOf('.')
+			if (dot <= 0) return
+			const stem = filename.slice(0, dot)
+			const ext = filename.slice(dot + 1).toLowerCase()
+			if (!['bed', 'bim', 'fam'].includes(ext)) return
+			if (!groups.has(stem)) {
+				groups.set(stem, new Set())
+			}
+			groups.get(stem).add(ext)
+		})
+
+		if (groups.size > 0) {
+			const allComplete = Array.from(groups.values()).every(
+				(exts) => exts.has('bed') && exts.has('bim') && exts.has('fam'),
+			)
+			if (allComplete) {
+				return 'Map[String, Record{bed: File, bim: File, fam: File}]'
+			}
+		}
+
+		if (filePaths.length === 1) return 'File'
+		return 'Map[String, File]'
+	}
+
 	async function collectManifestFromForm() {
 		const name = document.getElementById('dataset-form-name')?.value?.trim()
 		const description = document.getElementById('dataset-form-description')?.value?.trim()
@@ -2256,6 +2314,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			public_url,
 			private_url,
 			assets,
+			shape: inferDatasetShapeFromAssets(datasetAssets),
 			private_files: privateFiles,
 			mock_files: mockFiles,
 		}
@@ -3222,6 +3281,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			// Sync to sessionStorage so pipelines view can detect it
 			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetShape')
+			sessionStorage.removeItem('preselectedDatasetDataType')
 		} else {
 			// Clear if nothing selected
 			sessionStorage.removeItem('preselectedFileIds')

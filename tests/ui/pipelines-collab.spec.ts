@@ -19,7 +19,7 @@
  *
  * @tag pipelines-collab
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -192,7 +192,9 @@ function timer(label: string) {
 }
 
 test.describe('Pipelines Collaboration @pipelines-collab', () => {
-	test('two clients collaborate on pipeline run and share results', async ({ browser }) => {
+	test('two clients collaborate on pipeline run and share results', async ({
+		browser,
+	}, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const wsPort2 = wsPort1 + 1
@@ -908,15 +910,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('  ✓ Client1 received request and ran pipeline')
 			console.log('  ✓ Client1 shared results back')
 
-			// Pause for inspection in interactive mode
-			const isInteractive = process.env.INTERACTIVE_MODE === '1'
-			if (isInteractive) {
-				console.log('Interactive mode: Pausing for inspection...')
-				await page1.waitForTimeout(30_000)
-			}
-
 			testTimer.stop()
 		} finally {
+			await pauseForInteractive(testInfo)
 			if (logSocket) {
 				logSocket.close()
 			}

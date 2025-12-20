@@ -613,8 +613,9 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .unwrap_or_else(|| serde_json::json!("")),
             )
             .unwrap_or_default();
-            let result = crate::send_pipeline_results(recipient, pipeline_name, run_id, outputs, message)
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::send_pipeline_results(recipient, pipeline_name, run_id, outputs, message)
+                    .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
 
@@ -1040,9 +1041,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("spec")
                 .cloned()
                 .ok_or_else(|| "Missing spec".to_string())?;
-            let result = crate::commands::pipelines::import_pipeline_from_message(state.clone(), name, version, spec)
-                .await
-                .map_err(|e| e.to_string())?;
+            let result = crate::commands::pipelines::import_pipeline_from_message(
+                state.clone(),
+                name,
+                version,
+                spec,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "import_pipeline_from_request" => {
