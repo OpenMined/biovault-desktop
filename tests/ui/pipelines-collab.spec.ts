@@ -101,6 +101,31 @@ async function connectBackend(port: number): Promise<Backend> {
 	return { invoke, close }
 }
 
+async function pauseForInteractiveMode(timeoutMs = 30_000): Promise<void> {
+	if (process.env.INTERACTIVE_MODE !== '1') return
+	const seconds = Math.round(timeoutMs / 1000)
+	console.log(`Interactive mode: Press ENTER to finish and exit (or wait ${seconds}s)`)
+	await new Promise<void>((resolve) => {
+		const stdin = process.stdin
+		const done = () => {
+			if (stdin) {
+				stdin.off('data', onData)
+				stdin.pause()
+			}
+			resolve()
+		}
+		const onData = () => {
+			clearTimeout(timer)
+			done()
+		}
+		const timer = setTimeout(done, timeoutMs)
+		if (stdin) {
+			stdin.resume()
+			stdin.once('data', onData)
+		}
+	})
+}
+
 function resolveDatasitesRoot(dataDir: string): string {
 	return path.basename(dataDir) === 'datasites' ? dataDir : path.join(dataDir, 'datasites')
 }
@@ -1082,15 +1107,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('  ✓ Client1 shared private results back')
 			console.log('  ✓ Client2 imported private results (unencrypted)')
 
-			// Pause for inspection in interactive mode
-			const isInteractive = process.env.INTERACTIVE_MODE === '1'
-			if (isInteractive) {
-				console.log('Interactive mode: Pausing for inspection...')
-				await page1.waitForTimeout(30_000)
-			}
-
 			testTimer.stop()
 		} finally {
+			await pauseForInteractiveMode()
 			if (logSocket) {
 				logSocket.close()
 			}

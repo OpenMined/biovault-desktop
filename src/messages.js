@@ -1795,6 +1795,17 @@ export function createMessagesModule({
 
 					const actions = document.createElement('div')
 					actions.className = 'invite-actions'
+					let runActions = null
+					let runButtons = null
+
+					const updateRunButtons = (pipeline) => {
+						if (!runButtons) return
+						const enabled = Boolean(pipeline && pipelineRequest.dataset_name)
+						runButtons.pipeline = pipeline || null
+						runButtons.mock.disabled = !enabled
+						runButtons.real.disabled = !enabled
+						runButtons.both.disabled = !enabled
+					}
 
 					if (!group.isOutgoing) {
 						const importBtn = document.createElement('button')
@@ -1819,6 +1830,16 @@ export function createMessagesModule({
 									`Pipeline "${pipelineRequest.pipeline_name}" imported successfully!\n\nGo to Pipelines tab to view and run it.`,
 									{ title: 'Pipeline Imported', type: 'info' },
 								)
+
+								try {
+									const pipelines = await invoke('get_pipelines')
+									const pipeline = (pipelines || []).find(
+										(p) => p?.name === pipelineRequest.pipeline_name,
+									)
+									updateRunButtons(pipeline)
+								} catch (error) {
+									console.warn('Failed to refresh pipeline availability:', error)
+								}
 							} catch (error) {
 								console.error('Failed to import pipeline:', error)
 								await dialog.message('Failed to import pipeline: ' + (error?.message || error), {
@@ -1859,6 +1880,61 @@ export function createMessagesModule({
 					requestCard.appendChild(actions)
 
 					if (!group.isOutgoing) {
+						runActions = document.createElement('div')
+						runActions.className = 'invite-actions'
+
+						const runMockBtn = document.createElement('button')
+						runMockBtn.textContent = 'Run Mock'
+						runMockBtn.className = 'secondary'
+						runMockBtn.disabled = true
+
+						const runRealBtn = document.createElement('button')
+						runRealBtn.textContent = 'Run Real'
+						runRealBtn.className = 'secondary'
+						runRealBtn.disabled = true
+
+						const runBothBtn = document.createElement('button')
+						runBothBtn.textContent = 'Run Both'
+						runBothBtn.disabled = true
+
+						runButtons = { mock: runMockBtn, real: runRealBtn, both: runBothBtn, pipeline: null }
+
+						const runWithType = async (dataType) => {
+							const pipeline = runButtons?.pipeline
+							if (!pipeline) {
+								await dialog.message('Import the pipeline first before running.', {
+									title: 'Pipeline Required',
+									type: 'warning',
+								})
+								return
+							}
+							if (!pipelineRequest.dataset_name) {
+								await dialog.message('Dataset name missing from this request.', {
+									title: 'Missing Dataset',
+									type: 'error',
+								})
+								return
+							}
+							if (window.__pipelinesModule?.openRunPipelineWithDataset) {
+								window.__pipelinesModule.openRunPipelineWithDataset({
+									name: pipelineRequest.dataset_name,
+									dataType,
+									pipelineId: pipeline.id,
+								})
+							} else if (typeof window.navigateTo === 'function') {
+								window.navigateTo('pipelines')
+							}
+						}
+
+						runMockBtn.addEventListener('click', () => runWithType('mock'))
+						runRealBtn.addEventListener('click', () => runWithType('real'))
+						runBothBtn.addEventListener('click', () => runWithType('both'))
+
+						runActions.appendChild(runMockBtn)
+						runActions.appendChild(runRealBtn)
+						runActions.appendChild(runBothBtn)
+						requestCard.appendChild(runActions)
+
 						const resultsActions = document.createElement('div')
 						resultsActions.className = 'invite-actions'
 
@@ -1984,7 +2060,9 @@ export function createMessagesModule({
 									.map(
 										(file) => `
 											<label class="results-tree-file">
-												<input type="checkbox" data-path="${encodeURIComponent(file.path)}" checked />
+												<input type="checkbox" data-output-path="${encodeURIComponent(
+													file.path,
+												)}" data-path="${encodeURIComponent(file.path)}" checked />
 												<span class="results-tree-name">${escapeHtml(file.name)}</span>
 												<span class="results-tree-size">${formatFileSize(file.size)}</span>
 											</label>
@@ -2037,7 +2115,7 @@ export function createMessagesModule({
 							`
 
 							const fileChecks = Array.from(
-								card.querySelectorAll('input[type="checkbox"][data-path]'),
+								card.querySelectorAll('input[type="checkbox"][data-output-path]'),
 							)
 							const dirChecks = Array.from(
 								card.querySelectorAll('input[type="checkbox"][data-dir]'),
@@ -2045,7 +2123,7 @@ export function createMessagesModule({
 							const toggleDescendants = (dirValue, checked) => {
 								const prefix = dirValue ? `${dirValue}/` : ''
 								fileChecks.forEach((input) => {
-									const raw = input.dataset.path || ''
+									const raw = input.dataset.outputPath || input.dataset.path || ''
 									let decoded = raw
 									try {
 										decoded = decodeURIComponent(raw)
@@ -2096,9 +2174,9 @@ export function createMessagesModule({
 
 							card.querySelector('#send-results-confirm')?.addEventListener('click', async () => {
 								const selected = Array.from(
-									card.querySelectorAll('input[type="checkbox"][data-path]:checked'),
+									card.querySelectorAll('input[type="checkbox"][data-output-path]:checked'),
 								)
-									.map((input) => input.dataset.path)
+									.map((input) => input.dataset.outputPath || input.dataset.path)
 									.filter(Boolean)
 									.map((value) => {
 										try {
@@ -2153,6 +2231,7 @@ export function createMessagesModule({
 								const pipeline = (pipelines || []).find(
 									(p) => p?.name === pipelineRequest.pipeline_name,
 								)
+								updateRunButtons(pipeline)
 								if (!pipeline) {
 									runSelect.innerHTML = '<option value="">Import pipeline first</option>'
 									return
