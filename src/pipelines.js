@@ -32,6 +32,7 @@ export function createPipelinesModule({
 		},
 		pendingDataRun: null,
 		dataRunModalOpen: false,
+		lastAutoOpenKey: null,
 	}
 
 	// Load pipelines list
@@ -78,6 +79,7 @@ export function createPipelinesModule({
 			})
 
 			pipelineState.pipelines = pipelines
+			logPipelineDebug('loadPipelines', pipelines)
 
 			renderDataRunBanner()
 
@@ -315,10 +317,33 @@ export function createPipelinesModule({
 			}
 		}
 
+		let assetKeys = []
+		const assetKeysRaw = sessionStorage.getItem('preselectedAssetKeys')
+		if (assetKeysRaw) {
+			try {
+				const parsedKeys = JSON.parse(assetKeysRaw)
+				if (Array.isArray(parsedKeys)) {
+					assetKeys = parsedKeys.filter((value) => typeof value === 'string' && value)
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedAssetKeys:', error)
+			}
+		}
+
+		const datasetNameRaw = sessionStorage.getItem('preselectedDatasetName')
+		const datasetOwnerRaw = sessionStorage.getItem('preselectedDatasetOwner')
+		const dataTypeRaw = sessionStorage.getItem('preselectedDataType')
+		const dataSourceRaw = sessionStorage.getItem('preselectedDataSource')
+
 		const context = {
 			urls: urls.length > 0 ? urls : null,
 			fileIds: fileIds.length > 0 ? fileIds : null,
 			participantIds,
+			datasetName: datasetNameRaw && datasetNameRaw.trim() ? datasetNameRaw : null,
+			datasetOwner: datasetOwnerRaw && datasetOwnerRaw.trim() ? datasetOwnerRaw : null,
+			assetKeys,
+			dataType: dataTypeRaw && dataTypeRaw.trim() ? dataTypeRaw : null,
+			dataSource: dataSourceRaw && dataSourceRaw.trim() ? dataSourceRaw : null,
 		}
 
 		// Cache for performance, but will be cleared on next check if sessionStorage changed
@@ -337,6 +362,11 @@ export function createPipelinesModule({
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
+			sessionStorage.removeItem('preselectedDataType')
+			sessionStorage.removeItem('preselectedDataSource')
 		} catch (error) {
 			console.warn('Failed to clear preselected session data:', error)
 		}
@@ -605,6 +635,7 @@ export function createPipelinesModule({
 		}
 
 		const context = getPendingDataRunContext()
+		logDataRunContext('startDataDrivenRun', context)
 		const hasData =
 			context &&
 			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
@@ -622,6 +653,7 @@ export function createPipelinesModule({
 		)
 
 		if (eligiblePipelines.length === 0) {
+			logPipelineDebug('startDataDrivenRun no eligible pipelines', pipelineState.pipelines || [])
 			alert('No pipelines are available that accept a List[GenotypeRecord] input.')
 			clearDataRunContext()
 			return false
@@ -717,6 +749,7 @@ export function createPipelinesModule({
 	// Public function to show modal directly (called from Data tab)
 	async function showDataRunModalDirect() {
 		const context = getPendingDataRunContext()
+		logDataRunContext('showDataRunModalDirect', context)
 		const hasData =
 			context &&
 			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
@@ -734,6 +767,10 @@ export function createPipelinesModule({
 		)
 
 		if (eligiblePipelines.length === 0) {
+			logPipelineDebug(
+				'showDataRunModalDirect no eligible pipelines',
+				pipelineState.pipelines || [],
+			)
 			if (dialog && dialog.message) {
 				await dialog.message(
 					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
@@ -807,6 +844,40 @@ export function createPipelinesModule({
 			if (inputSpec.rawType) return inputSpec.rawType
 		}
 		return ''
+	}
+
+	function logPipelineDebug(label, pipelines) {
+		if (!pipelines || pipelines.length === 0) {
+			console.log(`[Pipelines Debug] ${label}: no pipelines`)
+			return
+		}
+
+		const summary = pipelines.map((pipeline) => {
+			const inputs = pipeline?.spec?.inputs || {}
+			const inputTypes = Object.entries(inputs).map(([key, spec]) => {
+				const typeStr = describeInputType(spec)
+				return typeStr ? `${key}:${typeStr}` : key
+			})
+
+			return {
+				id: pipeline?.id,
+				name: pipeline?.name,
+				inputs: inputTypes,
+				steps: pipeline?.spec?.steps?.length || 0,
+				acceptsGenotype: pipelineAcceptsGenotypeInput(pipeline),
+			}
+		})
+
+		console.log(`[Pipelines Debug] ${label}`, summary)
+	}
+
+	function logDataRunContext(label, context) {
+		console.log(`[Pipelines Debug] ${label} context`, {
+			hasContext: Boolean(context),
+			urls: context?.urls?.length || 0,
+			fileIds: context?.fileIds?.length || 0,
+			participantIds: context?.participantIds?.length || 0,
+		})
 	}
 
 	function pipelineAcceptsGenotypeInput(pipeline) {
@@ -1214,6 +1285,11 @@ export function createPipelinesModule({
 							urls: context.urls || [],
 							fileIds: context.fileIds || [],
 							participantIds: context.participantIds || [],
+							datasetName: context.datasetName || null,
+							datasetOwner: context.datasetOwner || null,
+							assetKeys: context.assetKeys || [],
+							dataType: context.dataType || null,
+							dataSource: context.dataSource || null,
 						},
 					})
 
@@ -4246,6 +4322,31 @@ steps:${
 		// Use storage event (works across tabs) and also poll when Pipelines view is active
 		let bannerCheckInterval = null
 
+		async function maybeAutoOpenDataRunModal() {
+			if (pipelineState.dataRunModalOpen) return
+			const context = getPendingDataRunContext()
+			const hasData =
+				context &&
+				((context.urls && context.urls.length > 0) ||
+					(context.fileIds && context.fileIds.length > 0))
+			if (!hasData) return
+
+			const contextKey = JSON.stringify({
+				urls: context.urls || [],
+				fileIds: context.fileIds || [],
+				participants: context.participantIds || [],
+			})
+			if (pipelineState.lastAutoOpenKey === contextKey) {
+				return
+			}
+			pipelineState.lastAutoOpenKey = contextKey
+			try {
+				await showDataRunModalDirect()
+			} catch (err) {
+				console.warn('Failed to auto-open data run modal:', err)
+			}
+		}
+
 		function refreshBannerIfNeeded() {
 			const isPipelinesViewActive = document
 				.getElementById('run-view')
@@ -4254,12 +4355,17 @@ steps:${
 				// Clear cached context to force fresh read from sessionStorage
 				pipelineState.pendingDataRun = null
 				renderDataRunBanner()
+				maybeAutoOpenDataRunModal()
 			}
 		}
 
 		// Listen for storage events (works when Data tab updates sessionStorage)
 		window.addEventListener('storage', (e) => {
-			if (e.key === 'preselectedFileIds' || e.key === 'preselectedParticipants') {
+			if (
+				e.key === 'preselectedFileIds' ||
+				e.key === 'preselectedParticipants' ||
+				e.key === 'preselectedUrls'
+			) {
 				refreshBannerIfNeeded()
 			}
 		})
@@ -5853,6 +5959,43 @@ steps:${
 
 		try {
 			let assets = []
+			const setDatasetContext = ({
+				datasetName,
+				datasetOwner,
+				assetKeys,
+				dataTypeLabel,
+				dataSource,
+			}) => {
+				try {
+					if (datasetName) {
+						sessionStorage.setItem('preselectedDatasetName', datasetName)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetName')
+					}
+					if (datasetOwner) {
+						sessionStorage.setItem('preselectedDatasetOwner', datasetOwner)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetOwner')
+					}
+					if (assetKeys && assetKeys.length > 0) {
+						sessionStorage.setItem('preselectedAssetKeys', JSON.stringify(assetKeys))
+					} else {
+						sessionStorage.removeItem('preselectedAssetKeys')
+					}
+					if (dataTypeLabel) {
+						sessionStorage.setItem('preselectedDataType', dataTypeLabel)
+					} else {
+						sessionStorage.removeItem('preselectedDataType')
+					}
+					if (dataSource) {
+						sessionStorage.setItem('preselectedDataSource', dataSource)
+					} else {
+						sessionStorage.removeItem('preselectedDataSource')
+					}
+				} catch (err) {
+					console.warn('Failed to set dataset context:', err)
+				}
+			}
 
 			// Check if this is a network dataset (has owner that's not us) or local dataset
 			const isNetworkDataset = entry && entry.owner && !entry.is_own
@@ -5864,6 +6007,50 @@ steps:${
 
 				// Network dataset assets have a different structure - extract mock paths
 				if (dataType === 'mock' && assets.length > 0) {
+					const mockEntryUrls = []
+					const mockEntryParticipants = []
+
+					for (const asset of assets) {
+						if (Array.isArray(asset.mock_entries)) {
+							for (const entry of asset.mock_entries) {
+								if (entry?.url) {
+									mockEntryUrls.push(entry.url)
+									mockEntryParticipants.push(entry.participant_id || '')
+								}
+							}
+						}
+					}
+
+					if (mockEntryUrls.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
+						console.log('Using network mock entries:', mockEntryUrls)
+						sessionStorage.setItem('preselectedUrls', JSON.stringify(mockEntryUrls))
+						sessionStorage.setItem('preselectedParticipants', JSON.stringify(mockEntryParticipants))
+
+						if (navigateTo) {
+							navigateTo('run')
+						}
+
+						setTimeout(async () => {
+							try {
+								await loadPipelines()
+								await showDataRunModalDirect()
+							} catch (err) {
+								console.error('Error showing data run modal:', err)
+							}
+						}, 100)
+						return
+					}
+
 					const mockPaths = []
 
 					// Get the datasites directory to derive local paths from mock_url if needed
@@ -5894,6 +6081,16 @@ steps:${
 						}
 					}
 					if (mockPaths.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
 						console.log('Using network mock paths:', mockPaths)
 						// Set paths directly for pipeline run
 						sessionStorage.setItem(
@@ -5946,6 +6143,16 @@ steps:${
 
 			// Assets are included in the response
 			assets = datasetEntry.assets || []
+			const assetKeys = assets
+				.map((asset) => asset.asset_key || asset.key || asset.assetKey)
+				.filter(Boolean)
+			setDatasetContext({
+				datasetName: datasetEntry.dataset?.name || name,
+				datasetOwner: datasetEntry.dataset?.author || entry?.owner || null,
+				assetKeys,
+				dataTypeLabel: dataType,
+				dataSource: 'dataset',
+			})
 			console.log('Dataset assets:', assets)
 			if (assets.length === 0) {
 				console.error('Dataset has no assets:', name)

@@ -1028,6 +1028,7 @@ pub fn run() {
             sync_messages_with_failures,
             send_pipeline_request,
             send_pipeline_request_results,
+            import_pipeline_results,
             send_pipeline_results,
             // Projects commands
             import_project,
@@ -1160,6 +1161,7 @@ pub fn run() {
             test_notification_applescript,
             // Sessions commands
             get_sessions,
+            list_sessions,
             get_session,
             create_session,
             create_session_with_datasets,

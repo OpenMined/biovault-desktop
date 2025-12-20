@@ -119,7 +119,38 @@ export function createMessagesModule({
 			sender: results.sender || msg.from,
 			results_location: results.results_location,
 			files: results.files || [],
+			submission_id: results.submission_id,
 		}
+	}
+
+	function parseRunMetadata(run) {
+		if (!run?.metadata) return {}
+		try {
+			return JSON.parse(run.metadata)
+		} catch (error) {
+			console.warn('Failed to parse run metadata:', error)
+			return {}
+		}
+	}
+
+	function formatRunSelectionLabel(run) {
+		const metadata = parseRunMetadata(run)
+		const selection = metadata.data_selection || {}
+		const parts = [`Run #${run.id}`]
+		if (selection.dataset_name) parts.push(selection.dataset_name)
+		if (Array.isArray(selection.asset_keys) && selection.asset_keys.length > 0) {
+			parts.push(selection.asset_keys.join(', '))
+		}
+		if (selection.data_type) {
+			const label = selection.data_type === 'private' ? 'real' : selection.data_type.toString()
+			parts.push(label)
+		}
+		if (selection.participant_count) {
+			parts.push(
+				`${selection.participant_count} participant${selection.participant_count === 1 ? '' : 's'}`,
+			)
+		}
+		return parts.join(' • ')
 	}
 
 	function setActiveMessageFilterButton(filter) {
@@ -1765,37 +1796,39 @@ export function createMessagesModule({
 					const actions = document.createElement('div')
 					actions.className = 'invite-actions'
 
-					const importBtn = document.createElement('button')
-					importBtn.textContent = 'Import Pipeline'
-					importBtn.addEventListener('click', async () => {
-						try {
-							if (!pipelineRequest.pipeline_location) {
-								await dialog.message('Pipeline folder not found in request', {
+					if (!group.isOutgoing) {
+						const importBtn = document.createElement('button')
+						importBtn.textContent = 'Import Pipeline'
+						importBtn.addEventListener('click', async () => {
+							try {
+								if (!pipelineRequest.pipeline_location) {
+									await dialog.message('Pipeline folder not found in request', {
+										title: 'Import Error',
+										type: 'error',
+									})
+									return
+								}
+
+								await invoke('import_pipeline_from_request', {
+									name: pipelineRequest.pipeline_name,
+									pipelineLocation: pipelineRequest.pipeline_location,
+									overwrite: false,
+								})
+
+								await dialog.message(
+									`Pipeline "${pipelineRequest.pipeline_name}" imported successfully!\n\nGo to Pipelines tab to view and run it.`,
+									{ title: 'Pipeline Imported', type: 'info' },
+								)
+							} catch (error) {
+								console.error('Failed to import pipeline:', error)
+								await dialog.message('Failed to import pipeline: ' + (error?.message || error), {
 									title: 'Import Error',
 									type: 'error',
 								})
-								return
 							}
-
-							await invoke('import_pipeline_from_request', {
-								name: pipelineRequest.pipeline_name,
-								pipelineLocation: pipelineRequest.pipeline_location,
-								overwrite: false,
-							})
-
-							await dialog.message(
-								`Pipeline "${pipelineRequest.pipeline_name}" imported successfully!\n\nGo to Pipelines tab to view and run it.`,
-								{ title: 'Pipeline Imported', type: 'info' },
-							)
-						} catch (error) {
-							console.error('Failed to import pipeline:', error)
-							await dialog.message('Failed to import pipeline: ' + (error?.message || error), {
-								title: 'Import Error',
-								type: 'error',
-							})
-						}
-					})
-					actions.appendChild(importBtn)
+						})
+						actions.appendChild(importBtn)
+					}
 
 					const openBtn = document.createElement('button')
 					openBtn.className = 'secondary'
@@ -1835,35 +1868,182 @@ export function createMessagesModule({
 						runSelect.innerHTML = '<option value="">Loading runs...</option>'
 						runSelect.disabled = true
 
+						const openBtn = document.createElement('button')
+						openBtn.textContent = 'Show in Finder'
+						openBtn.className = 'secondary'
+						openBtn.disabled = true
+						openBtn.style.display = 'none'
+						openBtn.addEventListener('click', async () => {
+							const runId = parseInt(runSelect.value, 10)
+							if (!runId) return
+							const run = runSelect.__runMap?.get(runId)
+							if (!run) return
+							try {
+								const path = run.results_dir || run.work_dir
+								if (!path) {
+									await dialog.message('Results folder not available for this run.', {
+										title: 'Open Folder Error',
+										type: 'error',
+									})
+									return
+								}
+								await invoke('open_folder', { path })
+							} catch (error) {
+								console.error('Failed to open results folder:', error)
+								await dialog.message(`Failed to open folder: ${error?.message || error}`, {
+									title: 'Open Folder Error',
+									type: 'error',
+								})
+							}
+						})
+
 						const sendBtn = document.createElement('button')
 						sendBtn.textContent = 'Send Back'
 						sendBtn.disabled = true
+						sendBtn.style.display = 'none'
 						sendBtn.addEventListener('click', async () => {
 							const runId = parseInt(runSelect.value, 10)
 							if (!runId) return
 
-							try {
-								sendBtn.disabled = true
-								await invoke('send_pipeline_request_results', {
-									requestId: msg.id,
-									runId,
-								})
-								await dialog.message('Results sent back to the shared folder.', {
-									title: 'Results Sent',
-									type: 'info',
-								})
-							} catch (error) {
-								console.error('Failed to send pipeline results:', error)
-								await dialog.message(`Failed to send results: ${error?.message || error}`, {
+							const run = runSelect.__runMap?.get(runId)
+							const pipeline = runSelect.__pipelineRef
+							if (!run || !pipeline) {
+								await dialog.message('Run metadata not available.', {
 									title: 'Send Results Error',
 									type: 'error',
 								})
-							} finally {
-								sendBtn.disabled = false
+								return
 							}
+
+							const resultsDir = run.results_dir || run.work_dir
+							const steps = pipeline.spec?.steps || []
+							const publishOutputs = []
+							steps.forEach((step, index) => {
+								if (step.publish && Object.keys(step.publish).length > 0) {
+									Object.entries(step.publish).forEach(([name, spec]) => {
+										const fileName = spec.match(/\\(([^)]+)\\)/)?.[1] || name
+										const outputPath = `${resultsDir}/${step.id}/${fileName}`
+										publishOutputs.push({
+											stepId: step.id,
+											fileName,
+											outputPath,
+											stepIndex: index,
+										})
+									})
+								}
+							})
+
+							const lastPublishStepIndex = publishOutputs.reduce((latest, output) => {
+								return output.stepIndex > latest ? output.stepIndex : latest
+							}, -1)
+
+							const modal = document.createElement('div')
+							modal.style.cssText =
+								'position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 9999;'
+
+							const card = document.createElement('div')
+							card.style.cssText =
+								'background: #ffffff; color: #0f172a; width: min(520px, 92vw); border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,0.25); padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;'
+
+							const outputList = publishOutputs
+								.map((output) => {
+									const checked = output.stepIndex === lastPublishStepIndex
+									const encodedPath = encodeURIComponent(output.outputPath)
+									return `
+										<label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer;">
+											<input type="checkbox" data-output-path="${encodedPath}" ${
+												checked ? 'checked' : ''
+											} style="margin-top: 2px;" />
+											<div>
+												<div style="font-size: 14px; font-weight: 600; color: #0f172a;">${escapeHtml(output.fileName)}</div>
+												<div style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace;">${escapeHtml(
+													output.stepId,
+												)}</div>
+											</div>
+										</label>
+									`
+								})
+								.join('')
+
+							card.innerHTML = `
+								<div style="display:flex; align-items:center; gap:10px;">
+									<div style="font-size: 18px; font-weight: 700;">Send Results</div>
+									<div style="font-size: 12px; color: #64748b; margin-left: auto;">Run #${runId}</div>
+								</div>
+								<div style="font-size: 13px; color: #64748b;">Choose which outputs to share. Defaults to the latest published outputs.</div>
+								<div style="display: flex; flex-direction: column; gap: 10px; max-height: 240px; overflow: auto;">
+									${outputList || '<div style="font-size: 13px; color: #94a3b8;">No published outputs detected.</div>'}
+								</div>
+								<label style="display: flex; gap: 10px; align-items: center; font-size: 13px; color: #475569;">
+									<input type="checkbox" id="send-all-results" />
+									<span>Include full results folder (may include system paths)</span>
+								</label>
+								<div style="display:flex; gap:8px; justify-content:flex-end;">
+									<button id="send-results-cancel" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#0f172a; font-weight:600; cursor:pointer;">Cancel</button>
+									<button id="send-results-confirm" style="padding:10px 14px; border-radius:8px; border:none; background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; font-weight:700; cursor:pointer;">Send</button>
+								</div>
+							`
+
+							modal.appendChild(card)
+							document.body.appendChild(modal)
+
+							const closeModal = () => {
+								modal.remove()
+							}
+							card.querySelector('#send-results-cancel')?.addEventListener('click', closeModal)
+							modal.addEventListener('click', (event) => {
+								if (event.target === modal) closeModal()
+							})
+
+							card.querySelector('#send-results-confirm')?.addEventListener('click', async () => {
+								const includeAll = card.querySelector('#send-all-results')?.checked
+								const selected = Array.from(
+									card.querySelectorAll('input[type="checkbox"][data-output-path]:checked'),
+								)
+									.map((input) => input.dataset.outputPath)
+									.filter(Boolean)
+									.map((value) => {
+										try {
+											return decodeURIComponent(value)
+										} catch {
+											return value
+										}
+									})
+
+								if (!includeAll && selected.length === 0) {
+									await dialog.message('Select at least one output or include the full results.', {
+										title: 'Send Results',
+										type: 'warning',
+									})
+									return
+								}
+
+								try {
+									sendBtn.disabled = true
+									await invoke('send_pipeline_request_results', {
+										requestId: msg.id,
+										runId,
+										outputPaths: includeAll ? undefined : selected,
+									})
+									await dialog.message('Results sent back to the shared folder.', {
+										title: 'Results Sent',
+										type: 'info',
+									})
+									closeModal()
+								} catch (error) {
+									console.error('Failed to send pipeline results:', error)
+									await dialog.message(`Failed to send results: ${error?.message || error}`, {
+										title: 'Send Results Error',
+										type: 'error',
+									})
+								} finally {
+									sendBtn.disabled = false
+								}
+							})
 						})
 
 						resultsActions.appendChild(runSelect)
+						resultsActions.appendChild(openBtn)
 						resultsActions.appendChild(sendBtn)
 						requestCard.appendChild(resultsActions)
 						;(async () => {
@@ -1888,11 +2068,28 @@ export function createMessagesModule({
 									return
 								}
 
+								runSelect.__runMap = new Map(matchingRuns.map((run) => [run.id, run]))
+								runSelect.__pipelineRef = pipeline
 								runSelect.innerHTML = matchingRuns
-									.map((run) => `<option value="${run.id}">Run #${run.id}</option>`)
+									.map(
+										(run) =>
+											`<option value="${run.id}">${escapeHtml(
+												formatRunSelectionLabel(run),
+											)}</option>`,
+									)
 									.join('')
 								runSelect.disabled = false
-								sendBtn.disabled = false
+								openBtn.style.display = ''
+								sendBtn.style.display = ''
+
+								const updateActionState = () => {
+									const runId = parseInt(runSelect.value, 10)
+									const hasSelection = Number.isFinite(runId)
+									openBtn.disabled = !hasSelection
+									sendBtn.disabled = !hasSelection
+								}
+								runSelect.addEventListener('change', updateActionState)
+								updateActionState()
 							} catch (error) {
 								console.error('Failed to load pipeline runs:', error)
 								runSelect.innerHTML = '<option value="">Failed to load runs</option>'
@@ -1933,24 +2130,30 @@ export function createMessagesModule({
 
 					const hasInlineContent = pipelineResults.files.some((file) => file.content_base64)
 
-					if (pipelineResults.results_location) {
-						const openBtn = document.createElement('button')
-						openBtn.textContent = 'Open Results Folder'
-						openBtn.addEventListener('click', async () => {
+					if (pipelineResults.results_location && !group.isOutgoing) {
+						const importBtn = document.createElement('button')
+						importBtn.textContent = 'Import Results'
+						importBtn.addEventListener('click', async () => {
 							try {
-								const folderPath = await invoke('resolve_syft_url_to_local_path', {
-									syftUrl: pipelineResults.results_location,
+								importBtn.disabled = true
+								const destPath = await invoke('import_pipeline_results', {
+									resultsLocation: pipelineResults.results_location,
+									submissionId: pipelineResults.submission_id,
+									runId: pipelineResults.run_id,
+									pipelineName: pipelineResults.pipeline_name,
 								})
-								await invoke('open_folder', { path: folderPath })
+								await invoke('open_folder', { path: destPath })
 							} catch (error) {
-								console.error('Failed to open results folder:', error)
-								await dialog.message(`Failed to open results folder: ${error?.message || error}`, {
-									title: 'Open Folder Error',
+								console.error('Failed to import results:', error)
+								await dialog.message(`Failed to import results: ${error?.message || error}`, {
+									title: 'Import Results Error',
 									type: 'error',
 								})
+							} finally {
+								importBtn.disabled = false
 							}
 						})
-						actions.appendChild(openBtn)
+						actions.appendChild(importBtn)
 					}
 
 					if (hasInlineContent) {

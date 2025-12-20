@@ -508,7 +508,18 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			configInfo?.data_dir && email ? `${configInfo.data_dir}/datasites/${email}` : ''
 		setSyftBoxPathDisplay('syftbox-datasites-dir', 'syftbox-open-datasites-btn', datasiteDir)
 
-		const logDir = configInfo?.log_dir || (await invoke('get_desktop_log_dir').catch(() => null))
+		const logDir =
+			configInfo?.log_dir ||
+			(await invoke('get_desktop_log_dir', { __wsTimeoutMs: 5000 }).catch(() => null)) ||
+			(await invoke('get_env_var', { key: 'BIOVAULT_HOME' })
+				.then((home) => (home ? `${home}/logs` : null))
+				.catch(() => null)) ||
+			(await invoke('get_dev_mode_info')
+				.then((info) => (info?.biovault_home ? `${info.biovault_home}/logs` : null))
+				.catch(() => null)) ||
+			(await invoke('get_env_var', { key: 'HOME' })
+				.then((home) => (home ? `${home}/Desktop/BioVault/logs` : null))
+				.catch(() => null))
 		setSyftBoxPathDisplay('syftbox-log-dir', 'syftbox-open-logs-btn', logDir)
 		setSyftBoxPathDisplay(
 			'syftbox-log-file',

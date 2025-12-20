@@ -47,14 +47,16 @@ fn should_skip_pipeline_path(rel: &Path) -> bool {
         "__pycache__",
         "node_modules",
         "target",
+        "work",
         "results",
         "runs",
     ];
 
     rel.components().any(|component| {
-        component.as_os_str().to_str().map_or(false, |name| {
-            skip_dirs.iter().any(|skip| skip == &name)
-        })
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| skip_dirs.iter().any(|skip| skip == &name))
     })
 }
 
@@ -85,9 +87,9 @@ fn copy_pipeline_folder(
 
         let dest_path = dest.join(rel);
         if entry.file_type().is_dir() {
-            storage
-                .ensure_dir(&dest_path)
-                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+            storage.ensure_dir(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
             continue;
         }
 
@@ -101,7 +103,13 @@ fn copy_pipeline_folder(
 
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| format!("Failed to write pipeline file {}: {}", dest_path.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to write pipeline file {}: {}",
+                    dest_path.display(),
+                    e
+                )
+            })?;
     }
 
     Ok(())
@@ -134,9 +142,78 @@ fn copy_results_folder(
 
         let dest_path = dest.join(rel);
         if entry.file_type().is_dir() {
+            storage.ensure_dir(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
+            continue;
+        }
+
+        let bytes = fs::read(path)
+            .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+        let hint = rel.to_string_lossy().to_string();
+        let policy = WritePolicy::Envelope {
+            recipients: vec![recipient.to_string()],
+            hint: Some(hint),
+        };
+
+        if let Some(parent) = dest_path.parent() {
             storage
-                .ensure_dir(&dest_path)
-                .map_err(|e| format!("Failed to create directory {}: {}", dest_path.display(), e))?;
+                .ensure_dir(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        storage
+            .write_with_shadow(&dest_path, &bytes, policy, true)
+            .map_err(|e| {
+                format!(
+                    "Failed to write results file {}: {}",
+                    dest_path.display(),
+                    e
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
+fn copy_results_folder_filtered(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+    recipient: &str,
+    allowed_rel_paths: Option<&std::collections::HashSet<String>>,
+) -> Result<(), String> {
+    storage
+        .ensure_dir(dest)
+        .map_err(|e| format!("Failed to create results folder: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let rel_str = rel.to_string_lossy().to_string();
+        if let Some(allowed) = allowed_rel_paths {
+            if !allowed.contains(&rel_str) {
+                continue;
+            }
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            storage.ensure_dir(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
             continue;
         }
 
@@ -150,7 +227,64 @@ fn copy_results_folder(
 
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| format!("Failed to write results file {}: {}", dest_path.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to write results file {}: {}",
+                    dest_path.display(),
+                    e
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
+fn copy_results_to_unencrypted(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| format!("Failed to create results folder: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
+            continue;
+        }
+
+        let bytes = storage
+            .read_with_shadow(path)
+            .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        fs::write(&dest_path, &bytes).map_err(|e| {
+            format!(
+                "Failed to write results file {}: {}",
+                dest_path.display(),
+                e
+            )
+        })?;
     }
 
     Ok(())
@@ -704,7 +838,8 @@ pub fn send_pipeline_request(
         .find(|p| p.name == pipeline_name)
         .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
 
-    let pipeline_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
+    let pipeline_yaml_path =
+        std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
     if !pipeline_yaml_path.exists() {
         return Err(format!(
             "Pipeline '{}' not found at {:?}",
@@ -748,7 +883,12 @@ pub fn send_pipeline_request(
         .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
     let perms_path = submission_path.join("syft.pub.yaml");
     storage
-        .write_with_shadow(&perms_path, perms_yaml.as_bytes(), WritePolicy::Plaintext, true)
+        .write_with_shadow(
+            &perms_path,
+            perms_yaml.as_bytes(),
+            WritePolicy::Plaintext,
+            true,
+        )
         .map_err(|e| format!("Failed to write permissions: {}", e))?;
 
     let datasite_root = config
@@ -809,6 +949,7 @@ pub fn send_pipeline_request_results(
     request_id: String,
     run_id: i64,
     message: Option<String>,
+    output_paths: Option<Vec<String>>,
 ) -> Result<VaultMessage, String> {
     let config = load_config()?;
     let (db, sync) = init_message_system(&config)
@@ -874,7 +1015,48 @@ pub fn send_pipeline_request_results(
     let results_dest_root = submission_root.join("results");
     let results_dest = results_dest_root.join(format!("run_{}", run_id));
 
-    copy_results_folder(&storage, &results_source_path, &results_dest, &sender)?;
+    let allowed_rel_paths = output_paths.as_ref().and_then(|paths| {
+        if paths.is_empty() {
+            return None;
+        }
+        let mut allowed = std::collections::HashSet::new();
+        for path_str in paths {
+            let path = PathBuf::from(&path_str);
+            let rel = if path.is_absolute() {
+                path.strip_prefix(&results_source_path)
+                    .ok()
+                    .map(|p| p.to_path_buf())
+            } else {
+                Some(path)
+            };
+            if let Some(rel_path) = rel {
+                if rel_path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+                {
+                    continue;
+                }
+                allowed.insert(rel_path.to_string_lossy().to_string());
+            }
+        }
+        if allowed.is_empty() {
+            None
+        } else {
+            Some(allowed)
+        }
+    });
+
+    if output_paths.is_some() && allowed_rel_paths.is_none() {
+        return Err("No valid outputs selected to send.".to_string());
+    }
+
+    copy_results_folder_filtered(
+        &storage,
+        &results_source_path,
+        &results_dest,
+        &sender,
+        allowed_rel_paths.as_ref(),
+    )?;
 
     let mut files = Vec::new();
     for entry in WalkDir::new(&results_dest)
@@ -899,15 +1081,21 @@ pub fn send_pipeline_request_results(
         }));
     }
 
-    let datasite_root = config
-        .get_datasite_path()
-        .map_err(|e| format!("Failed to resolve datasite root: {}", e))?;
+    let datasites_root = data_dir.join("datasites");
     let rel_results = results_dest
-        .strip_prefix(&datasite_root)
-        .map_err(|e| format!("Failed to compute results path: {}", e))?
-        .to_string_lossy()
-        .to_string();
-    let results_location = format!("syft://{}/{}", config.email, rel_results);
+        .strip_prefix(&datasites_root)
+        .map_err(|e| format!("Failed to compute results path: {}", e))?;
+    let mut rel_components = rel_results.components();
+    let owner_component = rel_components
+        .next()
+        .ok_or_else(|| "Failed to compute results path: empty".to_string())?;
+    let owner = owner_component.as_os_str().to_string_lossy();
+    let remainder = rel_components.as_path().to_string_lossy();
+    let results_location = if remainder.is_empty() {
+        format!("syft://{}", owner)
+    } else {
+        format!("syft://{}/{}", owner, remainder)
+    };
 
     let body = message.unwrap_or_else(|| {
         format!(
@@ -940,6 +1128,46 @@ pub fn send_pipeline_request_results(
         .unwrap_or(reply);
 
     Ok(updated)
+}
+
+/// Import pipeline results from a shared syft:// location into an unencrypted folder.
+#[tauri::command]
+pub fn import_pipeline_results(
+    results_location: String,
+    submission_id: Option<String>,
+    run_id: Option<i64>,
+    pipeline_name: Option<String>,
+) -> Result<String, String> {
+    let config = load_config()?;
+    let storage = syftbox_storage(&config)?;
+
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &results_location)
+        .map_err(|e| format!("Failed to resolve results location: {}", e))?;
+    if !source_root.exists() {
+        return Err(format!(
+            "Results folder not found at {}",
+            source_root.display()
+        ));
+    }
+
+    let base = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?
+        .join("results");
+    let folder_name = submission_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| pipeline_name.filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| "pipeline_results".to_string());
+    let mut dest = base.join(folder_name);
+    if let Some(run_id) = run_id {
+        dest = dest.join(format!("run_{}", run_id));
+    }
+
+    copy_results_to_unencrypted(&storage, &source_root, &dest)?;
+
+    Ok(dest.to_string_lossy().to_string())
 }
 
 #[derive(serde::Deserialize)]

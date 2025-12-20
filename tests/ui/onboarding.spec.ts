@@ -192,6 +192,11 @@ test.describe('Onboarding flow', () => {
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
+		const recoveryBlock = page.locator('#onboarding-recovery-block')
+		if (await recoveryBlock.isVisible().catch(() => false)) {
+			await page.locator('#onboarding-recovery-ack').check()
+		}
 		await page.locator('#onboarding-next-3-key').click()
 
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()
@@ -218,6 +223,11 @@ test.describe('Onboarding flow', () => {
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
+		await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
+		const recoveryBlock = page.locator('#onboarding-recovery-block')
+		if (await recoveryBlock.isVisible().catch(() => false)) {
+			await page.locator('#onboarding-recovery-ack').check()
+		}
 		await page.locator('#onboarding-next-3-key').click()
 
 		await expect(page.locator('#onboarding-step-4')).toBeVisible()
