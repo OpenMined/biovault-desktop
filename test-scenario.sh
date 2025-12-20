@@ -44,6 +44,8 @@ Usage: ./test-scenario.sh [OPTIONS] [-- PLAYWRIGHT_ARGS...]
 Scenario Options (pick one):
   --all                Run all scenarios (default)
   --onboarding         Run onboarding test only
+  --profiles           Run profiles UI flow (real backend, isolated sandbox)
+  --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
@@ -74,6 +76,8 @@ Examples:
   ./test-scenario.sh --messaging        # Run just messaging scenario
   ./test-scenario.sh --interactive      # Run all with visible browser
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
+  ./test-scenario.sh --interactive --profiles    # Run profiles UI flow (real backend) with visible browser
+  ./test-scenario.sh --interactive --profiles-mock    # Run profiles UI flow (mock) with visible browser
   ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
   ./test-scenario.sh --pipelines-gwas   # Run GWAS pipeline test
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
@@ -88,6 +92,14 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--onboarding)
 			SCENARIO="onboarding"
+			shift
+			;;
+		--profiles)
+			SCENARIO="profiles"
+			shift
+			;;
+		--profiles-mock)
+			SCENARIO="profiles-mock"
 			shift
 			;;
 		--messaging)
@@ -513,6 +525,21 @@ cleanup() {
 		[[ -n "${TAURI1_PID:-}" ]] && kill "$TAURI1_PID" 2>/dev/null || true
 		[[ -n "${TAURI2_PID:-}" ]] && kill "$TAURI2_PID" 2>/dev/null || true
 	fi
+	# Profiles switching can restart the Tauri process (new PID). Ensure we kill any lingering
+	# WS-bridge listeners for the selected ports (ports were chosen to be free for this run).
+	if command -v lsof >/dev/null 2>&1; then
+		for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" "$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))"; do
+			if [[ -z "${port:-}" || "$port" -le 0 ]]; then
+				continue
+			fi
+			local pids
+			pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)"
+			if [[ -n "${pids:-}" ]]; then
+				info "Killing lingering WS listeners on :$port (pids: $pids)"
+				kill $pids 2>/dev/null || true
+			fi
+		done
+	fi
 	if [[ -n "${LOGGER_PID:-}" ]]; then
 		info "Stopping unified logger"
 		kill "$LOGGER_PID" 2>/dev/null || true
@@ -547,30 +574,32 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Start devstack with two clients (reset by default to avoid stale state)
-info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
-DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
-# Stop any existing stack for this sandbox to avoid state conflicts
-# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
-STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
-if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-	STOP_ARGS+=(--reset)
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	# Start devstack with two clients (reset by default to avoid stale state)
+	info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
+	DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+	# Stop any existing stack for this sandbox to avoid state conflicts
+	# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
+	STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
+	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+		STOP_ARGS+=(--reset)
+	fi
+	timer_push "Devstack stop"
+	bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
+	timer_pop
+	DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
+	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+		DEVSTACK_ARGS+=(--reset)
+	fi
+	if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
+		DEVSTACK_ARGS+=(--skip-keys)
+	fi
+	timer_push "Devstack start"
+	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
+	timer_pop
 fi
-timer_push "Devstack stop"
-bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
-timer_pop
-DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
-if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-	DEVSTACK_ARGS+=(--reset)
-fi
-if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
-	DEVSTACK_ARGS+=(--skip-keys)
-fi
-timer_push "Devstack start"
-bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
-timer_pop
 
-# Read devstack state for client configs
+# Read devstack state for client configs (not needed for mock-only scenarios)
 find_state_file() {
 	local candidates=(
 		"$SANDBOX_ROOT/relay/state.json"
@@ -586,9 +615,11 @@ find_state_file() {
 }
 
 STATE_FILE="$(find_state_file || true)"
-if [[ -z "$STATE_FILE" ]]; then
-	echo "Devstack state not found in $SANDBOX_ROOT" >&2
-	exit 1
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	if [[ -z "$STATE_FILE" ]]; then
+		echo "Devstack state not found in $SANDBOX_ROOT" >&2
+		exit 1
+	fi
 fi
 
 parse_field() {
@@ -605,20 +636,22 @@ sys.exit(1)
 PY
 }
 
-CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
-CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
-CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
-CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
+	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
+	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
+	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
+	SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 print(f"http://127.0.0.1:{state['server']['port']}")
 PY
-)"
+	)"
 
-info "Client1 home: $CLIENT1_HOME"
-info "Client2 home: $CLIENT2_HOME"
-info "Server URL: $SERVER_URL"
+	info "Client1 home: $CLIENT1_HOME"
+	info "Client2 home: $CLIENT2_HOME"
+	info "Server URL: $SERVER_URL"
+fi
 
 wait_for_file() {
 	local path="$1"
@@ -895,7 +928,18 @@ launch_instance() {
 		export SYFTBOX_EMAIL="$email"
 		export SYFTBOX_CONFIG_PATH="$cfg"
 		export SYFTBOX_DATA_DIR="$home"
-		export SYC_VAULT="$home/.syc"
+		# Profiles tests manage SYC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
+		# Other scenarios keep a fixed vault path per client for simplicity.
+		if [[ "$SCENARIO" != "profiles" ]]; then
+			export SYC_VAULT="$home/.syc"
+		fi
+			# Keep the profiles store isolated under the sandbox HOME even if callers override defaults.
+			if [[ "$SCENARIO" == "profiles" ]]; then
+				# Allow callers to override the store location (for local dev), but default to the sandbox HOME.
+				if [[ -z "${BIOVAULT_PROFILES_PATH:-}" && -z "${BIOVAULT_PROFILES_DIR:-}" ]]; then
+					export BIOVAULT_PROFILES_DIR="$home/.bvprofiles"
+				fi
+			fi
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
@@ -1148,6 +1192,36 @@ ensure_playwright_browsers
 				start_tauri_instances
 				timer_push "Playwright: @onboarding-two"
 				run_ui_grep "@onboarding-two"
+				timer_pop
+				;;
+			profiles)
+				start_static_server
+				# Profiles test only needs one client, but uses the real backend.
+				assert_tauri_binary_present
+				assert_tauri_binary_fresh
+				export BIOVAULT_ALLOW_NEW_INSTANCE_IN_DEV=1
+				export BIOVAULT_SPAWN_PROBE_PATH="$CLIENT1_HOME/profiles/new-instance-probe.json"
+
+				timer_push "Tauri instance start (single)"
+				info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+				TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+				info "Waiting for WS bridge..."
+				wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+				timer_pop
+
+				export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+				export USE_REAL_INVOKE=true
+				# Provide deterministic homes for the test under the sandbox.
+				export PROFILES_HOME_A="$CLIENT1_HOME"
+				export PROFILES_HOME_B="$CLIENT1_HOME/profiles/profileB"
+				timer_push "Playwright: @profiles-real"
+				run_ui_grep "@profiles-real" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B"
+				timer_pop
+				;;
+			profiles-mock)
+				start_static_server
+				timer_push "Playwright: @profiles-mock"
+				run_ui_grep "@profiles-mock"
 				timer_pop
 				;;
 			messaging)

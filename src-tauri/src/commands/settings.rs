@@ -331,17 +331,21 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
         env::var("SYC_VAULT")
     );
 
-    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        let home_dir = dirs::home_dir().unwrap();
-        dirs::desktop_dir()
-            .unwrap_or_else(|| home_dir.join("Desktop"))
-            .join("BioVault")
-            .to_string_lossy()
-            .to_string()
-    });
-    println!("🏁 [complete_onboarding] BIOVAULT_HOME: {}", biovault_home);
+    let biovault_path = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to resolve BioVault home: {}", e))?;
+    println!(
+        "🏁 [complete_onboarding] BIOVAULT_HOME: {}",
+        biovault_path.display()
+    );
 
-    let biovault_path = PathBuf::from(&biovault_home);
+    if crate::commands::profiles::email_in_use_by_other_profile(&email, &biovault_path)
+        .unwrap_or(false)
+    {
+        return Err(
+            "That email already exists as another profile. Switch to that profile instead."
+                .to_string(),
+        );
+    }
 
     // Check vault state BEFORE init
     let syc_path = biovault_path.join(".syc");
@@ -368,7 +372,7 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to initialize BioVault: {}", e))?;
 
     // Ensure the config.yaml email matches the onboarding input (even if a placeholder existed before).
-    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    let config_path = biovault_path.join("config.yaml");
     match biovault::config::Config::load() {
         Ok(mut cfg) => {
             if cfg.email.trim() != email.trim() {
@@ -433,15 +437,24 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
 
     eprintln!("DEBUG: Onboarding complete");
     crate::desktop_log!("✅ Onboarding complete for: {}", email);
+
+    // Register/refresh the current profile entry (best-effort).
+    if let Err(err) = crate::commands::profiles::register_current_profile_email(&email) {
+        crate::desktop_log!("⚠️ Failed to register profile for {}: {}", email, err);
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     println!("⚙️ [get_settings] called");
-    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
-    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
-    let settings_path = desktop_dir
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let settings_path = biovault_home.join("database").join("settings.json");
+    let legacy_settings_path = dirs::desktop_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Desktop")))
+        .unwrap_or_else(|| PathBuf::from("."))
         .join("BioVault")
         .join("database")
         .join("settings.json");
@@ -455,6 +468,11 @@ pub fn get_settings() -> Result<Settings, String> {
         let content = fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?
+    } else if legacy_settings_path.exists() {
+        // Back-compat migration from legacy Desktop/BioVault location.
+        let content = fs::read_to_string(&legacy_settings_path)
+            .map_err(|e| format!("Failed to read legacy settings: {}", e))?;
+        serde_json::from_str(&content).unwrap_or_default()
     } else {
         println!("⚙️ [get_settings] settings.json does NOT exist, using defaults");
         Settings::default()
@@ -467,16 +485,11 @@ pub fn get_settings() -> Result<Settings, String> {
     // Load email from BioVault config if not set in settings
     if settings.email.is_empty() {
         println!("⚙️ [get_settings] email empty, loading from config.yaml...");
-        let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-            let home_dir = dirs::home_dir().unwrap();
-            dirs::desktop_dir()
-                .unwrap_or_else(|| home_dir.join("Desktop"))
-                .join("BioVault")
-                .to_string_lossy()
-                .to_string()
-        });
-        println!("⚙️ [get_settings] BIOVAULT_HOME: {}", biovault_home);
-        let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+        println!(
+            "⚙️ [get_settings] BIOVAULT_HOME: {}",
+            biovault_home.display()
+        );
+        let config_path = biovault_home.join("config.yaml");
         println!(
             "⚙️ [get_settings] config_path: {}, exists: {}",
             config_path.display(),
@@ -533,12 +546,9 @@ pub fn get_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn save_settings(mut settings: Settings) -> Result<(), String> {
-    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
-    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
-    let settings_path = desktop_dir
-        .join("BioVault")
-        .join("database")
-        .join("settings.json");
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let settings_path = biovault_home.join("database").join("settings.json");
 
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent)
@@ -558,15 +568,7 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
 
     fs::write(&settings_path, json).map_err(|e| format!("Failed to write settings: {}", e))?;
 
-    let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
-        let home_dir = dirs::home_dir().unwrap();
-        dirs::desktop_dir()
-            .unwrap_or_else(|| home_dir.join("Desktop"))
-            .join("BioVault")
-            .to_string_lossy()
-            .to_string()
-    });
-    let config_path = PathBuf::from(&biovault_home).join("config.yaml");
+    let config_path = biovault_home.join("config.yaml");
 
     // Load or create config
     let mut config = if config_path.exists() {
@@ -585,7 +587,15 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
     };
 
     // Update email if the user provided one, otherwise preserve existing
-    if !settings.email.is_empty() {
+    if !settings.email.is_empty() && settings.email.trim() != PLACEHOLDER_EMAIL {
+        if crate::commands::profiles::email_in_use_by_other_profile(&settings.email, &biovault_home)
+            .unwrap_or(false)
+        {
+            return Err(
+                "That email already exists as another profile. Switch to that profile instead."
+                    .to_string(),
+            );
+        }
         config.email = settings.email.clone();
     }
 
@@ -610,6 +620,13 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
     config
         .save(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Best-effort profile registration (keeps profile list in sync if identity changes).
+    if !config.email.trim().is_empty() && config.email.trim() != PLACEHOLDER_EMAIL {
+        if let Err(err) = crate::commands::profiles::register_current_profile_email(&config.email) {
+            crate::desktop_log!("⚠️ Failed to refresh profile registration: {}", err);
+        }
+    }
 
     Ok(())
 }

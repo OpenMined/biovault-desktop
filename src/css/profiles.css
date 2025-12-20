@@ -1,0 +1,161 @@
+/* Profiles overlay (shown when multiple profiles exist) */
+
+.profiles-view {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1000;
+	background: rgba(15, 23, 42, 0.4);
+	backdrop-filter: blur(6px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+}
+
+.profiles-overlay {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.profiles-card {
+	width: 100%;
+	max-width: 760px;
+	background: #ffffff;
+	border-radius: 16px;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+	padding: 22px;
+}
+
+.profiles-header {
+	margin-bottom: 14px;
+}
+
+.profiles-title {
+	margin: 0;
+	font-size: 22px;
+	font-weight: 700;
+	color: #111827;
+}
+
+.profiles-subtitle {
+	margin: 6px 0 0 0;
+	color: #6b7280;
+	font-size: 14px;
+}
+
+.profiles-message {
+	background: #fff7ed;
+	border: 1px solid #fed7aa;
+	color: #9a3412;
+	padding: 10px 12px;
+	border-radius: 12px;
+	margin: 10px 0 16px 0;
+	font-size: 13px;
+}
+
+.profiles-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.profiles-loading {
+	text-align: center;
+	color: #6b7280;
+	padding: 20px;
+}
+
+.profile-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 14px;
+	background: #ffffff;
+	cursor: pointer;
+}
+
+.profile-row.current {
+	border-color: #c7d2fe;
+	background: #eef2ff;
+}
+
+.profile-avatar {
+	width: 54px;
+	height: 54px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+}
+
+.profile-avatar svg {
+	width: 54px;
+	height: 54px;
+}
+
+.profile-meta {
+	flex: 1;
+	min-width: 0;
+}
+
+.profile-email {
+	font-weight: 700;
+	color: #111827;
+	font-size: 14px;
+	line-height: 18px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.profile-path {
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.profile-status {
+	margin-top: 4px;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.profile-status .dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 999px;
+	background: #22c55e;
+}
+
+.profile-status.running .dot {
+	background: #f97316;
+}
+
+.profile-actions {
+	display: flex;
+	gap: 8px;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.profiles-actions {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 16px;
+}
