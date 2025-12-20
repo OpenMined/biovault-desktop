@@ -8,6 +8,7 @@ pub mod messages;
 pub mod notifications;
 pub mod participants;
 pub mod pipelines;
+pub mod profiles;
 pub mod projects;
 pub mod runs;
 pub mod sessions;

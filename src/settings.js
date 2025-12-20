@@ -1,4 +1,12 @@
-export function createSettingsModule({ invoke, dialog, loadSavedDependencies, onAiConfigUpdated }) {
+import { showProfilesPickerInApp } from './profiles.js'
+
+export function createSettingsModule({
+	invoke,
+	dialog,
+	loadSavedDependencies,
+	onAiConfigUpdated,
+	templateLoader,
+}) {
 	let currentUserEmail = ''
 	let savedEmail = '' // The email that's actually saved in settings
 	// Default to online so the messages page starts in connected mode until we learn the real status.
@@ -12,6 +20,30 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 	let syftboxStatusTimer = null
 	let lastIndicatorTotals = { url: null, txTotal: null, rxTotal: null }
 	let lastRuntimeTotals = { url: null, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
+	let syftboxUnavailableShown = false
+	const syftboxUnavailableStorageKey = 'syftbox_unavailable_shown_v1'
+	let profilesRefreshTimer = null
+	let profilesRefreshInFlight = false
+	let lastProfilesSignature = ''
+
+	function hasShownSyftboxUnavailable() {
+		if (syftboxUnavailableShown) return true
+		try {
+			return localStorage.getItem(syftboxUnavailableStorageKey) === '1'
+		} catch (err) {
+			console.warn('Unable to read syftbox unavailable flag:', err)
+			return false
+		}
+	}
+
+	function markSyftboxUnavailableShown() {
+		syftboxUnavailableShown = true
+		try {
+			localStorage.setItem(syftboxUnavailableStorageKey, '1')
+		} catch (err) {
+			console.warn('Unable to persist syftbox unavailable flag:', err)
+		}
+	}
 
 	async function getDefaultServer() {
 		if (defaultServerPromise) return defaultServerPromise
@@ -61,6 +93,9 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 
 			loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
 			bindSyftBoxPathButtons()
+			bindProfileButtons()
+			loadProfilesList({ force: true })
+			startProfilesAutoRefresh()
 
 			checkSyftBoxStatus()
 			loadAutostartStatus()
@@ -84,6 +119,243 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			}, 2000)
 		} catch (error) {
 			console.error('Error loading settings:', error)
+		}
+	}
+
+	function escapeHtml(str) {
+		return String(str || '')
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+	}
+
+	function isSettingsViewVisible() {
+		const settingsView = document.getElementById('settings-view')
+		if (!settingsView) return false
+		const style = window.getComputedStyle(settingsView)
+		return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+	}
+
+	function getProfilesSignature(state) {
+		const profiles = Array.isArray(state?.profiles) ? state.profiles : []
+		return JSON.stringify({
+			current: state?.current_profile_id || '',
+			profiles: profiles.map((p) => ({
+				id: p.id,
+				email: p.email || '',
+				home: p.biovault_home,
+				running: !!p.running,
+				onboarded: !!p.onboarded,
+				is_current: !!p.is_current,
+				last_used_at: p.last_used_at || '',
+			})),
+		})
+	}
+
+	async function loadProfilesList({ force = false } = {}) {
+		const listEl = document.getElementById('settings-profiles-list')
+		if (!listEl) return
+		if (profilesRefreshInFlight) return
+
+		profilesRefreshInFlight = true
+		try {
+			const state = await invoke('profiles_get_boot_state')
+			const signature = getProfilesSignature(state)
+			if (!force && signature === lastProfilesSignature) return
+			lastProfilesSignature = signature
+
+			const openPickerBtn = document.getElementById('profiles-open-picker-btn')
+			if (openPickerBtn) {
+				const count = Array.isArray(state?.profiles) ? state.profiles.length : 0
+				openPickerBtn.style.display = count > 1 ? '' : 'none'
+			}
+			if (!state?.enabled || !state.profiles?.length) {
+				listEl.innerHTML = '<div class="settings-profiles-empty">No profiles configured</div>'
+				return
+			}
+
+			listEl.innerHTML = state.profiles
+				.map((p) => {
+					const isCurrent = p.is_current
+					const statusText = p.running ? 'Running' : p.onboarded ? 'Ready' : 'Needs setup'
+					const statusClass = p.running ? 'running' : p.onboarded ? 'ready' : 'pending'
+					const seed = p.fingerprint || p.email || p.id
+					const canDelete = !p.running && !p.is_current
+					const canNewInstance = !p.running && !p.is_current
+					return `
+						<div class="settings-profile-row ${isCurrent ? 'current' : ''}" data-profile-id="${escapeHtml(p.id)}">
+							<div class="settings-profile-avatar">${buildIdenticon(seed)}</div>
+							<div class="settings-profile-info">
+								<div class="settings-profile-email">${escapeHtml(p.email || '(Not set up)')}</div>
+								<div class="settings-profile-path" title="${escapeHtml(p.biovault_home)}">${escapeHtml(p.biovault_home)}</div>
+								<div class="settings-profile-status ${statusClass}">${escapeHtml(statusText)}</div>
+							</div>
+							<div class="settings-profile-actions">
+								${isCurrent ? '<span class="settings-profile-current-badge">Current</span>' : `<button class="settings-btn settings-btn-secondary settings-profile-switch-btn" ${p.running ? 'disabled' : ''}>Switch</button>`}
+								${isCurrent ? '' : `<button class="settings-btn settings-btn-secondary settings-profile-new-instance-btn" ${canNewInstance ? '' : 'disabled'} title="Open in new window">New Instance</button>`}
+								<button class="settings-btn settings-btn-danger settings-profile-delete-btn" ${canDelete ? '' : 'disabled'} title="${isCurrent ? 'Cannot delete current profile' : p.running ? 'Profile is running' : 'Delete profile'}">Delete</button>
+							</div>
+						</div>
+					`
+				})
+				.join('')
+
+			// Bind switch buttons
+			listEl.querySelectorAll('.settings-profile-switch-btn').forEach((btn) => {
+				btn.addEventListener('click', async (e) => {
+					const row = e.target.closest('.settings-profile-row')
+					const profileId = row?.dataset?.profileId
+					if (!profileId) return
+
+					// Disable button while switching
+					const switchBtn = e.target
+					switchBtn.disabled = true
+					switchBtn.textContent = 'Switching...'
+
+					try {
+						// Use in-place switch - no app restart needed
+						await invoke('profiles_switch_in_place', { profileId })
+
+						// Refresh the profiles list to show new current
+						await loadProfilesList({ force: true })
+
+						// Reload app state by navigating to trigger data refresh
+						await dialog.message(
+							'Profile switched successfully! The app will now reload data for the new profile.',
+							{ title: 'Profile Switched', type: 'info' },
+						)
+
+						// Trigger a full page reload to refresh all modules
+						location.reload()
+					} catch (err) {
+						console.warn('Failed to switch profile:', err)
+						await dialog.message(String(err?.message || err || 'Failed to switch profile'), {
+							title: 'Profiles',
+							type: 'error',
+						})
+						// Re-enable button on error
+						switchBtn.disabled = false
+						switchBtn.textContent = 'Switch'
+					}
+				})
+			})
+
+			// Bind new instance buttons
+			listEl.querySelectorAll('.settings-profile-new-instance-btn').forEach((btn) => {
+				btn.addEventListener('click', async (e) => {
+					const row = e.target.closest('.settings-profile-row')
+					const profileId = row?.dataset?.profileId
+					if (!profileId) return
+
+					try {
+						await invoke('profiles_open_new_instance', { profileId })
+					} catch (err) {
+						console.warn('Failed to open new instance:', err)
+						await dialog.message(String(err?.message || err || 'Failed to open new instance'), {
+							title: 'Profiles',
+							type: 'error',
+						})
+					}
+				})
+			})
+
+			// Bind delete buttons
+			listEl.querySelectorAll('.settings-profile-delete-btn').forEach((btn) => {
+				btn.addEventListener('click', async (e) => {
+					const row = e.target.closest('.settings-profile-row')
+					const profileId = row?.dataset?.profileId
+					if (!profileId) return
+
+					try {
+						const ok = await dialog.confirm(
+							'Delete this profile? This removes it from the list and deletes its home folder.',
+							{ title: 'Delete Profile', type: 'warning' },
+						)
+						if (!ok) return
+
+						await invoke('profiles_delete_profile', { profileId, deleteHome: true })
+						await loadProfilesList({ force: true })
+					} catch (err) {
+						console.warn('Failed to delete profile:', err)
+						await dialog.message(String(err?.message || err || 'Failed to delete profile'), {
+							title: 'Profiles',
+							type: 'error',
+						})
+					}
+				})
+			})
+		} catch (error) {
+			console.warn('Failed to load profiles:', error)
+			const openPickerBtn = document.getElementById('profiles-open-picker-btn')
+			if (openPickerBtn) openPickerBtn.style.display = 'none'
+			listEl.innerHTML = '<div class="settings-profiles-empty">Failed to load profiles</div>'
+		} finally {
+			profilesRefreshInFlight = false
+		}
+	}
+
+	function startProfilesAutoRefresh() {
+		if (profilesRefreshTimer) clearInterval(profilesRefreshTimer)
+		profilesRefreshTimer = setInterval(() => {
+			if (!isSettingsViewVisible() || document.hidden) return
+			loadProfilesList().catch(() => {})
+		}, 2000)
+	}
+
+	function bindProfileButtons() {
+		const addBtn = document.getElementById('profiles-add-btn-settings')
+		if (addBtn && !addBtn.dataset.bound) {
+			addBtn.dataset.bound = '1'
+			addBtn.addEventListener('click', async () => {
+				try {
+					await dialog.message(
+						'Choose a folder to use as this profile’s BioVault Home (BIOVAULT_HOME).\n\nTip: use “New Folder” in the picker to name it.',
+						{ title: 'Add Profile', type: 'info' },
+					)
+					const selection = await dialog.open({ directory: true, multiple: false })
+					if (!selection) return
+					const chosen = Array.isArray(selection) ? selection[0] : selection
+					if (!chosen) return
+					const ok = await dialog.confirm(`Create and switch to profile home?\n\n${chosen}`, {
+						title: 'Add Profile',
+						type: 'warning',
+					})
+					if (!ok) return
+					// Use in-place creation - no app restart needed
+					await invoke('profiles_create_and_switch_in_place', { homePath: chosen })
+
+					await dialog.message('Profile created! The app will now reload.', {
+						title: 'Profile Created',
+						type: 'info',
+					})
+
+					// Reload to pick up new profile
+					location.reload()
+				} catch (error) {
+					console.warn('Failed to add profile:', error)
+					await dialog.message(String(error?.message || error || 'Failed to add profile'), {
+						title: 'Profiles',
+						type: 'error',
+					})
+				}
+			})
+		}
+
+		const openPickerBtn = document.getElementById('profiles-open-picker-btn')
+		if (openPickerBtn && !openPickerBtn.dataset.bound) {
+			openPickerBtn.dataset.bound = '1'
+			openPickerBtn.addEventListener('click', async () => {
+				try {
+					await showProfilesPickerInApp({ invoke, templateLoader })
+				} catch (error) {
+					console.warn('Failed to open profile picker:', error)
+					await dialog.message(String(error?.message || error || 'Failed to open profile picker'), {
+						title: 'Profiles',
+						type: 'error',
+					})
+				}
+			})
 		}
 	}
 
@@ -348,12 +620,6 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		`,
 			)
 			.join('')
-	}
-
-	function escapeHtml(str) {
-		const div = document.createElement('div')
-		div.textContent = str
-		return div.innerHTML
 	}
 
 	function setSyftBoxPathDisplay(pathId, btnId, path) {
@@ -1179,10 +1445,15 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 			})
 			filterEl.dataset.listenerAttached = 'true'
 		}
-		refreshSyftboxQueue(true)
+		// Avoid modal spam on load; reserve dialogs for manual refresh.
+		refreshSyftboxQueue(false)
 		if (syftboxQueueTimer) clearInterval(syftboxQueueTimer)
-		// Poll frequently but avoid UI jank
-		syftboxQueueTimer = setInterval(refreshSyftboxQueue, 1000)
+		// Poll frequently but avoid UI jank; only when settings is visible.
+		syftboxQueueTimer = setInterval(() => {
+			const settingsRoot = document.getElementById('settings')
+			if (!settingsRoot || settingsRoot.style.display === 'none') return
+			refreshSyftboxQueue(false)
+		}, 1000)
 	}
 
 	function setupSyftboxDiagnostics() {
@@ -1748,7 +2019,8 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		} catch (error) {
 			console.error('Failed to load SyftBox queue:', error)
 			if (statusEl) statusEl.textContent = 'Unavailable'
-			if (showErrors) {
+			if (showErrors && !hasShownSyftboxUnavailable()) {
+				markSyftboxUnavailableShown()
 				await dialog.message(
 					'SyftBox control plane is unavailable. Start the daemon and try again.',
 					{ title: 'SyftBox', type: 'warning' },

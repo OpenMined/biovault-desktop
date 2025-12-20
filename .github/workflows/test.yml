@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - "main"
-      - "dev"
+      - 'main'
+      - 'dev'
   pull_request:
     branches:
-      - "**"
+      - '**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -63,8 +63,93 @@ jobs:
 
       - name: Run UI tests (headless)
         env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+          # Profiles real test runs via `test-scenario.sh --profiles` on PRs to main.
+          # Profiles mock test is intentionally not run in CI.
+          UI_TEST_GREP_INVERT_EXTRA: '@profiles-mock|@profiles-real'
         run: ./test-ui.sh
+
+  profiles-e2e:
+    name: Profiles E2E (real backend)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Tauri + Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            pkg-config \
+            curl \
+            xdg-utils \
+            wget \
+            file \
+            lsof \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsqlite3-dev \
+            libgtk-3-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go (syftbox devstack)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: biovault/syftbox/go.mod
+          cache: true
+          cache-dependency-path: biovault/syftbox/go.sum
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.1.38'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx --bun playwright install --with-deps chromium
+
+      - name: Build bv-desktop (release)
+        run: cargo build --release
+        working-directory: src-tauri
+
+      - name: Run profiles E2E scenario (headless)
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+        run: xvfb-run -a ./test-scenario.sh --profiles
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-e2e-test-results
+          path: |
+            logs/
+            test-results/
+            artifacts/
 
   linux-x64-build:
     name: Linux x64 build
@@ -269,8 +354,8 @@ jobs:
 
       - name: Run multi-client scenario tests
         env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+          AUTO_REBUILD_TAURI: '0'
         run: ./test-scenario.sh --all
 
       - name: Upload test artifacts on failure
@@ -357,9 +442,9 @@ jobs:
 
       - name: Run Jupyter session tests
         env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
-          JUPYTER_PAUSE_TIME: "5000"
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+          AUTO_REBUILD_TAURI: '0'
+          JUPYTER_PAUSE_TIME: '5000'
         run: ./test-scenario.sh --jupyter
 
       - name: Upload test artifacts on failure
@@ -462,9 +547,9 @@ jobs:
 
       - name: Run pipeline solo tests
         env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
-          CLEANUP_SYNTHETIC: "1"
+          SKIP_PLAYWRIGHT_INSTALL: '1'
+          AUTO_REBUILD_TAURI: '0'
+          CLEANUP_SYNTHETIC: '1'
         run: ./test-scenario.sh --pipelines-solo
 
       - name: Upload test artifacts on failure

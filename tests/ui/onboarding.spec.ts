@@ -37,6 +37,8 @@ async function advanceToEmailStep(page) {
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#skip-dependencies-btn').click()
 	await expect(page.locator('#onboarding-step-3')).toBeVisible()
+	await page.locator('#onboarding-next-3').click()
+	await expect(page.locator('#onboarding-step-3-email')).toBeVisible()
 	sendUnifiedLog({ event: 'onboarding-advance-complete' })
 }
 
@@ -186,8 +188,8 @@ test.describe('Onboarding flow', () => {
 	test('skipping SyftBox reaches the home screen', async ({ page }) => {
 		await advanceToEmailStep(page)
 		await page.fill('#onboarding-email', 'tester@example.com')
-		await expect(page.locator('#onboarding-next-3')).toBeEnabled()
-		await page.locator('#onboarding-next-3').click()
+		await expect(page.locator('#onboarding-next-3-email')).toBeEnabled()
+		await page.locator('#onboarding-next-3-email').click()
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()
@@ -213,7 +215,7 @@ test.describe('Onboarding flow', () => {
 	test('OTP retry rejects invalid code then accepts the resend', async ({ page }) => {
 		await advanceToEmailStep(page)
 		await page.fill('#onboarding-email', 'tester@example.com')
-		await page.locator('#onboarding-next-3').click()
+		await page.locator('#onboarding-next-3-email').click()
 
 		// Handle the key setup step (step 3-key)
 		await expect(page.locator('#onboarding-step-3-key')).toBeVisible()

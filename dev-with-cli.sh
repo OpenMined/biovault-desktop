@@ -18,22 +18,23 @@ echo -e "${GREEN}✓ Cleaned biovault package cache${NC}"
 
 BV_PATH="$SCRIPT_DIR/biovault/bv"
 
-# Use custom config if provided, otherwise use default Desktop/BioVault
+# Only set BIOVAULT_HOME if explicitly provided via BIOVAULT_CONFIG
+# Otherwise let the profile picker handle home selection
 if [ -n "$BIOVAULT_CONFIG" ]; then
     export BIOVAULT_HOME="$BIOVAULT_CONFIG"
+    mkdir -p "$BIOVAULT_HOME"
     echo -e "${YELLOW}📁 Using config directory: ${BIOVAULT_CONFIG}${NC}"
 else
-    # Default to Desktop/BioVault for desktop app consistency
-    export BIOVAULT_HOME="$HOME/Desktop/BioVault"
+    echo -e "${YELLOW}📁 No BIOVAULT_HOME set - profile picker will handle selection${NC}"
 fi
-
-mkdir -p "$BIOVAULT_HOME"
 
 # Override bv binary path
 export BIOVAULT_PATH="$BV_PATH"
 
 echo -e "${GREEN}✓ Configuration:${NC}"
-echo -e "${YELLOW}   Database: ${BIOVAULT_HOME}/biovault.db${NC}"
+if [ -n "$BIOVAULT_HOME" ]; then
+    echo -e "${YELLOW}   Database: ${BIOVAULT_HOME}/biovault.db${NC}"
+fi
 echo -e "${YELLOW}   CLI binary: ${BIOVAULT_PATH}${NC}"
 echo ""
 echo -e "${BLUE}🚀 Starting Tauri dev server...${NC}"
