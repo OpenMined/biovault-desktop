@@ -211,6 +211,9 @@ jobs:
           cd src-tauri
           cargo build --release
 
+      - name: Install maturin
+        run: pip install maturin
+
       - name: Pre-build syftbox-sdk wheel
         run: |
           cd biovault/syftbox-sdk/python
@@ -263,11 +266,11 @@ jobs:
             syftbox_impl: go
           # macOS x64
           - target: macos-x64
-            runner: macos-13
+            runner: macos-15-intel
             args: x86_64-apple-darwin
             syftbox_impl: rust
           - target: macos-x64
-            runner: macos-13
+            runner: macos-15-intel
             args: x86_64-apple-darwin
             syftbox_impl: go
           # Linux x64
