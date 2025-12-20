@@ -1198,31 +1198,6 @@ PY
 		run_ui_grep "@messaging-core-ui"
 		timer_pop
 		;;
-	pipelines-solo)
-		start_static_server
-		# Pipelines tests only need a single client; keep it lightweight.
-		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
-		if [[ -x "$TAURI_BINARY" ]]; then
-			assert_tauri_binary_fresh
-			timer_push "Tauri instance start (single)"
-			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
-			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
-			info "Waiting for WS bridge..."
-			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
-			timer_pop
-			export USE_REAL_INVOKE=true
-			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
-		else
-			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
-			export USE_REAL_INVOKE=false
-		fi
-		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
-
-		# Run pipelines UI flow (dataset + pipeline e2e)
-		timer_push "Playwright: pipelines-solo"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
-		timer_pop
-		;;
 	jupyter)
 		info "[DEBUG] Starting jupyter scenario"
 		info "[DEBUG] UI_PORT=$UI_PORT UI_BASE_URL=$UI_BASE_URL"
