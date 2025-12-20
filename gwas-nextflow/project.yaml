@@ -9,13 +9,10 @@ assets:
 description: GWAS analysis pipeline for comparing two populations using PLINK and generating Manhattan/QQ plots.
 
 inputs:
-  - name: data_dir
-    type: Directory
-    description: Directory containing PLINK files (.bed, .bim, .fam) for both populations
-  - name: datasets_csv
-    type: File
-    format: csv
-    description: CSV with dataset_name column listing the two population prefixes (without .bed extension)
+  - name: datasets
+    type: "Map[String, Record{bed: File, bim: File, fam: File}]"
+    format: json
+    description: JSON/YAML file mapping dataset names to PLINK bed/bim/fam paths
 
 parameters:
   - name: output_prefix
@@ -38,6 +35,10 @@ parameters:
     type: Integer
     default: 4
     description: Number of threads for PLINK
+  - name: test_mode
+    type: Bool
+    default: false
+    description: Run a lightweight mock analysis (no PLINK) for tests
 
 outputs:
   - name: gwas_output

@@ -22,7 +22,7 @@
  *
  * @tag jupyter-collab
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -401,7 +401,7 @@ function timer(label: string) {
 }
 
 test.describe('Jupyter Collaboration @jupyter-collab', () => {
-	test('two clients collaborate on notebooks', async ({ browser }) => {
+	test('two clients collaborate on notebooks', async ({ browser }, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const wsPort2 = wsPort1 + 1
@@ -1039,18 +1039,6 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('✅ No console errors detected')
 		}
 
-		// Pause for inspection (only in interactive mode, default 0 for CI)
-		const isInteractive = process.env.INTERACTIVE_MODE === '1'
-		const pauseTime = process.env.JUPYTER_PAUSE_TIME
-			? parseInt(process.env.JUPYTER_PAUSE_TIME, 10)
-			: isInteractive
-				? 10_000
-				: 0
-		if (pauseTime > 0) {
-			console.log(`Pausing for ${pauseTime / 1000} seconds to inspect outputs...`)
-			await jupyterPage1.waitForTimeout(pauseTime)
-		}
-
 		// TODO: Add specific assertions once we know what the expected outputs are
 		// For now, just log everything and don't fail on errors so we can see what happens
 		if (result1.errorCount > 0 || result2.errorCount > 0) {
@@ -1058,6 +1046,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			// Uncomment to fail on errors once we know expected behavior:
 			// throw new Error(`Notebooks had errors: DO=${result1.errorCount}, DS=${result2.errorCount}`)
 		}
+
+		await pauseForInteractive(testInfo)
 
 		// ============================================================
 		// Cleanup

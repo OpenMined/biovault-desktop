@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './playwright-fixtures'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'

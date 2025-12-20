@@ -483,6 +483,17 @@ const mockDialog = {
 			}, 0)
 		})
 	},
+	ask: async (message, options) => {
+		console.log('[Mock] dialog.ask:', message, options)
+		// Use setTimeout to ensure confirm() is called asynchronously
+		// This prevents blocking the event loop and allows Playwright to intercept
+		return new Promise((resolve) => {
+			setTimeout(() => {
+				const result = window.confirm(message)
+				resolve(result)
+			}, 0)
+		})
+	},
 }
 
 // Mock event listener

@@ -11,7 +11,7 @@
  * - stop_session_jupyter
  * - reset_session_jupyter
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import { waitForAppReady } from './test-helpers.js'
 
@@ -92,7 +92,7 @@ async function connectBackend(port: number): Promise<Backend> {
 }
 
 test.describe('Jupyter Session @jupyter-session', () => {
-	test('create solo session and run notebook cell', async ({ browser }) => {
+	test('create solo session and run notebook cell', async ({ browser }, testInfo) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const email = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
 
@@ -393,17 +393,10 @@ test.describe('Jupyter Session @jupyter-session', () => {
 			)
 		}
 
-		// Pause at the end so user can inspect the outputs
-		// Use a longer timeout for interactive viewing (default 10s for inspection)
-		const pauseTime = process.env.JUPYTER_PAUSE_TIME
-			? parseInt(process.env.JUPYTER_PAUSE_TIME, 10)
-			: 10_000
-		console.log(`Pausing for ${pauseTime / 1000} seconds to view outputs...`)
-		await jupyterPage.waitForTimeout(pauseTime)
-
 		// ============================================================
 		// Cleanup
 		// ============================================================
+		await pauseForInteractive(testInfo)
 		await backend.close()
 		await context.close()
 	})

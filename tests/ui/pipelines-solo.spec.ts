@@ -15,7 +15,7 @@
  *
  * @tag pipelines-solo
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -124,7 +124,7 @@ async function waitForRunCompletion(
 }
 
 test.describe('Pipelines Solo @pipelines-solo', () => {
-	test('import data, create dataset, run pipeline on mock data', async ({ browser }) => {
+	test('import data, create dataset, run pipeline on mock data', async ({ browser }, testInfo) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const email = process.env.TEST_EMAIL || 'client1@sandbox.local'
 		const syntheticDataDir =
@@ -702,6 +702,7 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 
 			console.log('\n=== TEST COMPLETED SUCCESSFULLY ===')
 		} finally {
+			await pauseForInteractive(testInfo)
 			await backend.close()
 			await context.close()
 		}

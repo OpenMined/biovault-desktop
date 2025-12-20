@@ -14,3 +14,6 @@ playwright-report/
 Baileys/
 warelay/
 biovault/
+
+# Nextflow work directory (contains symlinks)
+work/

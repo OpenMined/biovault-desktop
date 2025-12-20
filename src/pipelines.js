@@ -93,11 +93,9 @@ export function createPipelinesModule({
 		const stepCount = pipeline.spec?.steps?.length || 0
 		const description = pipeline.spec?.description || ''
 		const context = getPendingDataRunContext()
-		const hasDataSelected =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
-		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
-		const canRunWithData = hasDataSelected && acceptsGenotype
+		const hasDataSelected = hasPendingData(context)
+		const canRunWithData =
+			hasDataSelected && pipelineAcceptsShape(pipeline, context?.datasetShape || null)
 
 		// Resolve step projects to get names and versions
 		const stepDetails = (pipeline.spec?.steps || [])
@@ -241,11 +239,15 @@ export function createPipelinesModule({
 			return null
 		}
 
+		const datasetNameRaw = sessionStorage.getItem('preselectedDatasetName')
+		const datasetShapeRaw = sessionStorage.getItem('preselectedDatasetShape')
+		const datasetDataTypeRaw = sessionStorage.getItem('preselectedDatasetDataType')
+
 		// Check for URLs first (new approach), then fall back to file IDs (legacy)
 		const urlsRaw = sessionStorage.getItem('preselectedUrls')
 		const fileIdsRaw = sessionStorage.getItem('preselectedFileIds')
 
-		if (!urlsRaw && !fileIdsRaw) {
+		if (!urlsRaw && !fileIdsRaw && !datasetNameRaw) {
 			// Explicitly clear cache if no data
 			pipelineState.pendingDataRun = null
 			return null
@@ -295,7 +297,7 @@ export function createPipelinesModule({
 			}
 		}
 
-		if (urls.length === 0 && fileIds.length === 0) {
+		if (urls.length === 0 && fileIds.length === 0 && !datasetNameRaw) {
 			// Clear sessionStorage and cache if no valid data
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
@@ -316,6 +318,13 @@ export function createPipelinesModule({
 				console.warn('Failed to parse preselectedParticipants:', error)
 			}
 		}
+
+		const datasetName =
+			datasetNameRaw && datasetNameRaw !== 'null' ? datasetNameRaw.trim() || null : null
+		const datasetShape =
+			datasetShapeRaw && datasetShapeRaw !== 'null' ? datasetShapeRaw.trim() || null : null
+		const datasetDataType =
+			datasetDataTypeRaw && datasetDataTypeRaw !== 'null' ? datasetDataTypeRaw.trim() || null : null
 
 		const parseUrlList = (rawValue, label) => {
 			if (!rawValue) return []
@@ -385,7 +394,6 @@ export function createPipelinesModule({
 			}
 		}
 
-		const datasetNameRaw = sessionStorage.getItem('preselectedDatasetName')
 		const datasetOwnerRaw = sessionStorage.getItem('preselectedDatasetOwner')
 		const dataTypeRaw = sessionStorage.getItem('preselectedDataType')
 		const dataSourceRaw = sessionStorage.getItem('preselectedDataSource')
@@ -394,7 +402,9 @@ export function createPipelinesModule({
 			urls: urls.length > 0 ? urls : null,
 			fileIds: fileIds.length > 0 ? fileIds : null,
 			participantIds,
-			datasetName: datasetNameRaw && datasetNameRaw.trim() ? datasetNameRaw : null,
+			datasetName,
+			datasetShape,
+			datasetDataType,
 			datasetOwner: datasetOwnerRaw && datasetOwnerRaw.trim() ? datasetOwnerRaw : null,
 			assetKeys,
 			dataType: dataTypeRaw && dataTypeRaw.trim() ? dataTypeRaw : null,
@@ -421,11 +431,13 @@ export function createPipelinesModule({
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetShape')
+			sessionStorage.removeItem('preselectedDatasetDataType')
 			sessionStorage.removeItem('preselectedUrlsMock')
 			sessionStorage.removeItem('preselectedUrlsReal')
 			sessionStorage.removeItem('preselectedParticipantsMock')
 			sessionStorage.removeItem('preselectedParticipantsReal')
-			sessionStorage.removeItem('preselectedDatasetName')
 			sessionStorage.removeItem('preselectedDatasetOwner')
 			sessionStorage.removeItem('preselectedAssetKeys')
 			sessionStorage.removeItem('preselectedDataType')
@@ -444,9 +456,7 @@ export function createPipelinesModule({
 		let banner = document.getElementById(bannerId)
 
 		// Check for either URLs (new approach) or fileIds (legacy)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			if (banner) {
 				banner.remove()
@@ -493,9 +503,7 @@ export function createPipelinesModule({
 		const bannerId = 'pipeline-detail-data-banner'
 		let banner = document.getElementById(bannerId)
 
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			if (banner) {
 				banner.remove()
@@ -530,7 +538,7 @@ export function createPipelinesModule({
 				: fileCount
 
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, context?.datasetShape || null),
 		)
 
 		banner.innerHTML = `
@@ -699,9 +707,7 @@ export function createPipelinesModule({
 
 		const context = getPendingDataRunContext()
 		logDataRunContext('startDataDrivenRun', context)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			return false
 		}
@@ -711,13 +717,14 @@ export function createPipelinesModule({
 			await loadPipelines()
 		}
 
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, selectionShape),
 		)
 
 		if (eligiblePipelines.length === 0) {
 			logPipelineDebug('startDataDrivenRun no eligible pipelines', pipelineState.pipelines || [])
-			alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+			alert(`No pipelines are available that accept a ${selectionShape} input.`)
 			clearDataRunContext()
 			return false
 		}
@@ -813,9 +820,7 @@ export function createPipelinesModule({
 	async function showDataRunModalDirect(preselectedPipelineId = null) {
 		const context = getPendingDataRunContext()
 		logDataRunContext('showDataRunModalDirect', context)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			return false
 		}
@@ -825,8 +830,9 @@ export function createPipelinesModule({
 			await loadPipelines()
 		}
 
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, selectionShape),
 		)
 
 		if (eligiblePipelines.length === 0) {
@@ -836,11 +842,11 @@ export function createPipelinesModule({
 			)
 			if (dialog && dialog.message) {
 				await dialog.message(
-					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
+					`No pipelines are available that accept a ${selectionShape} input. Please create a compatible pipeline first.`,
 					{ title: 'No Compatible Pipelines', type: 'warning' },
 				)
 			} else {
-				alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+				alert(`No pipelines are available that accept a ${selectionShape} input.`)
 			}
 			clearDataRunContext()
 			return false
@@ -856,10 +862,7 @@ export function createPipelinesModule({
 		if (!handled) {
 			// Check why it wasn't handled
 			const context = getPendingDataRunContext()
-			const hasData =
-				context &&
-				((context.urls && context.urls.length > 0) ||
-					(context.fileIds && context.fileIds.length > 0))
+			const hasData = hasPendingData(context)
 
 			if (!hasData) {
 				// No data selected - prompt user to select data first
@@ -882,15 +885,16 @@ export function createPipelinesModule({
 			} else {
 				// Data is selected but pipeline might not be compatible
 				const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-				if (pipeline && !pipelineAcceptsGenotypeInput(pipeline)) {
+				const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
+				if (pipeline && !pipelineAcceptsShape(pipeline, selectionShape)) {
 					if (dialog && dialog.message) {
 						await dialog.message(
-							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
 							{ title: 'Incompatible Pipeline', type: 'warning' },
 						)
 					} else {
 						alert(
-							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
 						)
 					}
 				}
@@ -907,6 +911,264 @@ export function createPipelinesModule({
 			if (inputSpec.rawType) return inputSpec.rawType
 		}
 		return ''
+	}
+
+	function splitTypeTopLevel(value, delimiter) {
+		if (!value) return []
+		const parts = []
+		let depth = 0
+		let start = 0
+		for (let i = 0; i < value.length; i++) {
+			const ch = value[i]
+			if (ch === '[' || ch === '{') depth += 1
+			if (ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+			if (ch === delimiter && depth === 0) {
+				parts.push(value.slice(start, i).trim())
+				start = i + 1
+			}
+		}
+		parts.push(value.slice(start).trim())
+		return parts.filter((part) => part)
+	}
+
+	function splitTypeTopLevelOnce(value, delimiter) {
+		if (!value) return null
+		let depth = 0
+		for (let i = 0; i < value.length; i++) {
+			const ch = value[i]
+			if (ch === '[' || ch === '{') depth += 1
+			if (ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+			if (ch === delimiter && depth === 0) {
+				return [value.slice(0, i).trim(), value.slice(i + 1).trim()]
+			}
+		}
+		return null
+	}
+
+	function normalizeTypeName(typeName) {
+		if (!typeName) return null
+		switch (typeName.toLowerCase()) {
+			case 'string':
+				return 'String'
+			case 'bool':
+				return 'Bool'
+			case 'file':
+				return 'File'
+			case 'directory':
+				return 'Directory'
+			case 'participantsheet':
+				return 'ParticipantSheet'
+			case 'genotyperecord':
+				return 'GenotypeRecord'
+			case 'biovaultcontext':
+				return 'BiovaultContext'
+			default:
+				return typeName
+		}
+	}
+
+	function parseTypeExpr(raw) {
+		if (!raw || typeof raw !== 'string') return null
+		let trimmed = raw.trim()
+		if (!trimmed) return null
+		let optional = false
+		if (trimmed.endsWith('?')) {
+			optional = true
+			trimmed = trimmed.slice(0, -1).trim()
+		}
+		const lowered = trimmed.toLowerCase()
+		if (lowered.startsWith('list[') && trimmed.endsWith(']')) {
+			const inner = trimmed.slice(5, -1)
+			return { kind: 'List', optional, inner: parseTypeExpr(inner) }
+		}
+		if (lowered.startsWith('map[') && trimmed.endsWith(']')) {
+			const inner = trimmed.slice(4, -1)
+			const parts = splitTypeTopLevel(inner, ',')
+			if (parts.length !== 2 || parts[0].toLowerCase() !== 'string') return null
+			return { kind: 'Map', optional, value: parseTypeExpr(parts[1]) }
+		}
+		if ((lowered.startsWith('record{') || lowered.startsWith('dict{')) && trimmed.endsWith('}')) {
+			const inner = trimmed.slice(trimmed.indexOf('{') + 1, -1).trim()
+			if (!inner) return null
+			const fields = splitTypeTopLevel(inner, ',')
+				.map((field) => {
+					const parts = splitTypeTopLevelOnce(field, ':')
+					if (!parts) return null
+					return { name: parts[0], type: parseTypeExpr(parts[1]) }
+				})
+				.filter((field) => field && field.name)
+			return { kind: 'Record', optional, fields }
+		}
+		return { kind: normalizeTypeName(trimmed), optional }
+	}
+
+	function typeExprsCompatible(expected, actual) {
+		if (!expected || !actual) return false
+		if (expected.optional) return typeExprsCompatible({ ...expected, optional: false }, actual)
+		if (actual.optional) return typeExprsCompatible(expected, { ...actual, optional: false })
+		if (expected.kind !== actual.kind) return false
+		switch (expected.kind) {
+			case 'List':
+				return typeExprsCompatible(expected.inner, actual.inner)
+			case 'Map':
+				return typeExprsCompatible(expected.value, actual.value)
+			case 'Record': {
+				const expectedFields = expected.fields || []
+				const actualFields = actual.fields || []
+				if (expectedFields.length !== actualFields.length) return false
+				for (const field of expectedFields) {
+					const match = actualFields.find((candidate) => candidate.name === field.name)
+					if (!match) return false
+					if (!typeExprsCompatible(field.type, match.type)) return false
+				}
+				return true
+			}
+			default:
+				return true
+		}
+	}
+
+	function typesCompatible(expectedRaw, actualRaw) {
+		const expected = parseTypeExpr(expectedRaw)
+		const actual = parseTypeExpr(actualRaw)
+		if (expected && actual) {
+			return typeExprsCompatible(expected, actual)
+		}
+		if (!expectedRaw || !actualRaw) return false
+		return (
+			expectedRaw.trim().replace(/\?$/, '').toLowerCase() ===
+			actualRaw.trim().replace(/\?$/, '').toLowerCase()
+		)
+	}
+
+	function extractAssetFilename(filePath) {
+		if (!filePath) return null
+		const trimmed = String(filePath).split('#')[0].replace(/\/+$/, '')
+		const parts = trimmed.split('/')
+		const name = parts[parts.length - 1]
+		return name || null
+	}
+
+	function parseAssetRef(raw) {
+		if (!raw) return null
+		if (typeof raw === 'object') return raw
+		if (typeof raw !== 'string') return null
+		try {
+			return JSON.parse(raw)
+		} catch {
+			return null
+		}
+	}
+
+	function assetHasEntries(raw) {
+		const parsed = parseAssetRef(raw)
+		return Array.isArray(parsed?.entries) && parsed.entries.length > 0
+	}
+
+	function isTwinListAsset(asset) {
+		const kind = (asset?.kind || asset?.type || '').toString().toLowerCase()
+		return (
+			kind === 'twin_list' ||
+			assetHasEntries(asset?.private_ref) ||
+			assetHasEntries(asset?.mock_ref)
+		)
+	}
+
+	function collectDatasetAssetPaths(assets, dataType) {
+		const paths = []
+		const includePrivate = dataType === 'real' || dataType === 'both' || !dataType
+		const includeMock = dataType === 'mock' || dataType === 'both'
+
+		;(assets || []).forEach((asset) => {
+			if (!asset) return
+			if (includePrivate) {
+				const privatePath = asset.resolved_private_path || asset.private_path
+				if (privatePath) paths.push(privatePath)
+			}
+			if (includeMock) {
+				const mockPath = asset.resolved_mock_path || asset.mock_path || asset.mock_url
+				if (mockPath) paths.push(mockPath)
+			}
+		})
+
+		return paths
+	}
+
+	function inferDatasetShapeFromAssets(assets, dataType) {
+		if (!Array.isArray(assets) || assets.length === 0) return null
+		if (assets.some((asset) => isTwinListAsset(asset))) {
+			return 'List[GenotypeRecord]'
+		}
+
+		const filePaths = collectDatasetAssetPaths(assets, dataType)
+		if (filePaths.length === 0) return null
+
+		const groups = new Map()
+		filePaths.forEach((path) => {
+			const filename = extractAssetFilename(path)
+			if (!filename) return
+			const dot = filename.lastIndexOf('.')
+			if (dot <= 0) return
+			const stem = filename.slice(0, dot)
+			const ext = filename.slice(dot + 1).toLowerCase()
+			if (!['bed', 'bim', 'fam'].includes(ext)) return
+			if (!groups.has(stem)) {
+				groups.set(stem, new Set())
+			}
+			groups.get(stem).add(ext)
+		})
+
+		if (groups.size > 0) {
+			const allComplete = Array.from(groups.values()).every(
+				(exts) => exts.has('bed') && exts.has('bim') && exts.has('fam'),
+			)
+			if (allComplete) {
+				return 'Map[String, Record{bed: File, bim: File, fam: File}]'
+			}
+		}
+
+		if (filePaths.length === 1) return 'File'
+		return 'Map[String, File]'
+	}
+
+	function resolveDatasetShape(entry, assets, dataType) {
+		const extra = entry?.dataset?.extra
+		if (extra && typeof extra === 'object') {
+			const extraShape = extra.shape
+			if (typeof extraShape === 'string' && extraShape.trim()) {
+				return extraShape.trim()
+			}
+		} else if (typeof extra === 'string') {
+			try {
+				const parsed = JSON.parse(extra)
+				if (parsed && typeof parsed.shape === 'string' && parsed.shape.trim()) {
+					return parsed.shape.trim()
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		const manifestShape = entry?.manifest?.shape || entry?.shape
+		if (typeof manifestShape === 'string' && manifestShape.trim()) {
+			return manifestShape.trim()
+		}
+
+		return inferDatasetShapeFromAssets(assets, dataType)
+	}
+
+	function pipelineAcceptsShape(pipeline, shape) {
+		if (!pipeline) return false
+		const inputs = pipeline?.spec?.inputs || {}
+		const expectedShape = shape || 'List[GenotypeRecord]'
+		return Object.values(inputs).some((inputSpec) => {
+			const typeStr = describeInputType(inputSpec)
+			return typeof typeStr === 'string' && typesCompatible(expectedShape, typeStr)
+		})
+	}
+
+	function pipelineAcceptsGenotypeInput(pipeline) {
+		return pipelineAcceptsShape(pipeline, 'List[GenotypeRecord]')
 	}
 
 	function logPipelineDebug(label, pipelines) {
@@ -946,12 +1208,13 @@ export function createPipelinesModule({
 		})
 	}
 
-	function pipelineAcceptsGenotypeInput(pipeline) {
-		const inputs = pipeline?.spec?.inputs || {}
-		return Object.values(inputs).some((inputSpec) => {
-			const typeStr = describeInputType(inputSpec)
-			return typeof typeStr === 'string' && typeStr.toLowerCase() === 'list[genotyperecord]'
-		})
+	function hasPendingData(context) {
+		return (
+			!!context &&
+			((context.urls && context.urls.length > 0) ||
+				(context.fileIds && context.fileIds.length > 0) ||
+				context.datasetName)
+		)
 	}
 
 	function closeDataRunModal(clearContext = false) {
@@ -982,13 +1245,45 @@ export function createPipelinesModule({
 			console.warn('Failed to get runs base directory:', error)
 		}
 
-		const dataCount =
-			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
+		const isDatasetSelection =
+			!!context.datasetName &&
+			!(context.urls && context.urls.length) &&
+			!(context.fileIds && context.fileIds.length)
+		const dataCount = isDatasetSelection
+			? 0
+			: (context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const uniqueParticipantCount =
-			context.participantIds && context.participantIds.length > 0
+			!isDatasetSelection && context.participantIds && context.participantIds.length > 0
 				? context.participantIds.filter((p) => p).length // Filter out empty strings
 				: dataCount
 		const fileCount = dataCount
+		const datasetLabel = context.datasetName ? escapeHtml(context.datasetName) : null
+		const datasetTypeLabel = context.datasetDataType ? escapeHtml(context.datasetDataType) : null
+		const summaryDetailHtml = isDatasetSelection
+			? `<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
+					Dataset <strong style="color: #0f172a; font-weight: 600;">${datasetLabel}</strong>${
+						datasetTypeLabel ? ` (${datasetTypeLabel})` : ''
+					}
+				</div>
+				<div style="font-size: 13px; color: #64748b;">
+					Shape: <strong style="color: #0f172a; font-weight: 600;">${escapeHtml(selectionShape)}</strong>
+				</div>`
+			: `<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
+					<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${
+						fileCount === 1 ? '' : 's'
+					} 
+					covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${
+						uniqueParticipantCount === 1 ? '' : 's'
+					}
+				</div>`
+		const summaryFooterHtml = isDatasetSelection
+			? `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
+					We will pass the dataset map directly to the pipeline.
+				</div>`
+			: `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
+					We will generate a temporary samplesheet automatically for this run.
+				</div>`
 
 		const pipelineOptionsHtml = pipelines
 			.map((pipeline, index) => {
@@ -1141,17 +1436,8 @@ export function createPipelinesModule({
 							</svg>
 							<strong style="font-size: 16px; font-weight: 700; color: #1e293b; letter-spacing: -0.01em;">Selected Data</strong>
 						</div>
-						<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
-							<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${
-								fileCount === 1 ? '' : 's'
-							} 
-							covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${
-								uniqueParticipantCount === 1 ? '' : 's'
-							}
-						</div>
-						<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
-							We will generate a temporary samplesheet automatically for this run.
-						</div>
+						${summaryDetailHtml}
+						${summaryFooterHtml}
 					</div>
 					<div class="data-run-section" style="margin-bottom: 28px;">
 						<h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px;">
@@ -1343,6 +1629,16 @@ export function createPipelinesModule({
 				runBtn.disabled = true
 				runBtn.textContent = 'Starting…'
 
+				// Build input overrides from test config if available
+				const inputOverrides = {}
+				const testOverrides =
+					typeof window !== 'undefined' ? window.__TEST_PIPELINE_OVERRIDES__ : null
+				if (testOverrides && typeof testOverrides === 'object') {
+					for (const [key, value] of Object.entries(testOverrides)) {
+						inputOverrides[key] = value
+					}
+				}
+
 				const baseResultsDir = resultsDir ? resultsDir.replace(/[\\/]+$/, '') : null
 				const hasSplitUrls =
 					(context.mockUrls && context.mockUrls.length > 0) ||
@@ -1374,6 +1670,9 @@ export function createPipelinesModule({
 							urls: context.urls || [],
 							fileIds: context.fileIds || [],
 							participantIds: context.participantIds || [],
+							datasetName: context.datasetName || null,
+							datasetShape: context.datasetShape || null,
+							datasetDataType: context.datasetDataType || null,
 						},
 					]
 				}
@@ -1409,7 +1708,7 @@ export function createPipelinesModule({
 
 						const run = await invoke('run_pipeline', {
 							pipelineId,
-							inputOverrides: {},
+							inputOverrides,
 							resultsDir: resolvedResultsDir,
 							selection: {
 								urls: runSet.urls || [],
@@ -3891,11 +4190,10 @@ steps:${
 	async function runPipeline(pipelineId) {
 		const context = getPendingDataRunContext()
 		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 
-		if (hasData && pipeline && pipelineAcceptsGenotypeInput(pipeline)) {
+		if (hasData && pipeline && pipelineAcceptsShape(pipeline, selectionShape)) {
 			await startDataDrivenRun(pipelineId)
 			return
 		}
@@ -4496,7 +4794,10 @@ steps:${
 			if (
 				e.key === 'preselectedFileIds' ||
 				e.key === 'preselectedParticipants' ||
-				e.key === 'preselectedUrls'
+				e.key === 'preselectedUrls' ||
+				e.key === 'preselectedDatasetName' ||
+				e.key === 'preselectedDatasetShape' ||
+				e.key === 'preselectedDatasetDataType'
 			) {
 				refreshBannerIfNeeded()
 			}
@@ -6279,6 +6580,9 @@ steps:${
 						})
 						console.log('Using network mock paths:', mockPaths)
 						// Set paths directly for pipeline run
+						sessionStorage.removeItem('preselectedDatasetName')
+						sessionStorage.removeItem('preselectedDatasetShape')
+						sessionStorage.removeItem('preselectedDatasetDataType')
 						const mockUrls = mockPaths.map((p) => `file://${p}`)
 						const mockParticipants = mockPaths.map(() => '')
 						storeDataSelection({
@@ -6305,6 +6609,14 @@ steps:${
 						return
 					}
 				}
+
+				if (dialog?.message) {
+					await dialog.message('No synced mock data found for this dataset.', {
+						title: 'No Mock Data',
+						type: 'warning',
+					})
+				}
+				return
 			}
 
 			// For local datasets or if network path extraction failed, query database
@@ -6347,6 +6659,24 @@ steps:${
 				}
 				return
 			}
+
+			// Resolve dataset shape for type matching
+			const datasetShape = resolveDatasetShape(datasetEntry, assets, dataType)
+
+			// Store dataset context in sessionStorage
+			sessionStorage.setItem('preselectedDatasetName', name)
+			if (datasetShape) {
+				sessionStorage.setItem('preselectedDatasetShape', datasetShape)
+			} else {
+				sessionStorage.removeItem('preselectedDatasetShape')
+			}
+			if (dataType) {
+				sessionStorage.setItem('preselectedDatasetDataType', dataType)
+			} else {
+				sessionStorage.removeItem('preselectedDatasetDataType')
+			}
+			sessionStorage.removeItem('preselectedFileIds')
+
 			const mockUrls = []
 			const mockParticipantIds = []
 			const realUrls = []
