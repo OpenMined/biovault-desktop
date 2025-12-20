@@ -595,6 +595,13 @@ pub struct DiscoveredDatasetAsset {
     pub mock_url: Option<String>,
     pub mock_size: Option<u64>,
     pub mock_path: Option<String>,
+    pub mock_entries: Vec<DiscoveredDatasetMockEntry>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct DiscoveredDatasetMockEntry {
+    pub url: String,
+    pub participant_id: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -750,8 +757,39 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
             for (key, asset) in &manifest.assets {
                 let mock_url = asset.mock.as_ref().and_then(|m| match m {
                     serde_yaml::Value::String(s) => Some(s.clone()),
+                    serde_yaml::Value::Mapping(map) => map
+                        .get(serde_yaml::Value::String("url".to_string()))
+                        .and_then(|v| v.as_str().map(|s| s.to_string())),
                     _ => None,
                 });
+
+                let mut mock_entries = Vec::new();
+                if let Some(serde_yaml::Value::Mapping(map)) = asset.mock.as_ref() {
+                    if let Some(serde_yaml::Value::Sequence(entries)) =
+                        map.get(serde_yaml::Value::String("entries".to_string()))
+                    {
+                        for entry in entries {
+                            if let serde_yaml::Value::Mapping(entry_map) = entry {
+                                let url = entry_map
+                                    .get(serde_yaml::Value::String("url".to_string()))
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                if let Some(url) = url {
+                                    let participant_id = entry_map
+                                        .get(serde_yaml::Value::String(
+                                            "participant_id".to_string(),
+                                        ))
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from);
+                                    mock_entries.push(DiscoveredDatasetMockEntry {
+                                        url,
+                                        participant_id,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Try to find mock file and get its size
                 let (mock_size, mock_path) = if let Some(ref url) = mock_url {
@@ -826,6 +864,7 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
                     mock_url,
                     mock_size,
                     mock_path,
+                    mock_entries,
                 });
             }
 

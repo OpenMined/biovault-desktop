@@ -32,6 +32,7 @@ export function createPipelinesModule({
 		},
 		pendingDataRun: null,
 		dataRunModalOpen: false,
+		lastAutoOpenKey: null,
 	}
 
 	// Load pipelines list
@@ -78,6 +79,7 @@ export function createPipelinesModule({
 			})
 
 			pipelineState.pipelines = pipelines
+			logPipelineDebug('loadPipelines', pipelines)
 
 			renderDataRunBanner()
 
@@ -315,10 +317,33 @@ export function createPipelinesModule({
 			}
 		}
 
+		let assetKeys = []
+		const assetKeysRaw = sessionStorage.getItem('preselectedAssetKeys')
+		if (assetKeysRaw) {
+			try {
+				const parsedKeys = JSON.parse(assetKeysRaw)
+				if (Array.isArray(parsedKeys)) {
+					assetKeys = parsedKeys.filter((value) => typeof value === 'string' && value)
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedAssetKeys:', error)
+			}
+		}
+
+		const datasetNameRaw = sessionStorage.getItem('preselectedDatasetName')
+		const datasetOwnerRaw = sessionStorage.getItem('preselectedDatasetOwner')
+		const dataTypeRaw = sessionStorage.getItem('preselectedDataType')
+		const dataSourceRaw = sessionStorage.getItem('preselectedDataSource')
+
 		const context = {
 			urls: urls.length > 0 ? urls : null,
 			fileIds: fileIds.length > 0 ? fileIds : null,
 			participantIds,
+			datasetName: datasetNameRaw && datasetNameRaw.trim() ? datasetNameRaw : null,
+			datasetOwner: datasetOwnerRaw && datasetOwnerRaw.trim() ? datasetOwnerRaw : null,
+			assetKeys,
+			dataType: dataTypeRaw && dataTypeRaw.trim() ? dataTypeRaw : null,
+			dataSource: dataSourceRaw && dataSourceRaw.trim() ? dataSourceRaw : null,
 		}
 
 		// Cache for performance, but will be cleared on next check if sessionStorage changed
@@ -337,6 +362,11 @@ export function createPipelinesModule({
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
+			sessionStorage.removeItem('preselectedDataType')
+			sessionStorage.removeItem('preselectedDataSource')
 		} catch (error) {
 			console.warn('Failed to clear preselected session data:', error)
 		}
@@ -605,6 +635,7 @@ export function createPipelinesModule({
 		}
 
 		const context = getPendingDataRunContext()
+		logDataRunContext('startDataDrivenRun', context)
 		const hasData =
 			context &&
 			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
@@ -622,6 +653,7 @@ export function createPipelinesModule({
 		)
 
 		if (eligiblePipelines.length === 0) {
+			logPipelineDebug('startDataDrivenRun no eligible pipelines', pipelineState.pipelines || [])
 			alert('No pipelines are available that accept a List[GenotypeRecord] input.')
 			clearDataRunContext()
 			return false
@@ -717,6 +749,7 @@ export function createPipelinesModule({
 	// Public function to show modal directly (called from Data tab)
 	async function showDataRunModalDirect() {
 		const context = getPendingDataRunContext()
+		logDataRunContext('showDataRunModalDirect', context)
 		const hasData =
 			context &&
 			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
@@ -734,6 +767,10 @@ export function createPipelinesModule({
 		)
 
 		if (eligiblePipelines.length === 0) {
+			logPipelineDebug(
+				'showDataRunModalDirect no eligible pipelines',
+				pipelineState.pipelines || [],
+			)
 			if (dialog && dialog.message) {
 				await dialog.message(
 					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
@@ -807,6 +844,40 @@ export function createPipelinesModule({
 			if (inputSpec.rawType) return inputSpec.rawType
 		}
 		return ''
+	}
+
+	function logPipelineDebug(label, pipelines) {
+		if (!pipelines || pipelines.length === 0) {
+			console.log(`[Pipelines Debug] ${label}: no pipelines`)
+			return
+		}
+
+		const summary = pipelines.map((pipeline) => {
+			const inputs = pipeline?.spec?.inputs || {}
+			const inputTypes = Object.entries(inputs).map(([key, spec]) => {
+				const typeStr = describeInputType(spec)
+				return typeStr ? `${key}:${typeStr}` : key
+			})
+
+			return {
+				id: pipeline?.id,
+				name: pipeline?.name,
+				inputs: inputTypes,
+				steps: pipeline?.spec?.steps?.length || 0,
+				acceptsGenotype: pipelineAcceptsGenotypeInput(pipeline),
+			}
+		})
+
+		console.log(`[Pipelines Debug] ${label}`, summary)
+	}
+
+	function logDataRunContext(label, context) {
+		console.log(`[Pipelines Debug] ${label} context`, {
+			hasContext: Boolean(context),
+			urls: context?.urls?.length || 0,
+			fileIds: context?.fileIds?.length || 0,
+			participantIds: context?.participantIds?.length || 0,
+		})
 	}
 
 	function pipelineAcceptsGenotypeInput(pipeline) {
@@ -1214,6 +1285,11 @@ export function createPipelinesModule({
 							urls: context.urls || [],
 							fileIds: context.fileIds || [],
 							participantIds: context.participantIds || [],
+							datasetName: context.datasetName || null,
+							datasetOwner: context.datasetOwner || null,
+							assetKeys: context.assetKeys || [],
+							dataType: context.dataType || null,
+							dataSource: context.dataSource || null,
 						},
 					})
 
@@ -1621,7 +1697,9 @@ export function createPipelinesModule({
 		document.body.insertAdjacentHTML('beforeend', loadingHtml)
 
 		try {
-			await submitPipelineURL(false, url)
+			// Use overwrite=true for template pipelines since they're predefined
+			// and user explicitly wants this specific template
+			await submitPipelineURL(true, url)
 			const loadingModal = document.getElementById('pipeline-loading-modal')
 			if (loadingModal) loadingModal.remove()
 		} catch (error) {
@@ -4244,6 +4322,31 @@ steps:${
 		// Use storage event (works across tabs) and also poll when Pipelines view is active
 		let bannerCheckInterval = null
 
+		async function maybeAutoOpenDataRunModal() {
+			if (pipelineState.dataRunModalOpen) return
+			const context = getPendingDataRunContext()
+			const hasData =
+				context &&
+				((context.urls && context.urls.length > 0) ||
+					(context.fileIds && context.fileIds.length > 0))
+			if (!hasData) return
+
+			const contextKey = JSON.stringify({
+				urls: context.urls || [],
+				fileIds: context.fileIds || [],
+				participants: context.participantIds || [],
+			})
+			if (pipelineState.lastAutoOpenKey === contextKey) {
+				return
+			}
+			pipelineState.lastAutoOpenKey = contextKey
+			try {
+				await showDataRunModalDirect()
+			} catch (err) {
+				console.warn('Failed to auto-open data run modal:', err)
+			}
+		}
+
 		function refreshBannerIfNeeded() {
 			const isPipelinesViewActive = document
 				.getElementById('run-view')
@@ -4252,12 +4355,17 @@ steps:${
 				// Clear cached context to force fresh read from sessionStorage
 				pipelineState.pendingDataRun = null
 				renderDataRunBanner()
+				maybeAutoOpenDataRunModal()
 			}
 		}
 
 		// Listen for storage events (works when Data tab updates sessionStorage)
 		window.addEventListener('storage', (e) => {
-			if (e.key === 'preselectedFileIds' || e.key === 'preselectedParticipants') {
+			if (
+				e.key === 'preselectedFileIds' ||
+				e.key === 'preselectedParticipants' ||
+				e.key === 'preselectedUrls'
+			) {
 				refreshBannerIfNeeded()
 			}
 		})
@@ -5845,12 +5953,175 @@ steps:${
 
 	// Open run pipeline modal with dataset context
 	// Called from Data tab when user clicks "Run Pipeline" on a dataset card
+	// Also called from Network tab for peer datasets with mock data
 	async function openRunPipelineWithDataset({ name, dataType, entry }) {
 		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry })
 
 		try {
-			// Get dataset from database to extract file IDs
-			// list_datasets_with_assets returns: [{ dataset: {..., name}, assets: [...] }, ...]
+			let assets = []
+			const setDatasetContext = ({
+				datasetName,
+				datasetOwner,
+				assetKeys,
+				dataTypeLabel,
+				dataSource,
+			}) => {
+				try {
+					if (datasetName) {
+						sessionStorage.setItem('preselectedDatasetName', datasetName)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetName')
+					}
+					if (datasetOwner) {
+						sessionStorage.setItem('preselectedDatasetOwner', datasetOwner)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetOwner')
+					}
+					if (assetKeys && assetKeys.length > 0) {
+						sessionStorage.setItem('preselectedAssetKeys', JSON.stringify(assetKeys))
+					} else {
+						sessionStorage.removeItem('preselectedAssetKeys')
+					}
+					if (dataTypeLabel) {
+						sessionStorage.setItem('preselectedDataType', dataTypeLabel)
+					} else {
+						sessionStorage.removeItem('preselectedDataType')
+					}
+					if (dataSource) {
+						sessionStorage.setItem('preselectedDataSource', dataSource)
+					} else {
+						sessionStorage.removeItem('preselectedDataSource')
+					}
+				} catch (err) {
+					console.warn('Failed to set dataset context:', err)
+				}
+			}
+
+			// Check if this is a network dataset (has owner that's not us) or local dataset
+			const isNetworkDataset = entry && entry.owner && !entry.is_own
+
+			if (isNetworkDataset) {
+				// For network datasets, use the assets from the entry directly
+				console.log('Using network dataset assets from entry')
+				assets = entry.assets || []
+
+				// Network dataset assets have a different structure - extract mock paths
+				if (dataType === 'mock' && assets.length > 0) {
+					const mockEntryUrls = []
+					const mockEntryParticipants = []
+
+					for (const asset of assets) {
+						if (Array.isArray(asset.mock_entries)) {
+							for (const entry of asset.mock_entries) {
+								if (entry?.url) {
+									mockEntryUrls.push(entry.url)
+									mockEntryParticipants.push(entry.participant_id || '')
+								}
+							}
+						}
+					}
+
+					if (mockEntryUrls.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
+						console.log('Using network mock entries:', mockEntryUrls)
+						sessionStorage.setItem('preselectedUrls', JSON.stringify(mockEntryUrls))
+						sessionStorage.setItem('preselectedParticipants', JSON.stringify(mockEntryParticipants))
+
+						if (navigateTo) {
+							navigateTo('run')
+						}
+
+						setTimeout(async () => {
+							try {
+								await loadPipelines()
+								await showDataRunModalDirect()
+							} catch (err) {
+								console.error('Error showing data run modal:', err)
+							}
+						}, 100)
+						return
+					}
+
+					const mockPaths = []
+
+					// Get the datasites directory to derive local paths from mock_url if needed
+					let datasitesDir = null
+					try {
+						const configInfo = await invoke('get_syftbox_config_info')
+						if (configInfo?.data_dir) {
+							datasitesDir = configInfo.data_dir.endsWith('/datasites')
+								? configInfo.data_dir
+								: configInfo.data_dir + '/datasites'
+						}
+					} catch (err) {
+						console.warn('Could not get datasites dir:', err)
+					}
+
+					for (const asset of assets) {
+						// Network assets have mock_path directly (if file is synced)
+						if (asset.mock_path) {
+							mockPaths.push(asset.mock_path)
+						} else if (asset.mock_url && datasitesDir) {
+							// Derive local path from mock_url
+							// mock_url format: syft://{owner}/public/biovault/datasets/{name}/assets/{file}
+							// local path: {datasitesDir}/{owner}/public/biovault/datasets/{name}/assets/{file}
+							const urlPath = asset.mock_url.replace(/^syft:\/\//, '')
+							const localPath = datasitesDir + '/' + urlPath
+							console.log('Derived mock path from URL:', localPath)
+							mockPaths.push(localPath)
+						}
+					}
+					if (mockPaths.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
+						console.log('Using network mock paths:', mockPaths)
+						// Set paths directly for pipeline run
+						sessionStorage.setItem(
+							'preselectedUrls',
+							JSON.stringify(mockPaths.map((p) => `file://${p}`)),
+						)
+						sessionStorage.setItem(
+							'preselectedParticipants',
+							JSON.stringify(mockPaths.map(() => '')),
+						)
+
+						// Navigate to pipelines tab
+						if (navigateTo) {
+							navigateTo('run')
+						}
+
+						// Wait for navigation and then show modal
+						setTimeout(async () => {
+							try {
+								await loadPipelines()
+								await showDataRunModalDirect()
+							} catch (err) {
+								console.error('Error showing data run modal:', err)
+							}
+						}, 100)
+						return
+					}
+				}
+			}
+
+			// For local datasets or if network path extraction failed, query database
 			console.log('Fetching datasets with list_datasets_with_assets...')
 			const datasetsWithAssets = await invoke('list_datasets_with_assets')
 			console.log('Got datasets:', datasetsWithAssets)
@@ -5871,7 +6142,17 @@ steps:${
 			}
 
 			// Assets are included in the response
-			const assets = datasetEntry.assets || []
+			assets = datasetEntry.assets || []
+			const assetKeys = assets
+				.map((asset) => asset.asset_key || asset.key || asset.assetKey)
+				.filter(Boolean)
+			setDatasetContext({
+				datasetName: datasetEntry.dataset?.name || name,
+				datasetOwner: datasetEntry.dataset?.author || entry?.owner || null,
+				assetKeys,
+				dataTypeLabel: dataType,
+				dataSource: 'dataset',
+			})
 			console.log('Dataset assets:', assets)
 			if (assets.length === 0) {
 				console.error('Dataset has no assets:', name)
@@ -5998,6 +6279,152 @@ steps:${
 		}
 	}
 
+	// State for pipeline request flow
+	let pendingPipelineRequest = null
+
+	// Open modal to select a pipeline to request run on peer's private data
+	async function openRequestPipelineRun({ datasetName, datasetOwner, dataset }) {
+		console.log('openRequestPipelineRun:', { datasetName, datasetOwner, dataset })
+
+		pendingPipelineRequest = { datasetName, datasetOwner, dataset }
+
+		// Ensure we're on pipelines tab
+		if (navigateTo) {
+			navigateTo('pipelines')
+		}
+
+		// Load pipelines if not already loaded
+		await loadPipelines()
+
+		// Show pipeline selection modal for request
+		showRequestPipelineModal()
+	}
+
+	function showRequestPipelineModal() {
+		// Check if we have any pipelines
+		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
+			if (dialog?.message) {
+				dialog.message('You need to create a pipeline first before you can request a run.', {
+					title: 'No Pipelines',
+					type: 'warning',
+				})
+			}
+			return
+		}
+
+		// Create modal HTML
+		const modalHtml = `
+			<div id="request-pipeline-modal" class="modal-overlay">
+				<div class="modal-container" style="max-width: 500px;">
+					<div class="modal-header">
+						<h3>Request Pipeline Run</h3>
+						<button class="modal-close" onclick="document.getElementById('request-pipeline-modal').remove()">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>
+					</div>
+					<div class="modal-body">
+						<p style="margin-bottom: 16px; color: var(--text-secondary);">
+							Select a pipeline to send to <strong>${escapeHtml(pendingPipelineRequest?.datasetOwner || '')}</strong>
+							for running on their private data in dataset <strong>${escapeHtml(pendingPipelineRequest?.datasetName || '')}</strong>.
+						</p>
+						<div class="form-group">
+							<label>Select Pipeline</label>
+							<select id="request-pipeline-select" class="form-control">
+								${pipelineState.pipelines.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (v${p.version || '1.0.0'})</option>`).join('')}
+							</select>
+						</div>
+						<div class="form-group">
+							<label>Message (optional)</label>
+							<textarea id="request-pipeline-message" class="form-control" rows="3" placeholder="Add a message for the recipient..."></textarea>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-secondary" onclick="document.getElementById('request-pipeline-modal').remove()">Cancel</button>
+						<button class="btn btn-primary" id="send-pipeline-request-btn">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="22" y1="2" x2="11" y2="13"></line>
+								<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+							</svg>
+							Send Request
+						</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		// Remove existing modal if any
+		document.getElementById('request-pipeline-modal')?.remove()
+
+		// Add modal to DOM
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		// Wire up send button
+		document
+			.getElementById('send-pipeline-request-btn')
+			?.addEventListener('click', handleSendPipelineRequest)
+	}
+
+	async function handleSendPipelineRequest() {
+		const select = document.getElementById('request-pipeline-select')
+		const messageInput = document.getElementById('request-pipeline-message')
+		const pipelineName = select?.value
+		const message = messageInput?.value || ''
+
+		if (!pipelineName || !pendingPipelineRequest) {
+			return
+		}
+
+		const { datasetName, datasetOwner, dataset: _dataset } = pendingPipelineRequest
+
+		// Find the selected pipeline
+		const pipeline = pipelineState.pipelines.find((p) => p.name === pipelineName)
+		if (!pipeline) {
+			if (dialog?.message) {
+				await dialog.message('Pipeline not found', { title: 'Error', type: 'error' })
+			}
+			return
+		}
+
+		console.log('Sending pipeline request:', { pipeline, datasetName, datasetOwner, message })
+
+		try {
+			// Send the pipeline request via messaging system
+			// This will package the pipeline and send it as a message
+			await invoke('send_pipeline_request', {
+				pipelineName: pipeline.name,
+				pipelineVersion: pipeline.version || '1.0.0',
+				datasetName,
+				recipient: datasetOwner,
+				message:
+					message ||
+					`Please run the ${pipeline.name} pipeline on your private data in dataset ${datasetName}.`,
+			})
+
+			// Close modal
+			document.getElementById('request-pipeline-modal')?.remove()
+			pendingPipelineRequest = null
+
+			if (dialog?.message) {
+				await dialog.message(
+					`Pipeline request sent to ${datasetOwner}.\n\nThey will receive a message with the pipeline and can choose to run it on their private data.`,
+					{ title: 'Request Sent', type: 'info' },
+				)
+			}
+		} catch (error) {
+			console.error('Failed to send pipeline request:', error)
+			const errorMsg = error?.message || String(error) || 'Unknown error'
+			if (dialog?.message) {
+				await dialog.message('Failed to send pipeline request: ' + errorMsg, {
+					title: 'Error',
+					type: 'error',
+				})
+			}
+		}
+	}
+
 	return {
 		initialize,
 		loadPipelines,
@@ -6005,5 +6432,6 @@ steps:${
 		backToPipelinesList,
 		addProjectAsStep, // Expose for project creation to call
 		openRunPipelineWithDataset, // Expose for dataset "Run Pipeline" button
+		openRequestPipelineRun, // Expose for network "Request Run" button
 	}
 }

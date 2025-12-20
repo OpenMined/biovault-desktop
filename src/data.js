@@ -3078,6 +3078,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					// Store selected participant IDs and file IDs
 					sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
 					sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
+					sessionStorage.setItem('preselectedDataType', 'real')
+					sessionStorage.setItem('preselectedDataSource', 'file_selection')
+					sessionStorage.removeItem('preselectedDatasetName')
+					sessionStorage.removeItem('preselectedDatasetOwner')
+					sessionStorage.removeItem('preselectedAssetKeys')
 
 					// Trigger pipeline run modal via global pipeline module
 					if (
@@ -3222,10 +3227,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			// Sync to sessionStorage so pipelines view can detect it
 			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+			sessionStorage.setItem('preselectedDataType', 'real')
+			sessionStorage.setItem('preselectedDataSource', 'file_selection')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
 		} else {
 			// Clear if nothing selected
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDataType')
+			sessionStorage.removeItem('preselectedDataSource')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
 		}
 	}
 

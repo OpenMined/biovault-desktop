@@ -746,6 +746,7 @@ name = "bv-desktop"
 version = "0.1.40"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "biovault",
  "chrono",
  "csv",

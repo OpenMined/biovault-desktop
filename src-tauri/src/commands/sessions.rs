@@ -440,6 +440,11 @@ pub fn get_sessions() -> Result<Vec<Session>, String> {
 }
 
 #[tauri::command]
+pub fn list_sessions() -> Result<Vec<Session>, String> {
+    get_sessions()
+}
+
+#[tauri::command]
 pub fn get_session(session_id: String) -> Result<Session, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
 

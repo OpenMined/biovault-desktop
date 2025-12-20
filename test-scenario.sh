@@ -47,11 +47,11 @@ Scenario Options (pick one):
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
+  --pipelines-collab   Run two-client pipeline collaboration test
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
                        Accepts multiple notebook config files (runs all in sequence)
-  --pipelines-solo     Run pipeline test with synthetic data (single client)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
@@ -100,6 +100,10 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="pipelines-solo"
 			shift
 			;;
+		--pipelines-collab)
+			SCENARIO="pipelines-collab"
+			shift
+			;;
 		--jupyter)
 			SCENARIO="jupyter"
 			shift
@@ -113,10 +117,6 @@ while [[ $# -gt 0 ]]; do
 				NOTEBOOK_CONFIGS+=("$1")
 				shift
 			done
-			;;
-		--pipelines-solo)
-			SCENARIO="pipelines-solo"
-			shift
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
@@ -1332,6 +1332,80 @@ PY
 				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 				timer_pop
 			fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-collab)
+		start_static_server
+		start_tauri_instances
+
+		# Synthetic data configuration (same as pipelines-solo)
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+		CLEANUP_SYNTHETIC="${CLEANUP_SYNTHETIC:-0}"
+
+		# Check if synthetic data exists
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			info "=== Generating synthetic genotype data for collaboration test ==="
+			timer_push "Synthetic data generation"
+
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (without overlay)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
+			timer_pop
+		else
+			info "Using existing synthetic data ($EXISTING_COUNT files)"
+		fi
+
+		# Run pipelines collaboration test
+		info "=== Running Pipelines Collaboration Test ==="
+		timer_push "Playwright: @pipelines-collab"
+		run_ui_grep "@pipelines-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then
