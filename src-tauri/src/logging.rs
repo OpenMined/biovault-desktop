@@ -1,6 +1,7 @@
 use chrono::Local;
 #[cfg(unix)]
 use libc::{STDERR_FILENO, STDOUT_FILENO};
+use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 #[cfg(unix)]
@@ -29,10 +30,50 @@ impl LogLevel {
 
 /// Resolve the fully-qualified path to the desktop log file.
 pub fn desktop_log_path() -> PathBuf {
-    let mut path = crate::resolve_biovault_home_path();
-    path.push("logs");
-    path.push("desktop.log");
-    path
+    if let Ok(path) = env::var("BIOVAULT_DESKTOP_LOG_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    fn profiles_store_dir() -> Option<PathBuf> {
+        if let Ok(dir) = env::var("BIOVAULT_PROFILES_DIR") {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+        if let Ok(path) = env::var("BIOVAULT_PROFILES_PATH") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                let p = PathBuf::from(trimmed);
+                if let Some(parent) = p.parent() {
+                    return Some(parent.to_path_buf());
+                }
+            }
+        }
+        None
+    }
+
+    // In profile picker / bootstrap mode, avoid touching any profile home at all.
+    if env::var_os("BIOVAULT_PROFILE_PICKER").is_some() {
+        if let Some(base) =
+            profiles_store_dir().or_else(|| dirs::home_dir().map(|h| h.join(".bvprofiles")))
+        {
+            return base.join("logs").join("desktop.log");
+        }
+    }
+
+    // Prefer BIOVAULT_HOME if set; otherwise fall back to the profiles store dir (or ~/.bvprofiles).
+    let base = env::var("BIOVAULT_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(profiles_store_dir)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".bvprofiles")))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    base.join("logs").join("desktop.log")
 }
 
 fn write_log_line(level: LogLevel, message: &str) -> io::Result<()> {

@@ -20,6 +20,27 @@
 					<p>Current configuration directory</p>
 				</div>
 
+				<!-- Profiles -->
+				<div class="setting-item">
+					<label>Profiles</label>
+					<p>Switch identities without re-authenticating or re-entering keys.</p>
+					<div id="settings-profiles-list" class="settings-profiles-list">
+						<!-- Profiles will be populated here -->
+					</div>
+					<div class="profiles-settings-actions">
+						<button id="profiles-add-btn-settings" class="settings-btn settings-btn-primary">
+							Add Profile
+						</button>
+						<button
+							id="profiles-open-picker-btn"
+							class="settings-btn settings-btn-secondary"
+							style="display: none"
+						>
+							Switch Profiles
+						</button>
+					</div>
+				</div>
+
 				<!-- Dependencies section -->
 				<div class="setting-item">
 					<label>System Dependencies</label>

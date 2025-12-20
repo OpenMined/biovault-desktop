@@ -34,6 +34,7 @@ use commands::messages::{load_biovault_email, *};
 use commands::notifications::*;
 use commands::participants::*;
 use commands::pipelines::*;
+use commands::profiles::*;
 use commands::projects::*;
 use commands::runs::*;
 use commands::sessions::*;
@@ -44,6 +45,10 @@ use commands::syftbox::*;
 // BioVault CLI library imports
 use biovault::data::BioVaultDb;
 use biovault::messages::watcher::start_message_rpc_watcher;
+use once_cell::sync::Lazy;
+
+pub(crate) static PROFILE_LOCK: Lazy<Mutex<Option<commands::profiles::ProfileLock>>> =
+    Lazy::new(|| Mutex::new(None));
 
 pub(crate) fn resolve_biovault_home_path() -> PathBuf {
     if let Ok(home) = biovault::config::get_biovault_home() {
@@ -458,6 +463,54 @@ fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) 
     }
 }
 
+fn extract_profile_selector(args: &[String]) -> Option<String> {
+    args.iter()
+        .position(|a| a == "--profile" || a == "--profile-id")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+fn maybe_write_spawn_probe(args: &[String]) -> bool {
+    if env::var_os("BIOVAULT_SPAWN_PROBE_ONLY").is_none_or(|v| v.is_empty()) {
+        return false;
+    }
+    let path = match env::var("BIOVAULT_SPAWN_PROBE_PATH") {
+        Ok(value) => value.trim().to_string(),
+        Err(_) => return false,
+    };
+    if path.is_empty() {
+        return false;
+    }
+
+    let Some(profile_id) = extract_profile_selector(args) else {
+        return false;
+    };
+
+    let home = env::var("BIOVAULT_HOME").unwrap_or_default();
+    let payload = serde_json::json!({
+        "profile_id": profile_id,
+        "home": home,
+        "pid": std::process::id(),
+        "args": args,
+    });
+
+    let path_buf = PathBuf::from(path);
+    if let Some(parent) = path_buf.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!("Failed to create spawn probe dir: {}", err);
+            return false;
+        }
+    }
+
+    let body = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    if let Err(err) = fs::write(&path_buf, body) {
+        eprintln!("Failed to write spawn probe: {}", err);
+        return false;
+    }
+
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -467,27 +520,80 @@ pub fn run() {
         std::env::set_var("BV_SYFTBOX_BACKEND", default_backend);
     }
 
-    // Desktop app defaults to Desktop/BioVault if not specified via env or args
-    // Priority: 1) command-line args, 2) BIOVAULT_HOME env var, 3) Desktop/BioVault
-    let biovault_home = args
-        .iter()
-        .position(|arg| arg == "--biovault-config")
-        .and_then(|i| args.get(i + 1))
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("BIOVAULT_HOME").ok().map(PathBuf::from))
-        .or_else(|| {
-            // Desktop app defaults to Desktop/BioVault only if nothing else specified
-            let home_dir = dirs::home_dir()?;
-            let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
-            Some(desktop_dir.join("BioVault"))
-        });
+    fn resolve_home_ignoring_syftbox_env() -> Option<PathBuf> {
+        let saved_data_dir = std::env::var_os("SYFTBOX_DATA_DIR");
+        let saved_email = std::env::var_os("SYFTBOX_EMAIL");
 
-    // Only set BIOVAULT_HOME if it's not already set by the environment
-    // This allows virtualenvs or external tools to specify the location
-    if std::env::var("BIOVAULT_HOME").is_err() {
-        if let Some(home) = &biovault_home {
-            std::env::set_var("BIOVAULT_HOME", home);
+        if saved_data_dir.is_some() {
+            std::env::remove_var("SYFTBOX_DATA_DIR");
         }
+        if saved_email.is_some() {
+            std::env::remove_var("SYFTBOX_EMAIL");
+        }
+
+        let resolved = biovault::config::get_biovault_home().ok();
+
+        if let Some(v) = saved_data_dir {
+            std::env::set_var("SYFTBOX_DATA_DIR", v);
+        }
+        if let Some(v) = saved_email {
+            std::env::set_var("SYFTBOX_EMAIL", v);
+        }
+
+        resolved
+    }
+
+    // Profiles bootstrap:
+    // - If `--profile/--profile-id` is provided, select that profile's BIOVAULT_HOME.
+    // - If multiple profiles exist, enter picker mode and let the UI prompt.
+    // - Otherwise, select the current profile home (if present) or fall back to legacy resolution.
+    let _ = apply_profile_selection_from_args(&args);
+    if maybe_write_spawn_probe(&args) {
+        return;
+    }
+    let _ = apply_current_profile_if_ready(&args);
+    let _ = maybe_enter_bootstrap_mode(&args);
+
+    // In profile picker mode, avoid selecting a BIOVAULT_HOME until the user chooses a profile.
+    let mut profile_picker_mode = std::env::var_os("BIOVAULT_PROFILE_PICKER").is_some();
+
+    // Allow explicit config override for dev/debug.
+    if !profile_picker_mode && std::env::var_os("BIOVAULT_HOME").is_none() {
+        if let Some(path) = args
+            .iter()
+            .position(|arg| arg == "--biovault-config")
+            .and_then(|i| args.get(i + 1))
+        {
+            std::env::set_var("BIOVAULT_HOME", path);
+        }
+    }
+
+    // Ensure BIOVAULT_HOME is always set for downstream processes and legacy code paths.
+    if !profile_picker_mode && std::env::var_os("BIOVAULT_HOME").is_none() {
+        if let Some(home) = resolve_home_ignoring_syftbox_env() {
+            std::env::set_var("BIOVAULT_HOME", &home);
+        } else if let Some(home_dir) = dirs::home_dir() {
+            let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
+            std::env::set_var("BIOVAULT_HOME", desktop_dir.join("BioVault"));
+        }
+    }
+
+    // Acquire per-profile lock (no-op in picker mode). If lock conflicts, drop back into picker mode.
+    if !profile_picker_mode {
+        if let Ok(Some(lock)) = acquire_selected_profile_lock(&args) {
+            if let Ok(mut guard) = PROFILE_LOCK.lock() {
+                *guard = Some(lock);
+            }
+        }
+        if std::env::var_os("BIOVAULT_PROFILE_PICKER").is_some() {
+            profile_picker_mode = true;
+        }
+    }
+
+    // Ensure SYC_VAULT matches the selected BIOVAULT_HOME (profile-isolated by default).
+    if !profile_picker_mode {
+        let _ = ensure_profile_syc_vault_env();
+        let _ = biovault::config::ensure_syc_vault_env();
     }
 
     let desktop_log_path_buf = logging::desktop_log_path();
@@ -498,22 +604,36 @@ pub fn run() {
 
     logging::init_stdio_forwarding();
 
-    // Initialize shared BioVaultDb (handles files/participants)
-    // This automatically creates the directory via get_biovault_home() if needed
-    let biovault_db = BioVaultDb::new().expect("Failed to initialize BioVault database");
+    let biovault_db = if profile_picker_mode {
+        BioVaultDb {
+            conn: Connection::open_in_memory().expect("Could not open in-memory BioVault database"),
+        }
+    } else {
+        // Initialize shared BioVaultDb (handles files/participants)
+        // This automatically creates the directory via get_biovault_home() if needed
+        BioVaultDb::new().expect("Failed to initialize BioVault database")
+    };
 
-    // Get the actual biovault_home_dir that was used (for window title)
-    let biovault_home_dir =
-        biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
-
-    let home_display = biovault_home_dir.to_string_lossy().to_string();
-    crate::desktop_log!("📂 BioVault home resolved to {}", home_display);
+    // Get the actual biovault_home_dir that was used (for window title / DB paths).
+    let (biovault_home_dir, home_display) = if profile_picker_mode {
+        (PathBuf::from(""), "profile picker".to_string())
+    } else {
+        let biovault_home_dir =
+            biovault::config::get_biovault_home().expect("Failed to get BioVault home directory");
+        let home_display = biovault_home_dir.to_string_lossy().to_string();
+        crate::desktop_log!("📂 BioVault home resolved to {}", home_display);
+        (biovault_home_dir, home_display)
+    };
     crate::desktop_log!(
         "Desktop logging initialised. Log file: {}",
         desktop_log_path_buf.display()
     );
 
-    let email = load_biovault_email(&Some(biovault_home_dir.clone()));
+    let email = if profile_picker_mode {
+        "Select Profile".to_string()
+    } else {
+        load_biovault_email(&Some(biovault_home_dir.clone()))
+    };
 
     // Build window title - include debug info if BIOVAULT_DEBUG_BANNER is set
     let window_title = if std::env::var("BIOVAULT_DEBUG_BANNER")
@@ -525,13 +645,19 @@ pub fn run() {
         format!("BioVault - {}", email)
     };
 
-    // Desktop DB for runs/projects (keep separate for now)
-    let db_path = biovault_home_dir.join("biovault.db");
-    crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
-    let conn = Connection::open(&db_path).expect("Could not open database");
-    init_db(&conn).expect("Could not initialize database");
-
-    let queue_processor_paused = Arc::new(AtomicBool::new(true)); // Start paused - user can enable via UI
+    let (conn, queue_processor_paused) = if profile_picker_mode {
+        (
+            Connection::open_in_memory().expect("Could not open in-memory desktop database"),
+            Arc::new(AtomicBool::new(true)),
+        )
+    } else {
+        // Desktop DB for runs/projects (keep separate for now)
+        let db_path = biovault_home_dir.join("biovault.db");
+        crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
+        let conn = Connection::open(&db_path).expect("Could not open database");
+        init_db(&conn).expect("Could not initialize database");
+        (conn, Arc::new(AtomicBool::new(false))) // Start running
+    };
 
     let app_state = AppState {
         db: Mutex::new(conn),
@@ -540,131 +666,89 @@ pub fn run() {
     };
 
     // Spawn background queue processor (using library)
-    let paused_flag = queue_processor_paused.clone();
-    let biovault_db_for_processor = app_state.biovault_db.clone();
+    if !profile_picker_mode {
+        let paused_flag = queue_processor_paused.clone();
+        let biovault_db_for_processor = app_state.biovault_db.clone();
 
-    std::thread::spawn(move || {
-        loop {
-            // Check if paused
-            if !paused_flag.load(Ordering::SeqCst) {
-                // Get pending files - lock only briefly
-                let pending_files = {
-                    match biovault_db_for_processor.lock() {
-                        Ok(db) => biovault::data::get_pending_files(&db, 10).ok(),
-                        Err(_) => None,
-                    }
-                    // Lock is released here automatically
-                };
+        std::thread::spawn(move || {
+            loop {
+                // Check if paused
+                if !paused_flag.load(Ordering::SeqCst) {
+                    // Get pending files - lock only briefly
+                    let pending_files = {
+                        match biovault_db_for_processor.lock() {
+                            Ok(db) => biovault::data::get_pending_files(&db, 10).ok(),
+                            Err(_) => None,
+                        }
+                        // Lock is released here automatically
+                    };
 
-                if let Some(files) = pending_files {
-                    if !files.is_empty() {
-                        let mut processed = 0;
-                        let mut errors = 0;
+                    if let Some(files) = pending_files {
+                        if !files.is_empty() {
+                            let mut processed = 0;
+                            let mut errors = 0;
 
-                        for file in &files {
-                            // Lock briefly to mark as processing
-                            // Also check if file still exists (might have been deleted by clear queue)
-                            let marked = {
-                                match biovault_db_for_processor.lock() {
-                                    Ok(db) => {
-                                        // Check if file still exists first
-                                        let file_exists: Result<bool, _> = db.connection().query_row(
+                            for file in &files {
+                                // Lock briefly to mark as processing
+                                // Also check if file still exists (might have been deleted by clear queue)
+                                let marked = {
+                                    match biovault_db_for_processor.lock() {
+                                        Ok(db) => {
+                                            // Check if file still exists first
+                                            let file_exists: Result<bool, _> = db.connection().query_row(
                                             "SELECT COUNT(*) FROM files WHERE id = ?1 AND status = 'pending'",
                                             [file.id],
                                             |row| Ok(row.get::<_, i64>(0)? > 0),
                                         );
 
-                                        if let Ok(true) = file_exists {
-                                            biovault::data::update_file_status(
-                                                &db,
-                                                file.id,
-                                                "processing",
-                                                None,
-                                            )
-                                            .is_ok()
-                                        } else {
-                                            false // File doesn't exist or not pending anymore
-                                        }
-                                    }
-                                    Err(_) => false,
-                                }
-                            };
-
-                            if !marked {
-                                continue;
-                            }
-
-                            // Check pause flag before starting expensive operations
-                            if paused_flag.load(Ordering::SeqCst) {
-                                // Paused - reset this file back to pending and break
-                                if let Ok(db) = biovault_db_for_processor.lock() {
-                                    let _ = biovault::data::update_file_status(
-                                        &db, file.id, "pending", None,
-                                    );
-                                }
-                                break; // Break out of file processing loop
-                            }
-
-                            // Process file WITHOUT holding lock (expensive I/O operations)
-                            let hash_result = biovault::data::hash_file(&file.file_path);
-
-                            // Check pause flag again after hashing
-                            if paused_flag.load(Ordering::SeqCst) {
-                                // Paused during processing - reset back to pending
-                                if let Ok(db) = biovault_db_for_processor.lock() {
-                                    let _ = biovault::data::update_file_status(
-                                        &db, file.id, "pending", None,
-                                    );
-                                }
-                                break;
-                            }
-
-                            match hash_result {
-                                Ok(hash) => {
-                                    // Check pause flag before metadata operations
-                                    if paused_flag.load(Ordering::SeqCst) {
-                                        if let Ok(db) = biovault_db_for_processor.lock() {
-                                            let _ = biovault::data::update_file_status(
-                                                &db, file.id, "pending", None,
-                                            );
-                                        }
-                                        break;
-                                    }
-
-                                    // Detect and analyze file WITHOUT holding lock
-                                    let metadata = if file.data_type.as_deref() == Some("Unknown")
-                                        || file.data_type.is_none()
-                                    {
-                                        // Detect file type first
-                                        if let Ok(detected) =
-                                            biovault::data::detect_genotype_metadata(
-                                                &file.file_path,
-                                            )
-                                        {
-                                            if detected.data_type == "Genotype" {
-                                                // Check pause flag before expensive analysis
-                                                if paused_flag.load(Ordering::SeqCst) {
-                                                    if let Ok(db) = biovault_db_for_processor.lock()
-                                                    {
-                                                        let _ = biovault::data::update_file_status(
-                                                            &db, file.id, "pending", None,
-                                                        );
-                                                    }
-                                                    break;
-                                                }
-                                                // It's a genotype - analyze it fully
-                                                biovault::data::analyze_genotype_file(
-                                                    &file.file_path,
+                                            if let Ok(true) = file_exists {
+                                                biovault::data::update_file_status(
+                                                    &db,
+                                                    file.id,
+                                                    "processing",
+                                                    None,
                                                 )
-                                                .ok()
+                                                .is_ok()
                                             } else {
-                                                Some(detected)
+                                                false // File doesn't exist or not pending anymore
                                             }
-                                        } else {
-                                            None
                                         }
-                                    } else if file.data_type.as_deref() == Some("Genotype") {
-                                        // Check pause flag before expensive analysis
+                                        Err(_) => false,
+                                    }
+                                };
+
+                                if !marked {
+                                    continue;
+                                }
+
+                                // Check pause flag before starting expensive operations
+                                if paused_flag.load(Ordering::SeqCst) {
+                                    // Paused - reset this file back to pending and break
+                                    if let Ok(db) = biovault_db_for_processor.lock() {
+                                        let _ = biovault::data::update_file_status(
+                                            &db, file.id, "pending", None,
+                                        );
+                                    }
+                                    break; // Break out of file processing loop
+                                }
+
+                                // Process file WITHOUT holding lock (expensive I/O operations)
+                                let hash_result = biovault::data::hash_file(&file.file_path);
+
+                                // Check pause flag again after hashing
+                                if paused_flag.load(Ordering::SeqCst) {
+                                    // Paused during processing - reset back to pending
+                                    if let Ok(db) = biovault_db_for_processor.lock() {
+                                        let _ = biovault::data::update_file_status(
+                                            &db, file.id, "pending", None,
+                                        );
+                                    }
+                                    break;
+                                }
+
+                                match hash_result {
+                                    Ok(hash) => {
+                                        // Check pause flag before metadata operations
                                         if paused_flag.load(Ordering::SeqCst) {
                                             if let Ok(db) = biovault_db_for_processor.lock() {
                                                 let _ = biovault::data::update_file_status(
@@ -673,26 +757,107 @@ pub fn run() {
                                             }
                                             break;
                                         }
-                                        // Already known to be genotype - analyze it
-                                        biovault::data::analyze_genotype_file(&file.file_path).ok()
-                                    } else {
-                                        None
-                                    };
 
-                                    // Final pause check before updating database
-                                    if paused_flag.load(Ordering::SeqCst) {
-                                        if let Ok(db) = biovault_db_for_processor.lock() {
-                                            let _ = biovault::data::update_file_status(
-                                                &db, file.id, "pending", None,
-                                            );
+                                        // Detect and analyze file WITHOUT holding lock
+                                        let metadata = if file.data_type.as_deref()
+                                            == Some("Unknown")
+                                            || file.data_type.is_none()
+                                        {
+                                            // Detect file type first
+                                            if let Ok(detected) =
+                                                biovault::data::detect_genotype_metadata(
+                                                    &file.file_path,
+                                                )
+                                            {
+                                                if detected.data_type == "Genotype" {
+                                                    // Check pause flag before expensive analysis
+                                                    if paused_flag.load(Ordering::SeqCst) {
+                                                        if let Ok(db) =
+                                                            biovault_db_for_processor.lock()
+                                                        {
+                                                            let _ =
+                                                                biovault::data::update_file_status(
+                                                                    &db, file.id, "pending", None,
+                                                                );
+                                                        }
+                                                        break;
+                                                    }
+                                                    // It's a genotype - analyze it fully
+                                                    biovault::data::analyze_genotype_file(
+                                                        &file.file_path,
+                                                    )
+                                                    .ok()
+                                                } else {
+                                                    Some(detected)
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else if file.data_type.as_deref() == Some("Genotype") {
+                                            // Check pause flag before expensive analysis
+                                            if paused_flag.load(Ordering::SeqCst) {
+                                                if let Ok(db) = biovault_db_for_processor.lock() {
+                                                    let _ = biovault::data::update_file_status(
+                                                        &db, file.id, "pending", None,
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                            // Already known to be genotype - analyze it
+                                            biovault::data::analyze_genotype_file(&file.file_path)
+                                                .ok()
+                                        } else {
+                                            None
+                                        };
+
+                                        // Final pause check before updating database
+                                        if paused_flag.load(Ordering::SeqCst) {
+                                            if let Ok(db) = biovault_db_for_processor.lock() {
+                                                let _ = biovault::data::update_file_status(
+                                                    &db, file.id, "pending", None,
+                                                );
+                                            }
+                                            break;
                                         }
-                                        break;
-                                    }
 
-                                    // Lock briefly to update DB with results
-                                    // First check if file still exists (might have been deleted by clear queue)
-                                    match biovault_db_for_processor.lock() {
-                                        Ok(db) => {
+                                        // Lock briefly to update DB with results
+                                        // First check if file still exists (might have been deleted by clear queue)
+                                        match biovault_db_for_processor.lock() {
+                                            Ok(db) => {
+                                                // Check if file still exists before updating
+                                                let file_exists: Result<bool, _> =
+                                                    db.connection().query_row(
+                                                        "SELECT COUNT(*) FROM files WHERE id = ?1",
+                                                        [file.id],
+                                                        |row| Ok(row.get::<_, i64>(0)? > 0),
+                                                    );
+
+                                                if let Ok(true) = file_exists {
+                                                    if biovault::data::update_file_from_queue(
+                                                        &db,
+                                                        file.id,
+                                                        &hash,
+                                                        metadata.as_ref(),
+                                                    )
+                                                    .is_ok()
+                                                    {
+                                                        let _ = biovault::data::update_file_status(
+                                                            &db, file.id, "complete", None,
+                                                        );
+                                                        processed += 1;
+                                                    }
+                                                }
+                                                // If file doesn't exist anymore, it was deleted (e.g., by clear queue)
+                                                // Just skip it - no error needed
+                                            }
+                                            Err(_) => continue,
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Lock briefly to mark error
+                                        // First check if file still exists (might have been deleted by clear queue)
+                                        let error_msg = format!("{}", e);
+                                        if let Ok(db) = biovault_db_for_processor.lock() {
                                             // Check if file still exists before updating
                                             let file_exists: Result<bool, _> =
                                                 db.connection().query_row(
@@ -702,71 +867,38 @@ pub fn run() {
                                                 );
 
                                             if let Ok(true) = file_exists {
-                                                if biovault::data::update_file_from_queue(
+                                                let _ = biovault::data::update_file_status(
                                                     &db,
                                                     file.id,
-                                                    &hash,
-                                                    metadata.as_ref(),
-                                                )
-                                                .is_ok()
-                                                {
-                                                    let _ = biovault::data::update_file_status(
-                                                        &db, file.id, "complete", None,
-                                                    );
-                                                    processed += 1;
-                                                }
+                                                    "error",
+                                                    Some(&error_msg),
+                                                );
+                                                errors += 1;
                                             }
                                             // If file doesn't exist anymore, it was deleted (e.g., by clear queue)
                                             // Just skip it - no error needed
                                         }
-                                        Err(_) => continue,
-                                    }
-                                }
-                                Err(e) => {
-                                    // Lock briefly to mark error
-                                    // First check if file still exists (might have been deleted by clear queue)
-                                    let error_msg = format!("{}", e);
-                                    if let Ok(db) = biovault_db_for_processor.lock() {
-                                        // Check if file still exists before updating
-                                        let file_exists: Result<bool, _> =
-                                            db.connection().query_row(
-                                                "SELECT COUNT(*) FROM files WHERE id = ?1",
-                                                [file.id],
-                                                |row| Ok(row.get::<_, i64>(0)? > 0),
-                                            );
-
-                                        if let Ok(true) = file_exists {
-                                            let _ = biovault::data::update_file_status(
-                                                &db,
-                                                file.id,
-                                                "error",
-                                                Some(&error_msg),
-                                            );
-                                            errors += 1;
-                                        }
-                                        // If file doesn't exist anymore, it was deleted (e.g., by clear queue)
-                                        // Just skip it - no error needed
                                     }
                                 }
                             }
-                        }
 
-                        // Only log if files were actually processed
-                        if processed > 0 {
-                            crate::desktop_log!(
-                                "✅ Queue processor: processed {} files ({} errors)",
-                                processed,
-                                errors
-                            );
+                            // Only log if files were actually processed
+                            if processed > 0 {
+                                crate::desktop_log!(
+                                    "✅ Queue processor: processed {} files ({} errors)",
+                                    processed,
+                                    errors
+                                );
+                            }
                         }
                     }
                 }
-            }
 
-            // Wait 2 seconds before next check
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-    });
+                // Wait 2 seconds before next check
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+    }
 
     let mut builder = tauri::Builder::default();
 
@@ -843,10 +975,19 @@ pub fn run() {
 
                 // Handle window close event - minimize to tray instead of quitting
                 let window_clone = window.clone();
+                let app_handle = app.handle().clone();
+                let exit_on_close = profile_picker_mode
+                    || std::env::var("BIOVAULT_EXIT_ON_CLOSE")
+                        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                        .unwrap_or(false);
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = window_clone.hide();
+                        if exit_on_close {
+                            app_handle.exit(0);
+                        } else {
+                            api.prevent_close();
+                            let _ = window_clone.hide();
+                        }
                     }
                 });
             }
@@ -1116,6 +1257,20 @@ pub fn run() {
             reset_everything,
             get_autostart_enabled,
             set_autostart_enabled,
+            // Profiles
+            profiles_get_boot_state,
+            profiles_get_default_home,
+            profiles_open_new_instance,
+            profiles_switch,
+            profiles_switch_in_place,
+            profiles_create_and_switch_in_place,
+            profiles_open_picker,
+            profiles_quit_picker,
+            profiles_check_home_for_existing_email,
+            profiles_create_with_home_and_switch,
+            profiles_move_home,
+            profiles_delete_profile,
+            profiles_create_and_switch,
             // Key management
             key_check_vault_debug,
             key_get_status,

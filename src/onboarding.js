@@ -1716,14 +1716,121 @@ export function initOnboarding({
 	// Email input validation
 	const emailInput = document.getElementById('onboarding-email')
 	const emailValidationMsg = document.getElementById('email-validation-message')
+	const homeInput = document.getElementById('onboarding-home')
+	const homeBrowseBtn = document.getElementById('onboarding-home-browse')
+
+	const LOCAL_ONBOARD_EMAIL_KEY = 'bv_onboard_email'
+	const LOCAL_ONBOARD_HOME_KEY = 'bv_onboard_home'
+
+	function dirnameFromPath(p) {
+		if (!p || typeof p !== 'string') return ''
+		const s = p.trim()
+		if (!s) return ''
+		const lastSlash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+		if (lastSlash <= 0) return ''
+		return s.slice(0, lastSlash)
+	}
+
+	async function initHomePickerDefaults() {
+		if (!homeInput) return
+
+		// Restore any pending onboarding info from a previous relaunch.
+		try {
+			const pendingHome = window.localStorage.getItem(LOCAL_ONBOARD_HOME_KEY)
+			if (pendingHome && pendingHome.trim()) {
+				homeInput.value = pendingHome.trim()
+				return
+			}
+		} catch (_err) {
+			// ignore
+		}
+
+		// Default to Desktop/BioVault, unless current config already points somewhere else.
+		try {
+			const defaultHome = await invoke('profiles_get_default_home')
+			if (defaultHome && String(defaultHome).trim()) {
+				homeInput.value = String(defaultHome).trim()
+			}
+		} catch (_err) {
+			// ignore
+		}
+
+		// Default to the currently active BIOVAULT_HOME derived from config path.
+		try {
+			const configPath = await invoke('get_config_path')
+			const home = dirnameFromPath(configPath)
+			if (home) homeInput.value = home
+		} catch (_err) {
+			// ignore
+		}
+	}
+
+	async function resolveCurrentHomeBestEffort() {
+		// Prefer config path (most accurate).
+		try {
+			const configPath = await invoke('get_config_path')
+			const home = dirnameFromPath(configPath)
+			if (home) return home
+		} catch (_err) {
+			// ignore
+		}
+
+		// Fall back to profiles boot state (works even if config path fails).
+		try {
+			const state = await invoke('profiles_get_boot_state')
+			const current = Array.isArray(state?.profiles)
+				? state.profiles.find((p) => p?.is_current)
+				: null
+			if (current?.biovault_home) return String(current.biovault_home)
+		} catch (_err) {
+			// ignore
+		}
+
+		return ''
+	}
+
+	// Initialize defaults once the step is available in DOM.
+	void initHomePickerDefaults()
+
+	if (homeBrowseBtn && homeInput) {
+		homeBrowseBtn.addEventListener('click', async () => {
+			try {
+				const selection = await dialog.open({ directory: true, multiple: false })
+				if (!selection) return
+				const chosen = Array.isArray(selection) ? selection[0] : selection
+				if (!chosen) return
+				homeInput.value = chosen
+				try {
+					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, chosen)
+				} catch (_err) {
+					// ignore
+				}
+			} catch (error) {
+				console.warn('Home folder selection cancelled or failed:', error)
+			}
+		})
+	}
+
+	// Prefill email if we relaunched mid-onboarding.
+	if (emailInput) {
+		try {
+			const pendingEmail = window.localStorage.getItem(LOCAL_ONBOARD_EMAIL_KEY)
+			if (pendingEmail && pendingEmail.trim()) {
+				emailInput.value = pendingEmail.trim()
+				emailInput.dispatchEvent(new Event('input'))
+			}
+		} catch (_err) {
+			// ignore
+		}
+	}
 
 	if (emailInput) {
-		// Disable Next button initially
-		const nextBtn3 = document.getElementById('onboarding-next-3')
-		if (nextBtn3) {
-			nextBtn3.disabled = true
-			nextBtn3.style.opacity = '0.5'
-			nextBtn3.style.cursor = 'not-allowed'
+		// Email validation targets the email step button (not the home step button)
+		const emailNextBtn = document.getElementById('onboarding-next-3-email')
+		if (emailNextBtn) {
+			emailNextBtn.disabled = true
+			emailNextBtn.style.opacity = '0.5'
+			emailNextBtn.style.cursor = 'not-allowed'
 		}
 
 		// Real-time email validation
@@ -1731,18 +1838,18 @@ export function initOnboarding({
 			const email = emailInput.value.trim()
 			const isValid = isValidEmail(email)
 
-			if (nextBtn3 && emailValidationMsg) {
+			if (emailNextBtn && emailValidationMsg) {
 				if (isValid) {
-					nextBtn3.disabled = false
-					nextBtn3.style.opacity = '1'
-					nextBtn3.style.cursor = 'pointer'
+					emailNextBtn.disabled = false
+					emailNextBtn.style.opacity = '1'
+					emailNextBtn.style.cursor = 'pointer'
 					emailInput.style.borderColor = '#28a745'
 					emailValidationMsg.textContent = '✓ Valid email address'
 					emailValidationMsg.style.color = '#28a745'
 				} else {
-					nextBtn3.disabled = true
-					nextBtn3.style.opacity = '0.5'
-					nextBtn3.style.cursor = 'not-allowed'
+					emailNextBtn.disabled = true
+					emailNextBtn.style.opacity = '0.5'
+					emailNextBtn.style.cursor = 'not-allowed'
 					if (email.length > 0) {
 						emailInput.style.borderColor = '#dc3545'
 						// Provide specific error messages
@@ -1768,69 +1875,165 @@ export function initOnboarding({
 		emailInput.addEventListener('keydown', (event) => {
 			if (event.key === 'Enter') {
 				event.preventDefault()
-				if (nextBtn3 && !nextBtn3.disabled) {
-					nextBtn3.click()
+				if (emailNextBtn && !emailNextBtn.disabled) {
+					emailNextBtn.click()
 				}
 			}
 		})
+
+		// Trigger validation if email was pre-filled
+		if (emailInput.value.trim()) {
+			emailInput.dispatchEvent(new Event('input'))
+		}
 	}
 
-	// Step 3: Email -> Step 4 (SyftBox OTP) or Step 5 (if dev mode)
+	// Step 3: Home -> Step 3-email (check for existing email and prefill)
 	const nextBtn3 = document.getElementById('onboarding-next-3')
 	if (nextBtn3) {
 		nextBtn3.addEventListener('click', async () => {
-			const email = document.getElementById('onboarding-email').value.trim()
-			if (!isValidEmail(email)) {
-				await dialog.message('Please enter a valid email address', {
-					title: 'Invalid Email',
+			const desiredHome = (homeInput?.value || '').trim()
+			if (!desiredHome) {
+				await dialog.message('Please enter a BioVault home folder path', {
+					title: 'Home Required',
 					type: 'error',
 				})
 				return
 			}
 
-			// Debug: Check vault status BEFORE going to key step
-			console.log('📧 Email entered:', email, '- checking vault status before key step...')
+			// Check if the selected folder has an existing BioVault with email
+			const emailInput = document.getElementById('onboarding-email')
+			const prefillNotice = document.getElementById('email-prefill-notice')
 			try {
-				const vaultDebug = await invoke('key_check_vault_debug')
-				console.log('🔐 VAULT STATUS BEFORE KEY STEP:', JSON.stringify(vaultDebug, null, 2))
-			} catch (vaultErr) {
-				console.warn('⚠️ Could not check vault status:', vaultErr)
-			}
-
-			// Check if we're in dev mode with syftbox enabled
-			try {
-				const isDevMode = await invoke('is_dev_mode')
-				const isDevSyftbox = await invoke('is_dev_syftbox_enabled')
-
-				if (isDevMode && isDevSyftbox) {
-					console.log('🧪 Dev mode detected - checking syftbox server...')
-
-					// Check if syftbox server is reachable
-					const serverReachable = await invoke('check_dev_syftbox_server')
-
-					if (serverReachable) {
-						console.log('✅ Dev syftbox server reachable - skipping auth, showing key setup')
-
-						// Skip step 4 (auth) but still show key setup step
-						document.getElementById('onboarding-step-3').style.display = 'none'
-						document.getElementById('onboarding-step-3-key').style.display = 'block'
-						await showKeyStep(email)
-						return
-					} else {
-						console.log('⚠️ Dev syftbox server not reachable - falling back to normal flow')
+				const check = await invoke('profiles_check_home_for_existing_email', {
+					homePath: desiredHome,
+				})
+				if (check?.has_existing_config && check?.existing_email) {
+					// Pre-fill email from existing config
+					if (emailInput) {
+						emailInput.value = check.existing_email
+						emailInput.dispatchEvent(new Event('input'))
+					}
+					if (prefillNotice) {
+						prefillNotice.style.display = 'block'
+					}
+				} else {
+					// Clear any prefill notice
+					if (prefillNotice) {
+						prefillNotice.style.display = 'none'
 					}
 				}
-			} catch (error) {
-				console.error('Failed to check dev mode:', error)
-				// Continue with normal flow on error
+			} catch (err) {
+				console.warn('Failed to check home for existing email:', err)
+				if (prefillNotice) {
+					prefillNotice.style.display = 'none'
+				}
 			}
 
-			// Normal flow: go to key setup step first
 			document.getElementById('onboarding-step-3').style.display = 'none'
-			document.getElementById('onboarding-step-3-key').style.display = 'block'
-			await showKeyStep(email)
+			document.getElementById('onboarding-step-3-email').style.display = 'block'
 		})
 	}
+
+	// Step 3-email: Back to Step 3 (Home)
+	document.getElementById('onboarding-back-3-email')?.addEventListener('click', () => {
+		document.getElementById('onboarding-step-3-email').style.display = 'none'
+		document.getElementById('onboarding-step-3').style.display = 'block'
+	})
+
+	// Step 3-email: Next -> Step 3-key (do profile create/switch)
+	document.getElementById('onboarding-next-3-email')?.addEventListener('click', async () => {
+		const email = document.getElementById('onboarding-email').value.trim()
+		if (!isValidEmail(email)) {
+			await dialog.message('Please enter a valid email address', {
+				title: 'Invalid Email',
+				type: 'error',
+			})
+			return
+		}
+
+		const desiredHome = (homeInput?.value || '').trim()
+
+		// If user picked a different BioVault home, create/switch profiles before continuing.
+		if (desiredHome) {
+			try {
+				const currentHome = await resolveCurrentHomeBestEffort()
+				if (!currentHome || desiredHome !== currentHome) {
+					try {
+						window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
+						window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
+					} catch (_err) {
+						// ignore
+					}
+					try {
+						await invoke('profiles_create_with_home_and_switch', { homePath: desiredHome })
+					} catch (switchErr) {
+						if (
+							switchErr?.message?.includes('DEV_MODE_RESTART_REQUIRED') ||
+							String(switchErr).includes('DEV_MODE_RESTART_REQUIRED')
+						) {
+							await dialog.message(
+								'Profile created! Please restart the dev server (Ctrl+C and run ./dev-desktop.sh again) to continue setup.',
+								{ title: 'Dev Mode', type: 'info' },
+							)
+							return
+						}
+						// In WS bridge mode, backend exits and WS closes - reload to reconnect
+						const isDevWsBridge =
+							typeof window !== 'undefined' &&
+							(window.__DEV_WS_BRIDGE_PORT__ || window.location?.search?.includes('ws='))
+						if (isDevWsBridge) {
+							setTimeout(() => location.reload(), 1500)
+						}
+					}
+					return
+				}
+			} catch (error) {
+				console.warn('Failed to switch to selected home before onboarding:', error)
+			}
+		}
+
+		// Debug: Check vault status BEFORE going to key step
+		console.log('📧 Email entered:', email, '- checking vault status before key step...')
+		try {
+			const vaultDebug = await invoke('key_check_vault_debug')
+			console.log('🔐 VAULT STATUS BEFORE KEY STEP:', JSON.stringify(vaultDebug, null, 2))
+		} catch (vaultErr) {
+			console.warn('⚠️ Could not check vault status:', vaultErr)
+		}
+
+		// Check if we're in dev mode with syftbox enabled
+		try {
+			const isDevMode = await invoke('is_dev_mode')
+			const isDevSyftbox = await invoke('is_dev_syftbox_enabled')
+
+			if (isDevMode && isDevSyftbox) {
+				console.log('🧪 Dev mode detected - checking syftbox server...')
+
+				// Check if syftbox server is reachable
+				const serverReachable = await invoke('check_dev_syftbox_server')
+
+				if (serverReachable) {
+					console.log('✅ Dev syftbox server reachable - skipping auth, showing key setup')
+
+					// Skip step 4 (auth) but still show key setup step
+					document.getElementById('onboarding-step-3-email').style.display = 'none'
+					document.getElementById('onboarding-step-3-key').style.display = 'block'
+					await showKeyStep(email)
+					return
+				} else {
+					console.log('⚠️ Dev syftbox server not reachable - falling back to normal flow')
+				}
+			}
+		} catch (error) {
+			console.error('Failed to check dev mode:', error)
+			// Continue with normal flow on error
+		}
+
+		// Normal flow: go to key setup step first
+		document.getElementById('onboarding-step-3-email').style.display = 'none'
+		document.getElementById('onboarding-step-3-key').style.display = 'block'
+		await showKeyStep(email)
+	})
 
 	// Step 4: SyftBox helpers
 	document.querySelectorAll('.syftbox-link').forEach((link) => {
@@ -2226,6 +2429,14 @@ export function initOnboarding({
 			await invoke('complete_onboarding', { email })
 			console.log('🏁 [ONBOARDING] complete_onboarding succeeded')
 
+			// Clear any pending onboarding hints used across relaunches.
+			try {
+				window.localStorage.removeItem(LOCAL_ONBOARD_EMAIL_KEY)
+				window.localStorage.removeItem(LOCAL_ONBOARD_HOME_KEY)
+			} catch (_err) {
+				// ignore
+			}
+
 			// Check vault status AFTER completing onboarding
 			try {
 				const vaultDebug = await invoke('key_check_vault_debug')
@@ -2540,7 +2751,7 @@ export function initOnboarding({
 
 	document.getElementById('onboarding-back-3-key')?.addEventListener('click', () => {
 		document.getElementById('onboarding-step-3-key').style.display = 'none'
-		document.getElementById('onboarding-step-3').style.display = 'block'
+		document.getElementById('onboarding-step-3-email').style.display = 'block'
 	})
 
 	document.getElementById('onboarding-next-3-key')?.addEventListener('click', () => {
