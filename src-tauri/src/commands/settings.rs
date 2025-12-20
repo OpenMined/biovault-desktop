@@ -439,7 +439,8 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     println!("⚙️ [get_settings] called");
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
+    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
+    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
     let settings_path = desktop_dir
         .join("BioVault")
         .join("database")
@@ -532,7 +533,8 @@ pub fn get_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn save_settings(mut settings: Settings) -> Result<(), String> {
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
+    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
+    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
     let settings_path = desktop_dir
         .join("BioVault")
         .join("database")

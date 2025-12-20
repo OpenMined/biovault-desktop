@@ -409,17 +409,17 @@ jobs:
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.syftbox_impl == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Go (syftbox, Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'
@@ -867,7 +867,7 @@ jobs:
         if: failure() && runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           echo "Searching for linuxdeploy/appimage logs..."
-          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \;
+          find src-tauri/target/${{ matrix.args }}/release -maxdepth 5 -type f \( -iname "*linuxdeploy*.log*" -o -iname "*appimage*.log*" \) -print -exec sed -n '1,400p' {} \; 2>/dev/null || true
           echo "Dumping tauri-linux.log (if present)..."
           sed -n '1,400p' tauri-linux.log || true
 
