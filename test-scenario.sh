@@ -469,6 +469,14 @@ wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT
 }
 
 cleanup() {
+	# Interactive pause before cleanup (30s timeout)
+	if [[ "${INTERACTIVE_MODE:-0}" == "1" ]]; then
+		echo ""
+		info "=== Interactive Mode: Press ENTER to finish and exit (or wait 30s) ==="
+		read -t 30 -r || true
+		echo ""
+	fi
+
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
 		kill "$SERVER_PID" 2>/dev/null || true
