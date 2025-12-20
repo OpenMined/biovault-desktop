@@ -1,4 +1,5 @@
 use crate::types::AppState;
+use biovault::data::ProjectYaml;
 use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -75,6 +76,12 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
     let home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     Ok(home.join("pipelines"))
+}
+
+fn get_projects_dir() -> Result<PathBuf, String> {
+    let home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    Ok(home.join("projects"))
 }
 
 fn syftbox_storage_from_config(
@@ -1250,6 +1257,107 @@ pub async fn import_pipeline_from_request(
     }
 
     copy_pipeline_request_dir(&storage, &source_root, &dest_dir)?;
+
+    let projects_source = source_root.join("projects");
+    if projects_source.exists() {
+        let projects_dir = get_projects_dir()?;
+        fs::create_dir_all(&projects_dir)
+            .map_err(|e| format!("Failed to create projects directory: {}", e))?;
+
+        for entry in fs::read_dir(&projects_source)
+            .map_err(|e| format!("Failed to read projects folder: {}", e))?
+        {
+            let entry = entry.map_err(|e| format!("Failed to read project entry: {}", e))?;
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+
+            let project_dir_name = entry.file_name().to_string_lossy().to_string();
+            let dest_project_dir = projects_dir.join(&project_dir_name);
+
+            if dest_project_dir.exists() {
+                if overwrite {
+                    fs::remove_dir_all(&dest_project_dir).map_err(|e| {
+                        format!(
+                            "Failed to remove existing project directory {}: {}",
+                            dest_project_dir.display(),
+                            e
+                        )
+                    })?;
+                } else {
+                    continue;
+                }
+            }
+
+            copy_pipeline_request_dir(&storage, &entry_path, &dest_project_dir)?;
+
+            let project_yaml_path = dest_project_dir.join("project.yaml");
+            if !project_yaml_path.exists() {
+                continue;
+            }
+
+            let yaml_content = fs::read_to_string(&project_yaml_path).map_err(|e| {
+                format!(
+                    "Failed to read project.yaml at {}: {}",
+                    project_yaml_path.display(),
+                    e
+                )
+            })?;
+            let project_yaml: ProjectYaml = serde_yaml::from_str(&yaml_content).map_err(|e| {
+                format!(
+                    "Failed to parse project.yaml at {}: {}",
+                    project_yaml_path.display(),
+                    e
+                )
+            })?;
+
+            let identifier = format!("{}@{}", project_yaml.name, project_yaml.version);
+            let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+            if overwrite {
+                if db
+                    .get_project(&identifier)
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+                {
+                    db.update_project(
+                        &project_yaml.name,
+                        &project_yaml.version,
+                        &project_yaml.author,
+                        &project_yaml.workflow,
+                        &project_yaml.template,
+                        &dest_project_dir,
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    db.register_project(
+                        &project_yaml.name,
+                        &project_yaml.version,
+                        &project_yaml.author,
+                        &project_yaml.workflow,
+                        &project_yaml.template,
+                        &dest_project_dir,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            } else if db
+                .get_project(&identifier)
+                .map_err(|e| e.to_string())?
+                .is_none()
+            {
+                db.register_project(
+                    &project_yaml.name,
+                    &project_yaml.version,
+                    &project_yaml.author,
+                    &project_yaml.workflow,
+                    &project_yaml.template,
+                    &dest_project_dir,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
 
     let pipeline_dir_str = dest_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
