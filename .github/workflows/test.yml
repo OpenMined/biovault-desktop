@@ -523,7 +523,12 @@ jobs:
         shell: pwsh
         run: |
           # Build without updater signing for PR tests
-          tauri build --target ${{ matrix.args }} --ci --bundles nsis 2>&1 | Out-Null
+          # Use try/catch to ignore Tauri exit code from signing errors
+          try {
+            tauri build --target ${{ matrix.args }} --ci --bundles nsis 2>&1 | Out-Null
+          } catch {
+            Write-Host "Tauri build exited with error (likely signing) - checking if binary was created..."
+          }
           # Verify the binary was actually built
           if (Test-Path "src-tauri\target\${{ matrix.args }}\release\bv-desktop.exe") {
             Write-Host "✅ Build successful"
