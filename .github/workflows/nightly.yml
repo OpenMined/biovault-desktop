@@ -93,9 +93,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -242,9 +242,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -344,9 +344,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -446,9 +446,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5

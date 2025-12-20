@@ -982,6 +982,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 				statusBadge.innerHTML = `
 					<div class="badge-line">🧪 DEV MODE - Auth Disabled</div>
 					<div class="badge-subline">Server: ${devServer}</div>
+					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
 				`
 				statusBadge.classList.add('connected')
 				statusBadge.style.lineHeight = '1.4'
@@ -997,6 +998,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
 					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
 					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
+					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
 					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
 				`
 				statusBadge.classList.add('connected')
@@ -1011,6 +1013,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
 					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
 					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
+					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
 					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
 				`
 				statusBadge.classList.add('disconnected')
@@ -1243,6 +1246,7 @@ export function createSettingsModule({ invoke, dialog, loadSavedDependencies, on
 		}
 		setText('syftbox-pids', diag?.pids?.length ? diag.pids.join(', ') : 'Not running')
 		setText('syftbox-mode', diag?.mode || 'Unknown')
+		setText('syftbox-backend', diag?.backend || 'Unknown')
 		setText('syftbox-client-url', diag?.client_url || '—')
 		setText('syftbox-server-url', diag?.server_url || '—')
 		setText('syftbox-config-path-diag', diag?.config_path || '—')

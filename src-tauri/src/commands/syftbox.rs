@@ -2,6 +2,7 @@ use crate::types::{SyftBoxConfigInfo, SyftBoxState};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::env;
 use std::fs;
 use std::net::TcpListener;
 use std::path::Path;
@@ -65,11 +66,11 @@ fn ensure_syftbox_config(
     let mut cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
 
     let mut creds = cfg.syftbox_credentials.clone().unwrap_or_default();
-    let email = if cfg.email.trim().is_empty() {
-        creds.email.clone().unwrap_or_default()
-    } else {
-        cfg.email.clone()
-    };
+    let email = creds
+        .email
+        .clone()
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| cfg.email.clone());
     if email.trim().is_empty() {
         return Err(
             "SyftBox email is not set. Add an email in Settings → SyftBox and try again."
@@ -142,12 +143,27 @@ fn resolve_or_assign_client_url(
     config_path: &Path,
     data_dir: Option<&Path>,
 ) -> Result<String, String> {
-    // 1) Start from explicit value in creds
-    let mut candidate = creds
-        .client_url
-        .as_ref()
+    let embedded = crate::syftbox_backend_is_embedded();
+
+    // 1) Start from explicit env override
+    let mut candidate = env::var("SYFTBOX_CLIENT_URL")
+        .ok()
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
+
+    if embedded && candidate.is_none() {
+        return allocate_ephemeral_client_url()
+            .ok_or_else(|| "Failed to assign a control-plane port for SyftBox".to_string());
+    }
+
+    // 2) Fallback to explicit value in creds
+    if candidate.is_none() {
+        candidate = creds
+            .client_url
+            .as_ref()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty());
+    }
 
     // Also get token from creds
     let mut token = creds
@@ -156,7 +172,7 @@ fn resolve_or_assign_client_url(
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty());
 
-    // 2) Fallback to existing syftbox config.json
+    // 3) Fallback to existing syftbox config.json
     if config_path.exists() {
         if let Ok(existing) = fs::read_to_string(config_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&existing) {
@@ -178,7 +194,7 @@ fn resolve_or_assign_client_url(
         }
     }
 
-    // 3) Fallback to default
+    // 4) Fallback to default
     let candidate = candidate.unwrap_or_else(|| "http://127.0.0.1:7938".to_string());
 
     // Try to bind chosen address; if busy, pick random free port.
@@ -194,6 +210,13 @@ fn resolve_or_assign_client_url(
     }
 
     Err("Failed to assign a control-plane port for SyftBox".to_string())
+}
+
+fn allocate_ephemeral_client_url() -> Option<String> {
+    TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|listener| listener.local_addr().ok())
+        .map(|addr| format!("http://127.0.0.1:{}", addr.port()))
 }
 
 fn resolve_syftbox_log_path(
@@ -496,6 +519,7 @@ pub struct SyftBoxRuntimeUploads {
 pub struct SyftBoxDiagnostics {
     pub running: bool,
     pub mode: String,
+    pub backend: String,
     pub pids: Vec<u32>,
     pub config_path: Option<String>,
     pub data_dir: Option<String>,
@@ -513,6 +537,14 @@ fn normalize_percent(value: f64) -> f64 {
         (value * 100.0).min(100.0)
     } else {
         value
+    }
+}
+
+fn syftbox_backend_label() -> String {
+    if crate::syftbox_backend_is_embedded() {
+        "Embedded (syftbox-rs)".to_string()
+    } else {
+        "Process (syftbox binary)".to_string()
     }
 }
 
@@ -1043,9 +1075,34 @@ pub async fn syftbox_submit_otp(
     // have the local client_url/token config available (matches macOS onboarding behavior).
     match load_runtime_config() {
         Ok(runtime) => {
-            if let Err(e) = ensure_syftbox_config(&runtime) {
-                crate::desktop_log!("⚠️ Failed to write syftbox/config.json after auth: {}", e);
+            let runtime_clone = runtime.clone();
+            match tauri::async_runtime::spawn_blocking(move || {
+                ensure_syftbox_config(&runtime_clone)
+            })
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    crate::desktop_log!("⚠️ Failed to write syftbox/config.json after auth: {}", e);
+                }
+                Err(join_err) => {
+                    crate::desktop_log!(
+                        "⚠️ Failed to write syftbox/config.json after auth (task join): {}",
+                        join_err
+                    );
+                }
             }
+
+            // Restart the local SyftBox daemon so it picks up fresh auth tokens.
+            let restart_runtime = runtime.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = syftctl::stop_syftbox(&restart_runtime) {
+                    crate::desktop_log!("ℹ️ Failed to stop SyftBox after auth: {}", e);
+                }
+                if let Err(e) = syftctl::start_syftbox(&restart_runtime) {
+                    crate::desktop_log!("⚠️ Failed to restart SyftBox after auth: {}", e);
+                }
+            });
         }
         Err(e) => {
             crate::desktop_log!("⚠️ Could not load runtime config after auth: {}", e);
@@ -1173,6 +1230,7 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
     Ok(SyftBoxState {
         running,
         mode: format!("{:?}", mode),
+        backend: syftbox_backend_label(),
         log_path,
         error,
     })
@@ -1215,6 +1273,7 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
                 } else {
                     "Direct".to_string()
                 },
+                backend: syftbox_backend_label(),
                 log_path: resolve_syftbox_log_path(&runtime),
                 error: None,
             })
@@ -1244,6 +1303,7 @@ pub fn stop_syftbox_client() -> Result<SyftBoxState, String> {
                 } else {
                     "Direct".to_string()
                 },
+                backend: syftbox_backend_label(),
                 log_path: resolve_syftbox_log_path(&runtime),
                 error: None,
             })
@@ -1387,6 +1447,7 @@ pub fn get_syftbox_diagnostics() -> Result<SyftBoxDiagnostics, String> {
     Ok(SyftBoxDiagnostics {
         running,
         mode,
+        backend: syftbox_backend_label(),
         pids,
         config_path,
         data_dir,

@@ -370,43 +370,6 @@ fn read_template_bytes(app: &tauri::AppHandle, name: &str) -> Option<Vec<u8>> {
         })
 }
 
-/// Ensure the RPC session folder has proper syft.pub.yaml permissions for SyftBox sync
-fn ensure_rpc_session_permissions(rpc_path: &Path) {
-    let perm_path = rpc_path.join("syft.pub.yaml");
-    if perm_path.exists() {
-        return;
-    }
-
-    // Use the same permission format as DEFAULT_RPC_PERMISSION_CONTENT from syftbox-sdk
-    let permissions = r#"rules:
-  - pattern: "**/*.request"
-    access:
-      admin: []
-      read:
-        - "*"
-      write:
-        - "*"
-  - pattern: "**/*.response"
-    access:
-      admin: []
-      read:
-        - "*"
-      write:
-        - "*"
-  - pattern: "**/*.rejected"
-    access:
-      admin: []
-      read:
-        - "*"
-      write:
-        - "*"
-"#;
-
-    if let Err(e) = fs::write(&perm_path, permissions) {
-        eprintln!("Warning: Failed to write RPC session permissions: {}", e);
-    }
-}
-
 fn ensure_session_permissions(session_path: &Path, owner: &str, peer: &Option<String>) {
     // Create syft.pub.yaml to allow the peer to read (and admin remains with owner)
     // Owner gets admin; peer gets read; write remains empty (owner has implicit rights)
@@ -587,9 +550,6 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
         if let Err(e) = fs::create_dir_all(&rpc_path) {
             eprintln!("Warning: Failed to create RPC folder: {}", e);
         } else {
-            // Ensure proper SyftBox permissions for the RPC session folder
-            ensure_rpc_session_permissions(&rpc_path);
-
             let invitation = serde_json::json!({
                 "session_id": &session_id,
                 "requester": &owner,
@@ -657,9 +617,6 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
         if let Err(e) = fs::create_dir_all(&rpc_path) {
             eprintln!("Warning: Failed to create RPC folder: {}", e);
         } else {
-            // Ensure proper SyftBox permissions for the RPC session folder
-            ensure_rpc_session_permissions(&rpc_path);
-
             // Write session invitation request
             let invitation = serde_json::json!({
                 "session_id": &session_id,
@@ -1228,7 +1185,6 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         .join("session");
 
     let _ = fs::create_dir_all(&requester_rpc);
-    ensure_rpc_session_permissions(&requester_rpc);
 
     let response = serde_json::json!({
         "session_id": &session_id,
@@ -1310,7 +1266,6 @@ pub fn reject_session_invitation(session_id: String, reason: Option<String>) -> 
         .join("session");
 
     let _ = fs::create_dir_all(&requester_rpc);
-    ensure_rpc_session_permissions(&requester_rpc);
 
     let response = serde_json::json!({
         "session_id": &session_id,

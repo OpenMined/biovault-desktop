@@ -23,7 +23,7 @@ set -euo pipefail
 #   --skip-sync-check  Skip the sbdev sync probe
 #   --client EMAIL     Add a client (repeatable, defaults to client1/client2)
 #   --clients a,b,c    Comma-separated client list
-#   --path DIR         Override sandbox root (default: biovault/syftbox/sandbox)
+#   --path DIR         Override sandbox root (default: biovault/sandbox)
 #   --single [EMAIL]   Launch only one desktop (defaults to first client)
 #   --stop             Stop devstack and any desktop processes
 #
@@ -147,8 +147,8 @@ check_requirements() {
   command -v python3 >/dev/null 2>&1 || { log_error "python3 is required"; exit 1; }
   command -v go >/dev/null 2>&1 || { log_error "Go is required to run the sbdev devstack"; exit 1; }
   [[ -f "$DEVSTACK_SCRIPT" ]] || { log_error "Devstack helper not found at $DEVSTACK_SCRIPT"; exit 1; }
-  if ! command -v bun >/dev/null 2>&1 && ! command -v npm >/dev/null 2>&1; then
-    log_error "bun or npm is required to run the desktop"
+  if ! command -v npm >/dev/null 2>&1; then
+    log_error "npm is required to run the desktop"
     exit 1
   fi
 
@@ -165,7 +165,8 @@ ensure_bv_cli() {
 }
 
 sbdev_tool() {
-  (cd "$BIOVAULT_DIR/syftbox" && GOCACHE="$BIOVAULT_DIR/syftbox/.gocache" go run ./cmd/devstack "$@")
+  local syftbox_dir="$BIOVAULT_DIR/syftbox-sdk/syftbox"
+  (cd "$syftbox_dir" && GOCACHE="$syftbox_dir/.gocache" go run ./cmd/devstack "$@")
 }
 
 find_state_file() {
@@ -363,9 +364,6 @@ launch_desktop_instance() {
   export DEV_WS_BRIDGE_PORT="$ws_port"
 
   local pkg_cmd="npm"
-  if command -v bun >/dev/null 2>&1; then
-    pkg_cmd="bun"
-  fi
 
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"

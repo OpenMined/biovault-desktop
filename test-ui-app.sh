@@ -36,7 +36,7 @@ fi
 # Allow opting out of repeated browser downloads
 if [[ "${SKIP_PLAYWRIGHT_INSTALL:-0}" != "1" ]]; then
 	info "Ensuring Playwright Chromium browser is installed"
-	bunx --bun playwright install --with-deps chromium >/dev/null
+	npx playwright install --with-deps chromium >/dev/null
 fi
 
 # Find an available port if the requested one is taken
@@ -80,7 +80,7 @@ export DEV_WS_BRIDGE_PORT="${DEV_WS_BRIDGE_PORT:-3333}"
 
 info "Starting Tauri dev server with WebSocket bridge"
 info "Tauri logs: $TAURI_LOG"
-bun run dev > "$TAURI_LOG" 2>&1 &
+npm run dev > "$TAURI_LOG" 2>&1 &
 TAURI_PID=$!
 
 # Wait for WebSocket server to be ready
@@ -143,7 +143,7 @@ export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 export USE_REAL_INVOKE=true
 
 if ((${#FORWARD_ARGS[@]} == 0)); then
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui | tee -a "$LOG_FILE"
 else
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
 fi

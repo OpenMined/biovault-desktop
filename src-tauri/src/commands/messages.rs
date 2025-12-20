@@ -115,67 +115,6 @@ fn copy_pipeline_folder(
     Ok(())
 }
 
-fn copy_results_folder(
-    storage: &SyftBoxStorage,
-    src: &Path,
-    dest: &Path,
-    recipient: &str,
-) -> Result<(), String> {
-    storage
-        .ensure_dir(dest)
-        .map_err(|e| format!("Failed to create results folder: {}", e))?;
-
-    for entry in WalkDir::new(src)
-        .min_depth(1)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        let rel = path
-            .strip_prefix(src)
-            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
-
-        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
-            continue;
-        }
-
-        let dest_path = dest.join(rel);
-        if entry.file_type().is_dir() {
-            storage.ensure_dir(&dest_path).map_err(|e| {
-                format!("Failed to create directory {}: {}", dest_path.display(), e)
-            })?;
-            continue;
-        }
-
-        let bytes = fs::read(path)
-            .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
-        let hint = rel.to_string_lossy().to_string();
-        let policy = WritePolicy::Envelope {
-            recipients: vec![recipient.to_string()],
-            hint: Some(hint),
-        };
-
-        if let Some(parent) = dest_path.parent() {
-            storage
-                .ensure_dir(parent)
-                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
-        }
-
-        storage
-            .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| {
-                format!(
-                    "Failed to write results file {}: {}",
-                    dest_path.display(),
-                    e
-                )
-            })?;
-    }
-
-    Ok(())
-}
-
 fn copy_results_folder_filtered(
     storage: &SyftBoxStorage,
     src: &Path,
