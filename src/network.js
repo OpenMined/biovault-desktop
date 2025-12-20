@@ -811,6 +811,42 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	async function handleRunPipeline(dataset) {
 		console.log('Running pipeline on dataset:', dataset.name)
 
+		// Pre-seed selection so the pipeline run modal has data even if navigation races.
+		try {
+			const urls = []
+			const participantIds = []
+			const seen = new Set()
+			const assetKeys = []
+
+			if (Array.isArray(dataset.assets)) {
+				for (const asset of dataset.assets) {
+					if (asset?.key || asset?.asset_key || asset?.assetKey) {
+						assetKeys.push(asset.key || asset.asset_key || asset.assetKey)
+					}
+					if (Array.isArray(asset.mock_entries)) {
+						for (const entry of asset.mock_entries) {
+							if (!entry?.url || seen.has(entry.url)) continue
+							seen.add(entry.url)
+							urls.push(entry.url)
+							participantIds.push(entry.participant_id || '')
+						}
+					}
+				}
+			}
+
+			if (urls.length > 0) {
+				sessionStorage.setItem('preselectedUrls', JSON.stringify(urls))
+				sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+				sessionStorage.setItem('preselectedDatasetName', dataset.name || '')
+				sessionStorage.setItem('preselectedDatasetOwner', dataset.owner || '')
+				sessionStorage.setItem('preselectedAssetKeys', JSON.stringify(assetKeys.filter(Boolean)))
+				sessionStorage.setItem('preselectedDataType', 'mock')
+				sessionStorage.setItem('preselectedDataSource', 'network_dataset')
+			}
+		} catch (err) {
+			console.warn('Failed to pre-seed pipeline data selection:', err)
+		}
+
 		// Navigate to pipelines tab and trigger run modal with mock data
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('run')

@@ -576,8 +576,56 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let message: Option<String> = args
                 .get("message")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let result = crate::send_pipeline_request_results(request_id, run_id, message)
-                .map_err(|e| e.to_string())?;
+            let output_paths: Option<Vec<String>> = args
+                .get("outputPaths")
+                .cloned()
+                .or_else(|| args.get("output_paths").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result =
+                crate::send_pipeline_request_results(request_id, run_id, message, output_paths)
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_pipeline_results" => {
+            let results_location: String = serde_json::from_value(
+                args.get("resultsLocation")
+                    .cloned()
+                    .or_else(|| args.get("results_location").cloned())
+                    .ok_or_else(|| "Missing resultsLocation".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse resultsLocation: {}", e))?;
+            let submission_id: Option<String> = args
+                .get("submissionId")
+                .cloned()
+                .or_else(|| args.get("submission_id").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let run_id: Option<i64> = args
+                .get("runId")
+                .cloned()
+                .or_else(|| args.get("run_id").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let pipeline_name: Option<String> = args
+                .get("pipelineName")
+                .cloned()
+                .or_else(|| args.get("pipeline_name").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::import_pipeline_results(
+                results_location,
+                submission_id,
+                run_id,
+                pipeline_name,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "list_results_tree" => {
+            let root: String = serde_json::from_value(
+                args.get("root")
+                    .cloned()
+                    .ok_or_else(|| "Missing root".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse root: {}", e))?;
+            let result = crate::list_results_tree(root).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "send_pipeline_results" => {
@@ -624,6 +672,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         // --------------------------------------------------------------------
         "get_sessions" => {
             let result = crate::get_sessions().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "list_sessions" => {
+            let result = crate::list_sessions().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_session_invitations" => {

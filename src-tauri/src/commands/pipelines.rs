@@ -1,4 +1,6 @@
 use crate::types::AppState;
+use biovault::data::ProjectYaml;
+use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -31,19 +33,27 @@ pub struct PipelineCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunSelection {
     /// Legacy: database file IDs (deprecated, use urls instead)
-    #[serde(default)]
+    #[serde(default, alias = "file_ids")]
     pub file_ids: Vec<i64>,
     /// Syft URLs to resolve to local file paths
     #[serde(default)]
     pub urls: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "participant_ids")]
     pub participant_ids: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dataset_name")]
     pub dataset_name: Option<String>,
     #[serde(default)]
     pub dataset_shape: Option<String>,
     #[serde(default)]
     pub dataset_data_type: Option<String>,
+    #[serde(default, alias = "dataset_owner")]
+    pub dataset_owner: Option<String>,
+    #[serde(default, alias = "asset_keys")]
+    pub asset_keys: Vec<String>,
+    #[serde(default, alias = "data_type")]
+    pub data_type: Option<String>,
+    #[serde(default, alias = "data_source")]
+    pub data_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -414,6 +424,32 @@ fn get_pipelines_dir() -> Result<PathBuf, String> {
     Ok(home.join("pipelines"))
 }
 
+fn get_projects_dir() -> Result<PathBuf, String> {
+    let home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    Ok(home.join("projects"))
+}
+
+fn syftbox_storage_from_config(
+    config: &biovault::config::Config,
+) -> Result<SyftBoxStorage, String> {
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    Ok(SyftBoxStorage::new(&data_dir))
+}
+
+fn load_pipeline_spec_from_storage(
+    storage: &SyftBoxStorage,
+    path: &Path,
+) -> Result<PipelineSpec, String> {
+    let bytes = storage
+        .read_with_shadow(path)
+        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+    serde_yaml::from_slice::<PipelineSpec>(&bytes)
+        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))
+}
+
 fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
@@ -445,7 +481,34 @@ fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: 
 #[tauri::command]
 pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipeline>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    biovault_db.list_pipelines().map_err(|e| e.to_string())
+    let pipelines = biovault_db.list_pipelines().map_err(|e| e.to_string())?;
+
+    for pipeline in &pipelines {
+        match pipeline.spec.as_ref() {
+            Some(spec) => {
+                let input_types: Vec<String> = spec
+                    .inputs
+                    .iter()
+                    .map(|(name, input)| format!("{}:{}", name, input.raw_type()))
+                    .collect();
+                crate::desktop_log!(
+                    "Pipeline spec debug: '{}' inputs [{}] steps {}",
+                    pipeline.name,
+                    input_types.join(", "),
+                    spec.steps.len()
+                );
+            }
+            None => {
+                crate::desktop_log!(
+                    "Pipeline spec debug: '{}' missing spec (path: {})",
+                    pipeline.name,
+                    pipeline.pipeline_path
+                );
+            }
+        }
+    }
+
+    Ok(pipelines)
 }
 
 #[tauri::command]
@@ -473,6 +536,7 @@ pub async fn create_pipeline(
     fs::create_dir_all(&pipelines_dir)
         .map_err(|e| format!("Failed to create pipelines directory: {}", e))?;
 
+    let is_import_dir = directory.is_some();
     let mut pipeline_dir = if let Some(dir) = directory {
         PathBuf::from(dir)
     } else {
@@ -569,15 +633,38 @@ pub async fn create_pipeline(
         fs::create_dir_all(&pipeline_dir)
             .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
 
-        if pipeline_yaml_path.exists() && !overwrite {
+        crate::desktop_log!(
+            "create_pipeline debug: name='{}' dir_present={} pipeline_yaml_exists={} overwrite={} path={}",
+            name,
+            is_import_dir,
+            pipeline_yaml_path.exists(),
+            overwrite,
+            pipeline_yaml_path.display()
+        );
+
+        if pipeline_yaml_path.exists() {
+            if is_import_dir {
+                imported_spec = PipelineSpec::load(&pipeline_yaml_path).ok();
+            } else if !overwrite {
+                return Err(format!(
+                    "pipeline.yaml already exists at {}",
+                    pipeline_yaml_path.display()
+                ));
+            }
+        } else if is_import_dir {
             return Err(format!(
-                "pipeline.yaml already exists at {}",
-                pipeline_yaml_path.display()
+                "pipeline.yaml not found in {}",
+                pipeline_dir.display()
             ));
         }
 
-        let default_spec = format!(
-            r#"name: {}
+        if !pipeline_yaml_path.exists() || (!is_import_dir && overwrite) {
+            crate::desktop_log!(
+                "create_pipeline debug: writing default pipeline.yaml to {}",
+                pipeline_yaml_path.display()
+            );
+            let default_spec = format!(
+                r#"name: {}
 inputs:
   # Define pipeline inputs here
   # example_input: File
@@ -589,11 +676,12 @@ steps:
   #   with:
   #     input_name: inputs.example_input
 "#,
-            name
-        );
+                name
+            );
 
-        fs::write(&pipeline_yaml_path, default_spec)
-            .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+            fs::write(&pipeline_yaml_path, default_spec)
+                .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+        }
     }
 
     let pipeline_dir_str = pipeline_dir.to_string_lossy().to_string();
@@ -887,7 +975,40 @@ pub async fn run_pipeline(
             dataset_name,
             dataset_shape,
             dataset_data_type,
+            dataset_owner,
+            asset_keys,
+            data_type,
+            data_source,
         } = sel;
+
+        // Filter empty strings
+        let dataset_owner = dataset_owner.filter(|v| !v.trim().is_empty());
+        let data_type_sel = data_type.filter(|v| !v.trim().is_empty());
+        let data_source = data_source.filter(|v| !v.trim().is_empty());
+        let asset_keys: Vec<String> = asset_keys
+            .into_iter()
+            .filter(|v| !v.trim().is_empty())
+            .collect();
+
+        let apply_selection_context = |selection: &mut serde_json::Value| {
+            if let Some(map) = selection.as_object_mut() {
+                if let Some(value) = dataset_owner.clone() {
+                    map.insert("dataset_owner".to_string(), serde_json::json!(value));
+                }
+                if !asset_keys.is_empty() {
+                    map.insert(
+                        "asset_keys".to_string(),
+                        serde_json::json!(asset_keys.clone()),
+                    );
+                }
+                if let Some(value) = data_type_sel.clone() {
+                    map.insert("data_type".to_string(), serde_json::json!(value));
+                }
+                if let Some(value) = data_source.clone() {
+                    map.insert("data_source".to_string(), serde_json::json!(value));
+                }
+            }
+        };
 
         // Prefer URLs over file_ids (URLs are the new way, file_ids are legacy)
         let use_urls = !urls.is_empty();
@@ -1102,13 +1223,17 @@ pub async fn run_pipeline(
 
             generated_samplesheet_path = Some(sheet_path.to_string_lossy().to_string());
 
-            selection_metadata = Some(serde_json::json!({
+            let file_paths: Vec<String> = rows.iter().map(|(_, path)| path.clone()).collect();
+            let mut selection_value = serde_json::json!({
                 "urls": unique_urls,
                 "participant_ids": participant_ids,
                 "participant_labels": participant_labels,
                 "samplesheet_path": sheet_path.to_string_lossy(),
                 "participant_count": participant_total,
-            }));
+                "file_paths": file_paths,
+            });
+            apply_selection_context(&mut selection_value);
+            selection_metadata = Some(selection_value);
         } else if use_file_ids {
             // Legacy: use file_ids (deprecated)
             let mut seen_files = HashSet::new();
@@ -1196,13 +1321,17 @@ pub async fn run_pipeline(
             generated_samplesheet_path = Some(sheet_path.to_string_lossy().to_string());
 
             let participant_count = participant_labels.len();
-            selection_metadata = Some(serde_json::json!({
+            let file_paths: Vec<String> = rows.iter().map(|(_, path)| path.clone()).collect();
+            let mut selection_value = serde_json::json!({
                 "file_ids": unique_file_ids,
                 "participant_ids": dedup_participant_ids,
                 "participant_labels": participant_labels,
                 "samplesheet_path": sheet_path.to_string_lossy(),
                 "participant_count": participant_count,
-            }));
+                "file_paths": file_paths,
+            });
+            apply_selection_context(&mut selection_value);
+            selection_metadata = Some(selection_value);
         }
     }
 
@@ -1530,6 +1659,7 @@ fn should_skip_request_path(rel: &Path) -> bool {
         "__pycache__",
         "node_modules",
         "target",
+        "work",
         "results",
         "runs",
     ];
@@ -1591,7 +1721,11 @@ fn write_gwas_stub_outputs(step_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_pipeline_request_dir(src: &Path, dest: &Path) -> Result<(), String> {
+fn copy_pipeline_request_dir(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| format!("Failed to create destination: {}", e))?;
 
     for entry in WalkDir::new(src)
@@ -1622,8 +1756,11 @@ fn copy_pipeline_request_dir(src: &Path, dest: &Path) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
         }
 
-        fs::copy(path, &dest_path)
-            .map_err(|e| format!("Failed to copy {}: {}", dest_path.display(), e))?;
+        let bytes = storage
+            .read_with_shadow(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        fs::write(&dest_path, &bytes)
+            .map_err(|e| format!("Failed to write {}: {}", dest_path.display(), e))?;
     }
 
     Ok(())
@@ -1641,6 +1778,7 @@ pub async fn import_pipeline_from_request(
     let data_dir = config
         .get_syftbox_data_dir()
         .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    let storage = syftbox_storage_from_config(&config)?;
 
     let source_root = biovault::data::resolve_syft_url(&data_dir, &pipeline_location)
         .map_err(|e| format!("Failed to resolve pipeline location: {}", e))?;
@@ -1659,8 +1797,7 @@ pub async fn import_pipeline_from_request(
         ));
     }
 
-    let spec = PipelineSpec::load(&pipeline_yaml)
-        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+    let spec = load_pipeline_spec_from_storage(&storage, &pipeline_yaml)?;
     let resolved_name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(spec.name.clone());
@@ -1683,7 +1820,108 @@ pub async fn import_pipeline_from_request(
         }
     }
 
-    copy_pipeline_request_dir(&source_root, &dest_dir)?;
+    copy_pipeline_request_dir(&storage, &source_root, &dest_dir)?;
+
+    let projects_source = source_root.join("projects");
+    if projects_source.exists() {
+        let projects_dir = get_projects_dir()?;
+        fs::create_dir_all(&projects_dir)
+            .map_err(|e| format!("Failed to create projects directory: {}", e))?;
+
+        for entry in fs::read_dir(&projects_source)
+            .map_err(|e| format!("Failed to read projects folder: {}", e))?
+        {
+            let entry = entry.map_err(|e| format!("Failed to read project entry: {}", e))?;
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+
+            let project_dir_name = entry.file_name().to_string_lossy().to_string();
+            let dest_project_dir = projects_dir.join(&project_dir_name);
+
+            if dest_project_dir.exists() {
+                if overwrite {
+                    fs::remove_dir_all(&dest_project_dir).map_err(|e| {
+                        format!(
+                            "Failed to remove existing project directory {}: {}",
+                            dest_project_dir.display(),
+                            e
+                        )
+                    })?;
+                } else {
+                    continue;
+                }
+            }
+
+            copy_pipeline_request_dir(&storage, &entry_path, &dest_project_dir)?;
+
+            let project_yaml_path = dest_project_dir.join("project.yaml");
+            if !project_yaml_path.exists() {
+                continue;
+            }
+
+            let yaml_content = fs::read_to_string(&project_yaml_path).map_err(|e| {
+                format!(
+                    "Failed to read project.yaml at {}: {}",
+                    project_yaml_path.display(),
+                    e
+                )
+            })?;
+            let project_yaml: ProjectYaml = serde_yaml::from_str(&yaml_content).map_err(|e| {
+                format!(
+                    "Failed to parse project.yaml at {}: {}",
+                    project_yaml_path.display(),
+                    e
+                )
+            })?;
+
+            let identifier = format!("{}@{}", project_yaml.name, project_yaml.version);
+            let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+            if overwrite {
+                if db
+                    .get_project(&identifier)
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+                {
+                    db.update_project(
+                        &project_yaml.name,
+                        &project_yaml.version,
+                        &project_yaml.author,
+                        &project_yaml.workflow,
+                        &project_yaml.template,
+                        &dest_project_dir,
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    db.register_project(
+                        &project_yaml.name,
+                        &project_yaml.version,
+                        &project_yaml.author,
+                        &project_yaml.workflow,
+                        &project_yaml.template,
+                        &dest_project_dir,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            } else if db
+                .get_project(&identifier)
+                .map_err(|e| e.to_string())?
+                .is_none()
+            {
+                db.register_project(
+                    &project_yaml.name,
+                    &project_yaml.version,
+                    &project_yaml.author,
+                    &project_yaml.workflow,
+                    &project_yaml.template,
+                    &dest_project_dir,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
 
     let pipeline_dir_str = dest_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;

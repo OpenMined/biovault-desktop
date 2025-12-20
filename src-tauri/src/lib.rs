@@ -60,6 +60,13 @@ pub(crate) fn resolve_biovault_home_path() -> PathBuf {
         })
 }
 
+pub(crate) fn syftbox_backend_is_embedded() -> bool {
+    env::var("BV_SYFTBOX_BACKEND")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("embedded"))
+        .unwrap_or(false)
+}
+
 pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     // NOTE: All tables now managed by CLI via BioVaultDb (schema.sql)
     // Desktop-specific DB is deprecated - keeping for backwards compat only
@@ -69,13 +76,11 @@ pub(crate) fn init_db(_conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-// Scan resources directory for a bundled binary by name (java/nextflow/uv/syftbox)
+// Scan resources directory for a bundled binary by name (java/nextflow/uv)
 fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
     let mut search_roots = vec![
         resource_dir.join("bundled"),
         resource_dir.join("resources").join("bundled"),
-        resource_dir.join("syftbox"),
-        resource_dir.join("resources").join("syftbox"),
     ];
 
     search_roots.sort();
@@ -394,6 +399,11 @@ fn expose_bundled_binaries(app: &tauri::App) {
         }
     }
 
+    if syftbox_backend_is_embedded() {
+        crate::desktop_log!("🔧 SyftBox backend is embedded; skipping bundled binary lookup");
+        return;
+    }
+
     // Expose bundled syftbox as well (used by dependency check + runtime).
     let syftbox_candidates = [
         "syftbox/syftbox.exe".to_string(),
@@ -451,6 +461,11 @@ fn emit_message_sync(app_handle: &tauri::AppHandle, new_message_ids: &[String]) 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
+
+    if std::env::var("BV_SYFTBOX_BACKEND").is_err() {
+        let default_backend = option_env!("BV_SYFTBOX_DEFAULT_BACKEND").unwrap_or("embedded");
+        std::env::set_var("BV_SYFTBOX_BACKEND", default_backend);
+    }
 
     // Desktop app defaults to Desktop/BioVault if not specified via env or args
     // Priority: 1) command-line args, 2) BIOVAULT_HOME env var, 3) Desktop/BioVault
@@ -777,7 +792,7 @@ pub fn run() {
             expose_bundled_binaries(app);
 
             // Ensure bundled SyftBox binary is exposed if not already provided
-            if std::env::var("SYFTBOX_BINARY").is_err() {
+            if !syftbox_backend_is_embedded() && std::env::var("SYFTBOX_BINARY").is_err() {
                 // Try both legacy and nested resource paths, then fall back to a scan
                 let mut syftbox_candidates: Vec<PathBuf> = Vec::new();
                 if let Ok(p) = app
@@ -1028,6 +1043,8 @@ pub fn run() {
             sync_messages_with_failures,
             send_pipeline_request,
             send_pipeline_request_results,
+            list_results_tree,
+            import_pipeline_results,
             send_pipeline_results,
             // Projects commands
             import_project,
@@ -1160,6 +1177,7 @@ pub fn run() {
             test_notification_applescript,
             // Sessions commands
             get_sessions,
+            list_sessions,
             get_session,
             create_session,
             create_session_with_datasets,
@@ -1187,7 +1205,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     fn best_effort_stop_syftbox_for_exit() {
-        if crate::stop_syftbox_client().is_ok() {}
+        let _ = crate::stop_syftbox_client();
 
         #[cfg(target_os = "windows")]
         {

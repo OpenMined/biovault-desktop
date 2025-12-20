@@ -180,12 +180,20 @@ fn main() {
 
     // Rerun if beaver __init__.py changes
     println!("cargo:rerun-if-changed=../biovault/biovault-beaver/python/src/beaver/__init__.py");
+    println!("cargo:rerun-if-env-changed=BV_SYFTBOX_DEFAULT_BACKEND");
 
     // Windows defaults to a small thread stack reserve (commonly 1MB), which can overflow during
     // PQXDH/Kyber crypto operations (e.g. when sending an encrypted message). Increase the stack
     // reserve for the desktop executable to prevent STATUS_STACK_OVERFLOW crashes.
     #[cfg(target_os = "windows")]
     println!("cargo:rustc-link-arg-bin=bv-desktop=/STACK:8388608");
+
+    if let Ok(default_backend) = env::var("BV_SYFTBOX_DEFAULT_BACKEND") {
+        println!(
+            "cargo:rustc-env=BV_SYFTBOX_DEFAULT_BACKEND={}",
+            default_backend
+        );
+    }
 
     tauri_build::build()
 }

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SYFTBOX_DIR="$ROOT_DIR/biovault/syftbox"
+SYFTBOX_DIR="$ROOT_DIR/biovault/syftbox-sdk/syftbox"
 OUT_DIR="$ROOT_DIR/src-tauri/resources/syftbox"
 OUT_BIN="$OUT_DIR/syftbox"
 

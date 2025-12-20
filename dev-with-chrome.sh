@@ -45,7 +45,7 @@ echo -e "${YELLOW}   Backend will run in background${NC}"
 echo ""
 
 # Start Tauri dev in background (this starts Rust backend + WebSocket on port 3333)
-bun run dev > /tmp/tauri-dev.log 2>&1 &
+npm run dev > /tmp/tauri-dev.log 2>&1 &
 TAURI_PID=$!
 
 # Trap to cleanup on exit

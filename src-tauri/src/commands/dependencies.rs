@@ -15,6 +15,15 @@ fn configure_child_process(cmd: &mut Command) {
 #[cfg(not(target_os = "windows"))]
 fn configure_child_process(_cmd: &mut Command) {}
 
+pub(crate) fn dependency_names() -> Vec<&'static str> {
+    let mut deps = vec!["java", "docker", "nextflow"];
+    if !crate::syftbox_backend_is_embedded() {
+        deps.push("syftbox");
+    }
+    deps.push("uv");
+    deps
+}
+
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
 pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckResult, String> {
     eprintln!("DEBUG: save_dependency_states() CALLED");
@@ -94,7 +103,7 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
     match biovault::config::Config::load() {
         Ok(config) => {
             eprintln!("DEBUG: Config loaded successfully, checking binary_paths:");
-            for binary in ["java", "docker", "nextflow", "syftbox", "uv"] {
+            for binary in dependency_names() {
                 match config.get_binary_path(binary) {
                     Some(path) => {
                         eprintln!("DEBUG:   ✅ {} = {}", binary, path);
@@ -179,7 +188,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
         // This allows bundled binaries (set via env vars at runtime) to be detected even if
         // an older dependency_states.json was persisted when they were missing.
         let mut dependencies = Vec::new();
-        for dep_name in ["java", "docker", "nextflow", "syftbox", "uv"] {
+        for dep_name in dependency_names() {
             let hint = saved_result
                 .dependencies
                 .iter()
@@ -236,7 +245,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
     // Check each dependency with the saved custom path (if any)
     let mut dependencies = vec![];
-    for dep_name in ["java", "docker", "nextflow", "syftbox", "uv"] {
+    for dep_name in dependency_names() {
         let custom_path = config.get_binary_path(dep_name);
         if let Ok(dep_result) =
             biovault::cli::commands::check::check_single_dependency(dep_name, custom_path)

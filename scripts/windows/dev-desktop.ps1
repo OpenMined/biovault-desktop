@@ -40,20 +40,13 @@ if (-not $env:PROTOC) {
     }
 }
 
-# Set syftbox environment variables for dev builds
-$syftboxBinary = Join-Path $repoRoot "biovault\syftbox\bin\syftbox-dev.exe"
-if (Test-Path $syftboxBinary) {
-    $env:SYFTBOX_BINARY = $syftboxBinary
-    $env:SYFTBOX_VERSION = "dev"
-}
+$env:BV_SYFTBOX_BACKEND = "embedded"
 
 Write-Host ""
 Write-Host "Configuration:" -ForegroundColor Green
 Write-Host "   Database: $env:BIOVAULT_HOME\biovault.db" -ForegroundColor Yellow
 Write-Host "   CLI binary: $env:BIOVAULT_PATH" -ForegroundColor Yellow
-if ($env:SYFTBOX_BINARY) {
-    Write-Host "   Syftbox binary: $env:SYFTBOX_BINARY" -ForegroundColor Yellow
-}
+Write-Host "   Syftbox backend: $env:BV_SYFTBOX_BACKEND" -ForegroundColor Yellow
 if ($env:PROTOC) {
     Write-Host "   PROTOC: $env:PROTOC" -ForegroundColor Yellow
 }

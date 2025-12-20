@@ -9,7 +9,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
-const DEPENDENCY_BINARIES: [&str; 5] = ["nextflow", "java", "docker", "syftbox", "uv"];
+fn dependency_binaries() -> Vec<&'static str> {
+    let mut deps = vec!["nextflow", "java", "docker"];
+    if !crate::syftbox_backend_is_embedded() {
+        deps.push("syftbox");
+    }
+    deps.push("uv");
+    deps
+}
 
 #[tauri::command]
 pub fn start_analysis(
@@ -293,7 +300,7 @@ pub async fn execute_analysis(
 
     if let Some(ref cfg) = config {
         env_lines.push("  Preferred binary paths:".to_string());
-        for binary in DEPENDENCY_BINARIES {
+        for binary in dependency_binaries() {
             match resolve_binary_path(Some(cfg), binary) {
                 Some(path) => env_lines.push(format!("    {} = {}", binary, path)),
                 None => env_lines.push(format!("    {} = <not configured>", binary)),
@@ -595,7 +602,7 @@ fn build_augmented_path(cfg: Option<&Config>) -> Option<String> {
     let mut entries = BTreeSet::new();
 
     // Extract parent directories from configured binary paths
-    for key in DEPENDENCY_BINARIES {
+    for key in dependency_binaries() {
         if let Some(bin_path) = resolve_binary_path(cfg, key) {
             if !bin_path.is_empty() {
                 if let Some(parent) = Path::new(&bin_path).parent() {

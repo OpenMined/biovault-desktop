@@ -3,6 +3,7 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
+use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
 use chrono::Utc;
@@ -47,6 +48,7 @@ fn should_skip_pipeline_path(rel: &Path) -> bool {
         "__pycache__",
         "node_modules",
         "target",
+        "work",
         "results",
         "runs",
     ];
@@ -114,11 +116,62 @@ fn copy_pipeline_folder(
     Ok(())
 }
 
-fn copy_results_folder(
+fn collect_pipeline_projects(
+    spec: &PipelineSpec,
+    pipeline_root: &Path,
+    db: &biovault::data::BioVaultDb,
+) -> Result<Vec<PathBuf>, String> {
+    let mut projects = HashSet::new();
+
+    for step in &spec.steps {
+        let Some(uses) = step.uses.as_ref() else {
+            continue;
+        };
+
+        if uses.starts_with("http://")
+            || uses.starts_with("https://")
+            || uses.starts_with("syft://")
+        {
+            continue;
+        }
+
+        if uses.starts_with('/') {
+            let candidate = PathBuf::from(uses);
+            if candidate.exists() {
+                projects.insert(candidate);
+            }
+            continue;
+        }
+
+        if uses.starts_with('.') || uses.contains('/') || uses.contains('\\') {
+            let candidate = pipeline_root.join(uses);
+            if candidate.exists() {
+                let should_include = match (candidate.canonicalize(), pipeline_root.canonicalize())
+                {
+                    (Ok(candidate_path), Ok(root_path)) => !candidate_path.starts_with(root_path),
+                    _ => false,
+                };
+                if should_include {
+                    projects.insert(candidate);
+                }
+                continue;
+            }
+        }
+
+        if let Ok(Some(project)) = db.get_project(uses) {
+            projects.insert(PathBuf::from(project.project_path));
+        }
+    }
+
+    Ok(projects.into_iter().collect())
+}
+
+fn copy_results_folder_filtered(
     storage: &SyftBoxStorage,
     src: &Path,
     dest: &Path,
     recipient: &str,
+    allowed_rel_paths: Option<&std::collections::HashSet<String>>,
 ) -> Result<(), String> {
     storage
         .ensure_dir(dest)
@@ -137,6 +190,13 @@ fn copy_results_folder(
 
         if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
             continue;
+        }
+
+        let rel_str = rel.to_string_lossy().to_string();
+        if let Some(allowed) = allowed_rel_paths {
+            if !allowed.contains(&rel_str) {
+                continue;
+            }
         }
 
         let dest_path = dest.join(rel);
@@ -167,6 +227,108 @@ fn copy_results_folder(
     }
 
     Ok(())
+}
+
+fn copy_results_to_unencrypted(
+    storage: &SyftBoxStorage,
+    src: &Path,
+    dest: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| format!("Failed to create results folder: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
+            continue;
+        }
+
+        let bytes = storage
+            .read_with_shadow(path)
+            .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        fs::write(&dest_path, &bytes).map_err(|e| {
+            format!(
+                "Failed to write results file {}: {}",
+                dest_path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct ResultsTreeEntry {
+    pub path: String,
+    pub is_dir: bool,
+    pub size_bytes: Option<u64>,
+}
+
+#[tauri::command]
+pub fn list_results_tree(root: String) -> Result<Vec<ResultsTreeEntry>, String> {
+    let root_path = PathBuf::from(&root);
+    if !root_path.exists() {
+        return Err(format!(
+            "Results folder not found at {}",
+            root_path.display()
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for entry in WalkDir::new(&root_path)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(&root_path)
+            .map_err(|e| format!("Failed to resolve results path: {}", e))?;
+
+        if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
+            continue;
+        }
+
+        let is_dir = entry.file_type().is_dir();
+        let size_bytes = if is_dir {
+            None
+        } else {
+            Some(entry.metadata().map(|m| m.len()).unwrap_or(0))
+        };
+
+        entries.push(ResultsTreeEntry {
+            path: rel.to_string_lossy().to_string(),
+            is_dir,
+            size_bytes,
+        });
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
 }
 
 pub fn load_biovault_email(biovault_home: &Option<PathBuf>) -> String {
@@ -734,6 +896,9 @@ pub fn send_pipeline_request(
     let pipeline_spec: serde_yaml::Value = serde_yaml::from_str(&pipeline_content)
         .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
 
+    let pipeline_spec_struct: PipelineSpec = serde_yaml::from_str(&pipeline_content)
+        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
+
     let submission_root = config
         .get_shared_submissions_path()
         .map_err(|e| format!("Failed to resolve submissions folder: {}", e))?;
@@ -755,6 +920,27 @@ pub fn send_pipeline_request(
         &submission_path,
         &recipient,
     )?;
+
+    let project_paths = collect_pipeline_projects(
+        &pipeline_spec_struct,
+        Path::new(&pipeline.pipeline_path),
+        &biovault_db,
+    )?;
+    let projects_dest_root = submission_path.join("projects");
+    let mut included_projects: Vec<String> = Vec::new();
+    let mut seen_project_dirs = HashSet::new();
+    for project_path in project_paths {
+        let Some(project_dir_name) = project_path.file_name() else {
+            continue;
+        };
+        let project_dir_name = project_dir_name.to_string_lossy().to_string();
+        if !seen_project_dirs.insert(project_dir_name.clone()) {
+            continue;
+        }
+        let dest_path = projects_dest_root.join(&project_dir_name);
+        copy_pipeline_folder(&storage, &project_path, &dest_path, &recipient)?;
+        included_projects.push(project_dir_name);
+    }
 
     // Write permissions file for recipient access and results write-back
     let perms = SyftPermissions::new_for_datasite(&recipient);
@@ -802,6 +988,7 @@ pub fn send_pipeline_request(
             "submission_id": submission_folder_name,
             "sender_local_path": sender_local_path,
             "receiver_local_path_template": receiver_local_path_template,
+            "projects": included_projects,
         }
     }));
 
@@ -828,6 +1015,7 @@ pub fn send_pipeline_request_results(
     request_id: String,
     run_id: i64,
     message: Option<String>,
+    output_paths: Option<Vec<String>>,
 ) -> Result<VaultMessage, String> {
     let config = load_config()?;
     let (db, sync) = init_message_system(&config)
@@ -893,7 +1081,48 @@ pub fn send_pipeline_request_results(
     let results_dest_root = submission_root.join("results");
     let results_dest = results_dest_root.join(format!("run_{}", run_id));
 
-    copy_results_folder(&storage, &results_source_path, &results_dest, &sender)?;
+    let allowed_rel_paths = output_paths.as_ref().and_then(|paths| {
+        if paths.is_empty() {
+            return None;
+        }
+        let mut allowed = std::collections::HashSet::new();
+        for path_str in paths {
+            let path = PathBuf::from(&path_str);
+            let rel = if path.is_absolute() {
+                path.strip_prefix(&results_source_path)
+                    .ok()
+                    .map(|p| p.to_path_buf())
+            } else {
+                Some(path)
+            };
+            if let Some(rel_path) = rel {
+                if rel_path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+                {
+                    continue;
+                }
+                allowed.insert(rel_path.to_string_lossy().to_string());
+            }
+        }
+        if allowed.is_empty() {
+            None
+        } else {
+            Some(allowed)
+        }
+    });
+
+    if output_paths.is_some() && allowed_rel_paths.is_none() {
+        return Err("No valid outputs selected to send.".to_string());
+    }
+
+    copy_results_folder_filtered(
+        &storage,
+        &results_source_path,
+        &results_dest,
+        &sender,
+        allowed_rel_paths.as_ref(),
+    )?;
 
     let mut files = Vec::new();
     for entry in WalkDir::new(&results_dest)
@@ -918,15 +1147,21 @@ pub fn send_pipeline_request_results(
         }));
     }
 
-    let datasite_root = config
-        .get_datasite_path()
-        .map_err(|e| format!("Failed to resolve datasite root: {}", e))?;
+    let datasites_root = data_dir.join("datasites");
     let rel_results = results_dest
-        .strip_prefix(&datasite_root)
-        .map_err(|e| format!("Failed to compute results path: {}", e))?
-        .to_string_lossy()
-        .to_string();
-    let results_location = format!("syft://{}/{}", config.email, rel_results);
+        .strip_prefix(&datasites_root)
+        .map_err(|e| format!("Failed to compute results path: {}", e))?;
+    let mut rel_components = rel_results.components();
+    let owner_component = rel_components
+        .next()
+        .ok_or_else(|| "Failed to compute results path: empty".to_string())?;
+    let owner = owner_component.as_os_str().to_string_lossy();
+    let remainder = rel_components.as_path().to_string_lossy();
+    let results_location = if remainder.is_empty() {
+        format!("syft://{}", owner)
+    } else {
+        format!("syft://{}/{}", owner, remainder)
+    };
 
     let body = message.unwrap_or_else(|| {
         format!(
@@ -959,6 +1194,46 @@ pub fn send_pipeline_request_results(
         .unwrap_or(reply);
 
     Ok(updated)
+}
+
+/// Import pipeline results from a shared syft:// location into an unencrypted folder.
+#[tauri::command]
+pub fn import_pipeline_results(
+    results_location: String,
+    submission_id: Option<String>,
+    run_id: Option<i64>,
+    pipeline_name: Option<String>,
+) -> Result<String, String> {
+    let config = load_config()?;
+    let storage = syftbox_storage(&config)?;
+
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &results_location)
+        .map_err(|e| format!("Failed to resolve results location: {}", e))?;
+    if !source_root.exists() {
+        return Err(format!(
+            "Results folder not found at {}",
+            source_root.display()
+        ));
+    }
+
+    let base = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?
+        .join("results");
+    let folder_name = submission_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| pipeline_name.filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| "pipeline_results".to_string());
+    let mut dest = base.join(folder_name);
+    if let Some(run_id) = run_id {
+        dest = dest.join(format!("run_{}", run_id));
+    }
+
+    copy_results_to_unencrypted(&storage, &source_root, &dest)?;
+
+    Ok(dest.to_string_lossy().to_string())
 }
 
 #[derive(serde::Deserialize)]

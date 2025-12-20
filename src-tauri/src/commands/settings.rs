@@ -94,6 +94,8 @@ fn best_effort_stop_syftbox_for_reset() {
         }
     }
 
+    if crate::syftbox_backend_is_embedded() {}
+
     // Fallback for partially configured states (e.g. before onboarding) where runtime config can't be loaded.
     #[cfg(target_os = "windows")]
     {
@@ -403,7 +405,7 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
             match biovault::config::Config::load() {
                 Ok(config) => {
                     println!("✓ Dependency binaries detected and saved:");
-                    for binary in ["java", "docker", "nextflow", "syftbox", "uv"] {
+                    for binary in super::dependencies::dependency_names() {
                         match config.get_binary_path(binary) {
                             Some(path) => {
                                 println!("  - {}: {}", binary, path);
@@ -437,7 +439,8 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     println!("⚙️ [get_settings] called");
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
+    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
+    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
     let settings_path = desktop_dir
         .join("BioVault")
         .join("database")
@@ -530,7 +533,8 @@ pub fn get_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn save_settings(mut settings: Settings) -> Result<(), String> {
-    let desktop_dir = dirs::desktop_dir().ok_or("Could not find desktop directory")?;
+    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
+    let desktop_dir = dirs::desktop_dir().unwrap_or_else(|| home_dir.join("Desktop"));
     let settings_path = desktop_dir
         .join("BioVault")
         .join("database")

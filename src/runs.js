@@ -173,6 +173,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				// Find pipeline name
 				const pipeline = pipelines.find((p) => p.id === run.pipeline_id)
 				const pipelineName = pipeline ? pipeline.name : `Pipeline #${run.pipeline_id}`
+				let runMetadata = {}
+				try {
+					runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+				} catch (error) {
+					console.warn('Failed to parse run metadata:', error)
+				}
+				const dataSelection = runMetadata.data_selection || {}
+				const titleParts = [pipelineName]
+				if (dataSelection.dataset_name) titleParts.push(dataSelection.dataset_name)
+				if (Array.isArray(dataSelection.asset_keys) && dataSelection.asset_keys.length > 0) {
+					titleParts.push(dataSelection.asset_keys.join(', '))
+				}
+				if (dataSelection.data_type) {
+					const typeLabel = dataSelection.data_type === 'private' ? 'real' : dataSelection.data_type
+					titleParts.push(typeLabel)
+				}
+				const runTitle = titleParts.join(' - ')
 				const card = document.createElement('div')
 				card.className = 'pipeline-run-card'
 				card.dataset.runId = run.id
@@ -265,7 +282,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					</div>
 					<div class="run-main-info" style="flex: 1; min-width: 0;">
 						<div class="run-title" style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px; line-height: 1.3; letter-spacing: -0.01em;">${escapeHtml(
-							pipelineName,
+							runTitle,
 						)}</div>
 						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px;">
 							<span>Run #${run.id}</span>
@@ -455,9 +472,96 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			// Parse run metadata if available (stored when run was created)
-			const runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+			let runMetadata = {}
+			try {
+				runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
+			} catch (error) {
+				console.warn('Failed to parse run metadata:', error)
+			}
 			const inputOverrides = runMetadata.input_overrides || {}
 			const paramOverrides = runMetadata.parameter_overrides || {}
+			const dataSelection = runMetadata.data_selection || {}
+
+			const dataSummaryParts = []
+			if (dataSelection.dataset_name) {
+				dataSummaryParts.push(`Dataset: ${dataSelection.dataset_name}`)
+			}
+			if (Array.isArray(dataSelection.asset_keys) && dataSelection.asset_keys.length > 0) {
+				dataSummaryParts.push(`Asset: ${dataSelection.asset_keys.join(', ')}`)
+			}
+			if (dataSelection.data_type) {
+				const label = dataSelection.data_type === 'private' ? 'real' : dataSelection.data_type
+				dataSummaryParts.push(`Type: ${label}`)
+			}
+			if (dataSelection.participant_count) {
+				dataSummaryParts.push(
+					`${dataSelection.participant_count} participant${
+						dataSelection.participant_count === 1 ? '' : 's'
+					}`,
+				)
+			}
+
+			const selectionFiles = Array.isArray(dataSelection.file_paths)
+				? dataSelection.file_paths
+				: Array.isArray(dataSelection.urls)
+					? dataSelection.urls
+					: []
+			const maxFiles = 6
+			const fileItems = selectionFiles.slice(0, maxFiles).map((path) => {
+				const cleaned = typeof path === 'string' ? path.replace(/^file:\/\//, '') : ''
+				const parts = cleaned.split('/')
+				const name = parts[parts.length - 1] || cleaned
+				return name || path
+			})
+
+			const dataSelectionHtml =
+				dataSummaryParts.length > 0 || fileItems.length > 0
+					? `<div class="run-data-selection" style="margin-bottom: 24px;">
+						<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #0ea5e9;">
+								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+								<polyline points="7 10 12 15 17 10"></polyline>
+								<line x1="12" y1="15" x2="12" y2="3"></line>
+							</svg>
+							<h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em;">Data Selection</h3>
+						</div>
+						${
+							dataSummaryParts.length > 0
+								? `<div style="margin-bottom: 12px; font-size: 13px; color: #475569; display: flex; flex-wrap: wrap; gap: 8px;">
+									${dataSummaryParts
+										.map(
+											(part) =>
+												`<span style="padding: 4px 8px; background: #f1f5f9; border-radius: 6px; border: 1px solid #e2e8f0;">${escapeHtml(
+													part,
+												)}</span>`,
+										)
+										.join('')}
+								</div>`
+								: ''
+						}
+						${
+							fileItems.length > 0
+								? `<div style="display: flex; flex-direction: column; gap: 6px;">
+									${fileItems
+										.map(
+											(name) =>
+												`<div style="padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace;">${escapeHtml(
+													name,
+												)}</div>`,
+										)
+										.join('')}
+									${
+										selectionFiles.length > maxFiles
+											? `<div style="font-size: 12px; color: #94a3b8;">+${
+													selectionFiles.length - maxFiles
+												} more file${selectionFiles.length - maxFiles === 1 ? '' : 's'}</div>`
+											: ''
+									}
+								</div>`
+								: ''
+						}
+					</div>`
+					: ''
 
 			// Collect all published outputs from all steps - make them prominent
 			// Only show published outputs if the run has completed successfully
@@ -604,6 +708,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						</div>`
 							: ''
 					}
+
+					${dataSelectionHtml}
 
 					${inputsHtml}
 

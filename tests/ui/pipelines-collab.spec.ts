@@ -31,6 +31,10 @@ const UI_TIMEOUT = 10_000
 const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
 const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
+const DEBUG_PIPELINE_PAUSE_MS = (() => {
+	const raw = Number.parseInt(process.env.PIPELINES_COLLAB_PAUSE_MS || '30000', 10)
+	return Number.isFinite(raw) ? raw : 30_000
+})()
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -95,6 +99,31 @@ async function connectBackend(port: number): Promise<Backend> {
 	}
 
 	return { invoke, close }
+}
+
+async function pauseForInteractiveMode(timeoutMs = 30_000): Promise<void> {
+	if (process.env.INTERACTIVE_MODE !== '1') return
+	const seconds = Math.round(timeoutMs / 1000)
+	console.log(`Interactive mode: Press ENTER to finish and exit (or wait ${seconds}s)`)
+	await new Promise<void>((resolve) => {
+		const stdin = process.stdin
+		const done = () => {
+			if (stdin) {
+				stdin.off('data', onData)
+				stdin.pause()
+			}
+			resolve()
+		}
+		const onData = () => {
+			clearTimeout(timer)
+			done()
+		}
+		const timer = setTimeout(done, timeoutMs)
+		if (stdin) {
+			stdin.resume()
+			stdin.once('data', onData)
+		}
+	})
 }
 
 function resolveDatasitesRoot(dataDir: string): string {
@@ -179,6 +208,179 @@ async function waitForRunCompletion(
 	throw new Error(`Pipeline run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
 }
 
+async function waitForNewRun(
+	backend: Backend,
+	existingIds: Set<number>,
+	timeoutMs = 60_000,
+): Promise<any> {
+	const startTime = Date.now()
+	while (Date.now() - startTime < timeoutMs) {
+		const runs = await backend.invoke('get_pipeline_runs', {})
+		const newRuns = (runs || []).filter((run: any) => !existingIds.has(run.id))
+		if (newRuns.length > 0) {
+			newRuns.sort((a: any, b: any) => b.id - a.id)
+			return newRuns[0]
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+	throw new Error('Timed out waiting for new pipeline run')
+}
+
+function resolvePipelineResultPath(run: any): string {
+	const baseDir = run.results_dir || run.work_dir
+	return path.join(baseDir, 'herc2', 'result_HERC2.tsv')
+}
+
+async function readTextFileWithRetry(filePath: string, timeoutMs = 30_000): Promise<string> {
+	const startTime = Date.now()
+	while (Date.now() - startTime < timeoutMs) {
+		if (fs.existsSync(filePath)) {
+			const content = fs.readFileSync(filePath, 'utf8')
+			if (content.trim().length > 0) {
+				return content
+			}
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+	throw new Error(`Timed out waiting for file: ${filePath}`)
+}
+
+function getBiovaultHomeFromRun(run: any): string {
+	const baseDir = run.results_dir || run.work_dir
+	return path.dirname(path.dirname(baseDir))
+}
+
+function findImportedResultsFile(resultsRoot: string, runId: number): string | null {
+	if (!fs.existsSync(resultsRoot)) {
+		return null
+	}
+	const entries = fs.readdirSync(resultsRoot, { withFileTypes: true })
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue
+		const candidate = path.join(
+			resultsRoot,
+			entry.name,
+			`run_${runId}`,
+			'herc2',
+			'result_HERC2.tsv',
+		)
+		if (fs.existsSync(candidate)) {
+			return candidate
+		}
+	}
+	return null
+}
+
+async function waitForImportedResults(
+	resultsRoot: string,
+	runId: number,
+	timeoutMs = 30_000,
+): Promise<string> {
+	const startTime = Date.now()
+	while (Date.now() - startTime < timeoutMs) {
+		const found = findImportedResultsFile(resultsRoot, runId)
+		if (found) return found
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+	throw new Error(`Timed out waiting for imported results for run ${runId}`)
+}
+
+async function waitForMessageCard(
+	page: Page,
+	backend: Backend,
+	selector: string,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<ReturnType<Page['locator']>> {
+	const startTime = Date.now()
+	while (Date.now() - startTime < timeoutMs) {
+		const card = page.locator(selector)
+		if (await card.isVisible().catch(() => false)) {
+			return card
+		}
+
+		const threadItems = page.locator('#message-list .message-thread-item')
+		if (await threadItems.count().catch(() => 0)) {
+			await threadItems.first().click()
+			await page.waitForTimeout(1000)
+			if (await card.isVisible().catch(() => false)) {
+				return card
+			}
+		}
+
+		try {
+			await backend.invoke('trigger_syftbox_sync')
+		} catch {}
+		try {
+			await backend.invoke('sync_messages', {})
+		} catch {}
+
+		await page.reload()
+		await waitForAppReady(page, { timeout: 10_000 })
+		await page.locator('.nav-item[data-tab="messages"]').click()
+		await page.waitForTimeout(1500)
+	}
+	throw new Error(`Timed out waiting for message card: ${selector}`)
+}
+
+function normalizeTsvResult(content: string): string {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return lines.join('\n')
+	const [header, ...rows] = lines
+	rows.sort((a, b) => a.localeCompare(b))
+	return [header, ...rows].join('\n')
+}
+
+async function runDatasetPipeline(
+	page: Page,
+	backend: Backend,
+	datasetName: string,
+	dataType: 'mock' | 'real',
+	pipelineMatch = 'herc2',
+): Promise<any> {
+	await page.locator('.nav-item[data-tab="data"]').click()
+	await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
+		timeout: UI_TIMEOUT,
+	})
+	await page.locator('#data-view-toggle .pill-button[data-view="datasets"]').click()
+	await page.waitForTimeout(1000)
+
+	const datasetCard = page.locator('#datasets-grid .dataset-card').filter({ hasText: datasetName })
+	await expect(datasetCard).toBeVisible({ timeout: UI_TIMEOUT })
+
+	const runPipelineBtn = datasetCard.locator('.btn-run-pipeline')
+	await expect(runPipelineBtn).toBeVisible({ timeout: UI_TIMEOUT })
+
+	const runsBefore = await backend.invoke('get_pipeline_runs', {})
+	const previousIds = new Set((runsBefore || []).map((run: any) => run.id))
+
+	await runPipelineBtn.click()
+
+	const runModal = page.locator('#run-pipeline-modal')
+	await expect(runModal).toBeVisible({ timeout: UI_TIMEOUT })
+	await runModal.locator(`input[name="pipeline-data-type"][value="${dataType}"]`).check()
+	await runModal.locator('#run-pipeline-confirm').click()
+
+	const dataRunModal = page.locator('#data-run-modal')
+	await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
+
+	const pipelineOption = dataRunModal.locator(
+		`input[name="data-run-pipeline"][value*="${pipelineMatch}"], .data-run-pipeline-option:has-text("${pipelineMatch}")`,
+	)
+	if (await pipelineOption.isVisible().catch(() => false)) {
+		await pipelineOption.first().click()
+	}
+
+	const runBtn = dataRunModal.locator('#data-run-run-btn')
+	await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	await runBtn.click()
+	await page.waitForTimeout(3000)
+
+	return await waitForNewRun(backend, previousIds)
+}
+
 // Timing helper
 function timer(label: string) {
 	const start = Date.now()
@@ -202,6 +404,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const syntheticDataDir =
 			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
+		const datasetName = 'collab_genotype_dataset'
+		let client2MockResult = ''
+		let client1MockResult = ''
+		let client1PrivateResult = ''
+		let client1PrivateRunId: number | null = null
+		let client2BiovaultHome = ''
 
 		console.log('Setting up pipelines collaboration test')
 		console.log(`Client1 (Alice): ${email1} (port ${wsPort1})`)
@@ -401,7 +609,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await expect(page1.locator('#dataset-editor-section')).toBeVisible({ timeout: 10000 })
 
 			// Fill dataset form
-			await page1.locator('#dataset-form-name').fill('collab_genotype_dataset')
+			await page1.locator('#dataset-form-name').fill(datasetName)
 			await page1
 				.locator('#dataset-form-description')
 				.fill('Dataset for pipeline collaboration test')
@@ -482,7 +690,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Publish dataset
 			const datasetCard = page1
 				.locator('#datasets-grid .dataset-card')
-				.filter({ hasText: 'collab_genotype_dataset' })
+				.filter({ hasText: datasetName })
 			const publishBtn = datasetCard.locator('.btn-publish, button:has-text("Publish")')
 			await expect(publishBtn).toBeVisible({ timeout: 5000 })
 			await publishBtn.click()
@@ -592,15 +800,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			syncTimer.stop()
 			if (!datasetFound) {
-				console.log('Warning: Dataset not found on network within timeout - stopping here for now')
-				// For now, stop the test here since we're debugging the flow
-				console.log('\n=== STOPPING TEST FOR DEBUGGING ===')
-				console.log('Please verify manually:')
-				console.log('1. Client1 has published the dataset')
-				console.log('2. Client2 can see it in Network > Datasets')
-				console.log('3. Client2 can run the mock data through HERC2 pipeline')
-				testTimer.stop()
-				return
+				throw new Error('Dataset not found on network within timeout')
 			}
 
 			// ============================================================
@@ -659,6 +859,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				await herc2RadioOption.click()
 			}
 
+			const runsBeforeMock = await backend2.invoke('get_pipeline_runs', {})
+			const previousIds2 = new Set((runsBeforeMock || []).map((run: any) => run.id))
+
 			// Click the Run button
 			const runBtn = dataRunModal.locator('#data-run-run-btn')
 			await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
@@ -667,32 +870,41 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page2.waitForTimeout(3000)
 			console.log('Pipeline run started on mock data!')
 
+			if (DEBUG_PIPELINE_PAUSE_MS > 0) {
+				log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
+				console.log(`Pausing ${DEBUG_PIPELINE_PAUSE_MS}ms for Nextflow inspection...`)
+				await page2.waitForTimeout(DEBUG_PIPELINE_PAUSE_MS)
+			}
+
 			// Wait for run to complete by checking backend
 			const mockRunTimer = timer('Mock data pipeline run')
-			const runs2 = await backend2.invoke('get_pipeline_runs', {})
-			if (runs2 && runs2.length > 0) {
-				const latestRun = runs2[runs2.length - 1] // Get most recent run
-				console.log(`Waiting for run ${latestRun.id} to complete...`)
-				const { status } = await waitForRunCompletion(page2, backend2, latestRun.id)
-				console.log(`Pipeline run on mock data completed with status: ${status}`)
-				expect(status).toBe('success')
-				mockRunTimer.stop()
+			const mockRun2 = await waitForNewRun(backend2, previousIds2)
+			console.log(`Waiting for run ${mockRun2.id} to complete...`)
+			const { status, run: mockRun2Final } = await waitForRunCompletion(
+				page2,
+				backend2,
+				mockRun2.id,
+			)
+			console.log(`Pipeline run on mock data completed with status: ${status}`)
+			expect(status).toBe('success')
+			mockRunTimer.stop()
 
-				// Navigate to Runs tab to verify
-				const runsTab = page2.locator(
-					'.tab-pills button:has-text("Runs"), .pill-button:has-text("Runs")',
-				)
-				if (await runsTab.isVisible().catch(() => false)) {
-					await runsTab.click()
-					await page2.waitForTimeout(1000)
+			const mockResultPath2 = resolvePipelineResultPath(mockRun2Final)
+			client2MockResult = await readTextFileWithRetry(mockResultPath2)
+			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
 
-					// Verify run appears in list
-					const runCard = page2.locator('.run-card, .run-item').first()
-					await expect(runCard).toBeVisible({ timeout: UI_TIMEOUT })
-					console.log('✓ Run verified in Runs tab!')
-				}
-			} else {
-				console.log('Warning: No pipeline runs found after clicking Run')
+			// Navigate to Runs tab to verify
+			const runsTab = page2.locator(
+				'.tab-pills button:has-text("Runs"), .pill-button:has-text("Runs")',
+			)
+			if (await runsTab.isVisible().catch(() => false)) {
+				await runsTab.click()
+				await page2.waitForTimeout(1000)
+
+				// Verify run appears in list
+				const runCard = page2.locator('.run-card, .run-item').first()
+				await expect(runCard).toBeVisible({ timeout: UI_TIMEOUT })
+				console.log('✓ Run verified in Runs tab!')
 			}
 
 			// ============================================================
@@ -754,62 +966,55 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await expect(page1.locator('#messages-view, .messages-container')).toBeVisible({
 				timeout: UI_TIMEOUT,
 			})
-			await page1.waitForTimeout(2000)
+			await page1.waitForTimeout(1000)
 
-			// Look for pipeline request message
-			const requestCard = page1.locator('.message-pipeline-request')
-			if (await requestCard.isVisible({ timeout: 10_000 }).catch(() => false)) {
-				console.log('Pipeline request received!')
+			const requestCard = await waitForMessageCard(page1, backend1, '.message-pipeline-request')
+			console.log('Pipeline request received!')
 
-				// Click Import Pipeline button
-				const importPipelineBtn = requestCard.locator('button:has-text("Import Pipeline")')
-				if (await importPipelineBtn.isVisible().catch(() => false)) {
-					await importPipelineBtn.click()
-					await page1.waitForTimeout(2000)
-					console.log('Pipeline imported from request!')
-				}
-			} else {
-				console.log('Warning: Pipeline request card not visible - may need to refresh')
+			// Click Import Pipeline button if available
+			const importPipelineBtn = requestCard.locator('button:has-text("Import Pipeline")')
+			if (await importPipelineBtn.isVisible().catch(() => false)) {
+				await importPipelineBtn.click()
+				await page1.waitForTimeout(2000)
+				console.log('Pipeline imported from request!')
 			}
 
 			// ============================================================
-			// Step 8: Client1 runs pipeline on mock data
+			// Step 8: Client1 runs pipeline on mock data, then private data
 			// ============================================================
 			log(logSocket, { event: 'step-8', action: 'run-pipeline' })
-			console.log('\n=== Step 8: Client1 runs pipeline on mock data ===')
+			console.log('\n=== Step 8: Client1 runs pipeline on mock + private data ===')
 
-			// Navigate to Data tab
-			await page1.locator('.nav-item[data-tab="data"]').click()
-			await expect(page1.locator('#data-view.tab-content.active')).toBeVisible({
-				timeout: UI_TIMEOUT,
-			})
-			await page1.locator('#data-view-toggle .pill-button[data-view="datasets"]').click()
-			await page1.waitForTimeout(1000)
+			const mockRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'mock')
+			console.log(`Pipeline mock run started: ${mockRun1.id}`)
+			const { status: mockStatus, run: mockRun1Final } = await waitForRunCompletion(
+				page1,
+				backend1,
+				mockRun1.id,
+			)
+			console.log(`Pipeline mock run completed with status: ${mockStatus}`)
+			expect(mockStatus).toBe('success')
 
-			// Click Run Pipeline on dataset
-			const datasetCard1 = page1
-				.locator('#datasets-grid .dataset-card')
-				.filter({ hasText: 'collab_genotype_dataset' })
-			const runPipelineBtn1 = datasetCard1.locator('.btn-run-pipeline')
-			if (await runPipelineBtn1.isVisible().catch(() => false)) {
-				await runPipelineBtn1.click()
+			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
+			client1MockResult = await readTextFileWithRetry(mockResultPath1)
+			expect(normalizeTsvResult(client1MockResult)).toBe(normalizeTsvResult(client2MockResult))
 
-				// Select mock data
-				const runModal = page1.locator('#run-pipeline-modal')
-				await expect(runModal).toBeVisible({ timeout: 5000 })
-				await runModal.locator('input[name="pipeline-data-type"][value="mock"]').check()
-				await runModal.locator('#run-pipeline-confirm').click()
+			const privateRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'real')
+			console.log(`Pipeline private run started: ${privateRun1.id}`)
+			const { status: privateStatus, run: privateRun1Final } = await waitForRunCompletion(
+				page1,
+				backend1,
+				privateRun1.id,
+			)
+			console.log(`Pipeline private run completed with status: ${privateStatus}`)
+			expect(privateStatus).toBe('success')
+			client1PrivateRunId = privateRun1Final.id
 
-				await page1.waitForTimeout(5000)
+			const privateResultPath1 = resolvePipelineResultPath(privateRun1Final)
+			client1PrivateResult = await readTextFileWithRetry(privateResultPath1)
 
-				// Check for pipeline run
-				const runs = await backend1.invoke('get_pipeline_runs', {})
-				if (runs && runs.length > 0) {
-					const latestRun = runs[0]
-					console.log(`Pipeline run started: ${latestRun.id}`)
-					const { status } = await waitForRunCompletion(page1, backend1, latestRun.id)
-					console.log(`Pipeline run completed with status: ${status}`)
-				}
+			if (!client1PrivateRunId) {
+				throw new Error('Private pipeline run did not start correctly')
 			}
 
 			// ============================================================
@@ -818,54 +1023,33 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			log(logSocket, { event: 'step-9', action: 'share-results' })
 			console.log('\n=== Step 9: Client1 shares results back ===')
 
-			// Navigate to Runs tab
-			await page1.locator('.nav-item[data-tab="run"]').click()
-			await expect(page1.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
+			// Navigate to Messages and send results back from the request card
+			await page1.locator('.nav-item[data-tab="messages"]').click()
+			await expect(page1.locator('#messages-view, .messages-container')).toBeVisible({
+				timeout: UI_TIMEOUT,
+			})
+			await page1.waitForTimeout(2000)
 
-			// Click on Runs sub-tab
-			const runsSubTab = page1.locator(
-				'.tab-pills button:has-text("Runs"), .pill-button:has-text("Runs")',
-			)
-			if (await runsSubTab.isVisible().catch(() => false)) {
-				await runsSubTab.click()
-				await page1.waitForTimeout(1000)
-			}
+			const requestCardForSend = page1.locator('.message-pipeline-request')
+			await expect(requestCardForSend).toBeVisible({ timeout: 10_000 })
 
-			// Look for share button on completed run
-			const shareBtn = page1.locator('.run-share-btn').first()
-			if (await shareBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-				await shareBtn.click()
+			const runSelect = requestCardForSend.locator('select')
+			await expect(runSelect).toBeVisible({ timeout: 10_000 })
+			await expect(runSelect).toBeEnabled({ timeout: 10_000 })
+			await runSelect.selectOption(client1PrivateRunId.toString())
 
-				// Fill share modal
-				const shareModal = page1.locator('#share-results-modal')
-				await expect(shareModal).toBeVisible({ timeout: 5000 })
+			const sendBackBtn = requestCardForSend.locator('button:has-text("Send Back")')
+			await expect(sendBackBtn).toBeVisible({ timeout: 10_000 })
+			await sendBackBtn.click()
 
-				// Select recipient
-				const recipientSelect = shareModal.locator('#share-recipient')
-				await recipientSelect.selectOption(email2)
+			const sendConfirmBtn = page1.locator('#send-results-confirm')
+			await expect(sendConfirmBtn).toBeVisible({ timeout: 10_000 })
+			const outputCheckboxes = page1.locator('input[data-output-path]')
+			expect(await outputCheckboxes.count()).toBeGreaterThan(0)
 
-				// Add message
-				const messageInput = shareModal.locator('#share-message')
-				await messageInput.fill('Here are the HERC2 classification results from my private data!')
-
-				// Click send
-				await shareModal.locator('button:has-text("Send Results")').click()
-				await page1.waitForTimeout(2000)
-				console.log('Results shared!')
-			} else {
-				// Use backend as fallback
-				console.log('Share button not visible, using backend...')
-				const runs = await backend1.invoke('get_pipeline_runs', {})
-				if (runs && runs.length > 0) {
-					const completedRun = runs.find((r: any) => r.status === 'success')
-					if (completedRun) {
-						// Get published outputs
-						const resultsDir = completedRun.results_dir || completedRun.work_dir
-						// For now, just log - actual sharing would need file reading
-						console.log(`Would share results from: ${resultsDir}`)
-					}
-				}
-			}
+			await sendConfirmBtn.click()
+			await page1.waitForTimeout(3000)
+			console.log('Private results sent!')
 
 			// ============================================================
 			// Step 10: Client2 receives results
@@ -883,20 +1067,34 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await expect(page2.locator('#messages-view, .messages-container')).toBeVisible({
 				timeout: UI_TIMEOUT,
 			})
-			await page2.waitForTimeout(2000)
+			await page2.waitForTimeout(1000)
 
-			// Look for results message
-			const resultsCard = page2.locator('.message-pipeline-results')
-			if (await resultsCard.isVisible({ timeout: 15_000 }).catch(() => false)) {
-				console.log('✓ Pipeline results received!')
+			const resultsCard = await waitForMessageCard(page2, backend2, '.message-pipeline-results')
+			console.log('✓ Pipeline results received!')
 
-				// Verify files are listed
-				const fileItems = resultsCard.locator('.result-file')
-				const fileCount = await fileItems.count()
-				console.log(`Results contain ${fileCount} file(s)`)
-			} else {
-				console.log('Warning: Results card not visible yet - sync may be slow')
+			// Verify files are listed
+			const fileItems = resultsCard.locator('.result-file')
+			const fileCount = await fileItems.count()
+			console.log(`Results contain ${fileCount} file(s)`)
+
+			const importResultsBtn = resultsCard.locator('button:has-text("Import Results")')
+			await expect(importResultsBtn).toBeVisible({ timeout: UI_TIMEOUT })
+			await importResultsBtn.click()
+			await page2.waitForTimeout(3000)
+
+			if (!client2BiovaultHome) {
+				throw new Error('Client2 BioVault home path not resolved')
 			}
+
+			const resultsRoot = path.join(client2BiovaultHome, 'results')
+			const importedResultPath = await waitForImportedResults(resultsRoot, client1PrivateRunId!)
+
+			const importedBytes = fs.readFileSync(importedResultPath)
+			const header = importedBytes.slice(0, 4).toString('utf8')
+			expect(header).not.toBe('SYC1')
+
+			const importedContent = importedBytes.toString('utf8')
+			expect(importedContent.trim()).toBe(client1PrivateResult.trim())
 
 			// ============================================================
 			// Summary
@@ -907,8 +1105,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('  ✓ Client2 imported HERC2 pipeline')
 			console.log('  ✓ Client2 ran pipeline on mock data successfully')
 			console.log('  ✓ Client2 sent pipeline request for private data')
-			console.log('  ✓ Client1 received request and ran pipeline')
-			console.log('  ✓ Client1 shared results back')
+			console.log('  ✓ Client1 received request and ran pipeline (mock + private)')
+			console.log('  ✓ Client1 shared private results back')
+			console.log('  ✓ Client2 imported private results (unencrypted)')
 
 			testTimer.stop()
 		} finally {
