@@ -1,5 +1,6 @@
 use biovault::data::{ProjectFileNode, ProjectMetadata};
 use biovault::defaults::SYFTBOX_DEFAULT_SERVER_URL;
+use biovault::messages::MessageRpcWatcherHandle;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
@@ -15,6 +16,7 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     pub biovault_db: Arc<Mutex<BioVaultDb>>,
     pub queue_processor_paused: Arc<AtomicBool>,
+    pub message_watcher: Mutex<Option<MessageRpcWatcherHandle>>,
 }
 
 // Settings

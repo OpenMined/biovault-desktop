@@ -150,6 +150,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_settings().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "reset_all_data" => {
+            crate::reset_all_data(state).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "reset_everything" => {
+            crate::reset_everything(state).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         // --------------------------------------------------------------------
         // Profiles
         // --------------------------------------------------------------------

@@ -66,7 +66,7 @@ function Download([string]$url, [string]$dest, [int]$attempts = 3) {
       $curlCmd = Get-Command curl.exe -ErrorAction SilentlyContinue
       $curl = if ($curlCmd) { $curlCmd.Source } else { $null }
       if ($curl) {
-        & $curl "-fL" "--retry" "$attempts" "--retry-all-errors" "--retry-delay" "2" "-o" "$dest" "$url" | Out-Null
+        & $curl "-fL" "--retry" "$attempts" "--retry-all-errors" "--retry-delay" "2" "--silent" "--show-error" "-o" "$dest" "$url" | Out-Null
       } else {
         Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -Headers @{"User-Agent"="biovault-desktop"}
       }

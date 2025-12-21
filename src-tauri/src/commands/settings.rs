@@ -133,6 +133,15 @@ fn reset_all_data_impl(state: &AppState, preserve_keys: bool) -> Result<(), Stri
     best_effort_stop_syftbox_for_reset();
     stop_all_jupyter_best_effort();
 
+    // Stop filesystem watchers that keep BIOVAULT_HOME directories open on Windows.
+    if let Ok(mut slot) = state.message_watcher.lock() {
+        if let Some(handle) = slot.as_mut() {
+            crate::desktop_log!("RESET: Stopping message watcher...");
+            handle.stop();
+        }
+        *slot = None;
+    }
+
     let biovault_path = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
 

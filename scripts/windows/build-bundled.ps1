@@ -111,7 +111,14 @@ try {
     }
 
     $tauriArgs += @("--config", $configOverride)
-    & npx tauri @tauriArgs
+    $tauriCli = Join-Path $repoRoot "node_modules\\@tauri-apps\\cli\\tauri.js"
+    if (-not (Test-Path $tauriCli)) {
+        throw "Missing Tauri CLI at: $tauriCli (run npm ci first)"
+    }
+    $prevErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & node $tauriCli @tauriArgs 2>&1
+    $ErrorActionPreference = $prevErrorAction
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""

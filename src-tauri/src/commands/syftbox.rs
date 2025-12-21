@@ -688,6 +688,25 @@ fn terminate_pid_best_effort(pid: u32) {
     }
 }
 
+/// Forcefully kill all syftbox processes associated with this biovault home.
+/// This ensures we have exactly one syftbox process per home.
+fn kill_all_syftbox_for_home(config_path: Option<&Path>, data_dir: Option<&Path>) {
+    if let Some(pids) = find_our_syftbox_pids(config_path, data_dir) {
+        if !pids.is_empty() {
+            crate::desktop_log!(
+                "🔧 Killing {} existing syftbox process(es) for this home: {:?}",
+                pids.len(),
+                pids
+            );
+            for pid in &pids {
+                terminate_pid_best_effort(*pid);
+            }
+            // Wait for processes to die
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn find_our_syftbox_pids(config_path: Option<&Path>, data_dir: Option<&Path>) -> Option<Vec<u32>> {
     let config_str = config_path.map(|p| p.to_string_lossy().to_string());
@@ -1248,7 +1267,11 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
         );
     }
 
-    // Ensure we don't leave an older syftbox instance running with the same config.
+    // Forcefully kill any existing syftbox processes for this home directory
+    // This ensures exactly one syftbox process per biovault home
+    kill_all_syftbox_for_home(Some(&runtime.config_path), Some(&runtime.data_dir));
+
+    // Also try the standard stop method for good measure
     if let Err(e) = syftctl::stop_syftbox(&runtime) {
         crate::desktop_log!("ℹ️ Attempt to stop existing SyftBox before start: {}", e);
     }

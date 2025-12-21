@@ -410,6 +410,22 @@ fn expose_bundled_binaries(app: &tauri::App) {
     }
 
     // Expose bundled syftbox as well (used by dependency check + runtime).
+    // Respect an explicitly provided SYFTBOX_BINARY (e.g. dev scripts that point to syftbox-dev.exe).
+    if let Ok(existing) = std::env::var("SYFTBOX_BINARY") {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            let existing_path = std::path::PathBuf::from(&existing);
+            if existing_path.exists() {
+                crate::desktop_log!("🔧 Using pre-set SYFTBOX_BINARY: {}", existing);
+                return;
+            }
+            crate::desktop_log!(
+                "⚠️  SYFTBOX_BINARY was set to a missing path ({}); falling back to bundled candidates",
+                existing_path.display()
+            );
+        }
+    }
+
     let syftbox_candidates = [
         "syftbox/syftbox.exe".to_string(),
         "resources/syftbox/syftbox.exe".to_string(),
@@ -663,6 +679,7 @@ pub fn run() {
         db: Mutex::new(conn),
         biovault_db: Arc::new(Mutex::new(biovault_db)),
         queue_processor_paused: queue_processor_paused.clone(),
+        message_watcher: Mutex::new(None),
     };
 
     // Spawn background queue processor (using library)
@@ -1082,10 +1099,19 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let config = biovault::config::Config::load();
                 if let Ok(cfg) = config {
-                    if let Err(err) = start_message_rpc_watcher(cfg, move |ids| {
-                        emit_message_sync(&app_handle, ids);
+                    let emit_handle = app_handle.clone();
+                    match start_message_rpc_watcher(cfg, move |ids| {
+                        emit_message_sync(&emit_handle, ids);
                     }) {
-                        crate::desktop_log!("Message watcher failed to start: {}", err);
+                        Ok(handle) => {
+                            if let Ok(mut slot) = app_handle.state::<AppState>().message_watcher.lock()
+                            {
+                                *slot = Some(handle);
+                            }
+                        }
+                        Err(err) => {
+                            crate::desktop_log!("Message watcher failed to start: {}", err);
+                        }
                     }
                 } else if let Err(err) = config {
                     crate::desktop_log!("Message watcher: failed to load config: {}", err);
