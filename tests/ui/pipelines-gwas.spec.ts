@@ -501,12 +501,6 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 				.filter({ hasText: 'gwas_dataset' })
 			await expect(datasetCard).toBeVisible()
 
-			await page.evaluate(() => {
-				;(window as any).__TEST_PIPELINE_OVERRIDES__ = {
-					'gwas_analysis.test_mode': 'true',
-				}
-			})
-
 			const runPipelineBtn = datasetCard.locator('.btn-run-pipeline')
 			await expect(runPipelineBtn).toBeVisible()
 			await runPipelineBtn.click()
