@@ -1715,6 +1715,8 @@ export function createPipelinesModule({
 								fileIds: runSet.fileIds || [],
 								participantIds: runSet.participantIds || [],
 								datasetName: context.datasetName || null,
+								datasetShape: context.datasetShape || null,
+								datasetDataType: runSet.dataType || context.datasetDataType || null,
 								datasetOwner: context.datasetOwner || null,
 								assetKeys: context.assetKeys || [],
 								dataType: runSet.dataType || context.dataType || null,
@@ -6682,26 +6684,58 @@ steps:${
 			const realUrls = []
 			const realParticipantIds = []
 
+			console.error('DEBUG: All assets for extraction:', JSON.stringify(assets, null, 2))
+			console.error('DEBUG: dataType =', dataType)
+
 			// Extract URLs and participant IDs based on dataType
 			for (const asset of assets) {
-				// Parse the private_ref and mock_ref JSON
+				console.error('Processing asset:', asset.asset_key, {
+					private_ref: asset.private_ref,
+					mock_ref: asset.mock_ref,
+					private_path: asset.private_path,
+					mock_path: asset.mock_path,
+					resolved_private_path: asset.resolved_private_path,
+					resolved_mock_path: asset.resolved_mock_path,
+					private_file_id: asset.private_file_id,
+					mock_file_id: asset.mock_file_id,
+				})
+				// Parse the private_ref and mock_ref - they can be:
+				// 1. JSON objects with entries array (twin_list)
+				// 2. Plain URL strings (syft://...)
+				// 3. Template strings like {url}.private (not useful for extraction)
 				let privateRef = null
 				let mockRef = null
 
 				if (asset.private_ref) {
-					try {
-						privateRef = JSON.parse(asset.private_ref)
-					} catch (e) {
-						console.warn('Failed to parse private_ref:', e)
+					// Only try to parse if it looks like JSON (starts with { or [)
+					const trimmed = asset.private_ref.trim()
+					if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+						try {
+							privateRef = JSON.parse(asset.private_ref)
+						} catch (e) {
+							console.warn('Failed to parse private_ref as JSON:', e)
+						}
+					} else if (trimmed.startsWith('syft://') || trimmed.startsWith('http')) {
+						// Plain URL string
+						privateRef = { url: trimmed }
 					}
+					// Template strings like {url}.private are ignored
 				}
 
 				if (asset.mock_ref) {
-					try {
-						mockRef = JSON.parse(asset.mock_ref)
-					} catch (e) {
-						console.warn('Failed to parse mock_ref:', e)
+					// Only try to parse if it looks like JSON (starts with { or [)
+					const trimmed = asset.mock_ref.trim()
+					if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+						try {
+							mockRef = JSON.parse(asset.mock_ref)
+						} catch (e) {
+							console.warn('Failed to parse mock_ref as JSON:', e)
+						}
+					} else if (trimmed.startsWith('syft://') || trimmed.startsWith('http')) {
+						// Plain URL string
+						mockRef = { url: trimmed }
 					}
+					// Template strings are ignored
 				}
 
 				// For twin_list assets, extract entries
@@ -6715,8 +6749,13 @@ steps:${
 							}
 						}
 					} else if (mockRef?.url) {
-						// Single mock file URL
+						// Single mock file URL from parsed ref
 						mockUrls.push(mockRef.url)
+						mockParticipantIds.push('')
+					} else if (asset.resolved_mock_path || asset.mock_path) {
+						// Fallback: use resolved_mock_path or mock_path for single-file assets
+						const mockPath = asset.resolved_mock_path || asset.mock_path
+						mockUrls.push(`file://${mockPath}`)
 						mockParticipantIds.push('')
 					}
 				}
@@ -6735,8 +6774,13 @@ steps:${
 							}
 						}
 					} else if (privateRef?.url) {
-						// Single private file - need to look up in mapping.yaml via fragment
+						// Single private file URL from parsed ref
 						realUrls.push(privateRef.url)
+						realParticipantIds.push('')
+					} else if (asset.resolved_private_path || asset.private_path) {
+						// Fallback: use resolved_private_path or private_path for single-file assets
+						const privatePath = asset.resolved_private_path || asset.private_path
+						realUrls.push(`file://${privatePath}`)
 						realParticipantIds.push('')
 					}
 				}
@@ -6751,8 +6795,8 @@ steps:${
 						? mockParticipantIds
 						: [...mockParticipantIds, ...realParticipantIds]
 
-			console.log('Extracted URLs:', urls)
-			console.log('Extracted participant IDs:', participantIds)
+			console.error('DEBUG: Extracted URLs:', urls)
+			console.error('DEBUG: Extracted participant IDs:', participantIds)
 
 			if (urls.length === 0) {
 				if (dialog?.message) {

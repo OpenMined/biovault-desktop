@@ -1965,27 +1965,34 @@ export function initOnboarding({
 						// ignore
 					}
 					try {
-						await invoke('profiles_create_with_home_and_switch', { homePath: desiredHome })
+						// Use in-place switching which works in dev mode without restart
+						await invoke('profiles_create_and_switch_in_place', { homePath: desiredHome })
+						// Successfully switched - reload to reinitialize the UI with new profile
+						setTimeout(() => location.reload(), 500)
+						return
 					} catch (switchErr) {
-						if (
-							switchErr?.message?.includes('DEV_MODE_RESTART_REQUIRED') ||
-							String(switchErr).includes('DEV_MODE_RESTART_REQUIRED')
-						) {
+						const errStr = switchErr?.message || String(switchErr)
+						// If it's already the current profile, just continue with onboarding
+						if (errStr.includes('already your current profile')) {
+							console.log('Profile already current, continuing with onboarding')
+							// Don't return - fall through to continue onboarding
+						} else if (errStr.includes('DEV_MODE_RESTART_REQUIRED')) {
 							await dialog.message(
 								'Profile created! Please restart the dev server (Ctrl+C and run ./dev-desktop.sh again) to continue setup.',
 								{ title: 'Dev Mode', type: 'info' },
 							)
 							return
-						}
-						// In WS bridge mode, backend exits and WS closes - reload to reconnect
-						const isDevWsBridge =
-							typeof window !== 'undefined' &&
-							(window.__DEV_WS_BRIDGE_PORT__ || window.location?.search?.includes('ws='))
-						if (isDevWsBridge) {
-							setTimeout(() => location.reload(), 1500)
+						} else {
+							// In WS bridge mode, backend exits and WS closes - reload to reconnect
+							const isDevWsBridge =
+								typeof window !== 'undefined' &&
+								(window.__DEV_WS_BRIDGE_PORT__ || window.location?.search?.includes('ws='))
+							if (isDevWsBridge) {
+								setTimeout(() => location.reload(), 1500)
+							}
+							return
 						}
 					}
-					return
 				}
 			} catch (error) {
 				console.warn('Failed to switch to selected home before onboarding:', error)

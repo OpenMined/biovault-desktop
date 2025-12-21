@@ -9,8 +9,6 @@ use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use walkdir::WalkDir;
 
-use base64::{engine::general_purpose, Engine as _};
-
 // Use CLI library types and functions
 use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
 use biovault::cli::commands::project_management::{
@@ -1023,44 +1021,46 @@ pub async fn run_pipeline(
         });
         let mut dataset_handled = false;
 
-        if !use_urls && !use_file_ids {
-            if let Some(dataset_name) = dataset_name.clone() {
-                let data_type = dataset_data_type.unwrap_or_else(|| "mock".to_string());
-                let (dataset_record, dataset_assets) =
-                    biovault::data::get_dataset_with_assets(&biovault_db, &dataset_name)
-                        .map_err(|e| format!("Failed to load dataset '{}': {}", dataset_name, e))?
-                        .ok_or_else(|| format!("Dataset '{}' not found", dataset_name))?;
+        // When dataset_name is provided, try the dataset path first (regardless of URLs/file_ids)
+        // This properly handles Map/Record-shaped datasets like GWAS (Map[String, Record{bed, bim, fam}])
+        if let Some(dataset_name) = dataset_name.clone() {
+            let data_type = dataset_data_type
+                .clone()
+                .unwrap_or_else(|| "mock".to_string());
+            let (dataset_record, dataset_assets) =
+                biovault::data::get_dataset_with_assets(&biovault_db, &dataset_name)
+                    .map_err(|e| format!("Failed to load dataset '{}': {}", dataset_name, e))?
+                    .ok_or_else(|| format!("Dataset '{}' not found", dataset_name))?;
 
-                let manifest =
-                    biovault::data::build_manifest_from_db(&dataset_record, &dataset_assets);
-                let shape = dataset_shape
-                    .and_then(|value| {
-                        let trimmed = value.trim();
-                        if trimmed.is_empty() {
-                            None
-                        } else {
-                            Some(trimmed.to_string())
-                        }
-                    })
-                    .or_else(|| biovault::cli::commands::datasets::infer_dataset_shape(&manifest))
-                    .ok_or_else(|| {
-                        format!(
-                            "Dataset '{}' does not declare a shape and none could be inferred.",
-                            dataset_name
-                        )
-                    })?;
-
-                let shape_expr = parse_shape_expr(&shape).ok_or_else(|| {
-                    format!("Unsupported dataset shape '{}' for selection.", shape)
+            let manifest = biovault::data::build_manifest_from_db(&dataset_record, &dataset_assets);
+            let shape = dataset_shape
+                .clone()
+                .and_then(|value| {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                })
+                .or_else(|| biovault::cli::commands::datasets::infer_dataset_shape(&manifest))
+                .ok_or_else(|| {
+                    format!(
+                        "Dataset '{}' does not declare a shape and none could be inferred.",
+                        dataset_name
+                    )
                 })?;
 
-                if let ShapeExpr::List(inner) = &shape_expr {
-                    return Err(format!(
-                        "List-shaped dataset selections require explicit URL selection (item type: {:?}).",
-                        inner
-                    ));
-                }
+            let shape_expr = parse_shape_expr(&shape)
+                .ok_or_else(|| format!("Unsupported dataset shape '{}' for selection.", shape))?;
 
+            // List-shaped datasets need URL selection, fall through to URL/file_id paths
+            if let ShapeExpr::List(inner_type) = &shape_expr {
+                eprintln!(
+                    "[pipeline] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
+                    dataset_name, inner_type
+                );
+            } else {
                 let spec = PipelineSpec::load(&yaml_path)
                     .map_err(|e| format!("Failed to load pipeline spec: {}", e))?;
                 let input_name = spec
@@ -1125,6 +1125,7 @@ pub async fn run_pipeline(
 
                 dataset_handled = true;
             }
+            // If List-shaped, fall through to URL/file_id handling below
         }
 
         if dataset_handled {
@@ -1429,41 +1430,6 @@ pub async fn run_pipeline(
         )
         .map_err(|e| e.to_string())?;
 
-    let allow_nextflow_test_mode = std::env::var("BV_ALLOW_NEXTFLOW_TEST_MODE")
-        .ok()
-        .map(|value| is_truthy(&value))
-        .unwrap_or(false);
-    let test_mode_override = input_overrides
-        .iter()
-        .any(|(key, value)| key.ends_with(".test_mode") && is_truthy(value));
-
-    if test_mode_override
-        && pipeline_name == "gwas-population-analysis"
-        && !allow_nextflow_test_mode
-    {
-        let step_dir = results_path.join("gwas_analysis");
-        write_gwas_stub_outputs(&step_dir)?;
-        append_pipeline_log(
-            &window,
-            &log_path,
-            "✅ Pipeline run completed successfully (stubbed)",
-        );
-        let _ = biovault_db.update_pipeline_run_status(run_id, "success", true);
-        let _ = window.emit("pipeline-complete", "success");
-        return Ok(PipelineRun {
-            id: run_id,
-            pipeline_id: Some(pipeline_id),
-            step_id: None,
-            status: "success".to_string(),
-            work_dir: results_path.to_string_lossy().to_string(),
-            results_dir: Some(results_path.to_string_lossy().to_string()),
-            participant_count: None,
-            metadata: Some(metadata_str),
-            created_at: chrono::Local::now().to_rfc3339(),
-            completed_at: Some(chrono::Local::now().to_rfc3339()),
-        });
-    }
-
     drop(biovault_db); // Release lock
 
     // Spawn async task to run pipeline (so we can return immediately)
@@ -1670,55 +1636,6 @@ fn should_skip_request_path(rel: &Path) -> bool {
             .to_str()
             .is_some_and(|name| skip_dirs.iter().any(|skip| skip == &name))
     })
-}
-
-fn is_truthy(value: &str) -> bool {
-    matches!(
-        value.trim().to_lowercase().as_str(),
-        "1" | "true" | "yes" | "y" | "on"
-    )
-}
-
-fn write_gwas_stub_outputs(step_dir: &Path) -> Result<(), String> {
-    let results_dir = step_dir.join("results");
-    let logs_dir = step_dir.join("logs");
-    fs::create_dir_all(&results_dir)
-        .map_err(|e| format!("Failed to create stub results dir: {}", e))?;
-    fs::create_dir_all(&logs_dir).map_err(|e| format!("Failed to create stub logs dir: {}", e))?;
-
-    let assoc_path = results_dir.join("combined_gwas_gwas.assoc.logistic");
-    fs::write(
-        &assoc_path,
-        "CHR SNP BP A1 OR P\n1 rsTest 1000 A 1.2 0.05\n",
-    )
-    .map_err(|e| format!("Failed to write stub assoc file: {}", e))?;
-
-    let summary_path = results_dir.join("GWAS_ANALYSIS_INFO.txt");
-    fs::write(
-        &summary_path,
-        "GWAS ANALYSIS SUMMARY\nDataset 1: Chechen_qc\nDataset 2: Circassian_qc\nCombined dataset: combined_gwas\n",
-    )
-    .map_err(|e| format!("Failed to write stub summary: {}", e))?;
-
-    let png_bytes = general_purpose::STANDARD
-        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=")
-        .map_err(|e| format!("Failed to decode stub PNG: {}", e))?;
-
-    let plot_prefix = "combined_gwas_gwas.assoc";
-    let manhattan_path = step_dir.join(format!("{}_manhattan.png", plot_prefix));
-    let qq_path = step_dir.join(format!("{}_qq.png", plot_prefix));
-    fs::write(&manhattan_path, &png_bytes)
-        .map_err(|e| format!("Failed to write stub Manhattan plot: {}", e))?;
-    fs::write(&qq_path, &png_bytes).map_err(|e| format!("Failed to write stub QQ plot: {}", e))?;
-
-    let significant_path = step_dir.join(format!("{}_genome_wide_significant.txt", plot_prefix));
-    fs::write(
-        &significant_path,
-        "CHR\tSNP\tBP\tA1\tOR\tP\n1\trsTest\t1000\tA\t1.2\t0.05\n",
-    )
-    .map_err(|e| format!("Failed to write stub significant file: {}", e))?;
-
-    Ok(())
 }
 
 fn copy_pipeline_request_dir(

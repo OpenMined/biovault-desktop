@@ -21,19 +21,25 @@ workflow USER {
         def gw_sig = context.params?.gw_sig ?: "5e-8"
         def output_prefix = context.params?.output_prefix ?: "combined_gwas"
         def threads = context.params?.threads ?: 4
-        def test_mode_raw = context.params?.test_mode
-        def test_mode_enabled = false
-        if (test_mode_raw != null) {
-            if (test_mode_raw instanceof Boolean) {
-                test_mode_enabled = test_mode_raw
-            } else {
-                def normalized = test_mode_raw.toString().trim().toLowerCase()
-                test_mode_enabled = ['true', '1', 'yes', 'y', 'on'].contains(normalized)
+
+        // Debug: Print input information
+        println "=========================================="
+        println "[GWAS] Workflow starting..."
+        println "[GWAS] Assets directory: ${assetsDir}"
+        println "[GWAS] Parameters:"
+        println "  - n_pcs: ${n_pcs}"
+        println "  - annotation_pval: ${annotation_pval}"
+        println "  - gw_sig: ${gw_sig}"
+        println "  - output_prefix: ${output_prefix}"
+        println "  - threads: ${threads}"
+        println "[GWAS] Datasets received:"
+        datasets?.each { name, files ->
+            println "  - ${name}:"
+            files?.each { key, path ->
+                println "      ${key}: ${path}"
             }
         }
-        if (test_mode_enabled) {
-            println "[bv] GWAS test mode enabled"
-        }
+        println "=========================================="
 
         def datasetMap = datasets ?: [:]
         if (!(datasetMap instanceof Map) || datasetMap.isEmpty()) {
@@ -59,50 +65,28 @@ workflow USER {
         }
 
         // Run GWAS analysis
-        def gwas_results = test_mode_enabled
-            ? gwas_analysis_mock(
-                assetsDirPath,
-                dataset1Name,
-                dataset1.bed,
-                dataset1.bim,
-                dataset1.fam,
-                dataset2Name,
-                dataset2.bed,
-                dataset2.bim,
-                dataset2.fam,
-                output_prefix,
-                n_pcs,
-                threads
-            )
-            : gwas_analysis(
-                assetsDirPath,
-                dataset1Name,
-                dataset1.bed,
-                dataset1.bim,
-                dataset1.fam,
-                dataset2Name,
-                dataset2.bed,
-                dataset2.bim,
-                dataset2.fam,
-                output_prefix,
-                n_pcs,
-                threads
-            )
+        def gwas_results = gwas_analysis(
+            assetsDirPath,
+            dataset1Name,
+            dataset1.bed,
+            dataset1.bim,
+            dataset1.fam,
+            dataset2Name,
+            dataset2.bed,
+            dataset2.bim,
+            dataset2.fam,
+            output_prefix,
+            n_pcs,
+            threads
+        )
 
         // Generate plots from GWAS results
-        def plots = test_mode_enabled
-            ? make_plots_mock(
-                assetsDirPath,
-                gwas_results.assoc_file,
-                annotation_pval,
-                gw_sig
-            )
-            : make_plots(
-                assetsDirPath,
-                gwas_results.assoc_file,
-                annotation_pval,
-                gw_sig
-            )
+        def plots = make_plots(
+            assetsDirPath,
+            gwas_results.assoc_file,
+            annotation_pval,
+            gw_sig
+        )
 
     emit:
         gwas_output = gwas_results.results_dir
@@ -140,11 +124,22 @@ process gwas_analysis {
     """
     set -e
 
+    echo "=========================================="
+    echo "[GWAS] gwas_analysis starting..."
+    echo "[GWAS] Dataset 1: ${dataset1_name}"
+    echo "  - BED: ${dataset1_bed}"
+    echo "  - BIM: ${dataset1_bim}"
+    echo "  - FAM: ${dataset1_fam}"
+    echo "[GWAS] Dataset 2: ${dataset2_name}"
+    echo "  - BED: ${dataset2_bed}"
+    echo "  - BIM: ${dataset2_bim}"
+    echo "  - FAM: ${dataset2_fam}"
+    echo "[GWAS] Output prefix: ${output_prefix}"
+    echo "[GWAS] Parameters: n_pcs=${n_pcs}, threads=${threads}"
+    echo "=========================================="
+
     DATASET1="${dataset1_name}"
     DATASET2="${dataset2_name}"
-
-    echo "Dataset 1: \${DATASET1}"
-    echo "Dataset 2: \${DATASET2}"
 
     # Link input files to working directory
     [ -e "\${DATASET1}.bed" ] || ln -sf ${dataset1_bed} \${DATASET1}.bed
@@ -156,51 +151,6 @@ process gwas_analysis {
 
     # Run GWAS analysis script
     bash ${assets_dir}/gwas_analysis.sh "\${DATASET1}" "\${DATASET2}" "${output_prefix}" "${n_pcs}" "${threads}"
-    """
-}
-
-process gwas_analysis_mock {
-    publishDir params.results_dir, mode: 'copy', overwrite: true
-    errorStrategy { params.nextflow?.error_strategy ?: 'ignore' }
-    maxRetries { params.nextflow?.max_retries ?: 0 }
-
-    input:
-        path assets_dir
-        val dataset1_name
-        path dataset1_bed
-        path dataset1_bim
-        path dataset1_fam
-        val dataset2_name
-        path dataset2_bed
-        path dataset2_bim
-        path dataset2_fam
-        val output_prefix
-        val n_pcs
-        val threads
-
-    output:
-        path "results", emit: results_dir
-        path "results/${output_prefix}_gwas.assoc.logistic", emit: assoc_file
-        path "logs", emit: logs_dir
-
-    script:
-    """
-    set -e
-
-    mkdir -p results logs
-
-    cat > results/${output_prefix}_gwas.assoc.logistic << 'EOF'
-CHR SNP BP A1 OR P
-1 rsTest 1000 A 1.2 0.05
-EOF
-
-    cat > results/GWAS_ANALYSIS_INFO.txt << EOF
-GWAS ANALYSIS SUMMARY
-Dataset 1: ${dataset1_name}
-Dataset 2: ${dataset2_name}
-Combined dataset: ${output_prefix}
-PCs: ${n_pcs}, Threads: ${threads}
-EOF
     """
 }
 
@@ -225,48 +175,14 @@ process make_plots {
 
     script:
     """
+    echo "=========================================="
+    echo "[PLOTS] make_plots starting..."
+    echo "[PLOTS] Assets directory: ${assets_dir}"
+    echo "[PLOTS] Assoc file: ${assoc_file}"
+    echo "[PLOTS] Annotation P-value: ${annotation_pval}"
+    echo "[PLOTS] Genome-wide significance: ${gw_sig}"
+    echo "=========================================="
+
     python3 ${assets_dir}/make_manhattan.py ${assoc_file} ${annotation_pval} ${gw_sig}
     """
-}
-
-process make_plots_mock {
-    publishDir params.results_dir, mode: 'copy', overwrite: true
-    errorStrategy { params.nextflow?.error_strategy ?: 'ignore' }
-    maxRetries { params.nextflow?.max_retries ?: 0 }
-
-    input:
-        path assets_dir
-        path assoc_file
-        val annotation_pval
-        val gw_sig
-
-    output:
-        path "*_manhattan.png", emit: manhattan
-        path "*_qq.png", emit: qq
-        path "*_genome_wide_significant.txt", emit: significant, optional: true
-        path "*_top50_suggestive.txt", emit: top50, optional: true
-        path "*_annotated_snps.txt", emit: annotated, optional: true
-
-    script:
-    '''
-    set -euo pipefail
-
-    assoc_file="!{assoc_file}"
-    base64_png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII='
-    prefix="$(basename "$assoc_file")"
-    prefix="${prefix%.logistic}"
-
-    write_png() {
-        local path="$1"
-        echo "$base64_png" | base64 -d > "$path" 2>/dev/null || echo "$base64_png" | base64 -D > "$path"
-    }
-
-    write_png "${prefix}_manhattan.png"
-    write_png "${prefix}_qq.png"
-
-    cat > "${prefix}_genome_wide_significant.txt" << 'EOF'
-CHR	SNP	BP	A1	OR	P
-1	rsTest	1000	A	1.2	0.05
-EOF
-    '''
 }
