@@ -1104,7 +1104,8 @@ pub fn run() {
                         emit_message_sync(&emit_handle, ids);
                     }) {
                         Ok(handle) => {
-                            if let Ok(mut slot) = app_handle.state::<AppState>().message_watcher.lock()
+                            if let Ok(mut slot) =
+                                app_handle.state::<AppState>().message_watcher.lock()
                             {
                                 *slot = Some(handle);
                             }
