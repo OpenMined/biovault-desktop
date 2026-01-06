@@ -3,12 +3,10 @@ version: 0.1.0
 description: GWAS analysis pipeline for comparing two populations using PLINK and generating Manhattan/QQ plots.
 
 inputs:
-  data_dir: Directory
-  datasets_csv: File
+  datasets: "Map[String, Record{bed: File, bim: File, fam: File}]"
 
 steps:
   - id: gwas_analysis
     uses: ./
     with:
-      data_dir: inputs.data_dir
-      datasets_csv: inputs.datasets_csv
+      datasets: inputs.datasets

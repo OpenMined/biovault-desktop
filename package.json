@@ -4,10 +4,11 @@
 	"version": "0.1.39",
 	"type": "module",
 	"scripts": {
-		"tauri": "dotenv -- tauri",
-		"dev": "bash -lc 'set -euo pipefail; ./scripts/build-syftbox-dev.sh; SYFTBOX_DIR=\"$(pwd)/syftbox\"; if [[ ! -d \"$SYFTBOX_DIR\" && -d \"$(pwd)/biovault/syftbox\" ]]; then SYFTBOX_DIR=\"$(pwd)/biovault/syftbox\"; fi; export SYFTBOX_BINARY=\"$SYFTBOX_DIR/bin/syftbox-dev\"; export SYFTBOX_VERSION=\"$(git describe --tags --always --dirty 2>/dev/null || echo dev)\"; export PATH=\"$SYFTBOX_DIR/bin:$PATH\"; tauri dev'",
-		"dev:config": "BIOVAULT_HOME=${BIOVAULT_CONFIG} tauri dev",
-		"build": "bash -lc 'set -euo pipefail; ./scripts/build-syftbox-prod.sh; ./scripts/fetch-bundled-deps.sh; bash ./scripts/materialize-templates.sh; export SYFTBOX_BINARY=\"$(pwd)/src-tauri/resources/syftbox/syftbox\"; export SYFTBOX_VERSION=\"$(git describe --tags --always --dirty 2>/dev/null || echo dev)\"; dotenv -- tauri build'",
+		"tauri": "dotenv -- npm exec -- tauri",
+		"dev": "bash -lc 'set -euo pipefail; ./scripts/ensure-bundled-deps.sh; npm run tauri -- dev'",
+		"dev:config": "bash -lc 'set -euo pipefail; BIOVAULT_HOME=${BIOVAULT_CONFIG} ./scripts/ensure-bundled-deps.sh; npm run tauri -- dev'",
+		"build": "bash -lc 'set -euo pipefail; ./scripts/fetch-bundled-deps.sh; bash ./scripts/materialize-templates.sh; npm run tauri -- build'",
+		"build:go": "bash -lc 'set -euo pipefail; ./build-go.sh'",
 		"test:ui": "playwright test"
 	},
 	"devDependencies": {

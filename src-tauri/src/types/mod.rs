@@ -1,5 +1,6 @@
 use biovault::data::{ProjectFileNode, ProjectMetadata};
 use biovault::defaults::SYFTBOX_DEFAULT_SERVER_URL;
+use biovault::messages::MessageRpcWatcherHandle;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
@@ -15,6 +16,7 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     pub biovault_db: Arc<Mutex<BioVaultDb>>,
     pub queue_processor_paused: Arc<AtomicBool>,
+    pub message_watcher: Mutex<Option<MessageRpcWatcherHandle>>,
 }
 
 // Settings
@@ -247,6 +249,7 @@ pub const DEFAULT_JUPYTER_PYTHON: &str = "3.12";
 pub struct SyftBoxState {
     pub running: bool,
     pub mode: String,
+    pub backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -41,32 +41,6 @@ echo ""
 # Enable WebSocket bridge for browser mode
 export DEV_WS_BRIDGE=1
 
-echo -e "${BLUE}🚀 Starting Tauri dev server with WebSocket bridge...${NC}"
-echo -e "${YELLOW}   Backend will run in background${NC}"
-echo ""
-
-# Start Tauri dev in background (this starts Rust backend + WebSocket on port 3333)
-bun run dev > /tmp/tauri-dev.log 2>&1 &
-TAURI_PID=$!
-
-# Trap to cleanup on exit
-trap "echo -e '\n${YELLOW}🛑 Stopping servers...${NC}'; kill $TAURI_PID 2>/dev/null; kill $SERVER_PID 2>/dev/null; exit" EXIT INT TERM
-
-# Wait for WebSocket server to be ready
-echo -e "${YELLOW}⏳ Waiting for WebSocket server (port 3333)...${NC}"
-for i in {1..30}; do
-    if lsof -Pi :3333 -sTCP:LISTEN -t >/dev/null 2>&1; then
-        echo -e "${GREEN}✓ WebSocket server ready${NC}"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo -e "${YELLOW}⚠️  WebSocket server not detected (timeout)${NC}"
-        echo -e "${YELLOW}   Check logs: tail -f /tmp/tauri-dev.log${NC}"
-        echo -e "${YELLOW}   Continuing anyway...${NC}"
-    fi
-    sleep 0.5
-done
-
 # Find available port for HTTP server (default 8080, fallback to 8081-8089)
 PORT=8080
 for p in $(seq 8080 8089); do
@@ -86,30 +60,68 @@ cd "$SCRIPT_DIR/src"
 python3 -m http.server $PORT > /dev/null 2>&1 &
 SERVER_PID=$!
 
-# Wait a moment for server to start
-sleep 1
+TAURI_PID=""
+cleanup() {
+	echo -e "\n${YELLOW}🛑 Stopping servers...${NC}"
+	if [[ -n "${TAURI_PID}" ]]; then
+		kill "${TAURI_PID}" 2>/dev/null || true
+	fi
+	kill "${SERVER_PID}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
-# Open Chrome (or default browser)
-URL="http://localhost:$PORT"
-echo -e "${GREEN}✅ Setup complete!${NC}"
-echo -e "${GREEN}🌐 Opening Chrome at ${URL}${NC}"
-echo -e "${YELLOW}📝 Browser → HTTP server (port ${PORT}) → WebSocket → Rust backend (port 3333)${NC}"
-echo ""
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    open -a "Google Chrome" "$URL" 2>/dev/null || open "$URL"
-elif command -v google-chrome &> /dev/null; then
-    google-chrome "$URL" &
-elif command -v chromium &> /dev/null; then
-    chromium "$URL" &
-else
-    echo -e "${YELLOW}⚠️  Chrome not found. Please open manually: ${URL}${NC}"
-fi
-
-echo -e "${GREEN}✓ Servers running. Press Ctrl+C to stop.${NC}"
+echo -e "${GREEN}✓ HTTP server running. Press Ctrl+C to stop.${NC}"
 echo -e "${YELLOW}💡 Tip: Tauri logs → tail -f /tmp/tauri-dev.log${NC}"
 echo ""
 
-# Wait for Tauri process (main process)
-wait $TAURI_PID
+echo -e "${BLUE}🚀 Starting Tauri dev server with WebSocket bridge...${NC}"
+echo -e "${YELLOW}   Backend will auto-restart if it exits (e.g., profile switching)${NC}"
+echo ""
+
+OPENED_BROWSER=0
+URL="http://localhost:$PORT"
+
+while true; do
+	# Start Tauri dev (this starts Rust backend + WebSocket on port 3333)
+	bun run dev > /tmp/tauri-dev.log 2>&1 &
+	TAURI_PID=$!
+
+	# Wait for WebSocket server to be ready
+	echo -e "${YELLOW}⏳ Waiting for WebSocket server (port 3333)...${NC}"
+	for i in {1..30}; do
+		if lsof -Pi :3333 -sTCP:LISTEN -t >/dev/null 2>&1; then
+			echo -e "${GREEN}✓ WebSocket server ready${NC}"
+			if [[ "${OPENED_BROWSER}" -eq 0 ]]; then
+				echo ""
+				echo -e "${GREEN}✅ Setup complete!${NC}"
+				echo -e "${GREEN}🌐 Opening Chrome at ${URL}${NC}"
+				echo -e "${YELLOW}📝 Browser → HTTP server (port ${PORT}) → WebSocket → Rust backend (port 3333)${NC}"
+				echo ""
+
+				if [[ "$OSTYPE" == "darwin"* ]]; then
+					# macOS
+					open -a "Google Chrome" "$URL" 2>/dev/null || open "$URL"
+				elif command -v google-chrome &> /dev/null; then
+					google-chrome "$URL" &
+				elif command -v chromium &> /dev/null; then
+					chromium "$URL" &
+				else
+					echo -e "${YELLOW}⚠️  Chrome not found. Please open manually: ${URL}${NC}"
+				fi
+				OPENED_BROWSER=1
+			fi
+			break
+		fi
+		if [ $i -eq 30 ]; then
+			echo -e "${YELLOW}⚠️  WebSocket server not detected (timeout)${NC}"
+			echo -e "${YELLOW}   Check logs: tail -f /tmp/tauri-dev.log${NC}"
+			echo -e "${YELLOW}   Continuing anyway...${NC}"
+		fi
+		sleep 0.5
+	done
+
+	# Wait for Tauri process (main process)
+	wait $TAURI_PID || true
+	echo -e "${YELLOW}🔄 Tauri dev exited; restarting in 1s...${NC}"
+	sleep 1
+done

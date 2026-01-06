@@ -152,8 +152,8 @@ check_requirements() {
   command -v python3 >/dev/null 2>&1 || { log_error "python3 is required"; exit 1; }
   command -v go >/dev/null 2>&1 || { log_error "Go is required to run the sbdev devstack"; exit 1; }
   [[ -f "$DEVSTACK_SCRIPT" ]] || { log_error "Devstack helper not found at $DEVSTACK_SCRIPT"; exit 1; }
-  if ! command -v bun >/dev/null 2>&1 && ! command -v npm >/dev/null 2>&1; then
-    log_error "bun or npm is required to run the desktop"
+  if ! command -v npm >/dev/null 2>&1; then
+    log_error "npm is required to run the desktop"
     exit 1
   fi
 
@@ -368,9 +368,6 @@ launch_desktop_instance() {
   export DEV_WS_BRIDGE_PORT="$ws_port"
 
   local pkg_cmd="npm"
-  if command -v bun >/dev/null 2>&1; then
-    pkg_cmd="bun"
-  fi
 
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"

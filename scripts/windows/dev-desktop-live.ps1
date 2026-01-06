@@ -78,6 +78,7 @@ New-Item -ItemType Directory -Force -Path $env:BIOVAULT_HOME | Out-Null
 # Map SYFTBOX_URL -> SYFTBOX_SERVER_URL (what the app reads)
 $env:SYFTBOX_SERVER_URL = $SyftboxUrl
 if (-not $env:SYFTBOX_AUTH_ENABLED) { $env:SYFTBOX_AUTH_ENABLED = "1" }
+$env:BV_SYFTBOX_BACKEND = "embedded"
 
 # Help any codepaths that use syftbox-sdk defaults (instead of BioVault config) find the right files on Windows.
 $syftboxConfigPath = Join-Path $BioVaultHome "syftbox\config.json"
@@ -99,21 +100,6 @@ if (-not $env:SYFTBOX_EMAIL) {
   }
 }
 
-# Prefer bundled syftbox.exe produced by bundle-deps.ps1
-$syftboxExe = Join-Path $repoRoot "src-tauri\resources\syftbox\syftbox.exe"
-$syftboxFallback = Join-Path $repoRoot "src-tauri\resources\syftbox\syftbox"
-if (Test-Path $syftboxExe) {
-  $env:SYFTBOX_BINARY = $syftboxExe
-} elseif (Test-Path $syftboxFallback) {
-  $env:SYFTBOX_BINARY = $syftboxFallback
-}
-
-try {
-  $env:SYFTBOX_VERSION = (git -C $repoRoot describe --tags --always --dirty 2>$null)
-} catch {
-  if (-not $env:SYFTBOX_VERSION) { $env:SYFTBOX_VERSION = "dev" }
-}
-
 # Set PROTOC if not already set
 if (-not $env:PROTOC) {
   $protocPath = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\protoc.exe"
@@ -127,11 +113,10 @@ Write-Host "Configuration:" -ForegroundColor Green
 Write-Host "   BIOVAULT_HOME: $env:BIOVAULT_HOME" -ForegroundColor Yellow
 Write-Host "   SYFTBOX_SERVER_URL: $env:SYFTBOX_SERVER_URL" -ForegroundColor Yellow
 Write-Host "   SYFTBOX_AUTH_ENABLED: $env:SYFTBOX_AUTH_ENABLED" -ForegroundColor Yellow
+Write-Host "   BV_SYFTBOX_BACKEND: $env:BV_SYFTBOX_BACKEND" -ForegroundColor Yellow
 Write-Host "   SYFTBOX_CONFIG_PATH: $env:SYFTBOX_CONFIG_PATH" -ForegroundColor Yellow
 Write-Host "   SYFTBOX_DATA_DIR: $env:SYFTBOX_DATA_DIR" -ForegroundColor Yellow
 if ($env:SYFTBOX_EMAIL) { Write-Host "   SYFTBOX_EMAIL: $env:SYFTBOX_EMAIL" -ForegroundColor Yellow }
-if ($env:SYFTBOX_BINARY) { Write-Host "   SYFTBOX_BINARY: $env:SYFTBOX_BINARY" -ForegroundColor Yellow }
-if ($env:SYFTBOX_VERSION) { Write-Host "   SYFTBOX_VERSION: $env:SYFTBOX_VERSION" -ForegroundColor Yellow }
 if ($env:PROTOC) { Write-Host "   PROTOC: $env:PROTOC" -ForegroundColor Yellow }
 Write-Host ""
 

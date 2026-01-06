@@ -54,11 +54,49 @@
 			</div>
 		</div>
 
-		<!-- Step 3: Email -->
+		<!-- Step 3: BioVault Home (first) -->
 		<div id="onboarding-step-3" class="onboarding-step" style="display: none">
+			<h1>Choose BioVault Home</h1>
+			<p class="onboarding-step-description">
+				This is where BioVault will store your vault and data files.
+			</p>
+			<div class="onboarding-home-block onboarding-home-block-full">
+				<label class="onboarding-label" for="onboarding-home">BioVault Home</label>
+				<div class="onboarding-home-row">
+					<input
+						type="text"
+						id="onboarding-home"
+						class="onboarding-input onboarding-input-full"
+						placeholder="~/Desktop/BioVault"
+						autocapitalize="off"
+					/>
+					<button id="onboarding-home-browse" class="btn-secondary onboarding-btn">Browse…</button>
+				</div>
+				<p class="onboarding-hint">
+					This folder is your <code>BIOVAULT_HOME</code>. You can type a new folder name — BioVault
+					will create it if it doesn't exist. Each profile can use a different home.
+				</p>
+			</div>
+			<div class="onboarding-nav-buttons">
+				<button id="onboarding-back-3" class="btn-secondary onboarding-btn">← Back</button>
+				<button id="onboarding-next-3" class="btn-primary onboarding-btn" style="flex: 1">
+					Next →
+				</button>
+			</div>
+		</div>
+
+		<!-- Step 3a: Email (second) -->
+		<div id="onboarding-step-3-email" class="onboarding-step" style="display: none">
 			<h1>Enter Your Email</h1>
 			<p class="onboarding-step-description">
 				This will be used to identify your BioVault instance.
+			</p>
+			<p
+				id="email-prefill-notice"
+				class="onboarding-hint"
+				style="display: none; margin-bottom: 12px"
+			>
+				Found existing email from this BioVault folder.
 			</p>
 			<input
 				type="email"
@@ -69,8 +107,8 @@
 			/>
 			<div id="email-validation-message" class="onboarding-validation-message"></div>
 			<div class="onboarding-nav-buttons">
-				<button id="onboarding-back-3" class="btn-secondary onboarding-btn">← Back</button>
-				<button id="onboarding-next-3" class="btn-primary onboarding-btn" style="flex: 1">
+				<button id="onboarding-back-3-email" class="btn-secondary onboarding-btn">← Back</button>
+				<button id="onboarding-next-3-email" class="btn-primary onboarding-btn" style="flex: 1">
 					Next →
 				</button>
 			</div>

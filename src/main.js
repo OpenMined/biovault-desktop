@@ -18,6 +18,7 @@ import { createSessionsModule } from './sessions.js'
 import { createUpdaterModule } from './updater.js'
 import { createNetworkModule } from './network.js'
 import { setupEventHandlers } from './event-handlers.js'
+import { maybeShowProfilesOnStartup } from './profiles.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
 
 const { open } = dialog
@@ -67,6 +68,7 @@ const {
 	dialog,
 	loadSavedDependencies,
 	onAiConfigUpdated: invalidateAiConfig,
+	templateLoader,
 })
 
 const {
@@ -332,6 +334,34 @@ importSetLastImportView = setLastImportView
 
 window.addEventListener('DOMContentLoaded', async () => {
 	console.log('🔥 DOMContentLoaded fired')
+
+	// Profiles screen (only shows when multiple profiles exist, or on lock conflict).
+	{
+		const preferReal =
+			(typeof window !== 'undefined' && window.__PREFER_REAL_INVOKE__ === true) ||
+			(typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true') ||
+			(typeof window !== 'undefined' && window.process?.env?.USE_REAL_INVOKE === 'true')
+		const deadline = Date.now() + (preferReal ? 10_000 : 0)
+		let lastError = null
+		let keepTrying = true
+		while (keepTrying) {
+			try {
+				const { shown } = await maybeShowProfilesOnStartup({ invoke, templateLoader })
+				if (shown) return
+				break
+			} catch (error) {
+				lastError = error
+				if (!preferReal || Date.now() >= deadline) {
+					keepTrying = false
+					break
+				}
+				await new Promise((r) => setTimeout(r, 250))
+			}
+		}
+		if (lastError) {
+			console.warn('⚠️ Profiles boot check failed:', lastError)
+		}
+	}
 
 	try {
 		const dbPath = await invoke('get_database_path')

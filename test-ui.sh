@@ -30,12 +30,13 @@ if [[ "${INTERACTIVE}" -eq 1 ]]; then
     info "Interactive mode enabled (headed browser)"
     export PLAYWRIGHT_HEADLESS=false
     export PLAYWRIGHT_SLOWMO="${PLAYWRIGHT_SLOWMO:-100}"
+    export INTERACTIVE_MODE=1
 fi
 
 # Allow opting out of repeated browser downloads
 if [[ "${SKIP_PLAYWRIGHT_INSTALL:-0}" != "1" ]]; then
 	info "Ensuring Playwright Chromium browser is installed"
-	bunx --bun playwright install --with-deps chromium >/dev/null
+	npx playwright install --with-deps chromium >/dev/null
 fi
 
 # Kill any leftover static servers from previous runs on our target ports
@@ -103,8 +104,11 @@ info "Running Playwright tests"
 export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 # Exclude integration tests that require real backend or devstack (use test-scenario.sh for those)
 EXCLUDE_PATTERN="@messages-two|@messaging-core-ui|@messaging-sessions|@onboarding-two|@chaos|@pipelines-solo|@jupyter-session|@jupyter-collab"
+if [[ -n "${UI_TEST_GREP_INVERT_EXTRA:-}" ]]; then
+	EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|${UI_TEST_GREP_INVERT_EXTRA}"
+fi
 if ((${#FORWARD_ARGS[@]} == 0)); then
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui --grep-invert "$EXCLUDE_PATTERN" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" | tee -a "$LOG_FILE"
 else
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" bun run test:ui --grep-invert "$EXCLUDE_PATTERN" "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
 fi

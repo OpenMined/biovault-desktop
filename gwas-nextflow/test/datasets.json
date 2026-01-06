@@ -1,0 +1,12 @@
+{
+	"Chechen_qc": {
+		"bed": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Chechen_qc.bed",
+		"bim": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Chechen_qc.bim",
+		"fam": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Chechen_qc.fam"
+	},
+	"Circassian_qc": {
+		"bed": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Circassian_qc.bed",
+		"bim": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Circassian_qc.bim",
+		"fam": "/Users/madhavajay/dev/biovaults/datasets/jordan_gwas/Circassian_qc.fam"
+	}
+}

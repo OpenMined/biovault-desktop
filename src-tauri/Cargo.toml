@@ -48,8 +48,9 @@ libc = "0.2"
 image = "0.25"
 rand = "0.8"
 hex = "0.4"
+base64 = "0.22"
 anyhow = "1.0"
-syftbox-sdk = { path = "../syftbox-sdk", features = ["crypto", "process", "auth"] }
+syftbox-sdk = { path = "../syftbox-sdk", features = ["crypto", "process", "auth", "embedded"] }
 uuid = "1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

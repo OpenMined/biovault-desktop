@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './playwright-fixtures'
 import WebSocket from 'ws'
 import { waitForAppReady } from './test-helpers.js'
 
@@ -52,20 +52,24 @@ async function completeOnboarding(page, email: string, logSocket: WebSocket | nu
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#skip-dependencies-btn').click()
 
-	// Step 3: Email
+	// Step 3: Choose BioVault Home
 	await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
-	await page.fill('#onboarding-email', email)
-	await expect(page.locator('#onboarding-next-3')).toBeEnabled()
 	await page.locator('#onboarding-next-3').click()
+
+	// Step 3a: Email
+	await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 5000 })
+	await page.fill('#onboarding-email', email)
+	await expect(page.locator('#onboarding-next-3-email')).toBeEnabled()
+	await page.locator('#onboarding-next-3-email').click()
 
 	// Step 3-key: Key setup
 	await expect(page.locator('#onboarding-step-3-key')).toBeVisible({ timeout: 5000 })
+	await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
 	// If the app generated a recovery code, the UI requires an explicit acknowledgement before proceeding.
 	const recoveryBlock = page.locator('#onboarding-recovery-block')
-	if (await recoveryBlock.isVisible({ timeout: 500 }).catch(() => false)) {
+	if (await recoveryBlock.isVisible().catch(() => false)) {
 		await page.locator('#onboarding-recovery-ack').check()
 	}
-	await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
 	page.once('dialog', (dialog) => dialog.accept())
 	await page.locator('#onboarding-next-3-key').click()
 

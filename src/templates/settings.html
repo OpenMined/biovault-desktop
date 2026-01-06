@@ -20,6 +20,27 @@
 					<p>Current configuration directory</p>
 				</div>
 
+				<!-- Profiles -->
+				<div class="setting-item">
+					<label>Profiles</label>
+					<p>Switch identities without re-authenticating or re-entering keys.</p>
+					<div id="settings-profiles-list" class="settings-profiles-list">
+						<!-- Profiles will be populated here -->
+					</div>
+					<div class="profiles-settings-actions">
+						<button id="profiles-add-btn-settings" class="settings-btn settings-btn-primary">
+							Add Profile
+						</button>
+						<button
+							id="profiles-open-picker-btn"
+							class="settings-btn settings-btn-secondary"
+							style="display: none"
+						>
+							Switch Profiles
+						</button>
+					</div>
+				</div>
+
 				<!-- Dependencies section -->
 				<div class="setting-item">
 					<label>System Dependencies</label>
@@ -182,9 +203,6 @@
 							enabling dev mode. Changes are saved to your BioVault config.
 						</p>
 						<div class="syftbox-actions">
-							<button id="syftbox-set-dev-btn" class="settings-btn settings-btn-secondary">
-								Set Dev Server (skip auth)
-							</button>
 							<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
 								Authenticate
 							</button>
@@ -375,6 +393,10 @@
 							<div>
 								<div class="diag-label">Mode</div>
 								<div id="syftbox-mode" class="path-value monospace">-</div>
+							</div>
+							<div>
+								<div class="diag-label">Backend</div>
+								<div id="syftbox-backend" class="path-value monospace">-</div>
 							</div>
 							<div>
 								<div class="diag-label">Client URL</div>

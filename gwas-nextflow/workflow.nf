@@ -6,8 +6,7 @@ nextflow.enable.dsl=2
 workflow USER {
     take:
         context
-        data_dir      // Directory containing PLINK files
-        datasets_csv  // CSV file with dataset names
+        datasets      // Map[String, Record{bed,bim,fam}]
 
     main:
         def assetsDir = context.assets_dir
@@ -23,11 +22,59 @@ workflow USER {
         def output_prefix = context.params?.output_prefix ?: "combined_gwas"
         def threads = context.params?.threads ?: 4
 
+        // Debug: Print input information
+        println "=========================================="
+        println "[GWAS] Workflow starting..."
+        println "[GWAS] Assets directory: ${assetsDir}"
+        println "[GWAS] Parameters:"
+        println "  - n_pcs: ${n_pcs}"
+        println "  - annotation_pval: ${annotation_pval}"
+        println "  - gw_sig: ${gw_sig}"
+        println "  - output_prefix: ${output_prefix}"
+        println "  - threads: ${threads}"
+        println "[GWAS] Datasets received:"
+        datasets?.each { name, files ->
+            println "  - ${name}:"
+            files?.each { key, path ->
+                println "      ${key}: ${path}"
+            }
+        }
+        println "=========================================="
+
+        def datasetMap = datasets ?: [:]
+        if (!(datasetMap instanceof Map) || datasetMap.isEmpty()) {
+            throw new IllegalArgumentException("Expected datasets map with at least two entries")
+        }
+        def datasetNames = datasetMap.keySet().toList().sort()
+        if (datasetNames.size() < 2) {
+            throw new IllegalArgumentException("GWAS pipeline requires at least two datasets")
+        }
+
+        def dataset1Name = datasetNames[0]
+        def dataset2Name = datasetNames[1]
+        def dataset1 = datasetMap[dataset1Name]
+        def dataset2 = datasetMap[dataset2Name]
+        def requiredKeys = ['bed', 'bim', 'fam']
+        requiredKeys.each { key ->
+            if (!(dataset1 instanceof Map) || !dataset1.containsKey(key)) {
+                throw new IllegalArgumentException("Dataset '${dataset1Name}' missing '${key}' file")
+            }
+            if (!(dataset2 instanceof Map) || !dataset2.containsKey(key)) {
+                throw new IllegalArgumentException("Dataset '${dataset2Name}' missing '${key}' file")
+            }
+        }
+
         // Run GWAS analysis
         def gwas_results = gwas_analysis(
             assetsDirPath,
-            data_dir,
-            datasets_csv,
+            dataset1Name,
+            dataset1.bed,
+            dataset1.bim,
+            dataset1.fam,
+            dataset2Name,
+            dataset2.bed,
+            dataset2.bim,
+            dataset2.fam,
             output_prefix,
             n_pcs,
             threads
@@ -56,8 +103,14 @@ process gwas_analysis {
 
     input:
         path assets_dir
-        path data_dir
-        path datasets_csv
+        val dataset1_name
+        path dataset1_bed
+        path dataset1_bim
+        path dataset1_fam
+        val dataset2_name
+        path dataset2_bed
+        path dataset2_bim
+        path dataset2_fam
         val output_prefix
         val n_pcs
         val threads
@@ -71,20 +124,30 @@ process gwas_analysis {
     """
     set -e
 
-    # Read dataset names from CSV (skip header, get first two rows)
-    DATASET1=\$(tail -n +2 ${datasets_csv} | head -1 | cut -d',' -f1)
-    DATASET2=\$(tail -n +2 ${datasets_csv} | tail -1 | cut -d',' -f1)
+    echo "=========================================="
+    echo "[GWAS] gwas_analysis starting..."
+    echo "[GWAS] Dataset 1: ${dataset1_name}"
+    echo "  - BED: ${dataset1_bed}"
+    echo "  - BIM: ${dataset1_bim}"
+    echo "  - FAM: ${dataset1_fam}"
+    echo "[GWAS] Dataset 2: ${dataset2_name}"
+    echo "  - BED: ${dataset2_bed}"
+    echo "  - BIM: ${dataset2_bim}"
+    echo "  - FAM: ${dataset2_fam}"
+    echo "[GWAS] Output prefix: ${output_prefix}"
+    echo "[GWAS] Parameters: n_pcs=${n_pcs}, threads=${threads}"
+    echo "=========================================="
 
-    echo "Dataset 1: \${DATASET1}"
-    echo "Dataset 2: \${DATASET2}"
+    DATASET1="${dataset1_name}"
+    DATASET2="${dataset2_name}"
 
     # Link input files to working directory
-    ln -sf ${data_dir}/\${DATASET1}.bed \${DATASET1}.bed
-    ln -sf ${data_dir}/\${DATASET1}.bim \${DATASET1}.bim
-    ln -sf ${data_dir}/\${DATASET1}.fam \${DATASET1}.fam
-    ln -sf ${data_dir}/\${DATASET2}.bed \${DATASET2}.bed
-    ln -sf ${data_dir}/\${DATASET2}.bim \${DATASET2}.bim
-    ln -sf ${data_dir}/\${DATASET2}.fam \${DATASET2}.fam
+    [ -e "\${DATASET1}.bed" ] || ln -sf ${dataset1_bed} \${DATASET1}.bed
+    [ -e "\${DATASET1}.bim" ] || ln -sf ${dataset1_bim} \${DATASET1}.bim
+    [ -e "\${DATASET1}.fam" ] || ln -sf ${dataset1_fam} \${DATASET1}.fam
+    [ -e "\${DATASET2}.bed" ] || ln -sf ${dataset2_bed} \${DATASET2}.bed
+    [ -e "\${DATASET2}.bim" ] || ln -sf ${dataset2_bim} \${DATASET2}.bim
+    [ -e "\${DATASET2}.fam" ] || ln -sf ${dataset2_fam} \${DATASET2}.fam
 
     # Run GWAS analysis script
     bash ${assets_dir}/gwas_analysis.sh "\${DATASET1}" "\${DATASET2}" "${output_prefix}" "${n_pcs}" "${threads}"
@@ -112,6 +175,14 @@ process make_plots {
 
     script:
     """
+    echo "=========================================="
+    echo "[PLOTS] make_plots starting..."
+    echo "[PLOTS] Assets directory: ${assets_dir}"
+    echo "[PLOTS] Assoc file: ${assoc_file}"
+    echo "[PLOTS] Annotation P-value: ${annotation_pval}"
+    echo "[PLOTS] Genome-wide significance: ${gw_sig}"
+    echo "=========================================="
+
     python3 ${assets_dir}/make_manhattan.py ${assoc_file} ${annotation_pval} ${gw_sig}
     """
 }

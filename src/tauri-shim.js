@@ -143,6 +143,21 @@ class WsBridge {
 		if (this.connected) return
 		if (this.connectPromise) return this.connectPromise
 
+		const preferReal =
+			(typeof window !== 'undefined' && window.__PREFER_REAL_INVOKE__ === true) ||
+			(typeof process !== 'undefined' && process?.env?.USE_REAL_INVOKE === 'true') ||
+			(typeof window !== 'undefined' && window.process?.env?.USE_REAL_INVOKE === 'true')
+		const envConnectTimeout =
+			(typeof process !== 'undefined' && process?.env?.WS_CONNECT_TIMEOUT_MS) ||
+			(typeof window !== 'undefined' && window.process?.env?.WS_CONNECT_TIMEOUT_MS) ||
+			null
+		const connectTimeoutMs = (() => {
+			const fromEnv = Number.parseInt(envConnectTimeout || '', 10)
+			if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+			// When running in real-backend mode, allow the backend a bit longer to restart.
+			return preferReal ? 5000 : 500
+		})()
+
 		this.connecting = true
 		this.connectPromise = new Promise((resolve, reject) => {
 			try {
@@ -203,14 +218,14 @@ class WsBridge {
 					this.pendingRequests.clear()
 				}
 
-				// Timeout after 500ms for faster test feedback
+				// Timeout quickly in mock mode; allow longer in real-backend mode (restarts can take >500ms).
 				setTimeout(() => {
 					if (!this.connected) {
 						this.connecting = false
 						this.connectPromise = null
 						reject(new Error('WebSocket connection timeout'))
 					}
-				}, 500)
+				}, connectTimeoutMs)
 			} catch (error) {
 				this.connecting = false
 				this.connectPromise = null
@@ -429,6 +444,9 @@ async function mockInvoke(cmd, args = {}) {
 // Mock dialog
 const mockDialog = {
 	open: async (options) => {
+		if (typeof window !== 'undefined' && typeof window.__TEST_DIALOG_OPEN__ === 'function') {
+			return window.__TEST_DIALOG_OPEN__(options)
+		}
 		console.log('[Mock] dialog.open:', options)
 		return null
 	},
@@ -456,6 +474,17 @@ const mockDialog = {
 	},
 	confirm: async (message, options) => {
 		console.log('[Mock] dialog.confirm:', message, options)
+		// Use setTimeout to ensure confirm() is called asynchronously
+		// This prevents blocking the event loop and allows Playwright to intercept
+		return new Promise((resolve) => {
+			setTimeout(() => {
+				const result = window.confirm(message)
+				resolve(result)
+			}, 0)
+		})
+	},
+	ask: async (message, options) => {
+		console.log('[Mock] dialog.ask:', message, options)
 		// Use setTimeout to ensure confirm() is called asynchronously
 		// This prevents blocking the event loop and allows Playwright to intercept
 		return new Promise((resolve) => {

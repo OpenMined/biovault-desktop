@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './playwright-fixtures'
 import { waitForAppReady } from './test-helpers.js'
 
 test.describe('Updater', () => {

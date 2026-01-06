@@ -44,6 +44,7 @@ WARM_CACHE=0  # Set after arg parsing (scenario-dependent default)
 WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
+CLEANUP_ACTIVE=0
 
 show_usage() {
 	cat <<EOF
@@ -52,15 +53,18 @@ Usage: ./test-scenario.sh [OPTIONS] [-- PLAYWRIGHT_ARGS...]
 Scenario Options (pick one):
   --all                Run all scenarios (default)
   --onboarding         Run onboarding test only
+  --profiles           Run profiles UI flow (real backend, isolated sandbox)
+  --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
+  --pipelines-gwas     Run GWAS pipeline UI test only (single client)
+  --pipelines-collab   Run two-client pipeline collaboration test
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
                        Accepts multiple notebook config files (runs all in sequence)
-  --pipelines-solo     Run pipeline test with synthetic data (single client)
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
@@ -73,12 +77,18 @@ Environment Variables (pipelines-solo):
   FORCE_REGEN_SYNTHETIC=1   Force regenerate synthetic data even if it exists
   CLEANUP_SYNTHETIC=1       Remove synthetic data after test (default: keep for reuse)
 
+Environment Variables (pipelines-gwas):
+  GWAS_DATA_DIR             GWAS dataset directory (default: /Users/madhavajay/dev/biovaults/datasets/jordan_gwas)
+
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
   ./test-scenario.sh --messaging        # Run just messaging scenario
   ./test-scenario.sh --interactive      # Run all with visible browser
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
+  ./test-scenario.sh --interactive --profiles    # Run profiles UI flow (real backend) with visible browser
+  ./test-scenario.sh --interactive --profiles-mock    # Run profiles UI flow (mock) with visible browser
   ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
+  ./test-scenario.sh --pipelines-gwas   # Run GWAS pipeline test
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
 EOF
 }
@@ -91,6 +101,14 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--onboarding)
 			SCENARIO="onboarding"
+			shift
+			;;
+		--profiles)
+			SCENARIO="profiles"
+			shift
+			;;
+		--profiles-mock)
+			SCENARIO="profiles-mock"
 			shift
 			;;
 		--messaging)
@@ -109,6 +127,14 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="pipelines-solo"
 			shift
 			;;
+		--pipelines-gwas)
+			SCENARIO="pipelines-gwas"
+			shift
+			;;
+		--pipelines-collab)
+			SCENARIO="pipelines-collab"
+			shift
+			;;
 		--jupyter)
 			SCENARIO="jupyter"
 			shift
@@ -122,10 +148,6 @@ while [[ $# -gt 0 ]]; do
 				NOTEBOOK_CONFIGS+=("$1")
 				shift
 			done
-			;;
-		--pipelines-solo)
-			SCENARIO="pipelines-solo"
-			shift
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
@@ -204,6 +226,20 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 info() { printf "\033[1;36m[scenario]\033[0m %s\n" "$1"; }
 
+pause_for_interactive_exit() {
+	if [[ "${PLAYWRIGHT_INTERACTIVE_PAUSE:-0}" == "1" ]]; then
+		return
+	fi
+	if [[ "${INTERACTIVE_MODE:-0}" == "1" && "${WAIT_MODE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "1" ]]; then
+		if [[ -t 0 ]]; then
+			printf "\n\033[1;36m[scenario]\033[0m Interactive mode: press Enter to close servers and exit.\n"
+			read -r || true
+		else
+			info "Interactive mode requested but no TTY available; proceeding to shutdown."
+		fi
+	fi
+}
+
 timing_enabled() {
 	[[ "$TIMING" == "1" || "$TIMING" == "true" || "$TIMING" == "yes" ]]
 }
@@ -232,6 +268,11 @@ declare -a TIMER_SUMMARY=()
 SCRIPT_START_MS=""
 if timing_enabled; then
 	SCRIPT_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+fi
+
+if [[ "${INTERACTIVE_MODE}" == "1" ]]; then
+	export PLAYWRIGHT_INTERACTIVE_PAUSE="${PLAYWRIGHT_INTERACTIVE_PAUSE:-1}"
+	export INTERACTIVE_MODE
 fi
 
 timer_push() {
@@ -478,6 +519,12 @@ wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT
 }
 
 cleanup() {
+	if [[ "$CLEANUP_ACTIVE" == "1" ]]; then
+		return
+	fi
+	CLEANUP_ACTIVE=1
+	pause_for_interactive_exit
+
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
 		kill "$SERVER_PID" 2>/dev/null || true
@@ -486,6 +533,21 @@ cleanup() {
 		info "Stopping Tauri instances"
 		[[ -n "${TAURI1_PID:-}" ]] && kill "$TAURI1_PID" 2>/dev/null || true
 		[[ -n "${TAURI2_PID:-}" ]] && kill "$TAURI2_PID" 2>/dev/null || true
+	fi
+	# Profiles switching can restart the Tauri process (new PID). Ensure we kill any lingering
+	# WS-bridge listeners for the selected ports (ports were chosen to be free for this run).
+	if command -v lsof >/dev/null 2>&1; then
+		for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" "$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))"; do
+			if [[ -z "${port:-}" || "$port" -le 0 ]]; then
+				continue
+			fi
+			local pids
+			pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)"
+			if [[ -n "${pids:-}" ]]; then
+				info "Killing lingering WS listeners on :$port (pids: $pids)"
+				kill $pids 2>/dev/null || true
+			fi
+		done
 	fi
 	if [[ -n "${LOGGER_PID:-}" ]]; then
 		info "Stopping unified logger"
@@ -521,30 +583,32 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Start devstack with two clients (reset by default to avoid stale state)
-info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
-DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
-# Stop any existing stack for this sandbox to avoid state conflicts
-# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
-STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
-if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-	STOP_ARGS+=(--reset)
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	# Start devstack with two clients (reset by default to avoid stale state)
+	info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
+	DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+	# Stop any existing stack for this sandbox to avoid state conflicts
+	# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
+	STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
+	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+		STOP_ARGS+=(--reset)
+	fi
+	timer_push "Devstack stop"
+	bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
+	timer_pop
+	DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
+	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+		DEVSTACK_ARGS+=(--reset)
+	fi
+	if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
+		DEVSTACK_ARGS+=(--skip-keys)
+	fi
+	timer_push "Devstack start"
+	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
+	timer_pop
 fi
-timer_push "Devstack stop"
-bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
-timer_pop
-DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
-if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-	DEVSTACK_ARGS+=(--reset)
-fi
-if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
-	DEVSTACK_ARGS+=(--skip-keys)
-fi
-timer_push "Devstack start"
-bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
-timer_pop
 
-# Read devstack state for client configs
+# Read devstack state for client configs (not needed for mock-only scenarios)
 find_state_file() {
 	local candidates=(
 		"$SANDBOX_ROOT/relay/state.json"
@@ -560,9 +624,11 @@ find_state_file() {
 }
 
 STATE_FILE="$(find_state_file || true)"
-if [[ -z "$STATE_FILE" ]]; then
-	echo "Devstack state not found in $SANDBOX_ROOT" >&2
-	exit 1
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	if [[ -z "$STATE_FILE" ]]; then
+		echo "Devstack state not found in $SANDBOX_ROOT" >&2
+		exit 1
+	fi
 fi
 
 parse_field() {
@@ -579,20 +645,22 @@ sys.exit(1)
 PY
 }
 
-CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
-CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
-CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
-CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
+if [[ "$SCENARIO" != "profiles-mock" ]]; then
+	CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
+	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
+	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
+	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
+	SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 print(f"http://127.0.0.1:{state['server']['port']}")
 PY
-)"
+	)"
 
-info "Client1 home: $CLIENT1_HOME"
-info "Client2 home: $CLIENT2_HOME"
-info "Server URL: $SERVER_URL"
+	info "Client1 home: $CLIENT1_HOME"
+	info "Client2 home: $CLIENT2_HOME"
+	info "Server URL: $SERVER_URL"
+fi
 
 wait_for_file() {
 	local path="$1"
@@ -735,16 +803,32 @@ start_static_server() {
 	exit 1
 }
 
+resolve_tauri_profile() {
+	local profile="${TAURI_PROFILE:-release}"
+	if [[ "$TAURI_BINARY" == *"/target/debug/"* ]]; then
+		profile="debug"
+	fi
+	echo "$profile"
+}
+
 assert_tauri_binary_present() {
 	TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
-	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY"
+	local profile
+	profile="$(resolve_tauri_profile)"
+	info "[DEBUG] assert_tauri_binary_present: checking $TAURI_BINARY (profile=$profile)"
 	if [[ ! -x "$TAURI_BINARY" ]]; then
 		# Binary doesn't exist - auto-build if AUTO_REBUILD_TAURI is enabled (default)
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
-			info "Tauri binary not found, building (cd src-tauri && cargo build --release)..."
-			timer_push "Cargo build (tauri release - initial)"
-			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			if [[ "$profile" == "debug" ]]; then
+				info "Tauri binary not found, building debug (cd src-tauri && cargo build)..."
+				timer_push "Cargo build (tauri debug - initial)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build) >&2
+			else
+				info "Tauri binary not found, building release (cd src-tauri && cargo build --release)..."
+				timer_push "Cargo build (tauri release - initial)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			fi
 			timer_pop
 			# Verify build succeeded
 			if [[ ! -x "$TAURI_BINARY" ]]; then
@@ -759,7 +843,7 @@ assert_tauri_binary_present() {
 		ls -la "$ROOT_DIR/src-tauri/target/release/" 2>&1 | head -30 || echo "Cannot list directory" >&2
 		echo "[DEBUG] Checking if target directory exists:" >&2
 		ls -la "$ROOT_DIR/src-tauri/target/" 2>&1 | head -10 || echo "Cannot list target directory" >&2
-		echo "Tauri binary not found at $TAURI_BINARY - run 'bun run build' first" >&2
+		echo "Tauri binary not found at $TAURI_BINARY - run 'npm run build' first" >&2
 		exit 1
 	fi
 	info "[DEBUG] Tauri binary found and executable"
@@ -769,6 +853,8 @@ assert_tauri_binary_fresh() {
 	# Guardrail: stale binaries silently break harness assumptions (e.g. env var parsing).
 	info "[DEBUG] assert_tauri_binary_fresh: checking if binary is up to date"
 	info "[DEBUG] TAURI_BINARY=$TAURI_BINARY"
+	local profile
+	profile="$(resolve_tauri_profile)"
 	info "[DEBUG] Binary mtime: $(stat -f '%Sm' "$TAURI_BINARY" 2>/dev/null || stat -c '%y' "$TAURI_BINARY" 2>/dev/null || echo 'unknown')"
 
 	local newer=""
@@ -804,14 +890,20 @@ assert_tauri_binary_fresh() {
 		local auto_rebuild="${AUTO_REBUILD_TAURI:-1}"
 		info "[DEBUG] AUTO_REBUILD_TAURI=$auto_rebuild"
 		if [[ "$auto_rebuild" != "0" && "$auto_rebuild" != "false" && "$auto_rebuild" != "no" ]]; then
-			echo "Rebuilding (cd src-tauri && cargo build --release)..." >&2
-			timer_push "Cargo build (tauri release)"
-			(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			if [[ "$profile" == "debug" ]]; then
+				echo "Rebuilding debug (cd src-tauri && cargo build)..." >&2
+				timer_push "Cargo build (tauri debug)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build) >&2
+			else
+				echo "Rebuilding release (cd src-tauri && cargo build --release)..." >&2
+				timer_push "Cargo build (tauri release)"
+				(cd "$ROOT_DIR/src-tauri" && cargo build --release) >&2
+			fi
 			timer_pop
 			return 0
 		fi
 		echo "[DEBUG] ERROR: Rebuild required but AUTO_REBUILD_TAURI=$auto_rebuild prevents it" >&2
-		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'bun run build'." >&2
+		echo "Rebuild required: (cd src-tauri && cargo build --release) or 'npm run build'." >&2
 		echo "Tip: set AUTO_REBUILD_TAURI=1 to auto-rebuild." >&2
 		exit 1
 	fi
@@ -845,7 +937,18 @@ launch_instance() {
 		export SYFTBOX_EMAIL="$email"
 		export SYFTBOX_CONFIG_PATH="$cfg"
 		export SYFTBOX_DATA_DIR="$home"
-		export SYC_VAULT="$home/.syc"
+		# Profiles tests manage SYC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
+		# Other scenarios keep a fixed vault path per client for simplicity.
+		if [[ "$SCENARIO" != "profiles" ]]; then
+			export SYC_VAULT="$home/.syc"
+		fi
+			# Keep the profiles store isolated under the sandbox HOME even if callers override defaults.
+			if [[ "$SCENARIO" == "profiles" ]]; then
+				# Allow callers to override the store location (for local dev), but default to the sandbox HOME.
+				if [[ -z "${BIOVAULT_PROFILES_PATH:-}" && -z "${BIOVAULT_PROFILES_DIR:-}" ]]; then
+					export BIOVAULT_PROFILES_DIR="$home/.bvprofiles"
+				fi
+			fi
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
@@ -1045,7 +1148,7 @@ run_ui_grep() {
 		shift
 	done
 
-	cmd+=(bun run test:ui --grep "$grep_pat")
+	cmd+=(npm run test:ui -- --grep "$grep_pat")
 	append_array_items cmd PLAYWRIGHT_OPTS
 	append_array_items cmd FORWARD_ARGS
 
@@ -1098,6 +1201,36 @@ ensure_playwright_browsers
 				start_tauri_instances
 				timer_push "Playwright: @onboarding-two"
 				run_ui_grep "@onboarding-two"
+				timer_pop
+				;;
+			profiles)
+				start_static_server
+				# Profiles test only needs one client, but uses the real backend.
+				assert_tauri_binary_present
+				assert_tauri_binary_fresh
+				export BIOVAULT_ALLOW_NEW_INSTANCE_IN_DEV=1
+				export BIOVAULT_SPAWN_PROBE_PATH="$CLIENT1_HOME/profiles/new-instance-probe.json"
+
+				timer_push "Tauri instance start (single)"
+				info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+				TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+				info "Waiting for WS bridge..."
+				wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+				timer_pop
+
+				export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+				export USE_REAL_INVOKE=true
+				# Provide deterministic homes for the test under the sandbox.
+				export PROFILES_HOME_A="$CLIENT1_HOME"
+				export PROFILES_HOME_B="$CLIENT1_HOME/profiles/profileB"
+				timer_push "Playwright: @profiles-real"
+				run_ui_grep "@profiles-real" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B"
+				timer_pop
+				;;
+			profiles-mock)
+				start_static_server
+				timer_push "Playwright: @profiles-mock"
+				run_ui_grep "@profiles-mock"
 				timer_pop
 				;;
 			messaging)
@@ -1211,6 +1344,14 @@ PY
 		start_static_server
 		# Pipelines tests only need a single client; keep it lightweight.
 		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ ! -x "$TAURI_BINARY" ]]; then
+			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
+			if [[ -x "$debug_bin" ]]; then
+				info "Release Tauri binary not found; using debug binary at $debug_bin"
+				TAURI_BINARY="$debug_bin"
+				export TAURI_PROFILE=debug
+			fi
+		fi
 		if [[ -x "$TAURI_BINARY" ]]; then
 			assert_tauri_binary_fresh
 			timer_push "Tauri instance start (single)"
@@ -1230,6 +1371,40 @@ PY
 		# Run pipelines UI flow (dataset + pipeline e2e)
 		timer_push "Playwright: pipelines-solo"
 		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_pop
+		;;
+	pipelines-gwas)
+		start_static_server
+		# GWAS pipelines test only needs a single client; keep it lightweight.
+		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
+		if [[ ! -x "$TAURI_BINARY" ]]; then
+			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
+			if [[ -x "$debug_bin" ]]; then
+				info "Release Tauri binary not found; using debug binary at $debug_bin"
+				TAURI_BINARY="$debug_bin"
+				export TAURI_PROFILE=debug
+			fi
+		fi
+		if [[ -x "$TAURI_BINARY" ]]; then
+			assert_tauri_binary_fresh
+			timer_push "Tauri instance start (single)"
+			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+			info "Waiting for WS bridge..."
+			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+			timer_pop
+			export USE_REAL_INVOKE=true
+			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		else
+			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
+			export USE_REAL_INVOKE=false
+		fi
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		GWAS_DATA_DIR="${GWAS_DATA_DIR:-/Users/madhavajay/dev/biovaults/datasets/jordan_gwas}"
+		export GWAS_DATA_DIR
+
+		timer_push "Playwright: pipelines-gwas"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" GWAS_DATA_DIR="$GWAS_DATA_DIR" bun run test:ui tests/ui/pipelines-gwas.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		timer_pop
 		;;
 	jupyter)
@@ -1358,6 +1533,80 @@ PY
 				run_ui_grep "@jupyter-collab" "INCLUDE_JUPYTER_TESTS=1" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 				timer_pop
 			fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-collab)
+		start_static_server
+		start_tauri_instances
+
+		# Synthetic data configuration (same as pipelines-solo)
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+		CLEANUP_SYNTHETIC="${CLEANUP_SYNTHETIC:-0}"
+
+		# Check if synthetic data exists
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			info "=== Generating synthetic genotype data for collaboration test ==="
+			timer_push "Synthetic data generation"
+
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (without overlay)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
+			timer_pop
+		else
+			info "Using existing synthetic data ($EXISTING_COUNT files)"
+		fi
+
+		# Run pipelines collaboration test
+		info "=== Running Pipelines Collaboration Test ==="
+		timer_push "Playwright: @pipelines-collab"
+		run_ui_grep "@pipelines-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then

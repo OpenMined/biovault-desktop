@@ -32,6 +32,7 @@ export function createPipelinesModule({
 		},
 		pendingDataRun: null,
 		dataRunModalOpen: false,
+		lastAutoOpenKey: null,
 	}
 
 	// Load pipelines list
@@ -78,6 +79,7 @@ export function createPipelinesModule({
 			})
 
 			pipelineState.pipelines = pipelines
+			logPipelineDebug('loadPipelines', pipelines)
 
 			renderDataRunBanner()
 
@@ -91,11 +93,9 @@ export function createPipelinesModule({
 		const stepCount = pipeline.spec?.steps?.length || 0
 		const description = pipeline.spec?.description || ''
 		const context = getPendingDataRunContext()
-		const hasDataSelected =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
-		const acceptsGenotype = pipelineAcceptsGenotypeInput(pipeline)
-		const canRunWithData = hasDataSelected && acceptsGenotype
+		const hasDataSelected = hasPendingData(context)
+		const canRunWithData =
+			hasDataSelected && pipelineAcceptsShape(pipeline, context?.datasetShape || null)
 
 		// Resolve step projects to get names and versions
 		const stepDetails = (pipeline.spec?.steps || [])
@@ -239,11 +239,15 @@ export function createPipelinesModule({
 			return null
 		}
 
+		const datasetNameRaw = sessionStorage.getItem('preselectedDatasetName')
+		const datasetShapeRaw = sessionStorage.getItem('preselectedDatasetShape')
+		const datasetDataTypeRaw = sessionStorage.getItem('preselectedDatasetDataType')
+
 		// Check for URLs first (new approach), then fall back to file IDs (legacy)
 		const urlsRaw = sessionStorage.getItem('preselectedUrls')
 		const fileIdsRaw = sessionStorage.getItem('preselectedFileIds')
 
-		if (!urlsRaw && !fileIdsRaw) {
+		if (!urlsRaw && !fileIdsRaw && !datasetNameRaw) {
 			// Explicitly clear cache if no data
 			pipelineState.pendingDataRun = null
 			return null
@@ -293,7 +297,7 @@ export function createPipelinesModule({
 			}
 		}
 
-		if (urls.length === 0 && fileIds.length === 0) {
+		if (urls.length === 0 && fileIds.length === 0 && !datasetNameRaw) {
 			// Clear sessionStorage and cache if no valid data
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
@@ -315,10 +319,100 @@ export function createPipelinesModule({
 			}
 		}
 
+		const datasetName =
+			datasetNameRaw && datasetNameRaw !== 'null' ? datasetNameRaw.trim() || null : null
+		const datasetShape =
+			datasetShapeRaw && datasetShapeRaw !== 'null' ? datasetShapeRaw.trim() || null : null
+		const datasetDataType =
+			datasetDataTypeRaw && datasetDataTypeRaw !== 'null' ? datasetDataTypeRaw.trim() || null : null
+
+		const parseUrlList = (rawValue, label) => {
+			if (!rawValue) return []
+			try {
+				const parsed = JSON.parse(rawValue)
+				if (!Array.isArray(parsed)) return []
+				return [
+					...new Set(
+						parsed.filter(
+							(u) =>
+								typeof u === 'string' &&
+								(u.startsWith('syft://') || u.startsWith('file://') || u.startsWith('/')),
+						),
+					),
+				]
+			} catch (error) {
+				console.warn(`Failed to parse ${label}:`, error)
+				return []
+			}
+		}
+
+		const mockUrls = parseUrlList(
+			sessionStorage.getItem('preselectedUrlsMock'),
+			'preselectedUrlsMock',
+		)
+		const realUrls = parseUrlList(
+			sessionStorage.getItem('preselectedUrlsReal'),
+			'preselectedUrlsReal',
+		)
+
+		let mockParticipantIds = []
+		const mockParticipantsRaw = sessionStorage.getItem('preselectedParticipantsMock')
+		if (mockParticipantsRaw) {
+			try {
+				const parsedParticipants = JSON.parse(mockParticipantsRaw)
+				if (Array.isArray(parsedParticipants)) {
+					mockParticipantIds = parsedParticipants.filter((p) => typeof p === 'string')
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedParticipantsMock:', error)
+			}
+		}
+
+		let realParticipantIds = []
+		const realParticipantsRaw = sessionStorage.getItem('preselectedParticipantsReal')
+		if (realParticipantsRaw) {
+			try {
+				const parsedParticipants = JSON.parse(realParticipantsRaw)
+				if (Array.isArray(parsedParticipants)) {
+					realParticipantIds = parsedParticipants.filter((p) => typeof p === 'string')
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedParticipantsReal:', error)
+			}
+		}
+
+		let assetKeys = []
+		const assetKeysRaw = sessionStorage.getItem('preselectedAssetKeys')
+		if (assetKeysRaw) {
+			try {
+				const parsedKeys = JSON.parse(assetKeysRaw)
+				if (Array.isArray(parsedKeys)) {
+					assetKeys = parsedKeys.filter((value) => typeof value === 'string' && value)
+				}
+			} catch (error) {
+				console.warn('Failed to parse preselectedAssetKeys:', error)
+			}
+		}
+
+		const datasetOwnerRaw = sessionStorage.getItem('preselectedDatasetOwner')
+		const dataTypeRaw = sessionStorage.getItem('preselectedDataType')
+		const dataSourceRaw = sessionStorage.getItem('preselectedDataSource')
+
 		const context = {
 			urls: urls.length > 0 ? urls : null,
 			fileIds: fileIds.length > 0 ? fileIds : null,
 			participantIds,
+			datasetName,
+			datasetShape,
+			datasetDataType,
+			datasetOwner: datasetOwnerRaw && datasetOwnerRaw.trim() ? datasetOwnerRaw : null,
+			assetKeys,
+			dataType: dataTypeRaw && dataTypeRaw.trim() ? dataTypeRaw : null,
+			dataSource: dataSourceRaw && dataSourceRaw.trim() ? dataSourceRaw : null,
+			mockUrls: mockUrls.length > 0 ? mockUrls : null,
+			realUrls: realUrls.length > 0 ? realUrls : null,
+			mockParticipantIds: mockParticipantIds.length > 0 ? mockParticipantIds : null,
+			realParticipantIds: realParticipantIds.length > 0 ? realParticipantIds : null,
 		}
 
 		// Cache for performance, but will be cleared on next check if sessionStorage changed
@@ -337,6 +431,17 @@ export function createPipelinesModule({
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
 			sessionStorage.removeItem('preselectedParticipants')
+			sessionStorage.removeItem('preselectedDatasetName')
+			sessionStorage.removeItem('preselectedDatasetShape')
+			sessionStorage.removeItem('preselectedDatasetDataType')
+			sessionStorage.removeItem('preselectedUrlsMock')
+			sessionStorage.removeItem('preselectedUrlsReal')
+			sessionStorage.removeItem('preselectedParticipantsMock')
+			sessionStorage.removeItem('preselectedParticipantsReal')
+			sessionStorage.removeItem('preselectedDatasetOwner')
+			sessionStorage.removeItem('preselectedAssetKeys')
+			sessionStorage.removeItem('preselectedDataType')
+			sessionStorage.removeItem('preselectedDataSource')
 		} catch (error) {
 			console.warn('Failed to clear preselected session data:', error)
 		}
@@ -351,9 +456,7 @@ export function createPipelinesModule({
 		let banner = document.getElementById(bannerId)
 
 		// Check for either URLs (new approach) or fileIds (legacy)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			if (banner) {
 				banner.remove()
@@ -400,9 +503,7 @@ export function createPipelinesModule({
 		const bannerId = 'pipeline-detail-data-banner'
 		let banner = document.getElementById(bannerId)
 
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			if (banner) {
 				banner.remove()
@@ -437,7 +538,7 @@ export function createPipelinesModule({
 				: fileCount
 
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, context?.datasetShape || null),
 		)
 
 		banner.innerHTML = `
@@ -605,9 +706,8 @@ export function createPipelinesModule({
 		}
 
 		const context = getPendingDataRunContext()
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		logDataRunContext('startDataDrivenRun', context)
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			return false
 		}
@@ -617,12 +717,14 @@ export function createPipelinesModule({
 			await loadPipelines()
 		}
 
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, selectionShape),
 		)
 
 		if (eligiblePipelines.length === 0) {
-			alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+			logPipelineDebug('startDataDrivenRun no eligible pipelines', pipelineState.pipelines || [])
+			alert(`No pipelines are available that accept a ${selectionShape} input.`)
 			clearDataRunContext()
 			return false
 		}
@@ -715,11 +817,10 @@ export function createPipelinesModule({
 	}
 
 	// Public function to show modal directly (called from Data tab)
-	async function showDataRunModalDirect() {
+	async function showDataRunModalDirect(preselectedPipelineId = null) {
 		const context = getPendingDataRunContext()
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		logDataRunContext('showDataRunModalDirect', context)
+		const hasData = hasPendingData(context)
 		if (!hasData) {
 			return false
 		}
@@ -729,24 +830,29 @@ export function createPipelinesModule({
 			await loadPipelines()
 		}
 
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsGenotypeInput(pipeline),
+			pipelineAcceptsShape(pipeline, selectionShape),
 		)
 
 		if (eligiblePipelines.length === 0) {
+			logPipelineDebug(
+				'showDataRunModalDirect no eligible pipelines',
+				pipelineState.pipelines || [],
+			)
 			if (dialog && dialog.message) {
 				await dialog.message(
-					'No pipelines are available that accept a List[GenotypeRecord] input. Please create a compatible pipeline first.',
+					`No pipelines are available that accept a ${selectionShape} input. Please create a compatible pipeline first.`,
 					{ title: 'No Compatible Pipelines', type: 'warning' },
 				)
 			} else {
-				alert('No pipelines are available that accept a List[GenotypeRecord] input.')
+				alert(`No pipelines are available that accept a ${selectionShape} input.`)
 			}
 			clearDataRunContext()
 			return false
 		}
 
-		await showDataRunModal(context, eligiblePipelines, null)
+		await showDataRunModal(context, eligiblePipelines, preselectedPipelineId)
 		return true
 	}
 
@@ -756,10 +862,7 @@ export function createPipelinesModule({
 		if (!handled) {
 			// Check why it wasn't handled
 			const context = getPendingDataRunContext()
-			const hasData =
-				context &&
-				((context.urls && context.urls.length > 0) ||
-					(context.fileIds && context.fileIds.length > 0))
+			const hasData = hasPendingData(context)
 
 			if (!hasData) {
 				// No data selected - prompt user to select data first
@@ -782,15 +885,16 @@ export function createPipelinesModule({
 			} else {
 				// Data is selected but pipeline might not be compatible
 				const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-				if (pipeline && !pipelineAcceptsGenotypeInput(pipeline)) {
+				const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
+				if (pipeline && !pipelineAcceptsShape(pipeline, selectionShape)) {
 					if (dialog && dialog.message) {
 						await dialog.message(
-							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
 							{ title: 'Incompatible Pipeline', type: 'warning' },
 						)
 					} else {
 						alert(
-							'This pipeline does not accept List[GenotypeRecord] input. Please select a compatible pipeline or modify this pipeline to accept genotype data.',
+							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
 						)
 					}
 				}
@@ -809,12 +913,308 @@ export function createPipelinesModule({
 		return ''
 	}
 
-	function pipelineAcceptsGenotypeInput(pipeline) {
+	function splitTypeTopLevel(value, delimiter) {
+		if (!value) return []
+		const parts = []
+		let depth = 0
+		let start = 0
+		for (let i = 0; i < value.length; i++) {
+			const ch = value[i]
+			if (ch === '[' || ch === '{') depth += 1
+			if (ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+			if (ch === delimiter && depth === 0) {
+				parts.push(value.slice(start, i).trim())
+				start = i + 1
+			}
+		}
+		parts.push(value.slice(start).trim())
+		return parts.filter((part) => part)
+	}
+
+	function splitTypeTopLevelOnce(value, delimiter) {
+		if (!value) return null
+		let depth = 0
+		for (let i = 0; i < value.length; i++) {
+			const ch = value[i]
+			if (ch === '[' || ch === '{') depth += 1
+			if (ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+			if (ch === delimiter && depth === 0) {
+				return [value.slice(0, i).trim(), value.slice(i + 1).trim()]
+			}
+		}
+		return null
+	}
+
+	function normalizeTypeName(typeName) {
+		if (!typeName) return null
+		switch (typeName.toLowerCase()) {
+			case 'string':
+				return 'String'
+			case 'bool':
+				return 'Bool'
+			case 'file':
+				return 'File'
+			case 'directory':
+				return 'Directory'
+			case 'participantsheet':
+				return 'ParticipantSheet'
+			case 'genotyperecord':
+				return 'GenotypeRecord'
+			case 'biovaultcontext':
+				return 'BiovaultContext'
+			default:
+				return typeName
+		}
+	}
+
+	function parseTypeExpr(raw) {
+		if (!raw || typeof raw !== 'string') return null
+		let trimmed = raw.trim()
+		if (!trimmed) return null
+		let optional = false
+		if (trimmed.endsWith('?')) {
+			optional = true
+			trimmed = trimmed.slice(0, -1).trim()
+		}
+		const lowered = trimmed.toLowerCase()
+		if (lowered.startsWith('list[') && trimmed.endsWith(']')) {
+			const inner = trimmed.slice(5, -1)
+			return { kind: 'List', optional, inner: parseTypeExpr(inner) }
+		}
+		if (lowered.startsWith('map[') && trimmed.endsWith(']')) {
+			const inner = trimmed.slice(4, -1)
+			const parts = splitTypeTopLevel(inner, ',')
+			if (parts.length !== 2 || parts[0].toLowerCase() !== 'string') return null
+			return { kind: 'Map', optional, value: parseTypeExpr(parts[1]) }
+		}
+		if ((lowered.startsWith('record{') || lowered.startsWith('dict{')) && trimmed.endsWith('}')) {
+			const inner = trimmed.slice(trimmed.indexOf('{') + 1, -1).trim()
+			if (!inner) return null
+			const fields = splitTypeTopLevel(inner, ',')
+				.map((field) => {
+					const parts = splitTypeTopLevelOnce(field, ':')
+					if (!parts) return null
+					return { name: parts[0], type: parseTypeExpr(parts[1]) }
+				})
+				.filter((field) => field && field.name)
+			return { kind: 'Record', optional, fields }
+		}
+		return { kind: normalizeTypeName(trimmed), optional }
+	}
+
+	function typeExprsCompatible(expected, actual) {
+		if (!expected || !actual) return false
+		if (expected.optional) return typeExprsCompatible({ ...expected, optional: false }, actual)
+		if (actual.optional) return typeExprsCompatible(expected, { ...actual, optional: false })
+		if (expected.kind !== actual.kind) return false
+		switch (expected.kind) {
+			case 'List':
+				return typeExprsCompatible(expected.inner, actual.inner)
+			case 'Map':
+				return typeExprsCompatible(expected.value, actual.value)
+			case 'Record': {
+				const expectedFields = expected.fields || []
+				const actualFields = actual.fields || []
+				if (expectedFields.length !== actualFields.length) return false
+				for (const field of expectedFields) {
+					const match = actualFields.find((candidate) => candidate.name === field.name)
+					if (!match) return false
+					if (!typeExprsCompatible(field.type, match.type)) return false
+				}
+				return true
+			}
+			default:
+				return true
+		}
+	}
+
+	function typesCompatible(expectedRaw, actualRaw) {
+		const expected = parseTypeExpr(expectedRaw)
+		const actual = parseTypeExpr(actualRaw)
+		if (expected && actual) {
+			return typeExprsCompatible(expected, actual)
+		}
+		if (!expectedRaw || !actualRaw) return false
+		return (
+			expectedRaw.trim().replace(/\?$/, '').toLowerCase() ===
+			actualRaw.trim().replace(/\?$/, '').toLowerCase()
+		)
+	}
+
+	function extractAssetFilename(filePath) {
+		if (!filePath) return null
+		const trimmed = String(filePath).split('#')[0].replace(/\/+$/, '')
+		const parts = trimmed.split('/')
+		const name = parts[parts.length - 1]
+		return name || null
+	}
+
+	function parseAssetRef(raw) {
+		if (!raw) return null
+		if (typeof raw === 'object') return raw
+		if (typeof raw !== 'string') return null
+		try {
+			return JSON.parse(raw)
+		} catch {
+			return null
+		}
+	}
+
+	function assetHasEntries(raw) {
+		const parsed = parseAssetRef(raw)
+		return Array.isArray(parsed?.entries) && parsed.entries.length > 0
+	}
+
+	function isTwinListAsset(asset) {
+		const kind = (asset?.kind || asset?.type || '').toString().toLowerCase()
+		return (
+			kind === 'twin_list' ||
+			assetHasEntries(asset?.private_ref) ||
+			assetHasEntries(asset?.mock_ref)
+		)
+	}
+
+	function collectDatasetAssetPaths(assets, dataType) {
+		const paths = []
+		const includePrivate = dataType === 'real' || dataType === 'both' || !dataType
+		const includeMock = dataType === 'mock' || dataType === 'both'
+
+		;(assets || []).forEach((asset) => {
+			if (!asset) return
+			if (includePrivate) {
+				const privatePath = asset.resolved_private_path || asset.private_path
+				if (privatePath) paths.push(privatePath)
+			}
+			if (includeMock) {
+				const mockPath = asset.resolved_mock_path || asset.mock_path || asset.mock_url
+				if (mockPath) paths.push(mockPath)
+			}
+		})
+
+		return paths
+	}
+
+	function inferDatasetShapeFromAssets(assets, dataType) {
+		if (!Array.isArray(assets) || assets.length === 0) return null
+		if (assets.some((asset) => isTwinListAsset(asset))) {
+			return 'List[GenotypeRecord]'
+		}
+
+		const filePaths = collectDatasetAssetPaths(assets, dataType)
+		if (filePaths.length === 0) return null
+
+		const groups = new Map()
+		filePaths.forEach((path) => {
+			const filename = extractAssetFilename(path)
+			if (!filename) return
+			const dot = filename.lastIndexOf('.')
+			if (dot <= 0) return
+			const stem = filename.slice(0, dot)
+			const ext = filename.slice(dot + 1).toLowerCase()
+			if (!['bed', 'bim', 'fam'].includes(ext)) return
+			if (!groups.has(stem)) {
+				groups.set(stem, new Set())
+			}
+			groups.get(stem).add(ext)
+		})
+
+		if (groups.size > 0) {
+			const allComplete = Array.from(groups.values()).every(
+				(exts) => exts.has('bed') && exts.has('bim') && exts.has('fam'),
+			)
+			if (allComplete) {
+				return 'Map[String, Record{bed: File, bim: File, fam: File}]'
+			}
+		}
+
+		if (filePaths.length === 1) return 'File'
+		return 'Map[String, File]'
+	}
+
+	function resolveDatasetShape(entry, assets, dataType) {
+		const extra = entry?.dataset?.extra
+		if (extra && typeof extra === 'object') {
+			const extraShape = extra.shape
+			if (typeof extraShape === 'string' && extraShape.trim()) {
+				return extraShape.trim()
+			}
+		} else if (typeof extra === 'string') {
+			try {
+				const parsed = JSON.parse(extra)
+				if (parsed && typeof parsed.shape === 'string' && parsed.shape.trim()) {
+					return parsed.shape.trim()
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		const manifestShape = entry?.manifest?.shape || entry?.shape
+		if (typeof manifestShape === 'string' && manifestShape.trim()) {
+			return manifestShape.trim()
+		}
+
+		return inferDatasetShapeFromAssets(assets, dataType)
+	}
+
+	function pipelineAcceptsShape(pipeline, shape) {
+		if (!pipeline) return false
 		const inputs = pipeline?.spec?.inputs || {}
+		const expectedShape = shape || 'List[GenotypeRecord]'
 		return Object.values(inputs).some((inputSpec) => {
 			const typeStr = describeInputType(inputSpec)
-			return typeof typeStr === 'string' && typeStr.toLowerCase() === 'list[genotyperecord]'
+			return typeof typeStr === 'string' && typesCompatible(expectedShape, typeStr)
 		})
+	}
+
+	function pipelineAcceptsGenotypeInput(pipeline) {
+		return pipelineAcceptsShape(pipeline, 'List[GenotypeRecord]')
+	}
+
+	function logPipelineDebug(label, pipelines) {
+		if (!pipelines || pipelines.length === 0) {
+			console.log(`[Pipelines Debug] ${label}: no pipelines`)
+			return
+		}
+
+		const summary = pipelines.map((pipeline) => {
+			const inputs = pipeline?.spec?.inputs || {}
+			const inputTypes = Object.entries(inputs).map(([key, spec]) => {
+				const typeStr = describeInputType(spec)
+				return typeStr ? `${key}:${typeStr}` : key
+			})
+
+			return {
+				id: pipeline?.id,
+				name: pipeline?.name,
+				inputs: inputTypes,
+				steps: pipeline?.spec?.steps?.length || 0,
+				acceptsGenotype: pipelineAcceptsGenotypeInput(pipeline),
+			}
+		})
+
+		console.log(`[Pipelines Debug] ${label}`, summary)
+	}
+
+	function logDataRunContext(label, context) {
+		console.log(`[Pipelines Debug] ${label} context`, {
+			hasContext: Boolean(context),
+			urls: context?.urls?.length || 0,
+			mockUrls: context?.mockUrls?.length || 0,
+			realUrls: context?.realUrls?.length || 0,
+			fileIds: context?.fileIds?.length || 0,
+			participantIds: context?.participantIds?.length || 0,
+			dataType: context?.dataType || null,
+		})
+	}
+
+	function hasPendingData(context) {
+		return (
+			!!context &&
+			((context.urls && context.urls.length > 0) ||
+				(context.fileIds && context.fileIds.length > 0) ||
+				context.datasetName)
+		)
 	}
 
 	function closeDataRunModal(clearContext = false) {
@@ -845,13 +1245,45 @@ export function createPipelinesModule({
 			console.warn('Failed to get runs base directory:', error)
 		}
 
-		const dataCount =
-			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
+		const isDatasetSelection =
+			!!context.datasetName &&
+			!(context.urls && context.urls.length) &&
+			!(context.fileIds && context.fileIds.length)
+		const dataCount = isDatasetSelection
+			? 0
+			: (context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const uniqueParticipantCount =
-			context.participantIds && context.participantIds.length > 0
+			!isDatasetSelection && context.participantIds && context.participantIds.length > 0
 				? context.participantIds.filter((p) => p).length // Filter out empty strings
 				: dataCount
 		const fileCount = dataCount
+		const datasetLabel = context.datasetName ? escapeHtml(context.datasetName) : null
+		const datasetTypeLabel = context.datasetDataType ? escapeHtml(context.datasetDataType) : null
+		const summaryDetailHtml = isDatasetSelection
+			? `<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
+					Dataset <strong style="color: #0f172a; font-weight: 600;">${datasetLabel}</strong>${
+						datasetTypeLabel ? ` (${datasetTypeLabel})` : ''
+					}
+				</div>
+				<div style="font-size: 13px; color: #64748b;">
+					Shape: <strong style="color: #0f172a; font-weight: 600;">${escapeHtml(selectionShape)}</strong>
+				</div>`
+			: `<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
+					<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${
+						fileCount === 1 ? '' : 's'
+					} 
+					covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${
+						uniqueParticipantCount === 1 ? '' : 's'
+					}
+				</div>`
+		const summaryFooterHtml = isDatasetSelection
+			? `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
+					We will pass the dataset map directly to the pipeline.
+				</div>`
+			: `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
+					We will generate a temporary samplesheet automatically for this run.
+				</div>`
 
 		const pipelineOptionsHtml = pipelines
 			.map((pipeline, index) => {
@@ -1004,17 +1436,8 @@ export function createPipelinesModule({
 							</svg>
 							<strong style="font-size: 16px; font-weight: 700; color: #1e293b; letter-spacing: -0.01em;">Selected Data</strong>
 						</div>
-						<div style="font-size: 15px; color: #475569; line-height: 1.6; margin-bottom: 8px;">
-							<strong style="color: #0f172a; font-weight: 600;">${fileCount}</strong> genotype file${
-								fileCount === 1 ? '' : 's'
-							} 
-							covering <strong style="color: #0f172a; font-weight: 600;">${uniqueParticipantCount}</strong> participant${
-								uniqueParticipantCount === 1 ? '' : 's'
-							}
-						</div>
-						<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
-							We will generate a temporary samplesheet automatically for this run.
-						</div>
+						${summaryDetailHtml}
+						${summaryFooterHtml}
 					</div>
 					<div class="data-run-section" style="margin-bottom: 28px;">
 						<h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px;">
@@ -1202,30 +1625,116 @@ export function createPipelinesModule({
 			}
 
 			const resultsDir = resultsInput.value.trim() || null
-			const doRun = async () => {
+			const performRuns = async () => {
 				runBtn.disabled = true
 				runBtn.textContent = 'Starting…'
-				try {
-					const run = await invoke('run_pipeline', {
-						pipelineId,
-						inputOverrides: {},
-						resultsDir,
-						selection: {
+
+				// Build input overrides from test config if available
+				const inputOverrides = {}
+				const testOverrides =
+					typeof window !== 'undefined' ? window.__TEST_PIPELINE_OVERRIDES__ : null
+				if (testOverrides && typeof testOverrides === 'object') {
+					for (const [key, value] of Object.entries(testOverrides)) {
+						inputOverrides[key] = value
+					}
+				}
+
+				const baseResultsDir = resultsDir ? resultsDir.replace(/[\\/]+$/, '') : null
+				const hasSplitUrls =
+					(context.mockUrls && context.mockUrls.length > 0) ||
+					(context.realUrls && context.realUrls.length > 0)
+
+				let runSets = []
+				if (context.dataType === 'both' && hasSplitUrls) {
+					if (context.mockUrls && context.mockUrls.length > 0) {
+						runSets.push({
+							label: 'mock',
+							dataType: 'mock',
+							urls: context.mockUrls,
+							participantIds: context.mockParticipantIds || [],
+						})
+					}
+					if (context.realUrls && context.realUrls.length > 0) {
+						runSets.push({
+							label: 'real',
+							dataType: 'real',
+							urls: context.realUrls,
+							participantIds: context.realParticipantIds || [],
+						})
+					}
+				} else {
+					runSets = [
+						{
+							label: context.dataType || 'data',
+							dataType: context.dataType || null,
 							urls: context.urls || [],
 							fileIds: context.fileIds || [],
 							participantIds: context.participantIds || [],
+							datasetName: context.datasetName || null,
+							datasetShape: context.datasetShape || null,
+							datasetDataType: context.datasetDataType || null,
 						},
-					})
+					]
+				}
+
+				runSets = runSets.filter(
+					(runSet) =>
+						(runSet.urls && runSet.urls.length > 0) ||
+						(runSet.fileIds && runSet.fileIds.length > 0),
+				)
+
+				if (runSets.length === 0) {
+					runBtn.disabled = false
+					runBtn.textContent = 'Run Pipeline'
+					alert('No data selected to run.')
+					return
+				}
+
+				if (context.dataType === 'both' && runSets.length === 1 && dialog?.message) {
+					await dialog.message(
+						'Only one data side is available. Running the available data selection.',
+						{ title: 'Partial Selection', type: 'warning' },
+					)
+				}
+
+				try {
+					const runs = []
+					for (const [index, runSet] of runSets.entries()) {
+						const label = runSet.label || `run-${index + 1}`
+						runBtn.textContent = `Running ${label}…`
+
+						const resolvedResultsDir =
+							baseResultsDir && runSets.length > 1 ? `${baseResultsDir}/${label}` : baseResultsDir
+
+						const run = await invoke('run_pipeline', {
+							pipelineId,
+							inputOverrides,
+							resultsDir: resolvedResultsDir,
+							selection: {
+								urls: runSet.urls || [],
+								fileIds: runSet.fileIds || [],
+								participantIds: runSet.participantIds || [],
+								datasetName: context.datasetName || null,
+								datasetShape: context.datasetShape || null,
+								datasetDataType: runSet.dataType || context.datasetDataType || null,
+								datasetOwner: context.datasetOwner || null,
+								assetKeys: context.assetKeys || [],
+								dataType: runSet.dataType || context.dataType || null,
+								dataSource: context.dataSource || null,
+							},
+						})
+						runs.push(run)
+					}
 
 					clearDataRunContext()
 					closeDataRunModal()
 
-					// Store run ID in sessionStorage for auto-expansion on runs page
-					if (typeof sessionStorage !== 'undefined') {
-						sessionStorage.setItem('autoExpandRunId', run.id.toString())
+					if (typeof sessionStorage !== 'undefined' && runs.length > 0) {
+						sessionStorage.setItem('autoExpandRunId', runs[runs.length - 1].id.toString())
 					}
 
-					alert(`Pipeline started! Run ID: ${run.id}`)
+					const runIds = runs.map((run) => run.id).join(', ')
+					alert(`Pipeline started! Run ID${runs.length === 1 ? '' : 's'}: ${runIds}`)
 
 					if (typeof navigateTo === 'function') {
 						navigateTo('runs')
@@ -1244,17 +1753,17 @@ export function createPipelinesModule({
 			try {
 				const running = await invoke('check_docker_running')
 				if (running) {
-					await doRun()
+					await performRuns()
 				} else {
 					runBtn.disabled = false
 					runBtn.textContent = 'Run Pipeline'
-					await showDockerWarningModal(doRun)
+					await showDockerWarningModal(performRuns)
 				}
 			} catch (err) {
 				console.warn('Docker check failed (continuing):', err)
 				runBtn.disabled = false
 				runBtn.textContent = 'Run Pipeline'
-				await showDockerWarningModal(doRun)
+				await showDockerWarningModal(performRuns)
 			}
 		})
 	}
@@ -1621,7 +2130,9 @@ export function createPipelinesModule({
 		document.body.insertAdjacentHTML('beforeend', loadingHtml)
 
 		try {
-			await submitPipelineURL(false, url)
+			// Use overwrite=true for template pipelines since they're predefined
+			// and user explicitly wants this specific template
+			await submitPipelineURL(true, url)
 			const loadingModal = document.getElementById('pipeline-loading-modal')
 			if (loadingModal) loadingModal.remove()
 		} catch (error) {
@@ -3681,11 +4192,10 @@ steps:${
 	async function runPipeline(pipelineId) {
 		const context = getPendingDataRunContext()
 		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-		const hasData =
-			context &&
-			((context.urls && context.urls.length > 0) || (context.fileIds && context.fileIds.length > 0))
+		const hasData = hasPendingData(context)
+		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 
-		if (hasData && pipeline && pipelineAcceptsGenotypeInput(pipeline)) {
+		if (hasData && pipeline && pipelineAcceptsShape(pipeline, selectionShape)) {
 			await startDataDrivenRun(pipelineId)
 			return
 		}
@@ -4244,6 +4754,31 @@ steps:${
 		// Use storage event (works across tabs) and also poll when Pipelines view is active
 		let bannerCheckInterval = null
 
+		async function maybeAutoOpenDataRunModal() {
+			if (pipelineState.dataRunModalOpen) return
+			const context = getPendingDataRunContext()
+			const hasData =
+				context &&
+				((context.urls && context.urls.length > 0) ||
+					(context.fileIds && context.fileIds.length > 0))
+			if (!hasData) return
+
+			const contextKey = JSON.stringify({
+				urls: context.urls || [],
+				fileIds: context.fileIds || [],
+				participants: context.participantIds || [],
+			})
+			if (pipelineState.lastAutoOpenKey === contextKey) {
+				return
+			}
+			pipelineState.lastAutoOpenKey = contextKey
+			try {
+				await showDataRunModalDirect()
+			} catch (err) {
+				console.warn('Failed to auto-open data run modal:', err)
+			}
+		}
+
 		function refreshBannerIfNeeded() {
 			const isPipelinesViewActive = document
 				.getElementById('run-view')
@@ -4252,12 +4787,20 @@ steps:${
 				// Clear cached context to force fresh read from sessionStorage
 				pipelineState.pendingDataRun = null
 				renderDataRunBanner()
+				maybeAutoOpenDataRunModal()
 			}
 		}
 
 		// Listen for storage events (works when Data tab updates sessionStorage)
 		window.addEventListener('storage', (e) => {
-			if (e.key === 'preselectedFileIds' || e.key === 'preselectedParticipants') {
+			if (
+				e.key === 'preselectedFileIds' ||
+				e.key === 'preselectedParticipants' ||
+				e.key === 'preselectedUrls' ||
+				e.key === 'preselectedDatasetName' ||
+				e.key === 'preselectedDatasetShape' ||
+				e.key === 'preselectedDatasetDataType'
+			) {
 				refreshBannerIfNeeded()
 			}
 		})
@@ -5845,12 +6388,240 @@ steps:${
 
 	// Open run pipeline modal with dataset context
 	// Called from Data tab when user clicks "Run Pipeline" on a dataset card
-	async function openRunPipelineWithDataset({ name, dataType, entry }) {
-		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry })
+	// Also called from Network tab for peer datasets with mock data
+	async function openRunPipelineWithDataset({ name, dataType, entry, pipelineId }) {
+		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry, pipelineId })
 
 		try {
-			// Get dataset from database to extract file IDs
-			// list_datasets_with_assets returns: [{ dataset: {..., name}, assets: [...] }, ...]
+			let assets = []
+			const setDatasetContext = ({
+				datasetName,
+				datasetOwner,
+				assetKeys,
+				dataTypeLabel,
+				dataSource,
+			}) => {
+				try {
+					if (datasetName) {
+						sessionStorage.setItem('preselectedDatasetName', datasetName)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetName')
+					}
+					if (datasetOwner) {
+						sessionStorage.setItem('preselectedDatasetOwner', datasetOwner)
+					} else {
+						sessionStorage.removeItem('preselectedDatasetOwner')
+					}
+					if (assetKeys && assetKeys.length > 0) {
+						sessionStorage.setItem('preselectedAssetKeys', JSON.stringify(assetKeys))
+					} else {
+						sessionStorage.removeItem('preselectedAssetKeys')
+					}
+					if (dataTypeLabel) {
+						sessionStorage.setItem('preselectedDataType', dataTypeLabel)
+					} else {
+						sessionStorage.removeItem('preselectedDataType')
+					}
+					if (dataSource) {
+						sessionStorage.setItem('preselectedDataSource', dataSource)
+					} else {
+						sessionStorage.removeItem('preselectedDataSource')
+					}
+				} catch (err) {
+					console.warn('Failed to set dataset context:', err)
+				}
+			}
+
+			const storeDataSelection = ({
+				urls,
+				participantIds,
+				mockUrls,
+				mockParticipantIds,
+				realUrls,
+				realParticipantIds,
+			}) => {
+				try {
+					if (Array.isArray(urls) && urls.length > 0) {
+						sessionStorage.setItem('preselectedUrls', JSON.stringify(urls))
+					} else {
+						sessionStorage.removeItem('preselectedUrls')
+					}
+					if (Array.isArray(participantIds) && participantIds.length > 0) {
+						sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+					} else {
+						sessionStorage.removeItem('preselectedParticipants')
+					}
+					if (Array.isArray(mockUrls) && mockUrls.length > 0) {
+						sessionStorage.setItem('preselectedUrlsMock', JSON.stringify(mockUrls))
+					} else {
+						sessionStorage.removeItem('preselectedUrlsMock')
+					}
+					if (Array.isArray(mockParticipantIds) && mockParticipantIds.length > 0) {
+						sessionStorage.setItem(
+							'preselectedParticipantsMock',
+							JSON.stringify(mockParticipantIds),
+						)
+					} else {
+						sessionStorage.removeItem('preselectedParticipantsMock')
+					}
+					if (Array.isArray(realUrls) && realUrls.length > 0) {
+						sessionStorage.setItem('preselectedUrlsReal', JSON.stringify(realUrls))
+					} else {
+						sessionStorage.removeItem('preselectedUrlsReal')
+					}
+					if (Array.isArray(realParticipantIds) && realParticipantIds.length > 0) {
+						sessionStorage.setItem(
+							'preselectedParticipantsReal',
+							JSON.stringify(realParticipantIds),
+						)
+					} else {
+						sessionStorage.removeItem('preselectedParticipantsReal')
+					}
+				} catch (err) {
+					console.warn('Failed to store dataset selection:', err)
+				}
+			}
+
+			// Check if this is a network dataset (has owner that's not us) or local dataset
+			const isNetworkDataset = entry && entry.owner && !entry.is_own
+
+			if (isNetworkDataset) {
+				// For network datasets, use the assets from the entry directly
+				console.log('Using network dataset assets from entry')
+				assets = entry.assets || []
+
+				// Network dataset assets have a different structure - extract mock paths
+				if (dataType === 'mock' && assets.length > 0) {
+					const mockEntryUrls = []
+					const mockEntryParticipants = []
+
+					for (const asset of assets) {
+						if (Array.isArray(asset.mock_entries)) {
+							for (const entry of asset.mock_entries) {
+								if (entry?.url) {
+									mockEntryUrls.push(entry.url)
+									mockEntryParticipants.push(entry.participant_id || '')
+								}
+							}
+						}
+					}
+
+					if (mockEntryUrls.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
+						console.log('Using network mock entries:', mockEntryUrls)
+						storeDataSelection({
+							urls: mockEntryUrls,
+							participantIds: mockEntryParticipants,
+							mockUrls: mockEntryUrls,
+							mockParticipantIds: mockEntryParticipants,
+						})
+
+						if (navigateTo) {
+							navigateTo('run')
+						}
+
+						setTimeout(async () => {
+							try {
+								await loadPipelines()
+								await showDataRunModalDirect(pipelineId)
+							} catch (err) {
+								console.error('Error showing data run modal:', err)
+							}
+						}, 100)
+						return
+					}
+
+					const mockPaths = []
+
+					// Get the datasites directory to derive local paths from mock_url if needed
+					let datasitesDir = null
+					try {
+						const configInfo = await invoke('get_syftbox_config_info')
+						if (configInfo?.data_dir) {
+							datasitesDir = configInfo.data_dir.endsWith('/datasites')
+								? configInfo.data_dir
+								: configInfo.data_dir + '/datasites'
+						}
+					} catch (err) {
+						console.warn('Could not get datasites dir:', err)
+					}
+
+					for (const asset of assets) {
+						// Network assets have mock_path directly (if file is synced)
+						if (asset.mock_path) {
+							mockPaths.push(asset.mock_path)
+						} else if (asset.mock_url && datasitesDir) {
+							// Derive local path from mock_url
+							// mock_url format: syft://{owner}/public/biovault/datasets/{name}/assets/{file}
+							// local path: {datasitesDir}/{owner}/public/biovault/datasets/{name}/assets/{file}
+							const urlPath = asset.mock_url.replace(/^syft:\/\//, '')
+							const localPath = datasitesDir + '/' + urlPath
+							console.log('Derived mock path from URL:', localPath)
+							mockPaths.push(localPath)
+						}
+					}
+					if (mockPaths.length > 0) {
+						const assetKeys = assets
+							.map((asset) => asset.key || asset.asset_key || asset.assetKey)
+							.filter(Boolean)
+						setDatasetContext({
+							datasetName: entry?.name || name,
+							datasetOwner: entry?.owner,
+							assetKeys,
+							dataTypeLabel: dataType,
+							dataSource: 'network_dataset',
+						})
+						console.log('Using network mock paths:', mockPaths)
+						// Set paths directly for pipeline run
+						sessionStorage.removeItem('preselectedDatasetName')
+						sessionStorage.removeItem('preselectedDatasetShape')
+						sessionStorage.removeItem('preselectedDatasetDataType')
+						const mockUrls = mockPaths.map((p) => `file://${p}`)
+						const mockParticipants = mockPaths.map(() => '')
+						storeDataSelection({
+							urls: mockUrls,
+							participantIds: mockParticipants,
+							mockUrls,
+							mockParticipantIds: mockParticipants,
+						})
+
+						// Navigate to pipelines tab
+						if (navigateTo) {
+							navigateTo('run')
+						}
+
+						// Wait for navigation and then show modal
+						setTimeout(async () => {
+							try {
+								await loadPipelines()
+								await showDataRunModalDirect(pipelineId)
+							} catch (err) {
+								console.error('Error showing data run modal:', err)
+							}
+						}, 100)
+						return
+					}
+				}
+
+				if (dialog?.message) {
+					await dialog.message('No synced mock data found for this dataset.', {
+						title: 'No Mock Data',
+						type: 'warning',
+					})
+				}
+				return
+			}
+
+			// For local datasets or if network path extraction failed, query database
 			console.log('Fetching datasets with list_datasets_with_assets...')
 			const datasetsWithAssets = await invoke('list_datasets_with_assets')
 			console.log('Got datasets:', datasetsWithAssets)
@@ -5871,7 +6642,17 @@ steps:${
 			}
 
 			// Assets are included in the response
-			const assets = datasetEntry.assets || []
+			assets = datasetEntry.assets || []
+			const assetKeys = assets
+				.map((asset) => asset.asset_key || asset.key || asset.assetKey)
+				.filter(Boolean)
+			setDatasetContext({
+				datasetName: datasetEntry.dataset?.name || name,
+				datasetOwner: datasetEntry.dataset?.author || entry?.owner || null,
+				assetKeys,
+				dataTypeLabel: dataType,
+				dataSource: 'dataset',
+			})
 			console.log('Dataset assets:', assets)
 			if (assets.length === 0) {
 				console.error('Dataset has no assets:', name)
@@ -5880,29 +6661,81 @@ steps:${
 				}
 				return
 			}
-			const urls = []
-			const participantIds = []
+
+			// Resolve dataset shape for type matching
+			const datasetShape = resolveDatasetShape(datasetEntry, assets, dataType)
+
+			// Store dataset context in sessionStorage
+			sessionStorage.setItem('preselectedDatasetName', name)
+			if (datasetShape) {
+				sessionStorage.setItem('preselectedDatasetShape', datasetShape)
+			} else {
+				sessionStorage.removeItem('preselectedDatasetShape')
+			}
+			if (dataType) {
+				sessionStorage.setItem('preselectedDatasetDataType', dataType)
+			} else {
+				sessionStorage.removeItem('preselectedDatasetDataType')
+			}
+			sessionStorage.removeItem('preselectedFileIds')
+
+			const mockUrls = []
+			const mockParticipantIds = []
+			const realUrls = []
+			const realParticipantIds = []
+
+			console.error('DEBUG: All assets for extraction:', JSON.stringify(assets, null, 2))
+			console.error('DEBUG: dataType =', dataType)
 
 			// Extract URLs and participant IDs based on dataType
 			for (const asset of assets) {
-				// Parse the private_ref and mock_ref JSON
+				console.error('Processing asset:', asset.asset_key, {
+					private_ref: asset.private_ref,
+					mock_ref: asset.mock_ref,
+					private_path: asset.private_path,
+					mock_path: asset.mock_path,
+					resolved_private_path: asset.resolved_private_path,
+					resolved_mock_path: asset.resolved_mock_path,
+					private_file_id: asset.private_file_id,
+					mock_file_id: asset.mock_file_id,
+				})
+				// Parse the private_ref and mock_ref - they can be:
+				// 1. JSON objects with entries array (twin_list)
+				// 2. Plain URL strings (syft://...)
+				// 3. Template strings like {url}.private (not useful for extraction)
 				let privateRef = null
 				let mockRef = null
 
 				if (asset.private_ref) {
-					try {
-						privateRef = JSON.parse(asset.private_ref)
-					} catch (e) {
-						console.warn('Failed to parse private_ref:', e)
+					// Only try to parse if it looks like JSON (starts with { or [)
+					const trimmed = asset.private_ref.trim()
+					if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+						try {
+							privateRef = JSON.parse(asset.private_ref)
+						} catch (e) {
+							console.warn('Failed to parse private_ref as JSON:', e)
+						}
+					} else if (trimmed.startsWith('syft://') || trimmed.startsWith('http')) {
+						// Plain URL string
+						privateRef = { url: trimmed }
 					}
+					// Template strings like {url}.private are ignored
 				}
 
 				if (asset.mock_ref) {
-					try {
-						mockRef = JSON.parse(asset.mock_ref)
-					} catch (e) {
-						console.warn('Failed to parse mock_ref:', e)
+					// Only try to parse if it looks like JSON (starts with { or [)
+					const trimmed = asset.mock_ref.trim()
+					if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+						try {
+							mockRef = JSON.parse(asset.mock_ref)
+						} catch (e) {
+							console.warn('Failed to parse mock_ref as JSON:', e)
+						}
+					} else if (trimmed.startsWith('syft://') || trimmed.startsWith('http')) {
+						// Plain URL string
+						mockRef = { url: trimmed }
 					}
+					// Template strings are ignored
 				}
 
 				// For twin_list assets, extract entries
@@ -5910,15 +6743,20 @@ steps:${
 					if (mockRef?.entries) {
 						for (const mockEntry of mockRef.entries) {
 							if (mockEntry.url) {
-								urls.push(mockEntry.url)
+								mockUrls.push(mockEntry.url)
 								// Keep participant_ids aligned with urls
-								participantIds.push(mockEntry.participant_id || '')
+								mockParticipantIds.push(mockEntry.participant_id || '')
 							}
 						}
 					} else if (mockRef?.url) {
-						// Single mock file URL
-						urls.push(mockRef.url)
-						participantIds.push('')
+						// Single mock file URL from parsed ref
+						mockUrls.push(mockRef.url)
+						mockParticipantIds.push('')
+					} else if (asset.resolved_mock_path || asset.mock_path) {
+						// Fallback: use resolved_mock_path or mock_path for single-file assets
+						const mockPath = asset.resolved_mock_path || asset.mock_path
+						mockUrls.push(`file://${mockPath}`)
+						mockParticipantIds.push('')
 					}
 				}
 
@@ -5927,24 +6765,38 @@ steps:${
 						for (const privEntry of privateRef.entries) {
 							// Private entries can have url (for remote lookup) or file_path (local path)
 							if (privEntry.url) {
-								urls.push(privEntry.url)
-								participantIds.push(privEntry.participant_id || '')
+								realUrls.push(privEntry.url)
+								realParticipantIds.push(privEntry.participant_id || '')
 							} else if (privEntry.file_path) {
 								// For local private files, construct a file:// URL or use path directly
-								urls.push(`file://${privEntry.file_path}`)
-								participantIds.push(privEntry.participant_id || '')
+								realUrls.push(`file://${privEntry.file_path}`)
+								realParticipantIds.push(privEntry.participant_id || '')
 							}
 						}
 					} else if (privateRef?.url) {
-						// Single private file - need to look up in mapping.yaml via fragment
-						urls.push(privateRef.url)
-						participantIds.push('')
+						// Single private file URL from parsed ref
+						realUrls.push(privateRef.url)
+						realParticipantIds.push('')
+					} else if (asset.resolved_private_path || asset.private_path) {
+						// Fallback: use resolved_private_path or private_path for single-file assets
+						const privatePath = asset.resolved_private_path || asset.private_path
+						realUrls.push(`file://${privatePath}`)
+						realParticipantIds.push('')
 					}
 				}
 			}
 
-			console.log('Extracted URLs:', urls)
-			console.log('Extracted participant IDs:', participantIds)
+			const urls =
+				dataType === 'real' ? realUrls : dataType === 'mock' ? mockUrls : [...mockUrls, ...realUrls]
+			const participantIds =
+				dataType === 'real'
+					? realParticipantIds
+					: dataType === 'mock'
+						? mockParticipantIds
+						: [...mockParticipantIds, ...realParticipantIds]
+
+			console.error('DEBUG: Extracted URLs:', urls)
+			console.error('DEBUG: Extracted participant IDs:', participantIds)
 
 			if (urls.length === 0) {
 				if (dialog?.message) {
@@ -5956,11 +6808,26 @@ steps:${
 				return
 			}
 
-			// Set in sessionStorage for pipeline selection (using new URLs-based approach)
-			sessionStorage.setItem('preselectedUrls', JSON.stringify(urls))
-			if (participantIds.length > 0) {
-				sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
+			if (
+				dataType === 'both' &&
+				(mockUrls.length === 0 || realUrls.length === 0) &&
+				dialog?.message
+			) {
+				await dialog.message(
+					'Only one data side is available for this dataset. We will run the available data selection.',
+					{ title: 'Partial Selection', type: 'warning' },
+				)
 			}
+
+			// Set in sessionStorage for pipeline selection (using new URLs-based approach)
+			storeDataSelection({
+				urls,
+				participantIds,
+				mockUrls,
+				mockParticipantIds,
+				realUrls,
+				realParticipantIds,
+			})
 
 			// Clear cached context to force fresh read
 			pipelineState.pendingDataRun = null
@@ -5974,7 +6841,7 @@ steps:${
 			setTimeout(async () => {
 				try {
 					await loadPipelines()
-					await showDataRunModalDirect()
+					await showDataRunModalDirect(pipelineId)
 				} catch (err) {
 					console.error('Error showing data run modal:', err)
 					const errMsg = err?.message || String(err) || 'Unknown error'
@@ -5998,6 +6865,161 @@ steps:${
 		}
 	}
 
+	// State for pipeline request flow
+	let pendingPipelineRequest = null
+
+	// Open modal to select a pipeline to request run on peer's private data
+	async function openRequestPipelineRun({ datasetName, datasetOwner, dataset }) {
+		console.log('openRequestPipelineRun:', { datasetName, datasetOwner, dataset })
+
+		pendingPipelineRequest = { datasetName, datasetOwner, dataset }
+
+		// Ensure we're on pipelines tab
+		if (navigateTo) {
+			navigateTo('pipelines')
+		}
+
+		// Load pipelines if not already loaded
+		await loadPipelines()
+
+		// Show pipeline selection modal for request
+		showRequestPipelineModal()
+	}
+
+	function showRequestPipelineModal() {
+		// Check if we have any pipelines
+		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
+			if (dialog?.message) {
+				dialog.message('You need to create a pipeline first before you can request a run.', {
+					title: 'No Pipelines',
+					type: 'warning',
+				})
+			}
+			return
+		}
+
+		// Create modal HTML
+		const modalHtml = `
+			<div id="request-pipeline-modal" class="modal-overlay">
+				<div class="modal-content request-pipeline-modal">
+					<div class="modal-header">
+						<h3>Request Pipeline Run</h3>
+						<button class="modal-close" onclick="document.getElementById('request-pipeline-modal').remove()">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>
+					</div>
+					<div class="modal-body">
+						<p style="margin-bottom: 16px; color: var(--text-secondary);">
+							Select a pipeline to send to <strong>${escapeHtml(pendingPipelineRequest?.datasetOwner || '')}</strong>
+							for running on their private data in dataset <strong>${escapeHtml(pendingPipelineRequest?.datasetName || '')}</strong>.
+						</p>
+						<div class="form-group">
+							<label>Select Pipeline</label>
+							<select id="request-pipeline-select" class="form-control">
+								${pipelineState.pipelines.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (v${p.version || '1.0.0'})</option>`).join('')}
+							</select>
+						</div>
+						<div class="form-group">
+							<label>Message (optional)</label>
+							<textarea id="request-pipeline-message" class="form-control" rows="3" placeholder="Add a message for the recipient..."></textarea>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-secondary" onclick="document.getElementById('request-pipeline-modal').remove()">Cancel</button>
+						<button class="btn btn-primary" id="send-pipeline-request-btn">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="22" y1="2" x2="11" y2="13"></line>
+								<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+							</svg>
+							Send Request
+						</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		// Remove existing modal if any
+		document.getElementById('request-pipeline-modal')?.remove()
+
+		// Add modal to DOM
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		// Wire up send button
+		document
+			.getElementById('send-pipeline-request-btn')
+			?.addEventListener('click', handleSendPipelineRequest)
+	}
+
+	async function handleSendPipelineRequest() {
+		const select = document.getElementById('request-pipeline-select')
+		const messageInput = document.getElementById('request-pipeline-message')
+		const pipelineName = select?.value
+		const message = messageInput?.value || ''
+
+		if (!pipelineName || !pendingPipelineRequest) {
+			return
+		}
+
+		const { datasetName, datasetOwner, dataset: _dataset } = pendingPipelineRequest
+
+		// Find the selected pipeline
+		const pipeline = pipelineState.pipelines.find((p) => p.name === pipelineName)
+		if (!pipeline) {
+			if (dialog?.message) {
+				await dialog.message('Pipeline not found', { title: 'Error', type: 'error' })
+			}
+			return
+		}
+
+		console.log('Sending pipeline request:', { pipeline, datasetName, datasetOwner, message })
+
+		try {
+			// Send the pipeline request via messaging system
+			// This will package the pipeline and send it as a message
+			const sentMessage = await invoke('send_pipeline_request', {
+				pipelineName: pipeline.name,
+				pipelineVersion: pipeline.version || '1.0.0',
+				datasetName,
+				recipient: datasetOwner,
+				message:
+					message ||
+					`Please run the ${pipeline.name} pipeline on your private data in dataset ${datasetName}.`,
+			})
+
+			// Close modal
+			document.getElementById('request-pipeline-modal')?.remove()
+			pendingPipelineRequest = null
+
+			if (dialog?.message) {
+				await dialog.message(
+					`Pipeline request sent to ${datasetOwner}.\n\nThey will receive a message with the pipeline and can choose to run it on their private data.`,
+					{ title: 'Request Sent', type: 'info' },
+				)
+			}
+
+			const threadId = sentMessage?.thread_id || `pipeline-${pipeline.name}:${datasetName}`
+			if (typeof window.navigateTo === 'function') {
+				window.navigateTo('messages')
+			}
+			setTimeout(() => {
+				window.__messagesModule?.loadMessageThreads?.(true)
+				window.__messagesModule?.openThread?.(threadId)
+			}, 250)
+		} catch (error) {
+			console.error('Failed to send pipeline request:', error)
+			const errorMsg = error?.message || String(error) || 'Unknown error'
+			if (dialog?.message) {
+				await dialog.message('Failed to send pipeline request: ' + errorMsg, {
+					title: 'Error',
+					type: 'error',
+				})
+			}
+		}
+	}
+
 	return {
 		initialize,
 		loadPipelines,
@@ -6005,5 +7027,6 @@ steps:${
 		backToPipelinesList,
 		addProjectAsStep, // Expose for project creation to call
 		openRunPipelineWithDataset, // Expose for dataset "Run Pipeline" button
+		openRequestPipelineRun, // Expose for network "Request Run" button
 	}
 }
