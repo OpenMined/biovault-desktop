@@ -1,6 +1,12 @@
 node_modules
 .repo
 biovault
+bioscript
+biovault-beaver
+sbenv
+syft-crypto-core
+syftbox
+syftbox-sdk
 sandbox
 artifacts
 logs

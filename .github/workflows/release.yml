@@ -91,6 +91,10 @@ jobs:
         shell: bash
         run: ./repo --init --https
 
+      - name: Setup workspace symlinks
+        shell: bash
+        run: ./scripts/setup-repo-workspace.sh
+
       - name: Resolve release version
         id: version
         env:
@@ -303,6 +307,10 @@ jobs:
       - name: Sync workspace deps
         shell: bash
         run: ./repo --init --https
+
+      - name: Setup workspace symlinks
+        shell: bash
+        run: ./scripts/setup-repo-workspace.sh
 
       - name: Dry run mode notice
         if: ${{ inputs.dry_run }}

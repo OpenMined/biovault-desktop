@@ -29,6 +29,10 @@ jobs:
         shell: bash
         run: ./repo --init --https
 
+      - name: Setup workspace symlinks
+        shell: bash
+        run: ./scripts/setup-repo-workspace.sh
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -154,6 +158,10 @@ jobs:
       - name: Sync workspace deps
         shell: bash
         run: ./repo --init --https
+
+      - name: Setup workspace symlinks
+        shell: bash
+        run: ./scripts/setup-repo-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
