@@ -16,7 +16,16 @@ fi
 # This mirrors dev-two.sh but drives Playwright specs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIOVAULT_DIR="$ROOT_DIR/biovault"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
+BIOVAULT_BEAVER_DIR="${BIOVAULT_BEAVER_DIR:-$WORKSPACE_ROOT/biovault-beaver}"
+SYFTBOX_SDK_DIR="${SYFTBOX_SDK_DIR:-$WORKSPACE_ROOT/syftbox-sdk}"
+if [[ ! -d "$BIOVAULT_BEAVER_DIR" && -d "$BIOVAULT_DIR/biovault-beaver" ]]; then
+	BIOVAULT_BEAVER_DIR="$BIOVAULT_DIR/biovault-beaver"
+fi
+if [[ ! -d "$SYFTBOX_SDK_DIR" && -d "$BIOVAULT_DIR/syftbox-sdk" ]]; then
+	SYFTBOX_SDK_DIR="$BIOVAULT_DIR/syftbox-sdk"
+fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-scenario.log}"
@@ -767,11 +776,11 @@ assert_tauri_binary_fresh() {
 		"$ROOT_DIR/src-tauri/src"
 		"$ROOT_DIR/src-tauri/Cargo.toml"
 		"$ROOT_DIR/src-tauri/Cargo.lock"
-		"$ROOT_DIR/biovault/cli/src"
-		"$ROOT_DIR/biovault/cli/Cargo.toml"
-		"$ROOT_DIR/biovault/cli/Cargo.lock"
-		"$ROOT_DIR/biovault/syftbox-sdk/src"
-		"$ROOT_DIR/biovault/syftbox-sdk/Cargo.toml"
+		"$BIOVAULT_DIR/cli/src"
+		"$BIOVAULT_DIR/cli/Cargo.toml"
+		"$BIOVAULT_DIR/cli/Cargo.lock"
+		"$SYFTBOX_SDK_DIR/src"
+		"$SYFTBOX_SDK_DIR/Cargo.toml"
 	)
 
 	for p in "${candidates[@]}"; do
@@ -973,7 +982,7 @@ warm_jupyter_cache() {
 
 	# Get beaver version from __init__.py (same as build.rs does)
 	local beaver_version
-	beaver_version="$(grep '^__version__' "$ROOT_DIR/biovault/biovault-beaver/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
+	beaver_version="$(grep '^__version__' "$BIOVAULT_BEAVER_DIR/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
 
 	# Install PyPI packages first
 	timer_push "Jupyter cache: pip install (pypi)"
@@ -982,7 +991,7 @@ warm_jupyter_cache() {
 	timer_pop
 
 	# Install local editable syftbox-sdk if available
-	local syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
+	local syftbox_path="$SYFTBOX_SDK_DIR/python"
 	if [[ -d "$syftbox_path" ]]; then
 		timer_push "Jupyter cache: pip install (syftbox-sdk)"
 		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
@@ -993,7 +1002,7 @@ warm_jupyter_cache() {
 	fi
 
 	# Install local editable beaver if available
-	local beaver_path="$ROOT_DIR/biovault/biovault-beaver/python"
+	local beaver_path="$BIOVAULT_BEAVER_DIR/python"
 	if [[ -d "$beaver_path" ]]; then
 		timer_push "Jupyter cache: pip install (beaver)"
 		info "Installing beaver from local source..."

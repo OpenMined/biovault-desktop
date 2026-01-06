@@ -57,14 +57,15 @@ UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
 node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
 
-# Force rebuild biovault submodule
-info "Force rebuilding biovault submodule"
+# Force rebuild biovault dependency
+info "Force rebuilding biovault dependency"
 cd "$ROOT_DIR/src-tauri"
 cargo clean -p biovault >/dev/null 2>&1
 cd "$ROOT_DIR"
 
 # Set up BioVault configuration
-BV_PATH="$ROOT_DIR/biovault/bv"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$ROOT_DIR/biovault}"
+BV_PATH="$BIOVAULT_DIR/bv"
 if [ -n "${BIOVAULT_CONFIG:-}" ]; then
     export BIOVAULT_HOME="$BIOVAULT_CONFIG"
 else

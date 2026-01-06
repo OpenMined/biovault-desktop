@@ -12,9 +12,15 @@ set -euo pipefail
 # Defaults: client1=client1@sandbox.local, client2=client2@sandbox.local
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
+SBENV_DIR="${SBENV_DIR:-$WORKSPACE_ROOT/sbenv}"
+if [[ ! -d "$SBENV_DIR" && -d "$BIOVAULT_DIR/sbenv" ]]; then
+  SBENV_DIR="$BIOVAULT_DIR/sbenv"
+fi
 SYFTBOX_BIN_RES="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
-SBENV_BIN="$ROOT_DIR/biovault/sbenv/cli/target/release/sbenv"
-BV_CLI_BIN="$ROOT_DIR/biovault/cli/target/release/bv"
+SBENV_BIN="$SBENV_DIR/cli/target/release/sbenv"
+BV_CLI_BIN="$BIOVAULT_DIR/cli/target/release/bv"
 SYFTBOX_URL="${SYFTBOX_URL:-https://dev.syftbox.net}"
 SYFTBOX_AUTH_ENABLED="${SYFTBOX_AUTH_ENABLED:-1}"
 SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
@@ -42,11 +48,11 @@ build_syftbox() {
 
 ensure_cli() {
   echo "[live] Building BioVault CLI (cargo build --release)..."
-  (cd "$ROOT_DIR/biovault/cli" && cargo build --release)
+  (cd "$BIOVAULT_DIR/cli" && cargo build --release)
 
   if [[ ! -x "$SBENV_BIN" ]]; then
     echo "[live] Building sbenv CLI (cargo build --release)..."
-    (cd "$ROOT_DIR/biovault/sbenv/cli" && cargo build --release)
+    (cd "$SBENV_DIR/cli" && cargo build --release)
   fi
 }
 

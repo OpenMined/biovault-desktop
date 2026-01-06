@@ -11,7 +11,10 @@ set -euo pipefail
 # This script makes that behavior consistent across platforms.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NOTEBOOKS_SRC="${NOTEBOOKS_SRC:-$ROOT_DIR/biovault/biovault-beaver/notebooks}"
+NOTEBOOKS_SRC="${NOTEBOOKS_SRC:-$ROOT_DIR/biovault-beaver/notebooks}"
+if [[ ! -d "$NOTEBOOKS_SRC" && -d "$ROOT_DIR/biovault/biovault-beaver/notebooks" ]]; then
+  NOTEBOOKS_SRC="$ROOT_DIR/biovault/biovault-beaver/notebooks"
+fi
 TEMPLATES_DEST="${TEMPLATES_DEST:-$ROOT_DIR/src-tauri/resources/templates}"
 
 if [[ ! -d "$NOTEBOOKS_SRC" ]]; then

@@ -23,14 +23,19 @@ set -euo pipefail
 #   --skip-sync-check  Skip the sbdev sync probe
 #   --client EMAIL     Add a client (repeatable, defaults to client1/client2)
 #   --clients a,b,c    Comma-separated client list
-#   --path DIR         Override sandbox root (default: biovault/syftbox/sandbox)
+#   --path DIR         Override sandbox root (default: biovault/sandbox)
 #   --single [EMAIL]   Launch only one desktop (defaults to first client)
 #   --stop             Stop devstack and any desktop processes
 #
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIOVAULT_DIR="$SCRIPT_DIR/biovault"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$SCRIPT_DIR}"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
+SYFTBOX_DIR="${SYFTBOX_DIR:-$WORKSPACE_ROOT/syftbox}"
+if [[ ! -d "$SYFTBOX_DIR" && -d "$BIOVAULT_DIR/syftbox" ]]; then
+  SYFTBOX_DIR="$BIOVAULT_DIR/syftbox"
+fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
 WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
@@ -165,7 +170,7 @@ ensure_bv_cli() {
 }
 
 sbdev_tool() {
-  (cd "$BIOVAULT_DIR/syftbox" && GOCACHE="$BIOVAULT_DIR/syftbox/.gocache" go run ./cmd/devstack "$@")
+  (cd "$SYFTBOX_DIR" && GOCACHE="$SYFTBOX_DIR/.gocache" go run ./cmd/devstack "$@")
 }
 
 find_state_file() {

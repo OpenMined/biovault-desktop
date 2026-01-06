@@ -82,8 +82,16 @@ jobs:
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Install repo tool
+        shell: bash
+        run: ./scripts/install-repo-tool.sh
+
+      - name: Sync workspace deps
+        shell: bash
+        run: |
+          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
+          $REPO_TOOL sync
 
       - name: Resolve release version
         id: version
@@ -278,8 +286,16 @@ jobs:
 
       - name: Checkout project
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Install repo tool
+        shell: bash
+        run: ./scripts/install-repo-tool.sh
+
+      - name: Sync workspace deps
+        shell: bash
+        run: |
+          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
+          $REPO_TOOL sync
 
       - name: Dry run mode notice
         if: ${{ inputs.dry_run }}
@@ -399,17 +415,17 @@ jobs:
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Go (syftbox, Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Cache Rust dependencies
         if: matrix.build_kind == 'tauri'

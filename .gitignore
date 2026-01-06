@@ -45,3 +45,17 @@ templates-dev/
 # Test data (synthetic genotypes)
 test-data/
 data/*
+
+# Workspace dependencies (repo tool-managed)
+biovault/
+bioscript/
+biovault-beaver/
+syftbox/
+syftbox-sdk/
+syft-crypto-core/
+sbenv/
+
+# repo tool workspace metadata
+.repo/
+.repo-bin/
+.repo-manifest/

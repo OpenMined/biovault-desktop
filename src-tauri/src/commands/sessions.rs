@@ -199,11 +199,7 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
     let config = load_notebook_config(app);
     let notebooks: Vec<NotebookEntry> = if dev_mode { config.dev } else { config.prod };
 
-    let submodule_notebooks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("biovault")
-        .join("biovault-beaver")
-        .join("notebooks");
+    let beaver_notebooks = resolve_beaver_root().join("notebooks");
     let templates_dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("templates-dev");
@@ -233,11 +229,11 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
 
         if dev_mode {
             // Dev mode: create symlink to source file so notebooks stay up-to-date.
-            // Check submodule first (tutorial notebooks), then templates-dev (demo notebooks).
+            // Check biovault-beaver first (tutorial notebooks), then templates-dev (demo notebooks).
             let source = {
-                let submodule_path = submodule_notebooks.join(&entry.source);
-                if submodule_path.exists() {
-                    submodule_path
+                let beaver_path = beaver_notebooks.join(&entry.source);
+                if beaver_path.exists() {
+                    beaver_path
                 } else {
                     templates_dev.join(&entry.source)
                 }
@@ -294,20 +290,15 @@ fn copy_example_notebooks(session_path: &Path, app: &tauri::AppHandle) {
 fn load_notebook_config(app: &tauri::AppHandle) -> NotebookConfig {
     const CONFIG_NAME: &str = "notebooks.yaml";
 
-    // Dev mode: prefer reading from the biovault-beaver submodule directly so notebooks don't go stale
+    // Dev mode: prefer reading from biovault-beaver directly so notebooks don't go stale
     // and we don't need to copy files into resources during local development.
     if crate::is_dev_mode() {
-        let submodule_config = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("biovault")
-            .join("biovault-beaver")
-            .join("notebooks")
-            .join(CONFIG_NAME);
-        if let Ok(bytes) = fs::read(&submodule_config) {
+        let beaver_config = resolve_beaver_root().join("notebooks").join(CONFIG_NAME);
+        if let Ok(bytes) = fs::read(&beaver_config) {
             return serde_yaml::from_slice(&bytes).unwrap_or_else(|e| {
                 eprintln!(
                     "Warning: Failed to parse notebook config ({}): {}",
-                    submodule_config.display(),
+                    beaver_config.display(),
                     e
                 );
                 NotebookConfig::default()
@@ -330,6 +321,23 @@ fn load_notebook_config(app: &tauri::AppHandle) -> NotebookConfig {
         );
         NotebookConfig::default()
     }
+}
+
+fn resolve_beaver_root() -> PathBuf {
+    if let Ok(path) = std::env::var("BIOVAULT_BEAVER_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Ok(root) = std::env::var("WORKSPACE_ROOT") {
+        return PathBuf::from(root).join("biovault-beaver");
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let direct = manifest_dir.join("..").join("biovault-beaver");
+    if direct.exists() {
+        return direct;
+    }
+
+    manifest_dir.join("..").join("biovault").join("biovault-beaver")
 }
 
 fn template_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {

@@ -20,8 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Install repo tool
+        shell: bash
+        run: ./scripts/install-repo-tool.sh
+
+      - name: Sync workspace deps
+        shell: bash
+        run: |
+          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
+          $REPO_TOOL sync
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -85,8 +93,16 @@ jobs:
         shell: bash
 
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Install repo tool
+        shell: bash
+        run: ./scripts/install-repo-tool.sh
+
+      - name: Sync workspace deps
+        shell: bash
+        run: |
+          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
+          $REPO_TOOL sync
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -97,7 +113,7 @@ jobs:
           workspaces: |
             src-tauri
             biovault/cli
-            biovault/syftbox-sdk
+            syftbox-sdk
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -123,9 +139,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -197,7 +213,7 @@ jobs:
 
       - name: Pre-build syftbox-sdk wheel
         run: |
-          cd biovault/syftbox-sdk/python
+          cd syftbox-sdk/python
           maturin build --release
 
       - name: Run Jupyter collab scenario
@@ -206,7 +222,7 @@ jobs:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           JUPYTER_PAUSE_TIME: "5000"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines solo scenario
         if: matrix.scenario == 'pipelines-solo'

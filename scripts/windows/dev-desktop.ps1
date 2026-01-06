@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
 
-Write-Host "== Force rebuilding biovault submodule... ==" -ForegroundColor Blue
+Write-Host "== Force rebuilding biovault dependency... ==" -ForegroundColor Blue
 
 Push-Location (Join-Path $repoRoot "src-tauri")
 try {
@@ -16,7 +16,8 @@ try {
 Write-Host "Cleaned biovault package cache" -ForegroundColor Green
 
 # Set BioVault paths
-$bvPath = Join-Path $repoRoot "biovault\bv"
+$biovaultDir = if ($env:BIOVAULT_DIR) { $env:BIOVAULT_DIR } else { Join-Path $repoRoot "biovault" }
+$bvPath = Join-Path $biovaultDir "bv"
 
 # Use custom config if BIOVAULT_CONFIG is set, otherwise use Desktop\BioVault
 if ($env:BIOVAULT_CONFIG) {
@@ -41,7 +42,11 @@ if (-not $env:PROTOC) {
 }
 
 # Set syftbox environment variables for dev builds
-$syftboxBinary = Join-Path $repoRoot "biovault\syftbox\bin\syftbox-dev.exe"
+$syftboxRoot = Join-Path $repoRoot "syftbox"
+if (-not (Test-Path $syftboxRoot)) {
+    $syftboxRoot = Join-Path $biovaultDir "syftbox"
+}
+$syftboxBinary = Join-Path $syftboxRoot "bin\syftbox-dev.exe"
 if (Test-Path $syftboxBinary) {
     $env:SYFTBOX_BINARY = $syftboxBinary
     $env:SYFTBOX_VERSION = "dev"
