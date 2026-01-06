@@ -26,6 +26,9 @@ Usage: ./mods.sh [OPTIONS]
 Options:
   (none)              Show repo tree with branch/dirty status
   --init              Initialize repo workspace and sync deps
+  sync                Sync workspace to manifest (repo sync)
+  pin                 Update manifest.xml to current repo SHAs
+  main                Checkout main in all repos (no reset)
   --status            Show repo tool status
   --branch [name]     Checkout/create branch in all repos
   checkout <rev> <target>
@@ -37,6 +40,7 @@ EOF
 }
 
 REPO_CMD=()
+REPO_ENV=(PAGER=cat GIT_PAGER=cat LESS=FRX)
 
 require_repo() {
   if command -v repo >/dev/null 2>&1; then
@@ -133,16 +137,100 @@ resolve_manifest_url() {
   echo "file://$MANIFEST_REPO_DIR"
 }
 
+run_repo() {
+  env "${REPO_ENV[@]}" "${REPO_CMD[@]}" "$@"
+}
+
 repo_init() {
   local url
   url="$(resolve_manifest_url)"
   local branch="${MANIFEST_BRANCH:-$MANIFEST_BRANCH_DEFAULT}"
 
   if [[ -n "$branch" ]]; then
-    "${REPO_CMD[@]}" init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
+    run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
   else
-    "${REPO_CMD[@]}" init -u "$url" -m "$MANIFEST_FILE"
+    run_repo init -u "$url" -m "$MANIFEST_FILE"
   fi
+}
+
+repo_sync() {
+  run_repo sync
+}
+
+repo_pin() {
+  run_repo manifest -r -o "$MANIFEST_FILE"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$MANIFEST_FILE" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+
+projects = [child for child in list(root) if child.tag == "project"]
+others = [child for child in list(root) if child.tag != "project"]
+
+def sort_key(elem):
+    return (elem.get("path") or "", elem.get("name") or "")
+
+projects.sort(key=sort_key)
+
+root[:] = others + projects
+
+def indent(elem, level=0):
+    i = "\n" + level * "  "
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + "  "
+        for child in elem:
+            indent(child, level + 1)
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = i
+
+indent(root)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PY
+  elif command -v python >/dev/null 2>&1; then
+    python - "$MANIFEST_FILE" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+
+projects = [child for child in list(root) if child.tag == "project"]
+others = [child for child in list(root) if child.tag != "project"]
+
+def sort_key(elem):
+    return (elem.get("path") or "", elem.get("name") or "")
+
+projects.sort(key=sort_key)
+
+root[:] = others + projects
+
+def indent(elem, level=0):
+    i = "\n" + level * "  "
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + "  "
+        for child in elem:
+            indent(child, level + 1)
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = i
+
+indent(root)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PY
+  fi
+  echo "Updated $MANIFEST_FILE"
 }
 
 require_repo_workspace() {
@@ -299,13 +387,7 @@ resolve_checkout_targets() {
   matches=()
 
   if [[ "$target" == "all" ]]; then
-    while IFS= read -r path; do
-      [[ -z "$path" ]] && continue
-      matches+=("$path")
-    done < <(manifest_paths)
-    for repo in "${matches[@]}"; do
-      printf '%s\n' "$repo"
-    done
+    manifest_paths
     return
   fi
 
@@ -424,12 +506,25 @@ case "${1:-}" in
   --init)
     require_repo
     repo_init
-    "${REPO_CMD[@]}" sync
+    repo_sync
+    ;;
+  sync)
+    require_repo
+    require_repo_workspace
+    repo_sync
+    ;;
+  pin)
+    require_repo
+    require_repo_workspace
+    repo_pin
+    ;;
+  main)
+    do_checkout main all
     ;;
   --status)
     require_repo
     require_repo_workspace
-    "${REPO_CMD[@]}" status
+    run_repo status
     ;;
   --branch)
     require_repo
@@ -439,7 +534,7 @@ case "${1:-}" in
       echo "Missing branch name" >&2
       exit 1
     fi
-    "${REPO_CMD[@]}" forall -c "git checkout -B \"$branch\""
+    run_repo forall -c "git checkout -B \"$branch\""
     ;;
   --help|-h)
     usage

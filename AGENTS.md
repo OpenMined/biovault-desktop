@@ -7,6 +7,7 @@ This repo is a kind of mono-repo for BioVault but uses Google's repo tool so the
 - Initialize/sync workspace: `repo init -u <manifest-url> -m manifest.xml` then `repo sync`
 - Status across repos: `repo status`
 - Branch all repos together: `repo forall -c 'git checkout -B <branch>'`
+- Local helper: `./mods.sh` (tree view), `./mods.sh --init`, `./mods.sh sync`, `./mods.sh pin`
 
 ## Layout + fallbacks
 - Preferred layout is sibling repos at the repo root:
