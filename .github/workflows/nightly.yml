@@ -35,9 +35,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -88,9 +86,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -245,9 +241,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -355,9 +349,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -465,9 +457,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

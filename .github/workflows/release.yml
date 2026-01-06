@@ -89,9 +89,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Resolve release version
         id: version
@@ -293,9 +291,7 @@ jobs:
 
       - name: Sync workspace deps
         shell: bash
-        run: |
-          $REPO_TOOL init -u "file://${{ github.workspace }}" -m manifest.xml
-          $REPO_TOOL sync
+        run: ./repo --init --https
 
       - name: Dry run mode notice
         if: ${{ inputs.dry_run }}
