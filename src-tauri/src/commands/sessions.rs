@@ -337,7 +337,10 @@ fn resolve_beaver_root() -> PathBuf {
         return direct;
     }
 
-    manifest_dir.join("..").join("biovault").join("biovault-beaver")
+    manifest_dir
+        .join("..")
+        .join("biovault")
+        .join("biovault-beaver")
 }
 
 fn template_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {

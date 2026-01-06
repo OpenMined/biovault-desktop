@@ -148,7 +148,8 @@ fn main() {
     if let Ok(path) = env::var("BIOVAULT_BEAVER_DIR") {
         beaver_init_path = PathBuf::from(path).join("python/src/beaver/__init__.py");
     } else if let Ok(root) = env::var("WORKSPACE_ROOT") {
-        beaver_init_path = PathBuf::from(root).join("biovault-beaver/python/src/beaver/__init__.py");
+        beaver_init_path =
+            PathBuf::from(root).join("biovault-beaver/python/src/beaver/__init__.py");
     }
 
     if !beaver_init_path.exists() {
