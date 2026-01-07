@@ -42,6 +42,9 @@ sandbox/*
 # Generated notebooks (build artifacts)
 templates-dev/
 
+# Old submodule directory (now cloned as sibling)
+/biovault/
+
 # Test data (synthetic genotypes)
 test-data/
 data/*

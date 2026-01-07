@@ -1,3 +1,2 @@
-[submodule "biovault"]
-	path = biovault
-	url = https://github.com/openmined/biovault
+# Submodules removed - use repo tool or scripts/setup-workspace.sh
+# See manifest.xml for repository dependencies
