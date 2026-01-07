@@ -2,8 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SYFTBOX_DIR="$ROOT_DIR/biovault/syftbox-sdk/syftbox"
-OUT_DIR="$ROOT_DIR/biovault/syftbox-sdk/syftbox/bin"
+
+resolve_syftbox_dir() {
+  local candidates=(
+    "$ROOT_DIR/syftbox"
+    "$ROOT_DIR/syftbox-sdk/syftbox"
+    "$ROOT_DIR/biovault/syftbox-sdk/syftbox"
+    "$ROOT_DIR/../syftbox"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "syftbox repo not found. Run ./scripts/setup-workspace.sh first." >&2
+  exit 1
+}
+
+SYFTBOX_DIR="$(resolve_syftbox_dir)"
+OUT_DIR="$SYFTBOX_DIR/bin"
 OUT_BIN="$OUT_DIR/syftbox-dev"
 RESOURCE_DIR="$ROOT_DIR/src-tauri/resources/syftbox"
 RESOURCE_BIN="$RESOURCE_DIR/syftbox"

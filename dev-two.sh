@@ -165,7 +165,17 @@ ensure_bv_cli() {
 }
 
 sbdev_tool() {
-  local syftbox_dir="$BIOVAULT_DIR/syftbox-sdk/syftbox"
+  local syftbox_dir="$SCRIPT_DIR/syftbox"
+  if [[ ! -d "$syftbox_dir" ]]; then
+    syftbox_dir="$SCRIPT_DIR/syftbox-sdk/syftbox"
+  fi
+  if [[ ! -d "$syftbox_dir" ]]; then
+    syftbox_dir="$BIOVAULT_DIR/syftbox-sdk/syftbox"
+  fi
+  if [[ ! -d "$syftbox_dir" ]]; then
+    log_error "Syftbox repo not found (run scripts/setup-workspace.sh)."
+    exit 1
+  fi
   (cd "$syftbox_dir" && GOCACHE="$syftbox_dir/.gocache" go run ./cmd/devstack "$@")
 }
 

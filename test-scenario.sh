@@ -848,6 +848,11 @@ assert_tauri_binary_fresh() {
 	profile="$(resolve_tauri_profile)"
 	info "[DEBUG] Binary mtime: $(stat -f '%Sm' "$TAURI_BINARY" 2>/dev/null || stat -c '%y' "$TAURI_BINARY" 2>/dev/null || echo 'unknown')"
 
+	local syftbox_sdk_root="$ROOT_DIR/syftbox-sdk"
+	if [[ ! -d "$syftbox_sdk_root" ]]; then
+		syftbox_sdk_root="$ROOT_DIR/biovault/syftbox-sdk"
+	fi
+
 	local newer=""
 	local candidates=(
 		"$ROOT_DIR/src-tauri/src"
@@ -856,8 +861,8 @@ assert_tauri_binary_fresh() {
 		"$ROOT_DIR/biovault/cli/src"
 		"$ROOT_DIR/biovault/cli/Cargo.toml"
 		"$ROOT_DIR/biovault/cli/Cargo.lock"
-		"$ROOT_DIR/biovault/syftbox-sdk/src"
-		"$ROOT_DIR/biovault/syftbox-sdk/Cargo.toml"
+		"$syftbox_sdk_root/src"
+		"$syftbox_sdk_root/Cargo.toml"
 	)
 
 	for p in "${candidates[@]}"; do
@@ -1085,7 +1090,10 @@ warm_jupyter_cache() {
 	timer_pop
 
 	# Install local editable syftbox-sdk if available
-	local syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
+	local syftbox_path="$ROOT_DIR/syftbox-sdk/python"
+	if [[ ! -d "$syftbox_path" ]]; then
+		syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
+	fi
 	if [[ -d "$syftbox_path" ]]; then
 		timer_push "Jupyter cache: pip install (syftbox-sdk)"
 		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
