@@ -68,3 +68,5 @@ sbenv/
 .repo/
 .repo-bin/
 .repo-manifest/
+AGENTS.md
+TASK.md
