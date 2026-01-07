@@ -8,7 +8,7 @@
 
   <!-- SDK and crypto -->
   <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="main" />
-  <project name="AtheMathmo/syft-crypto-core" path="syft-crypto-core" revision="main" />
+  <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="main" />
 
   <!-- Server -->
   <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />

@@ -57,7 +57,7 @@ clone_if_missing() {
 # Clone all dependencies
 clone_if_missing "biovault" "https://github.com/OpenMined/biovault.git"
 clone_if_missing "syftbox-sdk" "https://github.com/OpenMined/syftbox-sdk.git"
-clone_if_missing "syft-crypto-core" "https://github.com/AtheMathmo/syft-crypto-core.git"
+clone_if_missing "syft-crypto-core" "https://github.com/OpenMined/syft-crypto-core.git"
 clone_if_missing "syftbox" "https://github.com/OpenMined/syftbox.git" "madhava/biovault"
 clone_if_missing "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
 clone_if_missing "sbenv" "https://github.com/OpenMined/sbenv.git"
