@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <manifest>
-  <remote name="github" fetch="git@github.com:" />
+  <remote name="github" fetch="ssh://git@github.com/" />
   <default remote="github" revision="main" />
 
   <!-- Core application -->
