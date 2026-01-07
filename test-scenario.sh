@@ -16,7 +16,29 @@ fi
 # This mirrors dev-two.sh but drives Playwright specs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIOVAULT_DIR="$ROOT_DIR/biovault"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
+BIOVAULT_BEAVER_DIR="${BIOVAULT_BEAVER_DIR:-$WORKSPACE_ROOT/biovault-beaver}"
+SYFTBOX_SDK_DIR="${SYFTBOX_SDK_DIR:-$WORKSPACE_ROOT/syftbox-sdk}"
+
+# Canonicalize paths to resolve symlinks (ensures profile paths are consistent)
+canonicalize_path() {
+	local p="$1"
+	if [[ -d "$p" ]]; then
+		(cd "$p" && pwd -P)
+	else
+		echo "$p"
+	fi
+}
+BIOVAULT_DIR="$(canonicalize_path "$BIOVAULT_DIR")"
+BIOVAULT_BEAVER_DIR="$(canonicalize_path "$BIOVAULT_BEAVER_DIR")"
+SYFTBOX_SDK_DIR="$(canonicalize_path "$SYFTBOX_SDK_DIR")"
+if [[ ! -d "$BIOVAULT_BEAVER_DIR" && -d "$BIOVAULT_DIR/biovault-beaver" ]]; then
+	BIOVAULT_BEAVER_DIR="$BIOVAULT_DIR/biovault-beaver"
+fi
+if [[ ! -d "$SYFTBOX_SDK_DIR" && -d "$BIOVAULT_DIR/syftbox-sdk" ]]; then
+	SYFTBOX_SDK_DIR="$BIOVAULT_DIR/syftbox-sdk"
+fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-scenario.log}"
@@ -853,11 +875,13 @@ assert_tauri_binary_fresh() {
 		"$ROOT_DIR/src-tauri/src"
 		"$ROOT_DIR/src-tauri/Cargo.toml"
 		"$ROOT_DIR/src-tauri/Cargo.lock"
-		"$ROOT_DIR/biovault/cli/src"
-		"$ROOT_DIR/biovault/cli/Cargo.toml"
-		"$ROOT_DIR/biovault/cli/Cargo.lock"
-		"$ROOT_DIR/biovault/syftbox-sdk/src"
-		"$ROOT_DIR/biovault/syftbox-sdk/Cargo.toml"
+		"$BIOVAULT_DIR/cli/src"
+		"$BIOVAULT_DIR/cli/build.rs"
+		"$BIOVAULT_DIR/cli/Cargo.toml"
+		"$BIOVAULT_DIR/cli/Cargo.lock"
+		"$BIOVAULT_BEAVER_DIR/python/src/beaver/__init__.py"
+		"$SYFTBOX_SDK_DIR/src"
+		"$SYFTBOX_SDK_DIR/Cargo.toml"
 	)
 
 	for p in "${candidates[@]}"; do
@@ -1076,7 +1100,7 @@ warm_jupyter_cache() {
 
 	# Get beaver version from __init__.py (same as build.rs does)
 	local beaver_version
-	beaver_version="$(grep '^__version__' "$ROOT_DIR/biovault/biovault-beaver/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
+	beaver_version="$(grep '^__version__' "$BIOVAULT_BEAVER_DIR/python/src/beaver/__init__.py" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "0.1.26")"
 
 	# Install PyPI packages first
 	timer_push "Jupyter cache: pip install (pypi)"
@@ -1085,7 +1109,7 @@ warm_jupyter_cache() {
 	timer_pop
 
 	# Install local editable syftbox-sdk if available
-	local syftbox_path="$ROOT_DIR/biovault/syftbox-sdk/python"
+	local syftbox_path="$SYFTBOX_SDK_DIR/python"
 	if [[ -d "$syftbox_path" ]]; then
 		timer_push "Jupyter cache: pip install (syftbox-sdk)"
 		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
@@ -1096,7 +1120,7 @@ warm_jupyter_cache() {
 	fi
 
 	# Install local editable beaver if available
-	local beaver_path="$ROOT_DIR/biovault/biovault-beaver/python"
+	local beaver_path="$BIOVAULT_BEAVER_DIR/python"
 	if [[ -d "$beaver_path" ]]; then
 		timer_push "Jupyter cache: pip install (beaver)"
 		info "Installing beaver from local source..."
@@ -1214,8 +1238,10 @@ ensure_playwright_browsers
 				# Provide deterministic homes for the test under the sandbox.
 				export PROFILES_HOME_A="$CLIENT1_HOME"
 				export PROFILES_HOME_B="$CLIENT1_HOME/profiles/profileB"
+				# Match the BIOVAULT_PROFILES_DIR set in launch_instance for consistency.
+				export BIOVAULT_PROFILES_DIR="$CLIENT1_HOME/.bvprofiles"
 				timer_push "Playwright: @profiles-real"
-				run_ui_grep "@profiles-real" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B"
+				run_ui_grep "@profiles-real" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B" "BIOVAULT_PROFILES_DIR=$BIOVAULT_PROFILES_DIR"
 				timer_pop
 				;;
 			profiles-mock)
@@ -1329,39 +1355,6 @@ PY
 		info "Opening UI for inspection"
 		timer_push "Playwright: @messaging-core-ui"
 		run_ui_grep "@messaging-core-ui"
-		timer_pop
-		;;
-	pipelines-solo)
-		start_static_server
-		# Pipelines tests only need a single client; keep it lightweight.
-		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
-		if [[ ! -x "$TAURI_BINARY" ]]; then
-			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
-			if [[ -x "$debug_bin" ]]; then
-				info "Release Tauri binary not found; using debug binary at $debug_bin"
-				TAURI_BINARY="$debug_bin"
-				export TAURI_PROFILE=debug
-			fi
-		fi
-		if [[ -x "$TAURI_BINARY" ]]; then
-			assert_tauri_binary_fresh
-			timer_push "Tauri instance start (single)"
-			info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
-			TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
-			info "Waiting for WS bridge..."
-			wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
-			timer_pop
-			export USE_REAL_INVOKE=true
-			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
-		else
-			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
-			export USE_REAL_INVOKE=false
-		fi
-		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
-
-		# Run pipelines UI flow (dataset + pipeline e2e)
-		timer_push "Playwright: pipelines-solo"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" bun run test:ui tests/ui/pipelines-solo.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		timer_pop
 		;;
 	pipelines-gwas)

@@ -131,7 +131,7 @@ async function waitForSpawnProbe(probePath, timeoutMs = 20_000) {
 	throw new Error(`Timed out waiting for spawn probe at ${probePath}: ${String(lastError || '')}`)
 }
 
-async function resetOnboardingState(homeA, homeB) {
+async function resetOnboardingState(homeA, homeB, wsPort) {
 	const targets = [
 		path.join(homeA, 'config.yaml'),
 		path.join(homeA, 'biovault.db'),
@@ -139,6 +139,24 @@ async function resetOnboardingState(homeA, homeB) {
 		path.join(homeB, 'biovault.db'),
 	]
 	await Promise.all(targets.map((p) => fs.unlink(p).catch(() => {})))
+	// Also clean the profiles directory to ensure a fresh state
+	const profilesDir = process.env.BIOVAULT_PROFILES_DIR || path.join(homeA, '.bvprofiles')
+	await fs.rm(profilesDir, { recursive: true, force: true }).catch(() => {})
+
+	// If wsPort is provided, verify the backend sees the reset and trigger
+	// legacy migration to create exactly one profile for the current BIOVAULT_HOME.
+	if (wsPort) {
+		// Give filesystem operations a moment to settle
+		await new Promise((r) => setTimeout(r, 100))
+		// Trigger legacy migration by calling profiles_get_boot_state
+		// This ensures the backend creates exactly 1 profile for BIOVAULT_HOME (homeA)
+		const state = await wsInvoke(wsPort, 'profiles_get_boot_state', {}, 5_000).catch(() => null)
+		const profileCount = state?.profiles?.length ?? 0
+		console.log(`[resetOnboardingState] After reset: ${profileCount} profiles`)
+		if (profileCount > 1) {
+			console.warn(`[resetOnboardingState] Expected 0-1 profiles after reset, got ${profileCount}`)
+		}
+	}
 }
 
 async function ensureCurrentHome(wsPort, homePath) {
@@ -267,8 +285,11 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		})
 
 		await setWsPort(page, wsPort)
-		await ensureCurrentHome(wsPort, homeA)
-		await resetOnboardingState(homeA, homeB)
+		// Wait for WS bridge before resetting state
+		await waitForWsBridge(wsPort, 60_000)
+		// Reset to clear any stale profiles and trigger exactly one legacy migration.
+		// Pass wsPort so the reset function can verify backend state.
+		await resetOnboardingState(homeA, homeB, wsPort)
 		await page.goto(process.env.UI_BASE_URL || 'http://localhost:8082')
 
 		// Step through onboarding until home step, then switch home to create profile B (this restarts the backend).
@@ -299,6 +320,18 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		// Open the picker and switch back to the original profile home.
 		await openPickerFromSettings(page)
 		const rows = page.locator('.profile-row')
+
+		// Debug: log profiles before asserting count
+		const bootStateDebug = await wsInvoke(wsPort, 'profiles_get_boot_state', {}, 5_000).catch(
+			() => null,
+		)
+		console.log(
+			`[profiles-real] Before count assertion: ${bootStateDebug?.profiles?.length ?? 0} profiles`,
+		)
+		for (const p of bootStateDebug?.profiles || []) {
+			console.log(`  - ${p?.id?.slice(0, 8)}... home=${p?.biovault_home}`)
+		}
+
 		await expect(rows).toHaveCount(2)
 		await expect(rowByHome(page, homeB).locator('.profile-new-instance-btn')).toHaveCount(0)
 

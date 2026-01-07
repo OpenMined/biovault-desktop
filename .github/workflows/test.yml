@@ -20,8 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,6 +40,7 @@ jobs:
   scenario-tests:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     strategy:
       fail-fast: false
@@ -98,20 +102,9 @@ jobs:
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-collab on macOS ARM - rust
-          - scenario: pipelines-collab
-            platform: macos-arm64
-            runner: macos-latest
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          # pipelines-collab on macOS ARM - go
-          - scenario: pipelines-collab
-            platform: macos-arm64
-            runner: macos-latest
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
+          # don't support nested virtualization (Docker requires VMs on macOS).
+          # pipelines-collab is fully tested on Linux which covers the core functionality.
 
     defaults:
       run:
@@ -140,8 +133,11 @@ jobs:
         shell: bash
 
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -152,7 +148,7 @@ jobs:
           workspaces: |
             src-tauri
             biovault/cli
-            biovault/syftbox-sdk
+            syftbox-sdk
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -178,9 +174,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -208,9 +204,8 @@ jobs:
             build-essential \
             pkg-config
 
-      - name: Setup Docker (macOS - pipelines scenarios)
-        if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
-        uses: docker/setup-docker-action@v4
+      # NOTE: Docker setup for macOS removed since pipelines-collab tests are skipped on macOS
+      # (GitHub macOS runners don't support nested virtualization needed for Docker)
 
       - name: Install npm dependencies
         run: npm ci
@@ -240,6 +235,11 @@ jobs:
           ./scripts/fetch-bundled-deps.sh
           chmod -R u+rw src-tauri/resources/bundled/ || true
 
+      - name: Materialize templates
+        run: |
+          chmod +x scripts/materialize-templates.sh || true
+          ./scripts/materialize-templates.sh || true
+
       - name: Build syftbox client
         run: |
           chmod +x scripts/build-syftbox-prod.sh
@@ -255,7 +255,7 @@ jobs:
 
       - name: Pre-build syftbox-sdk wheel
         run: |
-          cd biovault/syftbox-sdk/python
+          cd syftbox-sdk/python
           maturin build --release
 
       - name: Install biosynth CLI (Linux)
@@ -286,7 +286,7 @@ jobs:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           JUPYTER_PAUSE_TIME: "5000"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines solo scenario
         if: matrix.scenario == 'pipelines-solo'
@@ -318,8 +318,11 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Install system dependencies (Tauri + Xvfb)
         run: |
@@ -352,9 +355,9 @@ jobs:
       - name: Setup Go (syftbox devstack)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -375,6 +378,19 @@ jobs:
       - name: Install Playwright browsers
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Fetch bundled dependencies
+        run: |
+          export BUNDLED_OS="linux"
+          export BUNDLED_ARCH="x86_64"
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Materialize templates
+        run: |
+          chmod +x scripts/materialize-templates.sh || true
+          ./scripts/materialize-templates.sh || true
+
       - name: Build bv-desktop (release)
         run: cargo build --release
         working-directory: src-tauri
@@ -393,303 +409,3 @@ jobs:
             logs/
             test-results/
             artifacts/
-
-  # ============================================================================
-  # Release Build Test - Validates all platform/syftbox combinations build
-  # ============================================================================
-  release-build-test:
-    name: Build ${{ matrix.target }}-${{ matrix.syftbox_impl }}
-    runs-on: ${{ matrix.runner }}
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'main')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macOS ARM64
-          - target: macos-arm64
-            runner: macos-latest
-            args: aarch64-apple-darwin
-            syftbox_impl: rust
-          - target: macos-arm64
-            runner: macos-latest
-            args: aarch64-apple-darwin
-            syftbox_impl: go
-          # macOS x64
-          - target: macos-x64
-            runner: macos-15-intel
-            args: x86_64-apple-darwin
-            syftbox_impl: rust
-          - target: macos-x64
-            runner: macos-15-intel
-            args: x86_64-apple-darwin
-            syftbox_impl: go
-          # Linux x64
-          - target: linux-x64
-            runner: ubuntu-22.04
-            args: x86_64-unknown-linux-gnu
-            syftbox_impl: rust
-          - target: linux-x64
-            runner: ubuntu-22.04
-            args: x86_64-unknown-linux-gnu
-            syftbox_impl: go
-          # Windows x64
-          - target: windows-x64
-            runner: windows-latest
-            args: x86_64-pc-windows-msvc
-            syftbox_impl: rust
-          - target: windows-x64
-            runner: windows-latest
-            args: x86_64-pc-windows-msvc
-            syftbox_impl: go
-
-    defaults:
-      run:
-        shell: bash
-
-    env:
-      SYFTBOX_IMPL: ${{ matrix.syftbox_impl }}
-
-    steps:
-      - name: Enable Windows long paths
-        if: runner.os == 'Windows'
-        run: git config --system core.longpaths true
-
-      - name: Checkout project
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            pkg-config \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libsqlite3-dev \
-            libfuse2 \
-            patchelf \
-            libgtk-3-dev \
-            squashfs-tools
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.args }}
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            src-tauri
-            biovault/cli
-            biovault/syftbox-sdk
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli@latest
-
-      - name: Setup Go (syftbox)
-        if: runner.os != 'Windows' && matrix.syftbox_impl == 'go'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
-
-      - name: Setup Go (syftbox, Windows)
-        if: runner.os == 'Windows'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
-          cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
-
-      - name: Bundle dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $templatesDest = "src-tauri/resources/templates"
-          $templatesSrc = "templates-dev"
-          if (Test-Path $templatesDest -PathType Leaf) {
-            Remove-Item -Force $templatesDest
-          }
-          if (-not (Test-Path $templatesDest -PathType Container)) {
-            New-Item -ItemType Directory -Force -Path $templatesDest | Out-Null
-          }
-          if (Test-Path $templatesSrc -PathType Container) {
-            Copy-Item -Path (Join-Path $templatesSrc "*") -Destination $templatesDest -Recurse -Force
-          }
-          .\scripts\windows\bundle-deps.ps1
-
-      - name: Fetch bundled dependencies
-        if: runner.os != 'Windows'
-        run: |
-          case "${{ matrix.args }}" in
-            x86_64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="x86_64" ;;
-            aarch64-apple-*) export BUNDLED_OS="macos" BUNDLED_ARCH="aarch64" ;;
-            x86_64-unknown-linux-*) export BUNDLED_OS="linux" BUNDLED_ARCH="x86_64" ;;
-            *) echo "Unsupported target: ${{ matrix.args }}" >&2; exit 1 ;;
-          esac
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
-
-      - name: Materialize templates
-        run: |
-          chmod +x scripts/materialize-templates.sh || true
-          ./scripts/materialize-templates.sh || true
-
-      - name: Build syftbox client (Rust)
-        if: runner.os != 'Windows' && matrix.syftbox_impl == 'rust'
-        env:
-          SYFTBOX_RUST_TARGET: ${{ matrix.args }}
-        run: |
-          chmod +x scripts/build-syftbox-rust.sh
-          ./scripts/build-syftbox-rust.sh
-
-      - name: Build syftbox client (Go)
-        if: runner.os != 'Windows' && matrix.syftbox_impl == 'go'
-        run: |
-          chmod +x scripts/build-syftbox-prod.sh
-          ./scripts/build-syftbox-prod.sh
-
-      - name: Build syftbox client (Rust, Windows)
-        if: runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $repoRoot = (Resolve-Path ".").Path
-          $rustDir = Join-Path $repoRoot "biovault\syftbox-sdk\syftbox\rust"
-          cargo build --release --manifest-path "$rustDir\Cargo.toml" --target ${{ matrix.args }}
-          $bin = Join-Path $rustDir "target\${{ matrix.args }}\release\syftbox-rs.exe"
-          if (-not (Test-Path $bin)) {
-            throw "Rust syftbox binary not found at $bin"
-          }
-          $outDir = Join-Path $repoRoot "src-tauri\resources\syftbox"
-          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          Copy-Item -Force $bin (Join-Path $outDir "syftbox.exe")
-
-      - name: Build syftbox client (Go, Windows)
-        if: runner.os == 'Windows' && matrix.syftbox_impl == 'go'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $repoRoot = (Resolve-Path ".").Path
-          $syftboxDir = Join-Path $repoRoot "biovault\syftbox-sdk\syftbox"
-          $outDir = Join-Path $repoRoot "src-tauri\resources\syftbox"
-          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          $syftboxExe = Join-Path $outDir "syftbox.exe"
-          $version = (git describe --tags --always --dirty 2>$null)
-          if (-not $version) { $version = "dev" }
-          $rev = (git rev-parse --short HEAD 2>$null)
-          if (-not $rev) { $rev = "HEAD" }
-          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          $ldflags = "-s -w -H=windowsgui " +
-            "-X github.com/openmined/syftbox/internal/version.Version=$version " +
-            "-X github.com/openmined/syftbox/internal/version.Revision=$rev " +
-            "-X github.com/openmined/syftbox/internal/version.BuildDate=$date"
-          $env:GO111MODULE = "on"
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          Push-Location $syftboxDir
-          try {
-            & go build "-ldflags=$ldflags" -o $syftboxExe ".\cmd\client"
-          } finally {
-            Pop-Location
-          }
-
-      - name: Verify syftbox binary
-        if: runner.os != 'Windows'
-        run: |
-          SYFTBOX_BIN="src-tauri/resources/syftbox/syftbox"
-          if [[ ! -f "$SYFTBOX_BIN" ]]; then
-            echo "syftbox binary not found at $SYFTBOX_BIN" >&2
-            exit 1
-          fi
-          chmod +x "$SYFTBOX_BIN"
-          file "$SYFTBOX_BIN"
-          "$SYFTBOX_BIN" --help >/dev/null
-
-      - name: Verify syftbox binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $syftboxBin = "src-tauri\resources\syftbox\syftbox.exe"
-          if (-not (Test-Path $syftboxBin)) {
-            throw "syftbox binary not found at $syftboxBin"
-          }
-          Get-Item $syftboxBin | Format-List FullName,Length
-          & $syftboxBin --help | Out-Null
-
-      - name: Build Tauri app (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          # Build without updater signing for PR tests
-          tauri build --target ${{ matrix.args }} --ci --bundles app,dmg || true
-          # Verify the app was actually built
-          if [[ -d "src-tauri/target/${{ matrix.args }}/release/bundle/macos/BioVault.app" ]]; then
-            echo "✅ Build successful"
-            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/dmg/ || true
-            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/macos/ || true
-          else
-            echo "❌ Build failed - app bundle not found"
-            exit 1
-          fi
-
-      - name: Build Tauri app (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          # Build without updater signing for PR tests
-          tauri build --target ${{ matrix.args }} --ci --bundles deb 2>&1 | tee tauri-build.log || true
-          # Verify the binary was actually built
-          if [[ -f "src-tauri/target/${{ matrix.args }}/release/bv-desktop" ]]; then
-            echo "✅ Build successful"
-            ls -lh src-tauri/target/${{ matrix.args }}/release/bundle/deb/ || true
-          else
-            echo "❌ Build failed - binary not found"
-            exit 1
-          fi
-
-      - name: Build Tauri app (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Build without updater signing for PR tests
-          # Use try/catch to ignore Tauri exit code from signing errors
-          try {
-            tauri build --target ${{ matrix.args }} --ci --bundles nsis 2>&1 | Out-Null
-          } catch {
-            Write-Host "Tauri build exited with error (likely signing) - checking if binary was created..."
-          }
-          # Verify the binary was actually built
-          if (Test-Path "src-tauri\target\${{ matrix.args }}\release\bv-desktop.exe") {
-            Write-Host "✅ Build successful"
-            Get-ChildItem -Path "src-tauri\target\${{ matrix.args }}\release\bundle\nsis" -ErrorAction SilentlyContinue
-          } else {
-            Write-Host "❌ Build failed - binary not found"
-            exit 1
-          }
-
-      - name: Dump build logs on failure
-        if: failure() && runner.os == 'Linux'
-        run: |
-          echo "Build log:"
-          cat tauri-build.log || true

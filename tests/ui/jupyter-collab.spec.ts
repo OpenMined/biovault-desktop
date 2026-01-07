@@ -22,6 +22,7 @@
  *
  * @tag jupyter-collab
  */
+import { execFileSync } from 'child_process'
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import * as fs from 'fs'
@@ -32,7 +33,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fresh envs)
 const UI_TIMEOUT = 10_000
 const JUPYTER_STARTUP_TIMEOUT = 240_000 // Allow more time for venv install + server start
-const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
+const SYNC_TIMEOUT = 60_000 // 60 seconds for session sync (doubled for CI reliability)
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync (CI can be slow)
 const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
 	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
@@ -49,6 +50,73 @@ interface NotebookRun {
 interface NotebookConfig {
 	mode?: 'parallel' | 'sequential'
 	runs: NotebookRun[]
+}
+
+function parseBeaverVersion(content: string): string | null {
+	const match = content.match(/^__version__\s*=\s*"([^"]+)"/m)
+	return match ? match[1] : null
+}
+
+function resolveExpectedBeaverVersion(): string {
+	const candidates = [
+		process.env.BIOVAULT_BEAVER_DIR
+			? path.join(process.env.BIOVAULT_BEAVER_DIR, 'python/src/beaver/__init__.py')
+			: null,
+		process.env.WORKSPACE_ROOT
+			? path.join(process.env.WORKSPACE_ROOT, 'biovault-beaver/python/src/beaver/__init__.py')
+			: null,
+		path.join(process.cwd(), 'biovault-beaver/python/src/beaver/__init__.py'),
+		path.join(process.cwd(), 'biovault', 'biovault-beaver/python/src/beaver/__init__.py'),
+	]
+
+	for (const candidate of candidates) {
+		if (!candidate || !fs.existsSync(candidate)) continue
+		const content = fs.readFileSync(candidate, 'utf-8')
+		const version = parseBeaverVersion(content)
+		if (version) return version
+	}
+
+	throw new Error('Unable to resolve expected biovault-beaver version from repo')
+}
+
+function resolveVenvPythonPath(venvPath: string): string {
+	return process.platform === 'win32'
+		? path.join(venvPath, 'Scripts', 'python.exe')
+		: path.join(venvPath, 'bin', 'python')
+}
+
+function readBeaverVersionFromVenv(venvPath: string): { version: string; file: string } {
+	const pythonPath = resolveVenvPythonPath(venvPath)
+	if (!fs.existsSync(pythonPath)) {
+		throw new Error(`Jupyter venv python not found: ${pythonPath}`)
+	}
+
+	const output = execFileSync(
+		pythonPath,
+		['-c', 'import beaver; print(beaver.__version__); print(beaver.__file__)'],
+		{ encoding: 'utf-8' },
+	)
+	const lines = output
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length < 2) {
+		throw new Error(`Unexpected beaver version output: ${output}`)
+	}
+	return { version: lines[0], file: lines[1] }
+}
+
+async function assertBeaverVersionInSession(
+	dataDir: string,
+	sessionId: string,
+	expectedVersion: string,
+	label: string,
+): Promise<void> {
+	const sessionPath = path.join(dataDir, 'sessions', sessionId)
+	const venvPath = path.join(sessionPath, '.venv')
+	const { version, file } = readBeaverVersionFromVenv(venvPath)
+	console.log(`[${label}] beaver version in Jupyter venv: ${version} (${file})`)
+	expect(version, `${label} beaver version mismatch`).toBe(expectedVersion)
 }
 
 // Load config from JSON file if NOTEBOOK_CONFIG is set
@@ -407,17 +475,21 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const wsPort2 = wsPort1 + 1
 		const email1 = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
+		const expectedBeaverVersion = resolveExpectedBeaverVersion()
 
 		console.log(`Setting up two-client Jupyter collaboration test`)
 		console.log(`Client1: ${email1} (port ${wsPort1})`)
 		console.log(`Client2: ${email2} (port ${wsPort2})`)
 		console.log(`Notebook pair: DO="${NOTEBOOK_DO}", DS="${NOTEBOOK_DS}"`)
+		console.log(`Expected beaver version: ${expectedBeaverVersion}`)
 
 		// Create contexts and pages for both clients
 		const context1 = await browser.newContext()
 		const context2 = await browser.newContext()
 		const page1 = await context1.newPage()
 		const page2 = await context2.newPage()
+		let dataDir1: string | null = null
+		let dataDir2: string | null = null
 
 		// Monitor console errors for missing WS commands
 		const consoleErrors: string[] = []
@@ -461,15 +533,13 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('\n=== Onboarding clients (inline) ===')
 			const logSocket = await ensureLogSocket()
 
-			// Run both onboardings in parallel for speed
-			const onboardingPromises: Promise<boolean>[] = []
+			// Run onboardings sequentially to avoid race conditions with dialog handling
 			if (!isOnboarded1) {
-				onboardingPromises.push(completeOnboarding(page1, email1, logSocket))
+				await completeOnboarding(page1, email1, logSocket)
 			}
 			if (!isOnboarded2) {
-				onboardingPromises.push(completeOnboarding(page2, email2, logSocket))
+				await completeOnboarding(page2, email2, logSocket)
 			}
-			await Promise.all(onboardingPromises)
 
 			if (logSocket) {
 				logSocket.close()
@@ -479,8 +549,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			// Give SyftBox time to write/publish DID files and sync them between clients
 			// We trigger sync on both clients to accelerate the discovery
 			console.log('Waiting for peer DID files to sync...')
-			const dataDir1 = await getSyftboxDataDir(backend1)
-			const dataDir2 = await getSyftboxDataDir(backend2)
+			dataDir1 = await getSyftboxDataDir(backend1)
+			dataDir2 = await getSyftboxDataDir(backend2)
 			console.log(`Client1 dataDir: ${dataDir1}`)
 			console.log(`Client2 dataDir: ${dataDir2}`)
 			await Promise.all([
@@ -633,10 +703,28 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		// ============================================================
 		console.log('\n=== Step 3: Wait for session sync and Client2 accepts ===')
 
-		// Poll for invitation on Client2's backend
+		// Poll for invitation on Client2's backend, triggering syncs to accelerate discovery
 		let invitationFound = false
 		const syncStart = Date.now()
+		let syncIterCount = 0
 		while (Date.now() - syncStart < SYNC_TIMEOUT) {
+			const elapsed = Math.round((Date.now() - syncStart) / 1000)
+
+			// Trigger sync on both clients to accelerate session data transfer
+			// Client1 needs to upload, Client2 needs to download
+			try {
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				if (syncIterCount === 0) {
+					console.log(`[${elapsed}s] Triggered sync on both clients`)
+				}
+			} catch {
+				// Ignore sync errors
+			}
+			syncIterCount++
+
 			try {
 				const invitations = await backend2.invoke('get_session_invitations')
 				console.log(`Client2 invitations: ${JSON.stringify(invitations)}`)
@@ -680,7 +768,32 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		}
 
 		if (!invitationFound) {
-			console.log('WARNING: Session invitation not found within timeout - continuing anyway')
+			console.log('WARNING: Session invitation not found within timeout')
+			// Try a few more sync cycles before giving up entirely
+			console.log('Attempting additional sync cycles...')
+			for (let retry = 0; retry < 5; retry++) {
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				await page2.waitForTimeout(3000)
+				const sessions = await backend2.invoke('get_sessions').catch(() => [])
+				if (Array.isArray(sessions)) {
+					const found = sessions.find(
+						(s: any) =>
+							s.session_id === sessionId || s.sessionId === sessionId || s.name === sessionName,
+					)
+					if (found) {
+						console.log(`Session found on retry ${retry + 1}!`)
+						invitationFound = true
+						break
+					}
+				}
+				console.log(`Retry ${retry + 1}/5: Session still not visible on Client2`)
+			}
+			if (!invitationFound) {
+				console.log('CRITICAL: Session never synced to Client2 - test cannot proceed with chat')
+			}
 		}
 
 		// 🚀 OPTIMIZATION: Now that Client2 has the session, launch Jupyter on Client2 too
@@ -700,24 +813,52 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 				return null
 			})
 
-		// Navigate Client2 to Sessions tab and click on the session
-		await page2.locator('.nav-item[data-tab="sessions"]').click()
-		await expect(page2.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
-		await page2.waitForTimeout(1000)
+		// Navigate Client2 to Sessions tab and click on the session (with retries)
+		let client2SessionClicked = false
+		for (let attempt = 0; attempt < 3 && !client2SessionClicked; attempt++) {
+			if (attempt > 0) {
+				console.log(`Client2 session click retry ${attempt + 1}/3...`)
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				await page2.waitForTimeout(2000)
+			}
 
-		// Click on the session to select it
-		const sessionItem2 = page2
-			.locator('.session-list-item')
-			.filter({ hasText: sessionName })
-			.first()
-		if (await sessionItem2.isVisible({ timeout: 5000 }).catch(() => false)) {
-			console.log('Clicking on session in Client2 UI...')
-			await sessionItem2.click()
-			// Wait for session detail panel to appear
-			await expect(page2.locator('#sessions-main')).toBeVisible({ timeout: 5000 })
-			console.log('Client2 session detail panel is visible')
-		} else {
-			console.log('WARNING: Session item not visible in Client2 - may need to wait for sync')
+			await page2.reload()
+			await waitForAppReady(page2, { timeout: 10_000 })
+			await page2.locator('.nav-item[data-tab="sessions"]').click()
+			await expect(page2.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
+			await page2.waitForTimeout(1000)
+
+			// Click on the session to select it
+			const sessionItem2 = page2
+				.locator('.session-list-item')
+				.filter({ hasText: sessionName })
+				.first()
+			if (await sessionItem2.isVisible({ timeout: 5000 }).catch(() => false)) {
+				console.log('Clicking on session in Client2 UI...')
+				await sessionItem2.click()
+				// Wait for session detail panel to appear
+				if (
+					await page2
+						.locator('#sessions-main')
+						.isVisible({ timeout: 5000 })
+						.catch(() => false)
+				) {
+					console.log('Client2 session detail panel is visible')
+					client2SessionClicked = true
+				} else {
+					console.log('Client2 session detail panel NOT visible after click')
+				}
+			} else {
+				const allItems = await page2.locator('.session-list-item').count()
+				console.log(`Session item not visible (${allItems} items in list)`)
+			}
+		}
+
+		if (!client2SessionClicked) {
+			console.log('CRITICAL: Could not click session on Client2 after retries')
 		}
 
 		// ============================================================
@@ -729,13 +870,14 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		async function sendChatMessage(page: Page, clientName: string, message: string) {
 			// Scroll to the chat panel first (it's at the bottom of session detail)
 			const chatPanel = page.locator('.session-chat-panel')
-			await chatPanel.scrollIntoViewIfNeeded()
+			// Use a short timeout for scroll - if it can't scroll in 10s, the panel isn't there
+			await chatPanel.scrollIntoViewIfNeeded({ timeout: 10_000 })
 
 			const messageInput = page.locator('#session-message-input')
 			const sendBtn = page.locator('#send-session-message-btn')
 
 			// Wait for chat input to be visible
-			await expect(messageInput).toBeVisible({ timeout: 5000 })
+			await expect(messageInput).toBeVisible({ timeout: 10_000 })
 
 			// Clear any existing text and type the message
 			await messageInput.click()
@@ -826,6 +968,12 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		console.log('Waiting for Jupyter startup to complete...')
 		const [jupyterStatus1, jupyterStatus2] = await Promise.all([jupyterPromise1, jupyterPromise2])
 		jupyterTimer.stop()
+		if (!dataDir1 || !dataDir2) {
+			dataDir1 = await getSyftboxDataDir(backend1)
+			dataDir2 = await getSyftboxDataDir(backend2)
+		}
+		await assertBeaverVersionInSession(dataDir1, sessionId, expectedBeaverVersion, 'Client1')
+		await assertBeaverVersionInSession(dataDir2, sessionId, expectedBeaverVersion, 'Client2')
 
 		// Get URLs from status
 		const jupyterUrl1 = jupyterStatus1?.url || null

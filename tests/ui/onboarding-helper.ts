@@ -44,73 +44,87 @@ export async function completeOnboarding(
 ): Promise<boolean> {
 	log(logSocket, { event: 'onboarding-start', email })
 
-	await waitForAppReady(page, { timeout: 30_000 })
-
-	// The initial HTML ships with the main app layout visible (Run tab active) before the onboarding
-	// check completes. Only treat onboarding as "already complete" once the onboarding view is not
-	// active/visible.
-	const onboardingView = page.locator('#onboarding-view')
-	const onboardingActive = await onboardingView.isVisible({ timeout: 1000 }).catch(() => false)
-	if (!onboardingActive) {
-		log(logSocket, { event: 'onboarding-already-complete', email })
-		console.log(`${email}: Already onboarded, skipping`)
-		return false // Already onboarded
+	// Set up a persistent dialog handler that accepts all dialogs during onboarding.
+	// This is more robust than page.once() which can miss dialogs due to timing.
+	const dialogHandler = (dialog: import('@playwright/test').Dialog) => {
+		console.log(
+			`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`,
+		)
+		dialog.accept().catch(() => {})
 	}
+	page.on('dialog', dialogHandler)
 
-	console.log(`${email}: Starting onboarding...`)
+	try {
+		await waitForAppReady(page, { timeout: 30_000 })
 
-	// Step 1: Welcome
-	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 5000 })
-	await page.locator('#onboarding-next-1').click()
-	// Wait for step 1 to be hidden before checking step 2
-	await expect(page.locator('#onboarding-step-1')).toBeHidden({ timeout: 5000 })
+		// The initial HTML ships with the main app layout visible (Run tab active) before the onboarding
+		// check completes. Only treat onboarding as "already complete" once the onboarding view is not
+		// active/visible.
+		const onboardingView = page.locator('#onboarding-view')
+		const onboardingActive = await onboardingView.isVisible({ timeout: 1000 }).catch(() => false)
+		if (!onboardingActive) {
+			log(logSocket, { event: 'onboarding-already-complete', email })
+			console.log(`${email}: Already onboarded, skipping`)
+			return false // Already onboarded
+		}
 
-	// Step 2: Dependencies - skip
-	await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
-	page.once('dialog', (dialog) => dialog.accept())
-	await page.locator('#skip-dependencies-btn').click()
-	// Wait for step 2 to be hidden before checking step 3
-	await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 5000 })
+		console.log(`${email}: Starting onboarding...`)
 
-	// Step 3: Choose BioVault Home
-	await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
-	await page.locator('#onboarding-next-3').click()
-	// Wait for step 3 to be hidden before checking step 3-key
-	await expect(page.locator('#onboarding-step-3')).toBeHidden({ timeout: 5000 })
+		// Step 1: Welcome
+		await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 5000 })
+		await page.locator('#onboarding-next-1').click()
+		// Wait for step 1 to be hidden before checking step 2
+		await expect(page.locator('#onboarding-step-1')).toBeHidden({ timeout: 5000 })
 
-	// Step 3a: Email
-	await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 5000 })
-	await page.fill('#onboarding-email', email)
-	await expect(page.locator('#onboarding-next-3-email')).toBeEnabled()
-	await page.locator('#onboarding-next-3-email').click()
+		// Step 2: Dependencies - skip
+		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
+		await page.locator('#skip-dependencies-btn').click()
+		// Wait for step 2 to be hidden before checking step 3
+		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
+		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 15000 })
 
-	// Step 3-key: Key setup
-	await expect(page.locator('#onboarding-step-3-key')).toBeVisible({ timeout: 5000 })
-	await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
-	// If the app generated a recovery code, the UI requires an explicit acknowledgement before proceeding.
-	const recoveryBlock = page.locator('#onboarding-recovery-block')
-	if (await recoveryBlock.isVisible().catch(() => false)) {
-		await page.locator('#onboarding-recovery-ack').check()
+		// Step 3: Choose BioVault Home
+		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
+		await page.locator('#onboarding-next-3').click()
+		// Wait for step 3 to be hidden before checking step 3-key
+		await expect(page.locator('#onboarding-step-3')).toBeHidden({ timeout: 5000 })
+
+		// Step 3a: Email
+		await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 5000 })
+		await page.fill('#onboarding-email', email)
+		await expect(page.locator('#onboarding-next-3-email')).toBeEnabled()
+		await page.locator('#onboarding-next-3-email').click()
+
+		// Step 3-key: Key setup
+		await expect(page.locator('#onboarding-step-3-key')).toBeVisible({ timeout: 5000 })
+		await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
+		// If the app generated a recovery code, the UI requires an explicit acknowledgement before proceeding.
+		const recoveryBlock = page.locator('#onboarding-recovery-block')
+		if (await recoveryBlock.isVisible().catch(() => false)) {
+			await page.locator('#onboarding-recovery-ack').check()
+		}
+		await page.locator('#onboarding-next-3-key').click()
+		// Wait for step 3-key to be hidden before checking step 4
+		await expect(page.locator('#onboarding-step-3-key')).toBeHidden({ timeout: 5000 })
+
+		// Step 4: SyftBox - skip
+		await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
+		await Promise.all([
+			page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
+			page.locator('#skip-syftbox-btn').click(),
+		])
+
+		await expect(page.locator('#run-view')).toBeVisible({ timeout: 10_000 })
+		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
+		// finished re-initializing (nav/event handlers ready) before proceeding with tests.
+		await waitForAppReady(page, { timeout: 30_000 })
+		log(logSocket, { event: 'onboarding-complete', email })
+		console.log(`${email}: Onboarding complete!`)
+		return true // Onboarding was performed
+	} finally {
+		// Clean up the dialog handler
+		page.off('dialog', dialogHandler)
 	}
-	page.once('dialog', (dialog) => dialog.accept())
-	await page.locator('#onboarding-next-3-key').click()
-	// Wait for step 3-key to be hidden before checking step 4
-	await expect(page.locator('#onboarding-step-3-key')).toBeHidden({ timeout: 5000 })
-
-	// Step 4: SyftBox - skip
-	await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
-	await Promise.all([
-		page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
-		page.locator('#skip-syftbox-btn').click(),
-	])
-
-	await expect(page.locator('#run-view')).toBeVisible({ timeout: 10_000 })
-	// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
-	// finished re-initializing (nav/event handlers ready) before proceeding with tests.
-	await waitForAppReady(page, { timeout: 30_000 })
-	log(logSocket, { event: 'onboarding-complete', email })
-	console.log(`${email}: Onboarding complete!`)
-	return true // Onboarding was performed
 }
 
 /**

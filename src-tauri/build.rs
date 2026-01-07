@@ -139,18 +139,28 @@ fn main() {
     materialize_windows_templates_dir(&manifest_dir)
         .expect("failed to materialize resources/templates for Windows bundling");
 
-    // Extract biovault-beaver version from submodule's __init__.py
-    let beaver_init_path: PathBuf = [
-        "..",
-        "biovault",
-        "biovault-beaver",
-        "python",
-        "src",
-        "beaver",
-        "__init__.py",
-    ]
-    .iter()
-    .collect();
+    // Extract biovault-beaver version from its __init__.py (workspace layout).
+    let mut beaver_init_path = manifest_dir
+        .parent()
+        .expect("src-tauri has a parent")
+        .join("biovault-beaver/python/src/beaver/__init__.py");
+
+    if let Ok(path) = env::var("BIOVAULT_BEAVER_DIR") {
+        beaver_init_path = PathBuf::from(path).join("python/src/beaver/__init__.py");
+    } else if let Ok(root) = env::var("WORKSPACE_ROOT") {
+        beaver_init_path =
+            PathBuf::from(root).join("biovault-beaver/python/src/beaver/__init__.py");
+    }
+
+    if !beaver_init_path.exists() {
+        let legacy = manifest_dir
+            .parent()
+            .expect("src-tauri has a parent")
+            .join("biovault/biovault-beaver/python/src/beaver/__init__.py");
+        if legacy.exists() {
+            beaver_init_path = legacy;
+        }
+    }
 
     let beaver_version = if beaver_init_path.exists() {
         fs::read_to_string(&beaver_init_path)
@@ -172,14 +182,14 @@ fn main() {
             })
             .unwrap_or_else(|| "0.1.30".to_string()) // Fallback
     } else {
-        "0.1.30".to_string() // Fallback if submodule not present
+        "0.1.30".to_string() // Fallback if beaver repo isn't available
     };
 
     // Make version available to Rust code
     println!("cargo:rustc-env=BEAVER_VERSION={}", beaver_version);
 
     // Rerun if beaver __init__.py changes
-    println!("cargo:rerun-if-changed=../biovault/biovault-beaver/python/src/beaver/__init__.py");
+    println!("cargo:rerun-if-changed={}", beaver_init_path.display());
     println!("cargo:rerun-if-env-changed=BV_SYFTBOX_DEFAULT_BACKEND");
 
     // Windows defaults to a small thread stack reserve (commonly 1MB), which can overflow during

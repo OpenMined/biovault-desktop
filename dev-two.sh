@@ -30,7 +30,12 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIOVAULT_DIR="$SCRIPT_DIR/biovault"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$SCRIPT_DIR}"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
+SYFTBOX_DIR="${SYFTBOX_DIR:-$WORKSPACE_ROOT/syftbox}"
+if [[ ! -d "$SYFTBOX_DIR" && -d "$BIOVAULT_DIR/syftbox" ]]; then
+  SYFTBOX_DIR="$BIOVAULT_DIR/syftbox"
+fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
 WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
@@ -165,8 +170,7 @@ ensure_bv_cli() {
 }
 
 sbdev_tool() {
-  local syftbox_dir="$BIOVAULT_DIR/syftbox-sdk/syftbox"
-  (cd "$syftbox_dir" && GOCACHE="$syftbox_dir/.gocache" go run ./cmd/devstack "$@")
+  (cd "$SYFTBOX_DIR" && GOCACHE="$SYFTBOX_DIR/.gocache" go run ./cmd/devstack "$@")
 }
 
 find_state_file() {

@@ -432,11 +432,14 @@ fn ensure_legacy_profile_migrated(mut store: ProfileStore) -> Result<ProfileStor
     if let Some(pointer_home) = read_legacy_pointer_file() {
         if pointer_home.exists() || pointer_home.to_string_lossy().contains("BioVault") {
             let email = read_home_email(&pointer_home);
+            // Canonicalize the path to ensure consistency with resolve_or_create_profile_for_home
+            let home_canon = canonicalize_best_effort(&pointer_home);
+            let home_str = home_canon.to_string_lossy().to_string();
             let id = uuid::Uuid::new_v4().to_string();
             let entry = ProfileEntry {
                 id: id.clone(),
                 email,
-                biovault_home: pointer_home.to_string_lossy().to_string(),
+                biovault_home: home_str,
                 created_at: now_rfc3339(),
                 last_used_at: Some(now_rfc3339()),
                 cached_fingerprint: None,
@@ -456,11 +459,15 @@ fn ensure_legacy_profile_migrated(mut store: ProfileStore) -> Result<ProfileStor
     let home = resolve_legacy_home_without_syftbox_env()?;
     let email = read_home_email(&home);
 
+    // Canonicalize the path to ensure consistency with resolve_or_create_profile_for_home
+    let home_canon = canonicalize_best_effort(&home);
+    let home_str = home_canon.to_string_lossy().to_string();
+
     let id = uuid::Uuid::new_v4().to_string();
     let entry = ProfileEntry {
         id: id.clone(),
         email,
-        biovault_home: home.to_string_lossy().to_string(),
+        biovault_home: home_str,
         created_at: now_rfc3339(),
         last_used_at: Some(now_rfc3339()),
         cached_fingerprint: None,
@@ -644,7 +651,36 @@ pub fn acquire_selected_profile_lock(args: &[String]) -> Result<Option<ProfileLo
 }
 
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    // Try direct canonicalization first
+    if let Ok(canon) = fs::canonicalize(path) {
+        return canon;
+    }
+
+    // If path doesn't exist, canonicalize the longest existing ancestor and append the rest.
+    // This handles symlinks in parent directories even when the final path doesn't exist yet.
+    let mut current = path.to_path_buf();
+    let mut suffix = PathBuf::new();
+
+    while !current.as_os_str().is_empty() && !current.exists() {
+        if let Some(name) = current.file_name() {
+            suffix = PathBuf::from(name).join(&suffix);
+        }
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    if current.as_os_str().is_empty() || !current.exists() {
+        // No existing ancestor found, return original path
+        return path.to_path_buf();
+    }
+
+    match fs::canonicalize(&current) {
+        Ok(canon_parent) => canon_parent.join(suffix),
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 fn resolve_or_create_profile_for_home(
@@ -1382,6 +1418,10 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
     }
     let current_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    // Canonicalize to resolve symlinks and ensure consistent path comparison
+    let current_home_canon = canonicalize_best_effort(&current_home);
+    let home_str = current_home_canon.to_string_lossy().to_string();
+
     let email_norm = normalize_email(email);
     if email_norm.is_empty() {
         return Ok(());
@@ -1395,7 +1435,7 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
             .as_deref()
             .map(normalize_email)
             .is_some_and(|e| e == email_norm)
-            && p.biovault_home != current_home.to_string_lossy()
+            && canonicalize_best_effort(Path::new(&p.biovault_home)).to_string_lossy() != home_str
     }) {
         return Err("That email is already registered to another profile".to_string());
     }
@@ -1411,11 +1451,11 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
         Some(info.fingerprint)
     })();
 
-    // Find profile matching current home, else create one.
-    let home_str = current_home.to_string_lossy().to_string();
+    // Find profile matching current home (comparing canonical paths), else create one.
     let mut found_id = None;
     for p in &mut store.profiles {
-        if p.biovault_home == home_str {
+        let p_home_canon = canonicalize_best_effort(Path::new(&p.biovault_home));
+        if p_home_canon.to_string_lossy() == home_str {
             p.email = Some(email.trim().to_string());
             p.last_used_at = Some(now_rfc3339());
             if cached_fingerprint.is_some() {

@@ -1021,9 +1021,19 @@ pub async fn run_pipeline(
         });
         let mut dataset_handled = false;
 
+        // For network datasets (from other users), skip local DB lookup and use URLs directly
+        let is_network_dataset = data_source.as_deref() == Some("network_dataset");
+
         // When dataset_name is provided, try the dataset path first (regardless of URLs/file_ids)
         // This properly handles Map/Record-shaped datasets like GWAS (Map[String, Record{bed, bim, fam}])
+        // Skip for network datasets which don't exist in local DB
         if let Some(dataset_name) = dataset_name.clone() {
+            if is_network_dataset {
+                eprintln!(
+                    "[pipeline] Skipping local DB lookup for network dataset '{}', using URLs instead",
+                    dataset_name
+                );
+            } else {
             let data_type = dataset_data_type
                 .clone()
                 .unwrap_or_else(|| "mock".to_string());
@@ -1126,6 +1136,7 @@ pub async fn run_pipeline(
                 dataset_handled = true;
             }
             // If List-shaped, fall through to URL/file_id handling below
+            }
         }
 
         if dataset_handled {

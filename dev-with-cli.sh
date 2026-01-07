@@ -10,13 +10,14 @@ NC='\033[0m' # No Color
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo -e "${BLUE}🔨 Force rebuilding biovault submodule...${NC}"
+echo -e "${BLUE}🔨 Force rebuilding biovault dependency...${NC}"
 cd "$SCRIPT_DIR/src-tauri"
 cargo clean -p biovault
 cd "$SCRIPT_DIR"
 echo -e "${GREEN}✓ Cleaned biovault package cache${NC}"
 
-BV_PATH="$SCRIPT_DIR/biovault/bv"
+BIOVAULT_DIR="${BIOVAULT_DIR:-$SCRIPT_DIR/biovault}"
+BV_PATH="$BIOVAULT_DIR/bv"
 
 # Only set BIOVAULT_HOME if explicitly provided via BIOVAULT_CONFIG
 # Otherwise let the profile picker handle home selection

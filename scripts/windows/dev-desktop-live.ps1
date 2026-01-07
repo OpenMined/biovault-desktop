@@ -62,7 +62,7 @@ if (-not $SkipNextflowRunnerBuild) {
   Write-Host ""
 }
 
-Write-Host "== Force rebuilding biovault submodule... ==" -ForegroundColor Blue
+Write-Host "== Force rebuilding biovault dependency... ==" -ForegroundColor Blue
 Push-Location (Join-Path $repoRoot "src-tauri")
 try {
   & cargo clean -p biovault

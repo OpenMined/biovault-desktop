@@ -28,8 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -73,8 +76,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,9 +99,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -222,8 +228,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -242,9 +251,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -324,8 +333,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -344,9 +356,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -395,7 +407,7 @@ jobs:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           INCLUDE_JUPYTER_TESTS: "1"
-        run: ./test-scenario.sh --jupyter-collab biovault/biovault-beaver/notebooks/02-advanced-features.json
+        run: ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Upload test artifacts on failure
         if: failure()
@@ -426,8 +438,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Setup workspace
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -446,9 +461,9 @@ jobs:
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
         with:
-          go-version-file: biovault/syftbox-sdk/syftbox/go.mod
+          go-version-file: syftbox/go.mod
           cache: true
-          cache-dependency-path: biovault/syftbox-sdk/syftbox/go.sum
+          cache-dependency-path: syftbox/go.sum
 
       - name: Setup Python
         uses: actions/setup-python@v5
