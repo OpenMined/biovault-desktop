@@ -384,6 +384,19 @@ jobs:
       - name: Install Playwright browsers
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Fetch bundled dependencies
+        run: |
+          export BUNDLED_OS="linux"
+          export BUNDLED_ARCH="x86_64"
+          chmod +x scripts/fetch-bundled-deps.sh
+          ./scripts/fetch-bundled-deps.sh
+          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Materialize templates
+        run: |
+          chmod +x scripts/materialize-templates.sh || true
+          ./scripts/materialize-templates.sh || true
+
       - name: Build bv-desktop (release)
         run: cargo build --release
         working-directory: src-tauri
