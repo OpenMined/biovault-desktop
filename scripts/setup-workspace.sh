@@ -53,10 +53,11 @@ clone_if_missing() {
         echo "$name already exists at $PARENT_DIR/$name"
     else
         echo "Cloning $name to $PARENT_DIR/$name..."
+        # Use ${git_args[@]+"${git_args[@]}"} to handle empty arrays with set -u
         if [[ -n "$branch" ]]; then
-            git "${git_args[@]}" clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            git ${git_args[@]+"${git_args[@]}"} clone -b "$branch" "$url" "$PARENT_DIR/$name"
         else
-            git "${git_args[@]}" clone "$url" "$PARENT_DIR/$name"
+            git ${git_args[@]+"${git_args[@]}"} clone "$url" "$PARENT_DIR/$name"
         fi
     fi
 }
