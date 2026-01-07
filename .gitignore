@@ -42,8 +42,14 @@ sandbox/*
 # Generated notebooks (build artifacts)
 templates-dev/
 
-# Old submodule directory (now cloned as sibling)
+# Sibling repo symlinks (created by setup-workspace.sh)
 /biovault/
+/syftbox-sdk/
+/syft-crypto-core/
+/syftbox/
+/biovault-beaver/
+/sbenv/
+/bioscript/
 
 # Test data (synthetic genotypes)
 test-data/

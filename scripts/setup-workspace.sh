@@ -77,6 +77,23 @@ if [[ -f "$PARENT_DIR/biovault/scripts/setup-workspace.sh" ]]; then
     (cd "$PARENT_DIR/biovault" && ./scripts/setup-workspace.sh)
 fi
 
+# Create symlinks from repo root to parent deps (for compatibility with old paths)
+create_symlink() {
+    local name="$1"
+    if [[ ! -e "$REPO_ROOT/$name" ]]; then
+        ln -s "../$name" "$REPO_ROOT/$name"
+        echo "Created symlink: $name -> ../$name"
+    fi
+}
+
+create_symlink "biovault"
+create_symlink "syftbox-sdk"
+create_symlink "syft-crypto-core"
+create_symlink "syftbox"
+create_symlink "biovault-beaver"
+create_symlink "sbenv"
+create_symlink "bioscript"
+
 echo ""
 echo "Workspace setup complete!"
 echo "Dependencies are at:"
