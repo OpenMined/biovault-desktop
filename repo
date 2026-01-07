@@ -60,6 +60,13 @@ REQUIRED_TOOLS=(
   "cargo|cargo --version|rust|Rustlang.Rust.MSVC|Rust package manager (comes with Rust)"
   "python3|python3 --version|python@3|Python.Python.3.12|Python 3 for scripts"
   "uv|uv --version|uv|astral-sh.uv|Fast Python package manager"
+  "protoc|protoc --version|protobuf|Google.Protobuf|Protocol Buffers compiler"
+)
+
+# Linux-only system libraries required for Tauri: name|pkg-config_name|pacman_pkg|apt_pkg|description
+LINUX_SYSTEM_LIBS=(
+  "webkit2gtk-4.1|webkit2gtk-4.1|webkit2gtk-4.1|libwebkit2gtk-4.1-dev|WebKit rendering engine for Tauri"
+  "javascriptcoregtk-4.1|javascriptcoregtk-4.1|webkit2gtk-4.1|libjavascriptcoregtk-4.1-dev|JavaScript engine for WebKit"
 )
 
 repo_tools() {
@@ -83,14 +90,35 @@ repo_tools() {
     fi
   done
 
+  # Check Linux system libraries (only on Linux)
+  local missing_syslibs=()
+  if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo ""
+    echo -e "${CYAN}=== Linux System Libraries ===${NC}"
+    echo ""
+
+    for lib_def in "${LINUX_SYSTEM_LIBS[@]}"; do
+      IFS='|' read -r name pkg_config_name pacman_pkg apt_pkg description <<< "$lib_def"
+      if pkg-config --exists "$pkg_config_name" 2>/dev/null; then
+        local version
+        version=$(pkg-config --modversion "$pkg_config_name" 2>/dev/null || echo "installed")
+        echo -e "  ${GREEN}✓${NC} $name - $version"
+      else
+        missing_syslibs+=("$lib_def")
+        echo -e "  ${RED}✗${NC} $name - ${YELLOW}not found${NC} ($description)"
+      fi
+    done
+  fi
+
   echo ""
 
-  if [[ ${#missing[@]} -eq 0 ]]; then
+  if [[ ${#missing[@]} -eq 0 && ${#missing_syslibs[@]} -eq 0 ]]; then
     echo -e "${GREEN}✅ All required tools are installed!${NC}"
     return 0
   fi
 
-  echo -e "${YELLOW}Missing ${#missing[@]} tool(s). Install instructions:${NC}"
+  local total_missing=$((${#missing[@]} + ${#missing_syslibs[@]}))
+  echo -e "${YELLOW}Missing ${total_missing} item(s). Install instructions:${NC}"
   echo ""
 
   # Detect platform
@@ -134,16 +162,8 @@ repo_tools() {
       ;;
     linux)
       echo -e "${BLUE}Linux:${NC}"
-      if command -v brew >/dev/null 2>&1; then
-        local brew_list="${!brew_pkgs[*]}"
-        echo -e "  ${GREEN}Homebrew detected:${NC} brew install $brew_list"
-        echo ""
-        echo -ne "${YELLOW}Run this command now? [y/N]: ${NC}"
-        read -r confirm
-        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-          brew install ${!brew_pkgs[*]}
-        fi
-      elif command -v pacman >/dev/null 2>&1; then
+      # Prefer native package managers on Linux (they handle system libs better)
+      if command -v pacman >/dev/null 2>&1; then
         echo -e "  ${GREEN}Arch Linux:${NC}"
         # Map brew packages to pacman
         local pacman_pkgs=""
@@ -154,9 +174,19 @@ repo_tools() {
             node) pacman_pkgs+=" nodejs npm" ;;
             rust) pacman_pkgs+=" rust" ;;
             python@3) pacman_pkgs+=" python" ;;
+            protobuf) pacman_pkgs+=" protobuf" ;;
             uv) aur_pkgs+=" uv" ;;
             *) pacman_pkgs+=" $pkg" ;;
           esac
+        done
+        # Add missing Linux system libraries (deduplicated)
+        declare -A syslib_pacman_seen
+        for lib_def in "${missing_syslibs[@]}"; do
+          IFS='|' read -r _ _ pacman_pkg _ _ <<< "$lib_def"
+          if [[ -z "${syslib_pacman_seen[$pacman_pkg]:-}" ]]; then
+            pacman_pkgs+=" $pacman_pkg"
+            syslib_pacman_seen[$pacman_pkg]=1
+          fi
         done
         if [[ -n "$pacman_pkgs" ]]; then
           echo "  sudo pacman -S$pacman_pkgs"
@@ -179,8 +209,14 @@ repo_tools() {
             node) apt_pkgs+=" nodejs npm" ;;
             rust) apt_pkgs+=" rustc cargo" ;;
             python@3) apt_pkgs+=" python3" ;;
+            protobuf) apt_pkgs+=" protobuf-compiler" ;;
             *) apt_pkgs+=" $pkg" ;;
           esac
+        done
+        # Add missing Linux system libraries
+        for lib_def in "${missing_syslibs[@]}"; do
+          IFS='|' read -r _ _ _ apt_pkg _ <<< "$lib_def"
+          apt_pkgs+=" $apt_pkg"
         done
         echo "  sudo apt-get install$apt_pkgs"
       else
