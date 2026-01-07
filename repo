@@ -1544,6 +1544,9 @@ case "${1:-}" in
     require_repo
     repo_init "${2:-}"
     repo_sync
+    if [[ -x "$ROOT_DIR/scripts/setup-repo-workspace.sh" ]]; then
+      "$ROOT_DIR/scripts/setup-repo-workspace.sh"
+    fi
     ;;
   sync)
     require_repo
