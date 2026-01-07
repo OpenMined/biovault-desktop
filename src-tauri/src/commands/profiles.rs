@@ -432,11 +432,14 @@ fn ensure_legacy_profile_migrated(mut store: ProfileStore) -> Result<ProfileStor
     if let Some(pointer_home) = read_legacy_pointer_file() {
         if pointer_home.exists() || pointer_home.to_string_lossy().contains("BioVault") {
             let email = read_home_email(&pointer_home);
+            // Canonicalize the path to ensure consistency with resolve_or_create_profile_for_home
+            let home_canon = canonicalize_best_effort(&pointer_home);
+            let home_str = home_canon.to_string_lossy().to_string();
             let id = uuid::Uuid::new_v4().to_string();
             let entry = ProfileEntry {
                 id: id.clone(),
                 email,
-                biovault_home: pointer_home.to_string_lossy().to_string(),
+                biovault_home: home_str,
                 created_at: now_rfc3339(),
                 last_used_at: Some(now_rfc3339()),
                 cached_fingerprint: None,
@@ -456,11 +459,15 @@ fn ensure_legacy_profile_migrated(mut store: ProfileStore) -> Result<ProfileStor
     let home = resolve_legacy_home_without_syftbox_env()?;
     let email = read_home_email(&home);
 
+    // Canonicalize the path to ensure consistency with resolve_or_create_profile_for_home
+    let home_canon = canonicalize_best_effort(&home);
+    let home_str = home_canon.to_string_lossy().to_string();
+
     let id = uuid::Uuid::new_v4().to_string();
     let entry = ProfileEntry {
         id: id.clone(),
         email,
-        biovault_home: home.to_string_lossy().to_string(),
+        biovault_home: home_str,
         created_at: now_rfc3339(),
         last_used_at: Some(now_rfc3339()),
         cached_fingerprint: None,
