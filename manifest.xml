@@ -2,12 +2,19 @@
 <manifest>
   <remote name="github" fetch="git@github.com:" />
   <default remote="github" revision="main" />
-  <project name="OpenMined/bioscript" path="bioscript" revision="d1ec9f68e90efbfea565855939e4c64669a69e7e" />
-  <project name="openmined/biovault" path="biovault" revision="ffe2fa1942e76c9f5b34651d1fcbcdaaeab7c271" />
-  <project name="OpenMined/biovault-beaver" path="biovault-beaver" revision="2b73dbe04b25c2756160fbbe27ae08ab273544cd" />
-  <project name="openmined/sbenv" path="sbenv" revision="7f7981affffb1d705ff6502d3500cd24a033a4e5" />
-  <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="6edb4126057582cff97970d9f579d166558b4ab4" />
-  <project name="OpenMined/libsignal-protocol-syft" path="syft-crypto-core/vendor/libsignal-protocol-syft" revision="413591b0afa35e9408095a699b77f13293342a3e" />
+
+  <!-- Core application -->
+  <project name="OpenMined/biovault" path="biovault" revision="main" />
+
+  <!-- SDK and crypto -->
+  <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="main" />
+  <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="main" />
+
+  <!-- Server -->
   <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />
-  <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="8c45328de7d30a6c24acc18c7ddf3994790eacfb" />
-  </manifest>
+
+  <!-- Notebooks and tools -->
+  <project name="OpenMined/biovault-beaver" path="biovault-beaver" revision="main" />
+  <project name="OpenMined/sbenv" path="sbenv" revision="main" />
+  <project name="OpenMined/bioscript" path="bioscript" revision="main" />
+</manifest>

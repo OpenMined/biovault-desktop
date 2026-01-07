@@ -42,6 +42,15 @@ sandbox/*
 # Generated notebooks (build artifacts)
 templates-dev/
 
+# Sibling repo symlinks (created by setup-workspace.sh)
+/biovault/
+/syftbox-sdk/
+/syft-crypto-core/
+/syftbox/
+/biovault-beaver/
+/sbenv/
+/bioscript/
+
 # Test data (synthetic genotypes)
 test-data/
 data/*
