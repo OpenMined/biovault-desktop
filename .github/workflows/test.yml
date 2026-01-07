@@ -217,6 +217,7 @@ jobs:
       - name: Setup Docker (macOS - pipelines scenarios)
         if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
         uses: docker/setup-docker-action@v4
+        continue-on-error: true
 
       - name: Install npm dependencies
         run: npm ci

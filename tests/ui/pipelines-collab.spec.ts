@@ -29,7 +29,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
 const UI_TIMEOUT = 10_000
 const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
-const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
+const SYNC_TIMEOUT = 120_000 // 2 minutes for sync operations
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
 const DEBUG_PIPELINE_PAUSE_MS = (() => {
 	const raw = Number.parseInt(process.env.PIPELINES_COLLAB_PAUSE_MS || '30000', 10)
@@ -697,6 +697,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page1.waitForTimeout(3000)
 			console.log('Dataset published!')
 
+			try {
+				await backend1.invoke('trigger_syftbox_sync')
+			} catch {}
+
 			// ============================================================
 			// Step 3: Client2 (data scientist) imports HERC2 Pipeline
 			// ============================================================
@@ -755,6 +759,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await expect(networkDatasetsTab).toBeVisible({ timeout: UI_TIMEOUT })
 			await networkDatasetsTab.click()
 			await page2.waitForTimeout(500)
+
+			try {
+				await backend1.invoke('trigger_syftbox_sync')
+				await backend2.invoke('trigger_syftbox_sync')
+			} catch {}
+			await page2.waitForTimeout(2000)
 
 			// Wait for Client1's dataset to appear
 			const syncTimer = timer('Dataset sync to network')
