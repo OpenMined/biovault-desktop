@@ -46,8 +46,159 @@ Options:
                       Checkout a revision in a repo or all repos
                       target: repo path, repo name, or "all"
                       --reset: discard local changes before checkout
+  tools               Check required tools and show install instructions
   --help, -h          Show this help
 EOF
+}
+
+# Tool definitions: name|check_command|brew|winget|description
+REQUIRED_TOOLS=(
+  "go|go version|go|GoLang.Go|Go compiler for backend services"
+  "node|node --version|node|OpenJS.NodeJS|Node.js runtime for frontend tooling"
+  "npm|npm --version|node|OpenJS.NodeJS|Node package manager (comes with Node.js)"
+  "rustc|rustc --version|rust|Rustlang.Rust.MSVC|Rust compiler for native code"
+  "cargo|cargo --version|rust|Rustlang.Rust.MSVC|Rust package manager (comes with Rust)"
+  "python3|python3 --version|python@3|Python.Python.3.12|Python 3 for scripts"
+)
+
+repo_tools() {
+  echo -e "${CYAN}=== Required Development Tools ===${NC}"
+  echo ""
+
+  local missing=()
+  local installed=()
+
+  for tool_def in "${REQUIRED_TOOLS[@]}"; do
+    IFS='|' read -r name check_cmd brew_pkg winget_pkg description <<< "$tool_def"
+    local output
+    if output=$(eval "$check_cmd" 2>&1); then
+      local version
+      version=$(echo "$output" | head -n1)
+      installed+=("$name")
+      echo -e "  ${GREEN}✓${NC} $name - $version"
+    else
+      missing+=("$tool_def")
+      echo -e "  ${RED}✗${NC} $name - ${YELLOW}not found${NC} ($description)"
+    fi
+  done
+
+  echo ""
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✅ All required tools are installed!${NC}"
+    return 0
+  fi
+
+  echo -e "${YELLOW}Missing ${#missing[@]} tool(s). Install instructions:${NC}"
+  echo ""
+
+  # Detect platform
+  local platform="unknown"
+  local install_cmds=()
+
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    platform="macos"
+  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    platform="linux"
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "${WINDIR:-}" ]]; then
+    platform="windows"
+  fi
+
+  # Collect unique packages
+  declare -A brew_pkgs
+  declare -A winget_pkgs
+
+  for tool_def in "${missing[@]}"; do
+    IFS='|' read -r name check_cmd brew_pkg winget_pkg description <<< "$tool_def"
+    brew_pkgs["$brew_pkg"]=1
+    winget_pkgs["$winget_pkg"]=1
+  done
+
+  case "$platform" in
+    macos)
+      echo -e "${BLUE}macOS (Homebrew):${NC}"
+      if command -v brew >/dev/null 2>&1; then
+        local brew_list="${!brew_pkgs[*]}"
+        echo -e "  brew install $brew_list"
+        echo ""
+        echo -ne "${YELLOW}Run this command now? [y/N]: ${NC}"
+        read -r confirm
+        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+          brew install ${!brew_pkgs[*]}
+        fi
+      else
+        echo "  First install Homebrew: https://brew.sh"
+        echo "  Then run: brew install ${!brew_pkgs[*]}"
+      fi
+      ;;
+    linux)
+      echo -e "${BLUE}Linux:${NC}"
+      if command -v brew >/dev/null 2>&1; then
+        local brew_list="${!brew_pkgs[*]}"
+        echo -e "  ${GREEN}Homebrew detected:${NC} brew install $brew_list"
+        echo ""
+        echo -ne "${YELLOW}Run this command now? [y/N]: ${NC}"
+        read -r confirm
+        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+          brew install ${!brew_pkgs[*]}
+        fi
+      elif command -v pacman >/dev/null 2>&1; then
+        echo -e "  ${GREEN}Arch Linux:${NC}"
+        # Map brew packages to pacman
+        local pacman_pkgs=""
+        for pkg in "${!brew_pkgs[@]}"; do
+          case "$pkg" in
+            go) pacman_pkgs+=" go" ;;
+            node) pacman_pkgs+=" nodejs npm" ;;
+            rust) pacman_pkgs+=" rust" ;;
+            python@3) pacman_pkgs+=" python" ;;
+            *) pacman_pkgs+=" $pkg" ;;
+          esac
+        done
+        echo "  sudo pacman -S$pacman_pkgs"
+        echo ""
+        echo -ne "${YELLOW}Run this command now? [y/N]: ${NC}"
+        read -r confirm
+        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+          sudo pacman -S $pacman_pkgs
+        fi
+      elif command -v apt-get >/dev/null 2>&1; then
+        echo -e "  ${GREEN}Debian/Ubuntu:${NC}"
+        local apt_pkgs=""
+        for pkg in "${!brew_pkgs[@]}"; do
+          case "$pkg" in
+            go) apt_pkgs+=" golang-go" ;;
+            node) apt_pkgs+=" nodejs npm" ;;
+            rust) apt_pkgs+=" rustc cargo" ;;
+            python@3) apt_pkgs+=" python3" ;;
+            *) apt_pkgs+=" $pkg" ;;
+          esac
+        done
+        echo "  sudo apt-get install$apt_pkgs"
+      else
+        echo "  Install Homebrew (works on Linux too): https://brew.sh"
+        echo "  Then run: brew install ${!brew_pkgs[*]}"
+      fi
+      ;;
+    windows)
+      echo -e "${BLUE}Windows (winget):${NC}"
+      for pkg in "${!winget_pkgs[@]}"; do
+        echo "  winget install $pkg"
+      done
+      echo ""
+      echo "Or use Chocolatey/Scoop if preferred."
+      ;;
+    *)
+      echo -e "${BLUE}Manual installation required:${NC}"
+      for tool_def in "${missing[@]}"; do
+        IFS='|' read -r name check_cmd brew_pkg winget_pkg description <<< "$tool_def"
+        echo "  - $name: $description"
+      done
+      ;;
+  esac
+
+  echo ""
+  return 1
 }
 
 REPO_CMD=()
@@ -1584,6 +1735,9 @@ case "${1:-}" in
       exit 1
     fi
     run_repo forall -c "git checkout -B \"$branch\""
+    ;;
+  tools)
+    repo_tools
     ;;
   --help|-h)
     usage
