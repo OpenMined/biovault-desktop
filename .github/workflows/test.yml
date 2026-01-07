@@ -246,6 +246,11 @@ jobs:
           ./scripts/fetch-bundled-deps.sh
           chmod -R u+rw src-tauri/resources/bundled/ || true
 
+      - name: Materialize templates
+        run: |
+          chmod +x scripts/materialize-templates.sh || true
+          ./scripts/materialize-templates.sh || true
+
       - name: Build syftbox client
         run: |
           chmod +x scripts/build-syftbox-prod.sh
