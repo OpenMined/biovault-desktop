@@ -47,7 +47,9 @@ export async function completeOnboarding(
 	// Set up a persistent dialog handler that accepts all dialogs during onboarding.
 	// This is more robust than page.once() which can miss dialogs due to timing.
 	const dialogHandler = (dialog: import('@playwright/test').Dialog) => {
-		console.log(`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`)
+		console.log(
+			`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`,
+		)
 		dialog.accept().catch(() => {})
 	}
 	page.on('dialog', dialogHandler)
