@@ -740,15 +740,31 @@ jobs:
         run: |
           # Build without updater signing for PR tests
           # Use try/catch to ignore Tauri exit code from signing errors
+          $configOverride = "scripts\\windows\\tauri.windows.local.json"
           try {
-            tauri build --target ${{ matrix.args }} --ci --bundles nsis 2>&1 | Out-Null
+            tauri build --target ${{ matrix.args }} --ci --bundles nsis --config $configOverride 2>&1 | Out-Null
           } catch {
             Write-Host "Tauri build exited with error (likely signing) - checking if binary was created..."
           }
           # Verify the binary was actually built
-          if (Test-Path "src-tauri\target\${{ matrix.args }}\release\bv-desktop.exe") {
-            Write-Host "✅ Build successful"
-            Get-ChildItem -Path "src-tauri\target\${{ matrix.args }}\release\bundle\nsis" -ErrorAction SilentlyContinue
+          $targetRelease = "src-tauri\target\${{ matrix.args }}\release"
+          $fallbackRelease = "src-tauri\target\release"
+          $exeCandidates = @(
+            (Join-Path $targetRelease "bv-desktop.exe"),
+            (Join-Path $fallbackRelease "bv-desktop.exe")
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($exePath) {
+            Write-Host "✅ Build successful: $exePath"
+            $bundleCandidates = @(
+              (Join-Path $targetRelease "bundle\nsis"),
+              (Join-Path $fallbackRelease "bundle\nsis")
+            )
+            foreach ($bundle in $bundleCandidates) {
+              if (Test-Path $bundle) {
+                Get-ChildItem -Path $bundle -ErrorAction SilentlyContinue
+              }
+            }
           } else {
             Write-Host "❌ Build failed - binary not found"
             exit 1
