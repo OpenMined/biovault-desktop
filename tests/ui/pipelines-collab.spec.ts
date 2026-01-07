@@ -468,14 +468,13 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				const onboardingTimer = timer('Onboarding')
 				console.log('\n=== Onboarding clients ===')
 
-				const onboardingPromises: Promise<boolean>[] = []
+				// Run onboardings sequentially to avoid race conditions with dialog handling
 				if (!isOnboarded1) {
-					onboardingPromises.push(completeOnboarding(page1, email1, logSocket))
+					await completeOnboarding(page1, email1, logSocket)
 				}
 				if (!isOnboarded2) {
-					onboardingPromises.push(completeOnboarding(page2, email2, logSocket))
+					await completeOnboarding(page2, email2, logSocket)
 				}
-				await Promise.all(onboardingPromises)
 
 				// Wait for peer DID files to sync
 				console.log('Waiting for peer DID files to sync...')

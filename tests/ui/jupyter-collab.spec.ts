@@ -533,15 +533,13 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			console.log('\n=== Onboarding clients (inline) ===')
 			const logSocket = await ensureLogSocket()
 
-			// Run both onboardings in parallel for speed
-			const onboardingPromises: Promise<boolean>[] = []
+			// Run onboardings sequentially to avoid race conditions with dialog handling
 			if (!isOnboarded1) {
-				onboardingPromises.push(completeOnboarding(page1, email1, logSocket))
+				await completeOnboarding(page1, email1, logSocket)
 			}
 			if (!isOnboarded2) {
-				onboardingPromises.push(completeOnboarding(page2, email2, logSocket))
+				await completeOnboarding(page2, email2, logSocket)
 			}
-			await Promise.all(onboardingPromises)
 
 			if (logSocket) {
 				logSocket.close()
