@@ -270,8 +270,19 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		})
 
 		await setWsPort(page, wsPort)
+		// Wait for WS bridge before resetting state
+		await waitForWsBridge(wsPort, 60_000)
 		// Reset to clear any stale profiles - onboarding will create fresh profiles
 		await resetOnboardingState(homeA, homeB)
+		// Force backend to reload profiles from disk (cleared by reset)
+		try {
+			await wsInvoke(wsPort, 'profiles_reload', {}, 5_000)
+		} catch (_err) {
+			// profiles_reload may not exist, try alternative
+			await wsInvoke(wsPort, 'profiles_get_boot_state', { force_reload: true }, 5_000).catch(
+				() => {},
+			)
+		}
 		await page.goto(process.env.UI_BASE_URL || 'http://localhost:8082')
 
 		// Step through onboarding until home step, then switch home to create profile B (this restarts the backend).
