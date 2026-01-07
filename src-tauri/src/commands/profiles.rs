@@ -651,7 +651,36 @@ pub fn acquire_selected_profile_lock(args: &[String]) -> Result<Option<ProfileLo
 }
 
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    // Try direct canonicalization first
+    if let Ok(canon) = fs::canonicalize(path) {
+        return canon;
+    }
+
+    // If path doesn't exist, canonicalize the longest existing ancestor and append the rest.
+    // This handles symlinks in parent directories even when the final path doesn't exist yet.
+    let mut current = path.to_path_buf();
+    let mut suffix = PathBuf::new();
+
+    while !current.as_os_str().is_empty() && !current.exists() {
+        if let Some(name) = current.file_name() {
+            suffix = PathBuf::from(name).join(&suffix);
+        }
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    if current.as_os_str().is_empty() || !current.exists() {
+        // No existing ancestor found, return original path
+        return path.to_path_buf();
+    }
+
+    match fs::canonicalize(&current) {
+        Ok(canon_parent) => canon_parent.join(suffix),
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 fn resolve_or_create_profile_for_home(
