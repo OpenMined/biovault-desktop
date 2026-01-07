@@ -218,6 +218,26 @@ jobs:
       - name: Setup Docker (macOS - pipelines scenarios)
         if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
         uses: docker/setup-docker-action@v4
+        with:
+          version: latest
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: Verify Docker (macOS)
+        if: runner.os == 'macOS' && (matrix.scenario == 'pipelines-solo' || matrix.scenario == 'pipelines-collab')
+        run: |
+          echo "Checking Docker status..."
+          for i in 1 2 3 4 5; do
+            if docker info > /dev/null 2>&1; then
+              echo "Docker is running!"
+              docker version
+              exit 0
+            fi
+            echo "Attempt $i: Docker not ready, waiting 10s..."
+            sleep 10
+          done
+          echo "Docker failed to start after 5 attempts"
+          echo "DOCKER_AVAILABLE=false" >> $GITHUB_ENV
         continue-on-error: true
 
       - name: Install npm dependencies
