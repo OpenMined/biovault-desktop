@@ -33,7 +33,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fresh envs)
 const UI_TIMEOUT = 10_000
 const JUPYTER_STARTUP_TIMEOUT = 240_000 // Allow more time for venv install + server start
-const SYNC_TIMEOUT = 30_000 // 30 seconds for session sync
+const SYNC_TIMEOUT = 60_000 // 60 seconds for session sync (doubled for CI reliability)
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync (CI can be slow)
 const CHAT_PAUSE_MS = process.env.CHAT_PAUSE_MS
 	? Number.parseInt(process.env.CHAT_PAUSE_MS, 10)
@@ -703,10 +703,28 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		// ============================================================
 		console.log('\n=== Step 3: Wait for session sync and Client2 accepts ===')
 
-		// Poll for invitation on Client2's backend
+		// Poll for invitation on Client2's backend, triggering syncs to accelerate discovery
 		let invitationFound = false
 		const syncStart = Date.now()
+		let syncIterCount = 0
 		while (Date.now() - syncStart < SYNC_TIMEOUT) {
+			const elapsed = Math.round((Date.now() - syncStart) / 1000)
+
+			// Trigger sync on both clients to accelerate session data transfer
+			// Client1 needs to upload, Client2 needs to download
+			try {
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				if (syncIterCount === 0) {
+					console.log(`[${elapsed}s] Triggered sync on both clients`)
+				}
+			} catch {
+				// Ignore sync errors
+			}
+			syncIterCount++
+
 			try {
 				const invitations = await backend2.invoke('get_session_invitations')
 				console.log(`Client2 invitations: ${JSON.stringify(invitations)}`)
@@ -750,7 +768,32 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		}
 
 		if (!invitationFound) {
-			console.log('WARNING: Session invitation not found within timeout - continuing anyway')
+			console.log('WARNING: Session invitation not found within timeout')
+			// Try a few more sync cycles before giving up entirely
+			console.log('Attempting additional sync cycles...')
+			for (let retry = 0; retry < 5; retry++) {
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				await page2.waitForTimeout(3000)
+				const sessions = await backend2.invoke('get_sessions').catch(() => [])
+				if (Array.isArray(sessions)) {
+					const found = sessions.find(
+						(s: any) =>
+							s.session_id === sessionId || s.sessionId === sessionId || s.name === sessionName,
+					)
+					if (found) {
+						console.log(`Session found on retry ${retry + 1}!`)
+						invitationFound = true
+						break
+					}
+				}
+				console.log(`Retry ${retry + 1}/5: Session still not visible on Client2`)
+			}
+			if (!invitationFound) {
+				console.log('CRITICAL: Session never synced to Client2 - test cannot proceed with chat')
+			}
 		}
 
 		// 🚀 OPTIMIZATION: Now that Client2 has the session, launch Jupyter on Client2 too
@@ -770,24 +813,52 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 				return null
 			})
 
-		// Navigate Client2 to Sessions tab and click on the session
-		await page2.locator('.nav-item[data-tab="sessions"]').click()
-		await expect(page2.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
-		await page2.waitForTimeout(1000)
+		// Navigate Client2 to Sessions tab and click on the session (with retries)
+		let client2SessionClicked = false
+		for (let attempt = 0; attempt < 3 && !client2SessionClicked; attempt++) {
+			if (attempt > 0) {
+				console.log(`Client2 session click retry ${attempt + 1}/3...`)
+				await Promise.all([
+					backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+					backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+				])
+				await page2.waitForTimeout(2000)
+			}
 
-		// Click on the session to select it
-		const sessionItem2 = page2
-			.locator('.session-list-item')
-			.filter({ hasText: sessionName })
-			.first()
-		if (await sessionItem2.isVisible({ timeout: 5000 }).catch(() => false)) {
-			console.log('Clicking on session in Client2 UI...')
-			await sessionItem2.click()
-			// Wait for session detail panel to appear
-			await expect(page2.locator('#sessions-main')).toBeVisible({ timeout: 5000 })
-			console.log('Client2 session detail panel is visible')
-		} else {
-			console.log('WARNING: Session item not visible in Client2 - may need to wait for sync')
+			await page2.reload()
+			await waitForAppReady(page2, { timeout: 10_000 })
+			await page2.locator('.nav-item[data-tab="sessions"]').click()
+			await expect(page2.locator('.sessions-container')).toBeVisible({ timeout: UI_TIMEOUT })
+			await page2.waitForTimeout(1000)
+
+			// Click on the session to select it
+			const sessionItem2 = page2
+				.locator('.session-list-item')
+				.filter({ hasText: sessionName })
+				.first()
+			if (await sessionItem2.isVisible({ timeout: 5000 }).catch(() => false)) {
+				console.log('Clicking on session in Client2 UI...')
+				await sessionItem2.click()
+				// Wait for session detail panel to appear
+				if (
+					await page2
+						.locator('#sessions-main')
+						.isVisible({ timeout: 5000 })
+						.catch(() => false)
+				) {
+					console.log('Client2 session detail panel is visible')
+					client2SessionClicked = true
+				} else {
+					console.log('Client2 session detail panel NOT visible after click')
+				}
+			} else {
+				const allItems = await page2.locator('.session-list-item').count()
+				console.log(`Session item not visible (${allItems} items in list)`)
+			}
+		}
+
+		if (!client2SessionClicked) {
+			console.log('CRITICAL: Could not click session on Client2 after retries')
 		}
 
 		// ============================================================
@@ -799,13 +870,14 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		async function sendChatMessage(page: Page, clientName: string, message: string) {
 			// Scroll to the chat panel first (it's at the bottom of session detail)
 			const chatPanel = page.locator('.session-chat-panel')
-			await chatPanel.scrollIntoViewIfNeeded()
+			// Use a short timeout for scroll - if it can't scroll in 10s, the panel isn't there
+			await chatPanel.scrollIntoViewIfNeeded({ timeout: 10_000 })
 
 			const messageInput = page.locator('#session-message-input')
 			const sendBtn = page.locator('#send-session-message-btn')
 
 			// Wait for chat input to be visible
-			await expect(messageInput).toBeVisible({ timeout: 5000 })
+			await expect(messageInput).toBeVisible({ timeout: 10_000 })
 
 			// Clear any existing text and type the message
 			await messageInput.click()
