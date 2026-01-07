@@ -22,6 +22,7 @@
  *
  * @tag jupyter-collab
  */
+import { execFileSync } from 'child_process'
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import * as fs from 'fs'
@@ -49,6 +50,73 @@ interface NotebookRun {
 interface NotebookConfig {
 	mode?: 'parallel' | 'sequential'
 	runs: NotebookRun[]
+}
+
+function parseBeaverVersion(content: string): string | null {
+	const match = content.match(/^__version__\s*=\s*"([^"]+)"/m)
+	return match ? match[1] : null
+}
+
+function resolveExpectedBeaverVersion(): string {
+	const candidates = [
+		process.env.BIOVAULT_BEAVER_DIR
+			? path.join(process.env.BIOVAULT_BEAVER_DIR, 'python/src/beaver/__init__.py')
+			: null,
+		process.env.WORKSPACE_ROOT
+			? path.join(process.env.WORKSPACE_ROOT, 'biovault-beaver/python/src/beaver/__init__.py')
+			: null,
+		path.join(process.cwd(), 'biovault-beaver/python/src/beaver/__init__.py'),
+		path.join(process.cwd(), 'biovault', 'biovault-beaver/python/src/beaver/__init__.py'),
+	]
+
+	for (const candidate of candidates) {
+		if (!candidate || !fs.existsSync(candidate)) continue
+		const content = fs.readFileSync(candidate, 'utf-8')
+		const version = parseBeaverVersion(content)
+		if (version) return version
+	}
+
+	throw new Error('Unable to resolve expected biovault-beaver version from repo')
+}
+
+function resolveVenvPythonPath(venvPath: string): string {
+	return process.platform === 'win32'
+		? path.join(venvPath, 'Scripts', 'python.exe')
+		: path.join(venvPath, 'bin', 'python')
+}
+
+function readBeaverVersionFromVenv(venvPath: string): { version: string; file: string } {
+	const pythonPath = resolveVenvPythonPath(venvPath)
+	if (!fs.existsSync(pythonPath)) {
+		throw new Error(`Jupyter venv python not found: ${pythonPath}`)
+	}
+
+	const output = execFileSync(
+		pythonPath,
+		['-c', 'import beaver; print(beaver.__version__); print(beaver.__file__)'],
+		{ encoding: 'utf-8' },
+	)
+	const lines = output
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length < 2) {
+		throw new Error(`Unexpected beaver version output: ${output}`)
+	}
+	return { version: lines[0], file: lines[1] }
+}
+
+async function assertBeaverVersionInSession(
+	dataDir: string,
+	sessionId: string,
+	expectedVersion: string,
+	label: string,
+): Promise<void> {
+	const sessionPath = path.join(dataDir, 'sessions', sessionId)
+	const venvPath = path.join(sessionPath, '.venv')
+	const { version, file } = readBeaverVersionFromVenv(venvPath)
+	console.log(`[${label}] beaver version in Jupyter venv: ${version} (${file})`)
+	expect(version, `${label} beaver version mismatch`).toBe(expectedVersion)
 }
 
 // Load config from JSON file if NOTEBOOK_CONFIG is set
@@ -407,17 +475,21 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const wsPort2 = wsPort1 + 1
 		const email1 = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
+		const expectedBeaverVersion = resolveExpectedBeaverVersion()
 
 		console.log(`Setting up two-client Jupyter collaboration test`)
 		console.log(`Client1: ${email1} (port ${wsPort1})`)
 		console.log(`Client2: ${email2} (port ${wsPort2})`)
 		console.log(`Notebook pair: DO="${NOTEBOOK_DO}", DS="${NOTEBOOK_DS}"`)
+		console.log(`Expected beaver version: ${expectedBeaverVersion}`)
 
 		// Create contexts and pages for both clients
 		const context1 = await browser.newContext()
 		const context2 = await browser.newContext()
 		const page1 = await context1.newPage()
 		const page2 = await context2.newPage()
+		let dataDir1: string | null = null
+		let dataDir2: string | null = null
 
 		// Monitor console errors for missing WS commands
 		const consoleErrors: string[] = []
@@ -479,8 +551,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			// Give SyftBox time to write/publish DID files and sync them between clients
 			// We trigger sync on both clients to accelerate the discovery
 			console.log('Waiting for peer DID files to sync...')
-			const dataDir1 = await getSyftboxDataDir(backend1)
-			const dataDir2 = await getSyftboxDataDir(backend2)
+			dataDir1 = await getSyftboxDataDir(backend1)
+			dataDir2 = await getSyftboxDataDir(backend2)
 			console.log(`Client1 dataDir: ${dataDir1}`)
 			console.log(`Client2 dataDir: ${dataDir2}`)
 			await Promise.all([
@@ -826,6 +898,12 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		console.log('Waiting for Jupyter startup to complete...')
 		const [jupyterStatus1, jupyterStatus2] = await Promise.all([jupyterPromise1, jupyterPromise2])
 		jupyterTimer.stop()
+		if (!dataDir1 || !dataDir2) {
+			dataDir1 = await getSyftboxDataDir(backend1)
+			dataDir2 = await getSyftboxDataDir(backend2)
+		}
+		await assertBeaverVersionInSession(dataDir1, sessionId, expectedBeaverVersion, 'Client1')
+		await assertBeaverVersionInSession(dataDir2, sessionId, expectedBeaverVersion, 'Client2')
 
 		// Get URLs from status
 		const jupyterUrl1 = jupyterStatus1?.url || null
