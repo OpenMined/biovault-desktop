@@ -1418,6 +1418,10 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
     }
     let current_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    // Canonicalize to resolve symlinks and ensure consistent path comparison
+    let current_home_canon = canonicalize_best_effort(&current_home);
+    let home_str = current_home_canon.to_string_lossy().to_string();
+
     let email_norm = normalize_email(email);
     if email_norm.is_empty() {
         return Ok(());
@@ -1431,7 +1435,7 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
             .as_deref()
             .map(normalize_email)
             .is_some_and(|e| e == email_norm)
-            && p.biovault_home != current_home.to_string_lossy()
+            && canonicalize_best_effort(Path::new(&p.biovault_home)).to_string_lossy() != home_str
     }) {
         return Err("That email is already registered to another profile".to_string());
     }
@@ -1447,11 +1451,11 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
         Some(info.fingerprint)
     })();
 
-    // Find profile matching current home, else create one.
-    let home_str = current_home.to_string_lossy().to_string();
+    // Find profile matching current home (comparing canonical paths), else create one.
     let mut found_id = None;
     for p in &mut store.profiles {
-        if p.biovault_home == home_str {
+        let p_home_canon = canonicalize_best_effort(Path::new(&p.biovault_home));
+        if p_home_canon.to_string_lossy() == home_str {
             p.email = Some(email.trim().to_string());
             p.last_used_at = Some(now_rfc3339());
             if cached_fingerprint.is_some() {

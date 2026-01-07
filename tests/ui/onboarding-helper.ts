@@ -80,7 +80,8 @@ export async function completeOnboarding(
 		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
 		await page.locator('#skip-dependencies-btn').click()
 		// Wait for step 2 to be hidden before checking step 3
-		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 5000 })
+		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
+		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 15000 })
 
 		// Step 3: Choose BioVault Home
 		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
