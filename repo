@@ -1,4 +1,7 @@
 #!/bin/bash
+# repo - Workspace dependency management tool
+# Version: 1.0.0
+# Keep in sync across: biovault-desktop, syftbox-sdk, biovault, biovault-beaver
 set -euo pipefail
 
 RED='\033[0;31m'
