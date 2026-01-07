@@ -270,7 +270,7 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		})
 
 		await setWsPort(page, wsPort)
-		await ensureCurrentHome(wsPort, homeA)
+		// Reset to clear any stale profiles - onboarding will create fresh profiles
 		await resetOnboardingState(homeA, homeB)
 		await page.goto(process.env.UI_BASE_URL || 'http://localhost:8082')
 
