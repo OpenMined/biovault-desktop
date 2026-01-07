@@ -139,6 +139,9 @@ async function resetOnboardingState(homeA, homeB) {
 		path.join(homeB, 'biovault.db'),
 	]
 	await Promise.all(targets.map((p) => fs.unlink(p).catch(() => {})))
+	// Also clean the profiles directory to ensure a fresh state
+	const profilesDir = process.env.BIOVAULT_PROFILES_DIR || path.join(homeA, '.bvprofiles')
+	await fs.rm(profilesDir, { recursive: true, force: true }).catch(() => {})
 }
 
 async function ensureCurrentHome(wsPort, homePath) {
