@@ -2,7 +2,26 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SYFTBOX_DIR="$ROOT_DIR/biovault/syftbox-sdk/syftbox"
+SYFTBOX_DIR="${SYFTBOX_DIR:-}"
+if [[ -z "$SYFTBOX_DIR" ]]; then
+  for candidate in \
+    "$ROOT_DIR/biovault/syftbox-sdk/syftbox" \
+    "$ROOT_DIR/syftbox-sdk/syftbox" \
+    "$ROOT_DIR/biovault/syftbox" \
+    "$ROOT_DIR/syftbox"; do
+    if [[ -d "$candidate" ]]; then
+      SYFTBOX_DIR="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$SYFTBOX_DIR" || ! -d "$SYFTBOX_DIR" ]]; then
+  echo "Syftbox source dir not found. Set SYFTBOX_DIR or ensure submodules/symlinks are initialized." >&2
+  echo "Tried: biovault/syftbox-sdk/syftbox, syftbox-sdk/syftbox, biovault/syftbox, syftbox" >&2
+  exit 1
+fi
+
 RUST_DIR="$SYFTBOX_DIR/rust"
 OUT_DIR="$ROOT_DIR/src-tauri/resources/syftbox"
 OUT_BIN="$OUT_DIR/syftbox"
@@ -10,6 +29,11 @@ OUT_BIN="$OUT_DIR/syftbox"
 TARGET="${SYFTBOX_RUST_TARGET:-}"
 
 mkdir -p "$OUT_DIR"
+
+if [[ ! -f "$RUST_DIR/Cargo.toml" ]]; then
+  echo "Syftbox Rust manifest not found at $RUST_DIR/Cargo.toml" >&2
+  exit 1
+fi
 
 if [[ -n "$TARGET" ]]; then
   cargo build --release --manifest-path "$RUST_DIR/Cargo.toml" --target "$TARGET"
