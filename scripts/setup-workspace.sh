@@ -41,15 +41,20 @@ clone_if_missing() {
     local name="$1"
     local url="$2"
     local branch="${3:-}"
+    local git_args=()
+
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        git_args=(-c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}")
+    fi
 
     if [[ -d "$PARENT_DIR/$name" ]]; then
         echo "$name already exists at $PARENT_DIR/$name"
     else
         echo "Cloning $name to $PARENT_DIR/$name..."
         if [[ -n "$branch" ]]; then
-            git clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            git "${git_args[@]}" clone -b "$branch" "$url" "$PARENT_DIR/$name"
         else
-            git clone "$url" "$PARENT_DIR/$name"
+            git "${git_args[@]}" clone "$url" "$PARENT_DIR/$name"
         fi
     fi
 }
