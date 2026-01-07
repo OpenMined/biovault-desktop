@@ -44,7 +44,9 @@ clone_if_missing() {
     local git_args=()
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        git_args=(-c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}")
+        local auth_header
+        auth_header="$(printf "x-access-token:%s" "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        git_args=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}")
     fi
 
     if [[ -d "$PARENT_DIR/$name" ]]; then
