@@ -41,12 +41,12 @@ clone_if_missing() {
     local name="$1"
     local url="$2"
     local branch="${3:-}"
-    local git_args=()
+    local git_extra_header=""
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         local auth_header
-        auth_header="$(printf "x-access-token:%s" "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-        git_args=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}")
+        auth_header="$(printf "x-access-token:%s" "$GITHUB_TOKEN" | base64 | tr -d '\r\n')"
+        git_extra_header="http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}"
     fi
 
     if [[ -d "$PARENT_DIR/$name" ]]; then
@@ -54,9 +54,17 @@ clone_if_missing() {
     else
         echo "Cloning $name to $PARENT_DIR/$name..."
         if [[ -n "$branch" ]]; then
-            git "${git_args[@]}" clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            if [[ -n "$git_extra_header" ]]; then
+                git -c "$git_extra_header" clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            else
+                git clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            fi
         else
-            git "${git_args[@]}" clone "$url" "$PARENT_DIR/$name"
+            if [[ -n "$git_extra_header" ]]; then
+                git -c "$git_extra_header" clone "$url" "$PARENT_DIR/$name"
+            else
+                git clone "$url" "$PARENT_DIR/$name"
+            fi
         fi
     fi
 }
