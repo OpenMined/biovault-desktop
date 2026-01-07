@@ -40,6 +40,7 @@ jobs:
   scenario-tests:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     strategy:
       fail-fast: false

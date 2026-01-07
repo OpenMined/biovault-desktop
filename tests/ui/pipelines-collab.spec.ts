@@ -445,6 +445,20 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 		})
 
+		// Handle dialogs for both clients (needed for publish confirmations, etc.)
+		page1.on('dialog', async (dialog) => {
+			console.log(`[Client1 Dialog] ${dialog.type()}: ${dialog.message().substring(0, 80)}...`)
+			try {
+				await dialog.accept()
+			} catch {}
+		})
+		page2.on('dialog', async (dialog) => {
+			console.log(`[Client2 Dialog] ${dialog.type()}: ${dialog.message().substring(0, 80)}...`)
+			try {
+				await dialog.accept()
+			} catch {}
+		})
+
 		await setWsPort(page1, wsPort1)
 		await setWsPort(page2, wsPort2)
 
@@ -702,18 +716,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			log(logSocket, { event: 'step-3', action: 'import-pipeline' })
 			console.log('\n=== Step 3: Client2 imports HERC2 Pipeline ===')
 
-			// Handle dialogs for client2
-			page2.on('dialog', async (dialog) => {
-				console.log(`[Client2] Dialog: ${dialog.message()}`)
-				try {
-					await dialog.accept()
-				} catch {}
-			})
-
 			// Import HERC2 from local bioscript examples (faster than GitHub)
 			const herc2LocalPath = path.join(
 				process.cwd(),
-				'biovault',
 				'bioscript',
 				'examples',
 				'herc2',
@@ -764,7 +769,15 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page2.waitForTimeout(2000)
 
 			while (Date.now() - syncStart < SYNC_TIMEOUT) {
-				// Check for dataset cards FIRST before reloading
+				// Trigger sync on BOTH clients - Client1 needs to upload, Client2 needs to download
+				try {
+					await Promise.all([
+						backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+						backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+					])
+				} catch {}
+
+				// Check for dataset cards
 				// Network datasets use .dataset-item class (not .dataset-card which is for local datasets)
 				const datasetCards = page2.locator('.dataset-item')
 				const count = await datasetCards.count()
@@ -777,10 +790,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				}
 
 				// Only reload and retry if not found
-				console.log('No datasets found yet, triggering sync and reloading...')
-				try {
-					await backend2.invoke('trigger_syftbox_sync')
-				} catch {}
+				console.log('No datasets found yet, reloading...')
+				// Removed duplicate sync trigger since we now sync both at start of loop
 
 				await page2.reload()
 				await waitForAppReady(page2, { timeout: 10_000 })
@@ -866,7 +877,15 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Clicking Run button...')
 			await runBtn.click()
-			await page2.waitForTimeout(3000)
+			await page2.waitForTimeout(1000)
+
+			// Handle "Docker isn't running" dialog if it appears
+			const runAnywayBtn = page2.getByRole('button', { name: 'Run anyway' })
+			if (await runAnywayBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+				console.log('Docker dialog detected, clicking "Run anyway"...')
+				await runAnywayBtn.click()
+				await page2.waitForTimeout(2000)
+			}
 			console.log('Pipeline run started on mock data!')
 
 			if (DEBUG_PIPELINE_PAUSE_MS > 0) {
