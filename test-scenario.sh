@@ -20,6 +20,19 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
 BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
 BIOVAULT_BEAVER_DIR="${BIOVAULT_BEAVER_DIR:-$WORKSPACE_ROOT/biovault-beaver}"
 SYFTBOX_SDK_DIR="${SYFTBOX_SDK_DIR:-$WORKSPACE_ROOT/syftbox-sdk}"
+
+# Canonicalize paths to resolve symlinks (ensures profile paths are consistent)
+canonicalize_path() {
+	local p="$1"
+	if [[ -d "$p" ]]; then
+		(cd "$p" && pwd -P)
+	else
+		echo "$p"
+	fi
+}
+BIOVAULT_DIR="$(canonicalize_path "$BIOVAULT_DIR")"
+BIOVAULT_BEAVER_DIR="$(canonicalize_path "$BIOVAULT_BEAVER_DIR")"
+SYFTBOX_SDK_DIR="$(canonicalize_path "$SYFTBOX_SDK_DIR")"
 if [[ ! -d "$BIOVAULT_BEAVER_DIR" && -d "$BIOVAULT_DIR/biovault-beaver" ]]; then
 	BIOVAULT_BEAVER_DIR="$BIOVAULT_DIR/biovault-beaver"
 fi
