@@ -571,6 +571,17 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::sync_messages_with_failures().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "refresh_messages_batched" => {
+            let scope: Option<String> = args
+                .get("scope")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let limit: Option<usize> = args
+                .get("limit")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result =
+                crate::refresh_messages_batched(scope, limit).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "list_message_threads" => {
             let scope: Option<String> = args
                 .get("scope")

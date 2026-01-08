@@ -279,6 +279,7 @@ class WsBridge {
 			'syftbox_upload_action',
 			'sync_messages',
 			'sync_messages_with_failures',
+			'refresh_messages_batched',
 			'install_dependencies',
 			'install_dependency',
 			'install_brew',

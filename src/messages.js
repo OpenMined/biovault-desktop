@@ -47,12 +47,14 @@ export function createMessagesModule({
 	let searchTerm = ''
 	let messageFilter = 'inbox'
 
-	// Instant refresh in dev/test mode (500ms), normal refresh in production (10s)
+	// Refresh rate: 2s in dev/test mode, 10s in production
+	// Note: 500ms was too aggressive and caused DOM instability during Playwright tests
 	const isDevMode = window.__DEV_WS_BRIDGE_PORT__ || window.location.search.includes('ws=')
-	const AUTO_REFRESH_MS = isDevMode ? 500 : 10000
+	const AUTO_REFRESH_MS = isDevMode ? 2000 : 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
 	let failedMessages = []
 	let failedMessagesCount = 0
+	let lastRenderedThreadsHash = '' // Track last render to avoid unnecessary DOM rebuilds
 	const contactAutocomplete = createContactAutocomplete({ invoke, getCurrentUserEmail })
 
 	// ============================================================================
@@ -193,20 +195,26 @@ export function createMessagesModule({
 		}
 	}
 
+	// Update badge using a known count (avoids extra backend call)
+	function updateFailedMessagesBadgeWithCount(count) {
+		failedMessagesCount = count || 0
+		const badge = document.getElementById('failed-messages-badge')
+		if (badge) {
+			badge.textContent = failedMessagesCount > 9 ? '9+' : failedMessagesCount
+			badge.style.display = failedMessagesCount > 0 ? 'inline-block' : 'none'
+		}
+		// Add warning class to failed filter button if there are failures
+		const failedBtn = document.querySelector('.message-filter-failed')
+		if (failedBtn) {
+			failedBtn.classList.toggle('has-failures', failedMessagesCount > 0)
+		}
+	}
+
+	// Fetch count from backend (only when we haven't synced recently)
 	async function updateFailedMessagesBadge() {
 		try {
 			const count = await invoke('count_failed_messages')
-			failedMessagesCount = count || 0
-			const badge = document.getElementById('failed-messages-badge')
-			if (badge) {
-				badge.textContent = failedMessagesCount > 9 ? '9+' : failedMessagesCount
-				badge.style.display = failedMessagesCount > 0 ? 'inline-block' : 'none'
-			}
-			// Add warning class to failed filter button if there are failures
-			const failedBtn = document.querySelector('.message-filter-failed')
-			if (failedBtn) {
-				failedBtn.classList.toggle('has-failures', failedMessagesCount > 0)
-			}
+			updateFailedMessagesBadgeWithCount(count)
 		} catch (error) {
 			console.error('Failed to update failed messages badge:', error)
 		}
@@ -933,16 +941,22 @@ export function createMessagesModule({
 
 		try {
 			if (refresh) {
-				await invoke('sync_messages_with_failures')
+				// Use batched command: sync + list in one call (reduces roundtrips)
+				const result = await invoke('refresh_messages_batched', { scope: 'all' })
+				messageThreads = result?.threads || []
+				updateThreadActivity(messageThreads, emitToasts)
+				renderMessageThreads()
+				// Use failed count from batched result
+				updateFailedMessagesBadgeWithCount(result?.total_failed ?? 0)
+			} else {
+				// No sync needed - just list threads
+				const result = await invoke('list_message_threads', { scope: 'all' })
+				messageThreads = result || []
+				updateThreadActivity(messageThreads, emitToasts)
+				renderMessageThreads()
+				// Fetch failed count separately (no sync was done)
+				await updateFailedMessagesBadge()
 			}
-
-			const result = await invoke('list_message_threads', { scope: 'all' })
-			messageThreads = result || []
-
-			updateThreadActivity(messageThreads, emitToasts)
-			renderMessageThreads()
-			// Also update the failed messages badge
-			await updateFailedMessagesBadge()
 		} catch (error) {
 			console.error('Failed to load message threads:', error)
 			if (list) {
@@ -956,6 +970,25 @@ export function createMessagesModule({
 	function renderMessageThreads() {
 		const list = document.getElementById('message-list')
 		if (!list) return
+
+		// Compute hash of current state to detect changes
+		const stateHash = JSON.stringify({
+			threads: messageThreads.map((t) => ({
+				id: t.thread_id,
+				unread: t.unread_count,
+				last: t.last_message_at,
+				preview: t.last_message_preview,
+			})),
+			activeThreadId,
+			searchTerm,
+			messageFilter,
+		})
+
+		// Skip render if nothing changed (prevents DOM thrashing during polling)
+		if (stateHash === lastRenderedThreadsHash) {
+			return
+		}
+		lastRenderedThreadsHash = stateHash
 
 		// Filter threads based on search term
 		const filteredThreads = searchTerm

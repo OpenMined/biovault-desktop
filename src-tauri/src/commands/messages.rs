@@ -1,5 +1,6 @@
 use crate::types::{
-    MessageFilterScope, MessageSendRequest, MessageSyncResult, MessageThreadSummary,
+    BatchedMessageRefreshResult, MessageFilterScope, MessageSendRequest, MessageSyncResult,
+    MessageThreadSummary,
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
@@ -1331,4 +1332,154 @@ pub fn send_pipeline_results(
         .unwrap_or(msg);
 
     Ok(updated)
+}
+
+/// Batched message refresh: sync + list threads in a single command
+/// This reduces the number of roundtrips from frontend by combining two common operations.
+#[tauri::command]
+pub fn refresh_messages_batched(
+    scope: Option<String>,
+    limit: Option<usize>,
+) -> Result<BatchedMessageRefreshResult, String> {
+    let config = load_config()?;
+    let filter = parse_thread_filter(scope.as_deref())?;
+
+    // Initialize message system (used for sync)
+    let (db, sync) = init_message_system(&config)
+        .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
+
+    // Sync messages
+    let (ids, count, new_failed) = sync
+        .sync_quiet_with_failures()
+        .map_err(|e| format!("Failed to sync messages: {}", e))?;
+
+    let total_failed = sync.count_failed_messages().unwrap_or(0);
+
+    // List threads (reusing the db connection from sync)
+    let mut messages = db
+        .list_messages(None)
+        .map_err(|e| format!("Failed to list messages: {}", e))?;
+
+    let mut threads_map: HashMap<String, Vec<VaultMessage>> = HashMap::new();
+    for message in messages.drain(..) {
+        let key = message
+            .thread_id
+            .clone()
+            .unwrap_or_else(|| message.id.clone());
+        threads_map.entry(key).or_default().push(message);
+    }
+
+    let mut summaries: Vec<MessageThreadSummary> = threads_map
+        .into_iter()
+        .filter_map(|(thread_id, mut msgs)| {
+            if msgs.is_empty() {
+                return None;
+            }
+            msgs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+            let last_msg = msgs.last().cloned()?;
+
+            let include = match filter {
+                MessageFilterScope::All => true,
+                MessageFilterScope::Sent => msgs.iter().any(|m| m.status == MessageStatus::Sent),
+                MessageFilterScope::Inbox => msgs
+                    .iter()
+                    .any(|m| matches!(m.status, MessageStatus::Received | MessageStatus::Read)),
+            };
+            if !include {
+                return None;
+            }
+
+            let unread_count = msgs
+                .iter()
+                .filter(|m| m.status == MessageStatus::Received)
+                .count();
+
+            let has_project = msgs
+                .iter()
+                .any(|m| matches!(m.message_type, MessageType::Project { .. }));
+
+            // Detect session threads
+            let mut session_id: Option<String> = None;
+            let mut session_name: Option<String> = None;
+            for msg in &msgs {
+                if let Some(meta) = &msg.metadata {
+                    if let Some(session_chat) = meta.get("session_chat") {
+                        if let Some(id) = session_chat.get("session_id").and_then(|v| v.as_str()) {
+                            session_id = Some(id.to_string());
+                        }
+                        if let Some(name) =
+                            session_chat.get("session_name").and_then(|v| v.as_str())
+                        {
+                            session_name = Some(name.to_string());
+                        }
+                        break;
+                    }
+                    if let Some(invite) = meta.get("session_invite") {
+                        if let Some(id) = invite.get("session_id").and_then(|v| v.as_str()) {
+                            session_id = Some(id.to_string());
+                        }
+                        if let Some(name) = invite.get("session_name").and_then(|v| v.as_str()) {
+                            session_name = Some(name.to_string());
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let mut participants: HashSet<String> = HashSet::new();
+            for msg in &msgs {
+                if !msg.from.is_empty() {
+                    participants.insert(msg.from.clone());
+                }
+                if !msg.to.is_empty() {
+                    participants.insert(msg.to.clone());
+                }
+            }
+
+            let subject = last_msg
+                .subject
+                .clone()
+                .unwrap_or_else(|| "(No Subject)".to_string());
+
+            let preview = last_msg
+                .body
+                .split_whitespace()
+                .take(40)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let preview = if preview.len() > 200 {
+                format!("{}…", &preview[..200])
+            } else {
+                preview
+            };
+
+            Some(MessageThreadSummary {
+                thread_id,
+                subject,
+                participants: participants.into_iter().collect(),
+                unread_count,
+                last_message_at: Some(last_msg.created_at.to_rfc3339()),
+                last_message_preview: preview,
+                has_project,
+                session_id,
+                session_name,
+            })
+        })
+        .collect();
+
+    // Sort by last message time descending
+    summaries.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+
+    // Apply limit if provided
+    if let Some(lim) = limit {
+        summaries.truncate(lim);
+    }
+
+    Ok(BatchedMessageRefreshResult {
+        new_message_ids: ids,
+        new_messages: count,
+        new_failed,
+        total_failed,
+        threads: summaries,
+    })
 }
