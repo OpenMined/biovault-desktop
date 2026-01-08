@@ -1640,11 +1640,9 @@ export function initOnboarding({
 
 				try {
 					// Do not block the UI on potentially slow dependency checks in CI.
-					void invoke('update_saved_dependency_states', { __wsTimeoutMs: 5000 }).catch(
-						(error) => {
-							console.error('Failed to save skipped state:', error)
-						},
-					)
+					void invoke('update_saved_dependency_states', { __wsTimeoutMs: 5000 }).catch((error) => {
+						console.error('Failed to save skipped state:', error)
+					})
 				} catch (error) {
 					console.error('Failed to save skipped state:', error)
 				}
