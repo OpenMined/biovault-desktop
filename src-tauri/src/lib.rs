@@ -9,7 +9,7 @@ use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    AppHandle, Emitter, Manager,
 };
 
 // WebSocket bridge for browser development
@@ -917,6 +917,7 @@ pub fn run() {
         });
     }
 
+    crate::desktop_log!("Setup: building Tauri app");
     let mut builder = tauri::Builder::default();
 
     // Only add updater plugin if not disabled (for testing)
@@ -936,9 +937,22 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(app_state)
         .setup(move |app| {
+            crate::desktop_log!("Setup: entered Tauri setup");
+            if std::env::var("BV_WS_BRIDGE_PROBE").is_ok() {
+                let probe_path = std::env::var("BIOVAULT_HOME")
+                    .map(|home| format!("{}/logs/setup-probe.txt", home))
+                    .unwrap_or_else(|_| "logs/setup-probe.txt".to_string());
+                let _ = std::fs::create_dir_all(
+                    std::path::Path::new(&probe_path)
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new(".")),
+                );
+                let _ = std::fs::write(&probe_path, "setup");
+            }
             // Surface bundled binaries (java/nextflow/uv) to the environment so dependency
             // checks and runtime execution prefer the packaged versions.
             expose_bundled_binaries(app);
+            crate::desktop_log!("Setup: bundled binaries exposed");
 
             // Ensure bundled SyftBox binary is exposed if not already provided
             if !syftbox_backend_is_embedded() && std::env::var("SYFTBOX_BINARY").is_err() {
@@ -1118,20 +1132,6 @@ pub fn run() {
                     crate::desktop_log!("Message watcher: failed to load config: {}", err);
                 }
             });
-
-            // Start WebSocket bridge for browser development if enabled
-            if std::env::var("DEV_WS_BRIDGE").is_ok() {
-                let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
-                    .ok()
-                    .and_then(|v| v.parse::<u16>().ok())
-                    .unwrap_or(3333);
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = ws_bridge::start_ws_server(app_handle, bridge_port).await {
-                        crate::desktop_log!("❌ Failed to start WebSocket server: {}", e);
-                    }
-                });
-            }
 
             // Handle deep link URLs (biovault://...)
             #[cfg(desktop)]
@@ -1385,6 +1385,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+    crate::desktop_log!("Setup: Tauri app built");
 
     fn best_effort_stop_syftbox_for_exit() {
         let _ = crate::stop_syftbox_client();
@@ -1438,7 +1439,40 @@ pub fn run() {
         }
     }
 
+    fn maybe_start_ws_bridge(app_handle: AppHandle) {
+        let ws_bridge_enabled = std::env::var("DEV_WS_BRIDGE")
+            .map(|v| !matches!(v.as_str(), "0" | "false" | "no"))
+            .unwrap_or(true);
+        let ws_bridge_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(3333);
+
+        crate::desktop_log!(
+            "WS bridge: enabled={} disabled={} port={}",
+            ws_bridge_enabled,
+            ws_bridge_disabled,
+            bridge_port
+        );
+
+        if !ws_bridge_enabled || ws_bridge_disabled {
+            crate::desktop_log!("WS bridge disabled by environment");
+            return;
+        }
+
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = ws_bridge::start_ws_server(app_handle, bridge_port).await {
+                crate::desktop_log!("Failed to start WebSocket server: {}", e);
+            }
+        });
+    }
+
     let mut exit_cleanup_started = false;
+    maybe_start_ws_bridge(app.handle().clone());
+    crate::desktop_log!("Run: entering app.run");
     app.run(move |app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             if exit_cleanup_started {

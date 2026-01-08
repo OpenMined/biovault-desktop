@@ -4,7 +4,7 @@
  */
 import { expect, type Page } from '@playwright/test'
 import WebSocket from 'ws'
-import { waitForAppReady } from './test-helpers.js'
+import { ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 
 export async function ensureLogSocket(): Promise<WebSocket | null> {
 	if (!process.env.UNIFIED_LOG_WS) return null
@@ -56,6 +56,9 @@ export async function completeOnboarding(
 
 	try {
 		await waitForAppReady(page, { timeout: 30_000 })
+		if (await ensureProfileSelected(page, { timeout: 30_000 })) {
+			await waitForAppReady(page, { timeout: 30_000 })
+		}
 
 		// The initial HTML ships with the main app layout visible (Run tab active) before the onboarding
 		// check completes. Only treat onboarding as "already complete" once the onboarding view is not
