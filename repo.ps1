@@ -1198,18 +1198,44 @@ function Update-ManifestRevision {
     }
 
     $targetPath = $matches[0].Path
+    $targetName = $matches[0].Name
 
-    # Update manifest XML
-    [xml]$manifest = Get-Content $ManifestPath
-    foreach ($project in $manifest.manifest.project) {
-        $projPath = if ($project.path) { $project.path } else { $project.name }
-        if ($projPath -eq $targetPath) {
-            $project.SetAttribute("revision", $Revision)
-            break
+    $manifestText = Get-Content $ManifestPath -Raw
+    $updated = $false
+
+    $escapedPath = [regex]::Escape($targetPath)
+    $patternPath = "(<project\\b[^>]*\\bpath=\"$escapedPath\"[^>]*\\brevision=\")([^\"]*)(\")"
+    if ([regex]::IsMatch($manifestText, $patternPath)) {
+        $manifestText = [regex]::Replace(
+            $manifestText,
+            $patternPath,
+            { param($m) "$($m.Groups[1].Value)$Revision$($m.Groups[3].Value)" },
+            1
+        )
+        $updated = $true
+    }
+
+    if (-not $updated) {
+        $escapedName = [regex]::Escape($targetName)
+        $patternName = "(<project\\b[^>]*\\bname=\"$escapedName\"[^>]*\\brevision=\")([^\"]*)(\")"
+        if ([regex]::IsMatch($manifestText, $patternName)) {
+            $manifestText = [regex]::Replace(
+                $manifestText,
+                $patternName,
+                { param($m) "$($m.Groups[1].Value)$Revision$($m.Groups[3].Value)" },
+                1
+            )
+            $updated = $true
         }
     }
 
-    $manifest.Save($ManifestPath)
+    if (-not $updated) {
+        Write-Host "Project not found in manifest: $targetPath" -ForegroundColor Red
+        return
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($ManifestPath, $manifestText, $utf8NoBom)
     Write-Host "Updated $ManifestFile - $targetPath -> $Revision" -ForegroundColor Green
 }
 
