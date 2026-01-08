@@ -690,7 +690,11 @@ wait_for_file() {
 }
 
 preflight_peer_sync() {
-	local timeout_s="${DEVSTACK_SYNC_TIMEOUT:-30}"
+	local default_timeout=30
+	case "$(uname -s)" in
+		MINGW*|MSYS*|CYGWIN*|Windows_NT) default_timeout=90 ;;
+	esac
+	local timeout_s="${DEVSTACK_SYNC_TIMEOUT:-$default_timeout}"
 	# Mirror inbox-ping-pong.yaml: require public key bundles to be visible from both clients.
 	local c1_sees_c2="$CLIENT1_HOME/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
 	local c2_sees_c1="$CLIENT2_HOME/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
