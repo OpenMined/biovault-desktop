@@ -1,3 +1,15 @@
+function getPathBasename(filePath) {
+	if (!filePath) return ''
+	const normalized = filePath.replace(/\\/g, '/')
+	const parts = normalized.split('/')
+	return parts[parts.length - 1] || ''
+}
+
+function buildDatasetAssetSyftUrl(ownerEmail, datasetName, filePath) {
+	const fileName = getPathBasename(filePath)
+	return `syft://${ownerEmail}/public/biovault/datasets/${datasetName}/assets/${fileName}`
+}
+
 export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
 	let viewMode = 'participants'
@@ -2151,11 +2163,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					mockFile?.file_path?.startsWith('http://') ||
 					mockFile?.file_path?.startsWith('https://') ||
 					mockFile?.file_path?.startsWith('syft://')
-				const mockFileName = mockFile?.file_path.split('/').pop()
 				const manifestMock = mockFile
 					? mockIsUrl
 						? mockFile.file_path
-						: `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${mockFileName}`
+						: buildDatasetAssetSyftUrl(currentUserEmail, name, mockFile?.file_path)
 					: undefined
 
 				const assetId = crypto?.randomUUID ? crypto.randomUUID() : `asset-${idx}-${Date.now()}`
@@ -2220,13 +2231,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						f.file_path?.startsWith('http://') ||
 						f.file_path?.startsWith('https://') ||
 						f.file_path?.startsWith('syft://')
-					const fileName = f.file_path.split('/').pop()
 					const entry = {
 						id: entryId,
 						// Full URL for pipeline runs (resolves to local path)
 						url: isUrl
 							? f.file_path
-							: `syft://${currentUserEmail}/public/biovault/datasets/${name}/assets/${fileName}`,
+							: buildDatasetAssetSyftUrl(currentUserEmail, name, f.file_path),
 					}
 					// Only include participant_id if set
 					if (f.participant_id) {
@@ -3336,3 +3346,5 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		setViewMode,
 	}
 }
+
+export const __private__ = { getPathBasename, buildDatasetAssetSyftUrl }

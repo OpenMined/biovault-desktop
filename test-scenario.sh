@@ -957,13 +957,18 @@ launch_instance() {
 		if [[ "$SCENARIO" != "profiles" ]]; then
 			export SYC_VAULT="$home/.syc"
 		fi
-			# Keep the profiles store isolated under the sandbox HOME even if callers override defaults.
-			if [[ "$SCENARIO" == "profiles" ]]; then
-				# Allow callers to override the store location (for local dev), but default to the sandbox HOME.
-				if [[ -z "${BIOVAULT_PROFILES_PATH:-}" && -z "${BIOVAULT_PROFILES_DIR:-}" ]]; then
-					export BIOVAULT_PROFILES_DIR="$home/.bvprofiles"
-				fi
-			fi
+		# Keep the profiles store isolated under the sandbox HOME by default.
+		if [[ -z "${BIOVAULT_PROFILES_PATH:-}" && -z "${BIOVAULT_PROFILES_DIR:-}" ]]; then
+			export BIOVAULT_PROFILES_DIR="$home/.bvprofiles"
+		fi
+		# Avoid Docker credential helper issues in non-interactive sessions by using
+		# a per-sandbox Docker config without credsStore.
+		export DOCKER_CONFIG="$home/.docker"
+		mkdir -p "$DOCKER_CONFIG"
+		cat >"$DOCKER_CONFIG/config.json" <<'EOF'
+{"auths":{"ghcr.io":{"auth":"Og=="}}}
+EOF
+		export BIOVAULT_DOCKER_CONFIG="$DOCKER_CONFIG"
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1

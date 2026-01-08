@@ -23,7 +23,7 @@ import { expect, test, type Page, pauseForInteractive } from './playwright-fixtu
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
-import { applyWindowLayout, waitForAppReady } from './test-helpers.js'
+import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
@@ -124,6 +124,12 @@ async function pauseForInteractiveMode(timeoutMs = 30_000): Promise<void> {
 			stdin.once('data', onData)
 		}
 	})
+}
+
+async function ensureProfilePickerClosed(page: Page): Promise<void> {
+	if (await ensureProfileSelected(page, { timeout: 30_000 })) {
+		await waitForAppReady(page, { timeout: 30_000 })
+	}
 }
 
 function resolveDatasitesRoot(dataDir: string): string {
@@ -473,6 +479,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await applyWindowLayout(page2, 1, 'client2')
 			await waitForAppReady(page1, { timeout: 10_000 })
 			await waitForAppReady(page2, { timeout: 10_000 })
+			await ensureProfilePickerClosed(page1)
+			await ensureProfilePickerClosed(page2)
 
 			// Check if clients are onboarded
 			const isOnboarded1 = await backend1.invoke('check_is_onboarded')
@@ -527,6 +535,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page2.reload()
 			await waitForAppReady(page1, { timeout: 10_000 })
 			await waitForAppReady(page2, { timeout: 10_000 })
+			await ensureProfilePickerClosed(page1)
+			await ensureProfilePickerClosed(page2)
 			keysTimer.stop()
 
 			// ============================================================

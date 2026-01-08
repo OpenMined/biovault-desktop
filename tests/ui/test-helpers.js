@@ -76,6 +76,25 @@ export async function waitForAppReady(page, options) {
 	}
 }
 
+export async function ensureProfileSelected(page, options) {
+	const timeout = options?.timeout ?? 10_000
+	const profilesView = page.locator('#profiles-view')
+	const isVisible = await profilesView.isVisible({ timeout: 1000 }).catch(() => false)
+	if (!isVisible) return false
+
+	console.log('Profiles picker detected, selecting a profile...')
+	const openBtn = page.locator('.profile-open-btn:not([disabled])').first()
+	if ((await openBtn.count()) > 0) {
+		await openBtn.click()
+	} else {
+		const row = page.locator('.profile-row').first()
+		await row.click()
+	}
+
+	await expect(profilesView).toBeHidden({ timeout })
+	return true
+}
+
 export async function navigateToTab(page, tabName) {
 	// Try different selectors for navigation
 	const selectors = [
