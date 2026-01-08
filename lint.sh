@@ -63,14 +63,27 @@ wait_all() {
 
 # Rust (src-tauri)
 if [[ -f src-tauri/Cargo.toml ]]; then
+  # Check if we can run clippy (requires Tauri deps on Linux)
+  RUN_CLIPPY=1
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+      echo -e "${CYAN}⊘ rust-clippy skipped (webkit2gtk-4.1 not found)${NC}"
+      RUN_CLIPPY=0
+    fi
+  fi
+
   if [[ "$CHECK_MODE" -eq 1 ]]; then
     run_task "rust-fmt" cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-    run_task "rust-clippy" cargo clippy --all-targets --all-features --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+    if [[ "$RUN_CLIPPY" -eq 1 ]]; then
+      run_task "rust-clippy" cargo clippy --all-targets --all-features --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+    fi
   else
     run_task "rust-fmt" cargo fmt --all --manifest-path src-tauri/Cargo.toml
-    run_task "rust-clippy" cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+    if [[ "$RUN_CLIPPY" -eq 1 ]]; then
+      run_task "rust-clippy" cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+    fi
   fi
-  if [[ "$RUN_TESTS" -eq 1 ]]; then
+  if [[ "$RUN_TESTS" -eq 1 && "$RUN_CLIPPY" -eq 1 ]]; then
     run_task "rust-test" cargo test --manifest-path src-tauri/Cargo.toml
   fi
 fi
