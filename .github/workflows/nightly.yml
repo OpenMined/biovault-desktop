@@ -40,10 +40,14 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-      - name: Configure sccache
+      - name: Enable sccache (if available)
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -109,10 +113,14 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-      - name: Configure sccache
+      - name: Enable sccache (if available)
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -308,10 +316,14 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-      - name: Configure sccache
+      - name: Enable sccache (if available)
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -460,10 +472,14 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-      - name: Configure sccache
+      - name: Enable sccache (if available)
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -612,10 +628,14 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-      - name: Configure sccache
+      - name: Enable sccache (if available)
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
