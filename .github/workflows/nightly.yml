@@ -34,10 +34,31 @@ jobs:
           chmod +x scripts/setup-workspace.sh
           ./scripts/setup-workspace.sh
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -85,16 +106,43 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
@@ -126,7 +174,17 @@ jobs:
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: cache-playwright-pipelines
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
       - name: Install Playwright browsers
+        if: steps.cache-playwright-pipelines.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
       # Install biosynth - platform specific
@@ -167,11 +225,21 @@ jobs:
             echo "Warning: Could not download genostats.sqlite"
           }
 
+      - name: Cache bundled dependencies
+        id: cache-bundled-pipelines
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled-pipelines.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Build syftbox client
         run: |
@@ -237,16 +305,43 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
@@ -278,14 +373,34 @@ jobs:
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: cache-playwright-jupyter
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
       - name: Install Playwright browsers
+        if: steps.cache-playwright-jupyter.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Cache bundled dependencies
+        id: cache-bundled-jupyter
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled-jupyter.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Build syftbox client
         run: |
@@ -342,16 +457,43 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
@@ -383,14 +525,34 @@ jobs:
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: cache-playwright-jupyter-collab
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
       - name: Install Playwright browsers
+        if: steps.cache-playwright-jupyter-collab.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Cache bundled dependencies
+        id: cache-bundled-jupyter-collab
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled-jupyter-collab.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Build syftbox client
         run: |
@@ -447,16 +609,43 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Setup Go (syftbox)
         uses: actions/setup-go@v5
@@ -488,14 +677,34 @@ jobs:
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: cache-playwright-multi
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
       - name: Install Playwright browsers
+        if: steps.cache-playwright-multi.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Cache bundled dependencies
+        id: cache-bundled-multi
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled-multi.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Build syftbox client
         run: |

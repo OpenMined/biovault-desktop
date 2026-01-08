@@ -42,6 +42,11 @@ clone_if_missing() {
     local url="$2"
     local branch="${3:-}"
     local git_args=()
+    local clone_args=()
+
+    if [[ -n "${CI:-}" || -n "${GITHUB_ACTIONS:-}" ]]; then
+        clone_args=(--depth 1 --filter=blob:none)
+    fi
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         local auth_header
@@ -55,9 +60,9 @@ clone_if_missing() {
         echo "Cloning $name to $PARENT_DIR/$name..."
         # Use ${git_args[@]+"${git_args[@]}"} to handle empty arrays with set -u
         if [[ -n "$branch" ]]; then
-            git ${git_args[@]+"${git_args[@]}"} clone -b "$branch" "$url" "$PARENT_DIR/$name"
+            git ${git_args[@]+"${git_args[@]}"} clone ${clone_args[@]+"${clone_args[@]}"} -b "$branch" "$url" "$PARENT_DIR/$name"
         else
-            git ${git_args[@]+"${git_args[@]}"} clone "$url" "$PARENT_DIR/$name"
+            git ${git_args[@]+"${git_args[@]}"} clone ${clone_args[@]+"${clone_args[@]}"} "$url" "$PARENT_DIR/$name"
         fi
     fi
 }
