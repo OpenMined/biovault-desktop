@@ -142,6 +142,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Enable sccache (if available)
+        run: |
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -214,6 +226,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Cache Playwright browsers
+        id: cache-playwright
         uses: actions/cache@v4
         with:
           path: |
@@ -222,18 +235,28 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
 
       - name: Install Playwright browsers (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.cache-playwright.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
       - name: Install Playwright browsers (non-Linux)
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && steps.cache-playwright.outputs.cache-hit != 'true'
         run: bunx --bun playwright install chromium
 
+      - name: Cache bundled dependencies
+        id: cache-bundled
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Materialize templates
         run: |
@@ -348,9 +371,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Enable sccache (if available)
+        run: |
+          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "sccache unavailable; proceeding without cache."
+          fi
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            biovault/cli
+            syftbox-sdk
 
       - name: Setup Go (syftbox devstack)
         uses: actions/setup-go@v5
@@ -369,22 +413,52 @@ jobs:
         with:
           bun-version: '1.1.38'
 
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cache/bun
+            ~/Library/Caches/bun
+            ~/AppData/Local/bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - name: Install npm dependencies
         run: npm ci
 
       - name: Install bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: cache-playwright-profiles
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+
       - name: Install Playwright browsers
+        if: steps.cache-playwright-profiles.outputs.cache-hit != 'true'
         run: bunx --bun playwright install --with-deps chromium
 
+      - name: Cache bundled dependencies
+        id: cache-bundled-profiles
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/bundled
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+
       - name: Fetch bundled dependencies
+        if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
         run: |
           export BUNDLED_OS="linux"
           export BUNDLED_ARCH="x86_64"
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
-          chmod -R u+rw src-tauri/resources/bundled/ || true
+
+      - name: Ensure bundled dependency permissions
+        run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Materialize templates
         run: |
