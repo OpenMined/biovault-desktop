@@ -1063,7 +1063,29 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const sendConfirmBtn = page1.locator('#send-results-confirm')
 			await expect(sendConfirmBtn).toBeVisible({ timeout: 10_000 })
 			const outputCheckboxes = page1.locator('input[data-output-path]')
-			expect(await outputCheckboxes.count()).toBeGreaterThan(0)
+			const outputCheckboxCount = await outputCheckboxes.count()
+			expect(outputCheckboxCount).toBeGreaterThan(0)
+			console.log(`Found ${outputCheckboxCount} output file checkboxes`)
+
+			// Uncheck all files first
+			for (let i = 0; i < outputCheckboxCount; i++) {
+				const checkbox = outputCheckboxes.nth(i)
+				if (await checkbox.isChecked()) {
+					await checkbox.uncheck()
+				}
+			}
+			console.log('Unchecked all output files')
+
+			// Recheck only result_HERC2.tsv
+			const herc2Checkbox = page1.locator('input[data-output-path*="result_HERC2.tsv"]')
+			if ((await herc2Checkbox.count()) > 0) {
+				await herc2Checkbox.check()
+				console.log('Checked only result_HERC2.tsv for sharing')
+			} else {
+				// Fallback: check first checkbox if specific file not found
+				console.log('result_HERC2.tsv checkbox not found, checking first file')
+				await outputCheckboxes.first().check()
+			}
 
 			await sendConfirmBtn.click()
 			await page1.waitForTimeout(3000)

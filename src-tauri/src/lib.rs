@@ -18,6 +18,7 @@ mod ws_bridge;
 // Module declarations
 mod commands;
 mod logging;
+mod telemetry;
 mod types;
 
 // Import types from types module
@@ -619,6 +620,9 @@ pub fn run() {
     );
 
     logging::init_stdio_forwarding();
+
+    // Initialize OpenTelemetry if OTEL_EXPORTER_OTLP_ENDPOINT is set
+    telemetry::init();
 
     let biovault_db = if profile_picker_mode {
         BioVaultDb {

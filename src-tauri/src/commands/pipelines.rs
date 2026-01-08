@@ -1034,108 +1034,111 @@ pub async fn run_pipeline(
                     dataset_name
                 );
             } else {
-            let data_type = dataset_data_type
-                .clone()
-                .unwrap_or_else(|| "mock".to_string());
-            let (dataset_record, dataset_assets) =
-                biovault::data::get_dataset_with_assets(&biovault_db, &dataset_name)
-                    .map_err(|e| format!("Failed to load dataset '{}': {}", dataset_name, e))?
-                    .ok_or_else(|| format!("Dataset '{}' not found", dataset_name))?;
+                let data_type = dataset_data_type
+                    .clone()
+                    .unwrap_or_else(|| "mock".to_string());
+                let (dataset_record, dataset_assets) =
+                    biovault::data::get_dataset_with_assets(&biovault_db, &dataset_name)
+                        .map_err(|e| format!("Failed to load dataset '{}': {}", dataset_name, e))?
+                        .ok_or_else(|| format!("Dataset '{}' not found", dataset_name))?;
 
-            let manifest = biovault::data::build_manifest_from_db(&dataset_record, &dataset_assets);
-            let shape = dataset_shape
-                .clone()
-                .and_then(|value| {
-                    let trimmed = value.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_string())
-                    }
-                })
-                .or_else(|| biovault::cli::commands::datasets::infer_dataset_shape(&manifest))
-                .ok_or_else(|| {
-                    format!(
-                        "Dataset '{}' does not declare a shape and none could be inferred.",
-                        dataset_name
-                    )
-                })?;
-
-            let shape_expr = parse_shape_expr(&shape)
-                .ok_or_else(|| format!("Unsupported dataset shape '{}' for selection.", shape))?;
-
-            // List-shaped datasets need URL selection, fall through to URL/file_id paths
-            if let ShapeExpr::List(inner_type) = &shape_expr {
-                eprintln!(
-                    "[pipeline] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
-                    dataset_name, inner_type
-                );
-            } else {
-                let spec = PipelineSpec::load(&yaml_path)
-                    .map_err(|e| format!("Failed to load pipeline spec: {}", e))?;
-                let input_name = spec
-                    .inputs
-                    .iter()
-                    .find(|(_, input_spec)| {
-                        biovault::project_spec::types_compatible(&shape, input_spec.raw_type())
+                let manifest =
+                    biovault::data::build_manifest_from_db(&dataset_record, &dataset_assets);
+                let shape = dataset_shape
+                    .clone()
+                    .and_then(|value| {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
                     })
-                    .map(|(name, _)| name.clone())
+                    .or_else(|| biovault::cli::commands::datasets::infer_dataset_shape(&manifest))
                     .ok_or_else(|| {
                         format!(
-                            "Pipeline does not declare an input compatible with '{}'",
-                            shape
+                            "Dataset '{}' does not declare a shape and none could be inferred.",
+                            dataset_name
                         )
                     })?;
 
-                let (dataset_value, file_count) = build_dataset_input_value(
-                    &biovault_db,
-                    &dataset_assets,
-                    &data_type,
-                    &shape_expr,
-                )?;
+                let shape_expr = parse_shape_expr(&shape).ok_or_else(|| {
+                    format!("Unsupported dataset shape '{}' for selection.", shape)
+                })?;
 
-                let dataset_count = match &shape_expr {
-                    ShapeExpr::Map(_) => match &dataset_value {
-                        DatasetInputValue::Json(serde_json::Value::Object(map)) => map.len(),
-                        _ => 0,
-                    },
-                    ShapeExpr::Record(_) | ShapeExpr::File | ShapeExpr::Directory => 1,
-                    _ => 0,
-                };
-
-                let input_path = match dataset_value {
-                    DatasetInputValue::Path(path) => path,
-                    DatasetInputValue::Json(value) => {
-                        let inputs_dir = results_path.join("inputs");
-                        fs::create_dir_all(&inputs_dir).map_err(|e| {
-                            format!("Failed to prepare inputs directory for dataset: {}", e)
+                // List-shaped datasets need URL selection, fall through to URL/file_id paths
+                if let ShapeExpr::List(inner_type) = &shape_expr {
+                    eprintln!(
+                    "[pipeline] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
+                    dataset_name, inner_type
+                );
+                } else {
+                    let spec = PipelineSpec::load(&yaml_path)
+                        .map_err(|e| format!("Failed to load pipeline spec: {}", e))?;
+                    let input_name = spec
+                        .inputs
+                        .iter()
+                        .find(|(_, input_spec)| {
+                            biovault::project_spec::types_compatible(&shape, input_spec.raw_type())
+                        })
+                        .map(|(name, _)| name.clone())
+                        .ok_or_else(|| {
+                            format!(
+                                "Pipeline does not declare an input compatible with '{}'",
+                                shape
+                            )
                         })?;
-                        let dataset_path = inputs_dir.join(format!("{}_input.json", input_name));
-                        let payload = serde_json::to_string_pretty(&value)
-                            .map_err(|e| format!("Failed to serialize dataset map: {}", e))?;
-                        fs::write(&dataset_path, payload)
-                            .map_err(|e| format!("Failed to write dataset map: {}", e))?;
-                        dataset_path.to_string_lossy().to_string()
-                    }
-                };
 
-                input_overrides.insert(format!("inputs.{}", input_name), input_path.clone());
+                    let (dataset_value, file_count) = build_dataset_input_value(
+                        &biovault_db,
+                        &dataset_assets,
+                        &data_type,
+                        &shape_expr,
+                    )?;
 
-                selection_counts = Some((file_count, dataset_count));
+                    let dataset_count = match &shape_expr {
+                        ShapeExpr::Map(_) => match &dataset_value {
+                            DatasetInputValue::Json(serde_json::Value::Object(map)) => map.len(),
+                            _ => 0,
+                        },
+                        ShapeExpr::Record(_) | ShapeExpr::File | ShapeExpr::Directory => 1,
+                        _ => 0,
+                    };
 
-                selection_metadata = Some(serde_json::json!({
-                    "dataset_name": dataset_name,
-                    "dataset_shape": shape,
-                    "dataset_data_type": data_type,
-                    "dataset_input": input_name,
-                    "dataset_input_path": input_path,
-                    "dataset_count": dataset_count,
-                    "file_count": file_count,
-                }));
+                    let input_path = match dataset_value {
+                        DatasetInputValue::Path(path) => path,
+                        DatasetInputValue::Json(value) => {
+                            let inputs_dir = results_path.join("inputs");
+                            fs::create_dir_all(&inputs_dir).map_err(|e| {
+                                format!("Failed to prepare inputs directory for dataset: {}", e)
+                            })?;
+                            let dataset_path =
+                                inputs_dir.join(format!("{}_input.json", input_name));
+                            let payload = serde_json::to_string_pretty(&value)
+                                .map_err(|e| format!("Failed to serialize dataset map: {}", e))?;
+                            fs::write(&dataset_path, payload)
+                                .map_err(|e| format!("Failed to write dataset map: {}", e))?;
+                            dataset_path.to_string_lossy().to_string()
+                        }
+                    };
 
-                dataset_handled = true;
-            }
-            // If List-shaped, fall through to URL/file_id handling below
+                    input_overrides.insert(format!("inputs.{}", input_name), input_path.clone());
+
+                    selection_counts = Some((file_count, dataset_count));
+
+                    selection_metadata = Some(serde_json::json!({
+                        "dataset_name": dataset_name,
+                        "dataset_shape": shape,
+                        "dataset_data_type": data_type,
+                        "dataset_input": input_name,
+                        "dataset_input_path": input_path,
+                        "dataset_count": dataset_count,
+                        "file_count": file_count,
+                    }));
+
+                    dataset_handled = true;
+                }
+                // If List-shaped, fall through to URL/file_id handling below
             }
         }
 
