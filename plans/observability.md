@@ -37,6 +37,51 @@ This document outlines the integration of **SigNoz** for distributed tracing, lo
 
 ---
 
+## Recent Desktop Findings (2026-01-08)
+
+Local runs (pipelines-collab) show the biggest time sinks are still in dependency
+checks and onboarding. The run below was performed on the main desktop display.
+
+Run summary (pipelines-collab):
+
+- Command: `DISPLAY=:1 XAUTHORITY=/home/linux/.Xauthority ./test-scenario-obs.sh --pipelines-collab --interactive`
+- Total time: ~203.62s (Playwright ~195.90s)
+- Milestones: onboarding ~17.57s, key exchange ~2.48s, dataset sync ~2.01s
+
+Top command timings (sample):
+
+- refresh_messages_batched: ~2.0s total (746 calls, ~2.7ms avg)
+- check_dependencies: ~1.55s total (2 calls)
+- update_saved_dependency_states: ~1.40s total (2 calls)
+- complete_onboarding: ~1.40s total (2 calls)
+- get_syftbox_state: ~0.14s total (8 calls)
+- get_syftbox_diagnostics: ~0.18s total (4 calls)
+
+Findings:
+
+- Message refresh polling can cause DOM churn; batching sync+list reduced round
+  trips and render hashing avoided unnecessary DOM rebuilds.
+- Dependency checks remain the slowest per-call operations; caching and reducing
+  re-checks helps but must not hide missing deps.
+- No nested spans inside the slow commands; deeper instrumentation is still the
+  highest priority for root-cause analysis.
+
+Confirmed gaps:
+
+- Beaver (Python) has no telemetry. Instrument these files first:
+  - `biovault-beaver/python/src/beaver/runtime.py`
+  - `biovault-beaver/python/src/beaver/computation.py`
+  - `biovault-beaver/python/src/beaver/twin.py`
+  - `biovault-beaver/python/src/beaver/session.py`
+  - `biovault-beaver/python/src/beaver/remote_vars.py`
+
+Next actions:
+
+- Add child spans inside `get_syftbox_state`, `get_syftbox_diagnostics`,
+  `get_saved_dependency_states` to expose sub-steps.
+- Instrument the sync trigger HTTP handler to explain 404 failures.
+- Add OpenTelemetry initialization and spans to Beaver Python for Jupyter runs.
+
 ## Quick Start Options
 
 ### Option A: Jaeger (Fastest, No Docker)

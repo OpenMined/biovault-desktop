@@ -1213,6 +1213,7 @@ pub fn run() {
             dismiss_failed_message,
             delete_failed_message,
             sync_messages_with_failures,
+            refresh_messages_batched,
             send_pipeline_request,
             send_pipeline_request_results,
             list_results_tree,

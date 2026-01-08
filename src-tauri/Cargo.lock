@@ -541,7 +541,7 @@ checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 
 [[package]]
 name = "biovault"
-version = "0.1.133"
+version = "0.1.135"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6344,7 +6344,7 @@ dependencies = [
 
 [[package]]
 name = "syftbox-sdk"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

@@ -27,7 +27,7 @@ import { expect, test, type Page, pauseForInteractive } from './playwright-fixtu
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
-import { waitForAppReady } from './test-helpers.js'
+import { applyWindowLayout, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
 const TEST_TIMEOUT = 420_000 // 7 minutes max (Jupyter startup can be slow on fresh envs)
@@ -521,6 +521,8 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
 		await page1.goto(baseUrl)
 		await page2.goto(baseUrl)
+		await applyWindowLayout(page1, 0, 'client1')
+		await applyWindowLayout(page2, 1, 'client2')
 
 		// Check if clients are onboarded, do onboarding if needed
 		const isOnboarded1 = await backend1.invoke('check_is_onboarded')
