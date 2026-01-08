@@ -44,7 +44,8 @@ Options:
   --branch [name]     Checkout/create branch in all repos
   branch [name]       Create branch in dirty repos only (smart mode)
                       Shows which repos have changes and creates branches
-  lint                Run lint.sh in dirty repos (parallel, quiet on success)
+  lint [--force]      Run lint.sh in dirty repos (parallel, quiet on success)
+                      --force runs lint.sh in all repos that have it
   commit -m "msg"     Commit all dirty repos with same message
   push                Push all repos on feature branches
   pr                  Create PRs (sub-repos first, then desktop with links)
@@ -1669,25 +1670,55 @@ do_lint() {
   local start_time=$SECONDS
   local dirty_repos=()
   local repo
+  local force=0
 
-  # Check root repo
-  if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
-    dirty_repos+=(".")
-  fi
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        ;;
+      --help|-h)
+        echo "Usage: ./repo lint [--force]"
+        return 0
+        ;;
+      *)
+        echo "Unknown lint option: $1" >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
 
-  # Check all manifest repos
-  while IFS= read -r repo; do
-    [[ -z "$repo" ]] && continue
-    if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
-      if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+  if [[ "$force" -eq 1 ]]; then
+    if [[ -x ./lint.sh ]]; then
+      dirty_repos+=(".")
+    fi
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
         dirty_repos+=("$repo")
       fi
+    done < <(manifest_paths)
+  else
+    # Check root repo
+    if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+      dirty_repos+=(".")
     fi
-  done < <(manifest_paths)
 
-  if [[ ${#dirty_repos[@]} -eq 0 ]]; then
-    echo -e "${GREEN}✓ No dirty repos${NC}"
-    return 0
+    # Check all manifest repos
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+          dirty_repos+=("$repo")
+        fi
+      fi
+    done < <(manifest_paths)
+
+    if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+      echo -e "${GREEN}✓ No dirty repos${NC}"
+      return 0
+    fi
   fi
 
   local tmpdir
@@ -2261,7 +2292,7 @@ case "${1:-}" in
     do_branch_dirty "${2:-}"
     ;;
   lint)
-    do_lint
+    do_lint "${@:2}"
     ;;
   commit)
     do_commit "${@:2}"
