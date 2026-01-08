@@ -1794,6 +1794,7 @@ do_lint() {
       echo -e "${GREEN}✓ $label${elapsed}${NC}"
       cat "$outfile"
       echo ""
+      passed=$((passed + 1))
     else
       echo -e "${GREEN}✓ $label${elapsed}${NC}"
       passed=$((passed + 1))
