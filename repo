@@ -1972,23 +1972,32 @@ do_push() {
   for repo in "${repos_with_branches[@]}"; do
     local label="$repo"
     local branch
+    local remote
     if [[ "$repo" == "." ]]; then
       label="biovault-desktop"
       branch=$(git rev-parse --abbrev-ref HEAD)
+      remote=$(git remote | head -1)
     else
       branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+      remote=$(git -C "$repo" remote | head -1)
     fi
     echo -ne "  → $label ($branch): "
 
+    if [[ -z "$remote" ]]; then
+      echo -e "${RED}no remote${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
     if [[ "$repo" == "." ]]; then
-      if git push -u origin "$branch" >/dev/null 2>&1; then
+      if git push -u "$remote" "$branch" >/dev/null 2>&1; then
         echo -e "${GREEN}pushed${NC}"
       else
         echo -e "${RED}failed${NC}"
         failures=$((failures + 1))
       fi
     else
-      if git -C "$repo" push -u origin "$branch" >/dev/null 2>&1; then
+      if git -C "$repo" push -u "$remote" "$branch" >/dev/null 2>&1; then
         echo -e "${GREEN}pushed${NC}"
       else
         echo -e "${RED}failed${NC}"
