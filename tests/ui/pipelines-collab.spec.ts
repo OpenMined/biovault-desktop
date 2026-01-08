@@ -23,7 +23,7 @@ import { expect, test, type Page, pauseForInteractive } from './playwright-fixtu
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
-import { ensureProfileSelected, waitForAppReady } from './test-helpers.js'
+import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
@@ -475,6 +475,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
 			await page1.goto(`${baseUrl}?ws=${wsPort1}&real=1`)
 			await page2.goto(`${baseUrl}?ws=${wsPort2}&real=1`)
+			await applyWindowLayout(page1, 0, 'client1')
+			await applyWindowLayout(page2, 1, 'client2')
 			await waitForAppReady(page1, { timeout: 10_000 })
 			await waitForAppReady(page2, { timeout: 10_000 })
 			await ensureProfilePickerClosed(page1)
@@ -1073,7 +1075,29 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const sendConfirmBtn = page1.locator('#send-results-confirm')
 			await expect(sendConfirmBtn).toBeVisible({ timeout: 10_000 })
 			const outputCheckboxes = page1.locator('input[data-output-path]')
-			expect(await outputCheckboxes.count()).toBeGreaterThan(0)
+			const outputCheckboxCount = await outputCheckboxes.count()
+			expect(outputCheckboxCount).toBeGreaterThan(0)
+			console.log(`Found ${outputCheckboxCount} output file checkboxes`)
+
+			// Uncheck all files first
+			for (let i = 0; i < outputCheckboxCount; i++) {
+				const checkbox = outputCheckboxes.nth(i)
+				if (await checkbox.isChecked()) {
+					await checkbox.uncheck()
+				}
+			}
+			console.log('Unchecked all output files')
+
+			// Recheck only result_HERC2.tsv
+			const herc2Checkbox = page1.locator('input[data-output-path*="result_HERC2.tsv"]')
+			if ((await herc2Checkbox.count()) > 0) {
+				await herc2Checkbox.check()
+				console.log('Checked only result_HERC2.tsv for sharing')
+			} else {
+				// Fallback: check first checkbox if specific file not found
+				console.log('result_HERC2.tsv checkbox not found, checking first file')
+				await outputCheckboxes.first().check()
+			}
 
 			await sendConfirmBtn.click()
 			await page1.waitForTimeout(3000)

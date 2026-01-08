@@ -225,6 +225,18 @@ pub enum MessageFilterScope {
     All,
 }
 
+/// Batched result for refresh_messages_batched: sync + list in one call
+#[derive(Serialize)]
+pub struct BatchedMessageRefreshResult {
+    /// Sync results
+    pub new_message_ids: Vec<String>,
+    pub new_messages: usize,
+    pub new_failed: usize,
+    pub total_failed: usize,
+    /// Thread list
+    pub threads: Vec<MessageThreadSummary>,
+}
+
 // Jupyter Types
 #[derive(Serialize)]
 pub struct JupyterStatus {

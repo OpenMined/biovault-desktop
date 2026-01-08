@@ -1,4 +1,8 @@
 import { expect } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 export async function waitForAppReady(page, options) {
 	const timeout = options?.timeout ?? 2000 // Reduced to 2s default
@@ -163,4 +167,148 @@ export async function ensureNotInOnboarding(page) {
 			}
 		}
 	}
+}
+
+export async function applyWindowLayout(page, index = 0, label = 'page') {
+	const workspacesRaw = process.env.PLAYWRIGHT_WORKSPACES
+	if (workspacesRaw) {
+		const workspaceList = workspacesRaw
+			.split(',')
+			.map((entry) => entry.trim())
+			.filter(Boolean)
+		const workspace = workspaceList[index] || workspaceList[0]
+		const fullscreen =
+			process.env.PLAYWRIGHT_WORKSPACE_FULLSCREEN === '1' ||
+			process.env.PLAYWRIGHT_WORKSPACE_FULLSCREEN === 'true'
+		const focused = await moveWindowToWorkspace(page, workspace, fullscreen)
+		if (focused) {
+			return
+		}
+	}
+
+	const layout = process.env.PLAYWRIGHT_WINDOW_LAYOUT
+	if (!layout || layout === 'default') return
+
+	const gap = Number.parseInt(process.env.PLAYWRIGHT_WINDOW_GAP ?? '16', 10)
+	const offset = Number.parseInt(process.env.PLAYWRIGHT_WINDOW_OFFSET ?? '40', 10)
+
+	try {
+		const screen = await page.evaluate(() => ({
+			width: window.screen.availWidth,
+			height: window.screen.availHeight,
+		}))
+		if (!screen?.width || !screen?.height) {
+			console.log(`[window-layout] ${label}: screen size unavailable`)
+			return
+		}
+
+		let width = screen.width
+		let height = screen.height
+		let x = 0
+		let y = 0
+
+		switch (layout) {
+			case 'overlap': {
+				width = Math.floor(screen.width * 0.75)
+				height = Math.floor(screen.height * 0.85)
+				x = gap + index * offset
+				y = gap + index * offset
+				break
+			}
+			case 'vertical':
+			case 'side-by-side': {
+				width = Math.floor((screen.width - gap) / 2)
+				height = screen.height
+				x = index === 0 ? 0 : width + gap
+				y = 0
+				break
+			}
+			case 'horizontal':
+			case 'stacked': {
+				width = screen.width
+				height = Math.floor((screen.height - gap) / 2)
+				x = 0
+				y = index === 0 ? 0 : height + gap
+				break
+			}
+			case 'fullscreen': {
+				width = screen.width
+				height = screen.height
+				x = 0
+				y = 0
+				break
+			}
+			default:
+				console.log(`[window-layout] ${label}: unknown layout "${layout}"`)
+				return
+		}
+
+		await page.evaluate(
+			({ x, y, width, height }) => {
+				window.moveTo(x, y)
+				window.resizeTo(width, height)
+			},
+			{ x, y, width, height },
+		)
+
+		await page.setViewportSize({
+			width: Math.max(800, Math.min(width, screen.width)),
+			height: Math.max(600, Math.min(height, screen.height)),
+		})
+
+		console.log(`[window-layout] ${label}: ${layout} @ ${x},${y} ${width}x${height}`)
+	} catch (err) {
+		console.log(`[window-layout] ${label}: ${String(err)}`)
+	}
+}
+
+function resolveHyprlandSignature() {
+	if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+		return process.env.HYPRLAND_INSTANCE_SIGNATURE
+	}
+	try {
+		const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`
+		const hyprDir = path.join(runtimeDir, 'hypr')
+		const entries = fs.readdirSync(hyprDir, { withFileTypes: true })
+		const match = entries.find((entry) => entry.isDirectory())
+		return match ? match.name : null
+	} catch {
+		return null
+	}
+}
+
+function hyprctlDispatch(args) {
+	const signature = resolveHyprlandSignature()
+	if (!signature) return false
+	try {
+		const env = {
+			...process.env,
+			HYPRLAND_INSTANCE_SIGNATURE: signature,
+			XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`,
+		}
+		execFileSync('hyprctl', args, { env, stdio: 'ignore' })
+		return true
+	} catch (err) {
+		console.log(`[window-layout] hyprctl failed: ${String(err)}`)
+		return false
+	}
+}
+
+async function moveWindowToWorkspace(page, workspace, fullscreen) {
+	try {
+		await page.bringToFront()
+	} catch (err) {
+		console.log(`[window-layout] bringToFront failed: ${String(err)}`)
+		return false
+	}
+
+	if (!hyprctlDispatch(['dispatch', 'movetoworkspacesilent', workspace])) {
+		return false
+	}
+
+	if (fullscreen) {
+		hyprctlDispatch(['dispatch', 'fullscreen', '1'])
+	}
+
+	return true
 }

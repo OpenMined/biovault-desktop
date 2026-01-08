@@ -972,6 +972,10 @@ EOF
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
 		export DISABLE_UPDATER=1
+		# Set unique service name for telemetry (uses email as identifier)
+		if [[ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]]; then
+			export OTEL_SERVICE_NAME="$email"
+		fi
 		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
 		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
 			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"

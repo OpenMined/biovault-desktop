@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tracing::{info_span, Instrument};
 
 #[derive(Deserialize)]
 struct WsRequest {
@@ -82,8 +83,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
         // Execute each request concurrently so a slow command doesn't stall the bridge.
         let app = Arc::clone(&app);
         let tx = tx.clone();
+        let cmd_name = request.cmd.clone();
         tokio::spawn(async move {
-            let response = execute_command(&app, &request.cmd, request.args).await;
+            let span = info_span!("command", cmd = %cmd_name, request_id = request.id);
+            let response = execute_command(&app, &request.cmd, request.args)
+                .instrument(span)
+                .await;
             let ws_response = match response {
                 Ok(result) => WsResponse {
                     id: request.id,
@@ -564,6 +569,17 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "sync_messages_with_failures" => {
             let result = crate::sync_messages_with_failures().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "refresh_messages_batched" => {
+            let scope: Option<String> = args
+                .get("scope")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let limit: Option<usize> = args
+                .get("limit")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result =
+                crate::refresh_messages_batched(scope, limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "list_message_threads" => {

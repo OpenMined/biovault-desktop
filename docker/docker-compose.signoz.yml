@@ -1,0 +1,120 @@
+version: "3.8"
+
+# SigNoz Observability Stack for BioVault
+# Usage:
+#   docker compose -f docker-compose.signoz.yml up -d
+#   Open http://localhost:3301
+
+x-clickhouse-defaults: &clickhouse-defaults
+  restart: unless-stopped
+  logging:
+    options:
+      max-size: "50m"
+      max-file: "3"
+  ulimits:
+    nofile:
+      soft: 262144
+      hard: 262144
+
+services:
+  clickhouse:
+    <<: *clickhouse-defaults
+    image: clickhouse/clickhouse-server:24.1.2-alpine
+    container_name: signoz-clickhouse
+    hostname: clickhouse
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./signoz/clickhouse-config.xml:/etc/clickhouse-server/config.d/logging.xml:ro
+      - ./signoz/clickhouse-users.xml:/etc/clickhouse-server/users.d/users.xml:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "9000:9000"   # Native protocol
+      - "8123:8123"   # HTTP interface
+
+  otel-collector:
+    image: signoz/signoz-otel-collector:0.88.25
+    container_name: signoz-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./signoz/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-otel-collector
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  query-service:
+    image: signoz/query-service:0.45.1
+    container_name: signoz-query-service
+    command:
+      - "-config=/root/config/prometheus.yml"
+    environment:
+      - ClickHouseUrl=tcp://clickhouse:9000
+      - ALERTMANAGER_API_PREFIX=http://alertmanager:9093/api/
+      - SIGNOZ_LOCAL_DB_PATH=/var/lib/signoz/signoz.db
+      - DASHBOARDS_PATH=/root/config/dashboards
+      - STORAGE=clickhouse
+      - GODEBUG=netdns=go
+    volumes:
+      - ./signoz/prometheus.yml:/root/config/prometheus.yml:ro
+      - signoz-data:/var/lib/signoz
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  frontend:
+    image: signoz/frontend:0.45.1
+    container_name: signoz-frontend
+    ports:
+      - "3301:3301"
+    depends_on:
+      query-service:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  alertmanager:
+    image: signoz/alertmanager:0.23.5
+    container_name: signoz-alertmanager
+    volumes:
+      - ./signoz/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  clickhouse-data:
+    driver: local
+  signoz-data:
+    driver: local
+
+networks:
+  default:
+    name: signoz-network

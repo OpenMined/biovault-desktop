@@ -50,8 +50,16 @@ rand = "0.8"
 hex = "0.4"
 base64 = "0.22"
 anyhow = "1.0"
-syftbox-sdk = { path = "../syftbox-sdk", features = ["crypto", "process", "auth"] }
+syftbox-sdk = { path = "../syftbox-sdk", features = ["crypto", "process", "auth", "telemetry"] }
 uuid = "1"
+
+# OpenTelemetry for distributed tracing (optional, enabled via env var)
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["http-proto", "reqwest-client"] }
+tracing = "0.1"
+tracing-opentelemetry = "0.28"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

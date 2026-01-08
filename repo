@@ -42,6 +42,16 @@ Options:
   <target> <rev>      Shortcut for "track <target> <rev>"
   --status            Show repo tool status
   --branch [name]     Checkout/create branch in all repos
+  branch [name]       Create branch in dirty repos only (smart mode)
+                      Shows which repos have changes and creates branches
+  lint [--force] [--verbose]
+                      Run lint.sh in dirty repos (parallel, quiet on success)
+                      --force runs lint.sh in all repos that have it
+                      --verbose prints lint output even on success
+  commit -m "msg"     Commit all dirty repos with same message
+  push                Push all repos on feature branches
+  pr                  Create PRs (sub-repos first, then desktop with links)
+  release             Pin manifest to current HEADs and commit
   checkout <rev> <target>
                       Checkout a revision in a repo or all repos
                       target: repo path, repo name, or "all"
@@ -1658,6 +1668,515 @@ do_checkout() {
   fi
 }
 
+do_lint() {
+  local start_time=$SECONDS
+  local dirty_repos=()
+  local repo
+  local force=0
+  local verbose=0
+
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        ;;
+      --verbose)
+        verbose=1
+        ;;
+      --help|-h)
+        echo "Usage: ./repo lint [--force] [--verbose]"
+        return 0
+        ;;
+      *)
+        echo "Unknown lint option: $1" >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "$force" -eq 1 ]]; then
+    if [[ -x ./lint.sh ]]; then
+      dirty_repos+=(".")
+    fi
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        dirty_repos+=("$repo")
+      fi
+    done < <(manifest_paths)
+  else
+    # Check root repo
+    if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+      dirty_repos+=(".")
+    fi
+
+    # Check all manifest repos
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+          dirty_repos+=("$repo")
+        fi
+      fi
+    done < <(manifest_paths)
+
+    if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+      echo -e "${GREEN}✓ No dirty repos${NC}"
+      return 0
+    fi
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+
+  local pids=()
+  local repos_with_lint=()
+
+  # Launch all lint.sh in parallel
+  for repo in "${dirty_repos[@]}"; do
+    local script=""
+    local label="$repo"
+    if [[ "$repo" == "." ]]; then
+      script="./lint.sh"
+      label="biovault-desktop"
+    else
+      script="$repo/lint.sh"
+    fi
+
+    if [[ ! -x "$script" ]]; then
+      continue
+    fi
+
+    repos_with_lint+=("$repo")
+    echo -e "${CYAN}→ $label${NC}"
+    local outfile="$tmpdir/${repo//\//_}.out"
+    (
+      local task_start=$SECONDS
+      if (cd "${repo:-.}" && ./lint.sh) > "$outfile" 2>&1; then
+        echo "0" > "$outfile.status"
+      else
+        echo "1" > "$outfile.status"
+      fi
+      echo "$((SECONDS - task_start))" > "$outfile.time"
+    ) &
+    pids+=($!)
+  done
+
+  if [[ ${#repos_with_lint[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No repos with lint.sh${NC}"
+    return 0
+  fi
+
+  # Wait and collect results
+  echo ""
+  local failures=0
+  local passed=0
+  local i=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+    local repo="${repos_with_lint[$i]}"
+    local label="$repo"
+    [[ "$repo" == "." ]] && label="biovault-desktop"
+    local outfile="$tmpdir/${repo//\//_}.out"
+    local elapsed=""
+    if [[ -f "$outfile.time" ]]; then
+      elapsed=" ($(cat "$outfile.time")s)"
+    fi
+
+    if [[ -f "$outfile.status" && "$(cat "$outfile.status")" != "0" ]]; then
+      echo -e "${RED}✗ $label${elapsed}${NC}"
+      cat "$outfile"
+      echo ""
+      failures=$((failures + 1))
+    elif [[ "$verbose" -eq 1 ]]; then
+      echo -e "${GREEN}✓ $label${elapsed}${NC}"
+      cat "$outfile"
+      echo ""
+      passed=$((passed + 1))
+    else
+      echo -e "${GREEN}✓ $label${elapsed}${NC}"
+      passed=$((passed + 1))
+    fi
+    i=$((i + 1))
+  done
+
+  local total_time=$((SECONDS - start_time))
+  echo ""
+  if [[ "$failures" -eq 0 ]]; then
+    echo -e "${GREEN}${passed} repos passed in ${total_time}s${NC}"
+  else
+    echo -e "${RED}${failures} failed, ${passed} passed in ${total_time}s${NC}"
+    return 1
+  fi
+}
+
+do_branch_dirty() {
+  local branch="${1:-}"
+
+  if [[ -z "$branch" ]]; then
+    echo -e "${CYAN}=== Repos with uncommitted changes ===${NC}"
+    echo ""
+
+    local dirty_repos=()
+    local repo
+
+    # Check root repo
+    if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+      dirty_repos+=(".")
+      echo -e "  ${RED}●${NC} ${CYAN}. (biovault-desktop)${NC} - dirty"
+    fi
+
+    # Check all manifest repos
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+          dirty_repos+=("$repo")
+          echo -e "  ${RED}●${NC} ${CYAN}$repo${NC} - dirty"
+        fi
+      fi
+    done < <(manifest_paths)
+
+    echo ""
+    if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+      echo -e "${GREEN}No repos have uncommitted changes.${NC}"
+    else
+      echo -e "${YELLOW}${#dirty_repos[@]} repo(s) have changes.${NC}"
+      echo -e "Run: ${BLUE}./repo branch <branch-name>${NC} to create branches"
+    fi
+    return 0
+  fi
+
+  echo -e "${CYAN}=== Creating branch '$branch' in dirty repos ===${NC}"
+  echo ""
+
+  local dirty_repos=()
+  local repo
+
+  # Check root repo
+  if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+    dirty_repos+=(".")
+  fi
+
+  # Check all manifest repos
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+      if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+        dirty_repos+=("$repo")
+      fi
+    fi
+  done < <(manifest_paths)
+
+  if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+    echo -e "${GREEN}No repos have uncommitted changes. Nothing to do.${NC}"
+    return 0
+  fi
+
+  echo -e "Creating branch in ${#dirty_repos[@]} repo(s):"
+  echo ""
+
+  local failures=0
+  for repo in "${dirty_repos[@]}"; do
+    local label="$repo"
+    if [[ "$repo" == "." ]]; then
+      label=". (biovault-desktop)"
+    fi
+    echo -ne "  → $label: "
+
+    if [[ "$repo" == "." ]]; then
+      if git checkout -B "$branch" >/dev/null 2>&1; then
+        echo -e "${GREEN}created${NC}"
+      else
+        echo -e "${RED}failed${NC}"
+        failures=$((failures + 1))
+      fi
+    else
+      if git -C "$repo" checkout -B "$branch" >/dev/null 2>&1; then
+        echo -e "${GREEN}created${NC}"
+      else
+        echo -e "${RED}failed${NC}"
+        failures=$((failures + 1))
+      fi
+    fi
+  done
+
+  echo ""
+  if [[ "$failures" -eq 0 ]]; then
+    echo -e "${GREEN}✅ Branch '$branch' created in all dirty repos.${NC}"
+    echo ""
+    echo -e "Next steps:"
+    echo -e "  1. ${BLUE}./repo commit -m \"message\"${NC}"
+    echo -e "  2. ${BLUE}./repo push${NC}"
+    echo -e "  3. ${BLUE}./repo pr${NC}"
+  else
+    echo -e "${RED}Failed to create branch in $failures repo(s).${NC}"
+    return 1
+  fi
+}
+
+do_commit() {
+  local message=""
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      -m) message="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$message" ]]; then
+    echo "Usage: ./repo commit -m \"message\"" >&2
+    exit 1
+  fi
+
+  local dirty_repos=()
+  local repo
+
+  # Check root repo
+  if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+    dirty_repos+=(".")
+  fi
+
+  # Check all manifest repos
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+      if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+        dirty_repos+=("$repo")
+      fi
+    fi
+  done < <(manifest_paths)
+
+  if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+    echo -e "${GREEN}No repos have uncommitted changes.${NC}"
+    return 0
+  fi
+
+  local failures=0
+  for repo in "${dirty_repos[@]}"; do
+    local label="$repo"
+    [[ "$repo" == "." ]] && label="biovault-desktop"
+    echo -ne "  → $label: "
+
+    if [[ "$repo" == "." ]]; then
+      git add -A >/dev/null 2>&1
+      if git commit -m "$message" >/dev/null 2>&1; then
+        echo -e "${GREEN}committed${NC}"
+      else
+        echo -e "${YELLOW}nothing to commit${NC}"
+      fi
+    else
+      git -C "$repo" add -A >/dev/null 2>&1
+      if git -C "$repo" commit -m "$message" >/dev/null 2>&1; then
+        echo -e "${GREEN}committed${NC}"
+      else
+        echo -e "${YELLOW}nothing to commit${NC}"
+      fi
+    fi
+  done
+
+  if [[ "$failures" -eq 0 ]]; then
+    echo -e "\n${GREEN}Done. Run: ${BLUE}./repo push${NC}"
+  fi
+}
+
+do_push() {
+  local repos_with_branches=()
+  local repo
+
+  # Check root repo
+  local root_branch
+  root_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [[ -n "$root_branch" && "$root_branch" != "main" && "$root_branch" != "HEAD" ]]; then
+    repos_with_branches+=(".")
+  fi
+
+  # Check all manifest repos
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+      local branch
+      branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      if [[ -n "$branch" && "$branch" != "main" && "$branch" != "HEAD" ]]; then
+        repos_with_branches+=("$repo")
+      fi
+    fi
+  done < <(manifest_paths)
+
+  if [[ ${#repos_with_branches[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}No repos on feature branches to push.${NC}"
+    return 0
+  fi
+
+  local failures=0
+  for repo in "${repos_with_branches[@]}"; do
+    local label="$repo"
+    local branch
+    local remote
+    if [[ "$repo" == "." ]]; then
+      label="biovault-desktop"
+      branch=$(git rev-parse --abbrev-ref HEAD)
+      remote=$(git remote | head -1)
+    else
+      branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+      remote=$(git -C "$repo" remote | head -1)
+    fi
+    echo -ne "  → $label ($branch): "
+
+    if [[ -z "$remote" ]]; then
+      echo -e "${RED}no remote${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if [[ "$repo" == "." ]]; then
+      if git push -u "$remote" "$branch" >/dev/null 2>&1; then
+        echo -e "${GREEN}pushed${NC}"
+      else
+        echo -e "${RED}failed${NC}"
+        failures=$((failures + 1))
+      fi
+    else
+      if git -C "$repo" push -u "$remote" "$branch" >/dev/null 2>&1; then
+        echo -e "${GREEN}pushed${NC}"
+      else
+        echo -e "${RED}failed${NC}"
+        failures=$((failures + 1))
+      fi
+    fi
+  done
+
+  if [[ "$failures" -eq 0 ]]; then
+    echo -e "\n${GREEN}Done. Run: ${BLUE}./repo pr${NC}"
+  else
+    return 1
+  fi
+}
+
+do_release() {
+  echo -e "${CYAN}=== Pinning manifest to current HEADs ===${NC}"
+
+  require_repo
+  require_repo_workspace
+  repo_pin
+
+  if [[ -z $(git status --porcelain manifest.xml 2>/dev/null || true) ]]; then
+    echo -e "${GREEN}Manifest already up to date.${NC}"
+    return 0
+  fi
+
+  git add manifest.xml
+  git commit -m "chore: pin dependencies"
+  echo -e "${GREEN}✓ Manifest pinned and committed${NC}"
+  echo -e "Run: ${BLUE}./repo push${NC} then ${BLUE}./repo pr${NC}"
+}
+
+do_pr() {
+  local repos_with_branches=()
+  local pr_urls=()
+  local repo
+
+  # Collect repos on feature branches
+  local root_branch
+  root_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [[ -n "$root_branch" && "$root_branch" != "main" && "$root_branch" != "HEAD" ]]; then
+    repos_with_branches+=(".")
+  fi
+
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+      local branch
+      branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      if [[ -n "$branch" && "$branch" != "main" && "$branch" != "HEAD" ]]; then
+        repos_with_branches+=("$repo")
+      fi
+    fi
+  done < <(manifest_paths)
+
+  if [[ ${#repos_with_branches[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}No repos on feature branches.${NC}"
+    return 0
+  fi
+
+  # Create PRs in dependency order (sub-repos first, then desktop)
+  local sub_repos=()
+  local has_root=0
+  for repo in "${repos_with_branches[@]}"; do
+    if [[ "$repo" == "." ]]; then
+      has_root=1
+    else
+      sub_repos+=("$repo")
+    fi
+  done
+
+  # Create PRs for sub-repos first
+  for repo in "${sub_repos[@]}"; do
+    local label="$repo"
+    local branch
+    branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+    echo -ne "  → $label: "
+
+    # Check if PR already exists
+    local existing_pr
+    existing_pr=$(cd "$repo" && gh pr view "$branch" --json url -q '.url' 2>/dev/null || echo "")
+    if [[ -n "$existing_pr" ]]; then
+      echo -e "${CYAN}exists${NC} $existing_pr"
+      pr_urls+=("$existing_pr")
+      continue
+    fi
+
+    local pr_url
+    if pr_url=$(cd "$repo" && gh pr create --fill --head "$branch" 2>&1); then
+      echo -e "${GREEN}created${NC} $pr_url"
+      pr_urls+=("$pr_url")
+    else
+      echo -e "${RED}failed${NC}"
+    fi
+  done
+
+  # Create PR for root (desktop) with links to dependent PRs
+  if [[ "$has_root" -eq 1 ]]; then
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    echo -ne "  → biovault-desktop: "
+
+    # Check if PR already exists
+    local existing_pr
+    existing_pr=$(gh pr view "$branch" --json url -q '.url' 2>/dev/null || echo "")
+    if [[ -n "$existing_pr" ]]; then
+      echo -e "${CYAN}exists${NC} $existing_pr"
+      pr_urls+=("$existing_pr")
+    else
+      local body="## Summary\nChanges across workspace.\n\n"
+      if [[ ${#pr_urls[@]} -gt 0 ]]; then
+        body+="## Dependent PRs\n"
+        for url in "${pr_urls[@]}"; do
+          body+="- $url\n"
+        done
+      fi
+
+      local pr_url
+      if pr_url=$(gh pr create --title "$branch" --body "$(echo -e "$body")" --head "$branch" 2>&1); then
+        echo -e "${GREEN}created${NC} $pr_url"
+        pr_urls+=("$pr_url")
+      else
+        echo -e "${RED}failed${NC}"
+      fi
+    fi
+  fi
+
+  echo ""
+  if [[ ${#pr_urls[@]} -gt 0 ]]; then
+    echo -e "${GREEN}PRs:${NC}"
+    for url in "${pr_urls[@]}"; do
+      echo "  $url"
+    done
+  fi
+}
+
 do_switch() {
   local create=0
   if [[ "${1:-}" == "-b" ]]; then
@@ -1779,6 +2298,24 @@ case "${1:-}" in
       exit 1
     fi
     run_repo forall -c "git checkout -B \"$branch\""
+    ;;
+  branch)
+    do_branch_dirty "${2:-}"
+    ;;
+  lint)
+    do_lint "${@:2}"
+    ;;
+  commit)
+    do_commit "${@:2}"
+    ;;
+  push)
+    do_push
+    ;;
+  pr)
+    do_pr
+    ;;
+  release)
+    do_release
     ;;
   tools)
     repo_tools

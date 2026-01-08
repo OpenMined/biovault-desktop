@@ -18,6 +18,7 @@ mod ws_bridge;
 // Module declarations
 mod commands;
 mod logging;
+mod telemetry;
 mod types;
 
 // Import types from types module
@@ -620,6 +621,9 @@ pub fn run() {
 
     logging::init_stdio_forwarding();
 
+    // Initialize OpenTelemetry if OTEL_EXPORTER_OTLP_ENDPOINT is set
+    telemetry::init();
+
     let biovault_db = if profile_picker_mode {
         BioVaultDb {
             conn: Connection::open_in_memory().expect("Could not open in-memory BioVault database"),
@@ -1209,6 +1213,7 @@ pub fn run() {
             dismiss_failed_message,
             delete_failed_message,
             sync_messages_with_failures,
+            refresh_messages_batched,
             send_pipeline_request,
             send_pipeline_request_results,
             list_results_tree,
