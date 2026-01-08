@@ -1,0 +1,82 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "*"
+
+processors:
+  batch:
+    send_batch_size: 10000
+    send_batch_max_size: 11000
+    timeout: 10s
+
+  # Add resource attributes
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: development
+        action: upsert
+
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1000
+    spike_limit_mib: 200
+
+exporters:
+  # Traces to ClickHouse
+  clickhousetraces:
+    datasource: tcp://clickhouse:9000/?database=signoz_traces
+    docker_multi_node_cluster: false
+    low_cardinal_exception_grouping: false
+
+  # Logs to ClickHouse
+  clickhouselogs:
+    datasource: tcp://clickhouse:9000/?database=signoz_logs
+    docker_multi_node_cluster: false
+
+  # Metrics to ClickHouse
+  clickhousemetricswrite:
+    endpoint: tcp://clickhouse:9000/?database=signoz_metrics
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Debug output (disable in production)
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [clickhousetraces]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [clickhouselogs]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [clickhousemetricswrite]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

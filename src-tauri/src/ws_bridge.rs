@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tracing::{info_span, Instrument};
 
 #[derive(Deserialize)]
 struct WsRequest {
@@ -82,8 +83,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
         // Execute each request concurrently so a slow command doesn't stall the bridge.
         let app = Arc::clone(&app);
         let tx = tx.clone();
+        let cmd_name = request.cmd.clone();
         tokio::spawn(async move {
-            let response = execute_command(&app, &request.cmd, request.args).await;
+            let span = info_span!("command", cmd = %cmd_name, request_id = request.id);
+            let response = execute_command(&app, &request.cmd, request.args)
+                .instrument(span)
+                .await;
             let ws_response = match response {
                 Ok(result) => WsResponse {
                     id: request.id,
