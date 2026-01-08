@@ -4,6 +4,13 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// Cache for dependency states to avoid repeated subprocess checks.
+/// TTL is 30 seconds - after that, the next call will refresh.
+static DEPENDENCY_CACHE: Mutex<Option<(DependencyCheckResult, Instant)>> = Mutex::new(None);
+const DEPENDENCY_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(target_os = "windows")]
 fn configure_child_process(cmd: &mut Command) {
@@ -148,9 +155,38 @@ pub async fn check_single_dependency(
         .map_err(|e| format!("Failed to check dependency: {}", e))
 }
 
+/// Returns saved dependency states from disk cache.
+///
+/// This is a fast read-only operation that does NOT re-verify dependencies.
+/// It reads from the in-memory cache or disk file without running subprocess checks.
+///
+/// To refresh/re-verify dependencies, call:
+/// - `check_dependencies` for a full re-check
+/// - `update_saved_dependency_states` to refresh and persist
 #[tauri::command]
 pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
-    crate::desktop_log!("📋 Getting saved dependency states from file");
+    // Check in-memory cache first (TTL-based)
+    match DEPENDENCY_CACHE.lock() {
+        Ok(cache) => {
+            if let Some((ref cached_result, cached_at)) = *cache {
+                if cached_at.elapsed() < DEPENDENCY_CACHE_TTL {
+                    crate::desktop_log!(
+                        "📋 Returning cached dependency states (age: {:?})",
+                        cached_at.elapsed()
+                    );
+                    return Ok(cached_result.clone());
+                }
+            }
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "⚠️ Dependency cache lock poisoned; bypassing cache: {}",
+                err
+            );
+        }
+    }
+
+    crate::desktop_log!("📋 Getting saved dependency states (cache miss/expired)");
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
@@ -163,8 +199,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
     let biovault_path = PathBuf::from(&biovault_home);
     let states_path = biovault_path.join("dependency_states.json");
 
-    // Try to load saved states first, but always refresh by re-checking with the current
-    // environment (bundled binaries, PATH changes, etc.).
+    // Load saved states from disk without re-checking (fast path)
     if states_path.exists() {
         crate::desktop_log!("  Loading from: {}", states_path.display());
         let json_str = fs::read_to_string(&states_path)
@@ -173,104 +208,42 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
         let mut saved_result: DependencyCheckResult = serde_json::from_str(&json_str)
             .map_err(|e| format!("Failed to parse dependency states: {}", e))?;
 
-        let config = biovault::config::Config::load().ok();
-
-        // Fill missing paths from config
-        for dep in &mut saved_result.dependencies {
-            if dep.path.is_none() {
-                dep.path = config
-                    .as_ref()
-                    .and_then(|cfg| cfg.get_binary_path(&dep.name));
+        // Fill missing paths from config (cheap operation, no subprocess calls)
+        if let Ok(config) = biovault::config::Config::load() {
+            for dep in &mut saved_result.dependencies {
+                if dep.path.is_none() {
+                    dep.path = config.get_binary_path(&dep.name);
+                }
             }
         }
 
-        // Re-check each dependency using the saved/configured path as a hint.
-        // This allows bundled binaries (set via env vars at runtime) to be detected even if
-        // an older dependency_states.json was persisted when they were missing.
-        let mut dependencies = Vec::new();
-        for dep_name in dependency_names() {
-            let hint = saved_result
-                .dependencies
-                .iter()
-                .find(|d| d.name == dep_name)
-                .and_then(|d| d.path.clone())
-                .or_else(|| {
-                    config
-                        .as_ref()
-                        .and_then(|cfg| cfg.get_binary_path(dep_name))
-                });
-
-            if let Ok(dep_result) =
-                biovault::cli::commands::check::check_single_dependency(dep_name, hint)
-            {
-                dependencies.push(dep_result);
+        // Update the in-memory cache
+        match DEPENDENCY_CACHE.lock() {
+            Ok(mut cache) => {
+                *cache = Some((saved_result.clone(), Instant::now()));
             }
-        }
-
-        let all_satisfied = dependencies
-            .iter()
-            .all(|dep| dep.found && (dep.running.is_none() || dep.running == Some(true)));
-
-        let refreshed_result = DependencyCheckResult {
-            dependencies,
-            all_satisfied,
-        };
-
-        if let Ok(json) = serde_json::to_string_pretty(&refreshed_result) {
-            let _ = fs::write(&states_path, json);
+            Err(err) => {
+                crate::desktop_log!(
+                    "⚠️ Dependency cache lock poisoned; cache not updated: {}",
+                    err
+                );
+            }
         }
 
         crate::desktop_log!(
-            "  Loaded {} saved dependencies",
+            "  Loaded {} saved dependencies (no re-check)",
             saved_result.dependencies.len()
         );
-        return Ok(refreshed_result);
+        return Ok(saved_result);
     }
 
-    // If no saved states, check with current config paths
-    crate::desktop_log!("  No saved states found, checking with current config");
-    let config_path = biovault_path.join("config.yaml");
-
-    if !config_path.exists() {
-        crate::desktop_log!("  Config doesn't exist, returning empty dependencies");
-        return Ok(DependencyCheckResult {
-            dependencies: vec![],
-            all_satisfied: false,
-        });
-    }
-
-    // Load config to get saved custom paths
-    let config =
-        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
-
-    // Check each dependency with the saved custom path (if any)
-    let mut dependencies = vec![];
-    for dep_name in dependency_names() {
-        let custom_path = config.get_binary_path(dep_name);
-        if let Ok(dep_result) =
-            biovault::cli::commands::check::check_single_dependency(dep_name, custom_path)
-        {
-            dependencies.push(dep_result);
-        }
-    }
-
-    // Check if all are satisfied
-    let all_satisfied = dependencies
-        .iter()
-        .all(|dep| dep.found && (dep.running.is_none() || dep.running == Some(true)));
-
-    let result = DependencyCheckResult {
-        dependencies,
-        all_satisfied,
-    };
-
-    // Save these states for next time
-    if let Ok(json) = serde_json::to_string_pretty(&result) {
-        let _ = fs::write(&states_path, json);
-        crate::desktop_log!("  Saved current states to: {}", states_path.display());
-    }
-
-    Ok(result)
+    // If no saved states, return empty result
+    // The UI should call check_dependencies or update_saved_dependency_states to populate
+    crate::desktop_log!("  No saved states found, returning empty result");
+    Ok(DependencyCheckResult {
+        dependencies: vec![],
+        all_satisfied: false,
+    })
 }
 
 #[tauri::command]
@@ -325,6 +298,19 @@ pub async fn save_custom_path(name: String, path: String) -> Result<(), String> 
 #[tauri::command]
 pub fn update_saved_dependency_states() -> Result<(), String> {
     crate::desktop_log!("🔄 Updating saved dependency states");
+
+    // Invalidate the in-memory cache so the next get_saved_dependency_states call will refresh
+    match DEPENDENCY_CACHE.lock() {
+        Ok(mut cache) => {
+            *cache = None;
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "⚠️ Dependency cache lock poisoned; cache not invalidated: {}",
+                err
+            );
+        }
+    }
 
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
         let home_dir = dirs::home_dir().unwrap();
