@@ -44,8 +44,10 @@ Options:
   --branch [name]     Checkout/create branch in all repos
   branch [name]       Create branch in dirty repos only (smart mode)
                       Shows which repos have changes and creates branches
-  lint [--force]      Run lint.sh in dirty repos (parallel, quiet on success)
+  lint [--force] [--verbose]
+                      Run lint.sh in dirty repos (parallel, quiet on success)
                       --force runs lint.sh in all repos that have it
+                      --verbose prints lint output even on success
   commit -m "msg"     Commit all dirty repos with same message
   push                Push all repos on feature branches
   pr                  Create PRs (sub-repos first, then desktop with links)
@@ -1671,14 +1673,18 @@ do_lint() {
   local dirty_repos=()
   local repo
   local force=0
+  local verbose=0
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --force)
         force=1
         ;;
+      --verbose)
+        verbose=1
+        ;;
       --help|-h)
-        echo "Usage: ./repo lint [--force]"
+        echo "Usage: ./repo lint [--force] [--verbose]"
         return 0
         ;;
       *)
@@ -1784,6 +1790,10 @@ do_lint() {
       cat "$outfile"
       echo ""
       failures=$((failures + 1))
+    elif [[ "$verbose" -eq 1 ]]; then
+      echo -e "${GREEN}✓ $label${elapsed}${NC}"
+      cat "$outfile"
+      echo ""
     else
       echo -e "${GREEN}✓ $label${elapsed}${NC}"
       passed=$((passed + 1))
