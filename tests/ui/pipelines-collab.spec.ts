@@ -23,7 +23,7 @@ import { expect, test, type Page, pauseForInteractive } from './playwright-fixtu
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
-import { waitForAppReady } from './test-helpers.js'
+import { applyWindowLayout, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
@@ -469,6 +469,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
 			await page1.goto(`${baseUrl}?ws=${wsPort1}&real=1`)
 			await page2.goto(`${baseUrl}?ws=${wsPort2}&real=1`)
+			await applyWindowLayout(page1, 0, 'client1')
+			await applyWindowLayout(page2, 1, 'client2')
 			await waitForAppReady(page1, { timeout: 10_000 })
 			await waitForAppReady(page2, { timeout: 10_000 })
 
