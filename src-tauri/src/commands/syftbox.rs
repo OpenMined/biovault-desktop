@@ -151,11 +151,6 @@ fn resolve_or_assign_client_url(
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
 
-    if embedded && candidate.is_none() {
-        return allocate_ephemeral_client_url()
-            .ok_or_else(|| "Failed to assign a control-plane port for SyftBox".to_string());
-    }
-
     // 2) Fallback to explicit value in creds
     if candidate.is_none() {
         candidate = creds
@@ -194,8 +189,15 @@ fn resolve_or_assign_client_url(
         }
     }
 
-    // 4) Fallback to default
-    let candidate = candidate.unwrap_or_else(|| "http://127.0.0.1:7938".to_string());
+    // 4) Fallback to default (embedded uses an ephemeral port by default)
+    let candidate = if let Some(url) = candidate {
+        url
+    } else if embedded {
+        allocate_ephemeral_client_url()
+            .ok_or_else(|| "Failed to assign a control-plane port for SyftBox".to_string())?
+    } else {
+        "http://127.0.0.1:7938".to_string()
+    };
 
     // Try to bind chosen address; if busy, pick random free port.
     // Pass token to verify we can access an existing daemon.
@@ -1375,32 +1377,26 @@ pub fn get_syftbox_diagnostics() -> Result<SyftBoxDiagnostics, String> {
         if log_path.is_none() {
             log_path = resolve_syftbox_log_path(&runtime);
         }
-        if client_url.is_none() || client_token.is_none() || server_url.is_none() {
-            if let Ok(raw) = fs::read_to_string(&runtime.config_path) {
-                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-                    if client_url.is_none() {
-                        client_url = val
-                            .get("client_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+        if let Ok(raw) = fs::read_to_string(&runtime.config_path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                if let Some(url) = val.get("client_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        client_url = Some(url.to_string());
                     }
-                    if client_token.is_none() {
-                        client_token = val
-                            .get("client_token")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(token) = val.get("client_token").and_then(|v| v.as_str()) {
+                    if !token.trim().is_empty() {
+                        client_token = Some(token.to_string());
                     }
-                    if server_url.is_none() {
-                        server_url = val
-                            .get("server_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(url) = val.get("server_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        server_url = Some(url.to_string());
                     }
-                    if refresh_token.is_none() {
-                        refresh_token = val
-                            .get("refresh_token")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(token) = val.get("refresh_token").and_then(|v| v.as_str()) {
+                    if !token.trim().is_empty() {
+                        refresh_token = Some(token.to_string());
                     }
                 }
             }

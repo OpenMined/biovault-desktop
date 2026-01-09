@@ -2,6 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Default to embedded Rust; opt into Go via SYFTBOX_IMPL=go or BV_SYFTBOX_BACKEND=process.
+if [[ "${SYFTBOX_IMPL:-}" != "go" && "${BV_SYFTBOX_BACKEND:-}" != "process" ]]; then
+  exec "$ROOT_DIR/scripts/build-syftbox-rust.sh"
+fi
+
 SYFTBOX_DIR="${SYFTBOX_DIR:-$ROOT_DIR/syftbox}"
 if [[ ! -d "$SYFTBOX_DIR" && -d "$ROOT_DIR/biovault/syftbox" ]]; then
   SYFTBOX_DIR="$ROOT_DIR/biovault/syftbox"
