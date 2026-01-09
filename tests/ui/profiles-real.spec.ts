@@ -423,11 +423,11 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		}
 
 		// Open picker again and delete profile B (cannot delete current).
-	await openPickerFromSettings(page)
-	await expect(page.locator('.profile-row')).toHaveCount(2)
-	await rowByHome(page, homeB).locator('.profile-delete-btn').click()
+		await openPickerFromSettings(page)
+		await expect(page.locator('.profile-row')).toHaveCount(2)
+		await rowByHome(page, homeB).locator('.profile-delete-btn').click()
 
-	await expect(page.locator('.profile-row')).toHaveCount(1)
-	await expect(rowByHome(page, homeA)).toHaveCount(1)
-})
+		await expect(page.locator('.profile-row')).toHaveCount(1)
+		await expect(rowByHome(page, homeA)).toHaveCount(1)
+	})
 })

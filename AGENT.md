@@ -8,11 +8,12 @@
 - As you progress put your updated thinking in PROGRESS.md and keep it up to date
 - When you think you are done write at the end of PROGRESS.md: FINAL LOOP I think I am done, check everything one last time and exit
 - When you resume one last time if this is the last time and you are really done output: <promise>RALPH IS DONE</promise>
-- Use the local `./repo` helper for workspace setup/status across sub-repos.     - Setup: `./repo --init` (use `--https` in CI).
-  - Status: `./repo` or `./repo --status`                                        - Sync: `./repo sync`
-  - Pin manifest to current SHAs: `./repo pin`                                   - Tooling check: `./repo tools`
+- Use the local `./repo` helper for workspace setup/status across sub-repos. - Setup: `./repo --init` (use `--https` in CI).
+  - Status: `./repo` or `./repo --status` - Sync: `./repo sync`
+  - Pin manifest to current SHAs: `./repo pin` - Tooling check: `./repo tools`
 
 ## Testing
+
 - On windows the repo tools are ./repo.ps1
 - Multi-repo lint: `./repo lint` (runs lint.sh for dirty repos) --force to double check as well
 - Toolchain check: `./repo tools`
@@ -28,7 +29,7 @@
 
 ## Git Etiquette
 
-- Don't commit temp/debug files                                                
+- Don't commit temp/debug files
 - Run linting before committing
 - Commit after each working feature with descriptive message
 - Do not co-author commits or commit .claude / other agent cruft
@@ -37,7 +38,7 @@
 
 ## Refactoring Rules
 
-- Have tests passing BEFORE refactoring                                        
+- Have tests passing BEFORE refactoring
 - Copy code to new location first, then delete from old
 - Keep functionality identical - no "improvements" during refactor
 - Run tests after each move
@@ -46,5 +47,5 @@
 
 - Skip tests to move faster
 - Add new features before stabilizing existing ones
-- Make changes without reading the relevant code first                         
+- Make changes without reading the relevant code first
 - Leave unwrap() calls that could panic in production paths

@@ -395,7 +395,18 @@ detect_platform() {
 		*) arch="unknown" ;;
 	esac
 
-	echo "$os" "$arch"
+        echo "$os" "$arch"
+}
+
+to_host_path() {
+        local p="$1"
+        local os
+        read -r os _ <<<"$(detect_platform)"
+        if [[ "$os" == "windows" && -n "$p" ]] && command -v cygpath >/dev/null 2>&1; then
+                cygpath -m "$p"
+                return 0
+        fi
+        echo "$p"
 }
 
 find_bundled_uv() {
@@ -483,8 +494,10 @@ else
 fi
 
 # Start unified logger
-info "Starting unified logger on port ${LOG_PORT} (file: ${LOG_FILE})"
-UNIFIED_LOG_WS_URL="ws://localhost:${LOG_PORT}"
+UNIFIED_LOG_HOST="${UNIFIED_LOG_HOST:-127.0.0.1}"
+export UNIFIED_LOG_HOST
+info "Starting unified logger on ${UNIFIED_LOG_HOST}:${LOG_PORT} (file: ${LOG_FILE})"
+UNIFIED_LOG_WS_URL="ws://${UNIFIED_LOG_HOST}:${LOG_PORT}"
 UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
 node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
@@ -1122,26 +1135,30 @@ warm_jupyter_cache() {
 	timer_pop
 
 	# Install local editable syftbox-sdk if available
-	local syftbox_path="$SYFTBOX_SDK_DIR/python"
-	if [[ -d "$syftbox_path" ]]; then
-		timer_push "Jupyter cache: pip install (syftbox-sdk)"
-		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
-		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path" >>"$LOG_FILE" 2>&1 || {
-			info "Warning: Failed to install syftbox-sdk from local path"
-		}
-		timer_pop
-	fi
+        local syftbox_path="$SYFTBOX_SDK_DIR/python"
+        local syftbox_path_host
+        syftbox_path_host="$(to_host_path "$syftbox_path")"
+        if [[ -d "$syftbox_path" ]]; then
+                timer_push "Jupyter cache: pip install (syftbox-sdk)"
+                info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
+                "$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path_host" >>"$LOG_FILE" 2>&1 || {
+                        info "Warning: Failed to install syftbox-sdk from local path"
+                }
+                timer_pop
+        fi
 
-	# Install local editable beaver if available
-	local beaver_path="$BIOVAULT_BEAVER_DIR/python"
-	if [[ -d "$beaver_path" ]]; then
-		timer_push "Jupyter cache: pip install (beaver)"
-		info "Installing beaver from local source..."
-		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$beaver_path[lib-support]" >>"$LOG_FILE" 2>&1 || {
-			info "Warning: Failed to install beaver from local path"
-		}
-		timer_pop
-	fi
+        # Install local editable beaver if available
+        local beaver_path="$BIOVAULT_BEAVER_DIR/python"
+        local beaver_path_host
+        beaver_path_host="$(to_host_path "$beaver_path")"
+        if [[ -d "$beaver_path" ]]; then
+                timer_push "Jupyter cache: pip install (beaver)"
+                info "Installing beaver from local source..."
+                "$uv_bin" pip install --python "$cache_dir/.venv" -e "${beaver_path_host}[lib-support]" >>"$LOG_FILE" 2>&1 || {
+                        info "Warning: Failed to install beaver from local path"
+                }
+                timer_pop
+        fi
 
 	info "Cache warmup complete!"
 	timer_pop
