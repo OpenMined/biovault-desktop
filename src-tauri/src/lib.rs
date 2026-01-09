@@ -1445,10 +1445,11 @@ pub fn run() {
     }
 
     fn maybe_start_ws_bridge(app_handle: AppHandle) {
-        let ws_bridge_enabled = std::env::var("DEV_WS_BRIDGE")
+        // Check environment variables first (they take precedence)
+        let env_enabled = std::env::var("DEV_WS_BRIDGE")
             .map(|v| !matches!(v.as_str(), "0" | "false" | "no"))
             .unwrap_or(true);
-        let ws_bridge_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
+        let env_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
         let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
@@ -1456,15 +1457,29 @@ pub fn run() {
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(3333);
 
+        // Check settings (fallback when env vars are not set)
+        let settings_enabled = get_settings()
+            .map(|s| s.agent_bridge_enabled)
+            .unwrap_or(true); // Default to enabled if settings not available
+
+        // Final decision: env vars override settings
+        // Bridge is enabled if:
+        // - env DEV_WS_BRIDGE is not explicitly "0"/"false"/"no"
+        // - env DEV_WS_BRIDGE_DISABLE is not "1"/"true"/"yes"
+        // - settings agent_bridge_enabled is true (only matters if env vars not set)
+        let ws_bridge_enabled = env_enabled && !env_disabled && settings_enabled;
+
         crate::desktop_log!(
-            "WS bridge: enabled={} disabled={} port={}",
+            "WS bridge: env_enabled={} env_disabled={} settings_enabled={} final={} port={}",
+            env_enabled,
+            env_disabled,
+            settings_enabled,
             ws_bridge_enabled,
-            ws_bridge_disabled,
             bridge_port
         );
 
-        if !ws_bridge_enabled || ws_bridge_disabled {
-            crate::desktop_log!("WS bridge disabled by environment");
+        if !ws_bridge_enabled {
+            crate::desktop_log!("WS bridge disabled by environment or settings");
             return;
         }
 
