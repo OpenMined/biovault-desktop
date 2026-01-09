@@ -32,6 +32,16 @@ pub struct Settings {
     pub ai_api_token: String,
     pub ai_model: String,
     pub syftbox_server_url: String,
+    /// Enable the WebSocket agent bridge (default: true in dev mode)
+    #[serde(default = "default_agent_bridge_enabled")]
+    pub agent_bridge_enabled: bool,
+    /// Optional authentication token for the agent bridge
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_bridge_token: Option<String>,
+}
+
+fn default_agent_bridge_enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -46,6 +56,8 @@ impl Default for Settings {
             ai_api_token: String::new(),
             ai_model: "openrouter/auto".to_string(),
             syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
+            agent_bridge_enabled: default_agent_bridge_enabled(),
+            agent_bridge_token: None,
         }
     }
 }

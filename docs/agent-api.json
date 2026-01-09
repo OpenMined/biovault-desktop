@@ -1,0 +1,3076 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "BioVault Desktop Agent API",
+	"version": "1.4.0",
+	"description": "WebSocket API for AI agent control of BioVault Desktop",
+	"protocol": {
+		"transport": "WebSocket",
+		"defaultPort": 3333,
+		"address": "127.0.0.1",
+		"request": {
+			"type": "object",
+			"required": ["id", "cmd"],
+			"properties": {
+				"id": {
+					"type": "integer",
+					"description": "Unique request identifier (auto-incrementing)"
+				},
+				"cmd": {
+					"type": "string",
+					"description": "Command name (case-sensitive)"
+				},
+				"args": {
+					"type": "object",
+					"description": "Command arguments (optional, defaults to {})",
+					"default": {}
+				},
+				"token": {
+					"type": "string",
+					"description": "Authentication token (required if AGENT_BRIDGE_TOKEN is configured)"
+				}
+			}
+		},
+		"response": {
+			"type": "object",
+			"required": ["id"],
+			"properties": {
+				"id": {
+					"type": "integer",
+					"description": "Request identifier (matches request.id)"
+				},
+				"result": {
+					"description": "Command result (present on success)"
+				},
+				"error": {
+					"type": "string",
+					"description": "Error message (present on failure)"
+				}
+			}
+		},
+		"event": {
+			"type": "object",
+			"description": "Streaming event message (for long-running operations)",
+			"required": ["id", "type", "data"],
+			"properties": {
+				"id": {
+					"type": "integer",
+					"description": "Request identifier this event belongs to"
+				},
+				"type": {
+					"type": "string",
+					"enum": ["progress", "log", "status"],
+					"description": "Event type"
+				},
+				"data": {
+					"type": "object",
+					"description": "Event payload (structure depends on type)"
+				}
+			}
+		},
+		"eventTypes": {
+			"progress": {
+				"description": "Progress update for long-running operation",
+				"dataSchema": {
+					"type": "object",
+					"properties": {
+						"progress": {
+							"type": "number",
+							"minimum": 0,
+							"maximum": 1,
+							"description": "Progress as a float from 0.0 to 1.0"
+						},
+						"message": {
+							"type": "string",
+							"description": "Human-readable progress message"
+						}
+					}
+				}
+			},
+			"log": {
+				"description": "Log message during operation",
+				"dataSchema": {
+					"type": "object",
+					"properties": {
+						"level": {
+							"type": "string",
+							"enum": ["debug", "info", "warn", "error"],
+							"description": "Log level"
+						},
+						"message": {
+							"type": "string",
+							"description": "Log message text"
+						}
+					}
+				}
+			},
+			"status": {
+				"description": "Status change during operation",
+				"dataSchema": {
+					"type": "object",
+					"properties": {
+						"status": {
+							"type": "string",
+							"description": "Status name (e.g., 'downloading', 'installing')"
+						},
+						"details": {
+							"type": "object",
+							"description": "Optional additional details"
+						}
+					}
+				}
+			}
+		}
+	},
+	"categories": {
+		"agent_api": {
+			"description": "Agent API discovery and diagnostics",
+			"commands": [
+				"agent_api_discover",
+				"agent_api_get_audit_log",
+				"agent_api_clear_audit_log",
+				"agent_api_get_schema",
+				"agent_api_list_commands",
+				"agent_api_events_info"
+			]
+		},
+		"app_status": {
+			"description": "Application status and environment",
+			"commands": [
+				"get_app_version",
+				"is_dev_mode",
+				"get_dev_mode_info",
+				"get_env_var",
+				"get_config_path",
+				"get_database_path",
+				"get_autostart_enabled"
+			]
+		},
+		"onboarding": {
+			"description": "Onboarding and initial setup",
+			"commands": ["check_is_onboarded", "complete_onboarding"]
+		},
+		"profiles": {
+			"description": "Profile management",
+			"commands": [
+				"profiles_get_boot_state",
+				"profiles_get_default_home",
+				"profiles_open_new_instance",
+				"profiles_switch",
+				"profiles_switch_in_place",
+				"profiles_open_picker",
+				"profiles_quit_picker",
+				"profiles_check_home_for_existing_email",
+				"profiles_create_with_home_and_switch",
+				"profiles_create_and_switch_in_place",
+				"profiles_move_home",
+				"profiles_delete_profile",
+				"profiles_create_and_switch"
+			]
+		},
+		"settings": {
+			"description": "Application settings",
+			"commands": [
+				"get_settings",
+				"save_settings",
+				"set_autostart_enabled",
+				"get_saved_dependency_states"
+			]
+		},
+		"dependencies": {
+			"description": "Dependency management",
+			"commands": [
+				"check_dependencies",
+				"check_single_dependency",
+				"install_dependencies",
+				"install_dependency",
+				"install_brew",
+				"install_command_line_tools",
+				"check_brew_installed",
+				"check_command_line_tools_installed",
+				"update_saved_dependency_states",
+				"check_docker_running"
+			]
+		},
+		"syftbox": {
+			"description": "SyftBox control plane",
+			"commands": [
+				"check_syftbox_auth",
+				"get_syftbox_state",
+				"start_syftbox_client",
+				"stop_syftbox_client",
+				"get_syftbox_config_info",
+				"get_default_syftbox_server_url",
+				"is_dev_syftbox_enabled",
+				"check_dev_syftbox_server",
+				"syftbox_queue_status",
+				"syftbox_upload_action",
+				"syftbox_request_otp",
+				"syftbox_submit_otp",
+				"trigger_syftbox_sync",
+				"get_syftbox_diagnostics"
+			]
+		},
+		"keys": {
+			"description": "Cryptographic key management",
+			"commands": [
+				"key_get_status",
+				"key_list_contacts",
+				"key_generate",
+				"key_restore",
+				"key_check_contact",
+				"key_check_vault_debug",
+				"key_republish",
+				"key_refresh_contacts"
+			]
+		},
+		"network": {
+			"description": "Network and datasite operations",
+			"commands": [
+				"network_import_contact",
+				"network_remove_contact",
+				"network_trust_changed_key",
+				"network_scan_datasites",
+				"network_scan_datasets"
+			]
+		},
+		"messages": {
+			"description": "Messaging system",
+			"commands": [
+				"sync_messages",
+				"sync_messages_with_failures",
+				"refresh_messages_batched",
+				"list_message_threads",
+				"get_thread_messages",
+				"send_message",
+				"mark_thread_as_read",
+				"delete_message",
+				"delete_thread",
+				"count_failed_messages",
+				"list_failed_messages",
+				"dismiss_failed_message",
+				"delete_failed_message"
+			]
+		},
+		"projects": {
+			"description": "Project management",
+			"commands": [
+				"get_projects",
+				"get_available_project_examples",
+				"get_default_project_path",
+				"create_project",
+				"import_project",
+				"import_project_from_folder",
+				"delete_project",
+				"delete_project_folder",
+				"load_project_editor",
+				"save_project_editor",
+				"preview_project_spec",
+				"get_project_spec_digest",
+				"get_supported_input_types",
+				"get_supported_output_types",
+				"get_supported_parameter_types",
+				"get_common_formats"
+			]
+		},
+		"pipelines": {
+			"description": "Pipeline management and execution",
+			"commands": [
+				"get_pipelines",
+				"create_pipeline",
+				"import_pipeline",
+				"import_pipeline_from_message",
+				"import_pipeline_from_request",
+				"import_pipeline_with_deps",
+				"run_pipeline",
+				"get_pipeline_runs",
+				"get_runs_base_dir",
+				"load_pipeline_editor",
+				"save_pipeline_editor",
+				"delete_pipeline",
+				"validate_pipeline",
+				"delete_pipeline_run",
+				"preview_pipeline_spec",
+				"save_run_config",
+				"list_run_configs",
+				"get_run_config",
+				"delete_run_config",
+				"send_pipeline_request",
+				"send_pipeline_request_results",
+				"send_pipeline_results",
+				"import_pipeline_results",
+				"list_results_tree"
+			]
+		},
+		"datasets": {
+			"description": "Dataset management",
+			"commands": [
+				"get_datasets",
+				"list_datasets_with_assets",
+				"save_dataset_with_files",
+				"upsert_dataset_manifest",
+				"is_dataset_published",
+				"delete_dataset",
+				"publish_dataset",
+				"unpublish_dataset",
+				"get_datasets_folder_path",
+				"resolve_dataset_path",
+				"resolve_syft_url_to_local_path",
+				"resolve_syft_urls_batch"
+			]
+		},
+		"files": {
+			"description": "File operations and import",
+			"commands": [
+				"get_files",
+				"get_extensions",
+				"search_txt_files",
+				"suggest_patterns",
+				"extract_ids_for_files",
+				"detect_file_types",
+				"analyze_file_types",
+				"import_files_pending",
+				"import_files",
+				"import_files_with_metadata",
+				"is_directory",
+				"delete_file",
+				"delete_files_bulk",
+				"process_queue",
+				"pause_queue_processor",
+				"resume_queue_processor",
+				"clear_pending_queue",
+				"open_folder"
+			]
+		},
+		"participants": {
+			"description": "Participant management",
+			"commands": ["get_participants", "delete_participant", "delete_participants_bulk"]
+		},
+		"runs": {
+			"description": "Pipeline run management",
+			"commands": [
+				"get_runs",
+				"delete_run",
+				"get_run_logs",
+				"get_run_logs_tail",
+				"get_run_logs_full",
+				"start_analysis",
+				"execute_analysis"
+			]
+		},
+		"sessions": {
+			"description": "Collaborative session management",
+			"commands": [
+				"get_sessions",
+				"list_sessions",
+				"get_session",
+				"get_session_invitations",
+				"create_session",
+				"create_session_with_datasets",
+				"update_session_peer",
+				"delete_session",
+				"accept_session_invitation",
+				"reject_session_invitation",
+				"send_session_chat_message",
+				"get_session_chat_messages",
+				"get_session_messages",
+				"send_session_message",
+				"list_session_datasets",
+				"add_dataset_to_session",
+				"remove_dataset_from_session",
+				"get_session_beaver_summaries",
+				"open_session_folder"
+			]
+		},
+		"session_jupyter": {
+			"description": "Session Jupyter notebook management",
+			"commands": [
+				"get_session_jupyter_status",
+				"launch_session_jupyter",
+				"stop_session_jupyter",
+				"reset_session_jupyter"
+			]
+		},
+		"jupyter": {
+			"description": "Project Jupyter notebook management",
+			"commands": ["get_jupyter_status", "launch_jupyter", "stop_jupyter", "reset_jupyter"]
+		},
+		"logs": {
+			"description": "Logging and diagnostics",
+			"commands": [
+				"get_command_logs",
+				"clear_command_logs",
+				"get_desktop_log_dir",
+				"get_desktop_log_text",
+				"clear_desktop_log",
+				"get_queue_info",
+				"get_queue_processor_status"
+			]
+		},
+		"sql": {
+			"description": "Direct SQL access",
+			"commands": ["sql_list_tables", "sql_get_table_schema", "sql_run_query", "sql_export_query"]
+		},
+		"data_reset": {
+			"description": "Data reset operations (destructive)",
+			"commands": ["reset_all_data", "reset_everything"]
+		}
+	},
+	"commands": {
+		"agent_api_discover": {
+			"description": "Discover API metadata and capabilities",
+			"category": "agent_api",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"version": { "type": "string" },
+					"name": { "type": "string" },
+					"description": { "type": "string" },
+					"protocol": { "type": "object" },
+					"auth": { "type": "object" },
+					"docs": { "type": "string" },
+					"schema": { "type": "string" }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"agent_api_get_audit_log": {
+			"description": "Get recent agent API audit log entries",
+			"category": "agent_api",
+			"args": {
+				"maxEntries": {
+					"type": "integer",
+					"required": false,
+					"default": 100,
+					"description": "Maximum number of entries to return"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"timestamp": { "type": "string" },
+						"request_id": { "type": "integer" },
+						"cmd": { "type": "string" },
+						"args_size": { "type": "integer" },
+						"duration_ms": { "type": "integer" },
+						"success": { "type": "boolean" },
+						"error": { "type": "string" },
+						"peer_addr": { "type": "string" }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"agent_api_clear_audit_log": {
+			"description": "Clear the agent API audit log",
+			"category": "agent_api",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Deletes audit log file"]
+		},
+		"agent_api_get_schema": {
+			"description": "Get the full JSON schema for the API at runtime",
+			"category": "agent_api",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"description": "The complete agent-api.json schema"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"agent_api_list_commands": {
+			"description": "Get a lightweight list of available commands with basic metadata",
+			"category": "agent_api",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"version": { "type": "string" },
+					"commands": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"name": { "type": "string" },
+								"category": { "type": "string" },
+								"readOnly": { "type": "boolean" },
+								"async": { "type": "boolean" },
+								"longRunning": { "type": "boolean" },
+								"dangerous": { "type": "boolean" },
+								"emitsEvents": {
+									"type": "boolean",
+									"description": "Whether this command emits streaming events"
+								}
+							}
+						}
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"agent_api_events_info": {
+			"description": "Get information about the event streaming system for long-running operations",
+			"category": "agent_api",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"description": { "type": "string" },
+					"protocol": { "type": "object" },
+					"longRunningCommands": { "type": "array", "items": { "type": "string" } }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_app_version": {
+			"description": "Get the application version string",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"example": "0.1.0"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"is_dev_mode": {
+			"description": "Check if the app is running in development mode",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_dev_mode_info": {
+			"description": "Get comprehensive development mode settings",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"devMode": { "type": "boolean" },
+					"devSyftbox": { "type": "boolean" },
+					"devSyftboxServerUrl": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_env_var": {
+			"description": "Get an environment variable value",
+			"category": "app_status",
+			"args": {
+				"key": {
+					"type": "string",
+					"required": true,
+					"description": "Environment variable name"
+				}
+			},
+			"returns": {
+				"type": ["string", "null"]
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_config_path": {
+			"description": "Get the path to the config.yaml file",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"example": "/home/user/BioVault/config.yaml"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_database_path": {
+			"description": "Get the path to the SQLite database",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"example": "/home/user/BioVault/biovault.db"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_autostart_enabled": {
+			"description": "Check if the app is set to autostart on login",
+			"category": "app_status",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_settings": {
+			"description": "Get current application settings",
+			"category": "settings",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"docker_path": { "type": "string", "description": "Path to Docker binary" },
+					"java_path": { "type": "string", "description": "Path to Java binary" },
+					"syftbox_path": { "type": "string", "description": "Path to SyftBox binary" },
+					"biovault_path": { "type": "string", "description": "Path to BioVault CLI" },
+					"email": { "type": "string", "description": "User email address" },
+					"ai_api_url": { "type": "string", "description": "AI API endpoint URL" },
+					"ai_api_token": { "type": "string", "description": "AI API authentication token" },
+					"ai_model": { "type": "string", "description": "AI model identifier" },
+					"syftbox_server_url": { "type": "string", "description": "SyftBox server URL" },
+					"agent_bridge_enabled": {
+						"type": "boolean",
+						"description": "Whether WebSocket agent bridge is enabled"
+					},
+					"agent_bridge_token": {
+						"type": ["string", "null"],
+						"description": "Optional auth token for agent bridge"
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"save_settings": {
+			"description": "Save application settings",
+			"category": "settings",
+			"args": {
+				"settings": {
+					"type": "object",
+					"required": true,
+					"description": "Settings object to save (see get_settings for structure)"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Writes to config.yaml"]
+		},
+		"set_autostart_enabled": {
+			"description": "Enable or disable app autostart on login",
+			"category": "settings",
+			"args": {
+				"enabled": {
+					"type": "boolean",
+					"required": true,
+					"description": "Whether to enable autostart"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Modifies system autostart configuration"]
+		},
+		"check_is_onboarded": {
+			"description": "Check if onboarding has been completed",
+			"category": "onboarding",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"complete_onboarding": {
+			"description": "Complete the onboarding process with an email",
+			"category": "onboarding",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": true,
+					"description": "User email address"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": [
+				"Creates config.yaml",
+				"Initializes BioVault home directory",
+				"Saves dependency states",
+				"Registers profile"
+			]
+		},
+		"profiles_get_boot_state": {
+			"description": "Get the current boot state including all profiles",
+			"category": "profiles",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"profiles": {
+						"type": "array",
+						"items": { "type": "object" }
+					},
+					"currentProfileId": { "type": ["string", "null"] },
+					"isPickerMode": { "type": "boolean" }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"profiles_get_default_home": {
+			"description": "Get the default BioVault home directory path",
+			"category": "profiles",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"example": "/home/user/BioVault"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"profiles_open_new_instance": {
+			"description": "Open a new app instance for a profile",
+			"category": "profiles",
+			"args": {
+				"profileId": {
+					"type": "string",
+					"required": true,
+					"description": "Profile ID to open"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Spawns new process with profile environment"]
+		},
+		"profiles_switch": {
+			"description": "Switch to a different profile (opens new window)",
+			"category": "profiles",
+			"args": {
+				"profileId": {
+					"type": "string",
+					"required": true,
+					"description": "Profile ID to switch to"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Updates profile store", "Spawns new instance", "Closes current windows"]
+		},
+		"profiles_switch_in_place": {
+			"description": "Switch to a different profile in the current window",
+			"category": "profiles",
+			"args": {
+				"profileId": {
+					"type": "string",
+					"required": true,
+					"description": "Profile ID to switch to"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Updates environment variables", "Reinitializes databases"]
+		},
+		"profiles_check_home_for_existing_email": {
+			"description": "Check if a home path contains an existing profile with email",
+			"category": "profiles",
+			"args": {
+				"homePath": {
+					"type": "string",
+					"required": true,
+					"description": "Path to check for existing profile"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"exists": { "type": "boolean" },
+					"email": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"profiles_create_with_home_and_switch": {
+			"description": "Create a new profile at a home path and switch to it",
+			"category": "profiles",
+			"args": {
+				"homePath": {
+					"type": "string",
+					"required": true,
+					"description": "Home path for the new profile"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Creates profile directory", "Updates profile store", "Spawns new instance"]
+		},
+		"profiles_create_and_switch_in_place": {
+			"description": "Create a new profile and switch in the current window",
+			"category": "profiles",
+			"args": {
+				"homePath": {
+					"type": "string",
+					"required": true,
+					"description": "Home path for the new profile"
+				}
+			},
+			"returns": {
+				"type": "string",
+				"description": "New profile ID"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Creates profile directory", "Reinitializes databases", "Updates environment"]
+		},
+		"profiles_move_home": {
+			"description": "Move a profile's home directory to a new location",
+			"category": "profiles",
+			"args": {
+				"profileId": {
+					"type": "string",
+					"required": true
+				},
+				"newHomePath": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Moves directory contents", "Updates profile store"]
+		},
+		"profiles_delete_profile": {
+			"description": "Delete a profile",
+			"category": "profiles",
+			"args": {
+				"profileId": {
+					"type": "string",
+					"required": true
+				},
+				"deleteHome": {
+					"type": "boolean",
+					"required": false,
+					"default": false,
+					"description": "Also delete the home directory"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes from profile store", "Optionally deletes home directory"]
+		},
+		"check_dependencies": {
+			"description": "Check all required dependencies",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": { "type": "string" },
+						"installed": { "type": "boolean" },
+						"version": { "type": ["string", "null"] },
+						"path": { "type": ["string", "null"] }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"check_single_dependency": {
+			"description": "Check a single dependency by name",
+			"category": "dependencies",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true,
+					"description": "Dependency name (e.g., 'docker', 'nextflow')"
+				},
+				"path": {
+					"type": "string",
+					"required": false,
+					"description": "Optional path to check"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"name": { "type": "string" },
+					"installed": { "type": "boolean" },
+					"version": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"install_dependencies": {
+			"description": "Install missing dependencies",
+			"category": "dependencies",
+			"args": {
+				"names": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": true,
+					"description": "List of dependency names to install"
+				}
+			},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Downloads and installs software"],
+			"longRunning": true
+		},
+		"check_docker_running": {
+			"description": "Check if Docker daemon is running",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"install_dependency": {
+			"description": "Install a single dependency by name",
+			"category": "dependencies",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true,
+					"description": "Dependency name (e.g., 'docker', 'nextflow', 'java')"
+				}
+			},
+			"returns": {
+				"type": "string",
+				"description": "Status message"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": [
+				"Downloads and installs software",
+				"Emits dependency-install-start and dependency-install-complete events"
+			],
+			"longRunning": true
+		},
+		"install_brew": {
+			"description": "Install Homebrew (macOS only)",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"description": "Installation output"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Downloads and installs Homebrew"],
+			"longRunning": true,
+			"platforms": ["macos"]
+		},
+		"install_command_line_tools": {
+			"description": "Launch Xcode Command Line Tools installer (macOS only)",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "string",
+				"description": "Status message"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Launches system installer dialog"],
+			"platforms": ["macos"]
+		},
+		"check_brew_installed": {
+			"description": "Check if Homebrew is installed",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"check_command_line_tools_installed": {
+			"description": "Check if Xcode Command Line Tools are installed",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"check_syftbox_auth": {
+			"description": "Check SyftBox authentication status",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"authenticated": { "type": "boolean" },
+					"email": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_syftbox_state": {
+			"description": "Get current SyftBox daemon state",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"running": { "type": "boolean" },
+					"healthy": { "type": "boolean" },
+					"syncStatus": { "type": "string" }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"start_syftbox_client": {
+			"description": "Start the SyftBox daemon",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Spawns SyftBox daemon process"]
+		},
+		"stop_syftbox_client": {
+			"description": "Stop the SyftBox daemon",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Terminates SyftBox daemon"]
+		},
+		"get_syftbox_config_info": {
+			"description": "Get SyftBox configuration information",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"configPath": { "type": "string" },
+					"dataDir": { "type": "string" },
+					"serverUrl": { "type": "string" }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"trigger_syftbox_sync": {
+			"description": "Trigger an immediate SyftBox sync",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Triggers file synchronization"]
+		},
+		"syftbox_queue_status": {
+			"description": "Get SyftBox upload queue status",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"get_syftbox_diagnostics": {
+			"description": "Get SyftBox diagnostic information",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"syftbox_upload_action": {
+			"description": "Perform an action on a queued upload (retry, skip, cancel)",
+			"category": "syftbox",
+			"args": {
+				"id": {
+					"type": "string",
+					"required": true,
+					"description": "Upload item ID"
+				},
+				"action": {
+					"type": "string",
+					"required": true,
+					"description": "Action to perform (retry, skip, cancel)"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Modifies upload queue state"],
+			"longRunning": true
+		},
+		"syftbox_request_otp": {
+			"description": "Request an OTP code for SyftBox authentication",
+			"category": "syftbox",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": true,
+					"description": "Email address for OTP"
+				},
+				"serverUrl": {
+					"type": "string",
+					"required": false,
+					"description": "Optional SyftBox server URL override"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Sends OTP email to the specified address"]
+		},
+		"syftbox_submit_otp": {
+			"description": "Submit OTP code to complete SyftBox authentication",
+			"category": "syftbox",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": true,
+					"description": "Email address used for OTP request"
+				},
+				"otp": {
+					"type": "string",
+					"required": true,
+					"description": "OTP code from email"
+				},
+				"serverUrl": {
+					"type": "string",
+					"required": false,
+					"description": "Optional SyftBox server URL override"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Authenticates with SyftBox server", "Saves authentication token"]
+		},
+		"key_get_status": {
+			"description": "Get cryptographic key status",
+			"category": "keys",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": false,
+					"description": "Email to check status for"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"hasKey": { "type": "boolean" },
+					"fingerprint": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"key_generate": {
+			"description": "Generate a new cryptographic identity",
+			"category": "keys",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": false
+				},
+				"force": {
+					"type": "boolean",
+					"required": false,
+					"default": false,
+					"description": "Overwrite existing key"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"success": { "type": "boolean" },
+					"mnemonic": { "type": "string" }
+				}
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Creates cryptographic keys in vault"]
+		},
+		"key_restore": {
+			"description": "Restore identity from mnemonic",
+			"category": "keys",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": true
+				},
+				"mnemonic": {
+					"type": "string",
+					"required": true,
+					"description": "12-word recovery phrase"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Restores cryptographic keys to vault"]
+		},
+		"key_list_contacts": {
+			"description": "List saved contacts",
+			"category": "keys",
+			"args": {
+				"currentEmail": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object"
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"key_check_contact": {
+			"description": "Check if a contact exists",
+			"category": "keys",
+			"args": {
+				"email": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"network_import_contact": {
+			"description": "Import a contact's identity",
+			"category": "network",
+			"args": {
+				"identity": {
+					"type": "string",
+					"required": true,
+					"description": "Identity string or email to import"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Saves contact to vault"]
+		},
+		"network_scan_datasites": {
+			"description": "Scan for available datasites",
+			"category": "network",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"email": { "type": "string" },
+						"path": { "type": "string" }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"network_scan_datasets": {
+			"description": "Scan network for available datasets",
+			"category": "network",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"sync_messages": {
+			"description": "Sync all messages",
+			"category": "messages",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Syncs message database from SyftBox"],
+			"longRunning": true
+		},
+		"sync_messages_with_failures": {
+			"description": "Sync messages and track failures",
+			"category": "messages",
+			"args": {},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"synced": { "type": "integer" },
+					"failed": { "type": "integer" }
+				}
+			},
+			"readOnly": false,
+			"async": false,
+			"longRunning": true
+		},
+		"refresh_messages_batched": {
+			"description": "Refresh messages in batches",
+			"category": "messages",
+			"args": {
+				"scope": {
+					"type": "string",
+					"required": false
+				},
+				"limit": {
+					"type": "integer",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"longRunning": true
+		},
+		"list_message_threads": {
+			"description": "List message threads",
+			"category": "messages",
+			"args": {
+				"scope": {
+					"type": "string",
+					"required": false,
+					"description": "Filter by scope (e.g., 'session')"
+				},
+				"limit": {
+					"type": "integer",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_thread_messages": {
+			"description": "Get messages in a thread",
+			"category": "messages",
+			"args": {
+				"threadId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"send_message": {
+			"description": "Send a new message",
+			"category": "messages",
+			"args": {
+				"request": {
+					"type": "object",
+					"required": true,
+					"properties": {
+						"recipient": { "type": "string" },
+						"body": { "type": "string" },
+						"threadId": { "type": "string" }
+					}
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": [
+				"Writes to message database",
+				"Creates/encrypts message files",
+				"Triggers SyftBox sync"
+			]
+		},
+		"mark_thread_as_read": {
+			"description": "Mark a thread as read",
+			"category": "messages",
+			"args": {
+				"threadId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false
+		},
+		"delete_message": {
+			"description": "Delete a message",
+			"category": "messages",
+			"args": {
+				"messageId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes message from database and filesystem"]
+		},
+		"delete_thread": {
+			"description": "Delete an entire thread",
+			"category": "messages",
+			"args": {
+				"threadId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes all messages in thread"]
+		},
+		"get_projects": {
+			"description": "List all projects",
+			"category": "projects",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"create_project": {
+			"description": "Create a new project",
+			"category": "projects",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				},
+				"example": {
+					"type": "string",
+					"required": false,
+					"description": "Example project to copy from"
+				},
+				"directory": {
+					"type": "string",
+					"required": false
+				},
+				"createPythonScript": {
+					"type": "boolean",
+					"required": false
+				},
+				"scriptName": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": [
+				"Creates project directory",
+				"Writes project.yaml",
+				"Optionally creates Python script"
+			]
+		},
+		"load_project_editor": {
+			"description": "Load project data for editing",
+			"category": "projects",
+			"args": {
+				"projectId": {
+					"type": "integer",
+					"required": false
+				},
+				"projectPath": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"save_project_editor": {
+			"description": "Save project editor changes",
+			"category": "projects",
+			"args": {
+				"projectId": {
+					"type": "integer",
+					"required": false
+				},
+				"projectPath": {
+					"type": "string",
+					"required": true
+				},
+				"payload": {
+					"type": "object",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Writes project.yaml", "Updates database"]
+		},
+		"get_pipelines": {
+			"description": "List all pipelines",
+			"category": "pipelines",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"create_pipeline": {
+			"description": "Create a new pipeline",
+			"category": "pipelines",
+			"args": {
+				"request": {
+					"type": "object",
+					"required": true,
+					"properties": {
+						"name": { "type": "string" },
+						"directory": { "type": "string" },
+						"pipelineFile": { "type": "string" },
+						"overwrite": { "type": "boolean" }
+					}
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Creates pipeline directory", "Writes pipeline.yaml", "Registers in database"]
+		},
+		"import_pipeline_with_deps": {
+			"description": "Import a pipeline with its dependencies",
+			"category": "pipelines",
+			"args": {
+				"url": {
+					"type": "string",
+					"required": true
+				},
+				"nameOverride": {
+					"type": "string",
+					"required": false
+				},
+				"overwrite": {
+					"type": "boolean",
+					"required": false,
+					"default": false
+				}
+			},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Downloads pipeline", "Resolves dependencies"],
+			"longRunning": true
+		},
+		"run_pipeline": {
+			"description": "Execute a pipeline",
+			"category": "pipelines",
+			"args": {
+				"pipelineId": {
+					"type": "integer",
+					"required": true
+				},
+				"inputOverrides": {
+					"type": "object",
+					"required": false,
+					"default": {}
+				},
+				"resultsDir": {
+					"type": "string",
+					"required": false
+				},
+				"selection": {
+					"type": "object",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": [
+				"Creates run directory",
+				"Generates samplesheets",
+				"Spawns pipeline execution"
+			],
+			"longRunning": true
+		},
+		"get_pipeline_runs": {
+			"description": "List pipeline runs",
+			"category": "pipelines",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"get_runs": {
+			"description": "List all analysis runs",
+			"category": "runs",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": { "type": "integer" },
+						"name": { "type": "string" },
+						"status": { "type": "string" },
+						"createdAt": { "type": "string" }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"delete_run": {
+			"description": "Delete an analysis run",
+			"category": "runs",
+			"args": {
+				"runId": {
+					"type": "integer",
+					"required": true,
+					"description": "Run ID to delete"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes run from database", "May delete run directory"]
+		},
+		"get_run_logs": {
+			"description": "Get logs for a run",
+			"category": "runs",
+			"args": {
+				"runId": {
+					"type": "integer",
+					"required": true,
+					"description": "Run ID"
+				}
+			},
+			"returns": {
+				"type": "string",
+				"description": "Log contents"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_run_logs_tail": {
+			"description": "Get the last N lines of run logs",
+			"category": "runs",
+			"args": {
+				"runId": {
+					"type": "integer",
+					"required": true,
+					"description": "Run ID"
+				},
+				"lines": {
+					"type": "integer",
+					"required": false,
+					"default": 100,
+					"description": "Number of lines to return"
+				}
+			},
+			"returns": {
+				"type": "string",
+				"description": "Log tail contents"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_run_logs_full": {
+			"description": "Get full run logs without truncation",
+			"category": "runs",
+			"args": {
+				"runId": {
+					"type": "integer",
+					"required": true,
+					"description": "Run ID"
+				}
+			},
+			"returns": {
+				"type": "string",
+				"description": "Full log contents"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_datasets": {
+			"description": "List datasets with their assets",
+			"category": "datasets",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"save_dataset_with_files": {
+			"description": "Save a dataset with its files",
+			"category": "datasets",
+			"args": {
+				"manifest": {
+					"type": "object",
+					"required": true
+				},
+				"originalName": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Writes dataset files to SyftBox storage"]
+		},
+		"publish_dataset": {
+			"description": "Publish a dataset to the network",
+			"category": "datasets",
+			"args": {
+				"manifestPath": {
+					"type": "string",
+					"required": false
+				},
+				"name": {
+					"type": "string",
+					"required": false
+				},
+				"copyMock": {
+					"type": "boolean",
+					"required": false,
+					"default": false
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Copies to public datasite folder", "Updates index"]
+		},
+		"unpublish_dataset": {
+			"description": "Remove a dataset from public access",
+			"category": "datasets",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes from public folder"]
+		},
+		"delete_dataset": {
+			"description": "Delete a dataset",
+			"category": "datasets",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes from database and filesystem"]
+		},
+		"get_sessions": {
+			"description": "List all sessions",
+			"category": "sessions",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"create_session": {
+			"description": "Create a new collaborative session",
+			"category": "sessions",
+			"args": {
+				"request": {
+					"type": "object",
+					"required": true,
+					"properties": {
+						"name": { "type": "string" },
+						"participants": {
+							"type": "array",
+							"items": { "type": "string" }
+						},
+						"datasets": {
+							"type": "array",
+							"items": { "type": "string" }
+						}
+					}
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Creates session directories", "Copies notebooks", "Sends invite messages"]
+		},
+		"accept_session_invitation": {
+			"description": "Accept a session invitation",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Updates session status", "Sends response message"]
+		},
+		"reject_session_invitation": {
+			"description": "Reject a session invitation",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				},
+				"reason": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Declines invite", "Sends response message"]
+		},
+		"get_session": {
+			"description": "Get details of a specific session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true,
+					"description": "Session ID to retrieve"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"description": "Session object with full details"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"delete_session": {
+			"description": "Delete a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true,
+					"description": "Session ID to delete"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Removes session from database", "May remove session files"]
+		},
+		"add_dataset_to_session": {
+			"description": "Add a dataset to a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true,
+					"description": "Session ID"
+				},
+				"datasetName": {
+					"type": "string",
+					"required": true,
+					"description": "Dataset name to add"
+				},
+				"role": {
+					"type": "string",
+					"required": false,
+					"description": "Role for the dataset in the session"
+				}
+			},
+			"returns": {
+				"type": "object",
+				"description": "Session dataset entry"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Links dataset to session"]
+		},
+		"remove_dataset_from_session": {
+			"description": "Remove a dataset from a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true,
+					"description": "Session ID"
+				},
+				"datasetName": {
+					"type": "string",
+					"required": true,
+					"description": "Dataset name to remove"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Unlinks dataset from session"]
+		},
+		"launch_jupyter": {
+			"description": "Launch Jupyter for a project",
+			"category": "jupyter",
+			"args": {
+				"projectPath": {
+					"type": "string",
+					"required": true
+				},
+				"pythonVersion": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"status": { "type": "string" },
+					"url": { "type": "string" },
+					"token": { "type": "string" }
+				}
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Spawns Jupyter server process"],
+			"longRunning": true
+		},
+		"stop_jupyter": {
+			"description": "Stop Jupyter for a project",
+			"category": "jupyter",
+			"args": {
+				"projectPath": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Terminates Jupyter process"]
+		},
+		"get_jupyter_status": {
+			"description": "Get Jupyter status for a project",
+			"category": "jupyter",
+			"args": {
+				"projectPath": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"reset_jupyter": {
+			"description": "Reset Jupyter environment for a project",
+			"category": "jupyter",
+			"args": {
+				"projectPath": {
+					"type": "string",
+					"required": true
+				},
+				"pythonVersion": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Rebuilds virtual environment", "Stops server"],
+			"longRunning": true
+		},
+		"launch_session_jupyter": {
+			"description": "Launch Jupyter for a session",
+			"category": "session_jupyter",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				},
+				"pythonVersion": {
+					"type": "string",
+					"required": false
+				},
+				"copyExamples": {
+					"type": "boolean",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"longRunning": true
+		},
+		"stop_session_jupyter": {
+			"description": "Stop Jupyter for a session",
+			"category": "session_jupyter",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true
+		},
+		"get_command_logs": {
+			"description": "Get command execution logs",
+			"category": "logs",
+			"args": {},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_desktop_log_text": {
+			"description": "Get desktop log contents",
+			"category": "logs",
+			"args": {
+				"maxBytes": {
+					"type": "integer",
+					"required": false,
+					"description": "Maximum bytes to return (from end of file)"
+				}
+			},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_desktop_log_dir": {
+			"description": "Get desktop log directory path",
+			"category": "logs",
+			"args": {},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"clear_desktop_log": {
+			"description": "Clear the desktop log file",
+			"category": "logs",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Deletes desktop log file contents"]
+		},
+		"clear_command_logs": {
+			"description": "Clear command execution logs",
+			"category": "logs",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Clears in-memory command log"]
+		},
+		"sql_list_tables": {
+			"description": "List all database tables",
+			"category": "sql",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": { "type": "string" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"sql_get_table_schema": {
+			"description": "Get schema for a table",
+			"category": "sql",
+			"args": {
+				"table": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "array"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"sql_run_query": {
+			"description": "Execute a SQL query",
+			"category": "sql",
+			"args": {
+				"query": {
+					"type": "string",
+					"required": true
+				},
+				"options": {
+					"type": "object",
+					"required": false,
+					"properties": {
+						"limit": { "type": "integer" }
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"columns": { "type": "array" },
+					"rows": { "type": "array" }
+				}
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["May modify database if not SELECT"]
+		},
+		"reset_all_data": {
+			"description": "Reset all application data (preserves SyftBox)",
+			"category": "data_reset",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Stops daemons", "Deletes BIOVAULT_HOME (preserves .syc)"],
+			"dangerous": true
+		},
+		"reset_everything": {
+			"description": "Reset all data including SyftBox",
+			"category": "data_reset",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Deletes all data including .syc", "Recreates empty database"],
+			"dangerous": true
+		},
+		"get_files": {
+			"description": "Get all imported files",
+			"category": "files",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": { "type": "integer" },
+						"name": { "type": "string" },
+						"path": { "type": "string" },
+						"size": { "type": "integer" },
+						"participant_id": { "type": ["integer", "null"] }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_participants": {
+			"description": "Get all participants",
+			"category": "participants",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": { "type": "integer" },
+						"name": { "type": "string" },
+						"external_id": { "type": ["string", "null"] }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_extensions": {
+			"description": "Get file extensions from a directory",
+			"category": "files",
+			"args": {
+				"path": {
+					"type": "string",
+					"required": true,
+					"description": "Directory path to scan"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "string" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"search_txt_files": {
+			"description": "Search for text files in a directory with specific extensions",
+			"category": "files",
+			"args": {
+				"path": {
+					"type": "string",
+					"required": true,
+					"description": "Directory path to search"
+				},
+				"extensions": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": false,
+					"description": "File extensions to include"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "string" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"suggest_patterns": {
+			"description": "Suggest ID extraction patterns from file names",
+			"category": "files",
+			"args": {
+				"files": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": true,
+					"description": "List of file paths to analyze"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "string" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"extract_ids_for_files": {
+			"description": "Extract IDs from file names using a pattern",
+			"category": "files",
+			"args": {
+				"files": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": true
+				},
+				"pattern": {
+					"type": "string",
+					"required": true,
+					"description": "Regex pattern with capture group for ID"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"file": { "type": "string" },
+						"id": { "type": ["string", "null"] }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"detect_file_types": {
+			"description": "Detect file types for a list of files",
+			"category": "files",
+			"args": {
+				"files": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": true,
+					"description": "List of file paths to analyze"
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"file": { "type": "string" },
+						"type": { "type": "string" }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"import_files_pending": {
+			"description": "Import pending files with metadata",
+			"category": "files",
+			"args": {
+				"fileMetadata": {
+					"type": "array",
+					"required": true,
+					"description": "Array of file metadata objects to import"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Imports files to database", "Copies files to BioVault home"]
+		},
+		"open_folder": {
+			"description": "Open a folder in the system file explorer",
+			"category": "files",
+			"args": {
+				"path": {
+					"type": "string",
+					"required": true,
+					"description": "Folder path to open"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Opens system file explorer"]
+		},
+		"get_available_project_examples": {
+			"description": "List available project examples/templates",
+			"category": "projects",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": { "type": "string" },
+						"description": { "type": "string" }
+					}
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_default_project_path": {
+			"description": "Get the default path for a new project",
+			"category": "projects",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": false,
+					"description": "Optional project name"
+				}
+			},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_runs_base_dir": {
+			"description": "Get the base directory for pipeline runs",
+			"category": "pipelines",
+			"args": {},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"import_pipeline": {
+			"description": "Import a pipeline from a spec",
+			"category": "pipelines",
+			"args": {
+				"request": {
+					"type": "object",
+					"required": true,
+					"description": "Pipeline import request"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Creates pipeline in database"]
+		},
+		"import_pipeline_from_message": {
+			"description": "Import a pipeline from a message",
+			"category": "pipelines",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				},
+				"version": {
+					"type": "string",
+					"required": true
+				},
+				"spec": {
+					"type": "object",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Creates pipeline in database"]
+		},
+		"import_pipeline_from_request": {
+			"description": "Import a pipeline from a request location",
+			"category": "pipelines",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				},
+				"pipelineLocation": {
+					"type": "string",
+					"required": true,
+					"description": "Path or URL to pipeline"
+				},
+				"overwrite": {
+					"type": "boolean",
+					"required": false,
+					"default": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"sideEffects": ["Creates pipeline in database"]
+		},
+		"import_pipeline_results": {
+			"description": "Import pipeline results from a location",
+			"category": "pipelines",
+			"args": {
+				"resultsLocation": {
+					"type": "string",
+					"required": true
+				},
+				"submissionId": {
+					"type": "string",
+					"required": false
+				},
+				"runId": {
+					"type": "string",
+					"required": false
+				},
+				"pipelineName": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Imports results to database"]
+		},
+		"send_pipeline_request": {
+			"description": "Send a pipeline execution request to a peer",
+			"category": "pipelines",
+			"args": {
+				"pipelineName": {
+					"type": "string",
+					"required": true
+				},
+				"pipelineVersion": {
+					"type": "string",
+					"required": true
+				},
+				"datasetName": {
+					"type": "string",
+					"required": true
+				},
+				"recipient": {
+					"type": "string",
+					"required": true,
+					"description": "Email of the recipient"
+				},
+				"message": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Sends message to recipient"]
+		},
+		"send_pipeline_request_results": {
+			"description": "Send pipeline results back to requester",
+			"category": "pipelines",
+			"args": {
+				"requestId": {
+					"type": "string",
+					"required": true
+				},
+				"runId": {
+					"type": "integer",
+					"required": true
+				},
+				"message": {
+					"type": "string",
+					"required": false
+				},
+				"outputPaths": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Sends results message"]
+		},
+		"send_pipeline_results": {
+			"description": "Send pipeline results to a recipient",
+			"category": "pipelines",
+			"args": {
+				"recipient": {
+					"type": "string",
+					"required": true
+				},
+				"pipelineName": {
+					"type": "string",
+					"required": true
+				},
+				"runId": {
+					"type": "integer",
+					"required": true
+				},
+				"outputs": {
+					"type": "object",
+					"required": false
+				},
+				"message": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Sends results message"]
+		},
+		"list_results_tree": {
+			"description": "List results directory tree",
+			"category": "pipelines",
+			"args": {
+				"root": {
+					"type": "string",
+					"required": true,
+					"description": "Root directory path"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"list_datasets_with_assets": {
+			"description": "List datasets with their asset details",
+			"category": "datasets",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"is_dataset_published": {
+			"description": "Check if a dataset is published",
+			"category": "datasets",
+			"args": {
+				"name": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_datasets_folder_path": {
+			"description": "Get the datasets folder path",
+			"category": "datasets",
+			"args": {},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"resolve_dataset_path": {
+			"description": "Resolve a dataset directory path",
+			"category": "datasets",
+			"args": {
+				"dirPath": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"resolve_syft_url_to_local_path": {
+			"description": "Resolve a SyftBox URL to a local file path",
+			"category": "datasets",
+			"args": {
+				"syftUrl": {
+					"type": "string",
+					"required": true,
+					"description": "SyftBox URL (syft://...)"
+				}
+			},
+			"returns": {
+				"type": ["string", "null"]
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"resolve_syft_urls_batch": {
+			"description": "Resolve multiple SyftBox URLs to local paths",
+			"category": "datasets",
+			"args": {
+				"urls": {
+					"type": "array",
+					"items": { "type": "string" },
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object",
+				"description": "Map of URL to local path"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"list_sessions": {
+			"description": "List all sessions (alias for get_sessions)",
+			"category": "sessions",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_session_invitations": {
+			"description": "Get pending session invitations",
+			"category": "sessions",
+			"args": {},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"send_session_chat_message": {
+			"description": "Send a chat message in a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				},
+				"body": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Sends message to session participants"]
+		},
+		"get_session_chat_messages": {
+			"description": "Get chat messages for a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"list_session_datasets": {
+			"description": "List datasets in a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_session_beaver_summaries": {
+			"description": "Get Beaver summaries for a session",
+			"category": "sessions",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_session_jupyter_status": {
+			"description": "Get Jupyter status for a session",
+			"category": "session_jupyter",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				}
+			},
+			"returns": {
+				"type": "object",
+				"properties": {
+					"status": { "type": "string" },
+					"url": { "type": ["string", "null"] },
+					"token": { "type": ["string", "null"] }
+				}
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"reset_session_jupyter": {
+			"description": "Reset Jupyter environment for a session",
+			"category": "session_jupyter",
+			"args": {
+				"sessionId": {
+					"type": "string",
+					"required": true
+				},
+				"pythonVersion": {
+					"type": "string",
+					"required": false
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": false,
+			"async": true,
+			"longRunning": true,
+			"sideEffects": ["Stops Jupyter", "Deletes virtual environment", "Recreates environment"]
+		},
+		"get_queue_info": {
+			"description": "Get processing queue information",
+			"category": "logs",
+			"args": {
+				"fileId": {
+					"type": "integer",
+					"required": false,
+					"description": "Optional file ID to filter"
+				}
+			},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_queue_processor_status": {
+			"description": "Get queue processor status",
+			"category": "logs",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"get_saved_dependency_states": {
+			"description": "Get cached dependency states",
+			"category": "settings",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"update_saved_dependency_states": {
+			"description": "Update cached dependency states",
+			"category": "dependencies",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Updates cached state in config"]
+		},
+		"get_default_syftbox_server_url": {
+			"description": "Get the default SyftBox server URL",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "string"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"is_dev_syftbox_enabled": {
+			"description": "Check if dev SyftBox mode is enabled",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"check_dev_syftbox_server": {
+			"description": "Check if dev SyftBox server is reachable",
+			"category": "syftbox",
+			"args": {},
+			"returns": {
+				"type": "boolean"
+			},
+			"readOnly": true,
+			"async": true
+		},
+		"key_check_vault_debug": {
+			"description": "Debug vault state",
+			"category": "keys",
+			"args": {},
+			"returns": {
+				"type": "object"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"count_failed_messages": {
+			"description": "Count failed message operations",
+			"category": "messages",
+			"args": {},
+			"returns": {
+				"type": "integer"
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"list_failed_messages": {
+			"description": "List failed message operations",
+			"category": "messages",
+			"args": {
+				"includeDismissed": {
+					"type": "boolean",
+					"required": false,
+					"default": false
+				}
+			},
+			"returns": {
+				"type": "array",
+				"items": { "type": "object" }
+			},
+			"readOnly": true,
+			"async": false
+		},
+		"profiles_open_picker": {
+			"description": "Open the profile picker UI",
+			"category": "profiles",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Opens profile picker window"]
+		},
+		"profiles_quit_picker": {
+			"description": "Close the profile picker UI",
+			"category": "profiles",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Closes profile picker window"]
+		},
+		"profiles_create_and_switch": {
+			"description": "Create a new profile with default settings and switch to it",
+			"category": "profiles",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Creates profile", "Spawns new instance"]
+		}
+	}
+}
