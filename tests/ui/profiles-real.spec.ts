@@ -226,39 +226,42 @@ async function onboardingGoToHomeStep(page) {
 	await expect(page.locator('#onboarding-step-1')).toBeVisible({ timeout: 10_000 })
 	await page.locator('#onboarding-next-1').click()
 
-        await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 10_000 })
-        page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
-        await page.locator('#skip-dependencies-btn').click()
+	await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 10_000 })
+	page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
+	await page.locator('#skip-dependencies-btn').click()
 
-        try {
-                await expect(step3).toBeVisible({ timeout: 10_000 })
-                return true
-        } catch (_err) {
-                // Fall through to additional checks below.
-        }
+	try {
+		await expect(step3).toBeVisible({ timeout: 10_000 })
+		return true
+	} catch (_err) {
+		// Fall through to additional checks below.
+	}
 
-        const step3Email = page.locator('#onboarding-step-3-email')
-        if (await step3Email.isVisible({ timeout: 1_000 }).catch(() => false)) {
-                await page.locator('#onboarding-back-3-email').click().catch(() => {})
-                await expect(step3).toBeVisible({ timeout: 10_000 })
-                return true
-        }
+	const step3Email = page.locator('#onboarding-step-3-email')
+	if (await step3Email.isVisible({ timeout: 1_000 }).catch(() => false)) {
+		await page
+			.locator('#onboarding-back-3-email')
+			.click()
+			.catch(() => {})
+		await expect(step3).toBeVisible({ timeout: 10_000 })
+		return true
+	}
 
-        const step2 = page.locator('#onboarding-step-2')
-        if (await step2.isVisible({ timeout: 1_000 }).catch(() => false)) {
-                await page.evaluate(() => {
-                        const step2El = document.getElementById('onboarding-step-2')
-                        const step3El = document.getElementById('onboarding-step-3')
-                        if (step2El && step3El) {
-                                step2El.style.display = 'none'
-                                step3El.style.display = 'block'
-                        }
-                })
-                await expect(step3).toBeVisible({ timeout: 10_000 })
-                return true
-        }
+	const step2 = page.locator('#onboarding-step-2')
+	if (await step2.isVisible({ timeout: 1_000 }).catch(() => false)) {
+		await page.evaluate(() => {
+			const step2El = document.getElementById('onboarding-step-2')
+			const step3El = document.getElementById('onboarding-step-3')
+			if (step2El && step3El) {
+				step2El.style.display = 'none'
+				step3El.style.display = 'block'
+			}
+		})
+		await expect(step3).toBeVisible({ timeout: 10_000 })
+		return true
+	}
 
-        throw new Error('Unable to navigate to onboarding step 3 (home)')
+	throw new Error('Unable to navigate to onboarding step 3 (home)')
 }
 
 async function goHomeToEmailStep(page) {
