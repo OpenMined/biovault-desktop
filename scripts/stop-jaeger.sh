@@ -10,10 +10,12 @@ if [[ ! -f "$PID_FILE" ]]; then
     echo "⚠️  Jaeger not running (no PID file)"
 
     # Check for orphaned process
+    if command -v pgrep &>/dev/null; then
     ORPHAN_PID=$(pgrep -f "jaeger-all-in-one" 2>/dev/null || true)
     if [[ -n "$ORPHAN_PID" ]]; then
         echo "🔍 Found orphaned Jaeger process (PID: $ORPHAN_PID)"
         echo "   Kill with: kill $ORPHAN_PID"
+    fi
     fi
     exit 0
 fi

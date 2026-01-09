@@ -960,8 +960,8 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
 fn find_syftbox_pids(runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig) -> Vec<u32> {
     #[cfg(target_os = "windows")]
     {
-        return find_our_syftbox_pids(Some(&runtime.config_path), Some(&runtime.data_dir))
-            .unwrap_or_default();
+        find_our_syftbox_pids(Some(&runtime.config_path), Some(&runtime.data_dir))
+            .unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]

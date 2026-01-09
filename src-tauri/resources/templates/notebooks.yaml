@@ -1,0 +1,43 @@
+dev:
+  - source: 01-hello-beaver.ipynb
+    dest: 01-hello-beaver.ipynb
+  - source: 02-advanced-features-do.ipynb
+    dest: 02-advanced-features-do.ipynb
+  - source: 02-advanced-features-ds.ipynb
+    dest: 02-advanced-features-ds.ipynb
+  - source: 03-neural-network-do.ipynb
+    dest: 03-neural-network-do.ipynb
+  - source: 03-neural-network-ds.ipynb
+    dest: 03-neural-network-ds.ipynb
+  - source: 04-sessions-do-publish.ipynb
+    dest: 04-sessions-do-publish.ipynb
+  - source: 04-sessions-ds.ipynb
+    dest: 04-sessions-ds.ipynb
+  - source: 04-sessions-do-receive.ipynb
+    dest: 04-sessions-do-receive.ipynb
+  - source: 05-gwas-do.ipynb
+    dest: 05-gwas-do.ipynb
+  - source: 05-gwas-ds.ipynb
+    dest: 05-gwas-ds.ipynb
+
+prod:
+  - source: 01-hello-beaver.ipynb
+    dest: 01-hello-beaver.ipynb
+  - source: 02-advanced-features-do.ipynb
+    dest: 02-advanced-features-do.ipynb
+  - source: 02-advanced-features-ds.ipynb
+    dest: 02-advanced-features-ds.ipynb
+  - source: 03-neural-network-do.ipynb
+    dest: 03-neural-network-do.ipynb
+  - source: 03-neural-network-ds.ipynb
+    dest: 03-neural-network-ds.ipynb
+  - source: 04-sessions-do-publish.ipynb
+    dest: 04-sessions-do-publish.ipynb
+  - source: 04-sessions-ds.ipynb
+    dest: 04-sessions-ds.ipynb
+  - source: 04-sessions-do-receive.ipynb
+    dest: 04-sessions-do-receive.ipynb
+  - source: 05-gwas-do.ipynb
+    dest: 05-gwas-do.ipynb
+  - source: 05-gwas-ds.ipynb
+    dest: 05-gwas-ds.ipynb

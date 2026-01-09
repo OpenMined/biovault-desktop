@@ -24,7 +24,15 @@ echo ""
 
 # Check if Jaeger is installed
 JAEGER_BIN="${HOME}/.local/bin/jaeger-all-in-one"
-if [[ ! -x "$JAEGER_BIN" ]] && ! command -v jaeger-all-in-one &> /dev/null; then
+JAEGER_BIN_EXE="${JAEGER_BIN}.exe"
+if [[ "$(uname -s)" =~ (MINGW|MSYS|CYGWIN) ]]; then
+    if [[ -x "$JAEGER_BIN_EXE" ]]; then
+        JAEGER_BIN="$JAEGER_BIN_EXE"
+    fi
+fi
+if [[ ! -x "$JAEGER_BIN" ]] \
+    && ! command -v jaeger-all-in-one &> /dev/null \
+    && ! command -v jaeger-all-in-one.exe &> /dev/null; then
     echo -e "${YELLOW}⚠️  Jaeger not installed. Installing...${NC}"
     "$SCRIPT_DIR/scripts/setup-jaeger.sh"
     echo ""

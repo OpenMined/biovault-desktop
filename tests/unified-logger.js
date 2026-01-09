@@ -5,6 +5,7 @@ import path from 'path'
 
 const LOG_FILE = process.argv[2] || path.resolve(process.cwd(), 'logs/unified.log')
 const PORT = Number(process.argv[3] || process.env.UNIFIED_LOG_PORT || 9753)
+const HOST = process.env.UNIFIED_LOG_HOST || '127.0.0.1'
 
 fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
 const stream = fs.createWriteStream(LOG_FILE, { flags: 'a' })
@@ -17,9 +18,9 @@ const writeLine = (line) => {
 	}
 }
 
-writeLine(`🚀 Unified logger started on port ${PORT}`)
+writeLine(`🚀 Unified logger started on ${HOST}:${PORT}`)
 
-const wss = new WebSocketServer({ port: PORT })
+const wss = new WebSocketServer({ port: PORT, host: HOST })
 
 wss.on('connection', (socket, request) => {
 	const peer = request.socket.remoteAddress

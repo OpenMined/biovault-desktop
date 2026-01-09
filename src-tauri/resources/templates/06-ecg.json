@@ -1,0 +1,17 @@
+{
+	"mode": "parallel",
+	"runs": [
+		{
+			"role": "do",
+			"notebook": "notebooks/06-ecg-do.ipynb",
+			"timeout": 600,
+			"email": "client1@sandbox.local"
+		},
+		{
+			"role": "ds",
+			"notebook": "notebooks/06-ecg-ds.ipynb",
+			"timeout": 600,
+			"email": "client2@sandbox.local"
+		}
+	]
+}

@@ -1,0 +1,11 @@
+{
+	"mode": "single",
+	"runs": [
+		{
+			"role": "solo",
+			"notebook": "notebooks/01-hello-beaver.ipynb",
+			"timeout": 300,
+			"email": "solo@sandbox.local"
+		}
+	]
+}

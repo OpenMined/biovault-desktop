@@ -15,9 +15,15 @@ import { expect, test, type Page, pauseForInteractive } from './playwright-fixtu
 import WebSocket from 'ws'
 import { waitForAppReady } from './test-helpers.js'
 
-const TEST_TIMEOUT = 180_000 // 3 minutes max
-const UI_TIMEOUT = 5_000
-const JUPYTER_STARTUP_TIMEOUT = 90_000 // 90 seconds for Jupyter startup (cache should be warm)
+const IS_WINDOWS = process.platform === 'win32'
+const TEST_TIMEOUT = IS_WINDOWS ? 240_000 : 180_000 // Windows can be slower on first run
+const UI_TIMEOUT = IS_WINDOWS ? 10_000 : 5_000
+const FILE_BROWSER_TIMEOUT = IS_WINDOWS ? 15_000 : 5_000
+const JUPYTER_STARTUP_TIMEOUT = IS_WINDOWS ? 150_000 : 90_000 // Allow extra time for initial launch
+const JUPYTER_LAB_TIMEOUT = IS_WINDOWS ? 60_000 : 30_000
+const NOTEBOOK_PANEL_TIMEOUT = IS_WINDOWS ? 60_000 : 15_000
+const NOTEBOOK_CELL_TIMEOUT = IS_WINDOWS ? 60_000 : 15_000
+const POPUP_TIMEOUT = IS_WINDOWS ? 5_000 : 2_000
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -150,7 +156,7 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		// Check the "Copy examples" checkbox to get the 01-hello-beaver.ipynb notebook
 		console.log('Looking for Copy examples checkbox...')
 		const copyExamplesCheckbox = page.locator('#copy-examples-checkbox')
-		if (await copyExamplesCheckbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+		if (await copyExamplesCheckbox.isVisible({ timeout: POPUP_TIMEOUT }).catch(() => false)) {
 			console.log('Checking Copy examples checkbox...')
 			await copyExamplesCheckbox.check()
 			console.log('Copy examples checkbox checked!')
@@ -190,13 +196,13 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		// Wait for JupyterLab to fully load
 		console.log('Waiting for JupyterLab to load...')
 		await jupyterPage.waitForSelector('.jp-Launcher, .jp-NotebookPanel, .jp-DirListing', {
-			timeout: 30_000,
+			timeout: JUPYTER_LAB_TIMEOUT,
 		})
 		console.log('JupyterLab loaded!')
 
 		// Dismiss any notification popups (like "Would you like to get notified about official Jupyter news?")
 		const noButton = jupyterPage.locator('button:has-text("No")').first()
-		if (await noButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+		if (await noButton.isVisible({ timeout: POPUP_TIMEOUT }).catch(() => false)) {
 			console.log('Dismissing notification popup...')
 			await noButton.click()
 			await jupyterPage.waitForTimeout(500)
@@ -205,7 +211,7 @@ test.describe('Jupyter Session @jupyter-session', () => {
 		// Look for the 01-hello-beaver.ipynb file in the file browser (left panel)
 		console.log('Looking for file browser...')
 		const fileBrowser = jupyterPage.locator('.jp-DirListing-content')
-		await expect(fileBrowser).toBeVisible({ timeout: 5000 })
+		await expect(fileBrowser).toBeVisible({ timeout: FILE_BROWSER_TIMEOUT })
 		console.log('File browser visible!')
 
 		// Find the notebook item - it shows as truncated text like "01-hello-beaver.i..."
@@ -214,11 +220,13 @@ test.describe('Jupyter Session @jupyter-session', () => {
 			.filter({ hasText: /01-hello-beaver/i })
 			.first()
 
-		if (await helloNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
+		if (await helloNotebook.isVisible({ timeout: FILE_BROWSER_TIMEOUT }).catch(() => false)) {
 			console.log('Found 01-hello-beaver notebook, double-clicking to open...')
 			await helloNotebook.dblclick()
 			console.log('Waiting for notebook panel to appear...')
-			await jupyterPage.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+			await jupyterPage.waitForSelector('.jp-NotebookPanel:visible', {
+				timeout: NOTEBOOK_PANEL_TIMEOUT,
+			})
 			console.log('Notebook panel opened!')
 		} else {
 			console.log('WARNING: 01-hello-beaver not found, falling back to creating new notebook...')
@@ -226,10 +234,12 @@ test.describe('Jupyter Session @jupyter-session', () => {
 				.locator('.jp-LauncherCard')
 				.filter({ hasText: /Python 3/ })
 				.first()
-			if (await pythonNotebook.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await pythonNotebook.isVisible({ timeout: POPUP_TIMEOUT }).catch(() => false)) {
 				console.log('Clicking Python 3 launcher card...')
 				await pythonNotebook.click()
-				await jupyterPage.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+				await jupyterPage.waitForSelector('.jp-NotebookPanel:visible', {
+					timeout: NOTEBOOK_PANEL_TIMEOUT,
+				})
 			} else {
 				console.log('ERROR: Could not find launcher card either!')
 			}
@@ -237,12 +247,12 @@ test.describe('Jupyter Session @jupyter-session', () => {
 
 		// Wait for notebook to be ready with code cells
 		console.log('Waiting for code cells...')
-		await jupyterPage.waitForSelector('.jp-CodeCell', { timeout: 15_000 })
+		await jupyterPage.waitForSelector('.jp-CodeCell:visible', { timeout: NOTEBOOK_CELL_TIMEOUT })
 		console.log('Code cells ready!')
 
 		// Dismiss the notification popup if it appears again
 		const noButton2 = jupyterPage.locator('button:has-text("No")').first()
-		if (await noButton2.isVisible({ timeout: 1000 }).catch(() => false)) {
+		if (await noButton2.isVisible({ timeout: POPUP_TIMEOUT }).catch(() => false)) {
 			await noButton2.click()
 			await jupyterPage.waitForTimeout(500)
 		}

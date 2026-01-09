@@ -21,11 +21,15 @@ esac
 case "$OS" in
     darwin) PLATFORM="darwin" ;;
     linux) PLATFORM="linux" ;;
+    msys*|mingw*|cygwin*) PLATFORM="windows" ;;
     *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
 DOWNLOAD_URL="https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-${PLATFORM}-${ARCH}.tar.gz"
 BINARY_NAME="jaeger-all-in-one"
+if [[ "$PLATFORM" == "windows" ]]; then
+    BINARY_NAME="jaeger-all-in-one.exe"
+fi
 
 echo "📦 Setting up Jaeger ${JAEGER_VERSION} for ${PLATFORM}-${ARCH}"
 

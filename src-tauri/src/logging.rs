@@ -2,13 +2,11 @@ use chrono::Local;
 #[cfg(unix)]
 use libc::{STDERR_FILENO, STDOUT_FILENO};
 use std::env;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, RawFd};
 use std::path::PathBuf;
-use std::sync::Once;
-use std::thread;
 
 /// Represents the type of log event being recorded.
 #[derive(Clone, Copy)]

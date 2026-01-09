@@ -1,0 +1,19 @@
+{
+	"mode": "parallel",
+	"skip": true,
+	"skip_reason": "Requires PLINK tool and external genomic data files - manual testing only",
+	"runs": [
+		{
+			"role": "do",
+			"notebook": "notebooks/05-gwas-do.ipynb",
+			"timeout": 900,
+			"email": "client1@sandbox.local"
+		},
+		{
+			"role": "ds",
+			"notebook": "notebooks/05-gwas-ds.ipynb",
+			"timeout": 900,
+			"email": "client2@sandbox.local"
+		}
+	]
+}

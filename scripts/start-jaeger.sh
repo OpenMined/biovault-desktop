@@ -7,9 +7,15 @@ set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 JAEGER_DIR="${JAEGER_DIR:-$HOME/.local/share/jaeger}"
-BINARY_NAME="jaeger-all-in-one"
+EXE_SUFFIX=""
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$OS" in
+    msys*|mingw*|cygwin*) EXE_SUFFIX=".exe" ;;
+esac
+BINARY_NAME="jaeger-all-in-one${EXE_SUFFIX}"
 PID_FILE="$JAEGER_DIR/jaeger.pid"
 LOG_FILE="$JAEGER_DIR/jaeger.log"
+ERR_FILE="$JAEGER_DIR/jaeger.err.log"
 
 # Find binary
 JAEGER_BIN=""
@@ -41,9 +47,19 @@ mkdir -p "$JAEGER_DIR"
 # Check ports
 check_port() {
     local port=$1
-    if lsof -i ":$port" -sTCP:LISTEN &>/dev/null; then
-        echo "❌ Port $port is already in use"
-        return 1
+    if command -v lsof &>/dev/null; then
+        if lsof -i ":$port" -sTCP:LISTEN &>/dev/null; then
+            echo "❌ Port $port is already in use"
+            return 1
+        fi
+        return 0
+    fi
+    if command -v netstat &>/dev/null; then
+        if netstat -an 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | grep -qi "listening"; then
+            echo "❌ Port $port is already in use"
+            return 1
+        fi
+        return 0
     fi
     return 0
 }
@@ -57,14 +73,26 @@ done
 echo "🚀 Starting Jaeger..."
 
 # Start Jaeger with OTLP enabled
-nohup "$JAEGER_BIN" \
-    --collector.otlp.enabled=true \
-    --collector.otlp.http.host-port=:4318 \
-    --collector.otlp.grpc.host-port=:4317 \
-    > "$LOG_FILE" 2>&1 &
-
-JAEGER_PID=$!
-echo "$JAEGER_PID" > "$PID_FILE"
+if [[ "$EXE_SUFFIX" == ".exe" ]] && command -v powershell.exe &>/dev/null; then
+    JAEGER_BIN_WIN="$JAEGER_BIN"
+    LOG_FILE_WIN="$LOG_FILE"
+    ERR_FILE_WIN="$ERR_FILE"
+    if command -v cygpath &>/dev/null; then
+        JAEGER_BIN_WIN=$(cygpath -w "$JAEGER_BIN")
+        LOG_FILE_WIN=$(cygpath -w "$LOG_FILE")
+        ERR_FILE_WIN=$(cygpath -w "$ERR_FILE")
+    fi
+    powershell.exe -NoProfile -Command "Start-Process -FilePath '$JAEGER_BIN_WIN' -ArgumentList '--collector.otlp.enabled=true','--collector.otlp.http.host-port=:4318','--collector.otlp.grpc.host-port=:4317' -RedirectStandardOutput '$LOG_FILE_WIN' -RedirectStandardError '$ERR_FILE_WIN' -PassThru | Select-Object -ExpandProperty Id" > "$PID_FILE"
+    JAEGER_PID=$(tr -d '\r' < "$PID_FILE")
+else
+    nohup "$JAEGER_BIN" \
+        --collector.otlp.enabled=true \
+        --collector.otlp.http.host-port=:4318 \
+        --collector.otlp.grpc.host-port=:4317 \
+        > "$LOG_FILE" 2>&1 &
+    JAEGER_PID=$!
+    echo "$JAEGER_PID" > "$PID_FILE"
+fi
 
 # Wait for startup
 echo "⏳ Waiting for Jaeger to start..."
