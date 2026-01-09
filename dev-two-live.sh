@@ -18,6 +18,10 @@ SBENV_DIR="${SBENV_DIR:-$WORKSPACE_ROOT/sbenv}"
 if [[ ! -d "$SBENV_DIR" && -d "$BIOVAULT_DIR/sbenv" ]]; then
   SBENV_DIR="$BIOVAULT_DIR/sbenv"
 fi
+WORKSPACE_ROOT="$WORKSPACE_ROOT" "$ROOT_DIR/scripts/ensure-workspace-deps.sh" \
+  "biovault/cli/Cargo.toml" \
+  "syftbox-sdk/Cargo.toml" \
+  "syftbox/rust/Cargo.toml"
 SYFTBOX_BIN_RES="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
 SBENV_BIN="$SBENV_DIR/cli/target/release/sbenv"
 BV_CLI_BIN="$BIOVAULT_DIR/cli/target/release/bv"
@@ -37,6 +41,10 @@ mkdir -p "$LOG_DIR"
 DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
 DEFAULT_CLIENT2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 
+if [[ -z "${BV_SYFTBOX_BACKEND:-}" ]]; then
+  BV_SYFTBOX_BACKEND="embedded"
+fi
+
 build_syftbox() {
   echo "[live] Building syftbox for prod bundle..."
   (cd "$ROOT_DIR" && ./scripts/build-syftbox-prod.sh)
@@ -47,11 +55,22 @@ build_syftbox() {
   echo "[live] syftbox ready at $SYFTBOX_BIN_RES"
 }
 
+build_syftbox_rust() {
+  echo "[live] Building syftbox-rs (embedded)..."
+  (cd "$ROOT_DIR" && ./scripts/build-syftbox-rust.sh)
+  if [[ ! -x "$SYFTBOX_BIN_RES" ]]; then
+    echo "[live] ERROR: syftbox-rs binary missing at $SYFTBOX_BIN_RES" >&2
+    exit 1
+  fi
+  echo "[live] syftbox-rs ready at $SYFTBOX_BIN_RES"
+}
+
 ensure_cli() {
+  local mode="${1:-}"
   echo "[live] Building BioVault CLI (cargo build --release)..."
   (cd "$BIOVAULT_DIR/cli" && cargo build --release)
 
-  if [[ ! -x "$SBENV_BIN" ]]; then
+  if [[ "$mode" == "process" ]] && [[ ! -x "$SBENV_BIN" ]]; then
     echo "[live] Building sbenv CLI (cargo build --release)..."
     (cd "$SBENV_DIR/cli" && cargo build --release)
   fi
@@ -106,6 +125,30 @@ start_sbenv_client() {
   SBENV_LAUNCH_PIDS+=("$!")
 }
 
+start_embedded_client() {
+  if [[ "$BACKEND" == "process" ]]; then
+    return
+  fi
+  local email="$1"
+  local client_dir="$SANDBOX_DIR/$email"
+  local config_yaml="$client_dir/config.yaml"
+
+  if [[ ! -f "$config_yaml" ]]; then
+    echo "[live] Skipping syftboxd start for $email (missing config.yaml; complete onboarding first)"
+    return
+  fi
+
+  echo "[live] Starting embedded syftboxd for $email"
+  BIOVAULT_HOME="$client_dir" \
+    SYFTBOX_EMAIL="$email" \
+    SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
+    SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
+    BV_SYFTBOX_BACKEND=embedded \
+    "$BV_CLI_BIN" syftboxd start >/dev/null 2>&1 || {
+      echo "[live] WARN: syftboxd failed to start for $email (check config/auth)" >&2
+    }
+}
+
 stop_sbenv_client() {
   if [[ "$BACKEND" != "process" ]]; then
     return
@@ -134,6 +177,7 @@ provision_client() {
       rm -rf "$client_dir"
     fi
     mkdir -p "$client_dir"
+    start_embedded_client "$email"
   fi
   # Do not pre-provision keys/bundles; onboarding in-app will handle identity.
 }
@@ -227,18 +271,32 @@ launch_instance() {
       env_config="$default_config"
       env_data="$default_data"
     fi
-    BIOVAULT_HOME="$home" \
-    BV_SYFTBOX_BACKEND="$backend" \
-    SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
-    SYFTBOX_BINARY="$env_binary" \
-    SYFTBOX_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
-    SYFTBOX_EMAIL="$email" \
-    SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
-    SYFTBOX_CONFIG_PATH="$env_config" \
-    SYFTBOX_DATA_DIR="$env_data" \
-    SYC_VAULT="$home/.syc" \
-    BIOVAULT_DEBUG_BANNER=1 \
-    npm run dev
+    local -a cmd=(env)
+    if [[ "$backend" != "process" ]]; then
+      cmd+=(-u SYFTBOX_BINARY -u SYFTBOX_VERSION)
+    fi
+    cmd+=(
+      "BIOVAULT_HOME=$home"
+      "BIOVAULT_DEV_MODE=1"
+      "BIOVAULT_DEV_SYFTBOX=1"
+      "BIOVAULT_DISABLE_PROFILES=1"
+      "BV_SYFTBOX_BACKEND=$backend"
+      "SYFTBOX_SERVER_URL=$SYFTBOX_URL"
+      "SYFTBOX_EMAIL=$email"
+      "SYFTBOX_AUTH_ENABLED=$SYFTBOX_AUTH_ENABLED"
+      "SYFTBOX_CONFIG_PATH=$env_config"
+      "SYFTBOX_DATA_DIR=$env_data"
+      "SYC_VAULT=$home/.syc"
+      "BIOVAULT_DEBUG_BANNER=1"
+    )
+    if [[ "$backend" == "process" ]]; then
+      cmd+=(
+        "SYFTBOX_BINARY=$env_binary"
+        "SYFTBOX_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+      )
+    fi
+    cmd+=(npm run dev)
+    "${cmd[@]}"
   )
 }
 
@@ -338,7 +396,10 @@ main() {
 
   if [[ "$BACKEND" == "process" ]]; then
     build_syftbox
-    ensure_cli
+    ensure_cli "process"
+  else
+    build_syftbox_rust
+    ensure_cli "embedded"
   fi
 
   # Provision all requested clients
