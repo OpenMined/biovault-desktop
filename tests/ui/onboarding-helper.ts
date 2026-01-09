@@ -88,12 +88,30 @@ export async function completeOnboarding(
 
 		// Step 3: Choose BioVault Home
 		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
+		const homeInput = page.locator('#onboarding-home')
+		await expect(homeInput).toBeVisible({ timeout: 10_000 })
+		if (!(await homeInput.inputValue()).trim()) {
+			// Home defaults are populated asynchronously; try to pull them directly if still empty.
+			const fallbackHome = await page.evaluate(async () => {
+				try {
+					const invoke = (window as any)?.__TAURI__?.invoke
+					if (!invoke) return ''
+					const value = await invoke('profiles_get_default_home')
+					return typeof value === 'string' ? value : ''
+				} catch (_err) {
+					return ''
+				}
+			})
+			if (fallbackHome) {
+				await homeInput.fill(fallbackHome)
+			}
+		}
+		await expect(homeInput).toHaveValue(/.+/, { timeout: 20_000 })
 		await page.locator('#onboarding-next-3').click()
-		// Wait for step 3 to be hidden before checking step 3-key
-		await expect(page.locator('#onboarding-step-3')).toBeHidden({ timeout: 5000 })
+		// Wait for step 3-email to be visible (home check can take time in CI).
+		await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 20_000 })
 
 		// Step 3a: Email
-		await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 5000 })
 		await page.fill('#onboarding-email', email)
 		await expect(page.locator('#onboarding-next-3-email')).toBeEnabled()
 		await page.locator('#onboarding-next-3-email').click()

@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Run lint checks
-        run: ./lint.sh
+        run: ./lint.sh --check
 
   scenario-tests:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
