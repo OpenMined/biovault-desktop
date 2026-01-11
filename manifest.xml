@@ -9,4 +9,5 @@
   <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="51e5a74b387358613950d356f40d6b1eada8e891" />
   <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />
   <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="8d78a9cf9c9ef96570745183ff5b26969979dcf6" />
+  <project name="madhavajay/syqure" path="syqure" revision="madhava/new" />
   </manifest>
