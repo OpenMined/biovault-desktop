@@ -38,14 +38,14 @@ New-Item -ItemType Directory -Force -Path $env:BIOVAULT_HOME | Out-Null
 # Override bv binary path
 $env:BIOVAULT_PATH = $bvPath
 
-# Force Rust (embedded) SyftBox backend for Windows dev mode
-$env:BV_SYFTBOX_BACKEND = "embedded"
+# Force Rust (embedded) SyftBox backend for Windows dev mode unless overridden
+if (-not $env:BV_SYFTBOX_BACKEND) { $env:BV_SYFTBOX_BACKEND = "embedded" }
 
 # Dev mode flags (enables DEV MODE banner + extra UI)
 if (-not $env:BIOVAULT_DEV_MODE) { $env:BIOVAULT_DEV_MODE = "1" }
 if (-not $env:BIOVAULT_DEV_SYFTBOX) { $env:BIOVAULT_DEV_SYFTBOX = "1" }
 
-# Build syftbox-dev.exe (optional, but matches ./dev-desktop.sh behavior)
+# Build embedded SyftBox (default) or Go SyftBox if BV_SYFTBOX_BACKEND=process
 if (-not $SkipSyftboxBuild) {
     Write-Host "== Building SyftBox (dev) ==" -ForegroundColor Blue
     & (Join-Path $scriptDir "build-syftbox-dev.ps1")
@@ -63,24 +63,33 @@ if (-not $env:PROTOC) {
     }
 }
 
-# Set syftbox environment variables for dev builds
-$syftboxRoot = Join-Path $repoRoot "syftbox"
-if (-not (Test-Path $syftboxRoot)) {
-    $syftboxRoot = Join-Path $biovaultDir "syftbox"
-}
-$syftboxBinary = Join-Path $syftboxRoot "bin\syftbox-dev.exe"
-$syftboxResourceDev = Join-Path $repoRoot "src-tauri\resources\syftbox\syftbox-dev.exe"
-if (Test-Path $syftboxBinary) {
-    $env:SYFTBOX_BINARY = $syftboxBinary
-} elseif (Test-Path $syftboxResourceDev) {
-    $env:SYFTBOX_BINARY = $syftboxResourceDev
+# Set syftbox environment variables for dev builds (process backend only)
+if ($env:BV_SYFTBOX_BACKEND -eq "process") {
+    $syftboxRoot = Join-Path $repoRoot "syftbox"
+    if (-not (Test-Path $syftboxRoot)) {
+        $syftboxRoot = Join-Path $biovaultDir "syftbox"
+    }
+    $syftboxBinary = Join-Path $syftboxRoot "bin\syftbox-dev.exe"
+    $syftboxResourceDev = Join-Path $repoRoot "src-tauri\resources\syftbox\syftbox.exe"
+    if (Test-Path $syftboxBinary) {
+        $env:SYFTBOX_BINARY = $syftboxBinary
+    } elseif (Test-Path $syftboxResourceDev) {
+        $env:SYFTBOX_BINARY = $syftboxResourceDev
+    }
+} else {
+    Remove-Item Env:SYFTBOX_BINARY -ErrorAction SilentlyContinue
+    Remove-Item Env:SYFTBOX_VERSION -ErrorAction SilentlyContinue
 }
 
-try {
-    $syftboxVersion = (git -C $repoRoot describe --tags --always --dirty 2>$null)
-    if ($syftboxVersion) { $env:SYFTBOX_VERSION = $syftboxVersion }
-} catch {
-    if (-not $env:SYFTBOX_VERSION) { $env:SYFTBOX_VERSION = "dev" }
+if ($env:BV_SYFTBOX_BACKEND -eq "process") {
+    try {
+        $syftboxVersion = (git -C $repoRoot describe --tags --always --dirty 2>$null)
+        if ($syftboxVersion) { $env:SYFTBOX_VERSION = $syftboxVersion }
+    } catch {
+        if (-not $env:SYFTBOX_VERSION) { $env:SYFTBOX_VERSION = "dev" }
+    }
+} else {
+    Remove-Item Env:SYFTBOX_VERSION -ErrorAction SilentlyContinue
 }
 
 if ($env:SYFTBOX_BINARY) {
