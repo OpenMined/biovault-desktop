@@ -25,6 +25,9 @@ Options:
                       Run lint.sh in dirty repos (parallel, quiet on success)
                       --force runs lint.sh in all repos that have it
                       --verbose prints lint output even on success
+  test [--force]
+                      Run fast unit tests in dirty repos (quiet on success)
+                      --force runs tests in all repos with fast tests
   ssh                 Rewrite remotes to SSH for all repos
   main                Checkout main in all repos (no reset)
   switch [-b] <branch> <targets...>
@@ -1131,6 +1134,21 @@ function Invoke-Lint {
     }
 }
 
+function Invoke-Test {
+    param([string[]]$Args)
+
+    $winPs1Path = Join-Path $RootDir "win.ps1"
+    if (-not (Test-Path $winPs1Path)) {
+        Write-Host "win.ps1 not found at $winPs1Path" -ForegroundColor Red
+        return
+    }
+
+    & $winPs1Path ./repo test @Args
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
 function Invoke-SshRewrite {
     Write-Host "Rewriting remotes to SSH..." -ForegroundColor Cyan
 
@@ -1457,7 +1475,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             break
         }
         "^--force$" {
-            if ($Command -eq "lint") {
+            if ($Command -eq "lint" -or $Command -eq "test") {
                 $PositionalArgs += $arg
                 break
             }
@@ -1475,7 +1493,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             exit 1
         }
         "^--help$" {
-            if ($Command -eq "lint") {
+            if ($Command -eq "lint" -or $Command -eq "test") {
                 $PositionalArgs += $arg
                 break
             }
@@ -1525,6 +1543,9 @@ switch ($Command) {
     }
     "lint" {
         Invoke-Lint -Args $PositionalArgs
+    }
+    "test" {
+        Invoke-Test -Args $PositionalArgs
     }
     "ssh" {
         Invoke-SshRewrite

@@ -48,6 +48,9 @@ Options:
                       Run lint.sh in dirty repos (parallel, quiet on success)
                       --force runs lint.sh in all repos that have it
                       --verbose prints lint output even on success
+  test [--force]
+                      Run fast unit tests in dirty repos (quiet on success)
+                      --force runs tests in all repos with fast tests
   commit -m "msg"     Commit all dirty repos with same message
   push                Push all repos on feature branches
   pr                  Create PRs (sub-repos first, then desktop with links)
@@ -1812,6 +1815,173 @@ do_lint() {
   fi
 }
 
+fast_tests_available() {
+  case "$1" in
+    "."|bioscript|biovault|biovault-beaver|sbenv|syft-crypto-core|syftbox|syftbox-sdk)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+run_fast_tests() {
+  local repo="$1"
+
+  case "$repo" in
+    ".")
+      ./scripts/ensure-bundled-deps.sh
+      cargo test --manifest-path src-tauri/Cargo.toml
+      if compgen -G "tests/*.test.mjs" >/dev/null; then
+        node --test tests/*.test.mjs
+      fi
+      ;;
+    bioscript)
+      (cd "$repo" && ./test.sh)
+      ;;
+    biovault)
+      (cd "$repo/cli" && cargo test)
+      ;;
+    biovault-beaver)
+      (cd "$repo" && ./test.sh)
+      ;;
+    sbenv)
+      (cd "$repo/cli" && cargo test)
+      ;;
+    syft-crypto-core)
+      (cd "$repo" && cargo test)
+      ;;
+    syftbox)
+      (cd "$repo" && go test ./...)
+      ;;
+    syftbox-sdk)
+      (cd "$repo" && cargo test)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+do_test() {
+  local start_time=$SECONDS
+  local dirty_repos=()
+  local repo
+  local force=0
+
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        ;;
+      --help|-h)
+        echo "Usage: ./repo test [--force]"
+        return 0
+        ;;
+      *)
+        echo "Unknown test option: $1" >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "$force" -eq 1 ]]; then
+    dirty_repos+=(".")
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        dirty_repos+=("$repo")
+      fi
+    done < <(manifest_paths)
+  else
+    # Check root repo
+    if [[ -n $(git status --porcelain 2>/dev/null || true) ]]; then
+      dirty_repos+=(".")
+    fi
+
+    # Check all manifest repos
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      if [[ -d "$repo/.git" || -f "$repo/.git" ]]; then
+        if [[ -n $(git -C "$repo" status --porcelain 2>/dev/null || true) ]]; then
+          dirty_repos+=("$repo")
+        fi
+      fi
+    done < <(manifest_paths)
+
+    if [[ ${#dirty_repos[@]} -eq 0 ]]; then
+      echo -e "${GREEN}✓ No dirty repos${NC}"
+      return 0
+    fi
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+
+  local pids=()
+  local repos_with_tests=()
+
+  for repo in "${dirty_repos[@]}"; do
+    if ! fast_tests_available "$repo"; then
+      continue
+    fi
+
+    repos_with_tests+=("$repo")
+    local outfile="$tmpdir/${repo//\//_}.out"
+    (
+      local task_start=$SECONDS
+      if run_fast_tests "$repo" > "$outfile" 2>&1; then
+        echo "0" > "$outfile.status"
+      else
+        echo "1" > "$outfile.status"
+      fi
+      echo "$((SECONDS - task_start))" > "$outfile.time"
+    ) &
+    pids+=($!)
+  done
+
+  if [[ ${#repos_with_tests[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No repos with fast tests${NC}"
+    return 0
+  fi
+
+  local failures=0
+  local passed=0
+  local i=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+    local repo="${repos_with_tests[$i]}"
+    local label="$repo"
+    [[ "$repo" == "." ]] && label="biovault-desktop"
+    local outfile="$tmpdir/${repo//\//_}.out"
+    local elapsed=""
+    if [[ -f "$outfile.time" ]]; then
+      elapsed=" ($(cat "$outfile.time")s)"
+    fi
+
+    if [[ -f "$outfile.status" && "$(cat "$outfile.status")" != "0" ]]; then
+      echo -e "${RED}✗ $label${elapsed}${NC}"
+      cat "$outfile"
+      echo ""
+      failures=$((failures + 1))
+    else
+      passed=$((passed + 1))
+    fi
+    i=$((i + 1))
+  done
+
+  local total_time=$((SECONDS - start_time))
+  if [[ "$failures" -eq 0 ]]; then
+    echo -e "${GREEN}${passed} repos passed in ${total_time}s${NC}"
+  else
+    echo -e "${RED}${failures} failed, ${passed} passed in ${total_time}s${NC}"
+    return 1
+  fi
+}
+
 do_branch_dirty() {
   local branch="${1:-}"
 
@@ -2304,6 +2474,9 @@ case "${1:-}" in
     ;;
   lint)
     do_lint "${@:2}"
+    ;;
+  test)
+    do_test "${@:2}"
     ;;
   commit)
     do_commit "${@:2}"
