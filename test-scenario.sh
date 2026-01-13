@@ -48,6 +48,7 @@ MAX_PORT=8092
 TRACE=${TRACE:-0}
 DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 TIMING="${TIMING:-1}"
+DEVSTACK_STARTED=0
 
 # Parse arguments
 declare -a FORWARD_ARGS=()
@@ -70,7 +71,6 @@ Scenario Options (pick one):
   --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions      
-  --networking         Run control-plane + file sync networking smoke test
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
   --pipelines-gwas     Run GWAS pipeline UI test only (single client)
@@ -131,10 +131,6 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-sessions)
 			SCENARIO="messaging-sessions"
-			shift
-			;;
-		--networking)
-			SCENARIO="networking"
 			shift
 			;;
 		--messaging-core)
@@ -220,9 +216,12 @@ if [[ -z "$SCENARIO" ]]; then
         SCENARIO="${SCENARIO:-all}"
 fi
 
-# Networking scenarios manage SyftBox lifecycle in-app; avoid starting syftboxd unless explicitly requested.
-if [[ "$SCENARIO" == "networking" && -z "${BV_DEVSTACK_START_SYFTBOXD:-}" ]]; then
-        export BV_DEVSTACK_START_SYFTBOXD=0
+# Default to embedded SyftBox backend unless explicitly overridden.
+if [[ -z "${BV_SYFTBOX_BACKEND:-}" ]]; then
+        export BV_SYFTBOX_BACKEND=embedded
+fi
+if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then
+        export BV_DEVSTACK_CLIENT_MODE=embedded
 fi
 
 # Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
@@ -593,6 +592,21 @@ cleanup() {
 	# Clean up any Jupyter processes spawned during this run
 	kill_workspace_jupyter
 
+	if [[ "${KEEP_ALIVE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "true" && "${WAIT_MODE:-0}" != "1" && "${WAIT_MODE:-0}" != "true" ]]; then
+		if [[ "$DEVSTACK_STARTED" == "1" && "$SCENARIO" != "profiles-mock" ]]; then
+			info "Stopping SyftBox devstack"
+			local c1="${CLIENT1_EMAIL:-client1@sandbox.local}"
+			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
+			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
+			DEVSTACK_CLIENTS="${c1},${c2}"
+			local stop_args=(--clients "$DEVSTACK_CLIENTS" --sandbox "$sandbox_root" --stop)
+			if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+				stop_args+=(--reset)
+			fi
+			bash "$DEVSTACK_SCRIPT" "${stop_args[@]}" >/dev/null 2>&1 || true
+		fi
+	fi
+
 	# Close out any in-progress timers so failures still report partial durations.
 	if timing_enabled; then
 		while [[ "${#TIMER_LABEL_STACK[@]}" -gt 0 ]]; do
@@ -646,6 +660,7 @@ if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	timer_push "Devstack start"
 	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
 	timer_pop
+	DEVSTACK_STARTED=1
 fi
 
 # Read devstack state for client configs (not needed for mock-only scenarios)
@@ -1305,14 +1320,10 @@ ensure_playwright_browsers
 				run_ui_grep "@onboarding-two"
 				timer_pop
 				# After onboarding, keys exist - wait for them to sync via the network
-                        if [[ "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "0" || "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "false" || "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "no" ]]; then
-                                info "Skipping peer key sync (BV_DEVSTACK_START_SYFTBOXD=${BV_DEVSTACK_START_SYFTBOXD:-0})"
-                        else
-                                timer_push "Peer key sync"
-                                info "Waiting for peer keys to sync after onboarding..."
-                                preflight_peer_sync
-                                timer_pop
-                        fi
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
+			preflight_peer_sync
+			timer_pop
 				timer_push "Playwright: @messages-two"
 				run_ui_grep "@messages-two"
 				timer_pop
@@ -1332,23 +1343,6 @@ ensure_playwright_browsers
 			# Run comprehensive messaging + sessions test
 			timer_push "Playwright: @messaging-sessions"
 			run_ui_grep "@messaging-sessions"
-			timer_pop
-			;;
-                networking)
-                        export DISABLE_SYFTBOX_AUTO_START=1
-                        info "DISABLE_SYFTBOX_AUTO_START=1 (prevent auto-restart during networking test)"
-                        start_static_server
-                        start_tauri_instances
-			# Run onboarding first (creates keys), then wait for peer sync, then networking smoke test
-			timer_push "Playwright: @onboarding-two"
-			run_ui_grep "@onboarding-two"
-			timer_pop
-			timer_push "Peer key sync"
-			info "Waiting for peer keys to sync after onboarding..."
-			preflight_peer_sync
-			timer_pop
-			timer_push "Playwright: @networking"
-			run_ui_grep "@networking"
 			timer_pop
 			;;
 		all)
@@ -1373,10 +1367,6 @@ ensure_playwright_browsers
 			info "=== Phase 3: Messaging + Sessions ==="
 			timer_push "Playwright: @messaging-sessions"
 			run_ui_grep "@messaging-sessions"
-			timer_pop
-			info "=== Phase 4: Networking Smoke ==="
-			timer_push "Playwright: @networking"
-			run_ui_grep "@networking"
 			timer_pop
 			;;
 	messaging-core)
