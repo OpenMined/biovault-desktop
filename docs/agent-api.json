@@ -1,12 +1,27 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"title": "BioVault Desktop Agent API",
-	"version": "1.4.0",
+	"version": "1.4.2",
 	"description": "WebSocket API for AI agent control of BioVault Desktop",
 	"protocol": {
 		"transport": "WebSocket",
 		"defaultPort": 3333,
 		"address": "127.0.0.1",
+		"http": {
+			"address": "127.0.0.1",
+			"defaultPort": 3334,
+			"endpoints": {
+				"rpc": "POST /rpc",
+				"schema": "GET /schema",
+				"commands": "GET /commands"
+			},
+			"notes": [
+				"HTTP fallback supports request/response only (no streaming events).",
+				"Provide token in JSON body or Authorization: Bearer <token> header if required.",
+				"For long-running operations, poll with normal status/list commands.",
+				"Use HTTP for bootstrap and switch to WebSocket for streaming events."
+			]
+		},
 		"request": {
 			"type": "object",
 			"required": ["id", "cmd"],
@@ -175,6 +190,10 @@
 				"set_autostart_enabled",
 				"get_saved_dependency_states"
 			]
+		},
+		"ui": {
+			"description": "UI control (local window)",
+			"commands": ["ui_navigate", "ui_pipeline_import_options", "ui_pipeline_import_from_path"]
 		},
 		"dependencies": {
 			"description": "Dependency management",
@@ -2960,6 +2979,56 @@
 			},
 			"readOnly": true,
 			"async": false
+		},
+		"ui_navigate": {
+			"description": "Navigate the UI to a specific tab/view",
+			"category": "ui",
+			"args": {
+				"tab": {
+					"type": "string",
+					"required": true,
+					"description": "Target view (run, data, runs, logs, sql, sessions, network, messages, settings, import)"
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Updates active UI tab"]
+		},
+		"ui_pipeline_import_options": {
+			"description": "Open the pipeline import options modal in the Pipelines view",
+			"category": "ui",
+			"args": {},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Navigates to Pipelines view", "Opens pipeline import modal"]
+		},
+		"ui_pipeline_import_from_path": {
+			"description": "Import a pipeline from a local path via the UI",
+			"category": "ui",
+			"args": {
+				"path": {
+					"type": "string",
+					"required": true,
+					"description": "Path to pipeline.yaml or a pipeline folder"
+				},
+				"overwrite": {
+					"type": "boolean",
+					"required": false,
+					"default": false
+				}
+			},
+			"returns": {
+				"type": "null"
+			},
+			"readOnly": false,
+			"async": false,
+			"sideEffects": ["Navigates to Pipelines view", "Imports pipeline via create_pipeline"]
 		},
 		"update_saved_dependency_states": {
 			"description": "Update cached dependency states",

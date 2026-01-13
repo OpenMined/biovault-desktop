@@ -25,6 +25,7 @@ mod types;
 use types::AppState;
 
 // Import all command functions from command modules
+use commands::agent_api::*;
 use commands::datasets::*;
 use commands::dependencies::*;
 use commands::files::*;
@@ -1276,6 +1277,7 @@ pub fn run() {
             // Settings commands
             get_settings,
             save_settings,
+            get_agent_api_commands,
             get_app_version,
             open_folder,
             save_file_bytes,
@@ -1452,15 +1454,28 @@ pub fn run() {
         let env_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+        let settings = get_settings().ok();
+        let settings_enabled = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_enabled)
+            .unwrap_or(true); // Default to enabled if settings not available
+        let settings_port = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_port)
+            .unwrap_or(3333);
+        let settings_http_port = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_http_port)
+            .unwrap_or(3334);
+
         let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(3333);
-
-        // Check settings (fallback when env vars are not set)
-        let settings_enabled = get_settings()
-            .map(|s| s.agent_bridge_enabled)
-            .unwrap_or(true); // Default to enabled if settings not available
+            .unwrap_or(settings_port);
+        let http_port = std::env::var("DEV_WS_BRIDGE_HTTP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(settings_http_port);
 
         // Final decision: env vars override settings
         // Bridge is enabled if:
@@ -1470,12 +1485,13 @@ pub fn run() {
         let ws_bridge_enabled = env_enabled && !env_disabled && settings_enabled;
 
         crate::desktop_log!(
-            "WS bridge: env_enabled={} env_disabled={} settings_enabled={} final={} port={}",
+            "WS bridge: env_enabled={} env_disabled={} settings_enabled={} final={} ws_port={} http_port={}",
             env_enabled,
             env_disabled,
             settings_enabled,
             ws_bridge_enabled,
-            bridge_port
+            bridge_port,
+            http_port
         );
 
         if !ws_bridge_enabled {
@@ -1483,11 +1499,21 @@ pub fn run() {
             return;
         }
 
+        let ws_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = ws_bridge::start_ws_server(app_handle, bridge_port).await {
+            if let Err(e) = ws_bridge::start_ws_server(ws_handle, bridge_port).await {
                 crate::desktop_log!("Failed to start WebSocket server: {}", e);
             }
         });
+
+        if http_port > 0 {
+            let http_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = ws_bridge::start_http_server(http_handle, http_port).await {
+                    crate::desktop_log!("Failed to start HTTP bridge: {}", e);
+                }
+            });
+        }
     }
 
     let mut exit_cleanup_started = false;

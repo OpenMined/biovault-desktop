@@ -10,18 +10,21 @@
 // - DEV_WS_BRIDGE: Enable/disable the bridge ("0", "false", "no" to disable)
 // - DEV_WS_BRIDGE_DISABLE: Force disable ("1", "true", "yes" to disable)
 // - DEV_WS_BRIDGE_PORT: WebSocket server port (default: 3333)
+// - DEV_WS_BRIDGE_HTTP_PORT: HTTP fallback port (default: 3334)
 // - AGENT_BRIDGE_TOKEN: Authentication token (overrides settings)
 
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -38,6 +41,16 @@ struct WsRequest {
     token: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct HttpRpcRequest {
+    id: u32,
+    cmd: String,
+    #[serde(default)]
+    args: Value,
+    #[serde(default)]
+    token: Option<String>,
+}
+
 #[derive(Serialize)]
 struct WsResponse {
     id: u32,
@@ -45,6 +58,13 @@ struct WsResponse {
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
 }
 
 /// Event message for streaming updates during long-running operations.
@@ -146,6 +166,25 @@ fn validate_token(provided: Option<&str>) -> bool {
     }
 }
 
+/// Check whether the agent bridge is enabled in settings
+fn is_bridge_enabled() -> bool {
+    crate::get_settings()
+        .map(|settings| settings.agent_bridge_enabled)
+        .unwrap_or(true)
+}
+
+/// Check whether a command is blocked by agent policy
+fn is_command_blocked(cmd: &str) -> bool {
+    crate::get_settings()
+        .map(|settings| {
+            settings
+                .agent_bridge_blocklist
+                .iter()
+                .any(|blocked| blocked == cmd)
+        })
+        .unwrap_or(false)
+}
+
 /// Command metadata for the list_commands endpoint
 #[derive(Serialize)]
 struct CommandInfo {
@@ -234,6 +273,10 @@ fn get_commands_list() -> serde_json::Value {
         cmd("save_settings", "settings", false),
         cmd("set_autostart_enabled", "settings", false),
         cmd("get_autostart_enabled", "app_status", true),
+        // UI Control
+        cmd("ui_navigate", "ui", false),
+        cmd("ui_pipeline_import_options", "ui", false),
+        cmd("ui_pipeline_import_from_path", "ui", false),
         // Onboarding
         cmd("check_is_onboarded", "onboarding", true),
         cmd_async("complete_onboarding", "onboarding", false),
@@ -442,9 +485,31 @@ fn get_commands_list() -> serde_json::Value {
     ];
 
     serde_json::json!({
-        "version": "1.4.0",
+        "version": "1.4.2",
         "commands": commands
     })
+}
+
+fn load_schema_json(app: &AppHandle) -> Result<Value, String> {
+    let schema_content = if let Ok(resource_path) = app.path().resource_dir() {
+        let schema_path = resource_path.join("docs").join("agent-api.json");
+        std::fs::read_to_string(&schema_path).ok()
+    } else {
+        None
+    };
+
+    let schema_content =
+        schema_content.or_else(|| std::fs::read_to_string("docs/agent-api.json").ok());
+
+    match schema_content {
+        Some(content) => serde_json::from_str::<Value>(&content)
+            .map_err(|e| format!("Failed to parse schema: {}", e)),
+        None => {
+            let fallback = include_str!("../../docs/agent-api.json");
+            serde_json::from_str::<Value>(fallback)
+                .map_err(|e| format!("Failed to parse embedded schema: {}", e))
+        }
+    }
 }
 
 /// Get the path to the audit log file
@@ -467,6 +532,108 @@ fn write_audit_log(entry: &AuditLogEntry) {
             }
         }
     }
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+    let mut buffer = Vec::new();
+    let mut temp = [0u8; 1024];
+    let header_end = loop {
+        let n = stream
+            .read(&mut temp)
+            .await
+            .map_err(|e| format!("Failed to read request: {}", e))?;
+        if n == 0 {
+            return Err("Connection closed".to_string());
+        }
+        buffer.extend_from_slice(&temp[..n]);
+        if buffer.len() > MAX_HEADER_BYTES {
+            return Err("Request header too large".to_string());
+        }
+        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos;
+        }
+    };
+
+    let header_bytes = &buffer[..header_end];
+    let mut body = buffer[header_end + 4..].to_vec();
+    let header_text = String::from_utf8_lossy(header_bytes);
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| "Empty request".to_string())?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| "Missing method".to_string())?
+        .to_string();
+    let path = request_parts
+        .next()
+        .ok_or_else(|| "Missing path".to_string())?
+        .to_string();
+
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if content_length > MAX_BODY_BYTES {
+        return Err("Request body too large".to_string());
+    }
+
+    while body.len() < content_length {
+        let n = stream
+            .read(&mut temp)
+            .await
+            .map_err(|e| format!("Failed to read request body: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&temp[..n]);
+        if body.len() > MAX_BODY_BYTES {
+            return Err("Request body too large".to_string());
+        }
+    }
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    status_text: &str,
+    body: &[u8],
+    content_type: &str,
+) {
+    let header = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\n\r\n",
+        status,
+        status_text,
+        content_type,
+        body.len()
+    );
+    let _ = stream.write_all(header.as_bytes()).await;
+    let _ = stream.write_all(body).await;
+}
+
+fn extract_bearer_token(headers: &HashMap<String, String>) -> Option<String> {
+    headers.get("authorization").and_then(|value| {
+        let trimmed = value.trim();
+        trimmed
+            .strip_prefix("Bearer ")
+            .or_else(|| trimmed.strip_prefix("bearer "))
+            .map(|token| token.trim().to_string())
+    })
 }
 
 /// Context for emitting events during command execution
@@ -645,7 +812,201 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     crate::desktop_log!("🔌 WebSocket connection closed: {}", addr);
 }
 
+async fn handle_http_connection(mut stream: TcpStream, app: Arc<AppHandle>) {
+    let peer_addr = stream
+        .peer_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+
+    let request = match read_http_request(&mut stream).await {
+        Ok(req) => req,
+        Err(error) => {
+            let body = serde_json::json!({ "error": error }).to_string();
+            write_http_response(
+                &mut stream,
+                400,
+                "Bad Request",
+                body.as_bytes(),
+                "application/json",
+            )
+            .await;
+            return;
+        }
+    };
+
+    let path = request.path.split('?').next().unwrap_or(&request.path);
+
+    if request.method.eq_ignore_ascii_case("OPTIONS") {
+        write_http_response(&mut stream, 204, "No Content", b"", "text/plain").await;
+        return;
+    }
+    if !is_bridge_enabled() {
+        let body = serde_json::json!({ "error": "Agent bridge disabled by settings" }).to_string();
+        write_http_response(
+            &mut stream,
+            403,
+            "Forbidden",
+            body.as_bytes(),
+            "application/json",
+        )
+        .await;
+        return;
+    }
+
+    match (request.method.as_str(), path) {
+        ("GET", "/schema") => {
+            let header_token = extract_bearer_token(&request.headers);
+            if !validate_token(header_token.as_deref()) {
+                let body =
+                    serde_json::json!({ "error": "Authentication failed: invalid or missing token" })
+                        .to_string();
+                write_http_response(
+                    &mut stream,
+                    401,
+                    "Unauthorized",
+                    body.as_bytes(),
+                    "application/json",
+                )
+                .await;
+                return;
+            }
+            match load_schema_json(&app) {
+                Ok(schema) => {
+                    let body = serde_json::to_vec(&schema).unwrap_or_default();
+                    write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+                }
+                Err(error) => {
+                    let body = serde_json::json!({ "error": error }).to_string();
+                    write_http_response(
+                        &mut stream,
+                        404,
+                        "Not Found",
+                        body.as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+            }
+        }
+        ("GET", "/commands") => {
+            let header_token = extract_bearer_token(&request.headers);
+            if !validate_token(header_token.as_deref()) {
+                let body =
+                    serde_json::json!({ "error": "Authentication failed: invalid or missing token" })
+                        .to_string();
+                write_http_response(
+                    &mut stream,
+                    401,
+                    "Unauthorized",
+                    body.as_bytes(),
+                    "application/json",
+                )
+                .await;
+                return;
+            }
+            let body = serde_json::to_vec(&get_commands_list()).unwrap_or_default();
+            write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+        }
+        ("POST", "/rpc") => {
+            let mut rpc: HttpRpcRequest = match serde_json::from_slice(&request.body) {
+                Ok(value) => value,
+                Err(error) => {
+                    let body = serde_json::json!({
+                        "error": format!("Failed to parse request: {}", error)
+                    })
+                    .to_string();
+                    write_http_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        body.as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            if rpc.token.is_none() {
+                rpc.token = extract_bearer_token(&request.headers);
+            }
+
+            if !validate_token(rpc.token.as_deref()) {
+                let response = WsResponse {
+                    id: rpc.id,
+                    result: None,
+                    error: Some("Authentication failed: invalid or missing token".to_string()),
+                };
+                let body = serde_json::to_vec(&response).unwrap_or_default();
+                write_http_response(&mut stream, 401, "Unauthorized", &body, "application/json")
+                    .await;
+                return;
+            }
+
+            crate::desktop_log!("📨 HTTP Request: {} (id: {})", rpc.cmd, rpc.id);
+
+            let args_size = rpc.args.to_string().len();
+            let start = std::time::Instant::now();
+            let response = execute_command(&app, &rpc.cmd, rpc.args).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            let (http_response, success, error_msg) = match response {
+                Ok(result) => (
+                    WsResponse {
+                        id: rpc.id,
+                        result: Some(result),
+                        error: None,
+                    },
+                    true,
+                    None,
+                ),
+                Err(error) => (
+                    WsResponse {
+                        id: rpc.id,
+                        result: None,
+                        error: Some(error.clone()),
+                    },
+                    false,
+                    Some(error),
+                ),
+            };
+
+            let audit_entry = AuditLogEntry {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id: rpc.id,
+                cmd: rpc.cmd,
+                args_size,
+                duration_ms,
+                success,
+                error: error_msg,
+                peer_addr,
+            };
+            write_audit_log(&audit_entry);
+
+            let body = serde_json::to_vec(&http_response).unwrap_or_default();
+            write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+        }
+        _ => {
+            let body = serde_json::json!({ "error": "Not found" }).to_string();
+            write_http_response(
+                &mut stream,
+                404,
+                "Not Found",
+                body.as_bytes(),
+                "application/json",
+            )
+            .await;
+        }
+    }
+}
+
 async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Value, String> {
+    if !is_bridge_enabled() {
+        return Err("Agent bridge disabled by settings".to_string());
+    }
+    if is_command_blocked(cmd) {
+        return Err(format!("Command '{}' blocked by agent policy", cmd));
+    }
     // Get the app state
     let state = app.state::<crate::AppState>();
 
@@ -656,14 +1017,28 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         // --------------------------------------------------------------------
         "agent_api_discover" => {
             // Return API metadata for agent self-discovery
+            let http_port = std::env::var("DEV_WS_BRIDGE_HTTP_PORT")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .or_else(|| crate::get_settings().ok().map(|s| s.agent_bridge_http_port))
+                .unwrap_or(3334);
             Ok(serde_json::json!({
-                "version": "1.3.0",
+                "version": "1.4.2",
                 "name": "BioVault Desktop Agent API",
                 "description": "WebSocket API for AI agent control of BioVault Desktop",
                 "protocol": {
                     "transport": "WebSocket",
                     "address": "127.0.0.1",
-                    "defaultPort": 3333
+                    "defaultPort": 3333,
+                    "http": {
+                        "address": "127.0.0.1",
+                        "port": http_port,
+                        "endpoints": {
+                            "rpc": "POST /rpc",
+                            "schema": "GET /schema",
+                            "commands": "GET /commands"
+                        }
+                    }
                 },
                 "auth": {
                     "required": get_auth_token().is_some(),
@@ -713,29 +1088,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "agent_api_get_schema" => {
             // Return the full JSON schema for the API
-            // Try to read the bundled schema from the app resources first,
-            // fall back to reading from docs directory
-            let schema_content = if let Ok(resource_path) = app.path().resource_dir() {
-                let schema_path = resource_path.join("docs").join("agent-api.json");
-                std::fs::read_to_string(&schema_path).ok()
-            } else {
-                None
-            };
-
-            // If resource not found, try relative path (for development)
-            let schema_content = schema_content.or_else(|| {
-                let dev_path = std::path::Path::new("docs/agent-api.json");
-                std::fs::read_to_string(dev_path).ok()
-            });
-
-            match schema_content {
-                Some(content) => {
-                    // Parse and return as JSON value
-                    serde_json::from_str::<serde_json::Value>(&content)
-                        .map_err(|e| format!("Failed to parse schema: {}", e))
-                }
-                None => Err("Schema file not found".to_string()),
-            }
+            load_schema_json(app)
         }
         "agent_api_list_commands" => {
             // Return a lightweight list of available commands with basic metadata
@@ -799,6 +1152,72 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     "reset_jupyter"
                 ]
             }))
+        }
+        // --------------------------------------------------------------------
+        // UI Control
+        // --------------------------------------------------------------------
+        "ui_navigate" => {
+            use tauri::Emitter;
+
+            let tab: String = serde_json::from_value(
+                args.get("tab")
+                    .or_else(|| args.get("view"))
+                    .cloned()
+                    .ok_or_else(|| "Missing tab".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse tab: {}", e))?;
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "navigate",
+                    "tab": tab
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
+        }
+        "ui_pipeline_import_options" => {
+            use tauri::Emitter;
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "pipeline_import_options"
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
+        }
+        "ui_pipeline_import_from_path" => {
+            use tauri::Emitter;
+
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .or_else(|| args.get("pipelinePath"))
+                    .or_else(|| args.get("pipeline_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let overwrite = args
+                .get("overwrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "pipeline_import_from_path",
+                    "path": path,
+                    "overwrite": overwrite
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
         }
         // --------------------------------------------------------------------
         // Settings / environment helpers (needed for browser-mode feature flags)
@@ -885,9 +1304,49 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             Ok(serde_json::to_value(result).unwrap())
         }
         "save_settings" => {
-            let settings: crate::types::Settings =
-                serde_json::from_value(args.get("settings").cloned().unwrap_or(args.clone()))
-                    .map_err(|e| format!("Failed to parse settings: {}", e))?;
+            let current = crate::get_settings().map_err(|e| e.to_string())?;
+            let mut settings_value = args.get("settings").cloned().unwrap_or(args.clone());
+            let settings_obj = settings_value
+                .as_object_mut()
+                .ok_or_else(|| "Settings must be an object".to_string())?;
+
+            let protected_keys = [
+                ("agent_bridge_enabled", "agentBridgeEnabled"),
+                ("agent_bridge_port", "agentBridgePort"),
+                ("agent_bridge_http_port", "agentBridgeHttpPort"),
+                ("agent_bridge_token", "agentBridgeToken"),
+                ("agent_bridge_blocklist", "agentBridgeBlocklist"),
+            ];
+
+            for (snake, camel) in protected_keys {
+                if settings_obj.contains_key(snake) || settings_obj.contains_key(camel) {
+                    return Err("Agent bridge settings cannot be changed via WebSocket".to_string());
+                }
+            }
+
+            settings_obj.insert(
+                "agent_bridge_enabled".to_string(),
+                serde_json::to_value(current.agent_bridge_enabled).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_port".to_string(),
+                serde_json::to_value(current.agent_bridge_port).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_http_port".to_string(),
+                serde_json::to_value(current.agent_bridge_http_port).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_token".to_string(),
+                serde_json::to_value(current.agent_bridge_token.clone()).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_blocklist".to_string(),
+                serde_json::to_value(current.agent_bridge_blocklist.clone()).unwrap_or_default(),
+            );
+
+            let settings: crate::types::Settings = serde_json::from_value(settings_value)
+                .map_err(|e| format!("Failed to parse settings: {}", e))?;
             crate::commands::settings::save_settings(settings).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
@@ -3063,6 +3522,39 @@ pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn st
         while let Ok((stream, _)) = listener.accept().await {
             let app_clone = Arc::clone(&app);
             tokio::spawn(handle_connection(stream, app_clone));
+        }
+    });
+
+    Ok(())
+}
+
+pub async fn start_http_server(
+    app: AppHandle,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let listener = loop {
+        match TcpListener::bind(&addr).await {
+            Ok(listener) => break listener,
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(Box::new(err));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    };
+
+    crate::desktop_log!("🌐 HTTP bridge listening on http://{}", addr);
+
+    let app = Arc::new(app);
+
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let app_clone = Arc::clone(&app);
+            tokio::spawn(handle_http_connection(stream, app_clone));
         }
     });
 

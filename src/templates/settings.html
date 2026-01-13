@@ -79,6 +79,89 @@
 					</div>
 				</div>
 
+				<!-- Agent Bridge -->
+				<div class="setting-item">
+					<label>Agent WebSocket Bridge</label>
+					<p>
+						Control local agent access, configure the port, and manage command blocklists. Changes
+						to enable/port require an app restart.
+					</p>
+					<div class="agent-bridge-controls">
+						<div class="agent-bridge-control">
+							<label class="agent-bridge-toggle">
+								<input type="checkbox" id="agent-bridge-enabled" />
+								<span>Enable agent bridge</span>
+							</label>
+							<div class="agent-bridge-hint">Restart required to apply enable/port changes.</div>
+						</div>
+						<div class="agent-bridge-control">
+							<label for="agent-bridge-port">WebSocket Port</label>
+							<input type="number" id="agent-bridge-port" min="1" max="65535" />
+						</div>
+						<div class="agent-bridge-control">
+							<label for="agent-bridge-http-port">HTTP Port</label>
+							<input type="number" id="agent-bridge-http-port" min="1" max="65535" />
+						</div>
+						<div class="agent-bridge-control">
+							<label for="agent-bridge-token">Token (optional)</label>
+							<input
+								type="password"
+								id="agent-bridge-token"
+								placeholder="Leave blank for no auth"
+								autocomplete="off"
+							/>
+						</div>
+						<div class="agent-bridge-control">
+							<label>LLM-friendly API command</label>
+							<div class="agent-bridge-test monospace">
+								curl -s http://127.0.0.1:<span id="agent-bridge-test-port">3334</span>/schema
+							</div>
+						</div>
+					</div>
+					<div class="agent-bridge-lists">
+						<div class="agent-bridge-panel">
+							<div class="agent-bridge-panel-header">
+								<span>Allowed commands</span>
+								<input type="text" id="agent-bridge-allowed-filter" placeholder="Filter commands" />
+							</div>
+							<div id="agent-bridge-allowed-list" class="agent-bridge-list"></div>
+						</div>
+						<div class="agent-bridge-panel agent-bridge-panel-actions">
+							<button
+								id="agent-bridge-block-btn"
+								class="settings-btn settings-btn-secondary"
+								disabled
+							>
+								Block -&gt;
+							</button>
+							<button
+								id="agent-bridge-allow-btn"
+								class="settings-btn settings-btn-secondary"
+								disabled
+							>
+								&lt;- Allow
+							</button>
+						</div>
+						<div class="agent-bridge-panel">
+							<div class="agent-bridge-panel-header">
+								<span>Blocked commands</span>
+								<input type="text" id="agent-bridge-blocked-filter" placeholder="Filter commands" />
+							</div>
+							<div id="agent-bridge-blocked-list" class="agent-bridge-list"></div>
+						</div>
+					</div>
+					<div class="agent-bridge-actions">
+						<button id="agent-bridge-save-btn" class="settings-btn settings-btn-primary">
+							Save Agent Bridge
+						</button>
+						<span
+							id="agent-bridge-save-status"
+							class="settings-save-status"
+							data-tone="info"
+						></span>
+					</div>
+				</div>
+
 				<!-- Identity -->
 				<div class="setting-item">
 					<label>Identity</label>

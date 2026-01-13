@@ -1,3 +1,4 @@
+pub mod agent_api;
 pub mod datasets;
 pub mod dependencies;
 pub mod files;

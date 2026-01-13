@@ -15,12 +15,13 @@ The BioVault Desktop exposes a WebSocket bridge that allows external agents to i
 
 ### Environment Variables
 
-| Variable                | Description                                               | Default |
-| ----------------------- | --------------------------------------------------------- | ------- |
-| `DEV_WS_BRIDGE`         | Enable/disable the bridge ("0", "false", "no" to disable) | Enabled |
-| `DEV_WS_BRIDGE_DISABLE` | Force disable ("1", "true", "yes" to disable)             | Not set |
-| `DEV_WS_BRIDGE_PORT`    | WebSocket server port                                     | `3333`  |
-| `AGENT_BRIDGE_TOKEN`    | Authentication token (overrides settings)                 | Not set |
+| Variable                  | Description                                               | Default |
+| ------------------------- | --------------------------------------------------------- | ------- |
+| `DEV_WS_BRIDGE`           | Enable/disable the bridge ("0", "false", "no" to disable) | Enabled |
+| `DEV_WS_BRIDGE_DISABLE`   | Force disable ("1", "true", "yes" to disable)             | Not set |
+| `DEV_WS_BRIDGE_PORT`      | WebSocket server port                                     | `3333`  |
+| `DEV_WS_BRIDGE_HTTP_PORT` | HTTP fallback port                                        | `3334`  |
+| `AGENT_BRIDGE_TOKEN`      | Authentication token (overrides settings)                 | Not set |
 
 ### Authentication
 
@@ -49,6 +50,26 @@ When authentication is enabled, include the token in each request:
 	"cmd": "get_app_version",
 	"token": "your-secret-token"
 }
+```
+
+### HTTP Fallback (Optional)
+
+If WebSocket clients are not available, a lightweight HTTP fallback is available at
+`http://127.0.0.1:3334` (override via `DEV_WS_BRIDGE_HTTP_PORT` or settings).
+
+- `POST /rpc` accepts the same JSON payload as WebSocket requests.
+- `GET /schema` returns the full JSON schema (LLM-friendly).
+- `GET /commands` returns the command list with metadata.
+
+HTTP requests support the token in either the JSON body (`token`) or
+`Authorization: Bearer <token>` header. Streaming events are not supported over HTTP.
+For long-running operations, poll with normal status/list commands (e.g., `get_pipeline_runs`).
+Agents can use HTTP for bootstrap and switch to WebSocket for streaming events.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:3334/schema
 ```
 
 ### Audit Logging
@@ -213,7 +234,7 @@ Response:
 {
 	"id": 1,
 	"result": {
-		"version": "1.2.0",
+		"version": "1.4.2",
 		"name": "BioVault Desktop Agent API",
 		"auth": { "required": false, "method": "token" },
 		"docs": "docs/agent-api.md",
@@ -334,6 +355,16 @@ Commands for managing application settings.
 | `get_settings`          | Get all settings     | Yes       | No    |
 | `save_settings`         | Save settings        | No        | No    |
 | `set_autostart_enabled` | Toggle app autostart | No        | No    |
+
+### UI Control
+
+Commands for driving the local UI (navigation and pipeline import helpers).
+
+| Command                        | Description                                    | Read-Only | Async |
+| ------------------------------ | ---------------------------------------------- | --------- | ----- |
+| `ui_navigate`                  | Navigate to a tab/view                         | No        | No    |
+| `ui_pipeline_import_options`   | Open pipeline import options modal             | No        | No    |
+| `ui_pipeline_import_from_path` | Import a pipeline from a local path via the UI | No        | No    |
 
 ### Dependencies
 
@@ -830,9 +861,18 @@ To get the machine-readable API specification at runtime, read the `docs/agent-a
 
 ## Version
 
-This document describes API version **1.4.0**.
+This document describes API version **1.4.2**.
 
 ## Changelog
+
+### 1.4.2
+
+- Added HTTP fallback endpoints (`/rpc`, `/schema`, `/commands`)
+- Added agent bridge HTTP port configuration
+
+### 1.4.1
+
+- Added UI control commands: `ui_navigate`, `ui_pipeline_import_options`, `ui_pipeline_import_from_path`
 
 ### 1.4.0
 

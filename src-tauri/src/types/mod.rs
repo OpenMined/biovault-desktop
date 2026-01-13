@@ -35,13 +35,30 @@ pub struct Settings {
     /// Enable the WebSocket agent bridge (default: true in dev mode)
     #[serde(default = "default_agent_bridge_enabled")]
     pub agent_bridge_enabled: bool,
+    /// WebSocket agent bridge port (default: 3333)
+    #[serde(default = "default_agent_bridge_port")]
+    pub agent_bridge_port: u16,
+    /// HTTP fallback port for the agent bridge (default: 3334)
+    #[serde(default = "default_agent_bridge_http_port")]
+    pub agent_bridge_http_port: u16,
     /// Optional authentication token for the agent bridge
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_bridge_token: Option<String>,
+    /// Blocked agent bridge commands
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_bridge_blocklist: Vec<String>,
 }
 
 fn default_agent_bridge_enabled() -> bool {
     true
+}
+
+fn default_agent_bridge_port() -> u16 {
+    3333
+}
+
+fn default_agent_bridge_http_port() -> u16 {
+    3334
 }
 
 impl Default for Settings {
@@ -57,7 +74,10 @@ impl Default for Settings {
             ai_model: "openrouter/auto".to_string(),
             syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
             agent_bridge_enabled: default_agent_bridge_enabled(),
+            agent_bridge_port: default_agent_bridge_port(),
+            agent_bridge_http_port: default_agent_bridge_http_port(),
             agent_bridge_token: None,
+            agent_bridge_blocklist: Vec::new(),
         }
     }
 }
