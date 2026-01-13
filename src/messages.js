@@ -45,13 +45,13 @@ export function createMessagesModule({
 	let messageSyncUnlisten = null
 	let notificationApiPromise = null
 	let searchTerm = ''
-        let messageFilter = 'inbox'
-        let syftboxAutoStartDisabled = null
+	let messageFilter = 'inbox'
+	let syftboxAutoStartDisabled = null
 
-        // Refresh rate: 2s in dev/test mode, 10s in production
-        // Note: 500ms was too aggressive and caused DOM instability during Playwright tests
-        const isDevMode = window.__DEV_WS_BRIDGE_PORT__ || window.location.search.includes('ws=')
-        const AUTO_REFRESH_MS = isDevMode ? 2000 : 10000
+	// Refresh rate: 2s in dev/test mode, 10s in production
+	// Note: 500ms was too aggressive and caused DOM instability during Playwright tests
+	const isDevMode = window.__DEV_WS_BRIDGE_PORT__ || window.location.search.includes('ws=')
+	const AUTO_REFRESH_MS = isDevMode ? 2000 : 10000
 	const NO_SUBJECT_PLACEHOLDER = '(No Subject)'
 	let failedMessages = []
 	let failedMessagesCount = 0
@@ -62,31 +62,29 @@ export function createMessagesModule({
 	// UTILITIES (module-specific helpers)
 	// ============================================================================
 
-        // Wrapper for confirmWithDialog that passes the dialog object
-        async function confirm(message, options = {}) {
-                return confirmWithDialog(dialog, message, options)
-        }
+	// Wrapper for confirmWithDialog that passes the dialog object
+	async function confirm(message, options = {}) {
+		return confirmWithDialog(dialog, message, options)
+	}
 
-        async function isSyftboxAutoStartDisabled() {
-                if (syftboxAutoStartDisabled !== null) return syftboxAutoStartDisabled
-                try {
-                        const value = await invoke('get_env_var', {
-                                key: 'DISABLE_SYFTBOX_AUTO_START',
-                        })
-                        syftboxAutoStartDisabled = ['1', 'true', 'yes', 'on'].includes(
-                                (value || '').toLowerCase(),
-                        )
-                } catch (_) {
-                        syftboxAutoStartDisabled = false
-                }
-                return syftboxAutoStartDisabled
-        }
+	async function isSyftboxAutoStartDisabled() {
+		if (syftboxAutoStartDisabled !== null) return syftboxAutoStartDisabled
+		try {
+			const value = await invoke('get_env_var', {
+				key: 'DISABLE_SYFTBOX_AUTO_START',
+			})
+			syftboxAutoStartDisabled = ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase())
+		} catch (_) {
+			syftboxAutoStartDisabled = false
+		}
+		return syftboxAutoStartDisabled
+	}
 
-        // Format file size in human readable format
-        function formatFileSize(bytes) {
-                if (bytes === 0) return '0 Bytes'
-                const k = 1024
-                const sizes = ['Bytes', 'KB', 'MB', 'GB']
+	// Format file size in human readable format
+	function formatFileSize(bytes) {
+		if (bytes === 0) return '0 Bytes'
+		const k = 1024
+		const sizes = ['Bytes', 'KB', 'MB', 'GB']
 		const i = Math.floor(Math.log(bytes) / Math.log(k))
 		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 	}
@@ -818,30 +816,30 @@ export function createMessagesModule({
 			hasActivityBaseline = false
 			stopMessagesAutoRefresh()
 		} else {
-                        const syftboxStatus = getSyftboxStatus()
-                        // Auto-connect to online if authorized but not currently running
-                        if (!syftboxStatus.running) {
-                                const autoStartDisabled = await isSyftboxAutoStartDisabled()
-                                if (autoStartDisabled) {
-                                        console.log('SyftBox auto-start disabled; skipping auto-connect')
-                                } else {
-                                        try {
-                                                // Attempt to start SyftBox client automatically
-                                                const status = await invoke('start_syftbox_client')
-                                                setSyftboxStatus(status)
-                                                if (status.running) {
-                                                        startMessagesAutoRefresh(true)
-                                                        ensureNotificationPermission()
-                                                }
-                                        } catch (error) {
-                                                console.warn('Auto-connect to SyftBox failed:', error)
-                                                // Continue without auto-connect, user can manually enable
-                                        }
-                                }
-                        } else {
-                                startMessagesAutoRefresh(true)
-                                ensureNotificationPermission()
-                        }
+			const syftboxStatus = getSyftboxStatus()
+			// Auto-connect to online if authorized but not currently running
+			if (!syftboxStatus.running) {
+				const autoStartDisabled = await isSyftboxAutoStartDisabled()
+				if (autoStartDisabled) {
+					console.log('SyftBox auto-start disabled; skipping auto-connect')
+				} else {
+					try {
+						// Attempt to start SyftBox client automatically
+						const status = await invoke('start_syftbox_client')
+						setSyftboxStatus(status)
+						if (status.running) {
+							startMessagesAutoRefresh(true)
+							ensureNotificationPermission()
+						}
+					} catch (error) {
+						console.warn('Auto-connect to SyftBox failed:', error)
+						// Continue without auto-connect, user can manually enable
+					}
+				}
+			} else {
+				startMessagesAutoRefresh(true)
+				ensureNotificationPermission()
+			}
 		}
 
 		updateConnectionStatus()

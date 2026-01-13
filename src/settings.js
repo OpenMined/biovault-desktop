@@ -16,16 +16,16 @@ export function createSettingsModule({
 	let defaultServerPromise = null
 	let keyStatus = null
 	let vaultPath = ''
-        let syftboxQueueTimer = null
-        let syftboxStatusTimer = null
-        let lastIndicatorTotals = { url: null, txTotal: null, rxTotal: null }
-        let lastRuntimeTotals = { url: null, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
-        let syftboxUnavailableShown = false
-        let syftboxAutoStartDisabled = null
-        const syftboxUnavailableStorageKey = 'syftbox_unavailable_shown_v1'
-        let profilesRefreshTimer = null
-        let profilesRefreshInFlight = false
-        let lastProfilesSignature = ''
+	let syftboxQueueTimer = null
+	let syftboxStatusTimer = null
+	let lastIndicatorTotals = { url: null, txTotal: null, rxTotal: null }
+	let lastRuntimeTotals = { url: null, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
+	let syftboxUnavailableShown = false
+	let syftboxAutoStartDisabled = null
+	const syftboxUnavailableStorageKey = 'syftbox_unavailable_shown_v1'
+	let profilesRefreshTimer = null
+	let profilesRefreshInFlight = false
+	let lastProfilesSignature = ''
 
 	function hasShownSyftboxUnavailable() {
 		if (syftboxUnavailableShown) return true
@@ -46,7 +46,7 @@ export function createSettingsModule({
 		}
 	}
 
-        async function getDefaultServer() {
+	async function getDefaultServer() {
 		if (defaultServerPromise) return defaultServerPromise
 		defaultServerPromise = invoke('get_default_syftbox_server_url')
 			.then((val) => {
@@ -57,28 +57,26 @@ export function createSettingsModule({
 			})
 			.catch(() => defaultSyftboxServerUrl)
 		return defaultServerPromise
-        }
+	}
 
-        async function isSyftboxAutoStartDisabled() {
-                if (syftboxAutoStartDisabled !== null) return syftboxAutoStartDisabled
-                try {
-                        const value = await invoke('get_env_var', {
-                                key: 'DISABLE_SYFTBOX_AUTO_START',
-                        })
-                        syftboxAutoStartDisabled = ['1', 'true', 'yes', 'on'].includes(
-                                (value || '').toLowerCase(),
-                        )
-                } catch (_) {
-                        syftboxAutoStartDisabled = false
-                }
-                return syftboxAutoStartDisabled
-        }
+	async function isSyftboxAutoStartDisabled() {
+		if (syftboxAutoStartDisabled !== null) return syftboxAutoStartDisabled
+		try {
+			const value = await invoke('get_env_var', {
+				key: 'DISABLE_SYFTBOX_AUTO_START',
+			})
+			syftboxAutoStartDisabled = ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase())
+		} catch (_) {
+			syftboxAutoStartDisabled = false
+		}
+		return syftboxAutoStartDisabled
+	}
 
-        function setSaveStatus(message, tone = 'info') {
-                const statusEl = document.getElementById('settings-save-status')
-                if (!statusEl) return
-                statusEl.textContent = message
-                statusEl.dataset.tone = tone
+	function setSaveStatus(message, tone = 'info') {
+		const statusEl = document.getElementById('settings-save-status')
+		if (!statusEl) return
+		statusEl.textContent = message
+		statusEl.dataset.tone = tone
 	}
 
 	async function loadSettings() {
@@ -118,16 +116,16 @@ export function createSettingsModule({
 			bindKeyButtons()
 			refreshKeyStatus()
 			loadContacts()
-                        setupSyftboxQueue()
-                        setupSyftboxDiagnostics()
-                        refreshSyftboxDiagnostics()
+			setupSyftboxQueue()
+			setupSyftboxDiagnostics()
+			refreshSyftboxDiagnostics()
 
-                        // Auto-start SyftBox daemon if authenticated
-                        if (!(await isSyftboxAutoStartDisabled())) {
-                                autoStartSyftBoxDaemon()
-                        } else {
-                                console.log('SyftBox auto-start disabled; skipping auto-start')
-                        }
+			// Auto-start SyftBox daemon if authenticated
+			if (!(await isSyftboxAutoStartDisabled())) {
+				autoStartSyftBoxDaemon()
+			} else {
+				console.log('SyftBox auto-start disabled; skipping auto-start')
+			}
 
 			// Poll diagnostics more frequently while on settings
 			if (syftboxStatusTimer) clearInterval(syftboxStatusTimer)
