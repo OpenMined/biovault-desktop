@@ -1817,7 +1817,13 @@ do_lint() {
 
 fast_tests_available() {
   case "$1" in
-    "."|bioscript|biovault|biovault-beaver|sbenv|syft-crypto-core|syftbox|syftbox-sdk)
+    syft-crypto-core)
+      if [[ -d "$1/vendor/libsignal-protocol-syft/crates" ]]; then
+        return 0
+      fi
+      return 1
+      ;;
+    "."|bioscript|biovault|biovault-beaver|sbenv|syftbox|syftbox-sdk)
       return 0
       ;;
     *)
@@ -1930,6 +1936,9 @@ do_test() {
     fi
 
     repos_with_tests+=("$repo")
+    local label="$repo"
+    [[ "$repo" == "." ]] && label="biovault-desktop"
+    echo -e "${CYAN}→ $label${NC}"
     local outfile="$tmpdir/${repo//\//_}.out"
     (
       local task_start=$SECONDS
@@ -1968,6 +1977,7 @@ do_test() {
       echo ""
       failures=$((failures + 1))
     else
+      echo -e "${GREEN}✓ $label${elapsed}${NC}"
       passed=$((passed + 1))
     fi
     i=$((i + 1))
