@@ -1020,6 +1020,8 @@ EOF
 		export BIOVAULT_DOCKER_CONFIG="$DOCKER_CONFIG"
 		export DEV_WS_BRIDGE=1
 		export DEV_WS_BRIDGE_PORT="$ws_port"
+		# Avoid WS/HTTP port collisions when multiple clients run in one host.
+		export DEV_WS_BRIDGE_HTTP_PORT="$((ws_port + 1000))"
 		export DISABLE_UPDATER=1
 		# Set unique service name for telemetry (uses email as identifier)
 		if [[ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]]; then
