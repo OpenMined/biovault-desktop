@@ -21,6 +21,13 @@ Options:
   sync                Re-sync workspace to manifest
   fetch               Fetch remotes for all repos and show ahead/behind
   pull [--rebase]     Pull updates for all repos on branches
+  lint [--force] [--verbose]
+                      Run lint.sh in dirty repos (parallel, quiet on success)
+                      --force runs lint.sh in all repos that have it
+                      --verbose prints lint output even on success
+  test [--force]
+                      Run fast unit tests in dirty repos (quiet on success)
+                      --force runs tests in all repos with fast tests
   ssh                 Rewrite remotes to SSH for all repos
   main                Checkout main in all repos (no reset)
   switch [-b] <branch> <targets...>
@@ -726,7 +733,9 @@ function Sync-Workspace {
         Push-Location $targetPath
         try {
             git fetch --all 2>&1 | Out-Null
+            $ErrorActionPreference = "SilentlyContinue"
             $output = git checkout $proj.Revision 2>&1
+            $ErrorActionPreference = "Stop"
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "synced to $($proj.Revision)" -ForegroundColor Green
             } else {
@@ -760,6 +769,19 @@ function Test-RepoDirty {
     try {
         $ErrorActionPreference = "SilentlyContinue"
         $status = git status --porcelain -uno 2>$null
+        return ($status -and $status.Length -gt 0)
+    } finally {
+        $ErrorActionPreference = "Stop"
+        Pop-Location
+    }
+}
+
+function Test-RepoDirtyAll {
+    param([string]$RepoPath)
+    Push-Location $RepoPath
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $status = git status --porcelain 2>$null
         return ($status -and $status.Length -gt 0)
     } finally {
         $ErrorActionPreference = "Stop"
@@ -952,6 +974,178 @@ function Invoke-PullAll {
         } finally {
             Pop-Location
         }
+    }
+}
+
+function Invoke-Lint {
+    param([string[]]$Args)
+
+    $force = $false
+    $verbose = $false
+
+    foreach ($arg in $Args) {
+        switch ($arg) {
+            "--force" { $force = $true }
+            "--verbose" { $verbose = $true }
+            "--help" { Write-Host "Usage: .\\repo.ps1 lint [--force] [--verbose]" -ForegroundColor Yellow; return }
+            "-h" { Write-Host "Usage: .\\repo.ps1 lint [--force] [--verbose]" -ForegroundColor Yellow; return }
+            default {
+                Write-Host "Unknown lint option: $arg" -ForegroundColor Red
+                return
+            }
+        }
+    }
+
+    $startTime = Get-Date
+    $dirtyRepos = @()
+    $projects = Get-ManifestProjects
+
+    if ($force) {
+        if (Test-Path (Join-Path $RootDir "lint.sh")) {
+            $dirtyRepos += "."
+        }
+        foreach ($proj in $projects) {
+            $repoPath = Join-Path $RootDir $proj.Path
+            if (Test-Path (Join-Path $repoPath ".git")) {
+                $dirtyRepos += $proj.Path
+            }
+        }
+    } else {
+        if (Test-RepoDirtyAll $RootDir) {
+            $dirtyRepos += "."
+        }
+        foreach ($proj in $projects) {
+            $repoPath = Join-Path $RootDir $proj.Path
+            if (Test-Path $repoPath) {
+                if (Test-RepoDirtyAll $repoPath) {
+                    $dirtyRepos += $proj.Path
+                }
+            }
+        }
+
+        if ($dirtyRepos.Count -eq 0) {
+            Write-Host "No dirty repos" -ForegroundColor Green
+            return
+        }
+    }
+
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("repo-lint-" + [System.Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
+
+    $winPs1Path = Join-Path $RootDir "win.ps1"
+    if (-not (Test-Path $winPs1Path)) {
+        Write-Host "win.ps1 not found at $winPs1Path" -ForegroundColor Red
+        return
+    }
+
+    $jobs = @()
+    $reposWithLint = @()
+
+    try {
+        foreach ($repo in $dirtyRepos) {
+            $repoPath = if ($repo -eq ".") { $RootDir } else { Join-Path $RootDir $repo }
+            $label = if ($repo -eq ".") { "biovault-desktop" } else { $repo }
+            $repoKey = if ($repo -eq ".") { "root" } else { $repo }
+            $scriptPath = Join-Path $repoPath "lint.sh"
+
+            if (-not (Test-Path $scriptPath)) {
+                continue
+            }
+
+            $reposWithLint += $repo
+            Write-Host "-> $label" -ForegroundColor Cyan
+
+            $outfile = Join-Path $tmpDir (($repoKey -replace '[\\/]', '_') + ".out")
+            $errfile = Join-Path $tmpDir (($repoKey -replace '[\\/]', '_') + ".err")
+            $start = Get-Date
+
+            $job = Start-Job -ScriptBlock {
+                param($jobRepoPath, $jobWinPs1Path, $jobOutFile, $jobErrFile)
+                Push-Location $jobRepoPath
+                try {
+                    & $jobWinPs1Path ./lint.sh 1> $jobOutFile 2> $jobErrFile
+                    return $LASTEXITCODE
+                } finally {
+                    Pop-Location
+                }
+            } -ArgumentList $repoPath, $winPs1Path, $outfile, $errfile
+
+            $jobs += [pscustomobject]@{
+                Repo = $repo
+                Label = $label
+                Job = $job
+                OutFile = $outfile
+                ErrFile = $errfile
+                Start = $start
+            }
+        }
+
+        if ($reposWithLint.Count -eq 0) {
+            Write-Host "No repos with lint.sh" -ForegroundColor Green
+            return
+        }
+
+        Write-Host ""
+        $failures = 0
+        $passed = 0
+
+        foreach ($item in $jobs) {
+            Wait-Job -Job $item.Job | Out-Null
+
+            $elapsed = [int]((Get-Date) - $item.Start).TotalSeconds
+            $elapsedText = " (${elapsed}s)"
+
+            $jobResult = Receive-Job -Job $item.Job -ErrorAction SilentlyContinue
+            $exitCode = if ($jobResult -is [System.Array]) { $jobResult[-1] } else { $jobResult }
+            if ($null -eq $exitCode) { $exitCode = 1 }
+
+            if ($exitCode -ne 0) {
+                Write-Host "FAIL $($item.Label)$elapsedText" -ForegroundColor Red
+                if (Test-Path $item.OutFile) { Get-Content $item.OutFile }
+                if (Test-Path $item.ErrFile) { Get-Content $item.ErrFile }
+                Write-Host ""
+                $failures++
+            } elseif ($verbose) {
+                Write-Host "OK $($item.Label)$elapsedText" -ForegroundColor Green
+                if (Test-Path $item.OutFile) { Get-Content $item.OutFile }
+                if (Test-Path $item.ErrFile) { Get-Content $item.ErrFile }
+                Write-Host ""
+                $passed++
+            } else {
+                Write-Host "OK $($item.Label)$elapsedText" -ForegroundColor Green
+                $passed++
+            }
+
+            Remove-Job -Job $item.Job -Force | Out-Null
+        }
+
+        $totalTime = [int]((Get-Date) - $startTime).TotalSeconds
+        Write-Host ""
+        if ($failures -eq 0) {
+            Write-Host "$passed repos passed in ${totalTime}s" -ForegroundColor Green
+        } else {
+            Write-Host "$failures failed, $passed passed in ${totalTime}s" -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        if (Test-Path $tmpDir) {
+            Remove-Item -Recurse -Force $tmpDir
+        }
+    }
+}
+
+function Invoke-Test {
+    param([string[]]$Args)
+
+    $winPs1Path = Join-Path $RootDir "win.ps1"
+    if (-not (Test-Path $winPs1Path)) {
+        Write-Host "win.ps1 not found at $winPs1Path" -ForegroundColor Red
+        return
+    }
+
+    & $winPs1Path ./repo test @Args
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
     }
 }
 
@@ -1204,7 +1398,7 @@ function Update-ManifestRevision {
     $updated = $false
 
     $escapedPath = [regex]::Escape($targetPath)
-    $patternPath = "(<project\\b[^>]*\\bpath=\"$escapedPath\"[^>]*\\brevision=\")([^\"]*)(\")"
+    $patternPath = '(<project\\b[^>]*\\bpath="' + $escapedPath + '"[^>]*\\brevision=")([^"]*)(")'
     if ([regex]::IsMatch($manifestText, $patternPath)) {
         $manifestText = [regex]::Replace(
             $manifestText,
@@ -1217,7 +1411,7 @@ function Update-ManifestRevision {
 
     if (-not $updated) {
         $escapedName = [regex]::Escape($targetName)
-        $patternName = "(<project\\b[^>]*\\bname=\"$escapedName\"[^>]*\\brevision=\")([^\"]*)(\")"
+        $patternName = '(<project\\b[^>]*\\bname="' + $escapedName + '"[^>]*\\brevision=")([^"]*)(")'
         if ([regex]::IsMatch($manifestText, $patternName)) {
             $manifestText = [regex]::Replace(
                 $manifestText,
@@ -1280,6 +1474,33 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             $ConfigureFirewall = $true
             break
         }
+        "^--force$" {
+            if ($Command -eq "lint" -or $Command -eq "test") {
+                $PositionalArgs += $arg
+                break
+            }
+            Write-Host "Unknown option: $arg" -ForegroundColor Red
+            Show-Usage
+            exit 1
+        }
+        "^--verbose$" {
+            if ($Command -eq "lint") {
+                $PositionalArgs += $arg
+                break
+            }
+            Write-Host "Unknown option: $arg" -ForegroundColor Red
+            Show-Usage
+            exit 1
+        }
+        "^--help$" {
+            if ($Command -eq "lint" -or $Command -eq "test") {
+                $PositionalArgs += $arg
+                break
+            }
+            Write-Host "Unknown option: $arg" -ForegroundColor Red
+            Show-Usage
+            exit 1
+        }
         "^-b$" {
             $CreateBranch = $true
             break
@@ -1319,6 +1540,12 @@ switch ($Command) {
     }
     "pull" {
         Invoke-PullAll -UseRebase $UseRebase
+    }
+    "lint" {
+        Invoke-Lint -Args $PositionalArgs
+    }
+    "test" {
+        Invoke-Test -Args $PositionalArgs
     }
     "ssh" {
         Invoke-SshRewrite

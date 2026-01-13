@@ -1,0 +1,17 @@
+{
+	"mode": "parallel",
+	"runs": [
+		{
+			"role": "do",
+			"notebook": "notebooks/00-malicious-do.ipynb",
+			"timeout": 120,
+			"email": "victim@sandbox.local"
+		},
+		{
+			"role": "ds",
+			"notebook": "notebooks/00-malicious-ds.ipynb",
+			"timeout": 120,
+			"email": "attacker@sandbox.local"
+		}
+	]
+}

@@ -1,0 +1,17 @@
+{
+	"mode": "parallel",
+	"runs": [
+		{
+			"role": "do",
+			"notebook": "notebooks/03-neural-network-do.ipynb",
+			"timeout": 600,
+			"email": "client1@sandbox.local"
+		},
+		{
+			"role": "ds",
+			"notebook": "notebooks/03-neural-network-ds.ipynb",
+			"timeout": 600,
+			"email": "client2@sandbox.local"
+		}
+	]
+}

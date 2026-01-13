@@ -1,0 +1,23 @@
+{
+	"mode": "sequential",
+	"runs": [
+		{
+			"role": "do",
+			"notebook": "notebooks/04-sessions-do-publish.ipynb",
+			"timeout": 300,
+			"email": "do@sandbox.local"
+		},
+		{
+			"role": "ds",
+			"notebook": "notebooks/04-sessions-ds.ipynb",
+			"timeout": 300,
+			"email": "ds@sandbox.local"
+		},
+		{
+			"role": "do",
+			"notebook": "notebooks/04-sessions-do-receive.ipynb",
+			"timeout": 300,
+			"email": "do@sandbox.local"
+		}
+	]
+}
