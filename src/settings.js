@@ -31,6 +31,7 @@ export function createSettingsModule({
 	let agentSelections = { allowed: new Set(), blocked: new Set() }
 	let agentFilters = { allowed: '', blocked: '' }
 	let agentBridgeUiReady = false
+	let agentBridgeSaveTimer = null
 
 	function hasShownSyftboxUnavailable() {
 		if (syftboxUnavailableShown) return true
@@ -92,6 +93,18 @@ export function createSettingsModule({
 		if (!portLabel) return
 		const port = Number(portValue) || 3334
 		portLabel.textContent = String(port)
+	}
+
+	function scheduleAgentBridgeSave(delay = 700) {
+		if (agentBridgeSaveTimer) clearTimeout(agentBridgeSaveTimer)
+		agentBridgeSaveTimer = setTimeout(() => {
+			saveAgentBridgeSettings()
+		}, delay)
+	}
+
+	function randomPort(min = 20000, max = 60000) {
+		const range = max - min
+		return min + Math.floor(Math.random() * range)
 	}
 
 	function getAgentCommandList() {
@@ -178,6 +191,9 @@ export function createSettingsModule({
 		const portInput = document.getElementById('agent-bridge-port')
 		const httpPortInput = document.getElementById('agent-bridge-http-port')
 		const tokenInput = document.getElementById('agent-bridge-token')
+		const tokenToggle = document.getElementById('agent-bridge-token-toggle')
+		const tokenToggleLabel = document.getElementById('agent-bridge-token-toggle-label')
+		const randomizePortsBtn = document.getElementById('agent-bridge-randomize-ports')
 		const blockBtn = document.getElementById('agent-bridge-block-btn')
 		const allowBtn = document.getElementById('agent-bridge-allow-btn')
 		const allowedFilter = document.getElementById('agent-bridge-allowed-filter')
@@ -232,6 +248,50 @@ export function createSettingsModule({
 			if (enabledToggle) {
 				enabledToggle.addEventListener('change', () => saveAgentBridgeSettings())
 			}
+
+			if (tokenToggle && tokenInput) {
+				tokenToggle.addEventListener('click', () => {
+					const showing = tokenInput.type === 'text'
+					tokenInput.type = showing ? 'password' : 'text'
+					if (tokenToggleLabel) {
+						tokenToggleLabel.textContent = showing ? 'Show' : 'Hide'
+					} else {
+						tokenToggle.textContent = showing ? 'Show' : 'Hide'
+					}
+				})
+			}
+
+			if (tokenInput) {
+				tokenInput.addEventListener('input', () => scheduleAgentBridgeSave())
+				tokenInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (portInput) {
+				portInput.addEventListener('input', () => scheduleAgentBridgeSave())
+				portInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (httpPortInput) {
+				httpPortInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand(httpPortInput.value)
+					scheduleAgentBridgeSave()
+				})
+				httpPortInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (randomizePortsBtn) {
+				randomizePortsBtn.addEventListener('click', () => {
+					let wsPort = randomPort()
+					let httpPort = randomPort()
+					while (httpPort === wsPort) {
+						httpPort = randomPort()
+					}
+					if (portInput) portInput.value = String(wsPort)
+					if (httpPortInput) httpPortInput.value = String(httpPort)
+					updateAgentBridgeTestCommand(httpPort)
+					saveAgentBridgeSettings()
+				})
+			}
 		}
 
 		enabledToggle.checked = Boolean(settings?.agent_bridge_enabled)
@@ -245,6 +305,12 @@ export function createSettingsModule({
 
 		if (tokenInput) {
 			tokenInput.value = settings?.agent_bridge_token || ''
+			tokenInput.type = 'password'
+		}
+		if (tokenToggleLabel) {
+			tokenToggleLabel.textContent = 'Show'
+		} else if (tokenToggle) {
+			tokenToggle.textContent = 'Show'
 		}
 
 		agentBlocklist = new Set(settings?.agent_bridge_blocklist || [])
@@ -1598,7 +1664,11 @@ export function createSettingsModule({
 		const agentBridgePortRaw =
 			document.getElementById('agent-bridge-port')?.value ||
 			currentSettings?.agent_bridge_port ||
-			3333
+			''
+		if (!agentBridgePortRaw) {
+			setSaveStatus('Agent bridge port is required (or use Randomize Ports).', 'error')
+			return
+		}
 		const agentBridgePort = Number(agentBridgePortRaw)
 		if (!Number.isInteger(agentBridgePort) || agentBridgePort < 1 || agentBridgePort > 65535) {
 			setSaveStatus('Agent bridge port must be between 1 and 65535.', 'error')
@@ -1607,7 +1677,11 @@ export function createSettingsModule({
 		const agentBridgeHttpPortRaw =
 			document.getElementById('agent-bridge-http-port')?.value ||
 			currentSettings?.agent_bridge_http_port ||
-			3334
+			''
+		if (!agentBridgeHttpPortRaw) {
+			setSaveStatus('Agent bridge HTTP port is required (or use Randomize Ports).', 'error')
+			return
+		}
 		const agentBridgeHttpPort = Number(agentBridgeHttpPortRaw)
 		if (
 			!Number.isInteger(agentBridgeHttpPort) ||
@@ -1651,6 +1725,10 @@ export function createSettingsModule({
 	}
 
 	async function saveAgentBridgeSettings() {
+		if (agentBridgeSaveTimer) {
+			clearTimeout(agentBridgeSaveTimer)
+			agentBridgeSaveTimer = null
+		}
 		if (!currentSettings) {
 			currentSettings = await invoke('get_settings').catch(() => ({}))
 		}

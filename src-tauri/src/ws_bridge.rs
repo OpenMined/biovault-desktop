@@ -143,26 +143,23 @@ fn get_auth_token() -> Option<String> {
 
     // Fall back to settings
     if let Ok(settings) = crate::get_settings() {
-        return settings.agent_bridge_token;
+        return settings
+            .agent_bridge_token
+            .filter(|token| !token.is_empty());
     }
 
     None
 }
 
 /// Validate an authentication token against the configured token
-fn validate_token(provided: Option<&str>) -> bool {
+fn auth_error_message(provided: Option<&str>) -> Option<String> {
     match get_auth_token() {
-        Some(expected) => {
-            // Token is configured - require valid token
-            match provided {
-                Some(p) => p == expected,
-                None => false,
-            }
-        }
-        None => {
-            // No token configured - allow all requests (dev mode)
-            true
-        }
+        Some(expected) => match provided {
+            Some(p) if p == expected => None,
+            Some(_) => Some("Authentication failed: invalid token".to_string()),
+            None => Some("Authentication failed: missing token".to_string()),
+        },
+        None => None,
     }
 }
 
@@ -736,12 +733,12 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
         };
 
         // Validate authentication token
-        if !validate_token(request.token.as_deref()) {
+        if let Some(error_message) = auth_error_message(request.token.as_deref()) {
             crate::desktop_log!("🔒 Auth failed for request {} from {}", request.id, addr);
             let ws_response = WsResponse {
                 id: request.id,
                 result: None,
-                error: Some("Authentication failed: invalid or missing token".to_string()),
+                error: Some(error_message),
             };
             if let Ok(response_text) = serde_json::to_string(&ws_response) {
                 let _ = tx.send(response_text).await;
@@ -856,10 +853,8 @@ async fn handle_http_connection(mut stream: TcpStream, app: Arc<AppHandle>) {
     match (request.method.as_str(), path) {
         ("GET", "/schema") => {
             let header_token = extract_bearer_token(&request.headers);
-            if !validate_token(header_token.as_deref()) {
-                let body =
-                    serde_json::json!({ "error": "Authentication failed: invalid or missing token" })
-                        .to_string();
+            if let Some(error_message) = auth_error_message(header_token.as_deref()) {
+                let body = serde_json::json!({ "error": error_message }).to_string();
                 write_http_response(
                     &mut stream,
                     401,
@@ -890,10 +885,8 @@ async fn handle_http_connection(mut stream: TcpStream, app: Arc<AppHandle>) {
         }
         ("GET", "/commands") => {
             let header_token = extract_bearer_token(&request.headers);
-            if !validate_token(header_token.as_deref()) {
-                let body =
-                    serde_json::json!({ "error": "Authentication failed: invalid or missing token" })
-                        .to_string();
+            if let Some(error_message) = auth_error_message(header_token.as_deref()) {
+                let body = serde_json::json!({ "error": error_message }).to_string();
                 write_http_response(
                     &mut stream,
                     401,
@@ -931,11 +924,11 @@ async fn handle_http_connection(mut stream: TcpStream, app: Arc<AppHandle>) {
                 rpc.token = extract_bearer_token(&request.headers);
             }
 
-            if !validate_token(rpc.token.as_deref()) {
+            if let Some(error_message) = auth_error_message(rpc.token.as_deref()) {
                 let response = WsResponse {
                     id: rpc.id,
                     result: None,
-                    error: Some("Authentication failed: invalid or missing token".to_string()),
+                    error: Some(error_message),
                 };
                 let body = serde_json::to_vec(&response).unwrap_or_default();
                 write_http_response(&mut stream, 401, "Unauthorized", &body, "application/json")

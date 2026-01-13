@@ -104,12 +104,41 @@
 						</div>
 						<div class="agent-bridge-control">
 							<label for="agent-bridge-token">Token (optional)</label>
-							<input
-								type="password"
-								id="agent-bridge-token"
-								placeholder="Leave blank for no auth"
-								autocomplete="off"
-							/>
+							<div class="agent-bridge-token-row">
+								<input
+									type="password"
+									id="agent-bridge-token"
+									placeholder="Leave blank for no auth"
+									autocomplete="off"
+								/>
+								<button
+									type="button"
+									id="agent-bridge-token-toggle"
+									class="settings-btn settings-btn-secondary"
+								>
+									<svg
+										class="agent-bridge-token-icon"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+										focusable="false"
+									>
+										<path
+											d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"
+										/>
+									</svg>
+									<span id="agent-bridge-token-toggle-label">Show</span>
+								</button>
+							</div>
+						</div>
+						<div class="agent-bridge-control">
+							<label>Ports</label>
+							<button
+								id="agent-bridge-randomize-ports"
+								class="settings-btn settings-btn-secondary"
+								type="button"
+							>
+								Randomize Ports
+							</button>
 						</div>
 						<div class="agent-bridge-control">
 							<label>LLM-friendly API command</label>

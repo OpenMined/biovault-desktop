@@ -303,6 +303,29 @@
 	margin-top: 12px;
 }
 
+.agent-bridge-token-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.agent-bridge-token-row button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.agent-bridge-token-icon {
+	width: 16px;
+	height: 16px;
+	fill: currentColor;
+}
+
+.agent-bridge-token-row input {
+	flex: 1;
+	min-width: 0;
+}
+
 @media (max-width: 900px) {
 	.agent-bridge-lists {
 		grid-template-columns: 1fr;
