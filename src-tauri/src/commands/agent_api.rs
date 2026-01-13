@@ -1,3 +1,4 @@
+use std::env;
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
@@ -25,4 +26,27 @@ pub fn get_agent_api_commands(app: AppHandle) -> Result<Vec<String>, String> {
     let mut names: Vec<String> = commands.keys().cloned().collect();
     names.sort();
     Ok(names)
+}
+
+#[tauri::command]
+pub async fn restart_agent_bridge(app: AppHandle) -> Result<(), String> {
+    let settings = crate::get_settings().map_err(|e| e.to_string())?;
+    let env_enabled = env::var("DEV_WS_BRIDGE")
+        .map(|v| !matches!(v.as_str(), "0" | "false" | "no"))
+        .unwrap_or(true);
+    let env_disabled = env::var("DEV_WS_BRIDGE_DISABLE")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let ws_bridge_enabled = env_enabled && !env_disabled && settings.agent_bridge_enabled;
+
+    let bridge_port = env::var("DEV_WS_BRIDGE_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(settings.agent_bridge_port);
+    let http_port = env::var("DEV_WS_BRIDGE_HTTP_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(settings.agent_bridge_http_port);
+
+    crate::ws_bridge::restart_agent_bridge(app, bridge_port, http_port, ws_bridge_enabled).await
 }

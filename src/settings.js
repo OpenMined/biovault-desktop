@@ -88,11 +88,17 @@ export function createSettingsModule({
 		return agentCommandPromise
 	}
 
-	function updateAgentBridgeTestCommand(portValue) {
-		const portLabel = document.getElementById('agent-bridge-test-port')
-		if (!portLabel) return
-		const port = Number(portValue) || 3334
-		portLabel.textContent = String(port)
+	function updateAgentBridgeTestCommand() {
+		const commandEl = document.getElementById('agent-bridge-test-command')
+		if (!commandEl) return
+		const portInput = document.getElementById('agent-bridge-http-port')
+		const tokenInput = document.getElementById('agent-bridge-token')
+		const port = Number(portInput?.value) || 3334
+		const tokenValue = tokenInput?.value.trim() || ''
+		const revealToken = tokenInput?.type === 'text'
+		const displayToken = revealToken && tokenValue ? tokenValue : 'TOKEN'
+		const safeToken = displayToken.replace(/"/g, '\\"')
+		commandEl.textContent = `curl -s -H "Authorization: Bearer ${safeToken}" http://127.0.0.1:${port}/schema`
 	}
 
 	function scheduleAgentBridgeSave(delay = 700) {
@@ -100,6 +106,16 @@ export function createSettingsModule({
 		agentBridgeSaveTimer = setTimeout(() => {
 			saveAgentBridgeSettings()
 		}, delay)
+	}
+
+	async function restartAgentBridge() {
+		try {
+			await invoke('restart_agent_bridge')
+			setSaveStatus('Agent bridge restarted.', 'success')
+		} catch (error) {
+			console.error('Error restarting agent bridge:', error)
+			setSaveStatus(error?.message || 'Failed to restart agent bridge.', 'error')
+		}
 	}
 
 	function randomPort(min = 20000, max = 60000) {
@@ -194,6 +210,7 @@ export function createSettingsModule({
 		const tokenToggle = document.getElementById('agent-bridge-token-toggle')
 		const tokenToggleLabel = document.getElementById('agent-bridge-token-toggle-label')
 		const randomizePortsBtn = document.getElementById('agent-bridge-randomize-ports')
+		const restartBtn = document.getElementById('agent-bridge-restart')
 		const blockBtn = document.getElementById('agent-bridge-block-btn')
 		const allowBtn = document.getElementById('agent-bridge-allow-btn')
 		const allowedFilter = document.getElementById('agent-bridge-allowed-filter')
@@ -236,8 +253,8 @@ export function createSettingsModule({
 			}
 
 			if (httpPortInput) {
-				httpPortInput.addEventListener('input', (event) => {
-					updateAgentBridgeTestCommand(event.target.value)
+				httpPortInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand()
 				})
 			}
 
@@ -258,11 +275,15 @@ export function createSettingsModule({
 					} else {
 						tokenToggle.textContent = showing ? 'Show' : 'Hide'
 					}
+					updateAgentBridgeTestCommand()
 				})
 			}
 
 			if (tokenInput) {
-				tokenInput.addEventListener('input', () => scheduleAgentBridgeSave())
+				tokenInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand()
+					scheduleAgentBridgeSave()
+				})
 				tokenInput.addEventListener('blur', () => saveAgentBridgeSettings())
 			}
 
@@ -273,7 +294,7 @@ export function createSettingsModule({
 
 			if (httpPortInput) {
 				httpPortInput.addEventListener('input', () => {
-					updateAgentBridgeTestCommand(httpPortInput.value)
+					updateAgentBridgeTestCommand()
 					scheduleAgentBridgeSave()
 				})
 				httpPortInput.addEventListener('blur', () => saveAgentBridgeSettings())
@@ -288,8 +309,14 @@ export function createSettingsModule({
 					}
 					if (portInput) portInput.value = String(wsPort)
 					if (httpPortInput) httpPortInput.value = String(httpPort)
-					updateAgentBridgeTestCommand(httpPort)
+					updateAgentBridgeTestCommand()
 					saveAgentBridgeSettings()
+				})
+			}
+
+			if (restartBtn) {
+				restartBtn.addEventListener('click', () => {
+					restartAgentBridge()
 				})
 			}
 		}
@@ -298,9 +325,9 @@ export function createSettingsModule({
 		portInput.value = String(settings?.agent_bridge_port || 3333)
 		if (httpPortInput) {
 			httpPortInput.value = String(settings?.agent_bridge_http_port || 3334)
-			updateAgentBridgeTestCommand(httpPortInput.value)
+			updateAgentBridgeTestCommand()
 		} else {
-			updateAgentBridgeTestCommand('3334')
+			updateAgentBridgeTestCommand()
 		}
 
 		if (tokenInput) {
@@ -312,6 +339,7 @@ export function createSettingsModule({
 		} else if (tokenToggle) {
 			tokenToggle.textContent = 'Show'
 		}
+		updateAgentBridgeTestCommand()
 
 		agentBlocklist = new Set(settings?.agent_bridge_blocklist || [])
 		agentSelections = { allowed: new Set(), blocked: new Set() }
@@ -1697,6 +1725,12 @@ export function createSettingsModule({
 			: currentSettings?.agent_bridge_token || ''
 		const agentBridgeBlocklist = Array.from(agentBlocklist).sort()
 
+		const shouldRestart =
+			!currentSettings ||
+			currentSettings.agent_bridge_enabled !== agentBridgeEnabled ||
+			currentSettings.agent_bridge_port !== agentBridgePort ||
+			currentSettings.agent_bridge_http_port !== agentBridgeHttpPort
+
 		const settings = {
 			...(currentSettings || {}),
 			email,
@@ -1716,6 +1750,9 @@ export function createSettingsModule({
 			currentSettings = settings
 			currentUserEmail = email
 			setSaveStatus('Settings saved successfully.', 'success')
+			if (shouldRestart) {
+				await restartAgentBridge()
+			}
 			await checkSyftBoxStatus()
 			onAiConfigUpdated?.()
 		} catch (error) {
@@ -1765,6 +1802,12 @@ export function createSettingsModule({
 			: currentSettings?.agent_bridge_token || ''
 		const agentBridgeBlocklist = Array.from(agentBlocklist).sort()
 
+		const shouldRestart =
+			!currentSettings ||
+			currentSettings.agent_bridge_enabled !== agentBridgeEnabled ||
+			currentSettings.agent_bridge_port !== agentBridgePort ||
+			currentSettings.agent_bridge_http_port !== agentBridgeHttpPort
+
 		const settings = {
 			...(currentSettings || {}),
 			agent_bridge_enabled: agentBridgeEnabled,
@@ -1778,6 +1821,9 @@ export function createSettingsModule({
 			await invoke('save_settings', { settings })
 			currentSettings = { ...(currentSettings || {}), ...settings }
 			setSaveStatus('Agent bridge settings saved.', 'success')
+			if (shouldRestart) {
+				await restartAgentBridge()
+			}
 		} catch (error) {
 			console.error('Error saving agent bridge settings:', error)
 			setSaveStatus(error?.message || 'Failed to save agent bridge settings.', 'error')

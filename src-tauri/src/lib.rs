@@ -1278,6 +1278,7 @@ pub fn run() {
             get_settings,
             save_settings,
             get_agent_api_commands,
+            restart_agent_bridge,
             get_app_version,
             open_folder,
             save_file_bytes,
@@ -1494,26 +1495,15 @@ pub fn run() {
             http_port
         );
 
-        if !ws_bridge_enabled {
-            crate::desktop_log!("WS bridge disabled by environment or settings");
-            return;
-        }
-
-        let ws_handle = app_handle.clone();
+        let handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = ws_bridge::start_ws_server(ws_handle, bridge_port).await {
-                crate::desktop_log!("Failed to start WebSocket server: {}", e);
+            if let Err(e) =
+                ws_bridge::restart_agent_bridge(handle, bridge_port, http_port, ws_bridge_enabled)
+                    .await
+            {
+                crate::desktop_log!("Failed to start agent bridge: {}", e);
             }
         });
-
-        if http_port > 0 {
-            let http_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = ws_bridge::start_http_server(http_handle, http_port).await {
-                    crate::desktop_log!("Failed to start HTTP bridge: {}", e);
-                }
-            });
-        }
     }
 
     let mut exit_cleanup_started = false;

@@ -15,6 +15,7 @@
 
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,11 +23,11 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{info_span, Instrument};
 
@@ -59,6 +60,36 @@ struct WsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
+
+struct BridgeTask {
+    shutdown: watch::Sender<bool>,
+    handle: tokio::task::JoinHandle<()>,
+    port: u16,
+}
+
+#[derive(Default)]
+struct BridgeManager {
+    ws: Option<BridgeTask>,
+    http: Option<BridgeTask>,
+}
+
+impl BridgeManager {
+    fn stop_all(&mut self) {
+        if let Some(task) = self.ws.take() {
+            let _ = task.shutdown.send(true);
+            task.handle.abort();
+            crate::desktop_log!("🛑 Stopped WebSocket bridge on port {}", task.port);
+        }
+        if let Some(task) = self.http.take() {
+            let _ = task.shutdown.send(true);
+            task.handle.abort();
+            crate::desktop_log!("🛑 Stopped HTTP bridge on port {}", task.port);
+        }
+    }
+}
+
+static BRIDGE_MANAGER: Lazy<Mutex<BridgeManager>> =
+    Lazy::new(|| Mutex::new(BridgeManager::default()));
 
 struct HttpRequest {
     method: String,
@@ -3490,21 +3521,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
 
 pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
-    // During profile switching, the app may restart quickly and attempt to re-bind the same port
-    // while the previous process is still winding down. Retry a few times to reduce flakiness.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-    let listener = loop {
-        match TcpListener::bind(&addr).await {
-            Ok(listener) => break listener,
-            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(Box::new(err));
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-            Err(err) => return Err(Box::new(err)),
-        }
-    };
+    let listener = bind_listener(addr).await?;
 
     crate::desktop_log!("🚀 WebSocket server listening on ws://{}", addr);
     crate::desktop_log!("📝 Browser mode: Commands will be proxied via WebSocket");
@@ -3526,6 +3543,25 @@ pub async fn start_http_server(
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = bind_listener(addr).await?;
+
+    crate::desktop_log!("🌐 HTTP bridge listening on http://{}", addr);
+
+    let app = Arc::new(app);
+
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let app_clone = Arc::clone(&app);
+            tokio::spawn(handle_http_connection(stream, app_clone));
+        }
+    });
+
+    Ok(())
+}
+
+async fn bind_listener(addr: SocketAddr) -> Result<TcpListener, Box<dyn std::error::Error>> {
+    // During profile switching, the app may restart quickly and attempt to re-bind the same port
+    // while the previous process is still winding down. Retry a few times to reduce flakiness.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let listener = loop {
         match TcpListener::bind(&addr).await {
@@ -3540,16 +3576,133 @@ pub async fn start_http_server(
         }
     };
 
+    Ok(listener)
+}
+
+pub async fn start_ws_server_with_shutdown(
+    app: AppHandle,
+    port: u16,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = bind_listener(addr).await?;
+
+    crate::desktop_log!("🚀 WebSocket server listening on ws://{}", addr);
+    crate::desktop_log!("📝 Browser mode: Commands will be proxied via WebSocket");
+
+    let app = Arc::new(app);
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                incoming = listener.accept() => {
+                    match incoming {
+                        Ok((stream, _)) => {
+                            let app_clone = Arc::clone(&app);
+                            tokio::spawn(handle_connection(stream, app_clone));
+                        }
+                        Err(err) => {
+                            crate::desktop_log!("⚠️ WS bridge accept failed: {}", err);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(handle)
+}
+
+pub async fn start_http_server_with_shutdown(
+    app: AppHandle,
+    port: u16,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = bind_listener(addr).await?;
+
     crate::desktop_log!("🌐 HTTP bridge listening on http://{}", addr);
 
     let app = Arc::new(app);
-
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let app_clone = Arc::clone(&app);
-            tokio::spawn(handle_http_connection(stream, app_clone));
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                incoming = listener.accept() => {
+                    match incoming {
+                        Ok((stream, _)) => {
+                            let app_clone = Arc::clone(&app);
+                            tokio::spawn(handle_http_connection(stream, app_clone));
+                        }
+                        Err(err) => {
+                            crate::desktop_log!("⚠️ HTTP bridge accept failed: {}", err);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     });
+
+    Ok(handle)
+}
+
+pub async fn restart_agent_bridge(
+    app: AppHandle,
+    ws_port: u16,
+    http_port: u16,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut manager = BRIDGE_MANAGER
+            .lock()
+            .map_err(|_| "Failed to lock bridge manager".to_string())?;
+        manager.stop_all();
+    }
+
+    if !enabled {
+        crate::desktop_log!("WS bridge disabled by environment or settings");
+        return Ok(());
+    }
+
+    let (ws_shutdown_tx, ws_shutdown_rx) = watch::channel(false);
+    let ws_handle = start_ws_server_with_shutdown(app.clone(), ws_port, ws_shutdown_rx)
+        .await
+        .map_err(|e| format!("Failed to start WebSocket bridge: {}", e))?;
+
+    let mut http_task: Option<BridgeTask> = None;
+    if http_port > 0 {
+        let (http_shutdown_tx, http_shutdown_rx) = watch::channel(false);
+        match start_http_server_with_shutdown(app, http_port, http_shutdown_rx).await {
+            Ok(handle) => {
+                http_task = Some(BridgeTask {
+                    shutdown: http_shutdown_tx,
+                    handle,
+                    port: http_port,
+                });
+            }
+            Err(err) => {
+                let _ = ws_shutdown_tx.send(true);
+                ws_handle.abort();
+                return Err(format!("Failed to start HTTP bridge: {}", err));
+            }
+        }
+    }
+
+    let mut manager = BRIDGE_MANAGER
+        .lock()
+        .map_err(|_| "Failed to lock bridge manager".to_string())?;
+    manager.ws = Some(BridgeTask {
+        shutdown: ws_shutdown_tx,
+        handle: ws_handle,
+        port: ws_port,
+    });
+    manager.http = http_task;
 
     Ok(())
 }
