@@ -2,6 +2,17 @@
 
 ## Current Progress
 
+- Resuming after VM reboot: plan to extend networking E2E coverage, run observability-enabled networking scenario, then inspect unified logs + Jaeger spans for errors to fix.
+- Plan: stop any running BioVault/syftbox/test-scenario processes, then rerun networking scenario with embedded-mode default and inspect logs for errors.
+- Updated devstack/test-scenario defaults to embedded SyftBox clients (override with `--client-mode` or `BV_DEVSTACK_CLIENT_MODE`).
+- Removed networking-specific `DEVSTACK_SKIP_CLIENT_DAEMONS` override so client daemons are not disabled when running networking scenarios.
+- Fixed `test-scenario.sh` to guard `DEVSTACK_SKIP_CLIENT_DAEMONS` with a default to avoid unbound variable errors under `set -u`.
+- Networking run failed: embedded devstack start hit "BioVault not initialized" (bv init skipped for UI scenarios); updated `test-scenario.sh` to run devstack bootstrap when embedded.
+- Networking run failed: `syftboxd` exited because it tried to spawn `syftbox` binary; enabled `embedded` feature for `syftbox-sdk` in `biovault/cli/Cargo.toml`.
+- Networking run failed at peer key sync; traced to Windows backslash paths in syftbox-rs client uploads. Normalized datasite keys to forward slashes in `syftbox/rust/src/client.rs` and `syftbox/rust/src/sync.rs`, then rebuilt `biovault/cli` with `PROTOC`.
+- Networking run now reaches tests but fails on `stop_syftbox_client` ("SyftBox did not stop in time"). Plan: run embedded SyftBox inside Tauri and skip devstack syftboxd for networking to avoid conflicting daemons.
+- Plan: add a two-client offline recovery networking test (stop client2 syftbox, write sync file from client1, restart client2, verify resync).
+- Plan: run `.\win.ps1 --desktop --desktop-wait .\test-scenario-obs.sh --networking --interactive` and capture unified log + Jaeger error spans.
 - Jaeger Windows support added in obs scripts (exe detection, PowerShell start, separate stderr log).
 - Jaeger running on Windows; services visible: `client1@sandbox.local`, `client2@sandbox.local`.
 - Jupyter collaboration scenario passed with observability.

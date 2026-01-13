@@ -69,7 +69,8 @@ Scenario Options (pick one):
   --profiles           Run profiles UI flow (real backend, isolated sandbox)
   --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
-  --messaging-sessions Run onboarding + comprehensive messaging & sessions
+  --messaging-sessions Run onboarding + comprehensive messaging & sessions      
+  --networking         Run control-plane + file sync networking smoke test
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
   --pipelines-gwas     Run GWAS pipeline UI test only (single client)
@@ -130,6 +131,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--messaging-sessions)
 			SCENARIO="messaging-sessions"
+			shift
+			;;
+		--networking)
+			SCENARIO="networking"
 			shift
 			;;
 		--messaging-core)
@@ -211,27 +216,33 @@ done
 
 # Default to "all" if no scenario specified
 if [[ -z "$SCENARIO" ]]; then
-	# Support legacy SCENARIO env var
-	SCENARIO="${SCENARIO:-all}"
+        # Support legacy SCENARIO env var
+        SCENARIO="${SCENARIO:-all}"
+fi
+
+# Networking scenarios manage SyftBox lifecycle in-app; avoid starting syftboxd unless explicitly requested.
+if [[ "$SCENARIO" == "networking" && -z "${BV_DEVSTACK_START_SYFTBOXD:-}" ]]; then
+        export BV_DEVSTACK_START_SYFTBOXD=0
 fi
 
 # Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
 if [[ "$WARM_CACHE_SET" == "0" ]]; then
-	case "$SCENARIO" in
-		jupyter|jupyter-collab) WARM_CACHE=1 ;;
-		*) WARM_CACHE=0 ;;
+        case "$SCENARIO" in
+                jupyter|jupyter-collab) WARM_CACHE=1 ;;
+                *) WARM_CACHE=0 ;;
 	esac
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
-# For CLI/core scenarios, we want the biovault sandbox initialized by devstack (keys/config under .biovault).
+# Embedded SyftBox clients require BioVault init, so always run bootstrap in embedded mode.
 DEVSTACK_SKIP_KEYS="${DEVSTACK_SKIP_KEYS:-}"
+DEVSTACK_CLIENT_MODE="$(printf '%s' "${BV_DEVSTACK_CLIENT_MODE:-embedded}" | tr '[:upper:]' '[:lower:]')"
 if [[ -z "${DEVSTACK_SKIP_KEYS}" ]]; then
-	if [[ "$SCENARIO" == "messaging-core" ]]; then
-		DEVSTACK_SKIP_KEYS=0
-	else
-		DEVSTACK_SKIP_KEYS=1
-	fi
+        if [[ "$DEVSTACK_CLIENT_MODE" == "embedded" || "$SCENARIO" == "messaging-core" ]]; then
+                DEVSTACK_SKIP_KEYS=0
+        else
+                DEVSTACK_SKIP_KEYS=1
+        fi
 fi
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -623,12 +634,15 @@ if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
 	timer_pop
 	DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
-	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-		DEVSTACK_ARGS+=(--reset)
-	fi
-	if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
-		DEVSTACK_ARGS+=(--skip-keys)
-	fi
+        if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then  
+                DEVSTACK_ARGS+=(--reset)
+        fi
+        if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
+                DEVSTACK_ARGS+=(--skip-keys)
+        fi
+        if [[ "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "1" || "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "true" ]]; then
+                DEVSTACK_ARGS+=(--skip-client-daemons)
+        fi
 	timer_push "Devstack start"
 	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
 	timer_pop
@@ -965,10 +979,13 @@ launch_instance() {
 		export BIOVAULT_DEV_SYFTBOX=1
 		# In devstack mode we don't require OAuth-style SyftBox auth; unlock messages UI.
 		export SYFTBOX_AUTH_ENABLED=0
-		export SYFTBOX_SERVER_URL="$SERVER_URL"
-		export SYFTBOX_EMAIL="$email"
-		export SYFTBOX_CONFIG_PATH="$cfg"
-		export SYFTBOX_DATA_DIR="$home"
+                export SYFTBOX_SERVER_URL="$SERVER_URL"
+                export SYFTBOX_EMAIL="$email"
+                export SYFTBOX_CONFIG_PATH="$cfg"
+                export SYFTBOX_DATA_DIR="$home"
+                if [[ "$DEVSTACK_CLIENT_MODE" == "embedded" ]]; then
+                        export BV_SYFTBOX_BACKEND=embedded
+                fi
 		# Profiles tests manage SYC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
 		# Other scenarios keep a fixed vault path per client for simplicity.
 		if [[ "$SCENARIO" != "profiles" ]]; then
@@ -1288,55 +1305,80 @@ ensure_playwright_browsers
 				run_ui_grep "@onboarding-two"
 				timer_pop
 				# After onboarding, keys exist - wait for them to sync via the network
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
-				preflight_peer_sync
-				timer_pop
+                        if [[ "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "0" || "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "false" || "${BV_DEVSTACK_START_SYFTBOXD:-1}" == "no" ]]; then
+                                info "Skipping peer key sync (BV_DEVSTACK_START_SYFTBOXD=${BV_DEVSTACK_START_SYFTBOXD:-0})"
+                        else
+                                timer_push "Peer key sync"
+                                info "Waiting for peer keys to sync after onboarding..."
+                                preflight_peer_sync
+                                timer_pop
+                        fi
 				timer_push "Playwright: @messages-two"
 				run_ui_grep "@messages-two"
 				timer_pop
 				;;
-			messaging-sessions)
-				start_static_server
-				start_tauri_instances
-				# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
-				timer_push "Playwright: @onboarding-two"
-				run_ui_grep "@onboarding-two"
-				timer_pop
-				# After onboarding, keys exist - wait for them to sync via the network
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
-				preflight_peer_sync
-				timer_pop
-				# Run comprehensive messaging + sessions test
-				timer_push "Playwright: @messaging-sessions"
-				run_ui_grep "@messaging-sessions"
-				timer_pop
-				;;
-			all)
-				start_static_server
-				start_tauri_instances
-				# Run onboarding first (creates keys)
-				info "=== Phase 1: Onboarding ==="
-				timer_push "Playwright: @onboarding-two"
-				run_ui_grep "@onboarding-two"
-				timer_pop
-				# Wait for peer sync
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
+		messaging-sessions)
+			start_static_server
+			start_tauri_instances
+			# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
+			timer_push "Playwright: @onboarding-two"
+			run_ui_grep "@onboarding-two"
+			timer_pop
+			# After onboarding, keys exist - wait for them to sync via the network
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
 			timer_pop
-				# Run basic messaging test
-				info "=== Phase 2: Basic Messaging ==="
-				timer_push "Playwright: @messages-two"
-				run_ui_grep "@messages-two"
-				timer_pop
-				# Run comprehensive messaging + sessions test
-				info "=== Phase 3: Messaging + Sessions ==="
-				timer_push "Playwright: @messaging-sessions"
-				run_ui_grep "@messaging-sessions"
-				timer_pop
-				;;
+			# Run comprehensive messaging + sessions test
+			timer_push "Playwright: @messaging-sessions"
+			run_ui_grep "@messaging-sessions"
+			timer_pop
+			;;
+                networking)
+                        export DISABLE_SYFTBOX_AUTO_START=1
+                        info "DISABLE_SYFTBOX_AUTO_START=1 (prevent auto-restart during networking test)"
+                        start_static_server
+                        start_tauri_instances
+			# Run onboarding first (creates keys), then wait for peer sync, then networking smoke test
+			timer_push "Playwright: @onboarding-two"
+			run_ui_grep "@onboarding-two"
+			timer_pop
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
+			preflight_peer_sync
+			timer_pop
+			timer_push "Playwright: @networking"
+			run_ui_grep "@networking"
+			timer_pop
+			;;
+		all)
+			start_static_server
+			start_tauri_instances
+			# Run onboarding first (creates keys)
+			info "=== Phase 1: Onboarding ==="
+			timer_push "Playwright: @onboarding-two"
+			run_ui_grep "@onboarding-two"
+			timer_pop
+			# Wait for peer sync
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
+			preflight_peer_sync
+			timer_pop
+			# Run basic messaging test
+			info "=== Phase 2: Basic Messaging ==="
+			timer_push "Playwright: @messages-two"
+			run_ui_grep "@messages-two"
+			timer_pop
+			# Run comprehensive messaging + sessions test
+			info "=== Phase 3: Messaging + Sessions ==="
+			timer_push "Playwright: @messaging-sessions"
+			run_ui_grep "@messaging-sessions"
+			timer_pop
+			info "=== Phase 4: Networking Smoke ==="
+			timer_push "Playwright: @networking"
+			run_ui_grep "@networking"
+			timer_pop
+			;;
 	messaging-core)
 		# Reuse the biovault YAML scenario logic (CLI-level) without restarting devstack.
 		SCENARIO_SRC="$BIOVAULT_DIR/tests/scenarios/messaging-core.yaml"
