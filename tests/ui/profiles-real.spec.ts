@@ -7,7 +7,10 @@ import { navigateToTab, waitForAppReady } from './test-helpers.js'
 test.describe.configure({ timeout: 180_000 })
 
 function normalizePath(value) {
-	return path.resolve(String(value || ''))
+	const raw = String(value || '')
+	const withoutPrefix = raw.replace(/^\\\\\?\\/, '').replace(/^\\\\\.\\/, '')
+	const resolved = path.resolve(withoutPrefix)
+	return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
 function samePath(a, b) {
@@ -168,7 +171,7 @@ async function ensureCurrentHome(wsPort, homePath) {
 	}
 
 	const state = await wsInvoke(wsPort, 'profiles_get_boot_state', {}, 5_000).catch(() => null)
-	const match = state?.profiles?.find((p) => p?.biovault_home === homePath)
+	const match = state?.profiles?.find((p) => samePath(p?.biovault_home, homePath))
 	if (match?.id) {
 		await wsInvoke(wsPort, 'profiles_switch_in_place', { profileId: match.id }, 10_000)
 	} else {
@@ -182,7 +185,16 @@ function escapeRegex(value) {
 }
 
 function rowByHome(page, homePath) {
-	const exact = new RegExp(`^${escapeRegex(homePath)}$`)
+	const normalized = normalizePath(homePath)
+	const backslashes = normalized.replace(/\//g, '\\')
+	const slashes = normalized.replace(/\\/g, '/')
+	const pattern = [
+		`^${escapeRegex(backslashes)}$`,
+		`^${escapeRegex(slashes)}$`,
+		`^\\\\\\\\\\?\\\\${escapeRegex(backslashes)}$`,
+		`^\\\\\\\\\\?\\\\${escapeRegex(slashes)}$`,
+	].join('|')
+	const exact = new RegExp(pattern, process.platform === 'win32' ? 'i' : '')
 	return page
 		.locator('.profile-row')
 		.filter({ has: page.locator('.profile-path', { hasText: exact }) })
@@ -276,14 +288,28 @@ async function completeOnboardingFromEmailStep(page, { email }) {
 
 	await expect(page.locator('#onboarding-step-3-key')).toBeVisible({ timeout: 30_000 })
 	const recoveryBlock = page.locator('#onboarding-recovery-block')
-	if (await recoveryBlock.isVisible({ timeout: 500 }).catch(() => false)) {
-		await page.locator('#onboarding-recovery-ack').check()
+	const recoveryAck = page.locator('#onboarding-recovery-ack')
+	if (await recoveryBlock.isVisible({ timeout: 5_000 }).catch(() => false)) {
+		await recoveryAck.check().catch(() => {})
 	}
 	await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({ timeout: 30_000 })
 	page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
 	await page.locator('#onboarding-next-3-key').click()
 
-	await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
+	const step4 = page.locator('#onboarding-step-4')
+	try {
+		await expect(step4).toBeVisible({ timeout: 10_000 })
+	} catch (_err) {
+		if (await recoveryAck.isVisible({ timeout: 1_000 }).catch(() => false)) {
+			await recoveryAck.check().catch(() => {})
+			await expect(page.locator('#onboarding-next-3-key')).toBeEnabled({
+				timeout: 10_000,
+			})
+			page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
+			await page.locator('#onboarding-next-3-key').click()
+		}
+		await expect(step4).toBeVisible({ timeout: 30_000 })
+	}
 	await Promise.all([
 		page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
 		page.locator('#skip-syftbox-btn').click(),
@@ -296,9 +322,12 @@ async function assertHomePrefilled(page, expectedHomeContains) {
 	if (expectedHomeContains) {
 		const homeInput = page.locator('#onboarding-home')
 		await expect(homeInput).toBeVisible({ timeout: 10_000 })
-		await expect(homeInput).toHaveValue(
-			new RegExp(expectedHomeContains.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-		)
+		const expectedNormalized = normalizePath(expectedHomeContains)
+		await expect
+			.poll(async () => normalizePath(await homeInput.inputValue()), {
+				timeout: 10_000,
+			})
+			.toBe(expectedNormalized)
 	}
 }
 
@@ -371,14 +400,14 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		}
 		await fs.unlink(spawnProbePath).catch(() => {})
 		const bootState = await wsInvoke(wsPort, 'profiles_get_boot_state', {}, 5_000)
-		const profileA = bootState?.profiles?.find((p) => p?.biovault_home === homeA)
+		const profileA = bootState?.profiles?.find((p) => samePath(p?.biovault_home, homeA))
 		if (!profileA) {
 			throw new Error(`Failed to resolve profile for ${homeA}`)
 		}
 		await rowByHome(page, homeA).locator('.profile-new-instance-btn').click()
 		const probe = await waitForSpawnProbe(spawnProbePath, 20_000)
 		expect(probe.profile_id).toBe(profileA.id)
-		expect(probe.home).toBe(profileA.biovault_home)
+		expect(samePath(probe.home, profileA.biovault_home)).toBe(true)
 
 		await rowByHome(page, homeA).locator('.profile-open-btn').click()
 		await waitForWsBridge(wsPort, 60_000)
@@ -399,6 +428,6 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		await rowByHome(page, homeB).locator('.profile-delete-btn').click()
 
 		await expect(page.locator('.profile-row')).toHaveCount(1)
-		await expect(page.locator('.profile-row')).toContainText(homeA)
+		await expect(rowByHome(page, homeA)).toHaveCount(1)
 	})
 })

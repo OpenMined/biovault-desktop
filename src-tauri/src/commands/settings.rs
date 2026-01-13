@@ -94,7 +94,7 @@ fn best_effort_stop_syftbox_for_reset() {
         }
     }
 
-    if crate::syftbox_backend_is_embedded() {}
+    crate::syftbox_backend_is_embedded();
 
     // Fallback for partially configured states (e.g. before onboarding) where runtime config can't be loaded.
     #[cfg(target_os = "windows")]

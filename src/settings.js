@@ -21,6 +21,7 @@ export function createSettingsModule({
 	let lastIndicatorTotals = { url: null, txTotal: null, rxTotal: null }
 	let lastRuntimeTotals = { url: null, httpTx: null, httpRx: null, wsTx: null, wsRx: null }
 	let syftboxUnavailableShown = false
+	let syftboxAutoStartDisabled = null
 	const syftboxUnavailableStorageKey = 'syftbox_unavailable_shown_v1'
 	let profilesRefreshTimer = null
 	let profilesRefreshInFlight = false
@@ -63,6 +64,19 @@ export function createSettingsModule({
 			})
 			.catch(() => defaultSyftboxServerUrl)
 		return defaultServerPromise
+	}
+
+	async function isSyftboxAutoStartDisabled() {
+		if (syftboxAutoStartDisabled !== null) return syftboxAutoStartDisabled
+		try {
+			const value = await invoke('get_env_var', {
+				key: 'DISABLE_SYFTBOX_AUTO_START',
+			})
+			syftboxAutoStartDisabled = ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase())
+		} catch (_) {
+			syftboxAutoStartDisabled = false
+		}
+		return syftboxAutoStartDisabled
 	}
 
 	function setSaveStatus(message, tone = 'info') {
@@ -390,7 +404,11 @@ export function createSettingsModule({
 			refreshSyftboxDiagnostics()
 
 			// Auto-start SyftBox daemon if authenticated
-			autoStartSyftBoxDaemon()
+			if (!(await isSyftboxAutoStartDisabled())) {
+				autoStartSyftBoxDaemon()
+			} else {
+				console.log('SyftBox auto-start disabled; skipping auto-start')
+			}
 
 			// Poll diagnostics more frequently while on settings
 			if (syftboxStatusTimer) clearInterval(syftboxStatusTimer)

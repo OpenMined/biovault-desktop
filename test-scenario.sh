@@ -48,6 +48,7 @@ MAX_PORT=8092
 TRACE=${TRACE:-0}
 DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 TIMING="${TIMING:-1}"
+DEVSTACK_STARTED=0
 
 # Parse arguments
 declare -a FORWARD_ARGS=()
@@ -69,7 +70,7 @@ Scenario Options (pick one):
   --profiles           Run profiles UI flow (real backend, isolated sandbox)
   --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
-  --messaging-sessions Run onboarding + comprehensive messaging & sessions
+  --messaging-sessions Run onboarding + comprehensive messaging & sessions      
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
   --pipelines-gwas     Run GWAS pipeline UI test only (single client)
@@ -211,27 +212,36 @@ done
 
 # Default to "all" if no scenario specified
 if [[ -z "$SCENARIO" ]]; then
-	# Support legacy SCENARIO env var
-	SCENARIO="${SCENARIO:-all}"
+        # Support legacy SCENARIO env var
+        SCENARIO="${SCENARIO:-all}"
+fi
+
+# Default to embedded SyftBox backend unless explicitly overridden.
+if [[ -z "${BV_SYFTBOX_BACKEND:-}" ]]; then
+        export BV_SYFTBOX_BACKEND=embedded
+fi
+if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then
+        export BV_DEVSTACK_CLIENT_MODE=embedded
 fi
 
 # Scenario-dependent default: only warm Jupyter cache for Jupyter scenarios unless explicitly overridden.
 if [[ "$WARM_CACHE_SET" == "0" ]]; then
-	case "$SCENARIO" in
-		jupyter|jupyter-collab) WARM_CACHE=1 ;;
-		*) WARM_CACHE=0 ;;
+        case "$SCENARIO" in
+                jupyter|jupyter-collab) WARM_CACHE=1 ;;
+                *) WARM_CACHE=0 ;;
 	esac
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
-# For CLI/core scenarios, we want the biovault sandbox initialized by devstack (keys/config under .biovault).
+# Embedded SyftBox clients require BioVault init, so always run bootstrap in embedded mode.
 DEVSTACK_SKIP_KEYS="${DEVSTACK_SKIP_KEYS:-}"
+DEVSTACK_CLIENT_MODE="$(printf '%s' "${BV_DEVSTACK_CLIENT_MODE:-embedded}" | tr '[:upper:]' '[:lower:]')"
 if [[ -z "${DEVSTACK_SKIP_KEYS}" ]]; then
-	if [[ "$SCENARIO" == "messaging-core" ]]; then
-		DEVSTACK_SKIP_KEYS=0
-	else
-		DEVSTACK_SKIP_KEYS=1
-	fi
+        if [[ "$DEVSTACK_CLIENT_MODE" == "embedded" || "$SCENARIO" == "messaging-core" ]]; then
+                DEVSTACK_SKIP_KEYS=0
+        else
+                DEVSTACK_SKIP_KEYS=1
+        fi
 fi
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -395,7 +405,18 @@ detect_platform() {
 		*) arch="unknown" ;;
 	esac
 
-	echo "$os" "$arch"
+        echo "$os" "$arch"
+}
+
+to_host_path() {
+        local p="$1"
+        local os
+        read -r os _ <<<"$(detect_platform)"
+        if [[ "$os" == "windows" && -n "$p" ]] && command -v cygpath >/dev/null 2>&1; then
+                cygpath -m "$p"
+                return 0
+        fi
+        echo "$p"
 }
 
 find_bundled_uv() {
@@ -483,8 +504,10 @@ else
 fi
 
 # Start unified logger
-info "Starting unified logger on port ${LOG_PORT} (file: ${LOG_FILE})"
-UNIFIED_LOG_WS_URL="ws://localhost:${LOG_PORT}"
+UNIFIED_LOG_HOST="${UNIFIED_LOG_HOST:-127.0.0.1}"
+export UNIFIED_LOG_HOST
+info "Starting unified logger on ${UNIFIED_LOG_HOST}:${LOG_PORT} (file: ${LOG_FILE})"
+UNIFIED_LOG_WS_URL="ws://${UNIFIED_LOG_HOST}:${LOG_PORT}"
 UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
 node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
@@ -569,6 +592,21 @@ cleanup() {
 	# Clean up any Jupyter processes spawned during this run
 	kill_workspace_jupyter
 
+	if [[ "${KEEP_ALIVE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "true" && "${WAIT_MODE:-0}" != "1" && "${WAIT_MODE:-0}" != "true" ]]; then
+		if [[ "$DEVSTACK_STARTED" == "1" && "$SCENARIO" != "profiles-mock" ]]; then
+			info "Stopping SyftBox devstack"
+			local c1="${CLIENT1_EMAIL:-client1@sandbox.local}"
+			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
+			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
+			DEVSTACK_CLIENTS="${c1},${c2}"
+			local stop_args=(--clients "$DEVSTACK_CLIENTS" --sandbox "$sandbox_root" --stop)
+			if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+				stop_args+=(--reset)
+			fi
+			bash "$DEVSTACK_SCRIPT" "${stop_args[@]}" >/dev/null 2>&1 || true
+		fi
+	fi
+
 	# Close out any in-progress timers so failures still report partial durations.
 	if timing_enabled; then
 		while [[ "${#TIMER_LABEL_STACK[@]}" -gt 0 ]]; do
@@ -610,15 +648,19 @@ if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
 	timer_pop
 	DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
-	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-		DEVSTACK_ARGS+=(--reset)
-	fi
-	if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
-		DEVSTACK_ARGS+=(--skip-keys)
-	fi
+        if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then  
+                DEVSTACK_ARGS+=(--reset)
+        fi
+        if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
+                DEVSTACK_ARGS+=(--skip-keys)
+        fi
+        if [[ "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "1" || "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "true" ]]; then
+                DEVSTACK_ARGS+=(--skip-client-daemons)
+        fi
 	timer_push "Devstack start"
 	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
 	timer_pop
+	DEVSTACK_STARTED=1
 fi
 
 # Read devstack state for client configs (not needed for mock-only scenarios)
@@ -690,7 +732,11 @@ wait_for_file() {
 }
 
 preflight_peer_sync() {
-	local timeout_s="${DEVSTACK_SYNC_TIMEOUT:-30}"
+	local default_timeout=30
+	case "$(uname -s)" in
+		MINGW*|MSYS*|CYGWIN*|Windows_NT) default_timeout=90 ;;
+	esac
+	local timeout_s="${DEVSTACK_SYNC_TIMEOUT:-$default_timeout}"
 	# Mirror inbox-ping-pong.yaml: require public key bundles to be visible from both clients.
 	local c1_sees_c2="$CLIENT1_HOME/datasites/$CLIENT2_EMAIL/public/crypto/did.json"
 	local c2_sees_c1="$CLIENT2_HOME/datasites/$CLIENT1_EMAIL/public/crypto/did.json"
@@ -948,10 +994,13 @@ launch_instance() {
 		export BIOVAULT_DEV_SYFTBOX=1
 		# In devstack mode we don't require OAuth-style SyftBox auth; unlock messages UI.
 		export SYFTBOX_AUTH_ENABLED=0
-		export SYFTBOX_SERVER_URL="$SERVER_URL"
-		export SYFTBOX_EMAIL="$email"
-		export SYFTBOX_CONFIG_PATH="$cfg"
-		export SYFTBOX_DATA_DIR="$home"
+                export SYFTBOX_SERVER_URL="$SERVER_URL"
+                export SYFTBOX_EMAIL="$email"
+                export SYFTBOX_CONFIG_PATH="$cfg"
+                export SYFTBOX_DATA_DIR="$home"
+                if [[ "$DEVSTACK_CLIENT_MODE" == "embedded" ]]; then
+                        export BV_SYFTBOX_BACKEND=embedded
+                fi
 		# Profiles tests manage SYC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
 		# Other scenarios keep a fixed vault path per client for simplicity.
 		if [[ "$SCENARIO" != "profiles" ]]; then
@@ -1118,26 +1167,30 @@ warm_jupyter_cache() {
 	timer_pop
 
 	# Install local editable syftbox-sdk if available
-	local syftbox_path="$SYFTBOX_SDK_DIR/python"
-	if [[ -d "$syftbox_path" ]]; then
-		timer_push "Jupyter cache: pip install (syftbox-sdk)"
-		info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
-		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path" >>"$LOG_FILE" 2>&1 || {
-			info "Warning: Failed to install syftbox-sdk from local path"
-		}
-		timer_pop
-	fi
+        local syftbox_path="$SYFTBOX_SDK_DIR/python"
+        local syftbox_path_host
+        syftbox_path_host="$(to_host_path "$syftbox_path")"
+        if [[ -d "$syftbox_path" ]]; then
+                timer_push "Jupyter cache: pip install (syftbox-sdk)"
+                info "Installing syftbox-sdk from local source (compiling Rust bindings)..."
+                "$uv_bin" pip install --python "$cache_dir/.venv" -e "$syftbox_path_host" >>"$LOG_FILE" 2>&1 || {
+                        info "Warning: Failed to install syftbox-sdk from local path"
+                }
+                timer_pop
+        fi
 
-	# Install local editable beaver if available
-	local beaver_path="$BIOVAULT_BEAVER_DIR/python"
-	if [[ -d "$beaver_path" ]]; then
-		timer_push "Jupyter cache: pip install (beaver)"
-		info "Installing beaver from local source..."
-		"$uv_bin" pip install --python "$cache_dir/.venv" -e "$beaver_path[lib-support]" >>"$LOG_FILE" 2>&1 || {
-			info "Warning: Failed to install beaver from local path"
-		}
-		timer_pop
-	fi
+        # Install local editable beaver if available
+        local beaver_path="$BIOVAULT_BEAVER_DIR/python"
+        local beaver_path_host
+        beaver_path_host="$(to_host_path "$beaver_path")"
+        if [[ -d "$beaver_path" ]]; then
+                timer_push "Jupyter cache: pip install (beaver)"
+                info "Installing beaver from local source..."
+                "$uv_bin" pip install --python "$cache_dir/.venv" -e "${beaver_path_host}[lib-support]" >>"$LOG_FILE" 2>&1 || {
+                        info "Warning: Failed to install beaver from local path"
+                }
+                timer_pop
+        fi
 
 	info "Cache warmup complete!"
 	timer_pop
@@ -1267,55 +1320,55 @@ ensure_playwright_browsers
 				run_ui_grep "@onboarding-two"
 				timer_pop
 				# After onboarding, keys exist - wait for them to sync via the network
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
-				preflight_peer_sync
-				timer_pop
-				timer_push "Playwright: @messages-two"
-				run_ui_grep "@messages-two"
-				timer_pop
-				;;
-			messaging-sessions)
-				start_static_server
-				start_tauri_instances
-				# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
-				timer_push "Playwright: @onboarding-two"
-				run_ui_grep "@onboarding-two"
-				timer_pop
-				# After onboarding, keys exist - wait for them to sync via the network
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
-				preflight_peer_sync
-				timer_pop
-				# Run comprehensive messaging + sessions test
-				timer_push "Playwright: @messaging-sessions"
-				run_ui_grep "@messaging-sessions"
-				timer_pop
-				;;
-			all)
-				start_static_server
-				start_tauri_instances
-				# Run onboarding first (creates keys)
-				info "=== Phase 1: Onboarding ==="
-				timer_push "Playwright: @onboarding-two"
-				run_ui_grep "@onboarding-two"
-				timer_pop
-				# Wait for peer sync
-				timer_push "Peer key sync"
-				info "Waiting for peer keys to sync after onboarding..."
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
 			preflight_peer_sync
 			timer_pop
-				# Run basic messaging test
-				info "=== Phase 2: Basic Messaging ==="
 				timer_push "Playwright: @messages-two"
 				run_ui_grep "@messages-two"
 				timer_pop
-				# Run comprehensive messaging + sessions test
-				info "=== Phase 3: Messaging + Sessions ==="
-				timer_push "Playwright: @messaging-sessions"
-				run_ui_grep "@messaging-sessions"
-				timer_pop
 				;;
+		messaging-sessions)
+			start_static_server
+			start_tauri_instances
+			# Run onboarding first (creates keys), then wait for peer sync, then comprehensive test
+			timer_push "Playwright: @onboarding-two"
+			run_ui_grep "@onboarding-two"
+			timer_pop
+			# After onboarding, keys exist - wait for them to sync via the network
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
+			preflight_peer_sync
+			timer_pop
+			# Run comprehensive messaging + sessions test
+			timer_push "Playwright: @messaging-sessions"
+			run_ui_grep "@messaging-sessions"
+			timer_pop
+			;;
+		all)
+			start_static_server
+			start_tauri_instances
+			# Run onboarding first (creates keys)
+			info "=== Phase 1: Onboarding ==="
+			timer_push "Playwright: @onboarding-two"
+			run_ui_grep "@onboarding-two"
+			timer_pop
+			# Wait for peer sync
+			timer_push "Peer key sync"
+			info "Waiting for peer keys to sync after onboarding..."
+			preflight_peer_sync
+			timer_pop
+			# Run basic messaging test
+			info "=== Phase 2: Basic Messaging ==="
+			timer_push "Playwright: @messages-two"
+			run_ui_grep "@messages-two"
+			timer_pop
+			# Run comprehensive messaging + sessions test
+			info "=== Phase 3: Messaging + Sessions ==="
+			timer_push "Playwright: @messaging-sessions"
+			run_ui_grep "@messaging-sessions"
+			timer_pop
+			;;
 	messaging-core)
 		# Reuse the biovault YAML scenario logic (CLI-level) without restarting devstack.
 		SCENARIO_SRC="$BIOVAULT_DIR/tests/scenarios/messaging-core.yaml"

@@ -7,6 +7,7 @@
   <project name="OpenMined/biovault-beaver" path="biovault-beaver" revision="8705d3676cd90e5198b863283303f98f95af826e" />
   <project name="OpenMined/sbenv" path="sbenv" revision="7f7981affffb1d705ff6502d3500cd24a033a4e5" />
   <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="51e5a74b387358613950d356f40d6b1eada8e891" />
+  <!-- syftbox should stay on madhava/biovault for the time being -->
   <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />
   <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="8d78a9cf9c9ef96570745183ff5b26969979dcf6" />
   </manifest>
