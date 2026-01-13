@@ -226,7 +226,11 @@ export function createSettingsModule({
 			}
 
 			if (saveBtn) {
-				saveBtn.addEventListener('click', () => saveSettingsChanges())
+				saveBtn.addEventListener('click', () => saveAgentBridgeSettings())
+			}
+
+			if (enabledToggle) {
+				enabledToggle.addEventListener('change', () => saveAgentBridgeSettings())
 			}
 		}
 
@@ -1643,6 +1647,62 @@ export function createSettingsModule({
 		} catch (error) {
 			console.error('Error saving settings:', error)
 			setSaveStatus(error?.message || 'Failed to save settings.', 'error')
+		}
+	}
+
+	async function saveAgentBridgeSettings() {
+		if (!currentSettings) {
+			currentSettings = await invoke('get_settings').catch(() => ({}))
+		}
+
+		const agentBridgeEnabled =
+			document.getElementById('agent-bridge-enabled')?.checked ??
+			currentSettings?.agent_bridge_enabled ??
+			true
+		const agentBridgePortRaw =
+			document.getElementById('agent-bridge-port')?.value ||
+			currentSettings?.agent_bridge_port ||
+			3333
+		const agentBridgePort = Number(agentBridgePortRaw)
+		if (!Number.isInteger(agentBridgePort) || agentBridgePort < 1 || agentBridgePort > 65535) {
+			setSaveStatus('Agent bridge port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeHttpPortRaw =
+			document.getElementById('agent-bridge-http-port')?.value ||
+			currentSettings?.agent_bridge_http_port ||
+			3334
+		const agentBridgeHttpPort = Number(agentBridgeHttpPortRaw)
+		if (
+			!Number.isInteger(agentBridgeHttpPort) ||
+			agentBridgeHttpPort < 1 ||
+			agentBridgeHttpPort > 65535
+		) {
+			setSaveStatus('Agent bridge HTTP port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeTokenInput = document.getElementById('agent-bridge-token')
+		const agentBridgeToken = agentBridgeTokenInput
+			? agentBridgeTokenInput.value.trim()
+			: currentSettings?.agent_bridge_token || ''
+		const agentBridgeBlocklist = Array.from(agentBlocklist).sort()
+
+		const settings = {
+			...(currentSettings || {}),
+			agent_bridge_enabled: agentBridgeEnabled,
+			agent_bridge_port: agentBridgePort,
+			agent_bridge_http_port: agentBridgeHttpPort,
+			agent_bridge_token: agentBridgeToken || null,
+			agent_bridge_blocklist: agentBridgeBlocklist,
+		}
+
+		try {
+			await invoke('save_settings', { settings })
+			currentSettings = { ...(currentSettings || {}), ...settings }
+			setSaveStatus('Agent bridge settings saved.', 'success')
+		} catch (error) {
+			console.error('Error saving agent bridge settings:', error)
+			setSaveStatus(error?.message || 'Failed to save agent bridge settings.', 'error')
 		}
 	}
 
