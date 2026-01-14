@@ -522,7 +522,7 @@ pub fn get_settings() -> Result<Settings, String> {
     }
     println!("⚙️ [get_settings] final email: '{}'", settings.email);
 
-    // Keep SyftBox server URL aligned with the BioVault config
+    // Keep SyftBox server URL + agent bridge settings aligned with the BioVault config
     if let Ok(config) = biovault::config::Config::load() {
         if let Some(creds) = config.syftbox_credentials.as_ref() {
             if let Some(server_url) = creds.server_url.as_ref() {
@@ -531,6 +531,27 @@ pub fn get_settings() -> Result<Settings, String> {
                     settings.syftbox_server_url = normalized;
                 }
             }
+        }
+
+        if let Some(enabled) = config.agent_bridge_enabled {
+            settings.agent_bridge_enabled = enabled;
+        }
+        if let Some(port) = config.agent_bridge_port {
+            settings.agent_bridge_port = port;
+        }
+        if let Some(port) = config.agent_bridge_http_port {
+            settings.agent_bridge_http_port = port;
+        }
+        if let Some(token) = config.agent_bridge_token {
+            let trimmed = token.trim();
+            settings.agent_bridge_token = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(blocklist) = config.agent_bridge_blocklist {
+            settings.agent_bridge_blocklist = blocklist;
         }
     }
 
@@ -592,6 +613,11 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
             version: None,
             binary_paths: None,
             syftbox_credentials: None,
+            agent_bridge_enabled: None,
+            agent_bridge_port: None,
+            agent_bridge_http_port: None,
+            agent_bridge_token: None,
+            agent_bridge_blocklist: None,
         }
     };
 
@@ -624,6 +650,16 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
         creds.access_token = None;
         creds.refresh_token = None;
     }
+
+    config.agent_bridge_enabled = Some(settings.agent_bridge_enabled);
+    config.agent_bridge_port = Some(settings.agent_bridge_port);
+    config.agent_bridge_http_port = Some(settings.agent_bridge_http_port);
+    config.agent_bridge_token = settings
+        .agent_bridge_token
+        .as_ref()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty());
+    config.agent_bridge_blocklist = Some(settings.agent_bridge_blocklist.clone());
 
     // Save config
     config
@@ -674,6 +710,11 @@ pub fn set_syftbox_dev_server(server_url: String) -> Result<(), String> {
             version: None,
             binary_paths: None,
             syftbox_credentials: None,
+            agent_bridge_enabled: None,
+            agent_bridge_port: None,
+            agent_bridge_http_port: None,
+            agent_bridge_token: None,
+            agent_bridge_blocklist: None,
         }
     };
 

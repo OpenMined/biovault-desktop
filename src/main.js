@@ -450,6 +450,42 @@ window.addEventListener('DOMContentLoaded', async () => {
 	initializeSessionsTab()
 	networkModule.init()
 
+	// Listen for agent-driven UI commands (emitted by the WS bridge)
+	listen('agent-ui', async ({ payload }) => {
+		const action = payload?.action
+		if (!action) return
+
+		if (action === 'navigate') {
+			const rawTab = payload?.tab
+			if (!rawTab) return
+			const tab = rawTab === 'pipelines' ? 'run' : rawTab
+			navigateTo(tab)
+			return
+		}
+
+		if (action === 'pipeline_import_options') {
+			navigateTo('run')
+			if (window.pipelineModule?.showImportOptions) {
+				window.pipelineModule.showImportOptions()
+			} else {
+				console.warn('[agent-ui] pipelineModule.showImportOptions not available')
+			}
+			return
+		}
+
+		if (action === 'pipeline_import_from_path') {
+			const path = payload?.path
+			const overwrite = Boolean(payload?.overwrite)
+			if (!path) return
+			navigateTo('run')
+			if (window.pipelineModule?.importExistingPipeline) {
+				await window.pipelineModule.importExistingPipeline(overwrite, path)
+			} else {
+				console.warn('[agent-ui] pipelineModule.importExistingPipeline not available')
+			}
+		}
+	})
+
 	// Setup sidebar invite button
 	const sidebarInviteBtn = document.getElementById('sidebar-invite-btn')
 	if (sidebarInviteBtn) {

@@ -26,6 +26,13 @@ export function createSettingsModule({
 	let profilesRefreshTimer = null
 	let profilesRefreshInFlight = false
 	let lastProfilesSignature = ''
+	let agentCommands = []
+	let agentCommandPromise = null
+	let agentBlocklist = new Set()
+	let agentSelections = { allowed: new Set(), blocked: new Set() }
+	let agentFilters = { allowed: '', blocked: '' }
+	let agentBridgeUiReady = false
+	let agentBridgeSaveTimer = null
 
 	function hasShownSyftboxUnavailable() {
 		if (syftboxUnavailableShown) return true
@@ -73,10 +80,285 @@ export function createSettingsModule({
 	}
 
 	function setSaveStatus(message, tone = 'info') {
-		const statusEl = document.getElementById('settings-save-status')
-		if (!statusEl) return
-		statusEl.textContent = message
-		statusEl.dataset.tone = tone
+		const statusEls = [
+			document.getElementById('settings-save-status'),
+			document.getElementById('agent-bridge-save-status'),
+		].filter(Boolean)
+		if (statusEls.length === 0) return
+		statusEls.forEach((statusEl) => {
+			statusEl.textContent = message
+			statusEl.dataset.tone = tone
+		})
+	}
+
+	async function loadAgentCommandCatalog() {
+		if (agentCommandPromise) return agentCommandPromise
+		agentCommandPromise = invoke('get_agent_api_commands')
+			.then((commands) => (Array.isArray(commands) ? commands : []))
+			.catch((error) => {
+				console.warn('Failed to load agent command catalog:', error)
+				return []
+			})
+		return agentCommandPromise
+	}
+
+	function updateAgentBridgeTestCommand() {
+		const commandEl = document.getElementById('agent-bridge-test-command')
+		if (!commandEl) return
+		const portInput = document.getElementById('agent-bridge-http-port')
+		const tokenInput = document.getElementById('agent-bridge-token')
+		const port = Number(portInput?.value) || 3334
+		const tokenValue = tokenInput?.value.trim() || ''
+		const revealToken = tokenInput?.type === 'text'
+		const displayToken = revealToken && tokenValue ? tokenValue : 'TOKEN'
+		const safeToken = displayToken.replace(/"/g, '\\"')
+		commandEl.textContent = `curl -s -H "Authorization: Bearer ${safeToken}" http://127.0.0.1:${port}/schema`
+	}
+
+	function scheduleAgentBridgeSave(delay = 700) {
+		if (agentBridgeSaveTimer) clearTimeout(agentBridgeSaveTimer)
+		agentBridgeSaveTimer = setTimeout(() => {
+			saveAgentBridgeSettings()
+		}, delay)
+	}
+
+	async function restartAgentBridge() {
+		try {
+			await invoke('restart_agent_bridge')
+			setSaveStatus('Agent bridge restarted.', 'success')
+		} catch (error) {
+			console.error('Error restarting agent bridge:', error)
+			setSaveStatus(error?.message || 'Failed to restart agent bridge.', 'error')
+		}
+	}
+
+	function randomPort(min = 20000, max = 60000) {
+		const range = max - min
+		return min + Math.floor(Math.random() * range)
+	}
+
+	function getAgentCommandList() {
+		const commandSet = new Set(agentCommands)
+		agentBlocklist.forEach((cmd) => commandSet.add(cmd))
+		return Array.from(commandSet).sort()
+	}
+
+	function renderAgentBridgeList(listEl, commands, selectedSet, isBlocked) {
+		if (!listEl) return
+		listEl.innerHTML = ''
+		if (commands.length === 0) {
+			const empty = document.createElement('div')
+			empty.className = 'agent-bridge-empty'
+			empty.textContent = 'No commands'
+			listEl.appendChild(empty)
+			return
+		}
+
+		commands.forEach((cmd) => {
+			const row = document.createElement('div')
+			row.className = 'agent-bridge-command'
+			if (selectedSet.has(cmd)) row.classList.add('selected')
+			if (isBlocked) row.classList.add('blocked')
+			row.dataset.command = cmd
+
+			const label = document.createElement('span')
+			label.textContent = cmd
+			row.appendChild(label)
+
+			row.addEventListener('click', () => {
+				if (selectedSet.has(cmd)) {
+					selectedSet.delete(cmd)
+				} else {
+					selectedSet.add(cmd)
+				}
+				row.classList.toggle('selected')
+				updateAgentBridgeActionButtons()
+			})
+
+			listEl.appendChild(row)
+		})
+	}
+
+	function updateAgentBridgeActionButtons() {
+		const blockBtn = document.getElementById('agent-bridge-block-btn')
+		const allowBtn = document.getElementById('agent-bridge-allow-btn')
+		if (blockBtn) blockBtn.disabled = agentSelections.allowed.size === 0
+		if (allowBtn) allowBtn.disabled = agentSelections.blocked.size === 0
+	}
+
+	function renderAgentBridgeLists() {
+		const allCommands = getAgentCommandList()
+		const allowedCommands = allCommands.filter((cmd) => !agentBlocklist.has(cmd))
+		const blockedCommands = allCommands.filter((cmd) => agentBlocklist.has(cmd))
+
+		const allowedFilter = agentFilters.allowed.trim().toLowerCase()
+		const blockedFilter = agentFilters.blocked.trim().toLowerCase()
+
+		const filteredAllowed = allowedFilter
+			? allowedCommands.filter((cmd) => cmd.toLowerCase().includes(allowedFilter))
+			: allowedCommands
+		const filteredBlocked = blockedFilter
+			? blockedCommands.filter((cmd) => cmd.toLowerCase().includes(blockedFilter))
+			: blockedCommands
+
+		renderAgentBridgeList(
+			document.getElementById('agent-bridge-allowed-list'),
+			filteredAllowed,
+			agentSelections.allowed,
+			false,
+		)
+		renderAgentBridgeList(
+			document.getElementById('agent-bridge-blocked-list'),
+			filteredBlocked,
+			agentSelections.blocked,
+			true,
+		)
+		updateAgentBridgeActionButtons()
+	}
+
+	async function setupAgentBridgeUi(settings) {
+		const enabledToggle = document.getElementById('agent-bridge-enabled')
+		const portInput = document.getElementById('agent-bridge-port')
+		const httpPortInput = document.getElementById('agent-bridge-http-port')
+		const tokenInput = document.getElementById('agent-bridge-token')
+		const tokenToggle = document.getElementById('agent-bridge-token-toggle')
+		const tokenToggleLabel = document.getElementById('agent-bridge-token-toggle-label')
+		const randomizePortsBtn = document.getElementById('agent-bridge-randomize-ports')
+		const restartBtn = document.getElementById('agent-bridge-restart')
+		const blockBtn = document.getElementById('agent-bridge-block-btn')
+		const allowBtn = document.getElementById('agent-bridge-allow-btn')
+		const allowedFilter = document.getElementById('agent-bridge-allowed-filter')
+		const blockedFilter = document.getElementById('agent-bridge-blocked-filter')
+		const saveBtn = document.getElementById('agent-bridge-save-btn')
+
+		if (!enabledToggle || !portInput) return
+
+		if (!agentBridgeUiReady) {
+			agentBridgeUiReady = true
+
+			if (blockBtn) {
+				blockBtn.addEventListener('click', () => {
+					agentSelections.allowed.forEach((cmd) => agentBlocklist.add(cmd))
+					agentSelections.allowed.clear()
+					renderAgentBridgeLists()
+				})
+			}
+
+			if (allowBtn) {
+				allowBtn.addEventListener('click', () => {
+					agentSelections.blocked.forEach((cmd) => agentBlocklist.delete(cmd))
+					agentSelections.blocked.clear()
+					renderAgentBridgeLists()
+				})
+			}
+
+			if (allowedFilter) {
+				allowedFilter.addEventListener('input', (event) => {
+					agentFilters.allowed = event.target.value || ''
+					renderAgentBridgeLists()
+				})
+			}
+
+			if (blockedFilter) {
+				blockedFilter.addEventListener('input', (event) => {
+					agentFilters.blocked = event.target.value || ''
+					renderAgentBridgeLists()
+				})
+			}
+
+			if (httpPortInput) {
+				httpPortInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand()
+				})
+			}
+
+			if (saveBtn) {
+				saveBtn.addEventListener('click', () => saveAgentBridgeSettings())
+			}
+
+			if (enabledToggle) {
+				enabledToggle.addEventListener('change', () => saveAgentBridgeSettings())
+			}
+
+			if (tokenToggle && tokenInput) {
+				tokenToggle.addEventListener('click', () => {
+					const showing = tokenInput.type === 'text'
+					tokenInput.type = showing ? 'password' : 'text'
+					if (tokenToggleLabel) {
+						tokenToggleLabel.textContent = showing ? 'Show' : 'Hide'
+					} else {
+						tokenToggle.textContent = showing ? 'Show' : 'Hide'
+					}
+					updateAgentBridgeTestCommand()
+				})
+			}
+
+			if (tokenInput) {
+				tokenInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand()
+					scheduleAgentBridgeSave()
+				})
+				tokenInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (portInput) {
+				portInput.addEventListener('input', () => scheduleAgentBridgeSave())
+				portInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (httpPortInput) {
+				httpPortInput.addEventListener('input', () => {
+					updateAgentBridgeTestCommand()
+					scheduleAgentBridgeSave()
+				})
+				httpPortInput.addEventListener('blur', () => saveAgentBridgeSettings())
+			}
+
+			if (randomizePortsBtn) {
+				randomizePortsBtn.addEventListener('click', () => {
+					let wsPort = randomPort()
+					let httpPort = randomPort()
+					while (httpPort === wsPort) {
+						httpPort = randomPort()
+					}
+					if (portInput) portInput.value = String(wsPort)
+					if (httpPortInput) httpPortInput.value = String(httpPort)
+					updateAgentBridgeTestCommand()
+					saveAgentBridgeSettings()
+				})
+			}
+
+			if (restartBtn) {
+				restartBtn.addEventListener('click', () => {
+					restartAgentBridge()
+				})
+			}
+		}
+
+		enabledToggle.checked = Boolean(settings?.agent_bridge_enabled)
+		portInput.value = String(settings?.agent_bridge_port || 3333)
+		if (httpPortInput) {
+			httpPortInput.value = String(settings?.agent_bridge_http_port || 3334)
+			updateAgentBridgeTestCommand()
+		} else {
+			updateAgentBridgeTestCommand()
+		}
+
+		if (tokenInput) {
+			tokenInput.value = settings?.agent_bridge_token || ''
+			tokenInput.type = 'password'
+		}
+		if (tokenToggleLabel) {
+			tokenToggleLabel.textContent = 'Show'
+		} else if (tokenToggle) {
+			tokenToggle.textContent = 'Show'
+		}
+		updateAgentBridgeTestCommand()
+
+		agentBlocklist = new Set(settings?.agent_bridge_blocklist || [])
+		agentSelections = { allowed: new Set(), blocked: new Set() }
+		agentCommands = await loadAgentCommandCatalog()
+		renderAgentBridgeLists()
 	}
 
 	async function loadSettings() {
@@ -104,6 +386,7 @@ export function createSettingsModule({
 			document.getElementById('setting-ai-token').value = settings.ai_api_token || ''
 			document.getElementById('setting-ai-model').value = settings.ai_model || ''
 			setSaveStatus('', 'info')
+			await setupAgentBridgeUi(settings)
 
 			loadSavedDependencies('settings-deps-list', 'settings-dep-details-panel')
 			bindSyftBoxPathButtons()
@@ -1420,6 +1703,51 @@ export function createSettingsModule({
 		const aiModel = document.getElementById('setting-ai-model').value.trim()
 		const syftboxServerUrl =
 			document.getElementById('setting-syftbox-server')?.value.trim() || defaultSyftboxServerUrl
+		const agentBridgeEnabled =
+			document.getElementById('agent-bridge-enabled')?.checked ??
+			currentSettings?.agent_bridge_enabled ??
+			true
+		const agentBridgePortRaw =
+			document.getElementById('agent-bridge-port')?.value ||
+			currentSettings?.agent_bridge_port ||
+			''
+		if (!agentBridgePortRaw) {
+			setSaveStatus('Agent bridge port is required (or use Randomize Ports).', 'error')
+			return
+		}
+		const agentBridgePort = Number(agentBridgePortRaw)
+		if (!Number.isInteger(agentBridgePort) || agentBridgePort < 1 || agentBridgePort > 65535) {
+			setSaveStatus('Agent bridge port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeHttpPortRaw =
+			document.getElementById('agent-bridge-http-port')?.value ||
+			currentSettings?.agent_bridge_http_port ||
+			''
+		if (!agentBridgeHttpPortRaw) {
+			setSaveStatus('Agent bridge HTTP port is required (or use Randomize Ports).', 'error')
+			return
+		}
+		const agentBridgeHttpPort = Number(agentBridgeHttpPortRaw)
+		if (
+			!Number.isInteger(agentBridgeHttpPort) ||
+			agentBridgeHttpPort < 1 ||
+			agentBridgeHttpPort > 65535
+		) {
+			setSaveStatus('Agent bridge HTTP port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeTokenInput = document.getElementById('agent-bridge-token')
+		const agentBridgeToken = agentBridgeTokenInput
+			? agentBridgeTokenInput.value.trim()
+			: currentSettings?.agent_bridge_token || ''
+		const agentBridgeBlocklist = Array.from(agentBlocklist).sort()
+
+		const shouldRestart =
+			!currentSettings ||
+			currentSettings.agent_bridge_enabled !== agentBridgeEnabled ||
+			currentSettings.agent_bridge_port !== agentBridgePort ||
+			currentSettings.agent_bridge_http_port !== agentBridgeHttpPort
 
 		const settings = {
 			...(currentSettings || {}),
@@ -1428,6 +1756,11 @@ export function createSettingsModule({
 			ai_api_token: aiApiToken,
 			ai_model: aiModel,
 			syftbox_server_url: syftboxServerUrl,
+			agent_bridge_enabled: agentBridgeEnabled,
+			agent_bridge_port: agentBridgePort,
+			agent_bridge_http_port: agentBridgeHttpPort,
+			agent_bridge_token: agentBridgeToken || null,
+			agent_bridge_blocklist: agentBridgeBlocklist,
 		}
 
 		try {
@@ -1435,11 +1768,83 @@ export function createSettingsModule({
 			currentSettings = settings
 			currentUserEmail = email
 			setSaveStatus('Settings saved successfully.', 'success')
+			if (shouldRestart) {
+				await restartAgentBridge()
+			}
 			await checkSyftBoxStatus()
 			onAiConfigUpdated?.()
 		} catch (error) {
 			console.error('Error saving settings:', error)
 			setSaveStatus(error?.message || 'Failed to save settings.', 'error')
+		}
+	}
+
+	async function saveAgentBridgeSettings() {
+		if (agentBridgeSaveTimer) {
+			clearTimeout(agentBridgeSaveTimer)
+			agentBridgeSaveTimer = null
+		}
+		if (!currentSettings) {
+			currentSettings = await invoke('get_settings').catch(() => ({}))
+		}
+
+		const agentBridgeEnabled =
+			document.getElementById('agent-bridge-enabled')?.checked ??
+			currentSettings?.agent_bridge_enabled ??
+			true
+		const agentBridgePortRaw =
+			document.getElementById('agent-bridge-port')?.value ||
+			currentSettings?.agent_bridge_port ||
+			3333
+		const agentBridgePort = Number(agentBridgePortRaw)
+		if (!Number.isInteger(agentBridgePort) || agentBridgePort < 1 || agentBridgePort > 65535) {
+			setSaveStatus('Agent bridge port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeHttpPortRaw =
+			document.getElementById('agent-bridge-http-port')?.value ||
+			currentSettings?.agent_bridge_http_port ||
+			3334
+		const agentBridgeHttpPort = Number(agentBridgeHttpPortRaw)
+		if (
+			!Number.isInteger(agentBridgeHttpPort) ||
+			agentBridgeHttpPort < 1 ||
+			agentBridgeHttpPort > 65535
+		) {
+			setSaveStatus('Agent bridge HTTP port must be between 1 and 65535.', 'error')
+			return
+		}
+		const agentBridgeTokenInput = document.getElementById('agent-bridge-token')
+		const agentBridgeToken = agentBridgeTokenInput
+			? agentBridgeTokenInput.value.trim()
+			: currentSettings?.agent_bridge_token || ''
+		const agentBridgeBlocklist = Array.from(agentBlocklist).sort()
+
+		const shouldRestart =
+			!currentSettings ||
+			currentSettings.agent_bridge_enabled !== agentBridgeEnabled ||
+			currentSettings.agent_bridge_port !== agentBridgePort ||
+			currentSettings.agent_bridge_http_port !== agentBridgeHttpPort
+
+		const settings = {
+			...(currentSettings || {}),
+			agent_bridge_enabled: agentBridgeEnabled,
+			agent_bridge_port: agentBridgePort,
+			agent_bridge_http_port: agentBridgeHttpPort,
+			agent_bridge_token: agentBridgeToken || null,
+			agent_bridge_blocklist: agentBridgeBlocklist,
+		}
+
+		try {
+			await invoke('save_settings', { settings })
+			currentSettings = { ...(currentSettings || {}), ...settings }
+			setSaveStatus('Agent bridge settings saved.', 'success')
+			if (shouldRestart) {
+				await restartAgentBridge()
+			}
+		} catch (error) {
+			console.error('Error saving agent bridge settings:', error)
+			setSaveStatus(error?.message || 'Failed to save agent bridge settings.', 'error')
 		}
 	}
 

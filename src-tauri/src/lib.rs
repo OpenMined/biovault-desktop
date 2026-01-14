@@ -25,6 +25,7 @@ mod types;
 use types::AppState;
 
 // Import all command functions from command modules
+use commands::agent_api::*;
 use commands::datasets::*;
 use commands::dependencies::*;
 use commands::files::*;
@@ -1276,6 +1277,8 @@ pub fn run() {
             // Settings commands
             get_settings,
             save_settings,
+            get_agent_api_commands,
+            restart_agent_bridge,
             get_app_version,
             open_folder,
             save_file_bytes,
@@ -1445,32 +1448,60 @@ pub fn run() {
     }
 
     fn maybe_start_ws_bridge(app_handle: AppHandle) {
-        let ws_bridge_enabled = std::env::var("DEV_WS_BRIDGE")
+        // Check environment variables first (they take precedence)
+        let env_enabled = std::env::var("DEV_WS_BRIDGE")
             .map(|v| !matches!(v.as_str(), "0" | "false" | "no"))
             .unwrap_or(true);
-        let ws_bridge_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
+        let env_disabled = std::env::var("DEV_WS_BRIDGE_DISABLE")
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+        let settings = get_settings().ok();
+        let settings_enabled = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_enabled)
+            .unwrap_or(true); // Default to enabled if settings not available
+        let settings_port = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_port)
+            .unwrap_or(3333);
+        let settings_http_port = settings
+            .as_ref()
+            .map(|s| s.agent_bridge_http_port)
+            .unwrap_or(3334);
+
         let bridge_port = std::env::var("DEV_WS_BRIDGE_PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(3333);
+            .unwrap_or(settings_port);
+        let http_port = std::env::var("DEV_WS_BRIDGE_HTTP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(settings_http_port);
+
+        // Final decision: env vars override settings
+        // Bridge is enabled if:
+        // - env DEV_WS_BRIDGE is not explicitly "0"/"false"/"no"
+        // - env DEV_WS_BRIDGE_DISABLE is not "1"/"true"/"yes"
+        // - settings agent_bridge_enabled is true (only matters if env vars not set)
+        let ws_bridge_enabled = env_enabled && !env_disabled && settings_enabled;
 
         crate::desktop_log!(
-            "WS bridge: enabled={} disabled={} port={}",
+            "WS bridge: env_enabled={} env_disabled={} settings_enabled={} final={} ws_port={} http_port={}",
+            env_enabled,
+            env_disabled,
+            settings_enabled,
             ws_bridge_enabled,
-            ws_bridge_disabled,
-            bridge_port
+            bridge_port,
+            http_port
         );
 
-        if !ws_bridge_enabled || ws_bridge_disabled {
-            crate::desktop_log!("WS bridge disabled by environment");
-            return;
-        }
-
+        let handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = ws_bridge::start_ws_server(app_handle, bridge_port).await {
-                crate::desktop_log!("Failed to start WebSocket server: {}", e);
+            if let Err(e) =
+                ws_bridge::restart_agent_bridge(handle, bridge_port, http_port, ws_bridge_enabled)
+                    .await
+            {
+                crate::desktop_log!("Failed to start agent bridge: {}", e);
             }
         });
     }
