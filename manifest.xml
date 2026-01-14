@@ -3,11 +3,10 @@
   <remote name="github" fetch="ssh://git@github.com/" />
   <default remote="github" revision="main" />
   <project name="OpenMined/bioscript" path="bioscript" revision="d1ec9f68e90efbfea565855939e4c64669a69e7e" />
-  <project name="OpenMined/biovault" path="biovault" revision="b62c64387e432d5199f4958df44b1004e88cd05e" />
+  <project name="OpenMined/biovault" path="biovault" revision="main" />
   <project name="OpenMined/biovault-beaver" path="biovault-beaver" revision="8705d3676cd90e5198b863283303f98f95af826e" />
   <project name="OpenMined/sbenv" path="sbenv" revision="7f7981affffb1d705ff6502d3500cd24a033a4e5" />
   <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="51e5a74b387358613950d356f40d6b1eada8e891" />
-  <!-- syftbox should stay on madhava/biovault for the time being -->
   <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />
-  <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="8d78a9cf9c9ef96570745183ff5b26969979dcf6" />
+  <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="main" />
   </manifest>

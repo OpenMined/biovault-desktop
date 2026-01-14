@@ -381,6 +381,8 @@ repo_init() {
   else
     run_repo init -u "$url" -m "$MANIFEST_FILE"
   fi
+
+  ensure_origin_remotes
 }
 
 repo_init_with_https() {
@@ -478,6 +480,7 @@ PY
   git -C "$tmpdir" commit -m "Manifest for HTTPS" >/dev/null 2>&1 || true
 
   run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
+  ensure_origin_remotes "$tmpdir/$MANIFEST_FILE"
   if [[ -n "$tmpdir" ]]; then
     rm -rf "$tmpdir"
   fi
@@ -1226,6 +1229,50 @@ desired_ssh_url_for() {
   fi
 
   echo "git@${host}:${project}.git"
+}
+
+ensure_origin_remotes() {
+  local manifest_path="${1:-$MANIFEST_FILE}"
+  if [[ -z "$manifest_path" || ! -f "$manifest_path" ]]; then
+    return 0
+  fi
+
+  local MANIFEST_FILE="$manifest_path"
+  local path
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if [[ "$path" == "." ]]; then
+      continue
+    fi
+    if [[ ! -d "$path/.git" && ! -f "$path/.git" ]]; then
+      continue
+    fi
+    if git -C "$path" remote get-url origin >/dev/null 2>&1; then
+      continue
+    fi
+
+    local remote_name
+    remote_name="$(manifest_remote_for "$path")"
+    local fetch
+    fetch="$(manifest_fetch_for "$remote_name")"
+    local project
+    project="$(manifest_project_name_for "$path")"
+    if [[ -z "$fetch" || -z "$project" ]]; then
+      continue
+    fi
+
+    local url=""
+    case "$fetch" in
+      */|*:)
+        url="${fetch}${project}"
+        ;;
+      *)
+        url="${fetch}/${project}"
+        ;;
+    esac
+
+    git -C "$path" remote add origin "$url" >/dev/null 2>&1 || true
+  done < <(manifest_paths)
 }
 
 resolve_remote_for_repo() {
