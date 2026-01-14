@@ -44,11 +44,11 @@ Options:
   --branch [name]     Checkout/create branch in all repos
   branch [name]       Create branch in dirty repos only (smart mode)
                       Shows which repos have changes and creates branches
-  lint [--force] [--verbose]
+  lint [--force] [--verbose] [targets...]
                       Run lint.sh in dirty repos (parallel, quiet on success)
                       --force runs lint.sh in all repos that have it
                       --verbose prints lint output even on success
-  test [--force]
+  test [--force] [targets...]
                       Run fast unit tests in dirty repos (quiet on success)
                       --force runs tests in all repos with fast tests
   commit -m "msg"     Commit all dirty repos with same message
@@ -1677,6 +1677,7 @@ do_lint() {
   local repo
   local force=0
   local verbose=0
+  local lint_targets=()
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -1687,18 +1688,40 @@ do_lint() {
         verbose=1
         ;;
       --help|-h)
-        echo "Usage: ./repo lint [--force] [--verbose]"
+        echo "Usage: ./repo lint [--force] [--verbose] [targets...]"
         return 0
         ;;
       *)
-        echo "Unknown lint option: $1" >&2
-        return 1
+        lint_targets+=("$1")
         ;;
     esac
     shift
   done
 
-  if [[ "$force" -eq 1 ]]; then
+  if [[ "${#lint_targets[@]}" -gt 0 ]]; then
+    REPO_TARGETS=()
+    local target
+    for target in "${lint_targets[@]}"; do
+      case "$target" in
+        self|.)
+          add_target "."
+          ;;
+        all)
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            add_target "$path"
+          done < <(manifest_paths)
+          ;;
+        *)
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            add_target "$path"
+          done < <(resolve_checkout_targets "$target")
+          ;;
+      esac
+    done
+    dirty_repos=("${REPO_TARGETS[@]}")
+  elif [[ "$force" -eq 1 ]]; then
     if [[ -x ./lint.sh ]]; then
       dirty_repos+=(".")
     fi
@@ -1875,6 +1898,7 @@ do_test() {
   local dirty_repos=()
   local repo
   local force=0
+  local test_targets=()
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -1882,18 +1906,40 @@ do_test() {
         force=1
         ;;
       --help|-h)
-        echo "Usage: ./repo test [--force]"
+        echo "Usage: ./repo test [--force] [targets...]"
         return 0
         ;;
       *)
-        echo "Unknown test option: $1" >&2
-        return 1
+        test_targets+=("$1")
         ;;
     esac
     shift
   done
 
-  if [[ "$force" -eq 1 ]]; then
+  if [[ "${#test_targets[@]}" -gt 0 ]]; then
+    REPO_TARGETS=()
+    local target
+    for target in "${test_targets[@]}"; do
+      case "$target" in
+        self|.)
+          add_target "."
+          ;;
+        all)
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            add_target "$path"
+          done < <(manifest_paths)
+          ;;
+        *)
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            add_target "$path"
+          done < <(resolve_checkout_targets "$target")
+          ;;
+      esac
+    done
+    dirty_repos=("${REPO_TARGETS[@]}")
+  elif [[ "$force" -eq 1 ]]; then
     dirty_repos+=(".")
     while IFS= read -r repo; do
       [[ -z "$repo" ]] && continue
