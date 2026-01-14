@@ -410,9 +410,10 @@ test.describe('Profiles flow (real backend) @profiles-real', () => {
 		expect(samePath(probe.home, profileA.biovault_home)).toBe(true)
 
 		await rowByHome(page, homeA).locator('.profile-open-btn').click()
+		// The click triggers location.reload() in the app, wait for it to complete
+		await page.waitForLoadState('load')
 		await waitForWsBridge(wsPort, 60_000)
 		await waitForConfigHome(wsPort, homeA, 60_000)
-		await page.reload()
 
 		// Profile A should be un-onboarded; complete onboarding.
 		const needsHomeACompletion = await onboardingGoToHomeStep(page)
