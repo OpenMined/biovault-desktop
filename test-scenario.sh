@@ -50,6 +50,7 @@ DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 TIMING="${TIMING:-1}"
 DEVSTACK_STARTED=0
 
+
 # Parse arguments
 declare -a FORWARD_ARGS=()
 declare -a NOTEBOOK_CONFIGS=()

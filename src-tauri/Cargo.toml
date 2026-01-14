@@ -50,7 +50,7 @@ rand = "0.8"
 hex = "0.4"
 base64 = "0.22"
 anyhow = "1.0"
-syftbox-sdk = { path = "../syftbox-sdk", features = ["crypto", "process", "auth", "telemetry", "embedded"] }
+syftbox-sdk = { path = "../syftbox-sdk", default-features = false, features = ["crypto", "auth", "telemetry", "embedded"] }
 uuid = "1"
 
 # OpenTelemetry for distributed tracing (optional, enabled via env var)
