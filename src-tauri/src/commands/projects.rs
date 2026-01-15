@@ -2,7 +2,7 @@ use crate::types::{AppState, Project, ProjectEditorLoadResponse, ProjectListEntr
 use biovault::data::{hash_file, ProjectMetadata, UpdateProjectParams};
 use biovault::project_spec::{self, InputSpec, OutputSpec, ParameterSpec, ProjectSpec};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -260,12 +260,16 @@ fn parse_spec_payload(data: SaveProjectPayload) -> Result<(ProjectMetadata, Proj
         name: name_trimmed.to_string(),
         author: author_value,
         workflow: workflow_trimmed.to_string(),
+        description: None,
         template: template_value,
         version: Some(version_value),
+        datasites: None,
+        env: BTreeMap::new(),
         assets: cleaned_assets,
         parameters: parameter_specs,
         inputs: input_specs,
         outputs: output_specs,
+        steps: Vec::new(),
     };
 
     Ok((metadata, spec))

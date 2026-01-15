@@ -1,0 +1,41 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: hello-world
+  version: 0.1.0
+  description: Flow that references a reusable module.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default: ["local@localhost"]
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      local:
+        include:
+          - "{datasites[0]}"
+
+  modules:
+    hello:
+      source:
+        kind: local
+        path: ./modules/hello
+      digest: sha256:hello-module-placeholder
+      allow_dirty: true
+      interface:
+        outputs:
+          - name: message
+            type: File
+            format: { kind: txt }
+
+  steps:
+    - id: hello
+      uses: hello
+      run:
+        targets: local
+      publish:
+        message: outputs.message

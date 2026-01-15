@@ -1,0 +1,67 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: runner-showcase
+  version: 0.1.0
+  description: Demonstrates shell, python, and nextflow runners.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default: ["local@localhost"]
+    message:
+      type: String
+      default: "hello runners"
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      local:
+        include:
+          - "{datasites[0]}"
+
+  modules:
+    shell_write:
+      source:
+        kind: local
+        path: ./shell.module.yaml
+      allow_dirty: true
+      digest: sha256:shell-write-placeholder
+    python_upper:
+      source:
+        kind: local
+        path: ./python.module.yaml
+      allow_dirty: true
+      digest: sha256:python-upper-placeholder
+    nf_count:
+      source:
+        kind: local
+        path: ./nextflow.module.yaml
+      allow_dirty: true
+      digest: sha256:nf-count-placeholder
+
+  steps:
+    - id: write
+      uses: shell_write
+      run:
+        targets: local
+      with:
+        text: inputs.message
+
+    - id: upper
+      uses: python_upper
+      run:
+        targets: local
+      with:
+        input_txt: steps.write.outputs.out
+
+    - id: count
+      uses: nf_count
+      run:
+        targets: local
+      with:
+        input_txt: steps.upper.outputs.upper
+      publish:
+        stats: outputs.stats

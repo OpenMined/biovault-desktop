@@ -1,0 +1,19 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: nf-count
+  version: 0.1.0
+spec:
+  runner:
+    kind: nextflow
+    template: dynamic-nextflow
+    entrypoint: workflow.nf
+  inputs:
+    - name: input_txt
+      type: File
+      format: { kind: txt }
+  outputs:
+    - name: stats
+      type: File
+      format: { kind: tsv }
+      path: stats.tsv
