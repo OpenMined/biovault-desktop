@@ -51,6 +51,7 @@ Options:
   test [--force] [targets...]
                       Run fast unit tests in dirty repos (quiet on success)
                       --force runs tests in all repos with fast tests
+  check [targets...]  Run lint and test in parallel, report any failures
   commit -m "msg"     Commit all dirty repos with same message
   push                Push all repos on feature branches
   pr                  Create PRs (sub-repos first, then desktop with links)
@@ -1929,10 +1930,10 @@ run_fast_tests() {
       (cd "$repo" && cargo test)
       ;;
     syftbox)
-      (cd "$repo" && go test ./...)
+      (cd "$repo" && ./test.sh)
       ;;
     syftbox-sdk)
-      (cd "$repo" && cargo test)
+      (cd "$repo" && ./test.sh)
       ;;
     *)
       return 1
@@ -2081,6 +2082,115 @@ do_test() {
     echo -e "${GREEN}${passed} repos passed in ${total_time}s${NC}"
   else
     echo -e "${RED}${failures} failed, ${passed} passed in ${total_time}s${NC}"
+    return 1
+  fi
+}
+
+do_check() {
+  local start_time=$SECONDS
+  local targets=("$@")
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    echo "Usage: ./repo check <targets...>" >&2
+    echo "Example: ./repo check syftbox syftbox-sdk" >&2
+    exit 1
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+
+  echo -e "${CYAN}=== Check: lint + test ===${NC}"
+  echo ""
+
+  # Show what will be checked
+  for target in "${targets[@]}"; do
+    local repo_path
+    repo_path=$(resolve_checkout_targets "$target" 2>/dev/null | head -1) || repo_path="$target"
+    [[ "$repo_path" == "." ]] && repo_path="biovault-desktop"
+
+    local lint_cmd="(none)"
+    local test_cmd="(none)"
+
+    if [[ -x "$target/lint.sh" || (-x "./lint.sh" && "$target" == ".") ]]; then
+      lint_cmd="./lint.sh"
+    fi
+
+    case "$target" in
+      "."|biovault-desktop)
+        test_cmd="cargo test (src-tauri) + node --test"
+        ;;
+      syftbox)
+        test_cmd="./test.sh (go test + cargo test rust/)"
+        ;;
+      syftbox-sdk)
+        test_cmd="./test.sh (cargo test + cargo test --features embedded --test-threads=1)"
+        ;;
+      biovault)
+        test_cmd="cargo test (cli)"
+        ;;
+      *)
+        if [[ -x "$target/test.sh" ]]; then
+          test_cmd="./test.sh"
+        fi
+        ;;
+    esac
+
+    echo -e "  ${CYAN}$repo_path${NC}"
+    echo -e "    lint: ${BLUE}$lint_cmd${NC}"
+    echo -e "    test: ${BLUE}$test_cmd${NC}"
+  done
+  echo ""
+
+  # Run lint and test in parallel
+  (
+    do_lint "${targets[@]}" > "$tmpdir/lint.out" 2>&1
+    echo $? > "$tmpdir/lint.status"
+  ) &
+  local lint_pid=$!
+
+  (
+    do_test "${targets[@]}" > "$tmpdir/test.out" 2>&1
+    echo $? > "$tmpdir/test.status"
+  ) &
+  local test_pid=$!
+
+  echo -e "${YELLOW}Running lint and test in parallel...${NC}"
+  echo ""
+
+  # Wait for both
+  wait $lint_pid || true
+  wait $test_pid || true
+
+  local lint_status=0
+  local test_status=0
+  [[ -f "$tmpdir/lint.status" ]] && lint_status=$(cat "$tmpdir/lint.status")
+  [[ -f "$tmpdir/test.status" ]] && test_status=$(cat "$tmpdir/test.status")
+
+  # Report results
+  echo -e "${CYAN}=== Lint Results ===${NC}"
+  if [[ "$lint_status" -eq 0 ]]; then
+    echo -e "${GREEN}✓ Lint passed${NC}"
+  else
+    echo -e "${RED}✗ Lint failed${NC}"
+    cat "$tmpdir/lint.out"
+  fi
+
+  echo ""
+  echo -e "${CYAN}=== Test Results ===${NC}"
+  if [[ "$test_status" -eq 0 ]]; then
+    echo -e "${GREEN}✓ Tests passed${NC}"
+  else
+    echo -e "${RED}✗ Tests failed${NC}"
+    cat "$tmpdir/test.out"
+  fi
+
+  local total_time=$((SECONDS - start_time))
+  echo ""
+  if [[ "$lint_status" -eq 0 && "$test_status" -eq 0 ]]; then
+    echo -e "${GREEN}✅ All checks passed in ${total_time}s${NC}"
+  else
+    echo -e "${RED}❌ Some checks failed in ${total_time}s${NC}"
     return 1
   fi
 }
@@ -2580,6 +2690,9 @@ case "${1:-}" in
     ;;
   test)
     do_test "${@:2}"
+    ;;
+  check)
+    do_check "${@:2}"
     ;;
   commit)
     do_commit "${@:2}"
