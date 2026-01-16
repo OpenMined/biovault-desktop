@@ -608,10 +608,9 @@ pub fn run() {
         }
     }
 
-    // Ensure SYC_VAULT matches the selected BIOVAULT_HOME (profile-isolated by default).
+    // Require a single explicit Syft Crypto vault path.
     if !profile_picker_mode {
-        let _ = ensure_profile_syc_vault_env();
-        let _ = biovault::config::ensure_syc_vault_env();
+        let _ = biovault::config::require_syc_vault_env();
     }
 
     let desktop_log_path_buf = logging::desktop_log_path();

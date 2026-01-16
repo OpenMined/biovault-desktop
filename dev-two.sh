@@ -393,7 +393,7 @@ launch_desktop_instance() {
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
   export SYFTBOX_DATA_DIR="$data_dir"
-  export SYC_VAULT="$home/.syc"
+  export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
   export DEV_WS_BRIDGE=1
   export DEV_WS_BRIDGE_PORT="$ws_port"
 

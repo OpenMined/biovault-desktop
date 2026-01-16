@@ -296,19 +296,6 @@ fn resolve_vault_path_for_home(home: &Path) -> String {
     colocated.to_string_lossy().to_string()
 }
 
-fn legacy_syc_vault_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".syc"))
-}
-
-fn copy_dir_if_exists(src: &Path, dst: &Path) -> Result<(), String> {
-    if !src.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dst)
-        .map_err(|e| format!("Failed to create backup directory {}: {}", dst.display(), e))?;
-    copy_dir_recursive(src, dst)
-}
-
 pub fn ensure_profile_syc_vault_env() -> Result<(), String> {
     if !profiles_enabled() {
         return Ok(());
@@ -316,30 +303,12 @@ pub fn ensure_profile_syc_vault_env() -> Result<(), String> {
     if env::var_os("BIOVAULT_PROFILE_PICKER").is_some() {
         return Ok(());
     }
-    // Respect explicit overrides (useful for debugging).
     if env::var_os("SYC_VAULT").is_some() {
         return Ok(());
     }
 
-    let home = biovault::config::get_biovault_home()
-        .map_err(|e| format!("Failed to resolve BioVault home: {}", e))?;
-    let colocated = syftbox_sdk::syftbox::syc::vault_path_for_home(&home);
-
-    // One-time-ish migration: if this is still a single-profile setup and a legacy ~/.syc exists,
-    // copy keys/bundles into the colocated vault (leave ~/.syc intact as backup).
-    let store = ensure_legacy_profile_migrated(load_store()?)?;
-    if store.profiles.len() <= 1 && !colocated.exists() {
-        if let Some(legacy) = legacy_syc_vault_path() {
-            let legacy_keys = legacy.join("keys");
-            let legacy_bundles = legacy.join("bundles");
-            if legacy_keys.exists() || legacy_bundles.exists() {
-                let _ = copy_dir_if_exists(&legacy_keys, &colocated.join("keys"));
-                let _ = copy_dir_if_exists(&legacy_bundles, &colocated.join("bundles"));
-            }
-        }
-    }
-
-    env::set_var("SYC_VAULT", &colocated);
+    biovault::config::require_syc_vault_env()
+        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
     Ok(())
 }
 
@@ -1011,9 +980,9 @@ pub fn profiles_switch_in_place(
     env::set_var("BIOVAULT_HOME", &entry.biovault_home);
     env::set_var("BIOVAULT_PROFILE_ID", &entry.id);
 
-    // Update SYC_VAULT for the new home
-    let colocated_vault = syftbox_sdk::syftbox::syc::vault_path_for_home(&home);
-    env::set_var("SYC_VAULT", &colocated_vault);
+    // Ensure SYC_VAULT matches the single explicit vault location.
+    biovault::config::require_syc_vault_env()
+        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1117,9 +1086,9 @@ pub fn profiles_create_and_switch_in_place(
     env::set_var("BIOVAULT_HOME", home.to_string_lossy().to_string());
     env::set_var("BIOVAULT_PROFILE_ID", &profile_id);
 
-    // Update SYC_VAULT for the new home
-    let colocated_vault = syftbox_sdk::syftbox::syc::vault_path_for_home(&home);
-    env::set_var("SYC_VAULT", &colocated_vault);
+    // Ensure SYC_VAULT matches the single explicit vault location.
+    biovault::config::require_syc_vault_env()
+        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1442,7 +1411,7 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
 
     let cached_fingerprint = (|| {
         let slug = syftbox_sdk::sanitize_identity(email.trim());
-        let vault = biovault::config::resolve_default_syc_vault_path().ok()?;
+        let vault = biovault::config::resolve_syc_vault_path().ok()?;
         let bundle_path = vault.join("bundles").join(format!("{slug}.json"));
         if !bundle_path.exists() {
             return None;

@@ -286,7 +286,7 @@ launch_instance() {
       "SYFTBOX_AUTH_ENABLED=$SYFTBOX_AUTH_ENABLED"
       "SYFTBOX_CONFIG_PATH=$env_config"
       "SYFTBOX_DATA_DIR=$env_data"
-      "SYC_VAULT=$home/.syc"
+      "SYC_VAULT=$SYFTBOX_DATA_DIR/.syc"
       "BIOVAULT_DEBUG_BANNER=1"
     )
     if [[ "$backend" == "process" ]]; then

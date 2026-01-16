@@ -238,6 +238,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("agent_api_clear_audit_log", "agent_api", false),
         cmd("agent_api_get_schema", "agent_api", true),
         cmd("agent_api_list_commands", "agent_api", true),
+        cmd("get_agent_api_commands", "agent_api", true),
         cmd("agent_api_events_info", "agent_api", true),
         // App Status
         cmd("get_app_version", "app_status", true),
@@ -1013,6 +1014,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "agent_api_get_schema" => {
             // Return the full JSON schema for the API
             load_schema_json(app)
+        }
+        "get_agent_api_commands" => {
+            let commands = crate::commands::agent_api::get_agent_api_commands(app.clone())?;
+            Ok(serde_json::to_value(commands).unwrap())
         }
         "agent_api_list_commands" => {
             // Return a lightweight list of available commands with basic metadata
