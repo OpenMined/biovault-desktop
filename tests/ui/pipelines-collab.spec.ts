@@ -1138,7 +1138,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			mockRunTimer.stop()
 
 			const mockResultPath2 = resolvePipelineResultPath(mockRun2Final)
+			console.log(`[TSV] Reading client2 mock result from: ${mockResultPath2}`)
 			client2MockResult = await readTextFileWithRetry(mockResultPath2)
+			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
 			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
 
 			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
@@ -1261,7 +1263,28 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
 			client1MockResult = await readTextFileWithRetry(mockResultPath1)
-			expect(normalizeTsvResult(client1MockResult)).toBe(normalizeTsvResult(client2MockResult))
+			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
+			console.log(`[TSV Compare] client1MockResult length: ${client1MockResult.length}`)
+			console.log(`[TSV Compare] client2MockResult length: ${client2MockResult.length}`)
+			const normalized1 = normalizeTsvResult(client1MockResult)
+			const normalized2 = normalizeTsvResult(client2MockResult)
+			console.log(`[TSV Compare] normalized client1: ${normalized1.substring(0, 500)}...`)
+			console.log(`[TSV Compare] normalized client2: ${normalized2.substring(0, 500)}...`)
+			if (normalized1 !== normalized2) {
+				console.log(`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`)
+				// Log first difference
+				const lines1 = normalized1.split('\n')
+				const lines2 = normalized2.split('\n')
+				for (let i = 0; i < Math.max(lines1.length, lines2.length); i++) {
+					if (lines1[i] !== lines2[i]) {
+						console.log(`[TSV Compare] First diff at line ${i}:`)
+						console.log(`[TSV Compare]   client1: ${lines1[i]}`)
+						console.log(`[TSV Compare]   client2: ${lines2[i]}`)
+						break
+					}
+				}
+			}
+			expect(normalized1).toBe(normalized2)
 
 			const privateRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'real')
 			console.log(`Pipeline private run started: ${privateRun1.id}`)

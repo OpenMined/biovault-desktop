@@ -81,10 +81,13 @@ export async function completeOnboarding(
 
 		// Step 2: Dependencies - skip
 		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
+		console.log(`${email}: [onboarding] Clicking skip-dependencies-btn...`)
+		const step2StartTime = Date.now()
 		await page.locator('#skip-dependencies-btn').click()
 		// Wait for step 2 to be hidden before checking step 3
 		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
-		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 15000 })
+		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 30000 })
+		console.log(`${email}: [onboarding] Step 2 hidden after ${Date.now() - step2StartTime}ms`)
 
 		// Step 3: Choose BioVault Home
 		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
@@ -130,12 +133,16 @@ export async function completeOnboarding(
 
 		// Step 4: SyftBox - skip
 		await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
+		console.log(`${email}: [onboarding] Step 4 visible, clicking skip-syftbox-btn...`)
+		const step4StartTime = Date.now()
 		await Promise.all([
 			page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
 			page.locator('#skip-syftbox-btn').click(),
 		])
+		console.log(`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for run-view...`)
 
-		await expect(page.locator('#run-view')).toBeVisible({ timeout: 10_000 })
+		await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+		console.log(`${email}: [onboarding] run-view visible after ${Date.now() - step4StartTime}ms total`)
 		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
 		// finished re-initializing (nav/event handlers ready) before proceeding with tests.
 		await waitForAppReady(page, { timeout: 30_000 })

@@ -296,22 +296,6 @@ fn resolve_vault_path_for_home(home: &Path) -> String {
     colocated.to_string_lossy().to_string()
 }
 
-pub fn ensure_profile_syc_vault_env() -> Result<(), String> {
-    if !profiles_enabled() {
-        return Ok(());
-    }
-    if env::var_os("BIOVAULT_PROFILE_PICKER").is_some() {
-        return Ok(());
-    }
-    if env::var_os("SYC_VAULT").is_some() {
-        return Ok(());
-    }
-
-    biovault::config::require_syc_vault_env()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
-    Ok(())
-}
-
 fn summarize_profile(entry: &ProfileEntry, current: Option<&str>) -> ProfileSummary {
     let home = PathBuf::from(&entry.biovault_home);
     let email = entry
