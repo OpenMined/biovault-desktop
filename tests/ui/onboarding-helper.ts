@@ -140,16 +140,49 @@ export async function completeOnboarding(
 			page.locator('#skip-syftbox-btn').click(),
 		])
 		console.log(
-			`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for run-view...`,
+			`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for app ready...`,
 		)
+
+		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
+		// finished re-initializing (nav/event handlers ready) before checking run-view.
+		// This must happen BEFORE checking run-view because checkOnboarding() runs during init
+		// and may hide run-view if check_is_onboarded returns false due to timing issues.
+		await waitForAppReady(page, { timeout: 30_000 })
+		console.log(
+			`${email}: [onboarding] App ready after ${Date.now() - step4StartTime}ms, checking run-view...`,
+		)
+
+		// Check if onboarding is still showing - this indicates complete_onboarding succeeded
+		// but check_is_onboarded returned false after reload (config not persisted properly)
+		const onboardingStillVisible = await page
+			.locator('#onboarding-view')
+			.isVisible()
+			.catch(() => false)
+		if (onboardingStillVisible) {
+			// Get diagnostic info
+			const diag = await page
+				.evaluate(async () => {
+					const invoke = (window as any)?.__TAURI__?.invoke || (window as any)?.invoke
+					if (!invoke) return { error: 'no invoke' }
+					try {
+						const isOnboarded = await invoke('check_is_onboarded')
+						const devMode = await invoke('get_dev_mode_info').catch(() => null)
+						return { isOnboarded, devMode }
+					} catch (err) {
+						return { error: String(err) }
+					}
+				})
+				.catch(() => null)
+			console.log(`${email}: [onboarding] Diagnostic info:`, JSON.stringify(diag))
+			throw new Error(
+				`Onboarding still visible after complete_onboarding - check_is_onboarded may be returning false. Diagnostics: ${JSON.stringify(diag)}`,
+			)
+		}
 
 		await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
 		console.log(
 			`${email}: [onboarding] run-view visible after ${Date.now() - step4StartTime}ms total`,
 		)
-		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
-		// finished re-initializing (nav/event handlers ready) before proceeding with tests.
-		await waitForAppReady(page, { timeout: 30_000 })
 		log(logSocket, { event: 'onboarding-complete', email })
 		console.log(`${email}: Onboarding complete!`)
 		return true // Onboarding was performed
