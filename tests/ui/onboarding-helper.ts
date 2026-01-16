@@ -143,39 +143,45 @@ export async function completeOnboarding(
 			`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for app ready...`,
 		)
 
-		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
-		// finished re-initializing (nav/event handlers ready) before checking run-view.
-		// This must happen BEFORE checking run-view because checkOnboarding() runs during init
-		// and may hide run-view if check_is_onboarded returns false due to timing issues.
-		await waitForAppReady(page, { timeout: 30_000 })
+		// On a fresh install, completing onboarding triggers a full page reload.
+		// Wait for the onboarding check to complete (not just for onboarding to be visible).
+		// After successful complete_onboarding, check_is_onboarded should return true and
+		// the app should show run-view instead of onboarding-view.
+		console.log(`${email}: [onboarding] Waiting for onboarding check to complete...`)
+		await page.waitForFunction(
+			() =>
+				(window as any).__ONBOARDING_CHECK_COMPLETE__ === true &&
+				(window as any).__NAV_HANDLERS_READY__ === true &&
+				(window as any).__EVENT_HANDLERS_READY__ === true,
+			{ timeout: 30_000 },
+		)
 		console.log(
-			`${email}: [onboarding] App ready after ${Date.now() - step4StartTime}ms, checking run-view...`,
+			`${email}: [onboarding] Onboarding check complete after ${Date.now() - step4StartTime}ms`,
 		)
 
-		// Check if onboarding is still showing - this indicates complete_onboarding succeeded
-		// but check_is_onboarded returned false after reload (config not persisted properly)
+		// Now check if the app transitioned to the main view or stayed on onboarding
 		const onboardingStillVisible = await page
 			.locator('#onboarding-view')
-			.isVisible()
+			.evaluate((el) => {
+				return el.classList.contains('active') && window.getComputedStyle(el).display !== 'none'
+			})
 			.catch(() => false)
+
 		if (onboardingStillVisible) {
-			// Get diagnostic info
+			// Get diagnostic info from the page's console output
 			const diag = await page
-				.evaluate(async () => {
-					const invoke = (window as any)?.__TAURI__?.invoke || (window as any)?.invoke
-					if (!invoke) return { error: 'no invoke' }
-					try {
-						const isOnboarded = await invoke('check_is_onboarded')
-						const devMode = await invoke('get_dev_mode_info').catch(() => null)
-						return { isOnboarded, devMode }
-					} catch (err) {
-						return { error: String(err) }
-					}
-				})
+				.evaluate(() => ({
+					onboardingCheckComplete: (window as any).__ONBOARDING_CHECK_COMPLETE__,
+					navReady: (window as any).__NAV_HANDLERS_READY__,
+					eventReady: (window as any).__EVENT_HANDLERS_READY__,
+					url: window.location.href,
+				}))
 				.catch(() => null)
-			console.log(`${email}: [onboarding] Diagnostic info:`, JSON.stringify(diag))
+			console.log(`${email}: [onboarding] Page state:`, JSON.stringify(diag))
 			throw new Error(
-				`Onboarding still visible after complete_onboarding - check_is_onboarded may be returning false. Diagnostics: ${JSON.stringify(diag)}`,
+				`Onboarding still visible after complete_onboarding and page reload. ` +
+					`This usually means check_is_onboarded returned false. ` +
+					`Page state: ${JSON.stringify(diag)}`,
 			)
 		}
 
