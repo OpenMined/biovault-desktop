@@ -1,10 +1,15 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::types::AppState;
 use biovault::config::Config;
+
+fn key_debug_enabled() -> bool {
+    env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DEBUG_CRYPTO").is_some()
+}
 
 fn load_config_best_effort() -> Config {
     if let Ok(cfg) = Config::load() {
@@ -116,7 +121,7 @@ pub struct VaultDebugInfo {
 #[tauri::command]
 pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
     let syc_vault_env = std::env::var("SYC_VAULT").ok();
-    let vault_path = resolve_vault_default(None);
+    let vault_path = resolve_vault_default(None)?;
     let vault_exists = vault_path.exists();
     let keys_dir = vault_path.join("keys");
     let bundles_dir = vault_path.join("bundles");
@@ -183,6 +188,15 @@ pub async fn key_generate(
         overwrite,
         vault_path.display()
     );
+    if key_debug_enabled() {
+        println!(
+            "🔑 key_generate: data_root={} export_root={} SYC_VAULT={:?} BIOVAULT_HOME={:?}",
+            data_root.display(),
+            syftbox_sdk::syftbox::syc::resolve_encrypted_root(&data_root).display(),
+            env::var("SYC_VAULT").ok(),
+            env::var("BIOVAULT_HOME").ok()
+        );
+    }
 
     let outcome = biovault::syftbox::syc::provision_local_identity_with_options(
         &email,
@@ -200,6 +214,14 @@ pub async fn key_generate(
 
     let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
+    if key_debug_enabled() {
+        println!(
+            "🔑 key_generate: fingerprint={} bundle_path={} export_path={}",
+            bundle.fingerprint,
+            outcome.bundle_path.display(),
+            outcome.public_bundle_path.display()
+        );
+    }
     Ok(KeyOperationResult {
         identity: bundle.identity.clone(),
         fingerprint: bundle.fingerprint.clone(),
@@ -272,7 +294,7 @@ fn resolve_paths(
         })
     };
     let encrypted_root = syftbox_sdk::syftbox::syc::resolve_encrypted_root(&data_root);
-    let vault_path = resolve_vault_default(vault_override);
+    let vault_path = resolve_vault_default(vault_override)?;
     Ok((encrypted_root, vault_path))
 }
 
@@ -292,50 +314,17 @@ fn resolve_export_path(data_root: &Path, identity: &str) -> PathBuf {
         .join("did.json")
 }
 
-fn resolve_vault_default(vault_override: Option<&Path>) -> PathBuf {
+fn resolve_vault_default(vault_override: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(v) = vault_override {
         println!("🔑 resolve_vault: using override: {}", v.display());
-        return v.to_path_buf();
+        return Ok(v.to_path_buf());
     }
     if let Some(env_vault) = std::env::var_os("SYC_VAULT") {
         println!("🔑 resolve_vault: using SYC_VAULT env: {:?}", env_vault);
-        return PathBuf::from(env_vault);
+        return Ok(PathBuf::from(env_vault));
     }
-    // Prefer keeping vault data alongside the BioVault home so onboarding keeps everything together.
-    if let Ok(home) = biovault::config::get_biovault_home() {
-        let colocated = syftbox_sdk::syftbox::syc::vault_path_for_home(&home);
-        if colocated.exists() {
-            println!(
-                "🔑 resolve_vault: using existing BioVault colocated vault: {}",
-                colocated.display()
-            );
-            return colocated;
-        }
-        // Fall back to legacy ~/.syc if it already exists to avoid losing existing keys.
-        let legacy = dirs::home_dir()
-            .map(|h| h.join(".syc"))
-            .unwrap_or_else(|| PathBuf::from(".syc"));
-        if legacy.exists() {
-            println!(
-                "🔑 resolve_vault: legacy vault detected, using: {}",
-                legacy.display()
-            );
-            return legacy;
-        }
-        println!(
-            "🔑 resolve_vault: using new BioVault colocated vault: {}",
-            colocated.display()
-        );
-        return colocated;
-    }
-    let legacy = dirs::home_dir()
-        .map(|h| h.join(".syc"))
-        .unwrap_or_else(|| PathBuf::from(".syc"));
-    println!(
-        "🔑 resolve_vault: using legacy default: {}",
-        legacy.display()
-    );
-    legacy
+
+    biovault::config::resolve_syc_vault_path().map_err(|e| format!("SYC_VAULT is required: {e}"))
 }
 
 fn load_existing_bundle(
@@ -790,6 +779,23 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
 
     let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
     let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
+    if key_debug_enabled() {
+        println!(
+            "🌐 network_import_contact: remote fingerprint={} local_bundle_path={}",
+            remote_info.fingerprint,
+            local_bundle_path.display()
+        );
+        if local_bundle_path.exists() {
+            if let Ok(local_info) =
+                biovault::syftbox::syc::parse_public_bundle_file(&local_bundle_path)
+            {
+                println!(
+                    "🌐 network_import_contact: existing local fingerprint={}",
+                    local_info.fingerprint
+                );
+            }
+        }
+    }
 
     std::fs::copy(&did_path, &local_bundle_path)
         .map_err(|e| format!("failed to import bundle: {e}"))?;

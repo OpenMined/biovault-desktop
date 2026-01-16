@@ -10,11 +10,16 @@ use biovault::types::SyftPermissions;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use walkdir::WalkDir;
+
+fn msg_debug_enabled() -> bool {
+    env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DEBUG_CRYPTO").is_some()
+}
 
 fn load_config() -> Result<biovault::config::Config, String> {
     biovault::config::Config::load().map_err(|e| format!("Failed to load BioVault config: {}", e))
@@ -103,6 +108,14 @@ fn copy_pipeline_folder(
             hint: Some(hint),
         };
 
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] encrypt pipeline file={} dest={} recipient={}",
+                path.display(),
+                dest_path.display(),
+                recipient
+            );
+        }
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
             .map_err(|e| {
@@ -216,6 +229,14 @@ fn copy_results_folder_filtered(
             hint: Some(hint),
         };
 
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] encrypt results file={} dest={} recipient={}",
+                path.display(),
+                dest_path.display(),
+                recipient
+            );
+        }
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
             .map_err(|e| {
@@ -263,6 +284,14 @@ fn copy_results_to_unencrypted(
         let bytes = storage
             .read_with_shadow(path)
             .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] decrypt results file={} dest={} bytes={}",
+                path.display(),
+                dest_path.display(),
+                bytes.len()
+            );
+        }
 
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)

@@ -98,57 +98,6 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
-/// Event message for streaming updates during long-running operations.
-/// Sent with the same request id as the original command.
-#[derive(Serialize, Clone)]
-pub struct WsEvent {
-    /// Request ID this event belongs to
-    pub id: u32,
-    /// Event type: "progress", "log", "status", "complete", "error"
-    #[serde(rename = "type")]
-    pub event_type: String,
-    /// Event payload (structure depends on event_type)
-    pub data: Value,
-}
-
-impl WsEvent {
-    pub fn progress(id: u32, progress: f32, message: &str) -> Self {
-        WsEvent {
-            id,
-            event_type: "progress".to_string(),
-            data: serde_json::json!({
-                "progress": progress,
-                "message": message
-            }),
-        }
-    }
-
-    pub fn log(id: u32, level: &str, message: &str) -> Self {
-        WsEvent {
-            id,
-            event_type: "log".to_string(),
-            data: serde_json::json!({
-                "level": level,
-                "message": message
-            }),
-        }
-    }
-
-    pub fn status(id: u32, status: &str, details: Option<Value>) -> Self {
-        WsEvent {
-            id,
-            event_type: "status".to_string(),
-            data: serde_json::json!({
-                "status": status,
-                "details": details
-            }),
-        }
-    }
-}
-
-/// Sender for emitting events during command execution
-pub type EventSender = mpsc::Sender<String>;
-
 /// Audit log entry for agent bridge commands
 #[derive(Serialize)]
 struct AuditLogEntry {
@@ -289,6 +238,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("agent_api_clear_audit_log", "agent_api", false),
         cmd("agent_api_get_schema", "agent_api", true),
         cmd("agent_api_list_commands", "agent_api", true),
+        cmd("get_agent_api_commands", "agent_api", true),
         cmd("agent_api_events_info", "agent_api", true),
         // App Status
         cmd("get_app_version", "app_status", true),
@@ -662,55 +612,6 @@ fn extract_bearer_token(headers: &HashMap<String, String>) -> Option<String> {
             .or_else(|| trimmed.strip_prefix("bearer "))
             .map(|token| token.trim().to_string())
     })
-}
-
-/// Context for emitting events during command execution
-pub struct EventContext {
-    request_id: u32,
-    sender: EventSender,
-}
-
-impl EventContext {
-    /// Create a new event context for a request
-    pub fn new(request_id: u32, sender: EventSender) -> Self {
-        Self { request_id, sender }
-    }
-
-    /// Emit a progress event (0.0 - 1.0)
-    pub async fn progress(&self, progress: f32, message: &str) {
-        let event = WsEvent::progress(self.request_id, progress, message);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.sender.send(json).await;
-        }
-    }
-
-    /// Emit a log event
-    pub async fn log(&self, level: &str, message: &str) {
-        let event = WsEvent::log(self.request_id, level, message);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.sender.send(json).await;
-        }
-    }
-
-    /// Emit a status change event
-    pub async fn status(&self, status: &str, details: Option<Value>) {
-        let event = WsEvent::status(self.request_id, status, details);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.sender.send(json).await;
-        }
-    }
-
-    /// Emit a custom event
-    pub async fn emit(&self, event_type: &str, data: Value) {
-        let event = WsEvent {
-            id: self.request_id,
-            event_type: event_type.to_string(),
-            data,
-        };
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.sender.send(json).await;
-        }
-    }
 }
 
 async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
@@ -1113,6 +1014,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "agent_api_get_schema" => {
             // Return the full JSON schema for the API
             load_schema_json(app)
+        }
+        "get_agent_api_commands" => {
+            let commands = crate::commands::agent_api::get_agent_api_commands(app.clone())?;
+            Ok(serde_json::to_value(commands).unwrap())
         }
         "agent_api_list_commands" => {
             // Return a lightweight list of available commands with basic metadata
@@ -3517,46 +3422,6 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             Err(format!("Unhandled command: {}", cmd))
         }
     }
-}
-
-pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
-    let listener = bind_listener(addr).await?;
-
-    crate::desktop_log!("🚀 WebSocket server listening on ws://{}", addr);
-    crate::desktop_log!("📝 Browser mode: Commands will be proxied via WebSocket");
-
-    let app = Arc::new(app);
-
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let app_clone = Arc::clone(&app);
-            tokio::spawn(handle_connection(stream, app_clone));
-        }
-    });
-
-    Ok(())
-}
-
-pub async fn start_http_server(
-    app: AppHandle,
-    port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
-    let listener = bind_listener(addr).await?;
-
-    crate::desktop_log!("🌐 HTTP bridge listening on http://{}", addr);
-
-    let app = Arc::new(app);
-
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let app_clone = Arc::clone(&app);
-            tokio::spawn(handle_http_connection(stream, app_clone));
-        }
-    });
-
-    Ok(())
 }
 
 async fn bind_listener(addr: SocketAddr) -> Result<TcpListener, Box<dyn std::error::Error>> {

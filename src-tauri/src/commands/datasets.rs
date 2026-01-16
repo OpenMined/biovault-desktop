@@ -642,15 +642,9 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
 
     let datasites_dir = data_dir.join("datasites");
 
-    // Resolve vault path (prefer BioVault-colocated vault; fall back to legacy ~/.syc)
-    let vault_path = std::env::var_os("SYC_VAULT")
-        .map(std::path::PathBuf::from)
-        .or_else(|| biovault::config::resolve_default_syc_vault_path().ok())
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".syc"))
-                .unwrap_or_else(|| std::path::PathBuf::from(".syc"))
-        });
+    // Resolve vault path (strict: SYC_VAULT or SYFTBOX_DATA_DIR/.syc).
+    let vault_path = biovault::config::resolve_syc_vault_path()
+        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
     let bundles_dir = vault_path.join("bundles");
 
     let mut datasets = Vec::new();
