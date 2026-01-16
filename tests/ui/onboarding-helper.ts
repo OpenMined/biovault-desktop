@@ -139,10 +139,14 @@ export async function completeOnboarding(
 			page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
 			page.locator('#skip-syftbox-btn').click(),
 		])
-		console.log(`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for run-view...`)
+		console.log(
+			`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for run-view...`,
+		)
 
 		await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
-		console.log(`${email}: [onboarding] run-view visible after ${Date.now() - step4StartTime}ms total`)
+		console.log(
+			`${email}: [onboarding] run-view visible after ${Date.now() - step4StartTime}ms total`,
+		)
 		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
 		// finished re-initializing (nav/event handlers ready) before proceeding with tests.
 		await waitForAppReady(page, { timeout: 30_000 })

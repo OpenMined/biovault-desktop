@@ -1271,7 +1271,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`[TSV Compare] normalized client1: ${normalized1.substring(0, 500)}...`)
 			console.log(`[TSV Compare] normalized client2: ${normalized2.substring(0, 500)}...`)
 			if (normalized1 !== normalized2) {
-				console.log(`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`)
+				console.log(
+					`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`,
+				)
 				// Log first difference
 				const lines1 = normalized1.split('\n')
 				const lines2 = normalized2.split('\n')
