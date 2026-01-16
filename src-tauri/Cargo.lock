@@ -6499,6 +6499,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "tokio",
  "tokio-tungstenite 0.21.0",
  "tower 0.5.2",
