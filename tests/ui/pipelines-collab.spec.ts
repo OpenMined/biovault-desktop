@@ -296,6 +296,9 @@ async function waitForMessageCard(
 	backend: Backend,
 	selector: string,
 	timeoutMs = SYNC_TIMEOUT,
+	logSocket: WebSocket | null = null,
+	clientLabel = 'client',
+	label = 'wait-for-message',
 ): Promise<ReturnType<Page['locator']>> {
 	const startTime = Date.now()
 	while (Date.now() - startTime < timeoutMs) {
@@ -317,7 +320,7 @@ async function waitForMessageCard(
 			await backend.invoke('trigger_syftbox_sync')
 		} catch {}
 		try {
-			await backend.invoke('sync_messages', {})
+			await syncMessagesWithDebug(backend, logSocket, clientLabel, label)
 		} catch {}
 
 		await page.reload()
@@ -396,6 +399,198 @@ function timer(label: string) {
 			console.log(`⏱️  ${label}: ${(elapsed / 1000).toFixed(2)}s`)
 			return elapsed
 		},
+	}
+}
+
+type KeySnapshot = {
+	label: string
+	client: string
+	email: string
+	peerEmail: string
+	capturedAt: string
+	selfStatus?: any
+	peerStatus?: any
+	vaultDebug?: any
+	networkPeer?: any
+	networkCounts?: { contacts: number; discovered: number }
+	errors?: string[]
+}
+
+const keySnapshots = new Map<string, KeySnapshot>()
+
+function summarizeNetworkPeer(scan: any, peerEmail: string) {
+	if (!scan || !peerEmail) return null
+	const contacts = Array.isArray(scan.contacts) ? scan.contacts : []
+	const discovered = Array.isArray(scan.discovered) ? scan.discovered : []
+	const inContacts = contacts.find((c: any) => c.identity === peerEmail)
+	const inDiscovered = discovered.find((c: any) => c.identity === peerEmail)
+	if (inContacts) return { location: 'contacts', ...inContacts }
+	if (inDiscovered) return { location: 'discovered', ...inDiscovered }
+	return null
+}
+
+function keyListSignature(list: string[] | undefined): string {
+	if (!Array.isArray(list)) return ''
+	return [...list].sort().join('|')
+}
+
+function diffKeySnapshots(prev: KeySnapshot, next: KeySnapshot): string[] {
+	const changes: string[] = []
+
+	const prevSelf = prev.selfStatus?.vault_fingerprint
+	const nextSelf = next.selfStatus?.vault_fingerprint
+	if (prevSelf !== nextSelf) {
+		changes.push(`self.vault_fingerprint: ${prevSelf ?? 'none'} -> ${nextSelf ?? 'none'}`)
+	}
+
+	const prevExport = prev.selfStatus?.export_fingerprint
+	const nextExport = next.selfStatus?.export_fingerprint
+	if (prevExport !== nextExport) {
+		changes.push(`self.export_fingerprint: ${prevExport ?? 'none'} -> ${nextExport ?? 'none'}`)
+	}
+
+	const prevMatch = prev.selfStatus?.export_matches
+	const nextMatch = next.selfStatus?.export_matches
+	if (prevMatch !== nextMatch) {
+		changes.push(`self.export_matches: ${prevMatch ?? 'none'} -> ${nextMatch ?? 'none'}`)
+	}
+
+	const prevPeer = prev.peerStatus?.fingerprint
+	const nextPeer = next.peerStatus?.fingerprint
+	if (prevPeer !== nextPeer) {
+		changes.push(`peer.cached_fingerprint: ${prevPeer ?? 'none'} -> ${nextPeer ?? 'none'}`)
+	}
+
+	const prevNetwork = prev.networkPeer?.fingerprint
+	const nextNetwork = next.networkPeer?.fingerprint
+	if (prevNetwork !== nextNetwork) {
+		changes.push(`peer.network_fingerprint: ${prevNetwork ?? 'none'} -> ${nextNetwork ?? 'none'}`)
+	}
+
+	const prevKeyFiles = keyListSignature(prev.vaultDebug?.key_files)
+	const nextKeyFiles = keyListSignature(next.vaultDebug?.key_files)
+	if (prevKeyFiles !== nextKeyFiles) {
+		changes.push(`vault.key_files: ${prevKeyFiles || 'none'} -> ${nextKeyFiles || 'none'}`)
+	}
+
+	const prevBundleFiles = keyListSignature(prev.vaultDebug?.bundle_files)
+	const nextBundleFiles = keyListSignature(next.vaultDebug?.bundle_files)
+	if (prevBundleFiles !== nextBundleFiles) {
+		changes.push(`vault.bundle_files: ${prevBundleFiles || 'none'} -> ${nextBundleFiles || 'none'}`)
+	}
+
+	return changes
+}
+
+async function captureKeySnapshot(
+	label: string,
+	clientLabel: string,
+	backend: Backend,
+	email: string,
+	peerEmail: string,
+	logSocket: WebSocket | null,
+): Promise<KeySnapshot> {
+	const snapshot: KeySnapshot = {
+		label,
+		client: clientLabel,
+		email,
+		peerEmail,
+		capturedAt: new Date().toISOString(),
+		errors: [],
+	}
+
+	try {
+		snapshot.selfStatus = await backend.invoke('key_get_status', { email })
+	} catch (err) {
+		snapshot.errors?.push(`key_get_status: ${err}`)
+	}
+
+	try {
+		snapshot.peerStatus = await backend.invoke('key_check_contact', { email: peerEmail })
+	} catch (err) {
+		snapshot.errors?.push(`key_check_contact: ${err}`)
+	}
+
+	try {
+		snapshot.vaultDebug = await backend.invoke('key_check_vault_debug')
+	} catch (err) {
+		snapshot.errors?.push(`key_check_vault_debug: ${err}`)
+	}
+
+	try {
+		const scan = await backend.invoke('network_scan_datasites')
+		snapshot.networkPeer = summarizeNetworkPeer(scan, peerEmail)
+		snapshot.networkCounts = {
+			contacts: Array.isArray(scan?.contacts) ? scan.contacts.length : 0,
+			discovered: Array.isArray(scan?.discovered) ? scan.discovered.length : 0,
+		}
+	} catch (err) {
+		snapshot.errors?.push(`network_scan_datasites: ${err}`)
+	}
+
+	const summary = [
+		`self_fp=${snapshot.selfStatus?.vault_fingerprint ?? 'none'}`,
+		`export_fp=${snapshot.selfStatus?.export_fingerprint ?? 'none'}`,
+		`export_matches=${snapshot.selfStatus?.export_matches ?? 'none'}`,
+		`peer_cached_fp=${snapshot.peerStatus?.fingerprint ?? 'none'}`,
+		`peer_network_fp=${snapshot.networkPeer?.fingerprint ?? 'none'}`,
+		`vault_keys=${snapshot.vaultDebug?.key_files?.length ?? 0}`,
+		`vault_bundles=${snapshot.vaultDebug?.bundle_files?.length ?? 0}`,
+	].join(' ')
+
+	console.log(`[${clientLabel}] key snapshot ${label}: ${summary}`)
+	log(logSocket, { event: 'key-snapshot', ...snapshot })
+
+	const previous = keySnapshots.get(clientLabel)
+	if (previous) {
+		const changes = diffKeySnapshots(previous, snapshot)
+		if (changes.length > 0) {
+			console.log(`[${clientLabel}] key change ${label}: ${changes.join(' | ')}`)
+			log(logSocket, {
+				event: 'key-change',
+				label,
+				client: clientLabel,
+				email,
+				peerEmail,
+				changes,
+			})
+		}
+	}
+	keySnapshots.set(clientLabel, snapshot)
+
+	return snapshot
+}
+
+async function syncMessagesWithDebug(
+	backend: Backend,
+	logSocket: WebSocket | null,
+	clientLabel: string,
+	label: string,
+): Promise<void> {
+	try {
+		const result = await backend.invoke('sync_messages_with_failures')
+		log(logSocket, {
+			event: 'message-sync',
+			client: clientLabel,
+			label,
+			...result,
+		})
+		if (result?.new_failed > 0) {
+			const failed = await backend.invoke('list_failed_messages', { includeDismissed: true })
+			log(logSocket, {
+				event: 'message-sync-failures',
+				client: clientLabel,
+				label,
+				failed,
+			})
+		}
+	} catch (err) {
+		log(logSocket, {
+			event: 'message-sync-error',
+			client: clientLabel,
+			label,
+			error: String(err),
+		})
 	}
 }
 
@@ -482,6 +677,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await ensureProfilePickerClosed(page1)
 			await ensureProfilePickerClosed(page2)
 
+			await captureKeySnapshot('initial', 'client1', backend1, email1, email2, logSocket)
+			await captureKeySnapshot('initial', 'client2', backend2, email2, email1, logSocket)
+
 			// Check if clients are onboarded
 			const isOnboarded1 = await backend1.invoke('check_is_onboarded')
 			const isOnboarded2 = await backend2.invoke('check_is_onboarded')
@@ -511,6 +709,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				onboardingTimer.stop()
 			}
 
+			await captureKeySnapshot('post-onboarding', 'client1', backend1, email1, email2, logSocket)
+			await captureKeySnapshot('post-onboarding', 'client2', backend2, email2, email1, logSocket)
+
 			// ============================================================
 			// Step 1: Exchange keys via Network tab
 			// ============================================================
@@ -538,6 +739,23 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await ensureProfilePickerClosed(page1)
 			await ensureProfilePickerClosed(page2)
 			keysTimer.stop()
+
+			await captureKeySnapshot(
+				'post-network-import',
+				'client1',
+				backend1,
+				email1,
+				email2,
+				logSocket,
+			)
+			await captureKeySnapshot(
+				'post-network-import',
+				'client2',
+				backend2,
+				email2,
+				email1,
+				logSocket,
+			)
 
 			// ============================================================
 			// Step 2: Client1 imports data and creates dataset
@@ -920,8 +1138,13 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			mockRunTimer.stop()
 
 			const mockResultPath2 = resolvePipelineResultPath(mockRun2Final)
+			console.log(`[TSV] Reading client2 mock result from: ${mockResultPath2}`)
 			client2MockResult = await readTextFileWithRetry(mockResultPath2)
+			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
 			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
+
+			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
+			await captureKeySnapshot('post-mock-run', 'client1', backend1, email1, email2, logSocket)
 
 			// Navigate to Runs tab to verify
 			const runsTab = page2.locator(
@@ -980,6 +1203,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page2.waitForTimeout(3000)
 			console.log('Pipeline request sent!')
 
+			await captureKeySnapshot('post-request-send', 'client2', backend2, email2, email1, logSocket)
+			await captureKeySnapshot('post-request-send', 'client1', backend1, email1, email2, logSocket)
+
 			// ============================================================
 			// Step 7: Client1 receives request in Messages
 			// ============================================================
@@ -988,8 +1214,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Trigger sync on Client1
 			await backend1.invoke('trigger_syftbox_sync')
-			await backend1.invoke('sync_messages', {})
+			await syncMessagesWithDebug(backend1, logSocket, 'client1', 'receive-request')
 			await page1.waitForTimeout(3000)
+
+			await captureKeySnapshot('post-request-sync', 'client1', backend1, email1, email2, logSocket)
 
 			// Navigate to Messages
 			await page1.locator('.nav-item[data-tab="messages"]').click()
@@ -998,7 +1226,15 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			})
 			await page1.waitForTimeout(1000)
 
-			const requestCard = await waitForMessageCard(page1, backend1, '.message-pipeline-request')
+			const requestCard = await waitForMessageCard(
+				page1,
+				backend1,
+				'.message-pipeline-request',
+				SYNC_TIMEOUT,
+				logSocket,
+				'client1',
+				'wait-request-card',
+			)
 			console.log('Pipeline request received!')
 
 			// Click Import Pipeline button if available
@@ -1027,7 +1263,30 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
 			client1MockResult = await readTextFileWithRetry(mockResultPath1)
-			expect(normalizeTsvResult(client1MockResult)).toBe(normalizeTsvResult(client2MockResult))
+			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
+			console.log(`[TSV Compare] client1MockResult length: ${client1MockResult.length}`)
+			console.log(`[TSV Compare] client2MockResult length: ${client2MockResult.length}`)
+			const normalized1 = normalizeTsvResult(client1MockResult)
+			const normalized2 = normalizeTsvResult(client2MockResult)
+			console.log(`[TSV Compare] normalized client1: ${normalized1.substring(0, 500)}...`)
+			console.log(`[TSV Compare] normalized client2: ${normalized2.substring(0, 500)}...`)
+			if (normalized1 !== normalized2) {
+				console.log(
+					`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`,
+				)
+				// Log first difference
+				const lines1 = normalized1.split('\n')
+				const lines2 = normalized2.split('\n')
+				for (let i = 0; i < Math.max(lines1.length, lines2.length); i++) {
+					if (lines1[i] !== lines2[i]) {
+						console.log(`[TSV Compare] First diff at line ${i}:`)
+						console.log(`[TSV Compare]   client1: ${lines1[i]}`)
+						console.log(`[TSV Compare]   client2: ${lines2[i]}`)
+						break
+					}
+				}
+			}
+			expect(normalized1).toBe(normalized2)
 
 			const privateRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'real')
 			console.log(`Pipeline private run started: ${privateRun1.id}`)
@@ -1042,6 +1301,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const privateResultPath1 = resolvePipelineResultPath(privateRun1Final)
 			client1PrivateResult = await readTextFileWithRetry(privateResultPath1)
+
+			await captureKeySnapshot('post-client1-runs', 'client1', backend1, email1, email2, logSocket)
 
 			if (!client1PrivateRunId) {
 				throw new Error('Private pipeline run did not start correctly')
@@ -1103,6 +1364,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await page1.waitForTimeout(3000)
 			console.log('Private results sent!')
 
+			await captureKeySnapshot('post-results-send', 'client1', backend1, email1, email2, logSocket)
+
 			// ============================================================
 			// Step 10: Client2 receives results
 			// ============================================================
@@ -1111,8 +1374,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Trigger sync on Client2
 			await backend2.invoke('trigger_syftbox_sync')
-			await backend2.invoke('sync_messages', {})
+			await syncMessagesWithDebug(backend2, logSocket, 'client2', 'receive-results')
 			await page2.waitForTimeout(3000)
+
+			await captureKeySnapshot('post-results-sync', 'client2', backend2, email2, email1, logSocket)
 
 			// Navigate to Messages
 			await page2.locator('.nav-item[data-tab="messages"]').click()
@@ -1121,7 +1386,15 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			})
 			await page2.waitForTimeout(1000)
 
-			const resultsCard = await waitForMessageCard(page2, backend2, '.message-pipeline-results')
+			const resultsCard = await waitForMessageCard(
+				page2,
+				backend2,
+				'.message-pipeline-results',
+				SYNC_TIMEOUT,
+				logSocket,
+				'client2',
+				'wait-results-card',
+			)
 			console.log('✓ Pipeline results received!')
 
 			// Verify files are listed
