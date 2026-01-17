@@ -152,3 +152,22 @@ With `--test`: adds `cargo test` (Rust) or `pytest` (Python)
 ./repo branch feature/my-change
 # ... commit in each repo ...
 ```
+
+## Quick Start for New Contributors
+
+This repository is part of a multi-repository workspace managed using
+Google’s `repo` tool. Each sub-repository remains independent but is
+pinned to specific commits via `manifest.xml`.
+
+### Prerequisites
+- Git
+- Python 3.9+
+- Rust (stable toolchain)
+- Google `repo` tool
+
+### Initial Setup
+Initialize the workspace using the provided `manifest.xml`:
+
+```bash
+repo init -u <manifest-url> -m manifest.xml
+repo sync
