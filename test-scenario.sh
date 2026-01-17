@@ -71,11 +71,12 @@ Scenario Options (pick one):
   --profiles           Run profiles UI flow (real backend, isolated sandbox)
   --profiles-mock      Run profiles UI flow (mock backend)
   --messaging          Run onboarding + basic messaging
-  --messaging-sessions Run onboarding + comprehensive messaging & sessions      
+  --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
   --pipelines-solo     Run pipeline UI test only (single client)
   --pipelines-gwas     Run GWAS pipeline UI test only (single client)
   --pipelines-collab   Run two-client pipeline collaboration test
+  --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -148,6 +149,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--pipelines-collab)
 			SCENARIO="pipelines-collab"
+			shift
+			;;
+		--file-transfer)
+			SCENARIO="file-transfer"
 			shift
 			;;
 		--jupyter)
@@ -1655,6 +1660,39 @@ PY
 		info "=== Running Pipelines Collaboration Test ==="
 		timer_push "Playwright: @pipelines-collab"
 		run_ui_grep "@pipelines-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	file-transfer)
+		start_static_server
+		start_tauri_instances
+
+		# Create a large test file for transfer testing
+		TRANSFER_TEST_DIR="$ROOT_DIR/test-data/file-transfer"
+		LARGE_FILE_SIZE="${LARGE_FILE_SIZE_MB:-50}" # Default 50MB
+		mkdir -p "$TRANSFER_TEST_DIR"
+
+		LARGE_FILE_PATH="$TRANSFER_TEST_DIR/large-test-file.bin"
+		if [[ ! -f "$LARGE_FILE_PATH" ]] || [[ "$(stat -f%z "$LARGE_FILE_PATH" 2>/dev/null || stat -c%s "$LARGE_FILE_PATH" 2>/dev/null)" -lt $((LARGE_FILE_SIZE * 1024 * 1024)) ]]; then
+			info "Creating ${LARGE_FILE_SIZE}MB test file..."
+			timer_push "Create test file"
+			dd if=/dev/urandom of="$LARGE_FILE_PATH" bs=1M count="$LARGE_FILE_SIZE" 2>/dev/null
+			timer_pop
+		else
+			info "Using existing test file: $LARGE_FILE_PATH"
+		fi
+
+		export TRANSFER_TEST_DIR
+		export LARGE_FILE_PATH
+
+		info "=== Running File Transfer Test ==="
+		timer_push "Playwright: @file-transfer"
+		run_ui_grep "@file-transfer" "TRANSFER_TEST_DIR=$TRANSFER_TEST_DIR" "LARGE_FILE_PATH=$LARGE_FILE_PATH" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		timer_pop
 
 		# In wait mode, keep everything running

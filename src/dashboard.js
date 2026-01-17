@@ -19,6 +19,8 @@ export function createDashboardShell({
 	_stopMessagesAutoRefresh,
 	activateSessionsTab,
 	deactivateSessionsTab,
+	activateSyftboxTab,
+	deactivateSyftboxTab,
 }) {
 	let activeView = 'run'
 	let lastImportView = 'import'
@@ -111,10 +113,16 @@ export function createDashboardShell({
 				break
 			}
 			case 'sessions':
+				deactivateSyftboxTab?.()
 				activateSessionsTab?.()
+				break
+			case 'syftbox':
+				deactivateSessionsTab?.()
+				activateSyftboxTab?.()
 				break
 			default:
 				deactivateSessionsTab?.()
+				deactivateSyftboxTab?.()
 				break
 		}
 	}

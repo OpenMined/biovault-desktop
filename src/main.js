@@ -17,6 +17,7 @@ import { createSqlModule } from './sql.js'
 import { createSessionsModule } from './sessions.js'
 import { createUpdaterModule } from './updater.js'
 import { createNetworkModule } from './network.js'
+import { createSyftBoxModule } from './syftbox.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { maybeShowProfilesOnStartup } from './profiles.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
@@ -212,6 +213,9 @@ const {
 // Create network module
 const networkModule = createNetworkModule({ invoke, shellApi })
 
+// Create SyftBox module
+const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shellApi })
+
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
 let importSetLastImportView = () => console.warn('setLastImportView not yet initialized')
@@ -285,6 +289,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		loadSql: activateSqlTab,
 		activateSessionsTab,
 		deactivateSessionsTab,
+		activateSyftboxTab: syftBoxModule.activate,
+		deactivateSyftboxTab: syftBoxModule.deactivate,
 	})
 
 setRunNavigateTo(navigateTo)
@@ -386,6 +392,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
 			templateLoader.loadAndInject('network', 'network-view'),
+			templateLoader.loadAndInject('syftbox', 'syftbox-view'),
 			templateLoader.loadAndInject('logs', 'logs-view'),
 			templateLoader.loadAndInject('settings', 'settings-view'),
 		])
@@ -449,6 +456,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	pipelinesModule.initialize()
 	initializeSessionsTab()
 	networkModule.init()
+	syftBoxModule.init()
 
 	// Listen for agent-driven UI commands (emitted by the WS bridge)
 	listen('agent-ui', async ({ payload }) => {

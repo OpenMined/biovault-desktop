@@ -15,5 +15,9 @@ Baileys/
 warelay/
 biovault/
 
+# Vendored third-party code
+vendor/
+**/vendor/
+
 # Nextflow work directory (contains symlinks)
 work/

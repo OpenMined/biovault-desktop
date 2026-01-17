@@ -1,0 +1,384 @@
+<div class="view-container syftbox-view">
+	<!-- Settings Panel (slide-out) -->
+	<div id="syftbox-settings-panel" class="syftbox-settings-panel" style="display: none">
+		<div class="settings-panel-header">
+			<h3>SyftBox Settings</h3>
+			<button id="syftbox-settings-close" class="btn btn-icon" title="Close">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<line x1="18" y1="6" x2="6" y2="18"></line>
+					<line x1="6" y1="6" x2="18" y2="18"></line>
+				</svg>
+			</button>
+		</div>
+		<div class="settings-panel-content">
+			<!-- Server URL -->
+			<div class="settings-field">
+				<label for="syftbox-server-url">Server URL</label>
+				<input
+					type="url"
+					id="syftbox-server-url"
+					class="settings-input"
+					placeholder="https://syftbox.net"
+					autocomplete="off"
+				/>
+				<p class="settings-hint">The SyftBox server for secure data sharing</p>
+			</div>
+
+			<!-- Authentication -->
+			<div class="settings-field">
+				<label>Authentication</label>
+				<div id="syftbox-auth-status" class="auth-status">
+					<span class="auth-status-icon">○</span>
+					<span class="auth-status-text">Not authenticated</span>
+				</div>
+			</div>
+
+			<!-- Auth Step 1: Email -->
+			<div id="syftbox-auth-step1" class="auth-step">
+				<div class="settings-field">
+					<label for="syftbox-auth-email">Email</label>
+					<input
+						type="email"
+						id="syftbox-auth-email"
+						class="settings-input"
+						placeholder="you@example.com"
+						autocomplete="off"
+					/>
+				</div>
+				<button id="syftbox-request-otp" class="btn btn-primary">Send Verification Code</button>
+			</div>
+
+			<!-- Auth Step 2: OTP -->
+			<div id="syftbox-auth-step2" class="auth-step" style="display: none">
+				<div class="settings-field">
+					<label for="syftbox-auth-otp">Verification Code</label>
+					<input
+						type="text"
+						id="syftbox-auth-otp"
+						class="settings-input"
+						placeholder="Enter code from email"
+						autocomplete="off"
+					/>
+					<p class="settings-hint">Check your email for the verification code</p>
+				</div>
+				<div class="auth-step-actions">
+					<button id="syftbox-submit-otp" class="btn btn-primary">Verify</button>
+					<button id="syftbox-back-to-email" class="btn btn-secondary">Back</button>
+				</div>
+			</div>
+
+			<!-- Authenticated state -->
+			<div id="syftbox-auth-complete" class="auth-step" style="display: none">
+				<div class="auth-success">
+					<span class="auth-success-icon">✓</span>
+					<span class="auth-success-text"
+						>Authenticated as <strong id="syftbox-auth-user-email"></strong
+					></span>
+				</div>
+				<button id="syftbox-sign-out" class="btn btn-secondary btn-sm">Sign Out</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Header with status bar -->
+	<header class="page-header syftbox-header">
+		<div class="page-header-left">
+			<h1 class="page-title">SyftBox</h1>
+			<p class="page-subtitle">Sync status and file explorer</p>
+		</div>
+		<div class="syftbox-status-bar">
+			<span id="syftbox-connection-status" class="connection-status">
+				<span class="status-dot"></span>
+				<span class="status-text">Connecting...</span>
+			</span>
+			<span id="syftbox-user-email" class="user-email"></span>
+			<button id="syftbox-auth-btn" class="btn btn-secondary">Authenticate</button>
+			<button id="syftbox-settings-btn" class="btn btn-icon" title="SyftBox Settings">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<circle cx="12" cy="12" r="3"></circle>
+					<path
+						d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+					></path>
+				</svg>
+			</button>
+		</div>
+	</header>
+
+	<!-- Main content: Tree + Details -->
+	<div class="view-content syftbox-content">
+		<div class="syftbox-explorer">
+			<!-- Left pane: Tree or Activity Log -->
+			<div class="explorer-tree-pane">
+				<div class="tree-toolbar">
+					<div class="view-tabs">
+						<button id="view-tab-tree" class="view-tab active" data-view="tree" title="Tree View">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<path
+									d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+								></path>
+							</svg>
+							<span>Tree</span>
+						</button>
+						<button id="view-tab-log" class="view-tab" data-view="log" title="Activity Log">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<line x1="8" y1="6" x2="21" y2="6"></line>
+								<line x1="8" y1="12" x2="21" y2="12"></line>
+								<line x1="8" y1="18" x2="21" y2="18"></line>
+								<line x1="3" y1="6" x2="3.01" y2="6"></line>
+								<line x1="3" y1="12" x2="3.01" y2="12"></line>
+								<line x1="3" y1="18" x2="3.01" y2="18"></line>
+							</svg>
+							<span>Activity</span>
+						</button>
+						<button id="view-tab-conn" class="view-tab" data-view="conn" title="Connection Log">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<circle cx="12" cy="12" r="2"></circle>
+								<path
+									d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"
+								></path>
+							</svg>
+							<span>Conn</span>
+						</button>
+					</div>
+					<div class="activity-summary">
+						<span id="activity-syncing" class="activity-badge syncing">↻ 0</span>
+						<span id="activity-pending" class="activity-badge pending">⏳ 0</span>
+						<span id="activity-completed" class="activity-badge completed">✓ 0</span>
+						<span id="activity-errors" class="activity-badge error">✗ 0</span>
+					</div>
+					<input
+						type="text"
+						id="tree-filter"
+						class="tree-filter"
+						placeholder="Filter..."
+						autocomplete="off"
+						autocorrect="off"
+						autocapitalize="off"
+						spellcheck="false"
+					/>
+					<button id="tree-refresh-btn" class="btn btn-icon" title="Refresh">
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<polyline points="23 4 23 10 17 10"></polyline>
+							<polyline points="1 20 1 14 7 14"></polyline>
+							<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+						</svg>
+					</button>
+				</div>
+
+				<!-- Tree View -->
+				<div id="sync-tree-view" class="sync-view active">
+					<div id="sync-tree-list" class="sync-tree-list">
+						<div class="tree-loading">
+							<span class="spinner"></span>
+							<span>Loading datasites...</span>
+						</div>
+					</div>
+					<div class="tree-legend">
+						<span class="legend-item"><span class="status-completed">✓</span> synced</span>
+						<span class="legend-item"><span class="status-syncing">↻</span> syncing</span>
+						<span class="legend-item"><span class="status-pending">⏳</span> pending</span>
+						<span class="legend-item"><span class="status-error">✗</span> error</span>
+						<span class="legend-item"><span class="status-ignored">◌</span> ignored</span>
+						<span class="legend-item"><span class="status-essential">🔒</span> required</span>
+					</div>
+				</div>
+
+				<!-- Activity Log View -->
+				<div id="sync-log-view" class="sync-view">
+					<div id="activity-log-list" class="activity-log-list">
+						<div class="log-empty">No recent activity</div>
+					</div>
+				</div>
+
+				<!-- Connection Log View -->
+				<div id="sync-conn-view" class="sync-view">
+					<div class="conn-log-header">
+						<span class="conn-log-title">Connection History</span>
+						<button id="conn-log-clear" class="btn btn-sm" title="Clear log">Clear</button>
+					</div>
+					<div id="connection-log-list" class="connection-log-list">
+						<div class="log-empty">No connection events yet</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Right pane: Details + Shared -->
+			<div class="explorer-detail-pane">
+				<div id="sync-tree-details" class="sync-tree-details">
+					<div class="detail-placeholder">
+						<span class="placeholder-icon">📂</span>
+						<span class="placeholder-text">Select a file or folder to view details</span>
+					</div>
+				</div>
+
+				<!-- Shared With You section -->
+				<div class="shared-section">
+					<div class="shared-header">
+						<span class="shared-title">Shared With You</span>
+						<button id="refresh-shared-btn" class="btn btn-icon" title="Refresh">
+							<svg
+								width="12"
+								height="12"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<polyline points="23 4 23 10 17 10"></polyline>
+								<polyline points="1 20 1 14 7 14"></polyline>
+								<path
+									d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+								></path>
+							</svg>
+						</button>
+					</div>
+					<div id="shared-list" class="shared-list">
+						<div class="shared-empty">No shared content discovered</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Collapsible diagnostics footer -->
+		<div class="syftbox-diagnostics">
+			<button id="diagnostics-toggle" class="diagnostics-toggle">
+				<span class="toggle-icon">▶</span>
+				<span class="toggle-label">Paths & Diagnostics</span>
+				<span class="diagnostics-summary">
+					<span id="diag-pid">PID: -</span>
+					<span id="diag-mode">Mode: -</span>
+					<span id="diag-tx">TX: -</span>
+					<span id="diag-rx">RX: -</span>
+				</span>
+			</button>
+			<div id="diagnostics-panel" class="diagnostics-panel" style="display: none">
+				<div class="diag-grid">
+					<div class="diag-item">
+						<span class="diag-label">Config</span>
+						<span id="diag-config-path" class="diag-value monospace" title="Click to copy">-</span>
+						<div class="diag-actions">
+							<button class="btn btn-sm btn-icon" data-action="copy-config" title="Copy path">
+								📋
+							</button>
+							<button class="btn btn-sm" data-action="open-config">Open</button>
+						</div>
+					</div>
+					<div class="diag-item">
+						<span class="diag-label">Data Dir</span>
+						<span id="diag-data-dir" class="diag-value monospace" title="Click to copy">-</span>
+						<div class="diag-actions">
+							<button class="btn btn-sm btn-icon" data-action="copy-data" title="Copy path">
+								📋
+							</button>
+							<button class="btn btn-sm" data-action="open-data">Open</button>
+						</div>
+					</div>
+					<div class="diag-item">
+						<span class="diag-label">Datasites</span>
+						<span id="diag-datasites" class="diag-value monospace" title="Click to copy">-</span>
+						<div class="diag-actions">
+							<button class="btn btn-sm btn-icon" data-action="copy-datasites" title="Copy path">
+								📋
+							</button>
+							<button class="btn btn-sm" data-action="open-datasites">Open</button>
+						</div>
+					</div>
+					<div class="diag-item">
+						<span class="diag-label">Log File</span>
+						<span id="diag-log-path" class="diag-value monospace" title="Click to copy">-</span>
+						<div class="diag-actions">
+							<button class="btn btn-sm btn-icon" data-action="copy-log" title="Copy path">
+								📋
+							</button>
+							<button class="btn btn-sm" data-action="open-log">Open</button>
+						</div>
+					</div>
+				</div>
+				<div class="diag-row">
+					<span class="diag-label">Daemon</span>
+					<span id="diag-daemon-status" class="diag-value">-</span>
+					<div class="diag-actions">
+						<button id="diag-start-btn" class="btn btn-sm btn-success">Start</button>
+						<button id="diag-stop-btn" class="btn btn-sm btn-danger">Stop</button>
+					</div>
+				</div>
+				<div class="diag-row">
+					<span class="diag-label">Server</span>
+					<span
+						id="diag-server-url"
+						class="diag-value monospace clickable"
+						data-action="copy-server"
+						title="Click to copy"
+						>-</span
+					>
+				</div>
+				<div class="diag-row">
+					<span class="diag-label">Client URL</span>
+					<span
+						id="diag-client-url"
+						class="diag-value monospace clickable"
+						data-action="copy-client"
+						title="Click to copy"
+						>-</span
+					>
+				</div>
+				<div class="diag-row">
+					<span class="diag-label">Backend</span>
+					<span id="diag-backend" class="diag-value">-</span>
+				</div>
+				<div class="diag-row">
+					<span class="diag-label">Syftignore</span>
+					<span id="diag-syftignore" class="diag-value monospace" title="Click to copy">-</span>
+					<div class="diag-actions">
+						<button class="btn btn-sm btn-icon" data-action="copy-syftignore" title="Copy path">
+							📋
+						</button>
+						<button class="btn btn-sm" data-action="open-syftignore">Edit</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>

@@ -1364,6 +1364,16 @@ pub fn run() {
             open_path_in_file_manager,
             test_notification,
             test_notification_applescript,
+            // Sync tree commands
+            commands::sync_tree::sync_tree_list_dir,
+            commands::sync_tree::sync_tree_get_details,
+            commands::sync_tree::sync_tree_get_ignore_patterns,
+            commands::sync_tree::sync_tree_add_ignore,
+            commands::sync_tree::sync_tree_remove_ignore,
+            commands::sync_tree::sync_tree_init_default_policy,
+            commands::sync_tree::sync_tree_get_shared_with_me,
+            commands::sync_tree::sync_tree_subscribe,
+            commands::sync_tree::sync_tree_unsubscribe,
             // Sessions commands
             get_sessions,
             list_sessions,

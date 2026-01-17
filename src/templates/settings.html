@@ -309,26 +309,20 @@
 					</div>
 				</div>
 
-				<!-- SyftBox Integration -->
+				<!-- SyftBox Integration (simplified - full UI in SyftBox tab) -->
 				<div class="setting-item">
-					<label>SyftBox Integration</label>
+					<label>SyftBox</label>
 					<div class="settings-ai-field">
 						<label for="setting-syftbox-server">Server URL</label>
 						<input
 							type="url"
 							id="setting-syftbox-server"
 							class="setting-input"
-							placeholder="https://dev.syftbox.net"
+							placeholder="https://syftbox.net"
 						/>
 						<p style="margin: 6px 0 0; color: #6b7280">
-							Point the production app at an alternate SyftBox host (e.g. dev.syftbox.net) without
-							enabling dev mode. Changes are saved to your BioVault config.
+							Configure the SyftBox server for secure data sharing.
 						</p>
-						<div class="syftbox-actions">
-							<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
-								Authenticate
-							</button>
-						</div>
 					</div>
 					<div class="status-card status-card-stacked syftbox-status-card">
 						<div class="status-card-content">
@@ -338,249 +332,19 @@
 									<span class="spinner" style="width: 12px; height: 12px; margin: 0"></span>
 									Checking...
 								</span>
-								<span id="syftbox-dev-badge" class="status-badge" style="display: none"></span>
 							</div>
-							<p class="status-card-description">Connect to SyftBox for secure data sharing</p>
+							<p class="status-card-description">
+								View sync status, manage files, and configure sync policies in the
+								<a href="#" id="settings-goto-syftbox" class="settings-link">SyftBox tab</a>.
+							</p>
 						</div>
-					</div>
-					<div class="status-card status-card-stacked syftbox-paths-card">
-						<div class="status-card-content syftbox-paths">
-							<div class="status-card-title">SyftBox Paths</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">Config</div>
-									<div id="syftbox-config-path" class="path-value monospace">Loading...</div>
-								</div>
-								<button
-									id="syftbox-open-config-btn"
-									class="settings-btn settings-btn-secondary path-btn"
-									disabled
-								>
-									Open
-								</button>
-							</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">Data dir</div>
-									<div id="syftbox-data-dir" class="path-value monospace">Loading...</div>
-								</div>
-								<button
-									id="syftbox-open-data-dir-btn"
-									class="settings-btn settings-btn-secondary path-btn"
-									disabled
-								>
-									Open
-								</button>
-							</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">Datasites</div>
-									<div id="syftbox-datasites-dir" class="path-value monospace">Loading...</div>
-								</div>
-								<button
-									id="syftbox-open-datasites-btn"
-									class="settings-btn settings-btn-secondary path-btn"
-									disabled
-								>
-									Open
-								</button>
-							</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">Desktop logs</div>
-									<div id="syftbox-log-dir" class="path-value monospace">Loading...</div>
-								</div>
-								<button
-									id="syftbox-open-logs-btn"
-									class="settings-btn settings-btn-secondary path-btn"
-									disabled
-								>
-									Open
-								</button>
-							</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">SyftBox log file</div>
-									<div id="syftbox-log-file" class="path-value monospace">Loading...</div>
-								</div>
-								<button
-									id="syftbox-open-logfile-btn"
-									class="settings-btn settings-btn-secondary path-btn"
-									disabled
-								>
-									Open
-								</button>
-							</div>
-							<div class="path-row">
-								<div>
-									<div class="path-label">Daemon</div>
-									<div id="syftbox-daemon-status" class="path-value monospace">Checking...</div>
-								</div>
-								<div class="path-row-actions">
-									<button
-										id="syftbox-start-btn"
-										class="settings-btn settings-btn-secondary path-btn"
-									>
-										Start
-									</button>
-									<button
-										id="syftbox-stop-btn"
-										class="settings-btn settings-btn-secondary path-btn"
-									>
-										Stop
-									</button>
-								</div>
-							</div>
-						</div>
-					</div>
-					<div class="status-card status-card-stacked syftbox-queue-card">
-						<div class="status-card-header">
-							<div>
-								<div class="status-card-title">SyftBox Sync Queue</div>
-								<p class="status-card-description">
-									Live view of sync/upload progress from the SyftBox control plane
-								</p>
-							</div>
-							<div class="syftbox-queue-actions">
-								<button id="syftbox-queue-refresh" class="settings-btn settings-btn-secondary">
-									Refresh
-								</button>
-								<span id="syftbox-queue-status" class="queue-status-text">Connecting…</span>
-							</div>
-						</div>
-						<div class="syftbox-queue-summary">
-							<div class="summary-pill">
-								<span class="label">Pending</span>
-								<span id="syftbox-summary-pending" class="value">0</span>
-							</div>
-							<div class="summary-pill">
-								<span class="label">Syncing</span>
-								<span id="syftbox-summary-syncing" class="value">0</span>
-							</div>
-							<div class="summary-pill">
-								<span class="label">Completed</span>
-								<span id="syftbox-summary-completed" class="value">0</span>
-							</div>
-							<div class="summary-pill error">
-								<span class="label">Errors</span>
-								<span id="syftbox-summary-error" class="value">0</span>
-							</div>
-						</div>
-						<div class="syftbox-queue-lists">
-							<div class="queue-column">
-								<div class="queue-column-header">
-									<div>Sync & Uploads</div>
-									<div class="queue-filter" id="syftbox-queue-filter">
-										<button class="queue-filter-btn active" data-filter="active">
-											In Progress
-										</button>
-										<button class="queue-filter-btn" data-filter="completed">Completed</button>
-									</div>
-								</div>
-								<small id="syftbox-queue-count"></small>
-								<div id="syftbox-queue-list" class="queue-list empty">No active items</div>
-							</div>
-						</div>
-					</div>
-
-					<div class="status-card status-card-stacked syftbox-diagnostics-card">
-						<div class="syftbox-sidebar-indicator">
-							<div id="syftbox-indicator-dot" class="indicator-dot" data-state="offline"></div>
-							<div class="indicator-metrics">
-								<div><small>TX</small> <span id="syftbox-indicator-tx">-</span></div>
-								<div><small>RX</small> <span id="syftbox-indicator-rx">-</span></div>
-							</div>
-						</div>
-						<div class="status-card-header">
-							<div>
-								<div class="status-card-title">SyftBox Diagnostics</div>
-								<p class="status-card-description">
-									Runtime details to debug the local daemon and control plane calls
-								</p>
-							</div>
-							<div class="syftbox-queue-actions">
-								<button
-									id="syftbox-diagnostics-refresh"
-									class="settings-btn settings-btn-secondary"
-								>
-									Refresh
-								</button>
-							</div>
-						</div>
-						<div class="syftbox-diagnostics-grid">
-							<div>
-								<div class="diag-label">Daemon PID(s)</div>
-								<div id="syftbox-pids" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Mode</div>
-								<div id="syftbox-mode" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Backend</div>
-								<div id="syftbox-backend" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Client URL</div>
-								<div id="syftbox-client-url" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Server URL</div>
-								<div id="syftbox-server-url" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Client Token</div>
-								<div id="syftbox-client-token" class="path-value monospace wrap">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Refresh Token</div>
-								<div id="syftbox-refresh-token" class="path-value monospace wrap">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Config path</div>
-								<div id="syftbox-config-path-diag" class="path-value monospace">-</div>
-							</div>
-							<div>
-								<div class="diag-label">Log file</div>
-								<div id="syftbox-log-path" class="path-value monospace">-</div>
-							</div>
-						</div>
-						<div class="curl-helper">
-							<div class="diag-label">cURL for /v1/status</div>
-							<pre id="syftbox-curl-helper" class="code-box">-</pre>
-						</div>
-						<div class="cp-log-section">
-							<div class="cp-log-header">
-								<div class="diag-label">Control plane requests (latest)</div>
-							</div>
-							<div id="syftbox-cp-log" class="cp-log-list">No requests yet</div>
-						</div>
-
-						<div class="status-card-content syftbox-runtime-card">
-							<div class="runtime-pill">
-								<span class="pill-label">Status</span>
-								<span id="syftbox-runtime-status" class="pill-value">Unknown</span>
-							</div>
-							<div class="runtime-pill">
-								<span class="pill-label">Last contact</span>
-								<span id="syftbox-runtime-last-contact" class="pill-value">-</span>
-							</div>
-							<div class="runtime-pill">
-								<span class="pill-label">HTTP tx/rx</span>
-								<span id="syftbox-runtime-http" class="pill-value">-</span>
-							</div>
-							<div class="runtime-pill">
-								<span class="pill-label">WS tx/rx</span>
-								<span id="syftbox-runtime-ws" class="pill-value">-</span>
-							</div>
-							<div class="runtime-pill">
-								<span class="pill-label">Uploads</span>
-								<span id="syftbox-runtime-uploads" class="pill-value">-</span>
-							</div>
-							<div class="runtime-pill">
-								<span class="pill-label">Sync</span>
-								<span id="syftbox-runtime-sync" class="pill-value">-</span>
-							</div>
+						<div class="syftbox-actions" style="margin-top: 12px">
+							<button id="syftbox-auth-btn" class="settings-btn settings-btn-primary" disabled>
+								Authenticate
+							</button>
+							<button id="settings-open-syftbox" class="settings-btn settings-btn-secondary">
+								Open SyftBox Tab
+							</button>
 						</div>
 					</div>
 				</div>

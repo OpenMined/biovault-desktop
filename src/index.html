@@ -74,6 +74,25 @@
 						<img src="assets/icons/user-round.svg" width="24" height="24" alt="Network" />
 						<span class="nav-label">Network</span>
 					</button>
+					<button class="nav-item" data-tab="syftbox" title="SyftBox">
+						<svg
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path
+								d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+							></path>
+							<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+							<line x1="12" y1="22.08" x2="12" y2="12"></line>
+						</svg>
+						<span class="nav-label">SyftBox</span>
+					</button>
 					<button class="nav-item" data-tab="messages" title="Messages">
 						<img src="assets/icons/mail.svg" width="24" height="24" alt="Messages" />
 						<span class="nav-label">Messages</span>
@@ -99,11 +118,29 @@
 					<div id="sql-view" class="tab-content"></div>
 					<div id="sessions-view" class="tab-content"></div>
 					<div id="network-view" class="tab-content"></div>
+					<div id="syftbox-view" class="tab-content"></div>
 					<div id="messages-view" class="tab-content"></div>
 					<div id="settings-view" class="tab-content"></div>
 				</div>
 			</div>
 		</div>
+
+		<!-- Global SyftBox Status Bar - spans full width under everything -->
+		<footer id="global-status-bar" class="global-status-bar">
+			<div class="status-bar-left">
+				<span id="global-ws-status" class="ws-status" title="WebSocket connection">
+					<span class="ws-dot disconnected"></span>
+					<span class="ws-label">Disconnected</span>
+				</span>
+				<span id="global-last-sync" class="last-sync" title="Last successful sync">-</span>
+			</div>
+			<div class="status-bar-right">
+				<span id="global-pid" class="status-item">PID: -</span>
+				<span id="global-mode" class="status-item">Mode: -</span>
+				<span id="global-tx" class="status-item">TX: -</span>
+				<span id="global-rx" class="status-item">RX: -</span>
+			</div>
+		</footer>
 
 		<!-- Import Modal will be injected here by JavaScript -->
 
