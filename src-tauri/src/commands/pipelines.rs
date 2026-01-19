@@ -16,6 +16,7 @@ use biovault::cli::commands::project_management::{
 };
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
+use biovault::flow_spec::FlowFile;
 pub use biovault::pipeline_spec::PipelineSpec;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -564,7 +565,7 @@ pub async fn create_pipeline(
         }
 
         // Load pipeline spec from source
-        let mut spec = PipelineSpec::load(&source_pipeline_yaml_path)
+        let spec = PipelineSpec::load(&source_pipeline_yaml_path)
             .map_err(|e| format!("Failed to load pipeline.yaml: {}", e))?;
         name = spec.name.clone();
 
@@ -608,8 +609,10 @@ pub async fn create_pipeline(
 
         let spec_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
+                let mut flow = FlowFile::from_pipeline_spec(&spec)
+                    .map_err(|e| format!("Failed to convert spec: {}", e))?;
                 resolve_pipeline_dependencies(
-                    &mut spec,
+                    &mut flow,
                     &dependency_context,
                     &pipeline_yaml_path_clone,
                     overwrite,
@@ -617,7 +620,10 @@ pub async fn create_pipeline(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok::<PipelineSpec, String>(spec)
+                let updated = flow
+                    .to_pipeline_spec()
+                    .map_err(|e| format!("Failed to convert flow: {}", e))?;
+                Ok::<PipelineSpec, String>(updated)
             })
         })
         .await
