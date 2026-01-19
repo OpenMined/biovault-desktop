@@ -22,7 +22,8 @@ export function log(socket: WebSocket | null, payload: Record<string, unknown>):
 }
 
 export async function setWsPort(page: Page, port: number): Promise<void> {
-	await page.addInitScript((portNum: number) => {
+	const ciFlag = process.env.CI ? '1' : ''
+	await page.addInitScript((portNum: number, ci: string) => {
 		const w = window as any
 		w.__DEV_WS_BRIDGE_PORT__ = portNum
 		w.__DISABLE_UPDATER__ = true
@@ -30,7 +31,10 @@ export async function setWsPort(page: Page, port: number): Promise<void> {
 		w.process.env = w.process.env || {}
 		w.process.env.USE_REAL_INVOKE = 'true'
 		w.process.env.DISABLE_UPDATER = '1'
-	}, port)
+		if (ci) {
+			w.process.env.CI = w.process.env.CI || ci
+		}
+	}, port, ciFlag)
 }
 
 /**
@@ -174,6 +178,7 @@ export async function completeOnboarding(
 					onboardingCheckComplete: (window as any).__ONBOARDING_CHECK_COMPLETE__,
 					navReady: (window as any).__NAV_HANDLERS_READY__,
 					eventReady: (window as any).__EVENT_HANDLERS_READY__,
+					lastOnboardingCheck: (window as any).__LAST_ONBOARDING_CHECK__,
 					url: window.location.href,
 				}))
 				.catch(() => null)

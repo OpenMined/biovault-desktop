@@ -31,6 +31,7 @@ Options:
   --init [--https]    Initialize repo workspace and sync deps
   sync [branch]       Sync workspace to manifest (repo sync)
                       branch: checkout manifest branches and fast-forward
+  sync branch --force Discard local changes, force-sync, and fast-forward manifest branches
   fetch [-j N]        Fetch remotes for all repos and show ahead/behind
   pull [--rebase]     Pull updates for all repos on branches
   ssh                 Rewrite remotes to SSH for all repos
@@ -508,15 +509,31 @@ ensure_syft_crypto_submodule() {
 }
 
 repo_sync() {
-  if [[ "$#" -gt 1 ]]; then
-    echo "Usage: ./repo sync [branch]" >&2
+  local mode="${1:-}"
+  local force="${2:-}"
+
+  if [[ "$#" -gt 2 ]]; then
+    echo "Usage: ./repo sync [branch] [--force]" >&2
     exit 1
   fi
 
-  local mode="${1:-}"
   if [[ -n "$mode" && "$mode" != "branch" && "$mode" != "--branch" ]]; then
     echo "Unknown sync option: $mode" >&2
     exit 1
+  fi
+
+  if [[ -n "$force" && "$force" != "--force" ]]; then
+    echo "Unknown sync option: $force" >&2
+    exit 1
+  fi
+
+  if [[ "$mode" == "branch" && "$force" == "--force" ]]; then
+    echo -e "${YELLOW}→ Force syncing (discarding local commits/changes)${NC}"
+    run_repo forall -c 'git rebase --abort >/dev/null 2>&1 || true; git reset --hard; git clean -fd'
+    run_repo sync -d --force-sync
+    checkout_manifest_branches
+    ensure_syft_crypto_submodule
+    return
   fi
 
   run_repo sync
@@ -611,6 +628,63 @@ sync_manifest_branches() {
 
   if [[ "$failures" -ne 0 ]]; then
     exit 1
+  fi
+}
+
+checkout_manifest_branches() {
+  local failures=0
+
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+
+    local revision
+    revision="$(manifest_effective_revision_for "$repo")"
+    if [[ -z "$revision" ]]; then
+      continue
+    fi
+
+    if [[ "$revision" =~ ^[0-9a-fA-F]{7,40}$ ]] || git -C "$repo" show-ref --verify --quiet "refs/tags/$revision"; then
+      continue
+    fi
+
+    if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      continue
+    fi
+
+    local remote
+    remote="$(resolve_remote_for_repo "$repo" "$repo")"
+
+    if [[ -z "$remote" ]]; then
+      echo -e "  ${YELLOW}→ ${repo}: no remote found${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if ! git -C "$repo" fetch "$remote" --prune >/dev/null 2>&1; then
+      echo -e "  ${RED}✗ ${repo}: fetch failed${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/$remote/$revision"; then
+      if ! git -C "$repo" checkout -B "$revision" "$remote/$revision" >/dev/null 2>&1; then
+        echo -e "  ${RED}✗ ${repo}: failed to checkout ${revision}${NC}"
+        failures=$((failures + 1))
+        continue
+      fi
+      if ! git -C "$repo" reset --hard "$remote/$revision" >/dev/null 2>&1; then
+        echo -e "  ${RED}✗ ${repo}: failed to fast-forward ${revision}${NC}"
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
+
+    echo -e "  ${YELLOW}→ ${repo}: branch ${revision} not found on ${remote}${NC}"
+    failures=$((failures + 1))
+  done < <(manifest_paths)
+
+  if [[ "$failures" -ne 0 ]]; then
+    return 1
   fi
 }
 
