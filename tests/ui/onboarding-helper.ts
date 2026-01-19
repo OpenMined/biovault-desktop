@@ -22,7 +22,7 @@ export function log(socket: WebSocket | null, payload: Record<string, unknown>):
 }
 
 export async function setWsPort(page: Page, port: number): Promise<void> {
-	const ciFlag = process.env.CI ? '1' : ''
+	const ciFlag = process.env.CI || process.env.GITHUB_ACTIONS || ''
 	await page.addInitScript(
 		(portNum: number, ci: string) => {
 			const w = window as any
@@ -34,6 +34,8 @@ export async function setWsPort(page: Page, port: number): Promise<void> {
 			w.process.env.DISABLE_UPDATER = '1'
 			if (ci) {
 				w.process.env.CI = w.process.env.CI || ci
+				w.process.env.GITHUB_ACTIONS = w.process.env.GITHUB_ACTIONS || ci
+				w.__IS_CI__ = true
 			}
 		},
 		port,
@@ -176,6 +178,34 @@ export async function completeOnboarding(
 			.catch(() => false)
 
 		if (onboardingStillVisible) {
+			const ciFlag = !!process.env.CI || process.env.GITHUB_ACTIONS === 'true'
+			const retryCheck = await page
+				.evaluate(async (useLongTimeout) => {
+					const invoke = (window as any).__TAURI__?.invoke
+					if (!invoke) {
+						return { available: false }
+					}
+					const start = Date.now()
+					try {
+						const result = await invoke('check_is_onboarded', {
+							__wsTimeoutMs: useLongTimeout ? 15000 : 5000,
+						})
+						return { available: true, result, durationMs: Date.now() - start }
+					} catch (err) {
+						return { available: true, error: String(err), durationMs: Date.now() - start }
+					}
+				}, ciFlag)
+				.catch(() => null)
+			console.log(`${email}: [onboarding] check_is_onboarded retry:`, JSON.stringify(retryCheck))
+			if (retryCheck?.available && retryCheck?.result === true) {
+				await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
+				await waitForAppReady(page, { timeout: 30_000 })
+				await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+				log(logSocket, { event: 'onboarding-complete', email, recovery: 'retry-check' })
+				console.log(`${email}: Onboarding complete after retry!`)
+				return true
+			}
+
 			// Get diagnostic info from the page's console output
 			const diag = await page
 				.evaluate(() => ({
@@ -183,6 +213,9 @@ export async function completeOnboarding(
 					navReady: (window as any).__NAV_HANDLERS_READY__,
 					eventReady: (window as any).__EVENT_HANDLERS_READY__,
 					lastOnboardingCheck: (window as any).__LAST_ONBOARDING_CHECK__,
+					ci: (window as any).__IS_CI__ || null,
+					envCI: (window as any).process?.env?.CI || null,
+					envGithubActions: (window as any).process?.env?.GITHUB_ACTIONS || null,
 					url: window.location.href,
 				}))
 				.catch(() => null)

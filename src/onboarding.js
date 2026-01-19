@@ -1639,11 +1639,18 @@ export function initOnboarding({
 				}
 
 				try {
-					const ciFlag = window?.process?.env?.CI === '1' || window?.process?.env?.CI === 'true'
+					const ciFlag =
+						window?.process?.env?.CI === '1' ||
+						window?.process?.env?.CI === 'true' ||
+						window?.process?.env?.GITHUB_ACTIONS === 'true' ||
+						window?.__IS_CI__ === true
 					const wsTimeoutMs = ciFlag ? 15000 : 5000
 					const start = Date.now()
 					console.log(
 						`[onboarding] update_saved_dependency_states start (timeout=${wsTimeoutMs}ms)`,
+					)
+					console.log(
+						`[onboarding] env CI=${window?.process?.env?.CI || ''} GITHUB_ACTIONS=${window?.process?.env?.GITHUB_ACTIONS || ''}`,
 					)
 					// Do not block the UI on potentially slow dependency checks in CI.
 					void invoke('update_saved_dependency_states', { __wsTimeoutMs: wsTimeoutMs })
@@ -2512,6 +2519,8 @@ export function initOnboarding({
 				isOnboarded,
 				error: checkError ? String(checkError) : null,
 				ci: window?.process?.env?.CI || null,
+				githubActions: window?.process?.env?.GITHUB_ACTIONS || null,
+				isCiFlag: window?.__IS_CI__ || null,
 			}
 			if (checkError) {
 				console.warn('🔍 Onboarding check failed:', checkError)
