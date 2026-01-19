@@ -4,14 +4,14 @@ This document explains the different forms of `BindingSpec` used in `with:`, `pa
 
 ## Quick Reference
 
-| Form | Use Case | Example |
-|------|----------|---------|
-| String shorthand | Simple input/output references | `inputs.datasites` |
-| `from:` record | Step output references | `from: steps.write.outputs.file` |
-| `value:` literal | Hardcoded values | `value: "hello"` |
-| `env:` variable | Environment variables | `env: MY_VAR` |
-| `await:` block | Cross-datasite dependencies | `await: { timeout_seconds: 120 }` |
-| Type wrappers | Explicit typing | `File(path/to/file.txt)` |
+| Form             | Use Case                       | Example                           |
+| ---------------- | ------------------------------ | --------------------------------- |
+| String shorthand | Simple input/output references | `inputs.datasites`                |
+| `from:` record   | Step output references         | `from: steps.write.outputs.file`  |
+| `value:` literal | Hardcoded values               | `value: "hello"`                  |
+| `env:` variable  | Environment variables          | `env: MY_VAR`                     |
+| `await:` block   | Cross-datasite dependencies    | `await: { timeout_seconds: 120 }` |
+| Type wrappers    | Explicit typing                | `File(path/to/file.txt)`          |
 
 ## String Shorthand Forms
 
@@ -68,7 +68,7 @@ with:
 with:
   config:
     from: inputs.optional_config
-    default: "default.json"
+    default: 'default.json'
 ```
 
 ### With Environment Variable Fallback
@@ -77,7 +77,7 @@ with:
 with:
   api_key:
     env: API_KEY
-    default: "dev-key"
+    default: 'dev-key'
 ```
 
 ## Await Pattern (Cross-Datasite Dependencies)
@@ -99,17 +99,17 @@ with:
     await:
       timeout_seconds: 60
       poll_ms: 1000
-      on_timeout: default      # fail | skip | default
-      default_value: "[]"      # used when on_timeout is 'default'
+      on_timeout: default # fail | skip | default
+      default_value: '[]' # used when on_timeout is 'default'
 ```
 
 ### Timeout Behaviors
 
-| `on_timeout` | Behavior |
-|--------------|----------|
-| `fail` (default) | Step fails with timeout error |
-| `skip` | Step is skipped, downstream dependencies handle missing input |
-| `default` | Use `default_value` as the binding value |
+| `on_timeout`     | Behavior                                                      |
+| ---------------- | ------------------------------------------------------------- |
+| `fail` (default) | Step fails with timeout error                                 |
+| `skip`           | Step is skipped, downstream dependencies handle missing input |
+| `default`        | Use `default_value` as the binding value                      |
 
 ## Manifest References (Multi-Datasite Fan-In)
 
@@ -134,8 +134,8 @@ The `.manifest` suffix returns a JSON object mapping datasite names to file path
 
 ```json
 {
-  "client1@local": "/path/to/client1/file.txt",
-  "client2@local": "/path/to/client2/file.txt"
+	"client1@local": "/path/to/client1/file.txt",
+	"client2@local": "/path/to/client2/file.txt"
 }
 ```
 
@@ -146,15 +146,15 @@ In `share:` blocks, bindings work similarly but also support permissions:
 ```yaml
 share:
   result_shared:
-    source: result              # Output name from module
+    source: result # Output name from module
     path: shared/flows/{run_id}/{datasite.current}/result.txt
     permissions:
       read:
-        - "{datasites[*]}"      # All datasites can read
+        - '{datasites[*]}' # All datasites can read
       write:
-        - "{datasite.current}"  # Only current datasite can write
+        - '{datasite.current}' # Only current datasite can write
     await:
-      timeout_seconds: 30       # Wait for sync confirmation
+      timeout_seconds: 30 # Wait for sync confirmation
       on_timeout: fail
 ```
 
@@ -217,5 +217,5 @@ steps:
     with:
       config:
         from: inputs.config_override
-        default: "defaults/config.json"
+        default: 'defaults/config.json'
 ```

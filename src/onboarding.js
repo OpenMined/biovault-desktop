@@ -1639,9 +1639,35 @@ export function initOnboarding({
 				}
 
 				try {
-					await invoke('update_saved_dependency_states')
+					const ciFlag =
+						window?.process?.env?.CI === '1' ||
+						window?.process?.env?.CI === 'true' ||
+						window?.process?.env?.GITHUB_ACTIONS === 'true' ||
+						window?.__IS_CI__ === true
+					const wsTimeoutMs = ciFlag ? 15000 : 5000
+					const start = Date.now()
+					console.log(
+						`[onboarding] update_saved_dependency_states start (timeout=${wsTimeoutMs}ms)`,
+					)
+					console.log(
+						`[onboarding] env CI=${window?.process?.env?.CI || ''} GITHUB_ACTIONS=${window?.process?.env?.GITHUB_ACTIONS || ''}`,
+					)
+					// Do not block the UI on potentially slow dependency checks in CI.
+					void invoke('update_saved_dependency_states', { __wsTimeoutMs: wsTimeoutMs })
+						.then((result) => {
+							console.log(
+								`[onboarding] update_saved_dependency_states ok (${Date.now() - start}ms)`,
+								result ?? null,
+							)
+						})
+						.catch((error) => {
+							console.error(
+								`[onboarding] update_saved_dependency_states failed (${Date.now() - start}ms):`,
+								error,
+							)
+						})
 				} catch (error) {
-					console.error('Failed to save skipped state:', error)
+					console.error('[onboarding] Failed to save skipped state:', error)
 				}
 
 				document.getElementById('onboarding-step-2').style.display = 'none'
@@ -2478,8 +2504,34 @@ export function initOnboarding({
 				console.warn('⚠️ Could not check vault status:', vaultErr)
 			}
 
-			const isOnboarded = await invoke('check_is_onboarded')
-			console.log('🔍 Onboarding check - isOnboarded:', isOnboarded, 'type:', typeof isOnboarded)
+			const checkStart = Date.now()
+			let isOnboarded = false
+			let checkError = null
+			try {
+				isOnboarded = await invoke('check_is_onboarded')
+			} catch (err) {
+				checkError = err
+			}
+			const checkDurationMs = Date.now() - checkStart
+			window.__LAST_ONBOARDING_CHECK__ = {
+				ts: new Date().toISOString(),
+				durationMs: checkDurationMs,
+				isOnboarded,
+				error: checkError ? String(checkError) : null,
+				ci: window?.process?.env?.CI || null,
+				githubActions: window?.process?.env?.GITHUB_ACTIONS || null,
+				isCiFlag: window?.__IS_CI__ || null,
+			}
+			if (checkError) {
+				console.warn('🔍 Onboarding check failed:', checkError)
+			}
+			console.log(
+				'🔍 Onboarding check - isOnboarded:',
+				isOnboarded,
+				'type:',
+				typeof isOnboarded,
+				`(${checkDurationMs}ms)`,
+			)
 
 			// Check dev mode and log info
 			try {

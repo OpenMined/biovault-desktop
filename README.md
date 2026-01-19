@@ -119,6 +119,10 @@ Each repo has a `lint.sh` script that runs all checks in parallel:
 # Lint all dirty repos (parallel, quiet on success)
 ./repo lint
 
+# Run fast unit tests in dirty repos (quiet on success)
+./repo test
+./repo test --force
+
 # Or lint a single repo
 ./lint.sh                  # Auto-fix mode (default)
 ./lint.sh --check          # Read-only mode for CI

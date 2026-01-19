@@ -1,5 +1,4 @@
 use crate::types::AppState;
-use biovault::data::ProjectYaml;
 use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -16,9 +15,13 @@ use biovault::cli::commands::project_management::{
 };
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
+use biovault::flow_spec::FlowFile;
+use biovault::module_spec::ModuleFile;
 pub use biovault::pipeline_spec::PipelineSpec;
+use biovault::pipeline_spec::FLOW_YAML_FILE;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PipelineCreateRequest {
     pub name: String,
     pub directory: Option<String>,
@@ -443,9 +446,11 @@ fn load_pipeline_spec_from_storage(
 ) -> Result<PipelineSpec, String> {
     let bytes = storage
         .read_with_shadow(path)
-        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
-    serde_yaml::from_slice::<PipelineSpec>(&bytes)
-        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))
+        .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
+    let flow: FlowFile =
+        serde_yaml::from_slice(&bytes).map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
+    flow.to_pipeline_spec()
+        .map_err(|e| format!("Failed to convert flow spec: {}", e))
 }
 
 fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
@@ -550,29 +555,34 @@ pub async fn create_pipeline(
         }
     }
 
-    let mut pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
+    let mut flow_yaml_path = pipeline_dir.join(FLOW_YAML_FILE);
     let mut imported_spec: Option<PipelineSpec> = None;
 
     // If importing from a file, always copy to managed directory (like GitHub imports)
     if let Some(pipeline_file_path) = pipeline_file {
-        let source_pipeline_yaml_path = PathBuf::from(&pipeline_file_path);
-        if !source_pipeline_yaml_path.exists() {
+        let source_flow_yaml_path = PathBuf::from(&pipeline_file_path);
+        if !source_flow_yaml_path.exists() {
             return Err(format!(
-                "Selected pipeline.yaml does not exist at {}",
-                source_pipeline_yaml_path.display()
+                "Selected flow.yaml does not exist at {}",
+                source_flow_yaml_path.display()
             ));
         }
 
-        // Load pipeline spec from source
-        let mut spec = PipelineSpec::load(&source_pipeline_yaml_path)
-            .map_err(|e| format!("Failed to load pipeline.yaml: {}", e))?;
-        name = spec.name.clone();
+        // Load flow spec from source
+        let yaml_str = fs::read_to_string(&source_flow_yaml_path)
+            .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
+        let flow = FlowFile::parse_yaml(&yaml_str)
+            .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
+        if flow.kind != "Flow" {
+            return Err(format!("Expected Flow kind but found '{}'", flow.kind));
+        }
+        name = flow.metadata.name.clone();
 
         // Copy to managed directory (like GitHub imports do)
-        let source_parent = source_pipeline_yaml_path.parent().ok_or_else(|| {
+        let source_parent = source_flow_yaml_path.parent().ok_or_else(|| {
             format!(
                 "Unable to determine parent directory for {}",
-                source_pipeline_yaml_path.display()
+                source_flow_yaml_path.display()
             )
         })?;
 
@@ -596,34 +606,39 @@ pub async fn create_pipeline(
             .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
 
         pipeline_dir = managed_pipeline_dir.clone();
-        pipeline_yaml_path = managed_pipeline_dir.join("pipeline.yaml");
+        flow_yaml_path = managed_pipeline_dir.join(FLOW_YAML_FILE);
 
         // Resolve and import dependencies
         // Use spawn_blocking because BioVaultDb is not Send
-        // base_path is the directory containing pipeline.yaml (where project.yaml might also be)
+        // base_path is the directory containing flow.yaml (where module.yaml might also be)
         let dependency_context = DependencyContext::Local {
-            base_path: source_parent.to_path_buf(), // This is already the directory containing pipeline.yaml
+            base_path: source_parent.to_path_buf(), // This is already the directory containing flow.yaml
         };
-        let pipeline_yaml_path_clone = pipeline_yaml_path.clone();
+        let flow_yaml_path_clone = flow_yaml_path.clone();
 
-        let spec_result = tauri::async_runtime::spawn_blocking(move || {
+        let flow_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
+                let mut flow = FlowFile::parse_yaml(&yaml_str)
+                    .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
                 resolve_pipeline_dependencies(
-                    &mut spec,
+                    &mut flow,
                     &dependency_context,
-                    &pipeline_yaml_path_clone,
+                    &flow_yaml_path_clone,
                     overwrite,
                     true, // quiet = true for Tauri (no console output)
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok::<PipelineSpec, String>(spec)
+                Ok::<FlowFile, String>(flow)
             })
         })
         .await
         .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
 
-        let spec = spec_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
+        let flow = flow_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
+        let spec = flow
+            .to_pipeline_spec()
+            .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
         // Note: resolve_pipeline_dependencies already saves the spec (with description preserved)
         imported_spec = Some(spec);
@@ -632,53 +647,45 @@ pub async fn create_pipeline(
             .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
 
         crate::desktop_log!(
-            "create_pipeline debug: name='{}' dir_present={} pipeline_yaml_exists={} overwrite={} path={}",
+            "create_pipeline debug: name='{}' dir_present={} flow_yaml_exists={} overwrite={} path={}",
             name,
             is_import_dir,
-            pipeline_yaml_path.exists(),
+            flow_yaml_path.exists(),
             overwrite,
-            pipeline_yaml_path.display()
+            flow_yaml_path.display()
         );
 
-        if pipeline_yaml_path.exists() {
+        if flow_yaml_path.exists() {
             if is_import_dir {
-                imported_spec = PipelineSpec::load(&pipeline_yaml_path).ok();
+                imported_spec = PipelineSpec::load(&flow_yaml_path).ok();
             } else if !overwrite {
                 return Err(format!(
-                    "pipeline.yaml already exists at {}",
-                    pipeline_yaml_path.display()
+                    "flow.yaml already exists at {}",
+                    flow_yaml_path.display()
                 ));
             }
         } else if is_import_dir {
-            return Err(format!(
-                "pipeline.yaml not found in {}",
-                pipeline_dir.display()
-            ));
+            return Err(format!("flow.yaml not found in {}", pipeline_dir.display()));
         }
 
-        if !pipeline_yaml_path.exists() || (!is_import_dir && overwrite) {
+        if !flow_yaml_path.exists() || (!is_import_dir && overwrite) {
             crate::desktop_log!(
-                "create_pipeline debug: writing default pipeline.yaml to {}",
-                pipeline_yaml_path.display()
+                "create_pipeline debug: writing default flow.yaml to {}",
+                flow_yaml_path.display()
             );
-            let default_spec = format!(
-                r#"name: {}
-inputs:
-  # Define pipeline inputs here
-  # example_input: File
-
-steps:
-  # Add pipeline steps here
-  # - id: step1
-  #   uses: path/to/project
-  #   with:
-  #     input_name: inputs.example_input
-"#,
-                name
-            );
-
-            fs::write(&pipeline_yaml_path, default_spec)
-                .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+            let default_spec = PipelineSpec {
+                name: name.clone(),
+                description: None,
+                context: None,
+                inputs: Default::default(),
+                steps: Vec::new(),
+            };
+            let flow = FlowFile::from_pipeline_spec(&default_spec)
+                .map_err(|e| format!("Failed to build default flow spec: {}", e))?;
+            let yaml = serde_yaml::to_string(&flow)
+                .map_err(|e| format!("Failed to serialize flow.yaml: {}", e))?;
+            fs::write(&flow_yaml_path, yaml)
+                .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
         }
     }
 
@@ -736,14 +743,14 @@ pub async fn load_pipeline_editor(
         return Err("Either pipeline_id or pipeline_path must be provided".to_string());
     };
 
-    let yaml_path = path.join("pipeline.yaml");
+    let yaml_path = path.join(FLOW_YAML_FILE);
 
     // Load pipeline spec if file exists
     let spec = if yaml_path.exists() {
         let content = fs::read_to_string(&yaml_path)
-            .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
-        // Parse YAML to PipelineSpec
-        serde_yaml::from_str::<PipelineSpec>(&content).ok()
+            .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
+        let flow = FlowFile::parse_yaml(&content).ok();
+        flow.and_then(|f| f.to_pipeline_spec().ok())
     } else {
         None
     };
@@ -778,15 +785,14 @@ pub async fn save_pipeline_editor(
     spec: PipelineSpec,
 ) -> Result<Pipeline, String> {
     let path = PathBuf::from(&pipeline_path);
-    let yaml_path = path.join("pipeline.yaml");
+    let yaml_path = path.join(FLOW_YAML_FILE);
 
-    // Convert spec to YAML
-    let yaml_content = serde_yaml::to_string(&spec)
-        .map_err(|e| format!("Failed to serialize pipeline spec: {}", e))?;
+    let flow = FlowFile::from_pipeline_spec(&spec)
+        .map_err(|e| format!("Failed to convert pipeline spec to flow: {}", e))?;
+    let yaml_content = serde_yaml::to_string(&flow)
+        .map_err(|e| format!("Failed to serialize flow.yaml: {}", e))?;
 
-    // Write to file
-    fs::write(&yaml_path, yaml_content)
-        .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+    fs::write(&yaml_path, yaml_content).map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
 
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -853,8 +859,15 @@ pub async fn delete_pipeline(
 pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidationResult, String> {
     use std::process::Command as ProcessCommand;
 
+    let flow_path = PathBuf::from(&pipeline_path).join(FLOW_YAML_FILE);
+    let target = if flow_path.exists() {
+        flow_path.to_string_lossy().to_string()
+    } else {
+        pipeline_path
+    };
+
     let mut cmd = ProcessCommand::new("bv");
-    cmd.args(["pipeline", "validate", "--diagram", &pipeline_path]);
+    cmd.args(["pipeline", "validate", "--diagram", &target]);
     super::hide_console_window(&mut cmd);
     let output = cmd
         .output()
@@ -921,7 +934,7 @@ pub async fn run_pipeline(
     let pipeline_name = pipeline.name.clone();
     let pipeline_path = pipeline.pipeline_path.clone();
 
-    let yaml_path = PathBuf::from(&pipeline_path).join("pipeline.yaml");
+    let yaml_path = PathBuf::from(&pipeline_path).join(FLOW_YAML_FILE);
 
     // Generate results directory
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -1567,8 +1580,9 @@ pub async fn delete_pipeline_run(
 
 #[tauri::command]
 pub async fn preview_pipeline_spec(spec: PipelineSpec) -> Result<String, String> {
-    // Convert spec to YAML for preview
-    serde_yaml::to_string(&spec).map_err(|e| format!("Failed to generate pipeline preview: {}", e))
+    let flow = FlowFile::from_pipeline_spec(&spec)
+        .map_err(|e| format!("Failed to convert pipeline preview: {}", e))?;
+    serde_yaml::to_string(&flow).map_err(|e| format!("Failed to generate flow preview: {}", e))
 }
 
 /// Import a pipeline from a message (received via pipeline request)
@@ -1594,15 +1608,14 @@ pub async fn import_pipeline_from_message(
     fs::create_dir_all(&pipeline_dir)
         .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
 
-    // Convert JSON spec to YAML
-    // The spec from the message is a serde_json::Value, convert to YAML
-    let yaml_content = serde_yaml::to_string(&spec)
-        .map_err(|e| format!("Failed to convert pipeline spec to YAML: {}", e))?;
+    let flow: FlowFile = serde_json::from_value(spec)
+        .map_err(|e| format!("Failed to parse flow spec from message: {}", e))?;
+    let yaml_content = serde_yaml::to_string(&flow)
+        .map_err(|e| format!("Failed to convert flow spec to YAML: {}", e))?;
 
-    // Write pipeline.yaml
-    let pipeline_yaml_path = pipeline_dir.join("pipeline.yaml");
-    fs::write(&pipeline_yaml_path, &yaml_content)
-        .map_err(|e| format!("Failed to write pipeline.yaml: {}", e))?;
+    let flow_yaml_path = pipeline_dir.join(FLOW_YAML_FILE);
+    fs::write(&flow_yaml_path, &yaml_content)
+        .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
 
     // Register in database
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
@@ -1720,15 +1733,12 @@ pub async fn import_pipeline_from_request(
         ));
     }
 
-    let pipeline_yaml = source_root.join("pipeline.yaml");
-    if !pipeline_yaml.exists() {
-        return Err(format!(
-            "pipeline.yaml not found in {}",
-            source_root.display()
-        ));
+    let flow_yaml = source_root.join(FLOW_YAML_FILE);
+    if !flow_yaml.exists() {
+        return Err(format!("flow.yaml not found in {}", source_root.display()));
     }
 
-    let spec = load_pipeline_spec_from_storage(&storage, &pipeline_yaml)?;
+    let spec = load_pipeline_spec_from_storage(&storage, &flow_yaml)?;
     let resolved_name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(spec.name.clone());
@@ -1787,27 +1797,41 @@ pub async fn import_pipeline_from_request(
 
             copy_pipeline_request_dir(&storage, &entry_path, &dest_project_dir)?;
 
-            let project_yaml_path = dest_project_dir.join("project.yaml");
-            if !project_yaml_path.exists() {
+            let module_yaml_path = dest_project_dir.join("module.yaml");
+            if !module_yaml_path.exists() {
                 continue;
             }
 
-            let yaml_content = fs::read_to_string(&project_yaml_path).map_err(|e| {
+            let yaml_content = fs::read_to_string(&module_yaml_path).map_err(|e| {
                 format!(
-                    "Failed to read project.yaml at {}: {}",
-                    project_yaml_path.display(),
+                    "Failed to read module.yaml at {}: {}",
+                    module_yaml_path.display(),
                     e
                 )
             })?;
-            let project_yaml: ProjectYaml = serde_yaml::from_str(&yaml_content).map_err(|e| {
+            let module = ModuleFile::parse_yaml(&yaml_content).map_err(|e| {
                 format!(
-                    "Failed to parse project.yaml at {}: {}",
-                    project_yaml_path.display(),
+                    "Failed to parse module.yaml at {}: {}",
+                    module_yaml_path.display(),
+                    e
+                )
+            })?;
+            let project_yaml = module.to_project_spec().map_err(|e| {
+                format!(
+                    "Failed to convert module.yaml at {}: {}",
+                    module_yaml_path.display(),
                     e
                 )
             })?;
 
-            let identifier = format!("{}@{}", project_yaml.name, project_yaml.version);
+            let identifier = format!(
+                "{}@{}",
+                project_yaml.name,
+                project_yaml
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "0.1.0".to_string())
+            );
             let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
             if overwrite {
@@ -1818,20 +1842,20 @@ pub async fn import_pipeline_from_request(
                 {
                     db.update_project(
                         &project_yaml.name,
-                        &project_yaml.version,
+                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &project_yaml.author,
                         &project_yaml.workflow,
-                        &project_yaml.template,
+                        project_yaml.template.as_deref().unwrap_or("imported"),
                         &dest_project_dir,
                     )
                     .map_err(|e| e.to_string())?;
                 } else {
                     db.register_project(
                         &project_yaml.name,
-                        &project_yaml.version,
+                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &project_yaml.author,
                         &project_yaml.workflow,
-                        &project_yaml.template,
+                        project_yaml.template.as_deref().unwrap_or("imported"),
                         &dest_project_dir,
                     )
                     .map_err(|e| e.to_string())?;
@@ -1843,10 +1867,10 @@ pub async fn import_pipeline_from_request(
             {
                 db.register_project(
                     &project_yaml.name,
-                    &project_yaml.version,
+                    project_yaml.version.as_deref().unwrap_or("0.1.0"),
                     &project_yaml.author,
                     &project_yaml.workflow,
-                    &project_yaml.template,
+                    project_yaml.template.as_deref().unwrap_or("imported"),
                     &dest_project_dir,
                 )
                 .map_err(|e| e.to_string())?;

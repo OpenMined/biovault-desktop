@@ -82,7 +82,7 @@ if ($forwardArgs.Count -eq 0) {
 
 # Convert Windows path to Unix path for the script
 $script = $forwardArgs[0]
-$scriptArgs = if ($forwardArgs.Count -gt 1) { $forwardArgs[1..($forwardArgs.Count-1)] } else { @() }
+$scriptArgs = if ($forwardArgs.Count -gt 1) { @($forwardArgs[1..($forwardArgs.Count-1)]) } else { @() }
 
 # Get current directory in Unix format
 $unixPath = (Get-Location).Path -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
@@ -165,9 +165,10 @@ $tempScript = [System.IO.Path]::GetTempFileName() + ".sh"
 # Convert temp path to Unix format for bash
 $unixTempScript = $tempScript -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
 $unixTempScript = $unixTempScript.ToLower() -replace '^/([a-z])', '/$1'
+$scriptArgsList = @($scriptArgs)
 
 try {
-    & $GitBash $unixTempScript @scriptArgs
+    & $GitBash $unixTempScript @scriptArgsList
 } finally {
     Remove-Item $tempScript -ErrorAction SilentlyContinue
 }

@@ -2086,12 +2086,12 @@ export function createPipelinesModule({
 
 		const templateUrls = {
 			apol1:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/pipeline.yaml',
-			brca: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/pipeline.yaml',
+				'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/flow.yaml',
+			brca: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/flow.yaml',
 			herc2:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/pipeline.yaml',
+				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/flow.yaml',
 			thalassemia:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/pipeline.yaml',
+				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 		}
 
 		const url = templateUrls[templateName]
@@ -2324,20 +2324,20 @@ export function createPipelinesModule({
 				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
 					<div style="margin-bottom: 20px;">
 						<label style="display: block; margin-bottom: 10px; font-weight: 700; color: #0f172a; font-size: 14px; letter-spacing: -0.01em;">
-							GitHub URL to pipeline.yaml
+							GitHub URL to flow.yaml
 						</label>
 						<div style="display: flex; gap: 10px; align-items: center;">
 							<input 
 								type="text" 
 								id="pipeline-url-input" 
-								placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/pipeline.yaml"
+								placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/flow.yaml"
 								style="flex: 1; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace; background: #ffffff; color: #0f172a; transition: all 0.2s;"
 								onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'"
 								onblur="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none'"
 							>
 							<button 
 								type="button"
-								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/pipeline.yaml'"
+								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/flow.yaml'"
 								style="padding: 12px 18px; background: white; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; white-space: nowrap; transition: all 0.2s;"
 								onmouseover="this.style.background='#f8fafc'; this.style.borderColor='#94a3b8'"
 								onmouseout="this.style.background='white'; this.style.borderColor='#cbd5e1'"
@@ -2477,7 +2477,7 @@ export function createPipelinesModule({
 				let userMessage = 'Failed to import pipeline:\n\n' + errorMsg
 
 				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
-					userMessage += '\n\n💡 Tip: Make sure the URL points to a valid pipeline.yaml file.'
+					userMessage += '\n\n💡 Tip: Make sure the URL points to a valid flow.yaml file.'
 				}
 
 				if (url.includes('github.com')) {
@@ -2540,8 +2540,8 @@ export function createPipelinesModule({
 			const lastParentName = getLastNonEmptySegment(parentSegments)
 
 			const lowerName = fileName.toLowerCase()
-			const isPipelineFile = lowerName === 'pipeline.yaml' || lowerName === 'pipeline.yml'
-			const isProjectFile = lowerName === 'project.yaml' || lowerName === 'project.yml'
+			const isPipelineFile = lowerName === 'flow.yaml' || lowerName === 'flow.yml'
+			const isProjectFile = lowerName === 'module.yaml' || lowerName === 'module.yml'
 			const isYamlFile = lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')
 
 			let pipelineDir = selected
@@ -2913,7 +2913,7 @@ export function createPipelinesModule({
 			})
 
 			if (selected) {
-				// If user selected a project.yaml file, use the parent directory
+				// If user selected a module.yaml file, use the parent directory
 				let projectPath = selected
 				if (selected.endsWith('.yaml') || selected.endsWith('.yml')) {
 					// Get parent directory
@@ -3554,7 +3554,7 @@ steps:${
 					: ' []'
 			}`
 
-			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/pipeline.yaml'
+			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/flow.yaml'
 
 			const modalHtml = `
 				<div id="yaml-viewer-modal" class="modal-overlay" style="display: flex;">
@@ -3608,7 +3608,7 @@ steps:${
 		if (!pipelineState.currentPipeline) return
 
 		try {
-			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/pipeline.yaml'
+			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/flow.yaml'
 			await invoke('open_in_vscode', { path: yamlPath })
 		} catch (error) {
 			console.error('Error opening pipeline YAML in VSCode:', error)
@@ -4636,7 +4636,7 @@ steps:${
 
 	// Edit pipeline (placeholder for now)
 	async function editPipeline(pipelineId) {
-		alert('Pipeline editor coming soon! For now, you can edit the pipeline.yaml file directly.')
+		alert('Pipeline editor coming soon! For now, you can edit the flow.yaml file directly.')
 		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
 		if (pipeline) {
 			await openPipelineFolder(pipeline.pipeline_path)
@@ -5096,18 +5096,18 @@ steps:${
 					</div>
 					<div class="modal-body">
 						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
-							GitHub URL to project.yaml
+							GitHub URL to module.yaml
 						</label>
 						<input 
 							type="text" 
 							id="step-url-input" 
-							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/cli/examples/pipeline/count-lines/project.yaml"
+							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/cli/examples/pipeline/count-lines/module.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
 							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import projects.
 							<br>
-							This will download the project.yaml and assets, then add it as a step.
+							This will download the module.yaml and assets, then add it as a step.
 						</p>
 					</div>
 					<div class="modal-footer">
@@ -5196,7 +5196,7 @@ steps:${
 
 				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
 					userMessage +=
-						'\n\n💡 Tip: Make sure the URL points to a valid project.yaml file or project directory.'
+						'\n\n💡 Tip: Make sure the URL points to a valid module.yaml file or project directory.'
 				}
 
 				if (url.includes('github.com')) {
@@ -5776,7 +5776,7 @@ steps:${
 			if (editorData.spec.steps[configureStepState.stepIndex]) {
 				editorData.spec.steps[configureStepState.stepIndex].with = configureStepState.bindings
 
-				// NOTE: Parameters are NOT saved to pipeline.yaml per spec
+				// NOTE: Parameters are NOT saved to flow.yaml per spec
 				// They are runtime overrides only (--set step.param=value)
 				// We save them to run_configs for convenience
 

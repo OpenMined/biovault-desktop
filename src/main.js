@@ -17,6 +17,7 @@ import { createSqlModule } from './sql.js'
 import { createSessionsModule } from './sessions.js'
 import { createUpdaterModule } from './updater.js'
 import { createNetworkModule } from './network.js'
+import { createSyftBoxModule } from './syftbox.js'
 import { setupEventHandlers } from './event-handlers.js'
 import { maybeShowProfilesOnStartup } from './profiles.js'
 import { invoke, dialog, event, shell as shellApi, windowApi } from './tauri-shim.js'
@@ -212,6 +213,9 @@ const {
 // Create network module
 const networkModule = createNetworkModule({ invoke, shellApi })
 
+// Create SyftBox module
+const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shellApi })
+
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
 let importSetLastImportView = () => console.warn('setLastImportView not yet initialized')
@@ -285,6 +289,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		loadSql: activateSqlTab,
 		activateSessionsTab,
 		deactivateSessionsTab,
+		activateSyftboxTab: syftBoxModule.activate,
+		deactivateSyftboxTab: syftBoxModule.deactivate,
 	})
 
 setRunNavigateTo(navigateTo)
@@ -386,6 +392,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 			templateLoader.loadAndInject('runs', 'runs-view'),
 			templateLoader.loadAndInject('messages', 'messages-view'),
 			templateLoader.loadAndInject('network', 'network-view'),
+			templateLoader.loadAndInject('syftbox', 'syftbox-view'),
 			templateLoader.loadAndInject('logs', 'logs-view'),
 			templateLoader.loadAndInject('settings', 'settings-view'),
 		])
@@ -449,6 +456,43 @@ window.addEventListener('DOMContentLoaded', async () => {
 	pipelinesModule.initialize()
 	initializeSessionsTab()
 	networkModule.init()
+	syftBoxModule.init()
+
+	// Listen for agent-driven UI commands (emitted by the WS bridge)
+	listen('agent-ui', async ({ payload }) => {
+		const action = payload?.action
+		if (!action) return
+
+		if (action === 'navigate') {
+			const rawTab = payload?.tab
+			if (!rawTab) return
+			const tab = rawTab === 'pipelines' ? 'run' : rawTab
+			navigateTo(tab)
+			return
+		}
+
+		if (action === 'pipeline_import_options') {
+			navigateTo('run')
+			if (window.pipelineModule?.showImportOptions) {
+				window.pipelineModule.showImportOptions()
+			} else {
+				console.warn('[agent-ui] pipelineModule.showImportOptions not available')
+			}
+			return
+		}
+
+		if (action === 'pipeline_import_from_path') {
+			const path = payload?.path
+			const overwrite = Boolean(payload?.overwrite)
+			if (!path) return
+			navigateTo('run')
+			if (window.pipelineModule?.importExistingPipeline) {
+				await window.pipelineModule.importExistingPipeline(overwrite, path)
+			} else {
+				console.warn('[agent-ui] pipelineModule.importExistingPipeline not available')
+			}
+		}
+	})
 
 	// Setup sidebar invite button
 	const sidebarInviteBtn = document.getElementById('sidebar-invite-btn')

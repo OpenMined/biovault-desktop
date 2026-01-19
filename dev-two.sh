@@ -36,6 +36,20 @@ SYFTBOX_DIR="${SYFTBOX_DIR:-$WORKSPACE_ROOT/syftbox}"
 if [[ ! -d "$SYFTBOX_DIR" && -d "$BIOVAULT_DIR/syftbox" ]]; then
   SYFTBOX_DIR="$BIOVAULT_DIR/syftbox"
 fi
+WORKSPACE_ROOT="$WORKSPACE_ROOT" "$SCRIPT_DIR/scripts/ensure-workspace-deps.sh" \
+  "biovault/cli/Cargo.toml" \
+  "syftbox-sdk/Cargo.toml" \
+  "syftbox/rust/Cargo.toml"
+if [[ ! -f "$BIOVAULT_DIR/tests/scripts/devstack.sh" ]]; then
+  echo "Missing devstack script at $BIOVAULT_DIR/tests/scripts/devstack.sh" >&2
+  echo "Fix: run ./repo --init && ./repo sync from $WORKSPACE_ROOT" >&2
+  exit 1
+fi
+if [[ ! -d "$SYFTBOX_DIR" ]]; then
+  echo "Missing syftbox repo at $SYFTBOX_DIR" >&2
+  echo "Fix: run ./repo --init && ./repo sync from $WORKSPACE_ROOT" >&2
+  exit 1
+fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
 WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
@@ -319,11 +333,22 @@ PY
   local client_csv
   client_csv="$(IFS=,; echo "${CLIENTS[*]}")"
 
-  local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv" --skip-keys)
+  local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv")
   (( RESET_FLAG )) && args+=(--reset)
   (( SKIP_SYNC_CHECK )) && args+=(--skip-sync-check)
+  if [[ "${BV_DEVSTACK_SKIP_KEYS:-0}" == "1" ]]; then
+    args+=(--skip-keys)
+  fi
 
-  bash "$DEVSTACK_SCRIPT" "${args[@]}"
+  local -a env_prefix=(BIOVAULT_DISABLE_PROFILES=1)
+  if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then
+    if [[ "${BV_SYFTBOX_BACKEND:-embedded}" == "process" ]]; then
+      env_prefix+=(BV_DEVSTACK_CLIENT_MODE=go)
+    else
+      env_prefix+=(BV_DEVSTACK_CLIENT_MODE=embedded)
+    fi
+  fi
+  env "${env_prefix[@]}" bash "$DEVSTACK_SCRIPT" "${args[@]}"
 
   log_info "Active sbdev stacks:"
   sbdev_tool list || log_warn "Could not list sbdev stacks"
@@ -360,10 +385,15 @@ launch_desktop_instance() {
   export BIOVAULT_HOME="$home"
   export BIOVAULT_DEV_MODE=1
   export BIOVAULT_DEV_SYFTBOX=1
+  export BIOVAULT_DISABLE_PROFILES=1
+  export BV_SYFTBOX_BACKEND="${BV_SYFTBOX_BACKEND:-embedded}"
+  if [[ "$BV_SYFTBOX_BACKEND" != "process" ]]; then
+    unset SYFTBOX_BINARY SYFTBOX_VERSION
+  fi
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
   export SYFTBOX_DATA_DIR="$data_dir"
-  export SYC_VAULT="$home/.syc"
+  export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
   export DEV_WS_BRIDGE=1
   export DEV_WS_BRIDGE_PORT="$ws_port"
 
@@ -377,6 +407,7 @@ launch_desktop_instance() {
   echo -e "${YELLOW}  SYFTBOX_DATA_DIR:  $SYFTBOX_DATA_DIR${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
   echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
+  echo -e "${YELLOW}  SyftBox backend:   $BV_SYFTBOX_BACKEND${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
   echo -e "${YELLOW}  WS Bridge Port:    $DEV_WS_BRIDGE_PORT${NC}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"

@@ -4,9 +4,19 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
 
+/* Body layout for full-width status bar */
+body {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	margin: 0;
+	overflow: hidden;
+}
+
 .app-layout {
 	display: flex;
-	height: 100vh;
+	flex: 1;
+	min-height: 0;
 	overflow: hidden;
 	background: #ffffff;
 }
@@ -22,7 +32,7 @@
 	border-right: 1px solid #e2e8f0;
 	display: flex;
 	flex-direction: column;
-	height: 100vh;
+	height: 100%;
 	position: relative;
 	overflow: hidden;
 	padding-top: 10px;
@@ -206,6 +216,88 @@
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+}
+
+/* ============================================================================
+   GLOBAL STATUS BAR - Always visible at bottom of app
+   ============================================================================ */
+
+.global-status-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 16px;
+	background: #1e293b;
+	color: #94a3b8;
+	font-size: 11px;
+	font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+	border-top: 1px solid #334155;
+	flex-shrink: 0;
+}
+
+.status-bar-left,
+.status-bar-right {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.ws-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ws-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #64748b;
+	transition: background 0.3s ease;
+}
+
+.ws-dot.connected {
+	background: #10b981;
+	box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.ws-dot.disconnected {
+	background: #64748b;
+}
+
+.ws-dot.error {
+	background: #ef4444;
+}
+
+.ws-label {
+	color: #cbd5e1;
+}
+
+.last-sync {
+	color: #64748b;
+}
+
+.last-sync.recent {
+	color: #10b981;
+}
+
+.last-sync.clickable {
+	cursor: pointer;
+	transition: color 0.2s ease;
+}
+
+.last-sync.clickable:hover {
+	color: #cbd5e1;
+}
+
+.status-item {
+	color: #94a3b8;
+}
+
+.status-item:not(:last-child)::after {
+	content: '|';
+	margin-left: 16px;
+	color: #475569;
 }
 
 .tab-content {

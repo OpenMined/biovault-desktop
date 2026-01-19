@@ -2,12 +2,18 @@ use chrono::Local;
 #[cfg(unix)]
 use libc::{STDERR_FILENO, STDOUT_FILENO};
 use std::env;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, RawFd};
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::Once;
+#[cfg(unix)]
 use std::thread;
 
 /// Represents the type of log event being recorded.

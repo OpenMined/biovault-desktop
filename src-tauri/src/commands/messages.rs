@@ -3,6 +3,7 @@ use crate::types::{
     MessageThreadSummary,
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
+use biovault::flow_spec::FlowFile;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
@@ -10,11 +11,16 @@ use biovault::types::SyftPermissions;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use walkdir::WalkDir;
+
+fn msg_debug_enabled() -> bool {
+    env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DEBUG_CRYPTO").is_some()
+}
 
 fn load_config() -> Result<biovault::config::Config, String> {
     biovault::config::Config::load().map_err(|e| format!("Failed to load BioVault config: {}", e))
@@ -103,6 +109,14 @@ fn copy_pipeline_folder(
             hint: Some(hint),
         };
 
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] encrypt pipeline file={} dest={} recipient={}",
+                path.display(),
+                dest_path.display(),
+                recipient
+            );
+        }
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
             .map_err(|e| {
@@ -216,6 +230,14 @@ fn copy_results_folder_filtered(
             hint: Some(hint),
         };
 
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] encrypt results file={} dest={} recipient={}",
+                path.display(),
+                dest_path.display(),
+                recipient
+            );
+        }
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
             .map_err(|e| {
@@ -263,6 +285,14 @@ fn copy_results_to_unencrypted(
         let bytes = storage
             .read_with_shadow(path)
             .map_err(|e| format!("Failed to read results file {}: {}", path.display(), e))?;
+        if msg_debug_enabled() {
+            println!(
+                "[messages][debug] decrypt results file={} dest={} bytes={}",
+                path.display(),
+                dest_path.display(),
+                bytes.len()
+            );
+        }
 
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)
@@ -880,25 +910,23 @@ pub fn send_pipeline_request(
         .find(|p| p.name == pipeline_name)
         .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
 
-    let pipeline_yaml_path =
-        std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
-    if !pipeline_yaml_path.exists() {
+    let flow_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("flow.yaml");
+    if !flow_yaml_path.exists() {
         return Err(format!(
             "Pipeline '{}' not found at {:?}",
-            pipeline_name, pipeline_yaml_path
+            pipeline_name, flow_yaml_path
         ));
     }
 
     // Read pipeline spec
-    let pipeline_content = fs::read_to_string(&pipeline_yaml_path)
-        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+    let pipeline_content = fs::read_to_string(&flow_yaml_path)
+        .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
 
-    // Parse to validate it's valid YAML
-    let pipeline_spec: serde_yaml::Value = serde_yaml::from_str(&pipeline_content)
-        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
-
-    let pipeline_spec_struct: PipelineSpec = serde_yaml::from_str(&pipeline_content)
-        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
+    let flow: FlowFile = FlowFile::parse_yaml(&pipeline_content)
+        .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
+    let pipeline_spec_struct: PipelineSpec = flow
+        .to_pipeline_spec()
+        .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
     let submission_root = config
         .get_shared_submissions_path()
@@ -984,7 +1012,7 @@ pub fn send_pipeline_request(
             "pipeline_version": pipeline_version,
             "dataset_name": dataset_name,
             "sender": config.email,
-            "pipeline_spec": pipeline_spec,
+            "flow_spec": flow,
             "pipeline_location": submission_syft_url,
             "submission_id": submission_folder_name,
             "sender_local_path": sender_local_path,

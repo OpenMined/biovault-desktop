@@ -1,14 +1,33 @@
-// WebSocket bridge for browser development
-// This allows the Chrome browser to call Tauri commands via WebSocket
+// WebSocket bridge for browser development and AI agent control
+// This allows Chrome browsers and AI agents to call Tauri commands via WebSocket
+//
+// ## Security Model
+// - Binds to localhost only (127.0.0.1)
+// - Optional token authentication via settings or environment
+// - All commands are logged for audit purposes
+//
+// ## Environment Variables
+// - DEV_WS_BRIDGE: Enable/disable the bridge ("0", "false", "no" to disable)
+// - DEV_WS_BRIDGE_DISABLE: Force disable ("1", "true", "yes" to disable)
+// - DEV_WS_BRIDGE_PORT: WebSocket server port (default: 3333)
+// - DEV_WS_BRIDGE_HTTP_PORT: HTTP fallback port (default: 3334)
+// - AGENT_BRIDGE_TOKEN: Authentication token (overrides settings)
 
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{info_span, Instrument};
 
@@ -18,6 +37,19 @@ struct WsRequest {
     cmd: String,
     #[serde(default)]
     args: Value,
+    /// Optional authentication token
+    #[serde(default)]
+    token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HttpRpcRequest {
+    id: u32,
+    cmd: String,
+    #[serde(default)]
+    args: Value,
+    #[serde(default)]
+    token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -29,10 +61,574 @@ struct WsResponse {
     error: Option<String>,
 }
 
+struct BridgeTask {
+    shutdown: watch::Sender<bool>,
+    handle: tokio::task::JoinHandle<()>,
+    port: u16,
+}
+
+#[derive(Default)]
+struct BridgeManager {
+    ws: Option<BridgeTask>,
+    http: Option<BridgeTask>,
+}
+
+impl BridgeManager {
+    fn stop_all(&mut self) {
+        if let Some(task) = self.ws.take() {
+            let _ = task.shutdown.send(true);
+            task.handle.abort();
+            crate::desktop_log!("🛑 Stopped WebSocket bridge on port {}", task.port);
+        }
+        if let Some(task) = self.http.take() {
+            let _ = task.shutdown.send(true);
+            task.handle.abort();
+            crate::desktop_log!("🛑 Stopped HTTP bridge on port {}", task.port);
+        }
+    }
+}
+
+static BRIDGE_MANAGER: Lazy<Mutex<BridgeManager>> =
+    Lazy::new(|| Mutex::new(BridgeManager::default()));
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+/// Audit log entry for agent bridge commands
+#[derive(Serialize)]
+struct AuditLogEntry {
+    timestamp: String,
+    request_id: u32,
+    cmd: String,
+    args_size: usize,
+    duration_ms: u64,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    peer_addr: String,
+}
+
+/// Get the configured authentication token (env var takes precedence over settings)
+fn get_auth_token() -> Option<String> {
+    // Check environment variable first
+    if let Ok(token) = std::env::var("AGENT_BRIDGE_TOKEN") {
+        if !token.is_empty() {
+            return Some(token);
+        }
+    }
+
+    // Fall back to settings
+    if let Ok(settings) = crate::get_settings() {
+        return settings
+            .agent_bridge_token
+            .filter(|token| !token.is_empty());
+    }
+
+    None
+}
+
+/// Validate an authentication token against the configured token
+fn auth_error_message(provided: Option<&str>) -> Option<String> {
+    match get_auth_token() {
+        Some(expected) => match provided {
+            Some(p) if p == expected => None,
+            Some(_) => Some("Authentication failed: invalid token".to_string()),
+            None => Some("Authentication failed: missing token".to_string()),
+        },
+        None => None,
+    }
+}
+
+/// Check whether the agent bridge is enabled in settings
+fn is_bridge_enabled() -> bool {
+    crate::get_settings()
+        .map(|settings| settings.agent_bridge_enabled)
+        .unwrap_or(true)
+}
+
+/// Check whether a command is blocked by agent policy
+fn is_command_blocked(cmd: &str) -> bool {
+    crate::get_settings()
+        .map(|settings| {
+            settings
+                .agent_bridge_blocklist
+                .iter()
+                .any(|blocked| blocked == cmd)
+        })
+        .unwrap_or(false)
+}
+
+/// Command metadata for the list_commands endpoint
+#[derive(Serialize)]
+struct CommandInfo {
+    name: &'static str,
+    category: &'static str,
+    #[serde(rename = "readOnly")]
+    read_only: bool,
+    #[serde(rename = "async", skip_serializing_if = "std::ops::Not::not")]
+    is_async: bool,
+    #[serde(rename = "longRunning", skip_serializing_if = "std::ops::Not::not")]
+    long_running: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    dangerous: bool,
+    /// Whether this command emits streaming events (for long-running operations)
+    #[serde(rename = "emitsEvents", skip_serializing_if = "std::ops::Not::not")]
+    emits_events: bool,
+}
+
+/// Helper to create command info
+const fn cmd(name: &'static str, category: &'static str, read_only: bool) -> CommandInfo {
+    CommandInfo {
+        name,
+        category,
+        read_only,
+        is_async: false,
+        long_running: false,
+        dangerous: false,
+        emits_events: false,
+    }
+}
+
+const fn cmd_async(name: &'static str, category: &'static str, read_only: bool) -> CommandInfo {
+    CommandInfo {
+        name,
+        category,
+        read_only,
+        is_async: true,
+        long_running: false,
+        dangerous: false,
+        emits_events: false,
+    }
+}
+
+const fn cmd_long(name: &'static str, category: &'static str, read_only: bool) -> CommandInfo {
+    CommandInfo {
+        name,
+        category,
+        read_only,
+        is_async: true,
+        long_running: true,
+        dangerous: false,
+        emits_events: true,
+    }
+}
+
+const fn cmd_danger(name: &'static str, category: &'static str) -> CommandInfo {
+    CommandInfo {
+        name,
+        category,
+        read_only: false,
+        is_async: false,
+        long_running: false,
+        dangerous: true,
+        emits_events: false,
+    }
+}
+
+/// Get a structured list of all available commands
+fn get_commands_list() -> serde_json::Value {
+    let commands: Vec<CommandInfo> = vec![
+        // Agent API
+        cmd("agent_api_discover", "agent_api", true),
+        cmd("agent_api_get_audit_log", "agent_api", true),
+        cmd("agent_api_clear_audit_log", "agent_api", false),
+        cmd("agent_api_get_schema", "agent_api", true),
+        cmd("agent_api_list_commands", "agent_api", true),
+        cmd("get_agent_api_commands", "agent_api", true),
+        cmd("agent_api_events_info", "agent_api", true),
+        // App Status
+        cmd("get_app_version", "app_status", true),
+        cmd("is_dev_mode", "app_status", true),
+        cmd("get_dev_mode_info", "app_status", true),
+        cmd("get_env_var", "app_status", true),
+        cmd("get_config_path", "app_status", true),
+        cmd("get_database_path", "app_status", true),
+        cmd("get_settings", "settings", true),
+        cmd("save_settings", "settings", false),
+        cmd("set_autostart_enabled", "settings", false),
+        cmd("get_autostart_enabled", "app_status", true),
+        // UI Control
+        cmd("ui_navigate", "ui", false),
+        cmd("ui_pipeline_import_options", "ui", false),
+        cmd("ui_pipeline_import_from_path", "ui", false),
+        // Onboarding
+        cmd("check_is_onboarded", "onboarding", true),
+        cmd_async("complete_onboarding", "onboarding", false),
+        // Profiles
+        cmd("profiles_get_boot_state", "profiles", true),
+        cmd("profiles_get_default_home", "profiles", true),
+        cmd("profiles_open_new_instance", "profiles", false),
+        cmd("profiles_switch", "profiles", false),
+        cmd("profiles_switch_in_place", "profiles", false),
+        cmd("profiles_open_picker", "profiles", false),
+        cmd("profiles_quit_picker", "profiles", false),
+        cmd("profiles_check_home_for_existing_email", "profiles", true),
+        cmd("profiles_create_with_home_and_switch", "profiles", false),
+        cmd("profiles_create_and_switch_in_place", "profiles", false),
+        cmd("profiles_move_home", "profiles", false),
+        cmd("profiles_delete_profile", "profiles", false),
+        cmd("profiles_create_and_switch", "profiles", false),
+        // Dependencies
+        cmd_async("check_dependencies", "dependencies", true),
+        cmd_async("check_single_dependency", "dependencies", true),
+        cmd_long("install_dependencies", "dependencies", false),
+        cmd("update_saved_dependency_states", "dependencies", false),
+        cmd("get_saved_dependency_states", "dependencies", true),
+        cmd_async("check_docker_running", "dependencies", true),
+        cmd_long("install_dependency", "dependencies", false),
+        cmd_long("install_brew", "dependencies", false),
+        cmd_long("install_command_line_tools", "dependencies", false),
+        cmd("check_brew_installed", "dependencies", true),
+        cmd("check_command_line_tools_installed", "dependencies", true),
+        // SyftBox
+        cmd("check_syftbox_auth", "syftbox", true),
+        cmd("get_syftbox_state", "syftbox", true),
+        cmd("start_syftbox_client", "syftbox", false),
+        cmd("stop_syftbox_client", "syftbox", false),
+        cmd("get_syftbox_config_info", "syftbox", true),
+        cmd("get_default_syftbox_server_url", "syftbox", true),
+        cmd("is_dev_syftbox_enabled", "syftbox", true),
+        cmd_async("check_dev_syftbox_server", "syftbox", true),
+        cmd_async("trigger_syftbox_sync", "syftbox", false),
+        cmd_async("syftbox_queue_status", "syftbox", true),
+        cmd("get_syftbox_diagnostics", "syftbox", true),
+        cmd_long("syftbox_upload_action", "syftbox", false),
+        cmd_async("syftbox_request_otp", "syftbox", false),
+        cmd_async("syftbox_submit_otp", "syftbox", false),
+        // Sync Tree
+        cmd_async("sync_tree_list_dir", "sync_tree", true),
+        cmd_async("sync_tree_get_details", "sync_tree", true),
+        cmd_async("sync_tree_get_ignore_patterns", "sync_tree", true),
+        cmd_async("sync_tree_add_ignore", "sync_tree", false),
+        cmd_async("sync_tree_remove_ignore", "sync_tree", false),
+        cmd_async("sync_tree_init_default_policy", "sync_tree", false),
+        cmd_async("sync_tree_get_shared_with_me", "sync_tree", true),
+        cmd_async("sync_tree_subscribe", "sync_tree", false),
+        cmd_async("sync_tree_unsubscribe", "sync_tree", false),
+        // Keys
+        cmd("key_get_status", "keys", true),
+        cmd("key_list_contacts", "keys", true),
+        cmd_async("key_generate", "keys", false),
+        cmd_async("key_restore", "keys", false),
+        cmd("key_check_contact", "keys", true),
+        cmd("key_check_vault_debug", "keys", true),
+        cmd("key_republish", "keys", false),
+        cmd_async("key_refresh_contacts", "keys", false),
+        // Network
+        cmd("network_import_contact", "network", false),
+        cmd("network_remove_contact", "network", false),
+        cmd("network_trust_changed_key", "network", false),
+        cmd("network_scan_datasites", "network", true),
+        cmd("network_scan_datasets", "network", true),
+        // Messages
+        cmd_long("sync_messages", "messages", false),
+        cmd_long("sync_messages_with_failures", "messages", false),
+        cmd_long("refresh_messages_batched", "messages", false),
+        cmd("list_message_threads", "messages", true),
+        cmd("get_thread_messages", "messages", true),
+        cmd("send_message", "messages", false),
+        cmd("mark_thread_as_read", "messages", false),
+        cmd("delete_message", "messages", false),
+        cmd("delete_thread", "messages", false),
+        cmd("count_failed_messages", "messages", true),
+        cmd("list_failed_messages", "messages", true),
+        cmd("dismiss_failed_message", "messages", false),
+        cmd("delete_failed_message", "messages", false),
+        // Projects
+        cmd("get_projects", "projects", true),
+        cmd("get_available_project_examples", "projects", true),
+        cmd("get_default_project_path", "projects", true),
+        cmd("create_project", "projects", false),
+        cmd("import_project", "projects", false),
+        cmd("import_project_from_folder", "projects", false),
+        cmd("delete_project", "projects", false),
+        cmd("delete_project_folder", "projects", false),
+        cmd("load_project_editor", "projects", true),
+        cmd("save_project_editor", "projects", false),
+        cmd("preview_project_spec", "projects", true),
+        cmd("get_project_spec_digest", "projects", true),
+        cmd("get_supported_input_types", "projects", true),
+        cmd("get_supported_output_types", "projects", true),
+        cmd("get_supported_parameter_types", "projects", true),
+        cmd("get_common_formats", "projects", true),
+        // Pipelines
+        cmd_async("get_pipelines", "pipelines", true),
+        cmd_async("create_pipeline", "pipelines", false),
+        cmd_async("import_pipeline", "pipelines", false),
+        cmd_async("import_pipeline_from_message", "pipelines", false),
+        cmd_async("import_pipeline_from_request", "pipelines", false),
+        cmd_long("import_pipeline_with_deps", "pipelines", false),
+        cmd_long("run_pipeline", "pipelines", false),
+        cmd_async("get_pipeline_runs", "pipelines", true),
+        cmd_async("get_runs_base_dir", "pipelines", true),
+        cmd_async("load_pipeline_editor", "pipelines", true),
+        cmd_async("save_pipeline_editor", "pipelines", false),
+        cmd_async("delete_pipeline", "pipelines", false),
+        cmd_async("validate_pipeline", "pipelines", true),
+        cmd_async("delete_pipeline_run", "pipelines", false),
+        cmd_async("preview_pipeline_spec", "pipelines", true),
+        cmd_async("save_run_config", "pipelines", false),
+        cmd_async("list_run_configs", "pipelines", true),
+        cmd_async("get_run_config", "pipelines", true),
+        cmd_async("delete_run_config", "pipelines", false),
+        cmd("send_pipeline_request", "pipelines", false),
+        cmd("send_pipeline_request_results", "pipelines", false),
+        cmd("send_pipeline_results", "pipelines", false),
+        cmd("import_pipeline_results", "pipelines", false),
+        cmd("list_results_tree", "pipelines", true),
+        // Datasets
+        cmd("get_datasets", "datasets", true),
+        cmd("list_datasets_with_assets", "datasets", true),
+        cmd_async("save_dataset_with_files", "datasets", false),
+        cmd("upsert_dataset_manifest", "datasets", false),
+        cmd("is_dataset_published", "datasets", true),
+        cmd("delete_dataset", "datasets", false),
+        cmd_async("publish_dataset", "datasets", false),
+        cmd("unpublish_dataset", "datasets", false),
+        cmd("get_datasets_folder_path", "datasets", true),
+        cmd("resolve_dataset_path", "datasets", true),
+        cmd("resolve_syft_url_to_local_path", "datasets", true),
+        cmd("resolve_syft_urls_batch", "datasets", true),
+        // Files
+        cmd("get_files", "files", true),
+        cmd("get_participants", "participants", true),
+        cmd("get_extensions", "files", true),
+        cmd("search_txt_files", "files", true),
+        cmd("suggest_patterns", "files", true),
+        cmd("extract_ids_for_files", "files", true),
+        cmd_async("detect_file_types", "files", true),
+        cmd_async("analyze_file_types", "files", true),
+        cmd_async("import_files_pending", "files", false),
+        cmd_async("import_files", "files", false),
+        cmd_async("import_files_with_metadata", "files", false),
+        cmd("is_directory", "files", true),
+        cmd("delete_file", "files", false),
+        cmd("delete_files_bulk", "files", false),
+        cmd_async("process_queue", "files", false),
+        cmd("pause_queue_processor", "files", false),
+        cmd("resume_queue_processor", "files", false),
+        cmd("clear_pending_queue", "files", false),
+        cmd("open_folder", "files", false),
+        // Participants
+        cmd("delete_participant", "participants", false),
+        cmd("delete_participants_bulk", "participants", false),
+        // Runs
+        cmd("get_runs", "runs", true),
+        cmd("delete_run", "runs", false),
+        cmd("get_run_logs", "runs", true),
+        cmd("get_run_logs_tail", "runs", true),
+        cmd("get_run_logs_full", "runs", true),
+        cmd("start_analysis", "runs", false),
+        cmd_async("execute_analysis", "runs", false),
+        // Sessions
+        cmd("get_sessions", "sessions", true),
+        cmd("list_sessions", "sessions", true),
+        cmd("get_session_invitations", "sessions", true),
+        cmd("create_session", "sessions", false),
+        cmd("create_session_with_datasets", "sessions", false),
+        cmd("update_session_peer", "sessions", false),
+        cmd("accept_session_invitation", "sessions", false),
+        cmd("reject_session_invitation", "sessions", false),
+        cmd("send_session_chat_message", "sessions", false),
+        cmd("get_session_chat_messages", "sessions", true),
+        cmd("get_session_messages", "sessions", true),
+        cmd("send_session_message", "sessions", false),
+        cmd("list_session_datasets", "sessions", true),
+        cmd("get_session_beaver_summaries", "sessions", true),
+        cmd("get_session", "sessions", true),
+        cmd("delete_session", "sessions", false),
+        cmd("add_dataset_to_session", "sessions", false),
+        cmd("remove_dataset_from_session", "sessions", false),
+        cmd("open_session_folder", "sessions", false),
+        // Session Jupyter
+        cmd("get_session_jupyter_status", "session_jupyter", true),
+        cmd_long("launch_session_jupyter", "session_jupyter", false),
+        cmd_async("stop_session_jupyter", "session_jupyter", false),
+        cmd_long("reset_session_jupyter", "session_jupyter", false),
+        // Jupyter
+        cmd("get_jupyter_status", "jupyter", true),
+        cmd_long("launch_jupyter", "jupyter", false),
+        cmd_async("stop_jupyter", "jupyter", false),
+        cmd_long("reset_jupyter", "jupyter", false),
+        // Logs
+        cmd("get_command_logs", "logs", true),
+        cmd("get_desktop_log_dir", "logs", true),
+        cmd("get_desktop_log_text", "logs", true),
+        cmd("clear_desktop_log", "logs", false),
+        cmd("clear_command_logs", "logs", false),
+        cmd("get_queue_info", "logs", true),
+        cmd("get_queue_processor_status", "logs", true),
+        // SQL
+        cmd("sql_list_tables", "sql", true),
+        cmd("sql_get_table_schema", "sql", true),
+        cmd("sql_run_query", "sql", false),
+        cmd("sql_export_query", "sql", false),
+        // Data Reset
+        cmd_danger("reset_all_data", "data_reset"),
+        cmd_danger("reset_everything", "data_reset"),
+    ];
+
+    serde_json::json!({
+        "version": "1.4.2",
+        "commands": commands
+    })
+}
+
+fn load_schema_json(app: &AppHandle) -> Result<Value, String> {
+    let schema_content = if let Ok(resource_path) = app.path().resource_dir() {
+        let schema_path = resource_path.join("docs").join("agent-api.json");
+        std::fs::read_to_string(&schema_path).ok()
+    } else {
+        None
+    };
+
+    let schema_content =
+        schema_content.or_else(|| std::fs::read_to_string("docs/agent-api.json").ok());
+
+    match schema_content {
+        Some(content) => serde_json::from_str::<Value>(&content)
+            .map_err(|e| format!("Failed to parse schema: {}", e)),
+        None => {
+            let fallback = include_str!("../../docs/agent-api.json");
+            serde_json::from_str::<Value>(fallback)
+                .map_err(|e| format!("Failed to parse embedded schema: {}", e))
+        }
+    }
+}
+
+/// Get the path to the audit log file
+fn get_audit_log_path() -> Option<PathBuf> {
+    if let Ok(home) = biovault::config::get_biovault_home() {
+        let logs_dir = home.join("logs");
+        std::fs::create_dir_all(&logs_dir).ok()?;
+        Some(logs_dir.join("agent_bridge_audit.jsonl"))
+    } else {
+        None
+    }
+}
+
+/// Write an audit log entry
+fn write_audit_log(entry: &AuditLogEntry) {
+    if let Some(path) = get_audit_log_path() {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(json) = serde_json::to_string(entry) {
+                let _ = writeln!(file, "{}", json);
+            }
+        }
+    }
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+    let mut buffer = Vec::new();
+    let mut temp = [0u8; 1024];
+    let header_end = loop {
+        let n = stream
+            .read(&mut temp)
+            .await
+            .map_err(|e| format!("Failed to read request: {}", e))?;
+        if n == 0 {
+            return Err("Connection closed".to_string());
+        }
+        buffer.extend_from_slice(&temp[..n]);
+        if buffer.len() > MAX_HEADER_BYTES {
+            return Err("Request header too large".to_string());
+        }
+        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos;
+        }
+    };
+
+    let header_bytes = &buffer[..header_end];
+    let mut body = buffer[header_end + 4..].to_vec();
+    let header_text = String::from_utf8_lossy(header_bytes);
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| "Empty request".to_string())?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| "Missing method".to_string())?
+        .to_string();
+    let path = request_parts
+        .next()
+        .ok_or_else(|| "Missing path".to_string())?
+        .to_string();
+
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if content_length > MAX_BODY_BYTES {
+        return Err("Request body too large".to_string());
+    }
+
+    while body.len() < content_length {
+        let n = stream
+            .read(&mut temp)
+            .await
+            .map_err(|e| format!("Failed to read request body: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&temp[..n]);
+        if body.len() > MAX_BODY_BYTES {
+            return Err("Request body too large".to_string());
+        }
+    }
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    status_text: &str,
+    body: &[u8],
+    content_type: &str,
+) {
+    let header = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\n\r\n",
+        status,
+        status_text,
+        content_type,
+        body.len()
+    );
+    let _ = stream.write_all(header.as_bytes()).await;
+    let _ = stream.write_all(body).await;
+}
+
+fn extract_bearer_token(headers: &HashMap<String, String>) -> Option<String> {
+    headers.get("authorization").and_then(|value| {
+        let trimmed = value.trim();
+        trimmed
+            .strip_prefix("Bearer ")
+            .or_else(|| trimmed.strip_prefix("bearer "))
+            .map(|token| token.trim().to_string())
+    })
+}
+
 async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     let addr = stream
         .peer_addr()
         .expect("connected streams should have a peer address");
+    let addr_str = addr.to_string();
     crate::desktop_log!("🔌 WebSocket connection from: {}", addr);
 
     let ws_stream = match accept_async(stream).await {
@@ -78,29 +674,69 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
             }
         };
 
+        // Validate authentication token
+        if let Some(error_message) = auth_error_message(request.token.as_deref()) {
+            crate::desktop_log!("🔒 Auth failed for request {} from {}", request.id, addr);
+            let ws_response = WsResponse {
+                id: request.id,
+                result: None,
+                error: Some(error_message),
+            };
+            if let Ok(response_text) = serde_json::to_string(&ws_response) {
+                let _ = tx.send(response_text).await;
+            }
+            continue;
+        }
+
         crate::desktop_log!("📨 WS Request: {} (id: {})", request.cmd, request.id);
 
         // Execute each request concurrently so a slow command doesn't stall the bridge.
         let app = Arc::clone(&app);
         let tx = tx.clone();
         let cmd_name = request.cmd.clone();
+        let args_size = request.args.to_string().len();
+        let peer_addr = addr_str.clone();
         tokio::spawn(async move {
+            let start = std::time::Instant::now();
             let span = info_span!("command", cmd = %cmd_name, request_id = request.id);
             let response = execute_command(&app, &request.cmd, request.args)
                 .instrument(span)
                 .await;
-            let ws_response = match response {
-                Ok(result) => WsResponse {
-                    id: request.id,
-                    result: Some(result),
-                    error: None,
-                },
-                Err(error) => WsResponse {
-                    id: request.id,
-                    result: None,
-                    error: Some(error),
-                },
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            let (ws_response, success, error_msg) = match response {
+                Ok(result) => (
+                    WsResponse {
+                        id: request.id,
+                        result: Some(result),
+                        error: None,
+                    },
+                    true,
+                    None,
+                ),
+                Err(error) => (
+                    WsResponse {
+                        id: request.id,
+                        result: None,
+                        error: Some(error.clone()),
+                    },
+                    false,
+                    Some(error),
+                ),
             };
+
+            // Write audit log entry
+            let audit_entry = AuditLogEntry {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id: request.id,
+                cmd: cmd_name,
+                args_size,
+                duration_ms,
+                success,
+                error: error_msg,
+                peer_addr,
+            };
+            write_audit_log(&audit_entry);
 
             if let Ok(response_text) = serde_json::to_string(&ws_response) {
                 let _ = tx.send(response_text).await;
@@ -115,13 +751,413 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     crate::desktop_log!("🔌 WebSocket connection closed: {}", addr);
 }
 
+async fn handle_http_connection(mut stream: TcpStream, app: Arc<AppHandle>) {
+    let peer_addr = stream
+        .peer_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+
+    let request = match read_http_request(&mut stream).await {
+        Ok(req) => req,
+        Err(error) => {
+            let body = serde_json::json!({ "error": error }).to_string();
+            write_http_response(
+                &mut stream,
+                400,
+                "Bad Request",
+                body.as_bytes(),
+                "application/json",
+            )
+            .await;
+            return;
+        }
+    };
+
+    let path = request.path.split('?').next().unwrap_or(&request.path);
+
+    if request.method.eq_ignore_ascii_case("OPTIONS") {
+        write_http_response(&mut stream, 204, "No Content", b"", "text/plain").await;
+        return;
+    }
+    if !is_bridge_enabled() {
+        let body = serde_json::json!({ "error": "Agent bridge disabled by settings" }).to_string();
+        write_http_response(
+            &mut stream,
+            403,
+            "Forbidden",
+            body.as_bytes(),
+            "application/json",
+        )
+        .await;
+        return;
+    }
+
+    match (request.method.as_str(), path) {
+        ("GET", "/schema") => {
+            let header_token = extract_bearer_token(&request.headers);
+            if let Some(error_message) = auth_error_message(header_token.as_deref()) {
+                let body = serde_json::json!({ "error": error_message }).to_string();
+                write_http_response(
+                    &mut stream,
+                    401,
+                    "Unauthorized",
+                    body.as_bytes(),
+                    "application/json",
+                )
+                .await;
+                return;
+            }
+            match load_schema_json(&app) {
+                Ok(schema) => {
+                    let body = serde_json::to_vec(&schema).unwrap_or_default();
+                    write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+                }
+                Err(error) => {
+                    let body = serde_json::json!({ "error": error }).to_string();
+                    write_http_response(
+                        &mut stream,
+                        404,
+                        "Not Found",
+                        body.as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+            }
+        }
+        ("GET", "/commands") => {
+            let header_token = extract_bearer_token(&request.headers);
+            if let Some(error_message) = auth_error_message(header_token.as_deref()) {
+                let body = serde_json::json!({ "error": error_message }).to_string();
+                write_http_response(
+                    &mut stream,
+                    401,
+                    "Unauthorized",
+                    body.as_bytes(),
+                    "application/json",
+                )
+                .await;
+                return;
+            }
+            let body = serde_json::to_vec(&get_commands_list()).unwrap_or_default();
+            write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+        }
+        ("POST", "/rpc") => {
+            let mut rpc: HttpRpcRequest = match serde_json::from_slice(&request.body) {
+                Ok(value) => value,
+                Err(error) => {
+                    let body = serde_json::json!({
+                        "error": format!("Failed to parse request: {}", error)
+                    })
+                    .to_string();
+                    write_http_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        body.as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            if rpc.token.is_none() {
+                rpc.token = extract_bearer_token(&request.headers);
+            }
+
+            if let Some(error_message) = auth_error_message(rpc.token.as_deref()) {
+                let response = WsResponse {
+                    id: rpc.id,
+                    result: None,
+                    error: Some(error_message),
+                };
+                let body = serde_json::to_vec(&response).unwrap_or_default();
+                write_http_response(&mut stream, 401, "Unauthorized", &body, "application/json")
+                    .await;
+                return;
+            }
+
+            crate::desktop_log!("📨 HTTP Request: {} (id: {})", rpc.cmd, rpc.id);
+
+            let args_size = rpc.args.to_string().len();
+            let start = std::time::Instant::now();
+            let response = execute_command(&app, &rpc.cmd, rpc.args).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            let (http_response, success, error_msg) = match response {
+                Ok(result) => (
+                    WsResponse {
+                        id: rpc.id,
+                        result: Some(result),
+                        error: None,
+                    },
+                    true,
+                    None,
+                ),
+                Err(error) => (
+                    WsResponse {
+                        id: rpc.id,
+                        result: None,
+                        error: Some(error.clone()),
+                    },
+                    false,
+                    Some(error),
+                ),
+            };
+
+            let audit_entry = AuditLogEntry {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id: rpc.id,
+                cmd: rpc.cmd,
+                args_size,
+                duration_ms,
+                success,
+                error: error_msg,
+                peer_addr,
+            };
+            write_audit_log(&audit_entry);
+
+            let body = serde_json::to_vec(&http_response).unwrap_or_default();
+            write_http_response(&mut stream, 200, "OK", &body, "application/json").await;
+        }
+        _ => {
+            let body = serde_json::json!({ "error": "Not found" }).to_string();
+            write_http_response(
+                &mut stream,
+                404,
+                "Not Found",
+                body.as_bytes(),
+                "application/json",
+            )
+            .await;
+        }
+    }
+}
+
 async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Value, String> {
+    if !is_bridge_enabled() {
+        return Err("Agent bridge disabled by settings".to_string());
+    }
+    if is_command_blocked(cmd) {
+        return Err(format!("Command '{}' blocked by agent policy", cmd));
+    }
     // Get the app state
     let state = app.state::<crate::AppState>();
 
     // Match command names and call the appropriate function
-    // This is a simplified version - you'll need to add all commands
     match cmd {
+        // --------------------------------------------------------------------
+        // Agent API Discovery and Diagnostics
+        // --------------------------------------------------------------------
+        "agent_api_discover" => {
+            // Return API metadata for agent self-discovery
+            let http_port = std::env::var("DEV_WS_BRIDGE_HTTP_PORT")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .or_else(|| crate::get_settings().ok().map(|s| s.agent_bridge_http_port))
+                .unwrap_or(3334);
+            Ok(serde_json::json!({
+                "version": "1.4.2",
+                "name": "BioVault Desktop Agent API",
+                "description": "WebSocket API for AI agent control of BioVault Desktop",
+                "protocol": {
+                    "transport": "WebSocket",
+                    "address": "127.0.0.1",
+                    "defaultPort": 3333,
+                    "http": {
+                        "address": "127.0.0.1",
+                        "port": http_port,
+                        "endpoints": {
+                            "rpc": "POST /rpc",
+                            "schema": "GET /schema",
+                            "commands": "GET /commands"
+                        }
+                    }
+                },
+                "auth": {
+                    "required": get_auth_token().is_some(),
+                    "method": "token"
+                },
+                "docs": "docs/agent-api.md",
+                "schema": "docs/agent-api.json"
+            }))
+        }
+        "agent_api_get_audit_log" => {
+            // Return recent audit log entries
+            let max_entries: usize = args
+                .get("maxEntries")
+                .or_else(|| args.get("max_entries"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(100);
+
+            let mut entries = Vec::new();
+            if let Some(path) = get_audit_log_path() {
+                if path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let lines: Vec<&str> = content.lines().collect();
+                        let start = if lines.len() > max_entries {
+                            lines.len() - max_entries
+                        } else {
+                            0
+                        };
+                        for line in &lines[start..] {
+                            if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+                                entries.push(entry);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(serde_json::to_value(entries).unwrap())
+        }
+        "agent_api_clear_audit_log" => {
+            // Clear the audit log
+            if let Some(path) = get_audit_log_path() {
+                if path.exists() {
+                    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "agent_api_get_schema" => {
+            // Return the full JSON schema for the API
+            load_schema_json(app)
+        }
+        "get_agent_api_commands" => {
+            let commands = crate::commands::agent_api::get_agent_api_commands(app.clone())?;
+            Ok(serde_json::to_value(commands).unwrap())
+        }
+        "agent_api_list_commands" => {
+            // Return a lightweight list of available commands with basic metadata
+            // This is faster than get_schema for agents that just need command names
+            Ok(get_commands_list())
+        }
+        "agent_api_events_info" => {
+            // Return information about the event streaming system
+            Ok(serde_json::json!({
+                "description": "Long-running commands emit streaming events alongside the final response",
+                "protocol": {
+                    "eventFormat": {
+                        "id": "Request ID this event belongs to",
+                        "type": "Event type: progress, log, status",
+                        "data": "Event payload (structure depends on type)"
+                    },
+                    "eventTypes": {
+                        "progress": {
+                            "description": "Progress update for long-running operation",
+                            "data": {
+                                "progress": "Float 0.0-1.0",
+                                "message": "Human-readable progress message"
+                            }
+                        },
+                        "log": {
+                            "description": "Log message during operation",
+                            "data": {
+                                "level": "info, warn, error, debug",
+                                "message": "Log message text"
+                            }
+                        },
+                        "status": {
+                            "description": "Status change during operation",
+                            "data": {
+                                "status": "Status name (e.g., 'downloading', 'installing')",
+                                "details": "Optional additional details object"
+                            }
+                        }
+                    },
+                    "notes": [
+                        "Events are sent with the same 'id' as the original request",
+                        "Events may arrive before the final response",
+                        "The final response still uses 'result' or 'error' fields",
+                        "Commands with emitsEvents=true in metadata support events"
+                    ]
+                },
+                "longRunningCommands": [
+                    "install_dependencies",
+                    "install_dependency",
+                    "install_brew",
+                    "install_command_line_tools",
+                    "syftbox_upload_action",
+                    "sync_messages",
+                    "sync_messages_with_failures",
+                    "refresh_messages_batched",
+                    "import_pipeline_with_deps",
+                    "run_pipeline",
+                    "launch_session_jupyter",
+                    "reset_session_jupyter",
+                    "launch_jupyter",
+                    "reset_jupyter"
+                ]
+            }))
+        }
+        // --------------------------------------------------------------------
+        // UI Control
+        // --------------------------------------------------------------------
+        "ui_navigate" => {
+            use tauri::Emitter;
+
+            let tab: String = serde_json::from_value(
+                args.get("tab")
+                    .or_else(|| args.get("view"))
+                    .cloned()
+                    .ok_or_else(|| "Missing tab".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse tab: {}", e))?;
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "navigate",
+                    "tab": tab
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
+        }
+        "ui_pipeline_import_options" => {
+            use tauri::Emitter;
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "pipeline_import_options"
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
+        }
+        "ui_pipeline_import_from_path" => {
+            use tauri::Emitter;
+
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .or_else(|| args.get("pipelinePath"))
+                    .or_else(|| args.get("pipeline_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let overwrite = args
+                .get("overwrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            app.emit(
+                "agent-ui",
+                serde_json::json!({
+                    "action": "pipeline_import_from_path",
+                    "path": path,
+                    "overwrite": overwrite
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(serde_json::Value::Null)
+        }
         // --------------------------------------------------------------------
         // Settings / environment helpers (needed for browser-mode feature flags)
         // --------------------------------------------------------------------
@@ -147,6 +1183,57 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_runs(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "delete_run" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            crate::commands::runs::delete_run(state, run_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "get_run_logs" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let result =
+                crate::commands::runs::get_run_logs(state, run_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_run_logs_tail" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let lines: Option<usize> = args
+                .get("lines")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result =
+                crate::commands::runs::get_run_logs_tail(state, run_id, lines.unwrap_or(100))
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_run_logs_full" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let result = crate::commands::runs::get_run_logs_full(state, run_id)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "get_command_logs" => {
             let result = crate::get_command_logs().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
@@ -154,6 +1241,64 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "get_settings" => {
             let result = crate::get_settings().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_settings" => {
+            let current = crate::get_settings().map_err(|e| e.to_string())?;
+            let mut settings_value = args.get("settings").cloned().unwrap_or(args.clone());
+            let settings_obj = settings_value
+                .as_object_mut()
+                .ok_or_else(|| "Settings must be an object".to_string())?;
+
+            let protected_keys = [
+                ("agent_bridge_enabled", "agentBridgeEnabled"),
+                ("agent_bridge_port", "agentBridgePort"),
+                ("agent_bridge_http_port", "agentBridgeHttpPort"),
+                ("agent_bridge_token", "agentBridgeToken"),
+                ("agent_bridge_blocklist", "agentBridgeBlocklist"),
+            ];
+
+            for (snake, camel) in protected_keys {
+                if settings_obj.contains_key(snake) || settings_obj.contains_key(camel) {
+                    return Err("Agent bridge settings cannot be changed via WebSocket".to_string());
+                }
+            }
+
+            settings_obj.insert(
+                "agent_bridge_enabled".to_string(),
+                serde_json::to_value(current.agent_bridge_enabled).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_port".to_string(),
+                serde_json::to_value(current.agent_bridge_port).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_http_port".to_string(),
+                serde_json::to_value(current.agent_bridge_http_port).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_token".to_string(),
+                serde_json::to_value(current.agent_bridge_token.clone()).unwrap_or_default(),
+            );
+            settings_obj.insert(
+                "agent_bridge_blocklist".to_string(),
+                serde_json::to_value(current.agent_bridge_blocklist.clone()).unwrap_or_default(),
+            );
+
+            let settings: crate::types::Settings = serde_json::from_value(settings_value)
+                .map_err(|e| format!("Failed to parse settings: {}", e))?;
+            crate::commands::settings::save_settings(settings).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "set_autostart_enabled" => {
+            let enabled: bool = serde_json::from_value(
+                args.get("enabled")
+                    .cloned()
+                    .ok_or_else(|| "Missing enabled".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse enabled: {}", e))?;
+            crate::commands::settings::set_autostart_enabled((*app).clone(), enabled)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "reset_all_data" => {
             crate::reset_all_data(state).map_err(|e| e.to_string())?;
@@ -324,6 +1469,87 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "update_saved_dependency_states" => {
             crate::update_saved_dependency_states().map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
+        }
+        "install_dependency" => {
+            use tauri::Emitter;
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+
+            // Emit start event via app handle
+            let _ = app.emit(
+                "dependency-install-start",
+                serde_json::json!({ "dependency": name.clone() }),
+            );
+
+            // Install the dependency
+            let install_result =
+                biovault::cli::commands::setup::install_single_dependency(&name).await;
+
+            match install_result {
+                Ok(maybe_path) => {
+                    if let Some(path) = &maybe_path {
+                        let _ =
+                            biovault::config::Config::save_binary_path(&name, Some(path.clone()));
+                    }
+                    let _ = app.emit(
+                        "dependency-install-complete",
+                        serde_json::json!({
+                            "dependency": name,
+                            "success": true,
+                            "path": maybe_path
+                        }),
+                    );
+                    Ok(serde_json::to_value(format!("Installed: {}", name)).unwrap())
+                }
+                Err(e) => {
+                    let _ = app.emit(
+                        "dependency-install-complete",
+                        serde_json::json!({
+                            "dependency": name,
+                            "success": false,
+                            "error": e.to_string()
+                        }),
+                    );
+                    Err(e.to_string())
+                }
+            }
+        }
+        "install_brew" => {
+            let result = crate::commands::dependencies::install_brew()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "install_command_line_tools" => {
+            // This command exists on macOS only; on other platforms it's a no-op or error
+            #[cfg(target_os = "macos")]
+            {
+                // The command spawns an installer dialog which the user must complete
+                // We can't await it directly, so we just trigger it
+                let _ = std::process::Command::new("xcode-select")
+                    .arg("--install")
+                    .spawn()
+                    .map_err(|e| format!("Failed to launch installer: {}", e))?;
+                Ok(serde_json::to_value("Installer launched").unwrap())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err("Command Line Tools install is only available on macOS".to_string())
+            }
+        }
+        "check_brew_installed" => {
+            let result =
+                crate::commands::dependencies::check_brew_installed().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "check_command_line_tools_installed" => {
+            let result = crate::commands::dependencies::check_command_line_tools_installed()
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
         }
         "check_is_onboarded" => {
             let result = crate::check_is_onboarded().map_err(|e| e.to_string())?;
@@ -644,6 +1870,150 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "trigger_syftbox_sync" => {
             crate::trigger_syftbox_sync()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "syftbox_upload_action" => {
+            let id: String = serde_json::from_value(
+                args.get("id")
+                    .cloned()
+                    .ok_or_else(|| "Missing id".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse id: {}", e))?;
+            let action: String = serde_json::from_value(
+                args.get("action")
+                    .cloned()
+                    .ok_or_else(|| "Missing action".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse action: {}", e))?;
+            crate::commands::syftbox::syftbox_upload_action(id, action)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "syftbox_request_otp" => {
+            let email: String = serde_json::from_value(
+                args.get("email")
+                    .cloned()
+                    .ok_or_else(|| "Missing email".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse email: {}", e))?;
+            let server_url: Option<String> = args
+                .get("serverUrl")
+                .or_else(|| args.get("server_url"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            crate::commands::syftbox::syftbox_request_otp(email, server_url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "syftbox_submit_otp" => {
+            let email: String = serde_json::from_value(
+                args.get("email")
+                    .cloned()
+                    .ok_or_else(|| "Missing email".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse email: {}", e))?;
+            let otp: String = serde_json::from_value(
+                args.get("otp")
+                    .cloned()
+                    .ok_or_else(|| "Missing otp".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse otp: {}", e))?;
+            let server_url: Option<String> = args
+                .get("serverUrl")
+                .or_else(|| args.get("server_url"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            crate::commands::syftbox::syftbox_submit_otp(email, otp, server_url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        // Sync Tree commands
+        "sync_tree_list_dir" => {
+            let path: Option<String> = args
+                .get("path")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::commands::sync_tree::sync_tree_list_dir(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_details" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result = crate::commands::sync_tree::sync_tree_get_details(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_ignore_patterns" => {
+            let result = crate::commands::sync_tree::sync_tree_get_ignore_patterns()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_add_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_add_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_remove_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_remove_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_init_default_policy" => {
+            let result = crate::commands::sync_tree::sync_tree_init_default_policy()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_shared_with_me" => {
+            let result = crate::commands::sync_tree::sync_tree_get_shared_with_me()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_subscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_subscribe(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_unsubscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_unsubscribe(path)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
@@ -1007,6 +2377,71 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 crate::get_session_beaver_summaries(session_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_session" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result =
+                crate::commands::sessions::get_session(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_session" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            crate::commands::sessions::delete_session(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "add_dataset_to_session" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let dataset_name: String = serde_json::from_value(
+                args.get("datasetName")
+                    .cloned()
+                    .or_else(|| args.get("dataset_name").cloned())
+                    .ok_or_else(|| "Missing datasetName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse datasetName: {}", e))?;
+            let role: Option<String> = args
+                .get("role")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result =
+                crate::commands::sessions::add_dataset_to_session(session_id, dataset_name, role)
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "remove_dataset_from_session" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .or_else(|| args.get("session_id").cloned())
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let dataset_name: String = serde_json::from_value(
+                args.get("datasetName")
+                    .cloned()
+                    .or_else(|| args.get("dataset_name").cloned())
+                    .ok_or_else(|| "Missing datasetName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse datasetName: {}", e))?;
+            crate::commands::sessions::remove_dataset_from_session(session_id, dataset_name)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "sync_messages" => {
             let result = crate::sync_messages().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
@@ -1066,6 +2501,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let max_bytes = args.get("maxBytes").and_then(|v| v.as_u64());
             let result = crate::commands::logs::get_desktop_log_text(max_bytes)?;
             Ok(serde_json::to_value(result).unwrap())
+        }
+        "clear_desktop_log" => {
+            crate::commands::logs::clear_desktop_log()?;
+            Ok(serde_json::Value::Null)
+        }
+        "clear_command_logs" => {
+            crate::commands::logs::clear_command_logs()?;
+            Ok(serde_json::Value::Null)
         }
         "network_scan_datasets" => {
             let result = crate::commands::datasets::network_scan_datasets()?;
@@ -1438,9 +2881,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .cloned()
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or(false);
-            crate::commands::datasets::publish_dataset(manifest_path, name, copy_mock)
-                .await
-                .map_err(|e| e.to_string())?;
+            crate::commands::datasets::publish_dataset(
+                state.clone(),
+                manifest_path,
+                name,
+                copy_mock,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "unpublish_dataset" => {
@@ -1487,6 +2935,591 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::commands::datasets::resolve_syft_urls_batch(urls)?;
             Ok(serde_json::to_value(result).unwrap())
         }
+
+        // =====================================================================
+        // Additional File Commands
+        // =====================================================================
+        "is_directory" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result = crate::commands::files::is_directory(path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_file" => {
+            let file_id: i64 = serde_json::from_value(
+                args.get("fileId")
+                    .or_else(|| args.get("file_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing fileId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse fileId: {}", e))?;
+            crate::commands::files::delete_file(state.clone(), file_id)?;
+            Ok(serde_json::Value::Null)
+        }
+        "delete_files_bulk" => {
+            let file_ids: Vec<i64> = serde_json::from_value(
+                args.get("fileIds")
+                    .or_else(|| args.get("file_ids"))
+                    .cloned()
+                    .ok_or_else(|| "Missing fileIds".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse fileIds: {}", e))?;
+            let result = crate::commands::files::delete_files_bulk(state.clone(), file_ids)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "analyze_file_types" => {
+            let files: Vec<String> = serde_json::from_value(
+                args.get("files")
+                    .cloned()
+                    .ok_or_else(|| "Missing files".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse files: {}", e))?;
+            let result = crate::commands::files::analyze_file_types(state.clone(), files).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_files" => {
+            let files: Vec<String> = serde_json::from_value(
+                args.get("files")
+                    .cloned()
+                    .ok_or_else(|| "Missing files".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse files: {}", e))?;
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            let file_id_map: std::collections::HashMap<String, String> = args
+                .get("fileIdMap")
+                .or_else(|| args.get("file_id_map"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let result =
+                crate::commands::files::import_files(state.clone(), files, pattern, file_id_map)
+                    .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_files_with_metadata" => {
+            let file_metadata: std::collections::HashMap<
+                String,
+                crate::commands::files::FileMetadata,
+            > = serde_json::from_value(
+                args.get("fileMetadata")
+                    .or_else(|| args.get("file_metadata"))
+                    .cloned()
+                    .ok_or_else(|| "Missing fileMetadata".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse fileMetadata: {}", e))?;
+            let result =
+                crate::commands::files::import_files_with_metadata(state.clone(), file_metadata)
+                    .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "process_queue" => {
+            let limit: usize = args
+                .get("limit")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or(100);
+            let result = crate::commands::files::process_queue(state.clone(), limit).await?;
+            Ok(result)
+        }
+        "pause_queue_processor" => {
+            let result = crate::commands::files::pause_queue_processor(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resume_queue_processor" => {
+            let result = crate::commands::files::resume_queue_processor(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "clear_pending_queue" => {
+            let result = crate::commands::files::clear_pending_queue(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Participant Commands
+        // =====================================================================
+        "delete_participant" => {
+            let participant_id: i64 = serde_json::from_value(
+                args.get("participantId")
+                    .or_else(|| args.get("participant_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing participantId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse participantId: {}", e))?;
+            crate::commands::participants::delete_participant(state.clone(), participant_id)?;
+            Ok(serde_json::Value::Null)
+        }
+        "delete_participants_bulk" => {
+            let participant_ids: Vec<i64> = serde_json::from_value(
+                args.get("participantIds")
+                    .or_else(|| args.get("participant_ids"))
+                    .cloned()
+                    .ok_or_else(|| "Missing participantIds".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse participantIds: {}", e))?;
+            let result = crate::commands::participants::delete_participants_bulk(
+                state.clone(),
+                participant_ids,
+            )?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Message Commands
+        // =====================================================================
+        "dismiss_failed_message" => {
+            let id: String = serde_json::from_value(
+                args.get("id")
+                    .cloned()
+                    .ok_or_else(|| "Missing id".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse id: {}", e))?;
+            let result = crate::commands::messages::dismiss_failed_message(id)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_failed_message" => {
+            let id: String = serde_json::from_value(
+                args.get("id")
+                    .cloned()
+                    .ok_or_else(|| "Missing id".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse id: {}", e))?;
+            let result = crate::commands::messages::delete_failed_message(id)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Project Commands
+        // =====================================================================
+        "import_project" => {
+            let url: String = serde_json::from_value(
+                args.get("url")
+                    .cloned()
+                    .ok_or_else(|| "Missing url".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse url: {}", e))?;
+            let overwrite: bool = args
+                .get("overwrite")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or(false);
+            let result = crate::commands::projects::import_project(state.clone(), url, overwrite)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_project_from_folder" => {
+            let folder_path: String = serde_json::from_value(
+                args.get("folderPath")
+                    .or_else(|| args.get("folder_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing folderPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse folderPath: {}", e))?;
+            let result =
+                crate::commands::projects::import_project_from_folder(state.clone(), folder_path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_project" => {
+            let project_id: i64 = serde_json::from_value(
+                args.get("projectId")
+                    .or_else(|| args.get("project_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing projectId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectId: {}", e))?;
+            crate::commands::projects::delete_project(state.clone(), project_id)?;
+            Ok(serde_json::Value::Null)
+        }
+        "delete_project_folder" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .or_else(|| args.get("project_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            crate::commands::projects::delete_project_folder(project_path)?;
+            Ok(serde_json::Value::Null)
+        }
+        "preview_project_spec" => {
+            let payload: serde_json::Value = args
+                .get("payload")
+                .cloned()
+                .ok_or_else(|| "Missing payload".to_string())?;
+            let result = crate::commands::projects::preview_project_spec(payload)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_project_spec_digest" => {
+            let project_path: String = serde_json::from_value(
+                args.get("projectPath")
+                    .or_else(|| args.get("project_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing projectPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectPath: {}", e))?;
+            let result = crate::commands::projects::get_project_spec_digest(project_path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_supported_input_types" => {
+            let result = crate::commands::projects::get_supported_input_types();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_supported_output_types" => {
+            let result = crate::commands::projects::get_supported_output_types();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_supported_parameter_types" => {
+            let result = crate::commands::projects::get_supported_parameter_types();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_common_formats" => {
+            let result = crate::commands::projects::get_common_formats();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Run Commands
+        // =====================================================================
+        "start_analysis" => {
+            let participant_ids: Vec<i64> = serde_json::from_value(
+                args.get("participantIds")
+                    .or_else(|| args.get("participant_ids"))
+                    .cloned()
+                    .ok_or_else(|| "Missing participantIds".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse participantIds: {}", e))?;
+            let project_id: i64 = serde_json::from_value(
+                args.get("projectId")
+                    .or_else(|| args.get("project_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing projectId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse projectId: {}", e))?;
+            let result =
+                crate::commands::runs::start_analysis(state.clone(), participant_ids, project_id)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Pipeline Commands
+        // =====================================================================
+        "load_pipeline_editor" => {
+            let pipeline_id: Option<i64> = args
+                .get("pipelineId")
+                .or_else(|| args.get("pipeline_id"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let pipeline_path: Option<String> = args
+                .get("pipelinePath")
+                .or_else(|| args.get("pipeline_path"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::pipelines::load_pipeline_editor(
+                state.clone(),
+                pipeline_id,
+                pipeline_path,
+            )
+            .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_pipeline_editor" => {
+            let pipeline_id: Option<i64> = args
+                .get("pipelineId")
+                .or_else(|| args.get("pipeline_id"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let pipeline_path: String = serde_json::from_value(
+                args.get("pipelinePath")
+                    .or_else(|| args.get("pipeline_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelinePath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelinePath: {}", e))?;
+            let spec: crate::commands::pipelines::PipelineSpec = serde_json::from_value(
+                args.get("spec")
+                    .cloned()
+                    .ok_or_else(|| "Missing spec".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse spec: {}", e))?;
+            let result = crate::commands::pipelines::save_pipeline_editor(
+                state.clone(),
+                pipeline_id,
+                pipeline_path,
+                spec,
+            )
+            .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_pipeline" => {
+            let pipeline_id: i64 = serde_json::from_value(
+                args.get("pipelineId")
+                    .or_else(|| args.get("pipeline_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelineId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineId: {}", e))?;
+            crate::commands::pipelines::delete_pipeline(state.clone(), pipeline_id).await?;
+            Ok(serde_json::Value::Null)
+        }
+        "validate_pipeline" => {
+            let pipeline_path: String = serde_json::from_value(
+                args.get("pipelinePath")
+                    .or_else(|| args.get("pipeline_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelinePath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelinePath: {}", e))?;
+            let result = crate::commands::pipelines::validate_pipeline(pipeline_path).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_pipeline_run" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            crate::commands::pipelines::delete_pipeline_run(state.clone(), run_id).await?;
+            Ok(serde_json::Value::Null)
+        }
+        "preview_pipeline_spec" => {
+            let spec: crate::commands::pipelines::PipelineSpec = serde_json::from_value(
+                args.get("spec")
+                    .cloned()
+                    .ok_or_else(|| "Missing spec".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse spec: {}", e))?;
+            let result = crate::commands::pipelines::preview_pipeline_spec(spec).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_run_config" => {
+            let pipeline_id: i64 = serde_json::from_value(
+                args.get("pipelineId")
+                    .or_else(|| args.get("pipeline_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelineId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineId: {}", e))?;
+            let name: String = serde_json::from_value(
+                args.get("name")
+                    .cloned()
+                    .ok_or_else(|| "Missing name".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse name: {}", e))?;
+            let config_data: serde_json::Value = args
+                .get("configData")
+                .or_else(|| args.get("config_data"))
+                .cloned()
+                .ok_or_else(|| "Missing configData".to_string())?;
+            let result = crate::commands::pipelines::save_run_config(
+                state.clone(),
+                pipeline_id,
+                name,
+                config_data,
+            )
+            .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "list_run_configs" => {
+            let pipeline_id: i64 = serde_json::from_value(
+                args.get("pipelineId")
+                    .or_else(|| args.get("pipeline_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing pipelineId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pipelineId: {}", e))?;
+            let result =
+                crate::commands::pipelines::list_run_configs(state.clone(), pipeline_id).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_run_config" => {
+            let config_id: i64 = serde_json::from_value(
+                args.get("configId")
+                    .or_else(|| args.get("config_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing configId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse configId: {}", e))?;
+            let result =
+                crate::commands::pipelines::get_run_config(state.clone(), config_id).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "delete_run_config" => {
+            let config_id: i64 = serde_json::from_value(
+                args.get("configId")
+                    .or_else(|| args.get("config_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing configId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse configId: {}", e))?;
+            crate::commands::pipelines::delete_run_config(state.clone(), config_id).await?;
+            Ok(serde_json::Value::Null)
+        }
+
+        // =====================================================================
+        // Additional Session Commands
+        // =====================================================================
+        "create_session_with_datasets" => {
+            let request: crate::types::CreateSessionRequest = serde_json::from_value(
+                args.get("request")
+                    .cloned()
+                    .ok_or_else(|| "Missing request".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse request: {}", e))?;
+            let datasets: Vec<String> = serde_json::from_value(
+                args.get("datasets")
+                    .cloned()
+                    .ok_or_else(|| "Missing datasets".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse datasets: {}", e))?;
+            let result =
+                crate::commands::sessions::create_session_with_datasets(request, datasets)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "update_session_peer" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .or_else(|| args.get("session_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let peer: Option<String> = args
+                .get("peer")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::sessions::update_session_peer(session_id, peer)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_session_messages" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .or_else(|| args.get("session_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::commands::sessions::get_session_messages(session_id)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "send_session_message" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .or_else(|| args.get("session_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let body: String = serde_json::from_value(
+                args.get("body")
+                    .cloned()
+                    .ok_or_else(|| "Missing body".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse body: {}", e))?;
+            let result = crate::commands::sessions::send_session_message(session_id, body)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "open_session_folder" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .or_else(|| args.get("session_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            crate::commands::sessions::open_session_folder(session_id)?;
+            Ok(serde_json::Value::Null)
+        }
+
+        // =====================================================================
+        // Additional Key Commands
+        // =====================================================================
+        "key_republish" => {
+            let email: Option<String> = args
+                .get("email")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::key::key_republish(email)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "key_refresh_contacts" => {
+            let result = crate::commands::key::key_refresh_contacts(state.clone()).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Network Commands
+        // =====================================================================
+        "network_remove_contact" => {
+            let identity: String = serde_json::from_value(
+                args.get("identity")
+                    .cloned()
+                    .ok_or_else(|| "Missing identity".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse identity: {}", e))?;
+            crate::commands::key::network_remove_contact(identity)?;
+            Ok(serde_json::Value::Null)
+        }
+        "network_trust_changed_key" => {
+            let identity: String = serde_json::from_value(
+                args.get("identity")
+                    .cloned()
+                    .ok_or_else(|| "Missing identity".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse identity: {}", e))?;
+            let result = crate::commands::key::network_trust_changed_key(identity)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional Dataset Commands
+        // =====================================================================
+        "upsert_dataset_manifest" => {
+            let manifest: biovault::cli::commands::datasets::DatasetManifest =
+                serde_json::from_value(
+                    args.get("manifest")
+                        .cloned()
+                        .ok_or_else(|| "Missing manifest".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+            let result =
+                crate::commands::datasets::upsert_dataset_manifest(state.clone(), manifest)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Additional SQL Commands
+        // =====================================================================
+        "sql_export_query" => {
+            let query: String = serde_json::from_value(
+                args.get("query")
+                    .cloned()
+                    .ok_or_else(|| "Missing query".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse query: {}", e))?;
+            let destination: String = serde_json::from_value(
+                args.get("destination")
+                    .cloned()
+                    .ok_or_else(|| "Missing destination".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse destination: {}", e))?;
+            let options: Option<crate::commands::sql::SqlExportOptions> = args
+                .get("options")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result =
+                crate::commands::sql::sql_export_query(state.clone(), query, destination, options)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
         _ => {
             crate::desktop_log!("⚠️  Unhandled command: {}", cmd);
             Err(format!("Unhandled command: {}", cmd))
@@ -1494,8 +3527,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
     }
 }
 
-pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+async fn bind_listener(addr: SocketAddr) -> Result<TcpListener, Box<dyn std::error::Error>> {
     // During profile switching, the app may restart quickly and attempt to re-bind the same port
     // while the previous process is still winding down. Retry a few times to reduce flakiness.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -1512,17 +3544,133 @@ pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn st
         }
     };
 
+    Ok(listener)
+}
+
+pub async fn start_ws_server_with_shutdown(
+    app: AppHandle,
+    port: u16,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = bind_listener(addr).await?;
+
     crate::desktop_log!("🚀 WebSocket server listening on ws://{}", addr);
     crate::desktop_log!("📝 Browser mode: Commands will be proxied via WebSocket");
 
     let app = Arc::new(app);
-
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let app_clone = Arc::clone(&app);
-            tokio::spawn(handle_connection(stream, app_clone));
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                incoming = listener.accept() => {
+                    match incoming {
+                        Ok((stream, _)) => {
+                            let app_clone = Arc::clone(&app);
+                            tokio::spawn(handle_connection(stream, app_clone));
+                        }
+                        Err(err) => {
+                            crate::desktop_log!("⚠️ WS bridge accept failed: {}", err);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     });
+
+    Ok(handle)
+}
+
+pub async fn start_http_server_with_shutdown(
+    app: AppHandle,
+    port: u16,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = bind_listener(addr).await?;
+
+    crate::desktop_log!("🌐 HTTP bridge listening on http://{}", addr);
+
+    let app = Arc::new(app);
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                incoming = listener.accept() => {
+                    match incoming {
+                        Ok((stream, _)) => {
+                            let app_clone = Arc::clone(&app);
+                            tokio::spawn(handle_http_connection(stream, app_clone));
+                        }
+                        Err(err) => {
+                            crate::desktop_log!("⚠️ HTTP bridge accept failed: {}", err);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(handle)
+}
+
+pub async fn restart_agent_bridge(
+    app: AppHandle,
+    ws_port: u16,
+    http_port: u16,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut manager = BRIDGE_MANAGER
+            .lock()
+            .map_err(|_| "Failed to lock bridge manager".to_string())?;
+        manager.stop_all();
+    }
+
+    if !enabled {
+        crate::desktop_log!("WS bridge disabled by environment or settings");
+        return Ok(());
+    }
+
+    let (ws_shutdown_tx, ws_shutdown_rx) = watch::channel(false);
+    let ws_handle = start_ws_server_with_shutdown(app.clone(), ws_port, ws_shutdown_rx)
+        .await
+        .map_err(|e| format!("Failed to start WebSocket bridge: {}", e))?;
+
+    let mut http_task: Option<BridgeTask> = None;
+    if http_port > 0 {
+        let (http_shutdown_tx, http_shutdown_rx) = watch::channel(false);
+        match start_http_server_with_shutdown(app, http_port, http_shutdown_rx).await {
+            Ok(handle) => {
+                http_task = Some(BridgeTask {
+                    shutdown: http_shutdown_tx,
+                    handle,
+                    port: http_port,
+                });
+            }
+            Err(err) => {
+                let _ = ws_shutdown_tx.send(true);
+                ws_handle.abort();
+                return Err(format!("Failed to start HTTP bridge: {}", err));
+            }
+        }
+    }
+
+    let mut manager = BRIDGE_MANAGER
+        .lock()
+        .map_err(|_| "Failed to lock bridge manager".to_string())?;
+    manager.ws = Some(BridgeTask {
+        shutdown: ws_shutdown_tx,
+        handle: ws_handle,
+        port: ws_port,
+    });
+    manager.http = http_task;
 
     Ok(())
 }

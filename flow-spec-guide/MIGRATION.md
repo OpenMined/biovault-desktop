@@ -5,6 +5,7 @@ This document guides migration from the legacy `PipelineSpec` and `ProjectSpec` 
 ## Overview
 
 The new Flow spec consolidates `pipeline.yaml` and `project.yaml` into a single, more expressive format with:
+
 - Unified module system with versioning and integrity checking
 - Enhanced multiparty execution controls (topologies, selectors)
 - Built-in error handling, retry, and timeout policies
@@ -15,19 +16,23 @@ The new Flow spec consolidates `pipeline.yaml` and `project.yaml` into a single,
 We recommend a phased approach that maintains backward compatibility:
 
 ### Phase 1: Dual-Path Runtime (Current)
+
 - Runtime detects spec version via `apiVersion` field
 - Legacy files (`pipeline.yaml`, `project.yaml`) continue to work
 - New flows use `kind: Flow` with `apiVersion: syftbox.openmined.org/v1alpha1`
 
 ### Phase 2: Conversion Tooling
+
 - CLI command: `biovault migrate --input pipeline.yaml --output flow.yaml`
 - Automated conversion with manual review for complex cases
 
 ### Phase 3: Deprecation
+
 - Warning on legacy format usage
 - Documentation points to new format only
 
 ### Phase 4: Removal
+
 - Legacy code paths removed
 - Only Flow spec supported
 
@@ -35,68 +40,69 @@ We recommend a phased approach that maintains backward compatibility:
 
 ### PipelineSpec → Flow
 
-| PipelineSpec | Flow | Notes |
-|--------------|------|-------|
-| `name` | `metadata.name` | |
-| `description` | `metadata.description` | |
-| `context` | `spec.inputs` | Converted to typed inputs |
-| `inputs` | `spec.inputs` | |
-| `steps[].id` | `spec.steps[].id` | Same |
-| `steps[].uses` | `spec.steps[].uses` | Now references `spec.modules` |
-| `steps[].where_exec` | `spec.steps[].run.targets` | |
-| `steps[].runs_on` | `spec.steps[].run.targets` | |
-| `steps[].foreach` | `spec.steps[].run.strategy: parallel` | See strategy mapping |
-| `steps[].order` | `spec.steps[].run.strategy: sequential` | |
-| `steps[].with` | `spec.steps[].with` | Same, but with BindingSpec |
-| `steps[].publish` | `spec.steps[].publish` | Same |
-| `steps[].share` | `spec.steps[].share` | Enhanced with permissions |
-| `steps[].store` | `spec.steps[].store` | Same |
+| PipelineSpec         | Flow                                    | Notes                         |
+| -------------------- | --------------------------------------- | ----------------------------- |
+| `name`               | `metadata.name`                         |                               |
+| `description`        | `metadata.description`                  |                               |
+| `context`            | `spec.inputs`                           | Converted to typed inputs     |
+| `inputs`             | `spec.inputs`                           |                               |
+| `steps[].id`         | `spec.steps[].id`                       | Same                          |
+| `steps[].uses`       | `spec.steps[].uses`                     | Now references `spec.modules` |
+| `steps[].where_exec` | `spec.steps[].run.targets`              |                               |
+| `steps[].runs_on`    | `spec.steps[].run.targets`              |                               |
+| `steps[].foreach`    | `spec.steps[].run.strategy: parallel`   | See strategy mapping          |
+| `steps[].order`      | `spec.steps[].run.strategy: sequential` |                               |
+| `steps[].with`       | `spec.steps[].with`                     | Same, but with BindingSpec    |
+| `steps[].publish`    | `spec.steps[].publish`                  | Same                          |
+| `steps[].share`      | `spec.steps[].share`                    | Enhanced with permissions     |
+| `steps[].store`      | `spec.steps[].store`                    | Same                          |
 
 ### ProjectSpec → Module
 
-| ProjectSpec | Module | Notes |
-|-------------|--------|-------|
-| `name` | `metadata.name` | |
-| `author` | `metadata.authors[]` | Now a list |
-| `version` | `metadata.version` | |
-| `workflow` | `spec.runner.kind` | See runner mapping |
-| `template` | `spec.runner.template` | |
-| `inputs` | `spec.inputs` | |
-| `outputs` | `spec.outputs` | |
-| `parameters` | `spec.parameters` | |
-| `env` | `spec.runner.env` | |
-| `assets` | `spec.assets` | |
+| ProjectSpec  | Module                 | Notes              |
+| ------------ | ---------------------- | ------------------ |
+| `name`       | `metadata.name`        |                    |
+| `author`     | `metadata.authors[]`   | Now a list         |
+| `version`    | `metadata.version`     |                    |
+| `workflow`   | `spec.runner.kind`     | See runner mapping |
+| `template`   | `spec.runner.template` |                    |
+| `inputs`     | `spec.inputs`          |                    |
+| `outputs`    | `spec.outputs`         |                    |
+| `parameters` | `spec.parameters`      |                    |
+| `env`        | `spec.runner.env`      |                    |
+| `assets`     | `spec.assets`          |                    |
 
 ### Strategy Mapping
 
-| Legacy | Flow |
-|--------|------|
+| Legacy               | Flow                                         |
+| -------------------- | -------------------------------------------- |
 | `foreach: datasites` | `run.strategy: parallel`, `run.targets: all` |
-| `order: sequential` | `run.strategy: sequential` |
-| `runs_on: [list]` | `run.targets: [list]` or selector |
-| `where_exec: single` | `run.targets: {datasites[0]}` |
+| `order: sequential`  | `run.strategy: sequential`                   |
+| `runs_on: [list]`    | `run.targets: [list]` or selector            |
+| `where_exec: single` | `run.targets: {datasites[0]}`                |
 
 ### Runner Mapping
 
 | ProjectSpec workflow | Module runner.kind |
-|---------------------|-------------------|
-| `nextflow` | `nextflow` |
-| `shell` | `shell` |
-| `python` | `python` |
-| `container` | `container` |
+| -------------------- | ------------------ |
+| `nextflow`           | `nextflow`         |
+| `shell`              | `shell`            |
+| `python`             | `python`           |
+| `container`          | `container`        |
 
 ## Example Conversions
 
 ### Simple Pipeline → Flow
 
 **Before (pipeline.yaml):**
+
 ```yaml
 name: hello-pipeline
 description: Simple hello world
 inputs:
   message:
     type: string
-    default: "hello"
+    default: 'hello'
 steps:
   - id: write
     uses: ./hello-project
@@ -109,6 +115,7 @@ steps:
 ```
 
 **After (flow.yaml):**
+
 ```yaml
 apiVersion: syftbox.openmined.org/v1alpha1
 kind: Flow
@@ -120,7 +127,7 @@ spec:
   inputs:
     message:
       type: String
-      default: "hello"
+      default: 'hello'
 
   datasites:
     all:
@@ -128,7 +135,7 @@ spec:
     groups:
       local:
         include:
-          - "{datasites[0]}"
+          - '{datasites[0]}'
 
   modules:
     hello:
@@ -151,6 +158,7 @@ spec:
 ### Multi-Datasite Pipeline → Flow
 
 **Before (pipeline.yaml):**
+
 ```yaml
 name: distributed-compute
 steps:
@@ -174,6 +182,7 @@ steps:
 ```
 
 **After (flow.yaml):**
+
 ```yaml
 apiVersion: syftbox.openmined.org/v1alpha1
 kind: Flow
@@ -196,11 +205,11 @@ spec:
     groups:
       clients:
         include:
-          - "{datasites[0]}"
-          - "{datasites[1]}"
+          - '{datasites[0]}'
+          - '{datasites[1]}'
       aggregator:
         include:
-          - "{datasites[2]}"
+          - '{datasites[2]}'
 
   modules:
     compute:
@@ -228,9 +237,9 @@ spec:
           path: shared/flows/{run_id}/{datasite.current}/result.txt
           permissions:
             read:
-              - "{datasites[*]}"
+              - '{datasites[*]}'
             write:
-              - "{datasite.current}"
+              - '{datasite.current}'
 
     - id: aggregate
       uses: aggregate
@@ -291,12 +300,12 @@ enum SpecFormat {
 
 The new spec uses bracket notation for datasite selectors:
 
-| Legacy | New |
-|--------|-----|
-| `{datasites}` | `{datasites[*]}` |
-| `{datasites.0}` | `{datasites[0]}` |
-| `{datasites.1}` | `{datasites[1]}` |
-| N/A | `{datasites[0:3]}` (slice) |
+| Legacy          | New                        |
+| --------------- | -------------------------- |
+| `{datasites}`   | `{datasites[*]}`           |
+| `{datasites.0}` | `{datasites[0]}`           |
+| `{datasites.1}` | `{datasites[1]}`           |
+| N/A             | `{datasites[0:3]}` (slice) |
 
 ## New Features in Flow Spec
 
@@ -368,7 +377,7 @@ steps:
     run:
       targets: participants
       strategy: sequential
-      topology: ring  # Enables {datasite.prev}, {datasite.next}
+      topology: ring # Enables {datasite.prev}, {datasite.next}
 ```
 
 ## CLI Commands (Proposed)
@@ -392,11 +401,11 @@ biovault module sign ./my-module --key ~/.keys/signing.key
 
 ## Deprecation Timeline
 
-| Version | Status |
-|---------|--------|
-| 0.x | Both formats supported, no warnings |
-| 1.0 | Legacy format deprecated, warnings emitted |
-| 2.0 | Legacy format removed |
+| Version | Status                                     |
+| ------- | ------------------------------------------ |
+| 0.x     | Both formats supported, no warnings        |
+| 1.0     | Legacy format deprecated, warnings emitted |
+| 2.0     | Legacy format removed                      |
 
 ## Questions?
 

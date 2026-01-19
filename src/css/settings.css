@@ -167,6 +167,176 @@
 }
 
 /* ============================================================================
+   AGENT BRIDGE
+   ============================================================================ */
+
+.agent-bridge-controls {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 16px;
+	margin-top: 12px;
+}
+
+.agent-bridge-control label {
+	font-size: 12px;
+	font-weight: 600;
+	color: #374151;
+	margin-bottom: 6px;
+}
+
+.agent-bridge-toggle {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-weight: 600;
+	color: #111827;
+}
+
+.agent-bridge-toggle input {
+	transform: scale(1.05);
+}
+
+.agent-bridge-hint {
+	font-size: 12px;
+	color: #6b7280;
+	margin-top: 6px;
+}
+
+.agent-bridge-test {
+	background: #f8fafc;
+	border: 1px dashed #cbd5e1;
+	padding: 8px 10px;
+	border-radius: 8px;
+	font-size: 12px;
+}
+
+.agent-bridge-lists {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	gap: 12px;
+	margin-top: 16px;
+}
+
+.agent-bridge-panel {
+	background: #f8f9fa;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.agent-bridge-panel-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.agent-bridge-panel-header input {
+	flex: 1;
+	max-width: 180px;
+	font-size: 12px;
+	padding: 6px 8px;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+}
+
+.agent-bridge-list {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #ffffff;
+	padding: 6px;
+	max-height: 240px;
+	overflow-y: auto;
+}
+
+.agent-bridge-empty {
+	color: #9ca3af;
+	font-size: 12px;
+	padding: 10px;
+	text-align: center;
+}
+
+.agent-bridge-command {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 12px;
+	color: #1f2937;
+	transition: background 0.15s ease;
+}
+
+.agent-bridge-command:hover {
+	background: #f1f5f9;
+}
+
+.agent-bridge-command.selected {
+	background: #e0f2fe;
+}
+
+.agent-bridge-command.blocked {
+	border-left: 3px solid #ef4444;
+	padding-left: 6px;
+}
+
+.agent-bridge-panel-actions {
+	justify-content: center;
+	align-items: center;
+	gap: 10px;
+}
+
+.agent-bridge-panel-actions .settings-btn {
+	min-width: 110px;
+}
+
+.agent-bridge-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 12px;
+}
+
+.agent-bridge-token-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.agent-bridge-token-row button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.agent-bridge-token-icon {
+	width: 16px;
+	height: 16px;
+	fill: currentColor;
+}
+
+.agent-bridge-token-row input {
+	flex: 1;
+	min-width: 0;
+}
+
+@media (max-width: 900px) {
+	.agent-bridge-lists {
+		grid-template-columns: 1fr;
+	}
+
+	.agent-bridge-panel-actions {
+		flex-direction: row;
+	}
+}
+
+/* ============================================================================
    FORM INPUTS
    ============================================================================ */
 

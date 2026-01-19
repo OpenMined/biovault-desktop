@@ -32,6 +32,33 @@ pub struct Settings {
     pub ai_api_token: String,
     pub ai_model: String,
     pub syftbox_server_url: String,
+    /// Enable the WebSocket agent bridge (default: true in dev mode)
+    #[serde(default = "default_agent_bridge_enabled")]
+    pub agent_bridge_enabled: bool,
+    /// WebSocket agent bridge port (default: 3333)
+    #[serde(default = "default_agent_bridge_port")]
+    pub agent_bridge_port: u16,
+    /// HTTP fallback port for the agent bridge (default: 3334)
+    #[serde(default = "default_agent_bridge_http_port")]
+    pub agent_bridge_http_port: u16,
+    /// Optional authentication token for the agent bridge
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_bridge_token: Option<String>,
+    /// Blocked agent bridge commands
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_bridge_blocklist: Vec<String>,
+}
+
+fn default_agent_bridge_enabled() -> bool {
+    true
+}
+
+fn default_agent_bridge_port() -> u16 {
+    3333
+}
+
+fn default_agent_bridge_http_port() -> u16 {
+    3334
 }
 
 impl Default for Settings {
@@ -46,6 +73,11 @@ impl Default for Settings {
             ai_api_token: String::new(),
             ai_model: "openrouter/auto".to_string(),
             syftbox_server_url: DEFAULT_SYFTBOX_SERVER_URL.to_string(),
+            agent_bridge_enabled: default_agent_bridge_enabled(),
+            agent_bridge_port: default_agent_bridge_port(),
+            agent_bridge_http_port: default_agent_bridge_http_port(),
+            agent_bridge_token: None,
+            agent_bridge_blocklist: Vec::new(),
         }
     }
 }
@@ -266,6 +298,14 @@ pub struct SyftBoxState {
     pub log_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_url: Option<String>,
+    #[serde(default)]
+    pub tx_bytes: u64,
+    #[serde(default)]
+    pub rx_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -280,6 +320,102 @@ pub struct SyftBoxConfigInfo {
     pub data_dir_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_path: Option<String>,
+}
+
+// Sync Tree Types
+#[derive(Serialize, Clone)]
+pub struct SyncTreeNode {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    pub sync_state: String,
+    pub conflict_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f64>,
+    pub is_ignored: bool,
+    pub is_essential: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<u32>,
+    pub has_mixed_state: bool,
+    pub has_mixed_ignore: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SyncTreeDetails {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_count: Option<u32>,
+    pub sync_state: String,
+    pub conflict_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub error_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_synced: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_etag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uploaded_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    pub is_ignored: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignore_pattern: Option<String>,
+    pub is_essential: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub essential_pattern: Option<String>,
+    pub is_priority: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syft_pub_info: Option<SyftPubInfo>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SyftPubInfo {
+    pub permissions: Vec<SyftPubPermission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SyftPubPermission {
+    pub user: String,
+    pub access: String,
+    pub is_wildcard: bool,
+}
+
+#[derive(Serialize)]
+pub struct SyncIgnorePatterns {
+    pub default_patterns: Vec<String>,
+    pub custom_patterns: Vec<String>,
+    pub syftignore_path: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SharedWithMeItem {
+    pub owner: String,
+    pub path: String,
+    pub description: Option<String>,
+    pub access: String,
+    pub is_subscribed: bool,
 }
 
 // Log Types

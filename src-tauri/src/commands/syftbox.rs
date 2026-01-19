@@ -151,11 +151,6 @@ fn resolve_or_assign_client_url(
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
 
-    if embedded && candidate.is_none() {
-        return allocate_ephemeral_client_url()
-            .ok_or_else(|| "Failed to assign a control-plane port for SyftBox".to_string());
-    }
-
     // 2) Fallback to explicit value in creds
     if candidate.is_none() {
         candidate = creds
@@ -194,8 +189,15 @@ fn resolve_or_assign_client_url(
         }
     }
 
-    // 4) Fallback to default
-    let candidate = candidate.unwrap_or_else(|| "http://127.0.0.1:7938".to_string());
+    // 4) Fallback to default (embedded uses an ephemeral port by default)
+    let candidate = if let Some(url) = candidate {
+        url
+    } else if embedded {
+        allocate_ephemeral_client_url()
+            .ok_or_else(|| "Failed to assign a control-plane port for SyftBox".to_string())?
+    } else {
+        "http://127.0.0.1:7938".to_string()
+    };
 
     // Try to bind chosen address; if busy, pick random free port.
     // Pass token to verify we can access an existing daemon.
@@ -958,8 +960,8 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
 fn find_syftbox_pids(runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig) -> Vec<u32> {
     #[cfg(target_os = "windows")]
     {
-        return find_our_syftbox_pids(Some(&runtime.config_path), Some(&runtime.data_dir))
-            .unwrap_or_default();
+        find_our_syftbox_pids(Some(&runtime.config_path), Some(&runtime.data_dir))
+            .unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1226,22 +1228,54 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
 
 #[tauri::command]
 pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
-    let (running, mode, mut log_path, error) = match load_runtime_config() {
-        Ok(runtime) => {
-            let state = syftctl::state(&runtime).map_err(|e| e.to_string())?;
-            let log_path = resolve_syftbox_log_path(&runtime);
-            (
-                state.running,
-                state.mode,
-                log_path,
-                None::<String>, // no error
-            )
-        }
-        Err(e) => {
-            crate::desktop_log!("⚠️ No runtime config for SyftBox state: {}", e);
-            (false, syftctl::SyftBoxMode::Direct, None, Some(e))
-        }
-    };
+    let (running, mode, mut log_path, error, pid, client_url, tx_bytes, rx_bytes) =
+        match load_runtime_config() {
+            Ok(runtime) => {
+                let state = syftctl::state(&runtime).map_err(|e| e.to_string())?;
+                let log_path = resolve_syftbox_log_path(&runtime);
+
+                // Get PID from process list
+                let pids = find_syftbox_pids(&runtime);
+                let pid = pids.first().copied();
+
+                // Get client_url from config
+                let client_url = fs::read_to_string(&runtime.config_path)
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                    .and_then(|val| {
+                        val.get("client_url")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    });
+
+                // Get TX/RX bytes from status endpoint
+                let (tx_bytes, rx_bytes) = get_tx_rx_bytes(&client_url);
+
+                (
+                    state.running,
+                    state.mode,
+                    log_path,
+                    None::<String>,
+                    pid,
+                    client_url,
+                    tx_bytes,
+                    rx_bytes,
+                )
+            }
+            Err(e) => {
+                crate::desktop_log!("⚠️ No runtime config for SyftBox state: {}", e);
+                (
+                    false,
+                    syftctl::SyftBoxMode::Direct,
+                    None,
+                    Some(e),
+                    None,
+                    None,
+                    0,
+                    0,
+                )
+            }
+        };
     if log_path.is_none() {
         log_path = fallback_log_path();
     }
@@ -1252,7 +1286,50 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
         backend: syftbox_backend_label(),
         log_path,
         error,
+        pid,
+        client_url,
+        tx_bytes,
+        rx_bytes,
     })
+}
+
+fn get_tx_rx_bytes(client_url: &Option<String>) -> (u64, u64) {
+    let Some(url) = client_url else {
+        return (0, 0);
+    };
+
+    // Load token from config
+    let token = load_syftbox_client_config()
+        .ok()
+        .map(|cfg| cfg.client_token);
+    let Some(token) = token else {
+        return (0, 0);
+    };
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return (0, 0),
+    };
+
+    let status_url = format!("{}/v1/status", url.trim_end_matches('/'));
+    match client.get(&status_url).bearer_auth(&token).send() {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(status) = resp.json::<SyftBoxStatus>() {
+                let runtime = status.runtime.unwrap_or_default();
+                // Combine websocket and http bytes
+                let ws = runtime.websocket.unwrap_or_default();
+                let http = runtime.http.unwrap_or_default();
+                let tx = ws.bytes_sent_total.unwrap_or(0) + http.bytes_sent_total.unwrap_or(0);
+                let rx = ws.bytes_recv_total.unwrap_or(0) + http.bytes_recv_total.unwrap_or(0);
+                return (tx, rx);
+            }
+        }
+        _ => {}
+    }
+    (0, 0)
 }
 
 #[tauri::command]
@@ -1289,6 +1366,19 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
                 crate::desktop_log!("⚠️ SyftBox control plane not responding: {}", e);
                 return Err(e);
             }
+            // Get updated state info
+            let pids = find_syftbox_pids(&runtime);
+            let pid = pids.first().copied();
+            let client_url = fs::read_to_string(&runtime.config_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|val| {
+                    val.get("client_url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+            let (tx_bytes, rx_bytes) = get_tx_rx_bytes(&client_url);
+
             Ok(SyftBoxState {
                 running: true,
                 mode: if runtime.data_dir.join(".sbenv").exists() {
@@ -1299,6 +1389,10 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
                 backend: syftbox_backend_label(),
                 log_path: resolve_syftbox_log_path(&runtime),
                 error: None,
+                pid,
+                client_url,
+                tx_bytes,
+                rx_bytes,
             })
         }
         Err(e) => {
@@ -1329,6 +1423,10 @@ pub fn stop_syftbox_client() -> Result<SyftBoxState, String> {
                 backend: syftbox_backend_label(),
                 log_path: resolve_syftbox_log_path(&runtime),
                 error: None,
+                pid: None,
+                client_url: None,
+                tx_bytes: 0,
+                rx_bytes: 0,
             })
         }
         Err(e) => {
@@ -1375,32 +1473,26 @@ pub fn get_syftbox_diagnostics() -> Result<SyftBoxDiagnostics, String> {
         if log_path.is_none() {
             log_path = resolve_syftbox_log_path(&runtime);
         }
-        if client_url.is_none() || client_token.is_none() || server_url.is_none() {
-            if let Ok(raw) = fs::read_to_string(&runtime.config_path) {
-                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-                    if client_url.is_none() {
-                        client_url = val
-                            .get("client_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+        if let Ok(raw) = fs::read_to_string(&runtime.config_path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                if let Some(url) = val.get("client_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        client_url = Some(url.to_string());
                     }
-                    if client_token.is_none() {
-                        client_token = val
-                            .get("client_token")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(token) = val.get("client_token").and_then(|v| v.as_str()) {
+                    if !token.trim().is_empty() {
+                        client_token = Some(token.to_string());
                     }
-                    if server_url.is_none() {
-                        server_url = val
-                            .get("server_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(url) = val.get("server_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        server_url = Some(url.to_string());
                     }
-                    if refresh_token.is_none() {
-                        refresh_token = val
-                            .get("refresh_token")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                }
+                if let Some(token) = val.get("refresh_token").and_then(|v| v.as_str()) {
+                    if !token.trim().is_empty() {
+                        refresh_token = Some(token.to_string());
                     }
                 }
             }

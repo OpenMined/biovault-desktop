@@ -20,5 +20,5 @@ module.exports = {
 			},
 		],
 	},
-	ignorePatterns: ['node_modules/', 'biovault/', 'src-tauri/target/', 'tests/**/*.ts'],
+	ignorePatterns: ['node_modules/', 'biovault/', 'src-tauri/target/', 'tests/**/*.ts', 'examples/**/*.ts'],
 }
