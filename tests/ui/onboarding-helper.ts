@@ -23,18 +23,22 @@ export function log(socket: WebSocket | null, payload: Record<string, unknown>):
 
 export async function setWsPort(page: Page, port: number): Promise<void> {
 	const ciFlag = process.env.CI ? '1' : ''
-	await page.addInitScript((portNum: number, ci: string) => {
-		const w = window as any
-		w.__DEV_WS_BRIDGE_PORT__ = portNum
-		w.__DISABLE_UPDATER__ = true
-		w.process = w.process || {}
-		w.process.env = w.process.env || {}
-		w.process.env.USE_REAL_INVOKE = 'true'
-		w.process.env.DISABLE_UPDATER = '1'
-		if (ci) {
-			w.process.env.CI = w.process.env.CI || ci
-		}
-	}, port, ciFlag)
+	await page.addInitScript(
+		(portNum: number, ci: string) => {
+			const w = window as any
+			w.__DEV_WS_BRIDGE_PORT__ = portNum
+			w.__DISABLE_UPDATER__ = true
+			w.process = w.process || {}
+			w.process.env = w.process.env || {}
+			w.process.env.USE_REAL_INVOKE = 'true'
+			w.process.env.DISABLE_UPDATER = '1'
+			if (ci) {
+				w.process.env.CI = w.process.env.CI || ci
+			}
+		},
+		port,
+		ciFlag,
+	)
 }
 
 /**
