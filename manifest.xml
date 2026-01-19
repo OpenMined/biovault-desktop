@@ -7,6 +7,6 @@
   <project name="OpenMined/biovault-beaver" path="biovault-beaver" revision="main" />
   <project name="OpenMined/sbenv" path="sbenv" revision="main" />
   <project name="OpenMined/syft-crypto-core" path="syft-crypto-core" revision="main" />
-  <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault-fixes" />
+  <project name="OpenMined/syftbox" path="syftbox" revision="madhava/biovault" />
   <project name="OpenMined/syftbox-sdk" path="syftbox-sdk" revision="main" />
 </manifest>

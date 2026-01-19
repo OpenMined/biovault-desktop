@@ -1496,7 +1496,14 @@ print_repo() {
       branch_display="${detached_color}(detached: $short_sha)${NC}"
     fi
   else
-    branch_display="${BLUE}[$branch]${NC}"
+    # Color branch based on manifest match status
+    local branch_color="${BLUE}"
+    if [[ "$manifest_match" == "1" ]]; then
+      branch_color="${GREEN}"
+    elif [[ "$manifest_match" == "0" ]]; then
+      branch_color="${YELLOW}"
+    fi
+    branch_display="${branch_color}[$branch]${NC}"
   fi
 
   echo -e "${indent}${prefix}${CYAN}${path##*/}/${NC} ${branch_display}${dirty_color}${dirty}${NC}${manifest_note}"
@@ -1581,11 +1588,13 @@ PY
 
   echo ""
   echo -e "${GREEN}Legend:${NC}"
-  echo -e "  ${BLUE}[branch]${NC}     - on branch"
-  echo -e "  ${YELLOW}(tag)${NC}        - detached at tag"
+  echo -e "  ${GREEN}[branch]${NC}     - on branch, matches manifest"
+  echo -e "  ${YELLOW}[branch]${NC}     - on branch, differs from manifest"
+  echo -e "  ${BLUE}[branch]${NC}     - on branch, no manifest revision"
+  echo -e "  ${GREEN}(tag)${NC}        - detached at tag, matches manifest"
   echo -e "  ${YELLOW}(detached)${NC}   - detached HEAD"
   echo -e "  ${RED}[dirty]${NC}      - uncommitted changes"
-  echo -e "  ${BLUE}[manifest:x]${NC} - differs from manifest revision"
+  echo -e "  ${BLUE}[manifest:x]${NC} - expected manifest revision"
   echo -e "  ${RED}[missing]${NC}    - repo not checked out"
 }
 
@@ -1846,6 +1855,7 @@ do_lint() {
   echo ""
   local failures=0
   local passed=0
+  local failed_repos=()
   local i=0
   for pid in "${pids[@]}"; do
     wait "$pid" || true
@@ -1863,6 +1873,7 @@ do_lint() {
       cat "$outfile"
       echo ""
       failures=$((failures + 1))
+      failed_repos+=("$label")
     elif [[ "$verbose" -eq 1 ]]; then
       echo -e "${GREEN}✓ $label${elapsed}${NC}"
       cat "$outfile"
@@ -1880,7 +1891,9 @@ do_lint() {
   if [[ "$failures" -eq 0 ]]; then
     echo -e "${GREEN}${passed} repos passed in ${total_time}s${NC}"
   else
-    echo -e "${RED}${failures} failed, ${passed} passed in ${total_time}s${NC}"
+    local failed_list
+    failed_list=$(IFS=', '; echo "${failed_repos[*]}")
+    echo -e "${RED}${failures} failed (${failed_list}), ${passed} passed in ${total_time}s${NC}"
     return 1
   fi
 }
@@ -2052,6 +2065,7 @@ do_test() {
 
   local failures=0
   local passed=0
+  local failed_repos=()
   local i=0
   for pid in "${pids[@]}"; do
     wait "$pid" || true
@@ -2069,6 +2083,7 @@ do_test() {
       cat "$outfile"
       echo ""
       failures=$((failures + 1))
+      failed_repos+=("$label")
     else
       echo -e "${GREEN}✓ $label${elapsed}${NC}"
       passed=$((passed + 1))
@@ -2080,7 +2095,9 @@ do_test() {
   if [[ "$failures" -eq 0 ]]; then
     echo -e "${GREEN}${passed} repos passed in ${total_time}s${NC}"
   else
-    echo -e "${RED}${failures} failed, ${passed} passed in ${total_time}s${NC}"
+    local failed_list
+    failed_list=$(IFS=', '; echo "${failed_repos[*]}")
+    echo -e "${RED}${failures} failed (${failed_list}), ${passed} passed in ${total_time}s${NC}"
     return 1
   fi
 }

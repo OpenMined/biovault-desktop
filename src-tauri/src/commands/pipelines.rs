@@ -16,6 +16,7 @@ use biovault::cli::commands::project_management::{
 };
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
+use biovault::flow_spec::FlowFile;
 pub use biovault::pipeline_spec::PipelineSpec;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -563,10 +564,12 @@ pub async fn create_pipeline(
             ));
         }
 
-        // Load pipeline spec from source
-        let mut spec = PipelineSpec::load(&source_pipeline_yaml_path)
-            .map_err(|e| format!("Failed to load pipeline.yaml: {}", e))?;
-        name = spec.name.clone();
+        // Load flow file from source for dependency resolution
+        let raw_yaml = fs::read_to_string(&source_pipeline_yaml_path)
+            .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+        let mut flow = FlowFile::parse_yaml(&raw_yaml)
+            .map_err(|e| format!("Failed to parse pipeline.yaml as flow: {}", e))?;
+        name = flow.metadata.name.clone();
 
         // Copy to managed directory (like GitHub imports do)
         let source_parent = source_pipeline_yaml_path.parent().ok_or_else(|| {
@@ -609,7 +612,7 @@ pub async fn create_pipeline(
         let spec_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
                 resolve_pipeline_dependencies(
-                    &mut spec,
+                    &mut flow,
                     &dependency_context,
                     &pipeline_yaml_path_clone,
                     overwrite,
@@ -617,7 +620,8 @@ pub async fn create_pipeline(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok::<PipelineSpec, String>(spec)
+                // Convert FlowFile to PipelineSpec after dependency resolution
+                flow.to_pipeline_spec().map_err(|e| e.to_string())
             })
         })
         .await

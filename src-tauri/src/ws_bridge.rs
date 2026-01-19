@@ -100,6 +100,7 @@ struct HttpRequest {
 
 /// Event message for streaming updates during long-running operations.
 /// Sent with the same request id as the original command.
+#[allow(dead_code)]
 #[derive(Serialize, Clone)]
 pub struct WsEvent {
     /// Request ID this event belongs to
@@ -111,6 +112,7 @@ pub struct WsEvent {
     pub data: Value,
 }
 
+#[allow(dead_code)]
 impl WsEvent {
     pub fn progress(id: u32, progress: f32, message: &str) -> Self {
         WsEvent {
@@ -147,6 +149,7 @@ impl WsEvent {
 }
 
 /// Sender for emitting events during command execution
+#[allow(dead_code)]
 pub type EventSender = mpsc::Sender<String>;
 
 /// Audit log entry for agent bridge commands
@@ -665,11 +668,13 @@ fn extract_bearer_token(headers: &HashMap<String, String>) -> Option<String> {
 }
 
 /// Context for emitting events during command execution
+#[allow(dead_code)]
 pub struct EventContext {
     request_id: u32,
     sender: EventSender,
 }
 
+#[allow(dead_code)]
 impl EventContext {
     /// Create a new event context for a request
     pub fn new(request_id: u32, sender: EventSender) -> Self {
@@ -3519,6 +3524,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
     }
 }
 
+#[allow(dead_code)]
 pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let listener = bind_listener(addr).await?;
@@ -3538,6 +3544,7 @@ pub async fn start_ws_server(app: AppHandle, port: u16) -> Result<(), Box<dyn st
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn start_http_server(
     app: AppHandle,
     port: u16,

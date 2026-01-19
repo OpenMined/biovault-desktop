@@ -645,7 +645,7 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
     // Resolve vault path (prefer BioVault-colocated vault; fall back to legacy ~/.syc)
     let vault_path = std::env::var_os("SYC_VAULT")
         .map(std::path::PathBuf::from)
-        .or_else(|| biovault::config::resolve_default_syc_vault_path().ok())
+        .or_else(|| biovault::config::resolve_syc_vault_path().ok())
         .unwrap_or_else(|| {
             dirs::home_dir()
                 .map(|h| h.join(".syc"))

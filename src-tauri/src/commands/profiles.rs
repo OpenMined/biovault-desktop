@@ -1442,7 +1442,7 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
 
     let cached_fingerprint = (|| {
         let slug = syftbox_sdk::sanitize_identity(email.trim());
-        let vault = biovault::config::resolve_default_syc_vault_path().ok()?;
+        let vault = biovault::config::resolve_syc_vault_path().ok()?;
         let bundle_path = vault.join("bundles").join(format!("{slug}.json"));
         if !bundle_path.exists() {
             return None;
