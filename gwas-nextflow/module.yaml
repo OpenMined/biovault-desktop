@@ -1,0 +1,70 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: gwas-population-analysis
+  version: 0.1.0
+  description: GWAS analysis pipeline for comparing two populations using PLINK and generating Manhattan/QQ plots.
+  authors:
+    - madhava@openmined.org
+spec:
+  runner:
+    kind: nextflow
+    entrypoint: workflow.nf
+    template: dynamic-nextflow
+  assets:
+    - path: gwas_analysis.sh
+    - path: make_manhattan.py
+  inputs:
+    - name: datasets
+      type: Map[String, Record{bed: File, bim: File, fam: File}]
+      description: JSON/YAML file mapping dataset names to PLINK bed/bim/fam paths
+      format:
+        kind: json
+  parameters:
+    - name: output_prefix
+      type: String
+      default: combined_gwas
+      description: Prefix for output files
+    - name: n_pcs
+      type: Integer
+      default: 10
+      description: Number of principal components for PCA
+    - name: annotation_pval
+      type: String
+      default: "1e-5"
+      description: P-value threshold for annotating SNPs on Manhattan plot
+    - name: gw_sig
+      type: String
+      default: "5e-8"
+      description: Genome-wide significance threshold
+    - name: threads
+      type: Integer
+      default: 4
+      description: Number of threads for PLINK
+    - name: test_mode
+      type: Bool
+      default: false
+      description: Run a lightweight mock analysis (no PLINK) for tests
+  outputs:
+    - name: gwas_output
+      type: Directory
+      description: GWAS analysis results directory
+      path: results
+    - name: manhattan_plot
+      type: File
+      description: Manhattan plot PNG
+      format:
+        kind: png
+      path: "*_manhattan.png"
+    - name: qq_plot
+      type: File
+      description: QQ plot PNG
+      format:
+        kind: png
+      path: "*_qq.png"
+    - name: significant_snps
+      type: File
+      description: Genome-wide significant SNPs
+      format:
+        kind: txt
+      path: "*_genome_wide_significant.txt"

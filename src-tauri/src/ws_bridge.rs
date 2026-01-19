@@ -2783,9 +2783,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .cloned()
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or(false);
-            crate::commands::datasets::publish_dataset(manifest_path, name, copy_mock)
-                .await
-                .map_err(|e| e.to_string())?;
+            crate::commands::datasets::publish_dataset(
+                state.clone(),
+                manifest_path,
+                name,
+                copy_mock,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "unpublish_dataset" => {

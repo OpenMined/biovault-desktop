@@ -358,7 +358,7 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 			log(logSocket, { event: 'step-2', action: 'import-gwas-pipeline' })
 			console.log('\n=== Step 2: Import GWAS Pipeline ===')
 
-			const pipelinePath = path.join(process.cwd(), 'gwas-nextflow', 'pipeline.yaml')
+			const pipelinePath = path.join(process.cwd(), 'gwas-nextflow', 'flow.yaml')
 			const pipeline = await backend.invoke('create_pipeline', {
 				request: {
 					name: 'gwas-population-analysis',

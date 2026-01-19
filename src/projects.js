@@ -575,7 +575,7 @@ export function createProjectsModule({
 			if (showMessage) {
 				const statusEl = document.getElementById('step-status-message')
 				if (statusEl) {
-					statusEl.textContent = 'Detected external project.yaml changes. Editor reloaded.'
+					statusEl.textContent = 'Detected external module.yaml changes. Editor reloaded.'
 					statusEl.style.color = '#10b981'
 				}
 			}
@@ -588,7 +588,7 @@ export function createProjectsModule({
 		await reloadSpecFromDisk(false)
 		const statusEl = document.getElementById('project-edit-status')
 		if (statusEl) {
-			statusEl.textContent = 'Reloaded project.yaml from disk.'
+			statusEl.textContent = 'Reloaded module.yaml from disk.'
 			statusEl.style.color = '#666'
 		}
 		await checkSpecDigest(true)
@@ -619,7 +619,7 @@ export function createProjectsModule({
 			}
 			projectEditorState.lastSpecDigest = digestStr
 		} catch (error) {
-			console.error('Failed to compute project.yaml digest:', error)
+			console.error('Failed to compute module.yaml digest:', error)
 		}
 	}
 
@@ -1302,7 +1302,7 @@ export function createProjectsModule({
 			const errorStr = String(error)
 			console.error('Create project error:', errorStr)
 			const targetPath = directory || projectCreateState.defaultDir
-			if (errorStr.includes('project.yaml already exists') && targetPath) {
+			if (errorStr.includes('module.yaml already exists') && targetPath) {
 				const shouldOpen = confirm(`${errorStr}\n\nOpen the project editor for ${targetPath}?`)
 				if (shouldOpen) {
 					hideCreateProjectModal()

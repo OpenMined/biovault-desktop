@@ -154,7 +154,10 @@ async function waitForPeerDid(
 ): Promise<string> {
 	const label = clientLabel || 'client'
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
-	const didPath = path.join(datasitesRoot, peerEmail, 'public', 'crypto', 'did.json')
+	const didPaths = [
+		path.join(datasitesRoot, peerEmail, 'public', 'did.json'),
+		path.join(datasitesRoot, peerEmail, 'public', 'crypto', 'did.json'),
+	]
 
 	console.log(`[${label}] waitForPeerDid: looking for ${peerEmail}`)
 
@@ -162,9 +165,10 @@ async function waitForPeerDid(
 	let syncTriggerCount = 0
 
 	while (Date.now() - start < timeoutMs) {
-		if (fs.existsSync(didPath)) {
-			console.log(`[${label}] ✓ Found peer DID: ${didPath}`)
-			return didPath
+		const foundPath = didPaths.find((candidate) => fs.existsSync(candidate))
+		if (foundPath) {
+			console.log(`[${label}] ✓ Found peer DID: ${foundPath}`)
+			return foundPath
 		}
 
 		// Trigger sync every ~2 seconds
@@ -179,7 +183,7 @@ async function waitForPeerDid(
 		await new Promise((r) => setTimeout(r, 500))
 	}
 
-	throw new Error(`Timed out waiting for peer DID file: ${didPath}`)
+	throw new Error(`Timed out waiting for peer DID file: ${didPaths.join(', ')}`)
 }
 
 // Helper to wait for pipeline run to complete
@@ -954,12 +958,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				'herc2',
 				'herc2-classifier',
 			)
-			console.log(`Importing HERC2 from: ${herc2LocalPath}`)
+			const herc2FlowPath = path.join(herc2LocalPath, 'flow.yaml')
+			console.log(`Importing HERC2 from: ${herc2FlowPath}`)
 
 			try {
 				await backend2.invoke('import_pipeline', {
-					name: 'herc2-classifier',
-					directory: herc2LocalPath,
+					pipelineFile: herc2FlowPath,
 					overwrite: true,
 				})
 				console.log('Client2: HERC2 pipeline imported from local path!')

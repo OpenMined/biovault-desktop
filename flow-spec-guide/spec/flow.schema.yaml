@@ -1,0 +1,320 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: FlowSchema
+description: |
+  Draft schema for Flow definitions a way to orchestrate networked privacy preserving data science
+
+fields:
+  apiVersion:
+    type: String
+    required: true
+    example: syftbox.openmined.org/v1alpha1
+  kind:
+    type: String
+    required: true
+    const: Flow
+
+  manifest:
+    type: Record
+    required: false
+    description: Optional integrity data for versioning and caching.
+    fields:
+      digest:
+        type: String
+        description: Content hash in format 'algorithm:hex'. Supported algorithms: sha256, sha384, sha512.
+        example: sha256:a1b2c3...
+      modules:
+        type: Map[String, String]
+        description: Module name -> digest.
+      assets:
+        type: Map[String, String]
+        description: Asset path -> digest.
+      created_at:
+        type: String
+
+  metadata:
+    type: Record
+    required: true
+    fields:
+      name: { type: String, required: true }
+      version: { type: String, required: true }
+      description: { type: String }
+      authors: { type: List[String] }
+      tags: { type: List[String] }
+      labels: { type: Map[String, String] }
+      annotations: { type: Map[String, String] }
+
+  spec:
+    type: Record
+    required: true
+    fields:
+      inputs:
+        type: Map[String, InputSpec]
+        description: Flow-level inputs with optional defaults.
+      datasites:
+        type: Record
+        description: Datasite inventory plus reusable groups.
+        fields:
+          all:
+            type: List[String]|BindingSpec
+            description: Complete datasite list for the flow (can be bound from inputs/env).
+          groups:
+            type: Map[String, Selector]
+            description: Named groups using include/exclude selectors.
+      module_paths:
+        type: List[String]
+        description: |
+          Optional search roots for resolving local modules when source.path points
+          to a directory name (e.g., ./modules/hello or hello).
+      modules:
+        type: Map[String, ModuleRef|ModuleInline]
+        description: Reusable module definitions (inline or referenced).
+      steps:
+        type: List[StepSpec]
+        description: Ordered steps. Execution strategy is handled by targets + dependencies.
+      outputs:
+        type: Map[String, OutputBinding]
+        description: Optional flow outputs (aliases of step outputs).
+      runtime:
+        type: Record
+        description: Runtime directories and cleanup policy.
+        fields:
+          results_dir: { type: String }
+          work_dir: { type: String }
+          cache_dir: { type: String }
+          resume: { type: Bool }
+          cleanup:
+            type: Record
+            fields:
+              policy: { type: String, description: never|on_success|always }
+              keep_patterns: { type: List[String] }
+              purge_patterns: { type: List[String] }
+      completion:
+        type: Record
+        description: Conditions for success (file exists, step success, etc.).
+
+# Definitions
+
+definitions:
+  InputSpec:
+    type: Record
+    fields:
+      type: { type: String }
+      description: { type: String }
+      default: { type: String }
+      format: { type: FormatSpec }
+
+  FormatSpec:
+    type: Record
+    description: Describes structured files (CSV/JSON/etc).
+    fields:
+      kind: { type: String, example: csv|tsv|json|parquet|vcf }
+      mapping: { type: Map[String, String], description: Column -> field mapping }
+      key_path: { type: String, description: JSONPath-like selector (e.g., records.id) }
+      delimiter: { type: String }
+      header: { type: Bool }
+      schema: { type: Map[String, String], description: Field -> Type }
+
+  ModuleRef:
+    type: Record
+    description: Reference to a reusable module.
+    fields:
+      source:
+        type: Record
+        fields:
+          kind: { type: String, example: local|git|registry }
+          path: { type: String, description: File or directory. Directories auto-discover module.yaml/module.yml. }
+          url: { type: String }
+          ref: { type: String }
+          subpath: { type: String }
+          allow_fetch: { type: Bool, description: Explicitly allow remote fetch for this module }
+      version: { type: String }
+      digest: { type: String, example: sha256:... }
+      allow_dirty: { type: Bool, description: Allow local edits without digest mismatch }
+      interface:
+        type: InterfaceSpec
+        description: Optional summary of inputs/outputs/params for readability and binding checks.
+      interface_policy:
+        type: String
+        description: validate|override (override allows alias mapping to differ from module spec).
+      policy:
+        type: Record
+        description: Resolution policy and safety controls.
+        fields:
+          allow_local: { type: Bool }
+          allow_unsigned: { type: Bool }
+          allow_unpinned: { type: Bool, description: Allow missing digest }
+          cache: { type: String, description: reuse|refresh }
+      trust:
+        type: Record
+        description: Signature and signer policy for fetched modules.
+        fields:
+          require_signature: { type: Bool, default: false }
+          signature_format: { type: String, example: sigstore|gpg|minisign, default: sigstore }
+          allowed_signers: { type: List[String], description: Email addresses or key fingerprints }
+          keyring_path: { type: String, description: Path to keyring file for GPG verification }
+      sandbox:
+        type: Record
+        description: Isolation policy for module execution.
+        fields:
+          enabled: { type: Bool, default: true }
+          network: { type: String, example: none|host|restricted, default: restricted }
+          filesystem: { type: String, example: readonly|workspace|full, default: workspace }
+          allowed_paths: { type: List[String], description: Additional paths accessible in sandbox }
+          env_passthrough: { type: List[String], description: Environment variables to pass through }
+
+  ModuleInline:
+    type: Record
+    description: Full embedded module spec (see Module schema).
+
+  StepSpec:
+    type: Record
+    fields:
+      id: { type: String, required: true }
+      uses: { type: String|ModuleRef, description: Module name or inline ref }
+      depends_on: { type: List[String] }
+      run:
+        type: Record
+        fields:
+          targets:
+            type: String|List[String]|Selector
+            description: Datasite list, group name, or selector (include/exclude).
+          strategy:
+            type: String
+            example: parallel|sequential|round_robin
+          topology:
+            type: String
+            description: linear|ring (controls prev/next wrapping when sequential)
+          round_robin:
+            type: Record
+            fields:
+              seed: { type: String }
+              offset: { type: Integer }
+      with: { type: Map[String, BindingSpec] }
+      params: { type: Map[String, BindingSpec] }
+      publish: { type: Map[String, OutputBinding] }
+      store: { type: Map[String, StoreSpec] }
+      share: { type: Map[String, ShareSpec] }
+      when: { type: Record, description: Conditional execution }
+      retry:
+        type: Record
+        description: Retry policy for failed step execution.
+        fields:
+          max_attempts: { type: Integer, default: 1, description: Max retry attempts (1 = no retry) }
+          backoff:
+            type: Record
+            fields:
+              strategy: { type: String, example: exponential|linear|fixed, default: exponential }
+              initial_delay_ms: { type: Integer, default: 1000 }
+              max_delay_ms: { type: Integer, default: 60000 }
+              multiplier: { type: Float, default: 2.0, description: For exponential backoff }
+              jitter: { type: Bool, default: true, description: Add randomness to prevent thundering herd }
+          retryable_errors: { type: List[String], description: Error patterns that trigger retry (default: all) }
+      timeout:
+        type: Record
+        description: Timeout policy for step execution.
+        fields:
+          execution_seconds: { type: Integer, description: Max time for step to complete }
+          on_timeout: { type: String, example: fail|skip|default, default: fail }
+          default_value: { type: Any, description: Value to use if on_timeout is 'default' }
+
+  Selector:
+    type: Record
+    description: |
+      Selector can reference datasite names, group names, or indexed placeholders.
+      Bracket notation: {datasites[*]} for all, {datasites[0]} for index, {datasites[0:2]} for slice.
+    fields:
+      include: { type: List[String], description: Patterns to include (evaluated first) }
+      exclude: { type: List[String], description: Patterns to exclude (applied after include) }
+      role: { type: String, description: Named group defined in spec.datasites.groups }
+
+  BindingSpec:
+    type: String|Record
+    description: |
+      String shorthand forms include:
+      - inputs.<name>
+      - steps.<id>.outputs.<name>
+      - steps.<id>.outputs.<name>.manifest
+      - File(path), Directory(path), String(value), Bool(true), SyftURL, HTTPURL
+    fields:
+      from: { type: String }
+      value: { type: String }
+      env: { type: String, description: Env var name }
+      default: { type: String }
+      await:
+        type: Record
+        description: Block until value is available. Used for cross-datasite dependencies.
+        fields:
+          timeout_seconds: { type: Integer, description: Max wait time before triggering on_timeout }
+          poll_ms: { type: Integer, default: 1000, description: Polling interval }
+          on_timeout: { type: String, example: fail|skip|default, default: fail }
+          default_value: { type: Any, description: Value to use when on_timeout is 'default' }
+
+  OutputBinding:
+    type: String
+    description: Alias of a step output (e.g., outputs.result).
+
+  ShareSpec:
+    type: Record
+    fields:
+      source: { type: String }
+      path: { type: String, description: syft://... or relative to datasite root }
+      permissions:
+        type: Record
+        fields:
+          read: { type: List[String] }
+          write: { type: List[String] }
+          admin: { type: List[String] }
+      await:
+        type: Record
+        description: Block until shared file is confirmed written/synced.
+        fields:
+          timeout_seconds: { type: Integer, description: Max wait time before triggering on_timeout }
+          poll_ms: { type: Integer, default: 1000, description: Polling interval }
+          on_timeout: { type: String, example: fail|skip, default: fail }
+
+  StoreSpec:
+    type: Record
+    fields:
+      kind: { type: String, example: sql }
+      source: { type: String }
+      table: { type: String }
+      key_column: { type: String }
+      overwrite: { type: Bool }
+
+  InterfaceSpec:
+    type: Record
+    description: Lightweight contract summary for a module reference.
+    fields:
+      inputs: { type: List[PortSpec] }
+      outputs: { type: List[PortSpec] }
+      params: { type: List[PortSpec] }
+      aliases:
+        type: Record
+        description: Optional aliasing for flow-level names.
+        fields:
+          inputs: { type: Map[String, String] }
+          outputs: { type: Map[String, String] }
+          params: { type: Map[String, String] }
+
+  PortSpec:
+    type: Record
+    fields:
+      name: { type: String }
+      type: { type: String }
+      description: { type: String }
+      format: { type: FormatSpec }
+
+notes:
+  - Built-in template variables: {run_id}, {results}, {work}, {datasite.current},
+    {datasite.index}, {datasite.next}, {datasite.prev}.
+  - Datasite selector syntax uses bracket notation for clarity:
+    - {datasites[*]} expands to all datasites in spec.datasites.all
+    - {datasites[0]}, {datasites[1]} reference specific indices
+    - {datasites[0:3]} slice notation for ranges (indices 0, 1, 2)
+  - Outputs can declare path, glob, or regex in module spec; flow bindings can
+    reference manifests for multi-datasite fan-in.
+  - Module discovery: if source.path is a directory, look for module.yaml/module.yml.
+  - module_paths can resolve local modules by name without hardcoding absolute paths
+    (only when local module resolution is allowed).
+  - Digest format: 'algorithm:hex' where algorithm is sha256, sha384, or sha512.
+  - Sandbox isolation is enabled by default; disable with sandbox.enabled: false for trusted modules.

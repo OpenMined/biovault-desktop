@@ -1,0 +1,25 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: ring-add
+  version: 0.1.0
+spec:
+  runner:
+    kind: shell
+    template: shell
+    entrypoint: ring-add.sh
+  inputs:
+    - name: value_file
+      type: File
+      format: { kind: txt }
+    - name: prev_sum_path
+      type: File
+      format: { kind: txt }
+      optional: true
+    - name: seed
+      type: String
+  outputs:
+    - name: partial
+      type: File
+      format: { kind: txt }
+      path: partial.txt

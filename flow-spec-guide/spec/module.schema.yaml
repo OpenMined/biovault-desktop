@@ -1,0 +1,128 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: ModuleSchema
+description: |
+  Draft schema for Module definitions. This is a design spec for reusable sub components of Flows
+
+fields:
+  apiVersion:
+    type: String
+    required: true
+    example: syftbox.openmined.org/v1alpha1
+  kind:
+    type: String
+    required: true
+    const: Module
+
+  manifest:
+    type: Record
+    required: false
+    description: Optional integrity data (module and asset digests).
+    fields:
+      digest:
+        type: String
+        description: Content hash in format 'algorithm:hex'. Supported algorithms: sha256, sha384, sha512.
+        example: sha256:a1b2c3...
+      assets:
+        type: Map[String, String]
+        description: Asset path -> digest.
+      created_at:
+        type: String
+
+  metadata:
+    type: Record
+    required: true
+    fields:
+      name: { type: String, required: true }
+      version: { type: String, required: true }
+      description: { type: String }
+      authors: { type: List[String] }
+      tags: { type: List[String] }
+      labels: { type: Map[String, String] }
+      annotations: { type: Map[String, String] }
+
+  spec:
+    type: Record
+    required: true
+    fields:
+      runner:
+        type: Record
+        fields:
+          kind: { type: String, example: nextflow|shell|python|container }
+          entrypoint: { type: String }
+          template: { type: String, description: dynamic-nextflow|shell }
+          image: { type: String }
+          command: { type: String }
+          env: { type: Map[String, String] }
+      inputs: { type: List[InputSpec] }
+      outputs: { type: List[OutputSpec] }
+      parameters: { type: List[ParameterSpec] }
+      assets: { type: List[AssetSpec] }
+      sandbox:
+        type: Record
+        description: Default sandbox policy for this module (can be overridden in flow).
+        fields:
+          enabled: { type: Bool, default: true }
+          network: { type: String, example: none|host|restricted, default: restricted }
+          filesystem: { type: String, example: readonly|workspace|full, default: workspace }
+          allowed_paths: { type: List[String] }
+          env_passthrough: { type: List[String] }
+      timeout:
+        type: Record
+        description: Default timeout for module execution (can be overridden in flow step).
+        fields:
+          execution_seconds: { type: Integer }
+          on_timeout: { type: String, example: fail|skip, default: fail }
+
+# Definitions
+
+definitions:
+  InputSpec:
+    type: Record
+    fields:
+      name: { type: String }
+      type: { type: String }
+      description: { type: String }
+      format: { type: FormatSpec }
+      optional: { type: Bool }
+
+  OutputSpec:
+    type: Record
+    fields:
+      name: { type: String }
+      type: { type: String }
+      description: { type: String }
+      format: { type: FormatSpec }
+      path: { type: String }
+      glob: { type: String }
+      regex: { type: String }
+      cardinality: { type: String, example: one|many }
+
+  ParameterSpec:
+    type: Record
+    fields:
+      name: { type: String }
+      type: { type: String }
+      default: { type: String }
+      description: { type: String }
+
+  AssetSpec:
+    type: Record
+    fields:
+      path: { type: String }
+      digest: { type: String }
+      required: { type: Bool }
+
+  FormatSpec:
+    type: Record
+    fields:
+      kind: { type: String, example: csv|tsv|json|parquet|vcf }
+      mapping: { type: Map[String, String] }
+      key_path: { type: String }
+      delimiter: { type: String }
+      header: { type: Bool }
+      schema: { type: Map[String, String] }
+
+notes:
+  - Types include primitives (String, Bool, Integer, Float), files/directories,
+    and collections (List[T], Map[String, T], Set[T]).
+  - Output paths can use built-in variables: {run_id}, {results}, {work}.

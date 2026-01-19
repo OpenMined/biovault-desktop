@@ -1,0 +1,51 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: FlowOverlaySchema
+description: |
+  Draft schema for Flow overlays (JSON Patch). This is a design spec for
+  future compatibility and reuse. It is not yet enforced by runtime code.
+
+fields:
+  apiVersion:
+    type: String
+    required: true
+    example: syftbox.openmined.org/v1alpha1
+  kind:
+    type: String
+    required: true
+    const: FlowOverlay
+  metadata:
+    type: Record
+    required: true
+    fields:
+      name: { type: String, required: true }
+      description: { type: String }
+      labels: { type: Map[String, String] }
+  spec:
+    type: Record
+    required: true
+    fields:
+      target:
+        type: Record
+        description: Target flow to patch.
+        fields:
+          path: { type: String, required: true }
+          name: { type: String }
+          version: { type: String }
+      patches:
+        type: List[PatchOp]
+        description: JSON Patch operations (RFC 6902).
+
+# Definitions
+
+definitions:
+  PatchOp:
+    type: Record
+    fields:
+      op: { type: String, required: true }
+      path: { type: String, required: true }
+      value: { type: Any }
+      from: { type: String }
+
+notes:
+  - Patch paths use JSON Pointer syntax (e.g., /spec/steps/0/run/targets).
+  - Overlays are applied in order; last wins on conflicts.

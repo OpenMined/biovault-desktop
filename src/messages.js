@@ -115,7 +115,7 @@ export function createMessagesModule({
 			pipeline_version: request.pipeline_version || '1.0.0',
 			dataset_name: request.dataset_name,
 			sender: request.sender || msg.from,
-			pipeline_spec: request.pipeline_spec,
+			flow_spec: request.flow_spec,
 			pipeline_location: request.pipeline_location,
 			submission_id: request.submission_id,
 			sender_local_path: request.sender_local_path,
