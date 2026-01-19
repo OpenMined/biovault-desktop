@@ -4,6 +4,7 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
+use biovault::flow_spec::FlowFile;
 use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
@@ -909,25 +910,23 @@ pub fn send_pipeline_request(
         .find(|p| p.name == pipeline_name)
         .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
 
-    let pipeline_yaml_path =
-        std::path::PathBuf::from(&pipeline.pipeline_path).join("pipeline.yaml");
-    if !pipeline_yaml_path.exists() {
+    let flow_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("flow.yaml");
+    if !flow_yaml_path.exists() {
         return Err(format!(
             "Pipeline '{}' not found at {:?}",
-            pipeline_name, pipeline_yaml_path
+            pipeline_name, flow_yaml_path
         ));
     }
 
     // Read pipeline spec
-    let pipeline_content = fs::read_to_string(&pipeline_yaml_path)
-        .map_err(|e| format!("Failed to read pipeline.yaml: {}", e))?;
+    let pipeline_content = fs::read_to_string(&flow_yaml_path)
+        .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
 
-    // Parse to validate it's valid YAML
-    let pipeline_spec: serde_yaml::Value = serde_yaml::from_str(&pipeline_content)
-        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
-
-    let pipeline_spec_struct: PipelineSpec = serde_yaml::from_str(&pipeline_content)
-        .map_err(|e| format!("Failed to parse pipeline.yaml: {}", e))?;
+    let flow: FlowFile = serde_yaml::from_str(&pipeline_content)
+        .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
+    let pipeline_spec_struct: PipelineSpec = flow
+        .to_pipeline_spec()
+        .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
     let submission_root = config
         .get_shared_submissions_path()
@@ -1013,7 +1012,7 @@ pub fn send_pipeline_request(
             "pipeline_version": pipeline_version,
             "dataset_name": dataset_name,
             "sender": config.email,
-            "pipeline_spec": pipeline_spec,
+            "flow_spec": flow,
             "pipeline_location": submission_syft_url,
             "submission_id": submission_folder_name,
             "sender_local_path": sender_local_path,

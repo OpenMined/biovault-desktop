@@ -1,0 +1,55 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: dev-overlay-demo
+  version: 0.1.0
+  description: Base flow that references a remote module.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default: ["local@localhost"]
+    message:
+      type: String
+      default: "hello from overlay"
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      local:
+        include:
+          - "{datasites[0]}"
+
+  modules:
+    echoer:
+      source:
+        kind: registry
+        url: syftbox.openmined.org/registry/echoer
+        ref: v0.1.0
+        allow_fetch: false
+      digest: sha256:echoer-placeholder
+      policy:
+        allow_local: false
+        allow_unpinned: false
+      trust:
+        require_signature: true
+        allowed_signers:
+          - did:syft:example
+      interface:
+        inputs:
+          - name: text
+            type: String
+        outputs:
+          - name: message
+            type: File
+            format: { kind: txt }
+
+  steps:
+    - id: echo
+      uses: echoer
+      run:
+        targets: local
+      with:
+        text: inputs.message

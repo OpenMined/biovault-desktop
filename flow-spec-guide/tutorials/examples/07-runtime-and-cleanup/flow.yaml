@@ -1,0 +1,47 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: runtime-cleanup
+  version: 0.1.0
+  description: Demonstrates runtime paths and cleanup policy.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default: ["local@localhost"]
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      local:
+        include:
+          - "{datasites[0]}"
+
+  runtime:
+    results_dir: results/flows/{metadata.name}/{run_id}
+    work_dir: work/flows/{metadata.name}/{run_id}
+    cache_dir: cache/flows
+    resume: true
+    cleanup:
+      policy: on_success
+      keep_patterns:
+        - "**/results/**"
+      purge_patterns:
+        - "**/work/**"
+
+  modules:
+    workmark:
+      source:
+        kind: local
+        path: ./module.yaml
+      allow_dirty: true
+
+  steps:
+    - id: workmark
+      uses: workmark
+      run:
+        targets: local
+      publish:
+        report: outputs.report

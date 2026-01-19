@@ -1,5 +1,6 @@
 use crate::types::{AppState, Project, ProjectEditorLoadResponse, ProjectListEntry};
 use biovault::data::{hash_file, ProjectMetadata, UpdateProjectParams};
+use biovault::module_spec::{ModuleAsset, ModuleFile};
 use biovault::project_spec::{self, InputSpec, OutputSpec, ParameterSpec, ProjectSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -271,107 +272,9 @@ fn parse_spec_payload(data: SaveProjectPayload) -> Result<(ProjectMetadata, Proj
     Ok((metadata, spec))
 }
 
-fn format_project_yaml(spec: &ProjectSpec) -> String {
-    let mut yaml = String::new();
-    yaml.push_str(&format!("name: {}\n", spec.name));
-    yaml.push_str(&format!("author: {}\n", spec.author));
-    yaml.push_str(&format!("workflow: {}\n", spec.workflow));
-    if let Some(ref template) = spec.template {
-        yaml.push_str(&format!("template: {}\n", template));
-    }
-    if let Some(ref version) = spec.version {
-        yaml.push_str(&format!("version: {}\n", version));
-    }
-
-    yaml.push_str("assets:");
-    if spec.assets.is_empty() {
-        yaml.push_str(" []\n");
-    } else {
-        yaml.push('\n');
-        for asset in &spec.assets {
-            yaml.push_str(&format!("- {}\n", asset));
-        }
-    }
-
-    yaml.push_str("parameters:");
-    if spec.parameters.is_empty() {
-        yaml.push_str(" []\n");
-    } else {
-        yaml.push('\n');
-        for param in &spec.parameters {
-            yaml.push_str(&format!("  - name: {}\n", param.name));
-            yaml.push_str(&format!("    type: {}\n", param.raw_type));
-            if let Some(ref desc) = param.description {
-                yaml.push_str(&format!("    description: {}\n", desc));
-            }
-            if let Some(ref default) = param.default {
-                let default_str = serde_yaml::to_string(default)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                yaml.push_str(&format!("    default: {}\n", default_str));
-            }
-            if let Some(ref choices) = param.choices {
-                yaml.push_str("    choices:\n");
-                for choice in choices {
-                    yaml.push_str(&format!("      - {}\n", choice));
-                }
-            }
-            if let Some(advanced) = param.advanced {
-                if advanced {
-                    yaml.push_str("    advanced: true\n");
-                }
-            }
-        }
-    }
-
-    yaml.push_str("inputs:");
-    if spec.inputs.is_empty() {
-        yaml.push_str(" []\n");
-    } else {
-        yaml.push('\n');
-        for input in &spec.inputs {
-            yaml.push_str(&format!("  - name: {}\n", input.name));
-            yaml.push_str(&format!("    type: {}\n", input.raw_type));
-            if let Some(ref desc) = input.description {
-                yaml.push_str(&format!("    description: {}\n", desc));
-            }
-            if let Some(ref format) = input.format {
-                yaml.push_str(&format!("    format: {}\n", format));
-            }
-            if let Some(ref path) = input.path {
-                yaml.push_str(&format!("    path: {}\n", path));
-            }
-            if let Some(ref mapping) = input.mapping {
-                yaml.push_str("    mapping:\n");
-                for (key, value) in mapping {
-                    yaml.push_str(&format!("      {}: {}\n", key, value));
-                }
-            }
-        }
-    }
-
-    yaml.push_str("outputs:");
-    if spec.outputs.is_empty() {
-        yaml.push_str(" []\n");
-    } else {
-        yaml.push('\n');
-        for output in &spec.outputs {
-            yaml.push_str(&format!("  - name: {}\n", output.name));
-            yaml.push_str(&format!("    type: {}\n", output.raw_type));
-            if let Some(ref desc) = output.description {
-                yaml.push_str(&format!("    description: {}\n", desc));
-            }
-            if let Some(ref format) = output.format {
-                yaml.push_str(&format!("    format: {}\n", format));
-            }
-            if let Some(ref path) = output.path {
-                yaml.push_str(&format!("    path: {}\n", path));
-            }
-        }
-    }
-
-    yaml
+fn format_project_yaml(spec: &ProjectSpec) -> Result<String, String> {
+    let module = ModuleFile::from_project_spec(spec);
+    serde_yaml::to_string(&module).map_err(|e| format!("Failed to serialize module.yaml: {}", e))
 }
 
 #[tauri::command]
@@ -380,7 +283,7 @@ pub fn preview_project_spec(payload: serde_json::Value) -> Result<ProjectPreview
         serde_json::from_value(payload).map_err(|e| format!("Invalid project payload: {}", e))?;
     let (_, spec) = parse_spec_payload(data)?;
 
-    let yaml = format_project_yaml(&spec);
+    let yaml = format_project_yaml(&spec)?;
     let template = project_spec::generate_template_nf(&spec)
         .map_err(|e| format!("Failed to generate template preview: {}", e))?;
     let workflow = project_spec::generate_workflow_stub(&spec)
@@ -467,21 +370,36 @@ pub fn import_project_from_folder(
         return Err(format!("Path is not a directory: {}", folder_path));
     }
 
-    // Check if project.yaml exists in the folder
-    let project_yaml_path = path.join("project.yaml");
+    // Check if module.yaml exists in the folder
+    let project_yaml_path = path.join("module.yaml");
     if !project_yaml_path.exists() {
         return Err(format!(
-            "No project.yaml found in directory: {}",
+            "No module.yaml found in directory: {}",
             folder_path
         ));
     }
 
-    // Parse the project.yaml to get project metadata
+    // Parse the module.yaml to get project metadata
     let yaml_content = std::fs::read_to_string(&project_yaml_path)
-        .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+        .map_err(|e| format!("Failed to read module.yaml: {}", e))?;
 
-    let metadata: ProjectMetadata = serde_yaml::from_str(&yaml_content)
-        .map_err(|e| format!("Failed to parse project.yaml: {}", e))?;
+    let module = ModuleFile::from_str(&yaml_content)
+        .map_err(|e| format!("Failed to parse module.yaml: {}", e))?;
+    let spec = module
+        .to_project_spec()
+        .map_err(|e| format!("Failed to convert module.yaml: {}", e))?;
+
+    let metadata = ProjectMetadata {
+        name: spec.name,
+        author: spec.author,
+        workflow: spec.workflow,
+        template: spec.template,
+        version: spec.version,
+        assets: spec.assets,
+        parameters: spec.parameters,
+        inputs: spec.inputs,
+        outputs: spec.outputs,
+    };
 
     // Register the project in the database
     let db = state.biovault_db.lock().unwrap();
@@ -725,23 +643,25 @@ pub fn create_project(
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write Python script: {}", e))?;
 
-        // Update project.yaml to include the asset
-        let project_yaml_path = project_path.join("project.yaml");
+        // Update module.yaml to include the asset
+        let project_yaml_path = project_path.join("module.yaml");
         let yaml_content = std::fs::read_to_string(&project_yaml_path)
-            .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+            .map_err(|e| format!("Failed to read module.yaml: {}", e))?;
 
-        let mut spec: biovault::project_spec::ProjectSpec = serde_yaml::from_str(&yaml_content)
-            .map_err(|e| format!("Failed to parse project.yaml: {}", e))?;
+        let mut module = ModuleFile::from_str(&yaml_content)
+            .map_err(|e| format!("Failed to parse module.yaml: {}", e))?;
 
-        // Add asset if not already present
-        if !spec.assets.contains(&filename.to_string()) {
-            spec.assets.push(filename.to_string());
+        let assets = module.spec.assets.get_or_insert_with(Vec::new);
+        if !assets.iter().any(|asset| asset.path == filename) {
+            assets.push(ModuleAsset {
+                path: filename.to_string(),
+            });
         }
 
-        let updated_yaml = serde_yaml::to_string(&spec)
-            .map_err(|e| format!("Failed to serialize project.yaml: {}", e))?;
+        let updated_yaml = serde_yaml::to_string(&module)
+            .map_err(|e| format!("Failed to serialize module.yaml: {}", e))?;
         std::fs::write(&project_yaml_path, updated_yaml)
-            .map_err(|e| format!("Failed to update project.yaml: {}", e))?;
+            .map_err(|e| format!("Failed to update module.yaml: {}", e))?;
 
         crate::desktop_log!(
             "✅ Created Python script: {} and updated assets",
@@ -786,7 +706,7 @@ pub fn get_available_project_examples() -> Result<HashMap<String, serde_json::Va
 
     let mut result = HashMap::new();
 
-    // Scan for subdirectories with project.yaml
+    // Scan for subdirectories with module.yaml
     let entries = fs::read_dir(&pipeline_dir)
         .map_err(|e| format!("Failed to read pipeline directory: {}", e))?;
 
@@ -799,14 +719,17 @@ pub fn get_available_project_examples() -> Result<HashMap<String, serde_json::Va
             continue;
         }
 
-        let project_yaml = path.join("project.yaml");
+        let project_yaml = path.join("module.yaml");
         if project_yaml.exists() {
-            // Load the project.yaml
+            // Load the module.yaml
             let yaml_content = fs::read_to_string(&project_yaml)
                 .map_err(|e| format!("Failed to read {}: {}", project_yaml.display(), e))?;
 
-            let spec: biovault::project_spec::ProjectSpec = serde_yaml::from_str(&yaml_content)
+            let module = ModuleFile::from_str(&yaml_content)
                 .map_err(|e| format!("Failed to parse {}: {}", project_yaml.display(), e))?;
+            let spec = module
+                .to_project_spec()
+                .map_err(|e| format!("Failed to convert {}: {}", project_yaml.display(), e))?;
 
             // Use directory name as key
             let dir_name = path
@@ -865,7 +788,7 @@ pub fn load_project_editor(
 
         let mut proj_path = PathBuf::from(&record.project_path);
 
-        // If the path points to a file (e.g., project.yaml), use its parent directory
+        // If the path points to a file (e.g., module.yaml), use its parent directory
         if proj_path.is_file() {
             crate::desktop_log!(
                 "⚠️ Project path is a file, using parent directory: {}",
@@ -970,7 +893,7 @@ pub fn load_project_editor(
     };
 
     let metadata_result = biovault::data::load_project_metadata(&path_buf)
-        .map_err(|e| format!("Failed to read project.yaml: {}", e))?;
+        .map_err(|e| format!("Failed to read module.yaml: {}", e))?;
     let has_project_yaml = metadata_result.is_some();
 
     let default_author = biovault::config::Config::load()
@@ -1059,7 +982,7 @@ pub fn save_project_editor(
     }
 
     biovault::data::save_project_metadata(&project_path_buf, &metadata)
-        .map_err(|e| format!("Failed to save project.yaml: {}", e))?;
+        .map_err(|e| format!("Failed to save module.yaml: {}", e))?;
 
     // Regenerate workflow.nf if template is dynamic-nextflow
     if metadata.template.as_deref() == Some("dynamic-nextflow") {
@@ -1145,7 +1068,7 @@ pub fn save_project_editor(
 #[tauri::command]
 pub fn get_project_spec_digest(project_path: String) -> Result<Option<String>, String> {
     let project_root = PathBuf::from(&project_path);
-    let yaml_path = project_root.join("project.yaml");
+    let yaml_path = project_root.join("module.yaml");
 
     if !yaml_path.exists() {
         return Ok(None);
@@ -1153,7 +1076,7 @@ pub fn get_project_spec_digest(project_path: String) -> Result<Option<String>, S
 
     hash_file(yaml_path.to_str().unwrap())
         .map(Some)
-        .map_err(|e| format!("Failed to hash project.yaml: {}", e))
+        .map_err(|e| format!("Failed to hash module.yaml: {}", e))
 }
 
 #[tauri::command]
