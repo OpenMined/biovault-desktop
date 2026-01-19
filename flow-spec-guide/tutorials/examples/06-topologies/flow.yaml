@@ -1,0 +1,54 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: ring-reduction
+  version: 0.1.0
+  description: Sequential ring that passes a partial sum to the next datasite.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default:
+        - client1@local
+        - client2@local
+        - client3@local
+    seed:
+      type: String
+      default: "0"
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      participants:
+        include:
+          - "{datasites[*]}"
+
+  modules:
+    ring_add:
+      source:
+        kind: local
+        path: ./ring-add.module.yaml
+      allow_dirty: true
+
+  steps:
+    - id: ring_add
+      uses: ring_add
+      run:
+        targets: participants
+        strategy: sequential
+        topology: ring
+      with:
+        value_file: File(values/{datasite.current}.txt)
+        prev_sum_path: File(shared/flows/ring/{run_id}/{datasite.prev}/partial.txt)
+        seed: inputs.seed
+      share:
+        partial_shared:
+          source: partial
+          path: shared/flows/ring/{run_id}/{datasite.current}/partial.txt
+          permissions:
+            read:
+              - "{datasite.next}"
+            write:
+              - "{datasite.current}"

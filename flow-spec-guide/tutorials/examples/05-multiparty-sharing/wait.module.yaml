@@ -1,0 +1,21 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: wait
+  version: 0.1.0
+spec:
+  runner:
+    kind: shell
+    template: shell
+    entrypoint: wait.sh
+  inputs:
+    - name: combined_path
+      type: File
+      format: { kind: txt }
+    - name: wait_seconds
+      type: String
+  outputs:
+    - name: combined_copy
+      type: File
+      format: { kind: txt }
+      path: combined_copy.txt

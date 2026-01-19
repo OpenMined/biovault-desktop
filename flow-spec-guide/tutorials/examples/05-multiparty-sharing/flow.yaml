@@ -1,0 +1,134 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: multiparty-sharing
+  version: 0.1.0
+  description: Share files between datasites and collect them on an aggregator.
+  authors:
+    - you@example.org
+spec:
+  inputs:
+    datasites:
+      type: List[String]
+      default:
+        - client1@local
+        - client2@local
+        - aggregator@local
+    wait_seconds:
+      type: String
+      default: "120"
+
+  datasites:
+    all: inputs.datasites
+    groups:
+      all:
+        include:
+          - "{datasites[*]}"
+      clients:
+        include:
+          - "{datasites[0]}"
+          - "{datasites[1]}"
+      aggregator:
+        include:
+          - "{datasites[2]}"
+
+  modules:
+    write:
+      source:
+        kind: local
+        path: ./write.module.yaml
+      allow_dirty: true
+    tag:
+      source:
+        kind: local
+        path: ./tag.module.yaml
+      allow_dirty: true
+    collect:
+      source:
+        kind: local
+        path: ./collect.module.yaml
+      allow_dirty: true
+    rebroadcast:
+      source:
+        kind: local
+        path: ./rebroadcast.module.yaml
+      allow_dirty: true
+    wait:
+      source:
+        kind: local
+        path: ./wait.module.yaml
+      allow_dirty: true
+
+  steps:
+    - id: write
+      uses: write
+      run:
+        targets: all
+        strategy: parallel
+      share:
+        hello_shared:
+          source: hello
+          path: shared/flows/sharing/{run_id}/{datasite.current}/hello.txt
+          permissions:
+            read:
+              - "{datasites[*]}"
+            write:
+              - "{datasites[*]}"
+
+    - id: tag
+      uses: tag
+      run:
+        targets: clients
+        strategy: parallel
+      with:
+        hello_file: steps.write.outputs.hello
+      share:
+        tagged_shared:
+          source: tagged
+          path: shared/flows/sharing/{run_id}/{datasite.current}/tagged.txt
+          permissions:
+            read:
+              - "{datasites[*]}"
+            write:
+              - "{datasites[*]}"
+
+    - id: collect
+      uses: collect
+      run:
+        targets: aggregator
+      with:
+        shared_paths:
+          from: steps.tag.outputs.tagged_shared.manifest
+          await:
+            timeout_seconds: 120
+            poll_ms: 200
+        wait_seconds: inputs.wait_seconds
+
+    - id: rebroadcast
+      uses: rebroadcast
+      run:
+        targets: aggregator
+      with:
+        combined: steps.collect.outputs.combined
+      share:
+        combined_shared:
+          source: combined_out
+          path: shared/flows/sharing/{run_id}/combined/combined.txt
+          permissions:
+            read:
+              - "{datasites[*]}"
+            write:
+              - "{datasites[*]}"
+
+    - id: wait
+      uses: wait
+      run:
+        targets: clients
+        strategy: parallel
+      with:
+        combined_path:
+          from: steps.rebroadcast.outputs.combined_shared
+          await:
+            timeout_seconds: 120
+            poll_ms: 200
+        wait_seconds: inputs.wait_seconds

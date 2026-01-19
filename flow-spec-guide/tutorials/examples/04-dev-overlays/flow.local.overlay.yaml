@@ -1,0 +1,23 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: FlowOverlay
+metadata:
+  name: dev-local-override
+  description: Swap the registry module for a local dev module.
+spec:
+  target:
+    path: ./flow.yaml
+  patches:
+    - op: replace
+      path: /spec/modules/echoer/source
+      value:
+        kind: local
+        path: ./local.module.yaml
+    - op: replace
+      path: /spec/modules/echoer/allow_dirty
+      value: true
+    - op: replace
+      path: /spec/modules/echoer/policy
+      value:
+        allow_local: true
+        allow_unpinned: true
+        allow_unsigned: true
