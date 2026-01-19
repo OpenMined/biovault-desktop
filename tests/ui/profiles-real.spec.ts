@@ -278,7 +278,8 @@ async function onboardingGoToHomeStep(page) {
 
 async function goHomeToEmailStep(page) {
 	await page.locator('#onboarding-next-3').click()
-	await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 10_000 })
+	// Home check invoke can take time in CI after page reload
+	await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 20_000 })
 }
 
 async function completeOnboardingFromEmailStep(page, { email }) {

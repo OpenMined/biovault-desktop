@@ -330,6 +330,13 @@ jobs:
           path: data/genostats.sqlite
           key: genostats-v1
 
+      - name: Cache MinIO binary
+        id: cache-minio
+        uses: actions/cache@v4
+        with:
+          path: ~/.sbdev/bin
+          key: minio-${{ runner.os }}-${{ runner.arch }}-v1
+
       - name: Run Jupyter collab scenario
         if: matrix.scenario == 'jupyter-collab'
         env:

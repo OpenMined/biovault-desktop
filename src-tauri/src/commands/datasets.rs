@@ -1,8 +1,10 @@
 use crate::types::AppState;
+use biovault::data::datasets::{build_manifest_from_db, get_dataset_with_assets};
 use biovault::data::BioVaultDb;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_yaml;
+use std::env;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -158,13 +160,46 @@ pub fn delete_dataset(state: tauri::State<AppState>, name: String) -> Result<usi
 
 #[tauri::command]
 pub async fn publish_dataset(
+    state: tauri::State<'_, AppState>,
     manifest_path: Option<String>,
     name: Option<String>,
     copy_mock: bool,
 ) -> Result<(), String> {
-    biovault::cli::commands::datasets::publish(manifest_path, name, copy_mock)
-        .await
-        .map_err(|e| format!("Failed to publish dataset: {}", e))
+    if let Some(path) = manifest_path {
+        return biovault::cli::commands::datasets::publish(Some(path), name, copy_mock)
+            .await
+            .map_err(|e| format!("Failed to publish dataset: {}", e));
+    }
+
+    let Some(name) = name else {
+        return Err("Provide either a manifest path or dataset name".to_string());
+    };
+
+    let manifest = {
+        let db = state.biovault_db.lock().unwrap();
+        let Some((dataset, assets)) = get_dataset_with_assets(&db, &name)
+            .map_err(|e| format!("Failed to load dataset: {}", e))?
+        else {
+            return Err(format!("Dataset '{}' not found in database", name));
+        };
+
+        build_manifest_from_db(&dataset, &assets)
+    };
+    let temp_path = env::temp_dir().join(format!("biovault-dataset-{}.yaml", Uuid::new_v4()));
+    let yaml = serde_yaml::to_string(&manifest)
+        .map_err(|e| format!("Failed to serialize dataset manifest: {}", e))?;
+    std::fs::write(&temp_path, yaml)
+        .map_err(|e| format!("Failed to write dataset manifest: {}", e))?;
+
+    let result = biovault::cli::commands::datasets::publish(
+        Some(temp_path.to_string_lossy().to_string()),
+        None,
+        copy_mock,
+    )
+    .await;
+
+    let _ = std::fs::remove_file(&temp_path);
+    result.map_err(|e| format!("Failed to publish dataset: {}", e))
 }
 
 #[tauri::command]
@@ -642,15 +677,9 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
 
     let datasites_dir = data_dir.join("datasites");
 
-    // Resolve vault path (prefer BioVault-colocated vault; fall back to legacy ~/.syc)
-    let vault_path = std::env::var_os("SYC_VAULT")
-        .map(std::path::PathBuf::from)
-        .or_else(|| biovault::config::resolve_syc_vault_path().ok())
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".syc"))
-                .unwrap_or_else(|| std::path::PathBuf::from(".syc"))
-        });
+    // Resolve vault path (strict: SYC_VAULT or SYFTBOX_DATA_DIR/.syc).
+    let vault_path = biovault::config::resolve_syc_vault_path()
+        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
     let bundles_dir = vault_path.join("bundles");
 
     let mut datasets = Vec::new();

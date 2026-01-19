@@ -29,7 +29,9 @@ Usage: ./repo [OPTIONS]
 Options:
   (none)              Show repo tree with branch/dirty status
   --init [--https]    Initialize repo workspace and sync deps
-  sync                Sync workspace to manifest (repo sync)
+  sync [branch]       Sync workspace to manifest (repo sync)
+                      branch: checkout manifest branches and fast-forward
+  sync branch --force Discard local changes, force-sync, and fast-forward manifest branches
   fetch [-j N]        Fetch remotes for all repos and show ahead/behind
   pull [--rebase]     Pull updates for all repos on branches
   ssh                 Rewrite remotes to SSH for all repos
@@ -51,6 +53,7 @@ Options:
   test [--force] [targets...]
                       Run fast unit tests in dirty repos (quiet on success)
                       --force runs tests in all repos with fast tests
+  check [targets...]  Run lint and test in parallel, report any failures
   commit -m "msg"     Commit all dirty repos with same message
   push                Push all repos on feature branches
   pr                  Create PRs (sub-repos first, then desktop with links)
@@ -383,6 +386,7 @@ repo_init() {
   fi
 
   ensure_origin_remotes
+  ensure_syft_crypto_submodule
 }
 
 repo_init_with_https() {
@@ -486,8 +490,202 @@ PY
   fi
 }
 
+ensure_syft_crypto_submodule() {
+  local repo="syft-crypto-core"
+  if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$repo/.gitmodules" ]]; then
+    return 0
+  fi
+
+  echo -e "${CYAN}→ ${repo} submodules${NC}"
+  git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
+  if ! git -C "$repo" submodule update --init --recursive; then
+    echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
+    return 1
+  fi
+}
+
 repo_sync() {
+  local mode="${1:-}"
+  local force="${2:-}"
+
+  if [[ "$#" -gt 2 ]]; then
+    echo "Usage: ./repo sync [branch] [--force]" >&2
+    exit 1
+  fi
+
+  if [[ -n "$mode" && "$mode" != "branch" && "$mode" != "--branch" ]]; then
+    echo "Unknown sync option: $mode" >&2
+    exit 1
+  fi
+
+  if [[ -n "$force" && "$force" != "--force" ]]; then
+    echo "Unknown sync option: $force" >&2
+    exit 1
+  fi
+
+  if [[ "$mode" == "branch" && "$force" == "--force" ]]; then
+    echo -e "${YELLOW}→ Force syncing (discarding local commits/changes)${NC}"
+    run_repo forall -c 'git rebase --abort >/dev/null 2>&1 || true; git reset --hard; git clean -fd'
+    run_repo sync -d --force-sync
+    checkout_manifest_branches
+    ensure_syft_crypto_submodule
+    return
+  fi
+
   run_repo sync
+  if [[ "$mode" == "branch" || "$mode" == "--branch" ]]; then
+    sync_manifest_branches
+  fi
+  ensure_syft_crypto_submodule
+}
+
+sync_manifest_branches() {
+  local failures=0
+  local repo
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    echo -ne "  → $repo: "
+    if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo -e "${RED}missing${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if [[ -n $(git -C "$repo" status --porcelain -uno 2>/dev/null || true) ]]; then
+      echo -e "${YELLOW}dirty (skipped)${NC}"
+      continue
+    fi
+
+    local revision
+    revision="$(manifest_effective_revision_for "$repo")"
+    if [[ -z "$revision" ]]; then
+      echo -e "${YELLOW}no revision${NC}"
+      continue
+    fi
+
+    local remote
+    remote="$(resolve_remote_for_repo "$repo" "$repo")"
+    if [[ -z "$remote" ]]; then
+      echo -e "${YELLOW}no remote${NC}"
+      continue
+    fi
+
+    git -C "$repo" fetch "$remote" --prune >/dev/null 2>&1 || true
+
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/$remote/$revision"; then
+      if git -C "$repo" show-ref --verify --quiet "refs/heads/$revision"; then
+        if ! git -C "$repo" checkout "$revision" >/dev/null 2>&1; then
+          echo -e "${RED}failed${NC}"
+          failures=$((failures + 1))
+          continue
+        fi
+      else
+        if ! git -C "$repo" checkout -b "$revision" --track "$remote/$revision" >/dev/null 2>&1; then
+          echo -e "${RED}failed${NC}"
+          failures=$((failures + 1))
+          continue
+        fi
+      fi
+
+      git -C "$repo" branch --set-upstream-to "$remote/$revision" "$revision" >/dev/null 2>&1 || true
+      local head_before
+      head_before=$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)
+      if git -C "$repo" merge --ff-only "$remote/$revision" >/dev/null 2>&1; then
+        local head_after
+        head_after=$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)
+        if [[ -n "$head_before" && -n "$head_after" && "$head_before" != "$head_after" ]]; then
+          echo -e "${GREEN}updated${NC}"
+        else
+          echo -e "${GREEN}up-to-date${NC}"
+        fi
+      else
+        echo -e "${YELLOW}diverged${NC}"
+      fi
+      continue
+    fi
+
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$revision"; then
+      if git -C "$repo" checkout "$revision" >/dev/null 2>&1; then
+        echo -e "${YELLOW}no remote branch${NC}"
+      else
+        echo -e "${RED}failed${NC}"
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
+
+    if [[ "$revision" =~ ^[0-9a-fA-F]{7,40}$ ]] || git -C "$repo" show-ref --verify --quiet "refs/tags/$revision"; then
+      echo -e "${YELLOW}pinned (skipped)${NC}"
+      continue
+    fi
+
+    echo -e "${YELLOW}missing branch${NC}"
+  done < <(manifest_paths)
+
+  if [[ "$failures" -ne 0 ]]; then
+    exit 1
+  fi
+}
+
+checkout_manifest_branches() {
+  local failures=0
+
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+
+    local revision
+    revision="$(manifest_effective_revision_for "$repo")"
+    if [[ -z "$revision" ]]; then
+      continue
+    fi
+
+    if [[ "$revision" =~ ^[0-9a-fA-F]{7,40}$ ]] || git -C "$repo" show-ref --verify --quiet "refs/tags/$revision"; then
+      continue
+    fi
+
+    if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      continue
+    fi
+
+    local remote
+    remote="$(resolve_remote_for_repo "$repo" "$repo")"
+
+    if [[ -z "$remote" ]]; then
+      echo -e "  ${YELLOW}→ ${repo}: no remote found${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if ! git -C "$repo" fetch "$remote" --prune >/dev/null 2>&1; then
+      echo -e "  ${RED}✗ ${repo}: fetch failed${NC}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/$remote/$revision"; then
+      if ! git -C "$repo" checkout -B "$revision" "$remote/$revision" >/dev/null 2>&1; then
+        echo -e "  ${RED}✗ ${repo}: failed to checkout ${revision}${NC}"
+        failures=$((failures + 1))
+        continue
+      fi
+      if ! git -C "$repo" reset --hard "$remote/$revision" >/dev/null 2>&1; then
+        echo -e "  ${RED}✗ ${repo}: failed to fast-forward ${revision}${NC}"
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
+
+    echo -e "  ${YELLOW}→ ${repo}: branch ${revision} not found on ${remote}${NC}"
+    failures=$((failures + 1))
+  done < <(manifest_paths)
+
+  if [[ "$failures" -ne 0 ]]; then
+    return 1
+  fi
 }
 
 repo_fetch() {
@@ -986,6 +1184,57 @@ PY
       }
     }
   ' "$MANIFEST_FILE"
+}
+
+manifest_default_revision() {
+  if [[ ! -f "$MANIFEST_FILE" ]]; then
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$MANIFEST_FILE" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+manifest = sys.argv[1]
+tree = ET.parse(manifest)
+default = tree.getroot().find("default")
+if default is not None:
+    revision = default.get("revision") or ""
+    if revision:
+        print(revision)
+PY
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    python - "$MANIFEST_FILE" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+manifest = sys.argv[1]
+tree = ET.parse(manifest)
+default = tree.getroot().find("default")
+if default is not None:
+    revision = default.get("revision") or ""
+    if revision:
+        print(revision)
+PY
+    return
+  fi
+
+  awk -F'"' '/<default / { for (i = 1; i <= NF; i++) { if ($i == "revision") { print $(i + 1); exit } } }' "$MANIFEST_FILE"
+}
+
+manifest_effective_revision_for() {
+  local target="$1"
+  local revision=""
+  revision="$(manifest_revision_for "$target")"
+  if [[ -n "$revision" ]]; then
+    echo "$revision"
+    return
+  fi
+  manifest_default_revision
 }
 
 manifest_remote_for() {
@@ -1820,14 +2069,17 @@ do_lint() {
   for repo in "${dirty_repos[@]}"; do
     local script=""
     local label="$repo"
+    local use_just=0
     if [[ "$repo" == "." ]]; then
       script="./lint.sh"
       label="biovault-desktop"
+    elif [[ "$repo" == "syft-crypto-core" ]]; then
+      use_just=1
     else
       script="$repo/lint.sh"
     fi
 
-    if [[ ! -x "$script" ]]; then
+    if [[ "$use_just" -eq 0 && ! -x "$script" ]]; then
       continue
     fi
 
@@ -1836,7 +2088,13 @@ do_lint() {
     local outfile="$tmpdir/${repo//\//_}.out"
     (
       local task_start=$SECONDS
-      if (cd "${repo:-.}" && ./lint.sh) > "$outfile" 2>&1; then
+      if [[ "$use_just" -eq 1 ]]; then
+        if (cd "$repo" && just lint-fix) > "$outfile" 2>&1; then
+          echo "0" > "$outfile.status"
+        else
+          echo "1" > "$outfile.status"
+        fi
+      elif (cd "${repo:-.}" && ./lint.sh) > "$outfile" 2>&1; then
         echo "0" > "$outfile.status"
       else
         echo "1" > "$outfile.status"
@@ -1939,13 +2197,13 @@ run_fast_tests() {
       (cd "$repo/cli" && cargo test)
       ;;
     syft-crypto-core)
-      (cd "$repo" && cargo test)
+      (cd "$repo" && just test)
       ;;
     syftbox)
-      (cd "$repo" && go test ./...)
+      (cd "$repo" && ./test.sh)
       ;;
     syftbox-sdk)
-      (cd "$repo" && cargo test)
+      (cd "$repo" && ./test.sh)
       ;;
     *)
       return 1
@@ -2098,6 +2356,194 @@ do_test() {
     local failed_list
     failed_list=$(IFS=', '; echo "${failed_repos[*]}")
     echo -e "${RED}${failures} failed (${failed_list}), ${passed} passed in ${total_time}s${NC}"
+    return 1
+  fi
+}
+
+do_check() {
+  local start_time=$SECONDS
+  local targets=("$@")
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    echo "Usage: ./repo check <targets...>" >&2
+    echo "Example: ./repo check syftbox syftbox-sdk" >&2
+    exit 1
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+
+  local syft_crypto_requested=0
+  local other_targets=()
+  local target
+  for target in "${targets[@]}"; do
+    local resolved=""
+    local is_syft_crypto=0
+    if [[ "$target" == "syft-crypto-core" ]]; then
+      is_syft_crypto=1
+    else
+      resolved=$(resolve_checkout_targets "$target" 2>/dev/null | head -1 || true)
+      if [[ "$resolved" == "syft-crypto-core" ]]; then
+        is_syft_crypto=1
+      fi
+    fi
+
+    if [[ "$is_syft_crypto" -eq 1 ]]; then
+      syft_crypto_requested=1
+    else
+      other_targets+=("$target")
+    fi
+  done
+
+  echo -e "${CYAN}=== Check: lint + test ===${NC}"
+  echo ""
+
+  # Show what will be checked
+  for target in "${targets[@]}"; do
+    local repo_path
+    repo_path=$(resolve_checkout_targets "$target" 2>/dev/null | head -1) || repo_path="$target"
+    [[ "$repo_path" == "." ]] && repo_path="biovault-desktop"
+
+    local lint_cmd="(none)"
+    local test_cmd="(none)"
+    local is_syft_crypto=0
+    if [[ "$repo_path" == "syft-crypto-core" || "$target" == "syft-crypto-core" ]]; then
+      is_syft_crypto=1
+    fi
+
+    if [[ "$is_syft_crypto" -eq 1 ]]; then
+      lint_cmd="just lint-fix"
+      test_cmd="just check-all"
+    else
+      if [[ -x "$target/lint.sh" || (-x "./lint.sh" && "$target" == ".") ]]; then
+        lint_cmd="./lint.sh"
+      fi
+
+      case "$target" in
+        "."|biovault-desktop)
+          test_cmd="cargo test (src-tauri) + node --test"
+          ;;
+        syftbox)
+          test_cmd="./test.sh (go test + cargo test rust/)"
+          ;;
+        syftbox-sdk)
+          test_cmd="./test.sh (cargo test + cargo test --features embedded --test-threads=1)"
+          ;;
+        biovault)
+          test_cmd="cargo test (cli)"
+          ;;
+        *)
+          if [[ -x "$target/test.sh" ]]; then
+            test_cmd="./test.sh"
+          fi
+          ;;
+      esac
+    fi
+
+    echo -e "  ${CYAN}$repo_path${NC}"
+    echo -e "    lint: ${BLUE}$lint_cmd${NC}"
+    echo -e "    test: ${BLUE}$test_cmd${NC}"
+  done
+  echo ""
+
+  local lint_pid=""
+  local test_pid=""
+  local syft_crypto_pid=""
+
+  if [[ ${#other_targets[@]} -gt 0 ]]; then
+    (
+      do_lint "${other_targets[@]}" > "$tmpdir/lint.out" 2>&1
+      echo $? > "$tmpdir/lint.status"
+    ) &
+    lint_pid=$!
+
+    (
+      do_test "${other_targets[@]}" > "$tmpdir/test.out" 2>&1
+      echo $? > "$tmpdir/test.status"
+    ) &
+    test_pid=$!
+  else
+    echo "0" > "$tmpdir/lint.status"
+    echo "0" > "$tmpdir/test.status"
+    echo "Skipped (no non-syft-crypto-core targets)" > "$tmpdir/lint.out"
+    echo "Skipped (no non-syft-crypto-core targets)" > "$tmpdir/test.out"
+  fi
+
+  if [[ "$syft_crypto_requested" -eq 1 ]]; then
+    (
+      (cd "syft-crypto-core" && just check-all) > "$tmpdir/syft-crypto-core-check.out" 2>&1
+      echo $? > "$tmpdir/syft-crypto-core-check.status"
+    ) &
+    syft_crypto_pid=$!
+  fi
+
+  if [[ ${#other_targets[@]} -gt 0 && "$syft_crypto_requested" -eq 1 ]]; then
+    echo -e "${YELLOW}Running lint/test + syft-crypto-core check-all in parallel...${NC}"
+  elif [[ ${#other_targets[@]} -gt 0 ]]; then
+    echo -e "${YELLOW}Running lint and test in parallel...${NC}"
+  elif [[ "$syft_crypto_requested" -eq 1 ]]; then
+    echo -e "${YELLOW}Running syft-crypto-core check-all...${NC}"
+  fi
+  echo ""
+
+  # Wait for both
+  if [[ -n "$lint_pid" ]]; then
+    wait "$lint_pid" || true
+  fi
+  if [[ -n "$test_pid" ]]; then
+    wait "$test_pid" || true
+  fi
+  if [[ -n "$syft_crypto_pid" ]]; then
+    wait "$syft_crypto_pid" || true
+  fi
+
+  local lint_status=0
+  local test_status=0
+  local syft_crypto_status=0
+  [[ -f "$tmpdir/lint.status" ]] && lint_status=$(cat "$tmpdir/lint.status")
+  [[ -f "$tmpdir/test.status" ]] && test_status=$(cat "$tmpdir/test.status")
+  [[ -f "$tmpdir/syft-crypto-core-check.status" ]] && syft_crypto_status=$(cat "$tmpdir/syft-crypto-core-check.status")
+
+  # Report results
+  echo -e "${CYAN}=== Lint Results ===${NC}"
+  if [[ ${#other_targets[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ Lint skipped (no non-syft-crypto-core targets)${NC}"
+  elif [[ "$lint_status" -eq 0 ]]; then
+    echo -e "${GREEN}✓ Lint passed${NC}"
+  else
+    echo -e "${RED}✗ Lint failed${NC}"
+    cat "$tmpdir/lint.out"
+  fi
+
+  echo ""
+  echo -e "${CYAN}=== Test Results ===${NC}"
+  if [[ ${#other_targets[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ Tests skipped (no non-syft-crypto-core targets)${NC}"
+  elif [[ "$test_status" -eq 0 ]]; then
+    echo -e "${GREEN}✓ Tests passed${NC}"
+  else
+    echo -e "${RED}✗ Tests failed${NC}"
+    cat "$tmpdir/test.out"
+  fi
+
+  if [[ "$syft_crypto_requested" -eq 1 ]]; then
+    echo ""
+    echo -e "${CYAN}=== Syft Crypto Core Check-All Results ===${NC}"
+    if [[ "$syft_crypto_status" -eq 0 ]]; then
+      echo -e "${GREEN}✓ syft-crypto-core check-all passed${NC}"
+    else
+      echo -e "${RED}✗ syft-crypto-core check-all failed${NC}"
+      cat "$tmpdir/syft-crypto-core-check.out"
+    fi
+  fi
+
+  local total_time=$((SECONDS - start_time))
+  echo ""
+  if [[ "$lint_status" -eq 0 && "$test_status" -eq 0 && "$syft_crypto_status" -eq 0 ]]; then
+    echo -e "${GREEN}✅ All checks passed in ${total_time}s${NC}"
+  else
+    echo -e "${RED}❌ Some checks failed in ${total_time}s${NC}"
     return 1
   fi
 }
@@ -2555,7 +3001,7 @@ case "${1:-}" in
   sync)
     require_repo
     require_repo_workspace
-    repo_sync
+    repo_sync "${@:2}"
     ;;
   fetch)
     repo_fetch "${@:2}"
@@ -2597,6 +3043,9 @@ case "${1:-}" in
     ;;
   test)
     do_test "${@:2}"
+    ;;
+  check)
+    do_check "${@:2}"
     ;;
   commit)
     do_commit "${@:2}"

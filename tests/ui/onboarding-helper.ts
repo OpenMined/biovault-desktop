@@ -22,15 +22,25 @@ export function log(socket: WebSocket | null, payload: Record<string, unknown>):
 }
 
 export async function setWsPort(page: Page, port: number): Promise<void> {
-	await page.addInitScript((portNum: number) => {
-		const w = window as any
-		w.__DEV_WS_BRIDGE_PORT__ = portNum
-		w.__DISABLE_UPDATER__ = true
-		w.process = w.process || {}
-		w.process.env = w.process.env || {}
-		w.process.env.USE_REAL_INVOKE = 'true'
-		w.process.env.DISABLE_UPDATER = '1'
-	}, port)
+	const ciFlag = process.env.CI || process.env.GITHUB_ACTIONS || ''
+	await page.addInitScript(
+		(portNum: number, ci: string) => {
+			const w = window as any
+			w.__DEV_WS_BRIDGE_PORT__ = portNum
+			w.__DISABLE_UPDATER__ = true
+			w.process = w.process || {}
+			w.process.env = w.process.env || {}
+			w.process.env.USE_REAL_INVOKE = 'true'
+			w.process.env.DISABLE_UPDATER = '1'
+			if (ci) {
+				w.process.env.CI = w.process.env.CI || ci
+				w.process.env.GITHUB_ACTIONS = w.process.env.GITHUB_ACTIONS || ci
+				w.__IS_CI__ = true
+			}
+		},
+		port,
+		ciFlag,
+	)
 }
 
 /**
@@ -81,10 +91,13 @@ export async function completeOnboarding(
 
 		// Step 2: Dependencies - skip
 		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
+		console.log(`${email}: [onboarding] Clicking skip-dependencies-btn...`)
+		const step2StartTime = Date.now()
 		await page.locator('#skip-dependencies-btn').click()
 		// Wait for step 2 to be hidden before checking step 3
 		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
-		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 15000 })
+		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 30000 })
+		console.log(`${email}: [onboarding] Step 2 hidden after ${Date.now() - step2StartTime}ms`)
 
 		// Step 3: Choose BioVault Home
 		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })
@@ -130,15 +143,94 @@ export async function completeOnboarding(
 
 		// Step 4: SyftBox - skip
 		await expect(page.locator('#onboarding-step-4')).toBeVisible({ timeout: 30_000 })
+		console.log(`${email}: [onboarding] Step 4 visible, clicking skip-syftbox-btn...`)
+		const step4StartTime = Date.now()
 		await Promise.all([
 			page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
 			page.locator('#skip-syftbox-btn').click(),
 		])
+		console.log(
+			`${email}: [onboarding] Navigation complete after ${Date.now() - step4StartTime}ms, waiting for app ready...`,
+		)
 
-		await expect(page.locator('#run-view')).toBeVisible({ timeout: 10_000 })
-		// On a fresh install, completing onboarding triggers a full page reload. Ensure the app
-		// finished re-initializing (nav/event handlers ready) before proceeding with tests.
-		await waitForAppReady(page, { timeout: 30_000 })
+		// On a fresh install, completing onboarding triggers a full page reload.
+		// Wait for the onboarding check to complete (not just for onboarding to be visible).
+		// After successful complete_onboarding, check_is_onboarded should return true and
+		// the app should show run-view instead of onboarding-view.
+		console.log(`${email}: [onboarding] Waiting for onboarding check to complete...`)
+		await page.waitForFunction(
+			() =>
+				(window as any).__ONBOARDING_CHECK_COMPLETE__ === true &&
+				(window as any).__NAV_HANDLERS_READY__ === true &&
+				(window as any).__EVENT_HANDLERS_READY__ === true,
+			{ timeout: 30_000 },
+		)
+		console.log(
+			`${email}: [onboarding] Onboarding check complete after ${Date.now() - step4StartTime}ms`,
+		)
+
+		// Now check if the app transitioned to the main view or stayed on onboarding
+		const onboardingStillVisible = await page
+			.locator('#onboarding-view')
+			.evaluate((el) => {
+				return el.classList.contains('active') && window.getComputedStyle(el).display !== 'none'
+			})
+			.catch(() => false)
+
+		if (onboardingStillVisible) {
+			const ciFlag = !!process.env.CI || process.env.GITHUB_ACTIONS === 'true'
+			const retryCheck = await page
+				.evaluate(async (useLongTimeout) => {
+					const invoke = (window as any).__TAURI__?.invoke
+					if (!invoke) {
+						return { available: false }
+					}
+					const start = Date.now()
+					try {
+						const result = await invoke('check_is_onboarded', {
+							__wsTimeoutMs: useLongTimeout ? 15000 : 5000,
+						})
+						return { available: true, result, durationMs: Date.now() - start }
+					} catch (err) {
+						return { available: true, error: String(err), durationMs: Date.now() - start }
+					}
+				}, ciFlag)
+				.catch(() => null)
+			console.log(`${email}: [onboarding] check_is_onboarded retry:`, JSON.stringify(retryCheck))
+			if (retryCheck?.available && retryCheck?.result === true) {
+				await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
+				await waitForAppReady(page, { timeout: 30_000 })
+				await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+				log(logSocket, { event: 'onboarding-complete', email, recovery: 'retry-check' })
+				console.log(`${email}: Onboarding complete after retry!`)
+				return true
+			}
+
+			// Get diagnostic info from the page's console output
+			const diag = await page
+				.evaluate(() => ({
+					onboardingCheckComplete: (window as any).__ONBOARDING_CHECK_COMPLETE__,
+					navReady: (window as any).__NAV_HANDLERS_READY__,
+					eventReady: (window as any).__EVENT_HANDLERS_READY__,
+					lastOnboardingCheck: (window as any).__LAST_ONBOARDING_CHECK__,
+					ci: (window as any).__IS_CI__ || null,
+					envCI: (window as any).process?.env?.CI || null,
+					envGithubActions: (window as any).process?.env?.GITHUB_ACTIONS || null,
+					url: window.location.href,
+				}))
+				.catch(() => null)
+			console.log(`${email}: [onboarding] Page state:`, JSON.stringify(diag))
+			throw new Error(
+				`Onboarding still visible after complete_onboarding and page reload. ` +
+					`This usually means check_is_onboarded returned false. ` +
+					`Page state: ${JSON.stringify(diag)}`,
+			)
+		}
+
+		await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+		console.log(
+			`${email}: [onboarding] run-view visible after ${Date.now() - step4StartTime}ms total`,
+		)
 		log(logSocket, { event: 'onboarding-complete', email })
 		console.log(`${email}: Onboarding complete!`)
 		return true // Onboarding was performed

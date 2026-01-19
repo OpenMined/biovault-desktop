@@ -151,7 +151,6 @@ impl WsEvent {
 /// Sender for emitting events during command execution
 #[allow(dead_code)]
 pub type EventSender = mpsc::Sender<String>;
-
 /// Audit log entry for agent bridge commands
 #[derive(Serialize)]
 struct AuditLogEntry {
@@ -292,6 +291,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("agent_api_clear_audit_log", "agent_api", false),
         cmd("agent_api_get_schema", "agent_api", true),
         cmd("agent_api_list_commands", "agent_api", true),
+        cmd("get_agent_api_commands", "agent_api", true),
         cmd("agent_api_events_info", "agent_api", true),
         // App Status
         cmd("get_app_version", "app_status", true),
@@ -352,6 +352,16 @@ fn get_commands_list() -> serde_json::Value {
         cmd_long("syftbox_upload_action", "syftbox", false),
         cmd_async("syftbox_request_otp", "syftbox", false),
         cmd_async("syftbox_submit_otp", "syftbox", false),
+        // Sync Tree
+        cmd_async("sync_tree_list_dir", "sync_tree", true),
+        cmd_async("sync_tree_get_details", "sync_tree", true),
+        cmd_async("sync_tree_get_ignore_patterns", "sync_tree", true),
+        cmd_async("sync_tree_add_ignore", "sync_tree", false),
+        cmd_async("sync_tree_remove_ignore", "sync_tree", false),
+        cmd_async("sync_tree_init_default_policy", "sync_tree", false),
+        cmd_async("sync_tree_get_shared_with_me", "sync_tree", true),
+        cmd_async("sync_tree_subscribe", "sync_tree", false),
+        cmd_async("sync_tree_unsubscribe", "sync_tree", false),
         // Keys
         cmd("key_get_status", "keys", true),
         cmd("key_list_contacts", "keys", true),
@@ -717,7 +727,6 @@ impl EventContext {
         }
     }
 }
-
 async fn handle_connection(stream: TcpStream, app: Arc<AppHandle>) {
     let addr = stream
         .peer_addr()
@@ -1118,6 +1127,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "agent_api_get_schema" => {
             // Return the full JSON schema for the API
             load_schema_json(app)
+        }
+        "get_agent_api_commands" => {
+            let commands = crate::commands::agent_api::get_agent_api_commands(app.clone())?;
+            Ok(serde_json::to_value(commands).unwrap())
         }
         "agent_api_list_commands" => {
             // Return a lightweight list of available commands with basic metadata
@@ -2020,6 +2033,94 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
+        // Sync Tree commands
+        "sync_tree_list_dir" => {
+            let path: Option<String> = args
+                .get("path")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::commands::sync_tree::sync_tree_list_dir(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_details" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result = crate::commands::sync_tree::sync_tree_get_details(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_ignore_patterns" => {
+            let result = crate::commands::sync_tree::sync_tree_get_ignore_patterns()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_add_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_add_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_remove_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_remove_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_init_default_policy" => {
+            let result = crate::commands::sync_tree::sync_tree_init_default_policy()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_shared_with_me" => {
+            let result = crate::commands::sync_tree::sync_tree_get_shared_with_me()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_subscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_subscribe(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_unsubscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_unsubscribe(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "mark_thread_as_read" => {
             let thread_id: String = serde_json::from_value(
                 args.get("threadId")
@@ -2883,9 +2984,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .cloned()
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or(false);
-            crate::commands::datasets::publish_dataset(manifest_path, name, copy_mock)
-                .await
-                .map_err(|e| e.to_string())?;
+            crate::commands::datasets::publish_dataset(
+                state.clone(),
+                manifest_path,
+                name,
+                copy_mock,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "unpublish_dataset" => {
@@ -3565,7 +3671,6 @@ pub async fn start_http_server(
 
     Ok(())
 }
-
 async fn bind_listener(addr: SocketAddr) -> Result<TcpListener, Box<dyn std::error::Error>> {
     // During profile switching, the app may restart quickly and attempt to re-bind the same port
     // while the previous process is still winding down. Retry a few times to reduce flakiness.

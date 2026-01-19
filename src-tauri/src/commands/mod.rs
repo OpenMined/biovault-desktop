@@ -16,6 +16,7 @@ pub mod sessions;
 pub mod settings;
 pub mod sql;
 pub mod syftbox;
+pub mod sync_tree;
 
 /// Configure a Command to hide the console window on Windows.
 /// This prevents black CMD windows from flashing when spawning child processes.
