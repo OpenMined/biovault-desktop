@@ -21,6 +21,7 @@ pub use biovault::pipeline_spec::PipelineSpec;
 use biovault::pipeline_spec::FLOW_YAML_FILE;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PipelineCreateRequest {
     pub name: String,
     pub directory: Option<String>,
@@ -570,7 +571,7 @@ pub async fn create_pipeline(
         // Load flow spec from source
         let yaml_str = fs::read_to_string(&source_flow_yaml_path)
             .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
-        let mut flow = FlowFile::from_str(&yaml_str)
+        let mut flow = FlowFile::parse_yaml(&yaml_str)
             .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
         if flow.kind != "Flow" {
             return Err(format!("Expected Flow kind but found '{}'", flow.kind));
@@ -662,10 +663,7 @@ pub async fn create_pipeline(
                 ));
             }
         } else if is_import_dir {
-            return Err(format!(
-                "flow.yaml not found in {}",
-                pipeline_dir.display()
-            ));
+            return Err(format!("flow.yaml not found in {}", pipeline_dir.display()));
         }
 
         if !flow_yaml_path.exists() || (!is_import_dir && overwrite) {
@@ -749,7 +747,7 @@ pub async fn load_pipeline_editor(
     let spec = if yaml_path.exists() {
         let content = fs::read_to_string(&yaml_path)
             .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
-        let flow = FlowFile::from_str(&content).ok();
+        let flow = FlowFile::parse_yaml(&content).ok();
         flow.and_then(|f| f.to_pipeline_spec().ok())
     } else {
         None
@@ -792,8 +790,7 @@ pub async fn save_pipeline_editor(
     let yaml_content = serde_yaml::to_string(&flow)
         .map_err(|e| format!("Failed to serialize flow.yaml: {}", e))?;
 
-    fs::write(&yaml_path, yaml_content)
-        .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
+    fs::write(&yaml_path, yaml_content).map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
 
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -1736,10 +1733,7 @@ pub async fn import_pipeline_from_request(
 
     let flow_yaml = source_root.join(FLOW_YAML_FILE);
     if !flow_yaml.exists() {
-        return Err(format!(
-            "flow.yaml not found in {}",
-            source_root.display()
-        ));
+        return Err(format!("flow.yaml not found in {}", source_root.display()));
     }
 
     let spec = load_pipeline_spec_from_storage(&storage, &flow_yaml)?;
@@ -1813,16 +1807,28 @@ pub async fn import_pipeline_from_request(
                     e
                 )
             })?;
-            let module = ModuleFile::from_str(&yaml_content)
-                .map_err(|e| format!("Failed to parse module.yaml at {}: {}", module_yaml_path.display(), e))?;
-            let project_yaml = module
-                .to_project_spec()
-                .map_err(|e| format!("Failed to convert module.yaml at {}: {}", module_yaml_path.display(), e))?;
+            let module = ModuleFile::parse_yaml(&yaml_content).map_err(|e| {
+                format!(
+                    "Failed to parse module.yaml at {}: {}",
+                    module_yaml_path.display(),
+                    e
+                )
+            })?;
+            let project_yaml = module.to_project_spec().map_err(|e| {
+                format!(
+                    "Failed to convert module.yaml at {}: {}",
+                    module_yaml_path.display(),
+                    e
+                )
+            })?;
 
             let identifier = format!(
                 "{}@{}",
                 project_yaml.name,
-                project_yaml.version.clone().unwrap_or_else(|| "0.1.0".to_string())
+                project_yaml
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "0.1.0".to_string())
             );
             let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -1834,10 +1840,7 @@ pub async fn import_pipeline_from_request(
                 {
                     db.update_project(
                         &project_yaml.name,
-                        project_yaml
-                            .version
-                            .as_deref()
-                            .unwrap_or("0.1.0"),
+                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &project_yaml.author,
                         &project_yaml.workflow,
                         project_yaml.template.as_deref().unwrap_or("imported"),
@@ -1847,10 +1850,7 @@ pub async fn import_pipeline_from_request(
                 } else {
                     db.register_project(
                         &project_yaml.name,
-                        project_yaml
-                            .version
-                            .as_deref()
-                            .unwrap_or("0.1.0"),
+                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &project_yaml.author,
                         &project_yaml.workflow,
                         project_yaml.template.as_deref().unwrap_or("imported"),
@@ -1865,10 +1865,7 @@ pub async fn import_pipeline_from_request(
             {
                 db.register_project(
                     &project_yaml.name,
-                    project_yaml
-                        .version
-                        .as_deref()
-                        .unwrap_or("0.1.0"),
+                    project_yaml.version.as_deref().unwrap_or("0.1.0"),
                     &project_yaml.author,
                     &project_yaml.workflow,
                     project_yaml.template.as_deref().unwrap_or("imported"),

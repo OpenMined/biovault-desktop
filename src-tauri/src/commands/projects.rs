@@ -383,7 +383,7 @@ pub fn import_project_from_folder(
     let yaml_content = std::fs::read_to_string(&project_yaml_path)
         .map_err(|e| format!("Failed to read module.yaml: {}", e))?;
 
-    let module = ModuleFile::from_str(&yaml_content)
+    let module = ModuleFile::parse_yaml(&yaml_content)
         .map_err(|e| format!("Failed to parse module.yaml: {}", e))?;
     let spec = module
         .to_project_spec()
@@ -648,7 +648,7 @@ pub fn create_project(
         let yaml_content = std::fs::read_to_string(&project_yaml_path)
             .map_err(|e| format!("Failed to read module.yaml: {}", e))?;
 
-        let mut module = ModuleFile::from_str(&yaml_content)
+        let mut module = ModuleFile::parse_yaml(&yaml_content)
             .map_err(|e| format!("Failed to parse module.yaml: {}", e))?;
 
         let assets = module.spec.assets.get_or_insert_with(Vec::new);
@@ -725,7 +725,7 @@ pub fn get_available_project_examples() -> Result<HashMap<String, serde_json::Va
             let yaml_content = fs::read_to_string(&project_yaml)
                 .map_err(|e| format!("Failed to read {}: {}", project_yaml.display(), e))?;
 
-            let module = ModuleFile::from_str(&yaml_content)
+            let module = ModuleFile::parse_yaml(&yaml_content)
                 .map_err(|e| format!("Failed to parse {}: {}", project_yaml.display(), e))?;
             let spec = module
                 .to_project_spec()

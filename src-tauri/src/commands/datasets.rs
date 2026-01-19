@@ -1,6 +1,6 @@
 use crate::types::AppState;
-use biovault::data::BioVaultDb;
 use biovault::data::datasets::{build_manifest_from_db, get_dataset_with_assets};
+use biovault::data::BioVaultDb;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_yaml;

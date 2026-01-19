@@ -2789,8 +2789,8 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 name,
                 copy_mock,
             )
-                .await
-                .map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "unpublish_dataset" => {

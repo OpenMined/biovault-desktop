@@ -3,8 +3,8 @@ use crate::types::{
     MessageThreadSummary,
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
-use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::flow_spec::FlowFile;
+use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
@@ -922,7 +922,7 @@ pub fn send_pipeline_request(
     let pipeline_content = fs::read_to_string(&flow_yaml_path)
         .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
 
-    let flow: FlowFile = serde_yaml::from_str(&pipeline_content)
+    let flow: FlowFile = FlowFile::parse_yaml(&pipeline_content)
         .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
     let pipeline_spec_struct: PipelineSpec = flow
         .to_pipeline_spec()
