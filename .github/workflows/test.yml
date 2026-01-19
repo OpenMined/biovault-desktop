@@ -49,14 +49,14 @@ jobs:
           # jupyter-collab on Linux - rust
           - scenario: jupyter-collab
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
           # jupyter-collab on Linux - go
           - scenario: jupyter-collab
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
@@ -77,28 +77,28 @@ jobs:
           # pipelines-solo on Linux - rust
           - scenario: pipelines-solo
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
           # pipelines-solo on Linux - go
           - scenario: pipelines-solo
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
           # pipelines-collab on Linux - rust
           - scenario: pipelines-collab
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
           # pipelines-collab on Linux - go
           - scenario: pipelines-collab
             platform: linux-x86_64
-            runner: ubuntu-latest
+            runner: namespace-profile-linux-medium
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
@@ -302,6 +302,13 @@ jobs:
         with:
           path: data/genostats.sqlite
           key: genostats-v1
+
+      - name: Cache MinIO binary
+        id: cache-minio
+        uses: actions/cache@v4
+        with:
+          path: ~/.sbdev/bin
+          key: minio-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Run Jupyter collab scenario
         if: matrix.scenario == 'jupyter-collab'

@@ -571,7 +571,7 @@ pub async fn create_pipeline(
         // Load flow spec from source
         let yaml_str = fs::read_to_string(&source_flow_yaml_path)
             .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
-        let mut flow = FlowFile::parse_yaml(&yaml_str)
+        let flow = FlowFile::parse_yaml(&yaml_str)
             .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
         if flow.kind != "Flow" {
             return Err(format!("Expected Flow kind but found '{}'", flow.kind));
@@ -618,6 +618,8 @@ pub async fn create_pipeline(
 
         let flow_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
+                let mut flow = FlowFile::parse_yaml(&yaml_str)
+                    .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
                 resolve_pipeline_dependencies(
                     &mut flow,
                     &dependency_context,

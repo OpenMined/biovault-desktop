@@ -923,96 +923,24 @@ export function createSettingsModule({
 			.join('')
 	}
 
-	function setSyftBoxPathDisplay(pathId, btnId, path) {
-		const el = document.getElementById(pathId)
-		const btn = document.getElementById(btnId)
-		const trimmed = (path || '').trim()
-		const display = trimmed || 'Not resolved'
-		if (el) {
-			el.textContent = display
-			el.title = display
-		}
-		if (btn) {
-			btn.disabled = !trimmed
-			btn.dataset.path = trimmed
-		}
-	}
-
 	function bindSyftBoxPathButtons() {
-		const buttons = [
-			'syftbox-open-config-btn',
-			'syftbox-open-data-dir-btn',
-			'syftbox-open-datasites-btn',
-			'syftbox-open-logs-btn',
-			'syftbox-open-logfile-btn',
-		]
+		// Navigation to SyftBox tab
+		const gotoSyftbox = document.getElementById('settings-goto-syftbox')
+		const openSyftbox = document.getElementById('settings-open-syftbox')
 
-		buttons.forEach((id) => {
-			const btn = document.getElementById(id)
-			if (!btn || btn.dataset.listenerAttached) return
-			btn.addEventListener('click', async () => {
-				const path = btn.dataset.path
-				if (!path) {
-					await dialog.message('Path is not set yet.', {
-						title: 'Path Unavailable',
-						type: 'warning',
-					})
-					return
-				}
-				try {
-					await invoke('open_folder', { path })
-				} catch (error) {
-					console.error(`Failed to open path (${path}):`, error)
-					await dialog.message(`Failed to open ${path}: ${error}`, {
-						title: 'Open Failed',
-						type: 'error',
-					})
-				}
+		if (gotoSyftbox && !gotoSyftbox.dataset.listenerAttached) {
+			gotoSyftbox.addEventListener('click', (e) => {
+				e.preventDefault()
+				window.navigateTo?.('syftbox')
 			})
-			btn.dataset.listenerAttached = 'true'
-		})
-
-		const startBtn = document.getElementById('syftbox-start-btn')
-		const stopBtn = document.getElementById('syftbox-stop-btn')
-		if (startBtn && !startBtn.dataset.listenerAttached) {
-			startBtn.addEventListener('click', async () => {
-				startBtn.disabled = true
-				stopBtn && (stopBtn.disabled = true)
-				try {
-					await invoke('start_syftbox_client')
-					await checkSyftBoxStatus()
-				} catch (error) {
-					console.error('Failed to start SyftBox:', error)
-					await dialog.message(`Failed to start SyftBox: ${error}`, {
-						title: 'Start Failed',
-						type: 'error',
-					})
-				} finally {
-					startBtn.disabled = false
-					stopBtn && (stopBtn.disabled = false)
-				}
-			})
-			startBtn.dataset.listenerAttached = 'true'
+			gotoSyftbox.dataset.listenerAttached = 'true'
 		}
-		if (stopBtn && !stopBtn.dataset.listenerAttached) {
-			stopBtn.addEventListener('click', async () => {
-				startBtn && (startBtn.disabled = true)
-				stopBtn.disabled = true
-				try {
-					await invoke('stop_syftbox_client')
-					await checkSyftBoxStatus()
-				} catch (error) {
-					console.error('Failed to stop SyftBox:', error)
-					await dialog.message(`Failed to stop SyftBox: ${error}`, {
-						title: 'Stop Failed',
-						type: 'error',
-					})
-				} finally {
-					startBtn && (startBtn.disabled = false)
-					stopBtn.disabled = false
-				}
+
+		if (openSyftbox && !openSyftbox.dataset.listenerAttached) {
+			openSyftbox.addEventListener('click', () => {
+				window.navigateTo?.('syftbox')
 			})
-			stopBtn.dataset.listenerAttached = 'true'
+			openSyftbox.dataset.listenerAttached = 'true'
 		}
 	}
 
@@ -1062,49 +990,6 @@ export function createSettingsModule({
 			if (btn) {
 				btn.disabled = false
 				btn.textContent = 'Refresh Keys'
-			}
-		}
-	}
-
-	async function refreshSyftBoxPaths(configInfo) {
-		setSyftBoxPathDisplay('syftbox-config-path', 'syftbox-open-config-btn', configInfo?.config_path)
-		setSyftBoxPathDisplay('syftbox-data-dir', 'syftbox-open-data-dir-btn', configInfo?.data_dir)
-
-		const email = document.getElementById('setting-email')?.value.trim() || currentUserEmail
-		const datasiteDir =
-			configInfo?.data_dir && email ? `${configInfo.data_dir}/datasites/${email}` : ''
-		setSyftBoxPathDisplay('syftbox-datasites-dir', 'syftbox-open-datasites-btn', datasiteDir)
-
-		const logDir =
-			configInfo?.log_dir ||
-			(await invoke('get_desktop_log_dir', { __wsTimeoutMs: 5000 }).catch(() => null)) ||
-			(await invoke('get_env_var', { key: 'BIOVAULT_HOME' })
-				.then((home) => (home ? `${home}/logs` : null))
-				.catch(() => null)) ||
-			(await invoke('get_dev_mode_info')
-				.then((info) => (info?.biovault_home ? `${info.biovault_home}/logs` : null))
-				.catch(() => null)) ||
-			(await invoke('get_env_var', { key: 'HOME' })
-				.then((home) => (home ? `${home}/Desktop/BioVault/logs` : null))
-				.catch(() => null))
-		setSyftBoxPathDisplay('syftbox-log-dir', 'syftbox-open-logs-btn', logDir)
-		setSyftBoxPathDisplay(
-			'syftbox-log-file',
-			'syftbox-open-logfile-btn',
-			configInfo?.log_path || logDir,
-		)
-
-		const daemonStatus = document.getElementById('syftbox-daemon-status')
-		if (daemonStatus) {
-			if (configInfo?.data_dir_error) {
-				daemonStatus.textContent = `Error: ${configInfo.data_dir_error}`
-				daemonStatus.dataset.tone = 'error'
-			} else if (configInfo?.data_dir) {
-				daemonStatus.textContent = 'Checking...'
-				daemonStatus.dataset.tone = 'info'
-			} else {
-				daemonStatus.textContent = 'No data dir'
-				daemonStatus.dataset.tone = 'warn'
 			}
 		}
 	}
@@ -1528,86 +1413,51 @@ export function createSettingsModule({
 	async function checkSyftBoxStatus() {
 		const statusBadge = document.getElementById('syftbox-status-badge')
 		const authBtn = document.getElementById('syftbox-auth-btn')
-		const devBadge = document.getElementById('syftbox-dev-badge')
 		const serverLabel =
 			(currentSettings?.syftbox_server_url && currentSettings.syftbox_server_url.trim()) ||
 			defaultSyftboxServerUrl
 
+		if (!statusBadge) return
+
 		try {
-			// Check for dev mode first
 			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
 			const configInfo = await invoke('get_syftbox_config_info')
-			await refreshSyftBoxPaths(configInfo)
 			const syftboxState = await invoke('get_syftbox_state').catch(() => ({ running: false }))
 
-			// Remove all status classes
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
 
-			// In dev mode with syftbox enabled, show special status
 			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
-				const devServer = devModeInfo.server_url || serverLabel || 'localhost:8080'
-				statusBadge.innerHTML = `
-					<div class="badge-line">🧪 DEV MODE - Auth Disabled</div>
-					<div class="badge-subline">Server: ${devServer}</div>
-					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
-				`
+				statusBadge.innerHTML = '🧪 Dev Mode'
 				statusBadge.classList.add('connected')
-				statusBadge.style.lineHeight = '1.4'
-				authBtn.textContent = 'Dev Mode Active'
-				authBtn.disabled = true
-				// Update syftbox status to running in dev mode
+				if (authBtn) {
+					authBtn.textContent = 'Dev Mode Active'
+					authBtn.disabled = true
+				}
 				syftboxStatus = { running: true, mode: 'Dev' }
 			} else if (configInfo.is_authenticated) {
-				statusBadge.innerHTML = `
-					<div class="badge-line">✓ Authenticated</div>
-					<div class="badge-subline">Server: ${serverLabel}</div>
-					<div class="badge-subline">Config: ${configInfo.config_path}</div>
-					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
-					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
-					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
-					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
-					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
-				`
+				const daemonState = syftboxState.running ? '● Running' : '○ Stopped'
+				statusBadge.innerHTML = `✓ Connected (${daemonState})`
 				statusBadge.classList.add('connected')
-				statusBadge.style.lineHeight = '1.4'
-				authBtn.textContent = 'Reauthenticate'
-				authBtn.disabled = false
+				if (authBtn) {
+					authBtn.textContent = 'Reauthenticate'
+					authBtn.disabled = false
+				}
 			} else {
-				statusBadge.innerHTML = `
-					<div class="badge-line">✗ Not Authenticated</div>
-					<div class="badge-subline">Server: ${serverLabel}</div>
-					<div class="badge-subline">Config: ${configInfo.config_path}</div>
-					<div class="badge-subline">Data: ${configInfo.data_dir || 'Not resolved'}</div>
-					<div class="badge-subline">Daemon: ${syftboxState.running ? 'Running' : 'Stopped'}</div>
-					<div class="badge-subline">Mode: ${syftboxState.mode || 'Unknown'}</div>
-					<div class="badge-subline">Backend: ${syftboxState.backend || 'Unknown'}</div>
-					${syftboxState.log_path || configInfo.log_path ? `<div class="badge-subline">Log: ${syftboxState.log_path || configInfo.log_path}</div>` : ''}
-				`
+				statusBadge.innerHTML = '✗ Not Authenticated'
 				statusBadge.classList.add('disconnected')
-				statusBadge.style.lineHeight = '1.4'
-				authBtn.textContent = 'Authenticate'
-				authBtn.disabled = false
-			}
-
-			if (devBadge) {
-				devBadge.style.display = serverLabel !== defaultSyftboxServerUrl ? 'inline-flex' : 'none'
-				devBadge.textContent =
-					serverLabel !== defaultSyftboxServerUrl ? 'Auth skipped (dev host)' : ''
+				if (authBtn) {
+					authBtn.textContent = 'Authenticate'
+					authBtn.disabled = false
+				}
 			}
 		} catch (error) {
 			statusBadge.innerHTML = '? Status Unknown'
-			statusBadge.classList.remove('connected', 'disconnected', 'checking')
 			statusBadge.classList.add('checking')
-			authBtn.disabled = false
-			authBtn.textContent = 'Authenticate'
-			await refreshSyftBoxPaths({})
-			console.error('Error checking SyftBox status:', error)
-
-			const daemonStatus = document.getElementById('syftbox-daemon-status')
-			if (daemonStatus) {
-				daemonStatus.textContent = 'Status unknown'
-				daemonStatus.dataset.tone = 'warn'
+			if (authBtn) {
+				authBtn.disabled = false
+				authBtn.textContent = 'Authenticate'
 			}
+			console.error('Error checking SyftBox status:', error)
 		}
 	}
 

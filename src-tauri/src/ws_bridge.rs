@@ -299,6 +299,16 @@ fn get_commands_list() -> serde_json::Value {
         cmd_long("syftbox_upload_action", "syftbox", false),
         cmd_async("syftbox_request_otp", "syftbox", false),
         cmd_async("syftbox_submit_otp", "syftbox", false),
+        // Sync Tree
+        cmd_async("sync_tree_list_dir", "sync_tree", true),
+        cmd_async("sync_tree_get_details", "sync_tree", true),
+        cmd_async("sync_tree_get_ignore_patterns", "sync_tree", true),
+        cmd_async("sync_tree_add_ignore", "sync_tree", false),
+        cmd_async("sync_tree_remove_ignore", "sync_tree", false),
+        cmd_async("sync_tree_init_default_policy", "sync_tree", false),
+        cmd_async("sync_tree_get_shared_with_me", "sync_tree", true),
+        cmd_async("sync_tree_subscribe", "sync_tree", false),
+        cmd_async("sync_tree_unsubscribe", "sync_tree", false),
         // Keys
         cmd("key_get_status", "keys", true),
         cmd("key_list_contacts", "keys", true),
@@ -1916,6 +1926,94 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .or_else(|| args.get("server_url"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
             crate::commands::syftbox::syftbox_submit_otp(email, otp, server_url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        // Sync Tree commands
+        "sync_tree_list_dir" => {
+            let path: Option<String> = args
+                .get("path")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::commands::sync_tree::sync_tree_list_dir(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_details" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result = crate::commands::sync_tree::sync_tree_get_details(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_ignore_patterns" => {
+            let result = crate::commands::sync_tree::sync_tree_get_ignore_patterns()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_add_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_add_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_remove_ignore" => {
+            let pattern: String = serde_json::from_value(
+                args.get("pattern")
+                    .cloned()
+                    .ok_or_else(|| "Missing pattern".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse pattern: {}", e))?;
+            crate::commands::sync_tree::sync_tree_remove_ignore(pattern)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_init_default_policy" => {
+            let result = crate::commands::sync_tree::sync_tree_init_default_policy()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_get_shared_with_me" => {
+            let result = crate::commands::sync_tree::sync_tree_get_shared_with_me()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "sync_tree_subscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_subscribe(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "sync_tree_unsubscribe" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::sync_tree::sync_tree_unsubscribe(path)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
