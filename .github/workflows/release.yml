@@ -1247,6 +1247,7 @@ jobs:
         with:
           context: docker/windows
           file: docker/windows/Dockerfile.nextflow-runner
+          platforms: linux/amd64
           push: ${{ inputs.dry_run != true }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
