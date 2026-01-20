@@ -10,11 +10,15 @@
     "frontendDist": "../build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "title": "bv-desktop-new",
-        "width": 800,
-        "height": 600
+        "title": "BioVault",
+        "width": 1100,
+        "height": 700,
+        "minWidth": 900,
+        "minHeight": 600,
+        "devtools": true
       }
     ],
     "security": {
