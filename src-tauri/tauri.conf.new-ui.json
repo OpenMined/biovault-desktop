@@ -1,0 +1,98 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "BioVault",
+	"version": "0.1.39",
+	"identifier": "org.openmined.biovault-desktop",
+	"build": {
+		"devUrl": "http://localhost:1420",
+		"frontendDist": "../bv-desktop-new/build"
+	},
+	"app": {
+		"withGlobalTauri": true,
+		"windows": [
+			{
+				"title": "BioVault",
+				"width": 1100,
+				"height": 700,
+				"minWidth": 900,
+				"minHeight": 600,
+				"devtools": true,
+				"titleBarStyle": "Overlay",
+				"hiddenTitle": true
+			}
+		],
+		"security": {
+			"csp": null,
+			"capabilities": [
+				{
+					"identifier": "main-capability",
+					"windows": [
+						"main"
+					],
+					"permissions": [
+						"core:default",
+						"core:window:default",
+						"core:window:allow-start-dragging",
+						"dialog:allow-open",
+						"dialog:allow-confirm",
+						"dialog:allow-ask",
+						"dialog:allow-message",
+						"dialog:allow-save",
+						"dialog:default",
+						"opener:default",
+						"opener:allow-open-url",
+						"notification:default",
+						"updater:default",
+						"updater:allow-check",
+						"process:default",
+						"process:allow-restart"
+					]
+				}
+			]
+		}
+	},
+	"bundle": {
+		"active": true,
+		"createUpdaterArtifacts": true,
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"macOS": {
+			"entitlements": "./Entitlements.plist",
+			"minimumSystemVersion": "10.13"
+		},
+		"targets": [
+			"app",
+			"appimage",
+			"dmg",
+			"nsis"
+		],
+		"resources": [
+			"resources/templates",
+			"resources/bundled/README.txt",
+			"resources/bundled/java",
+			"resources/bundled/nextflow",
+			"resources/bundled/uv"
+		]
+	},
+	"plugins": {
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJENkYyRTIzRkIwM0MyMkIKUldRcndnUDdJeTV2TGZTNk9seHlxd2h2ZUJvYjVobjhxdEQ1MkMreEtpN05HdU85TGpHUEFRaEoK",
+			"endpoints": [
+				"https://github.com/OpenMined/biovault-desktop/releases/download/updater-manifests/release-{{target}}-{{arch}}.json",
+				"https://github.com/OpenMined/biovault-desktop/releases/latest/download/release.json"
+			]
+		},
+		"deep-link": {
+			"desktop": {
+				"schemes": [
+					"biovault"
+				]
+			}
+		}
+	}
+}

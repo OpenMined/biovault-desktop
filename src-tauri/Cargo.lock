@@ -573,7 +573,7 @@ checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 
 [[package]]
 name = "biovault"
-version = "0.1.140"
+version = "0.1.143"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6499,6 +6499,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "tokio",
  "tokio-tungstenite 0.21.0",
  "tower 0.5.2",

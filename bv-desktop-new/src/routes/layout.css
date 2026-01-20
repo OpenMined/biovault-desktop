@@ -119,6 +119,31 @@
     body {
         @apply bg-background text-foreground;
     }
+
+    /* Make titlebar draggable for window movement (including touch/pen on Windows) */
+    [data-tauri-drag-region] {
+        -webkit-app-region: drag;
+        app-region: drag;
+    }
+
+    /* Ensure interactive elements inside drag region are still clickable */
+    [data-tauri-drag-region] button,
+    [data-tauri-drag-region] a,
+    [data-tauri-drag-region] input {
+        -webkit-app-region: no-drag;
+        app-region: no-drag;
+    }
+
+    /* Offset the fixed sidebar to start below the header */
+    [data-slot="sidebar-container"] {
+        top: 3rem !important; /* h-12 = 3rem */
+        height: calc(100svh - 3rem) !important;
+    }
+
+    /* Also adjust the sidebar wrapper to not use full viewport height */
+    [data-slot="sidebar-wrapper"] {
+        min-height: auto !important;
+    }
 }
 
 :root {
