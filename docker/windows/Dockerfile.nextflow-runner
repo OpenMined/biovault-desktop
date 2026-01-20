@@ -3,6 +3,7 @@ FROM ${NEXTFLOW_BASE_IMAGE}
 
 USER root
 ARG DOCKER_CLI_VERSION=28.0.1
+ARG TARGETARCH
 
 RUN set -eux; \
   if ! command -v tar >/dev/null 2>&1; then \
@@ -13,7 +14,12 @@ RUN set -eux; \
     else echo "Missing 'tar' and no known package manager found" >&2; exit 1; \
     fi; \
   fi; \
-  curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz; \
+  case "${TARGETARCH:-amd64}" in \
+    amd64) DOCKER_ARCH="x86_64" ;; \
+    arm64) DOCKER_ARCH="aarch64" ;; \
+    *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz; \
   tar -xzf /tmp/docker.tgz -C /tmp; \
   mv /tmp/docker/docker /usr/local/bin/docker; \
   chmod +x /usr/local/bin/docker; \
