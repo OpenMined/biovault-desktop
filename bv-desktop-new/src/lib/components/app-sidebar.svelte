@@ -3,51 +3,34 @@
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
 	import { page } from '$app/stores'
-	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
+	import ArrowLeftToLineIcon from '@lucide/svelte/icons/arrow-left-to-line'
+	import ArrowRightFromLineIcon from '@lucide/svelte/icons/arrow-right-from-line'
+	import ChartBarIcon from '@lucide/svelte/icons/chart-bar'
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up'
 	import CompassIcon from '@lucide/svelte/icons/compass'
+	import DatabaseIcon from '@lucide/svelte/icons/database'
 	import InboxIcon from '@lucide/svelte/icons/inbox'
 	import LogOutIcon from '@lucide/svelte/icons/log-out'
 	import SettingsIcon from '@lucide/svelte/icons/settings'
 	import UserIcon from '@lucide/svelte/icons/user'
+	import UsersIcon from '@lucide/svelte/icons/users'
 	import WorkflowIcon from '@lucide/svelte/icons/workflow'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
-	import * as Collapsible from '$lib/components/ui/collapsible/index.js'
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
+	import { useSidebar } from '$lib/components/ui/sidebar/index.js'
+	import { ChevronsLeft, ChevronsRight } from '@lucide/svelte'
 
-	// Navigation items with subroutes
+	const sidebar = useSidebar()
+
+	// Navigation items
 	const navItems = [
-		{
-			title: 'Flows',
-			url: '/flows',
-			icon: WorkflowIcon,
-			subroutes: [
-				{ title: 'All Flows', url: '/flows' },
-				{ title: 'My Flows', url: '/flows/my' },
-				{ title: 'Shared', url: '/flows/shared' },
-			],
-		},
-		{
-			title: 'Explore',
-			url: '/explore',
-			icon: CompassIcon,
-			subroutes: [
-				{ title: 'Browse', url: '/explore' },
-				{ title: 'Featured', url: '/explore/featured' },
-				{ title: 'Categories', url: '/explore/categories' },
-			],
-		},
-		{
-			title: 'Inbox',
-			url: '/inbox',
-			icon: InboxIcon,
-			subroutes: [
-				{ title: 'All Messages', url: '/inbox' },
-				{ title: 'Unread', url: '/inbox/unread' },
-				{ title: 'Archived', url: '/inbox/archived' },
-			],
-		},
+		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
+		{ title: 'Explore', url: '/explore', icon: CompassIcon },
+		{ title: 'Inbox', url: '/inbox', icon: InboxIcon },
+		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon },
+		{ title: 'Results', url: '/results', icon: ChartBarIcon },
+		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 	]
 
 	// User identity from BioVault settings
@@ -70,48 +53,24 @@
 			userLoading = false
 		}
 	})
-
-	// Check if any subroute is active
-	function isNavItemActive(item: (typeof navItems)[0], pathname: string): boolean {
-		return item.subroutes.some((sub) => pathname === sub.url || pathname.startsWith(sub.url + '/'))
-	}
 </script>
 
-<Sidebar.Root>
+<Sidebar.Root collapsible="icon">
 	<Sidebar.Content class="pt-2">
 		<Sidebar.Group>
-			<Sidebar.GroupLabel>Navigation</Sidebar.GroupLabel>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
 					{#each navItems as item (item.title)}
-						<Collapsible.Root open={isNavItemActive(item, $page.url.pathname)} class="group/collapsible">
-							<Sidebar.MenuItem>
-								<Collapsible.Trigger>
-									{#snippet child({ props })}
-										<Sidebar.MenuButton {...props}>
-											<item.icon />
-											<span>{item.title}</span>
-											<ChevronDownIcon class="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-180" />
-										</Sidebar.MenuButton>
-									{/snippet}
-								</Collapsible.Trigger>
-								<Collapsible.Content>
-									<Sidebar.MenuSub>
-										{#each item.subroutes as subroute (subroute.url)}
-											<Sidebar.MenuSubItem>
-												<Sidebar.MenuSubButton isActive={$page.url.pathname === subroute.url}>
-													{#snippet child({ props })}
-														<a href={subroute.url} {...props}>
-															{subroute.title}
-														</a>
-													{/snippet}
-												</Sidebar.MenuSubButton>
-											</Sidebar.MenuSubItem>
-										{/each}
-									</Sidebar.MenuSub>
-								</Collapsible.Content>
-							</Sidebar.MenuItem>
-						</Collapsible.Root>
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={$page.url.pathname.startsWith(item.url)}>
+								{#snippet child({ props })}
+									<a href={item.url} {...props}>
+										<item.icon />
+										<span>{item.title}</span>
+									</a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
 					{/each}
 				</Sidebar.Menu>
 			</Sidebar.GroupContent>
@@ -125,6 +84,7 @@
 						{#snippet child({ props })}
 							<Sidebar.MenuButton
 								{...props}
+								size="lg"
 								class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 							>
 								<Avatar.Root class="h-8 w-8 rounded-lg">
@@ -132,14 +92,14 @@
 										{userLoading ? '...' : userInitials}
 									</Avatar.Fallback>
 								</Avatar.Root>
-								<div class="grid flex-1 text-left text-sm leading-tight">
+								<div class="group-data-[collapsible=icon]:hidden grid flex-1 text-left text-sm leading-tight">
 									<span class="truncate font-semibold">{userLoading ? 'Loading...' : userName}</span
 									>
 									<span class="truncate text-xs"
 										>{userLoading ? '' : userEmail || 'Not configured'}</span
 									>
 								</div>
-								<ChevronUpIcon class="ml-auto size-4" />
+								<ChevronUpIcon class="group-data-[collapsible=icon]:hidden ml-auto size-4" />
 							</Sidebar.MenuButton>
 						{/snippet}
 					</DropdownMenu.Trigger>
@@ -181,4 +141,15 @@
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Footer>
+	<Sidebar.Rail class="group/rail flex items-center justify-center cursor-pointer">
+		<div
+			class="bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-border flex h-6 w-6 items-center justify-center rounded-full border opacity-0 shadow-sm transition-all group-hover:opacity-100 z-1 cursor-pointer"
+		>
+			{#if sidebar.state === 'collapsed'}
+				<ChevronsRight class="size-4" />
+			{:else}
+				<ChevronsLeft class="size-4" />
+			{/if}
+		</div>
+	</Sidebar.Rail>
 </Sidebar.Root>

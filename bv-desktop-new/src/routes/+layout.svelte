@@ -18,74 +18,77 @@
 		<!-- Full-width header/titlebar at top -->
 		<header
 			data-tauri-drag-region
-			class="bg-background fixed top-0 left-0 right-0 z-20 flex h-12 shrink-0 items-center justify-end gap-1 border-b px-4"
+			class="bg-background fixed top-0 left-0 right-0 z-20 flex h-12 shrink-0 items-center justify-between border-b px-4"
 		>
+			<div class="ps-16"></div>
 			<Tooltip.Provider delayDuration={0}>
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<SquareTerminalIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>Logs</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+				<div class="flex items-center gap-1">
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<SquareTerminalIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Logs</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
 
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<DatabaseIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>Database</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<DatabaseIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Database</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
 
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<GraduationCapIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>Learn</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<GraduationCapIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Learn</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
 
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<SparklesIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>AI Assistant</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<SparklesIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>AI Assistant</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
 
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<BellIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>Notifications</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<BellIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Notifications</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
 
-				<Tooltip.Root>
-					<Tooltip.Trigger
-						class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-					>
-						<CircleHelpIcon class="size-5" />
-					</Tooltip.Trigger>
-					<Tooltip.Content>
-						<p>Help & Support</p>
-					</Tooltip.Content>
-				</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+						>
+							<CircleHelpIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Help & Support</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
+				</div>
 			</Tooltip.Provider>
 		</header>
 
