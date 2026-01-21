@@ -3,8 +3,6 @@
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
 	import { page } from '$app/stores'
-	import ArrowLeftToLineIcon from '@lucide/svelte/icons/arrow-left-to-line'
-	import ArrowRightFromLineIcon from '@lucide/svelte/icons/arrow-right-from-line'
 	import ChartBarIcon from '@lucide/svelte/icons/chart-bar'
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up'
 	import CompassIcon from '@lucide/svelte/icons/compass'
@@ -92,7 +90,9 @@
 										{userLoading ? '...' : userInitials}
 									</Avatar.Fallback>
 								</Avatar.Root>
-								<div class="group-data-[collapsible=icon]:hidden grid flex-1 text-left text-sm leading-tight">
+								<div
+									class="group-data-[collapsible=icon]:hidden grid flex-1 text-left text-sm leading-tight"
+								>
 									<span class="truncate font-semibold">{userLoading ? 'Loading...' : userName}</span
 									>
 									<span class="truncate text-xs"

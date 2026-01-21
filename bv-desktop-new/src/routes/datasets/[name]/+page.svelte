@@ -8,9 +8,11 @@
 		type PaginationState,
 		type RowSelectionState,
 		type ColumnFiltersState,
+		type SortingState,
 		getCoreRowModel,
 		getFilteredRowModel,
 		getPaginationRowModel,
+		getSortedRowModel,
 	} from '@tanstack/table-core'
 	import {
 		createSvelteTable,
@@ -25,6 +27,7 @@
 	import * as Card from '$lib/components/ui/card/index.js'
 	import * as Table from '$lib/components/ui/table/index.js'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
+	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import PackageIcon from '@lucide/svelte/icons/package'
 	import SaveIcon from '@lucide/svelte/icons/save'
@@ -40,7 +43,8 @@
 	import AssetFileCell from './asset-file-cell.svelte'
 
 	interface Asset {
-		id: string
+		rowId: string
+		fileId: number | null
 		name: string
 		path: string
 		exists: boolean
@@ -77,6 +81,11 @@
 		assets: DatasetAsset[]
 	}
 
+	interface ExtensionCount {
+		extension: string
+		count: number
+	}
+
 	let datasetName = $derived($page.params.name)
 
 	let loading = $state(true)
@@ -97,6 +106,22 @@
 	let pagination = $state<PaginationState>({ pageIndex: 0, pageSize: 20 })
 	let rowSelection = $state<RowSelectionState>({})
 	let columnFilters = $state<ColumnFiltersState>([])
+	let sorting = $state<SortingState>([{ id: 'fileId', desc: false }])
+
+	// File type selection (after folder pick)
+	let fileTypeDialogOpen = $state(false)
+	let pendingFolderPath = $state<string | null>(null)
+	let fileTypeOptions = $state<ExtensionCount[]>([])
+	let selectedExtensions = $state<Set<string>>(new Set())
+	let allExtensionsSelected = $derived(
+		fileTypeOptions.length > 0 && selectedExtensions.size === fileTypeOptions.length,
+	)
+	let someExtensionsSelected = $derived(
+		selectedExtensions.size > 0 && selectedExtensions.size < fileTypeOptions.length,
+	)
+	let sortedFileTypes = $derived(
+		[...fileTypeOptions].sort((a, b) => a.extension.localeCompare(b.extension)),
+	)
 
 	// Column definitions
 	const columns: ColumnDef<Asset>[] = [
@@ -119,9 +144,9 @@
 			enableHiding: false,
 		},
 		{
-			accessorKey: 'name',
-			header: 'Name',
-			cell: ({ row }) => row.original.name || '(unnamed)',
+			accessorKey: 'fileId',
+			header: 'ID',
+			cell: ({ row }) => row.original.fileId ?? '—',
 		},
 		{
 			accessorKey: 'path',
@@ -139,7 +164,7 @@
 			id: 'actions',
 			header: '',
 			cell: ({ row }) => {
-				const { id: assetId, path: assetPath, exists } = row.original
+				const { rowId: assetId, path: assetPath, exists } = row.original
 				return renderComponent(AssetDeleteButton, {
 					assetId,
 					assetPath,
@@ -159,6 +184,9 @@
 			get pagination() {
 				return pagination
 			},
+			get sorting() {
+				return sorting
+			},
 			get rowSelection() {
 				return rowSelection
 			},
@@ -169,6 +197,7 @@
 		getCoreRowModel: getCoreRowModel(),
 		getPaginationRowModel: getPaginationRowModel(),
 		getFilteredRowModel: getFilteredRowModel(),
+		getSortedRowModel: getSortedRowModel(),
 		onPaginationChange: (updater) => {
 			if (typeof updater === 'function') {
 				pagination = updater(pagination)
@@ -183,6 +212,13 @@
 				rowSelection = updater
 			}
 		},
+		onSortingChange: (updater) => {
+			if (typeof updater === 'function') {
+				sorting = updater(sorting)
+			} else {
+				sorting = updater
+			}
+		},
 		onColumnFiltersChange: (updater) => {
 			if (typeof updater === 'function') {
 				columnFilters = updater(columnFilters)
@@ -190,12 +226,33 @@
 				columnFilters = updater
 			}
 		},
-		getRowId: (row) => row.id,
+		getRowId: (row) => row.rowId,
 	})
 
 	onMount(async () => {
 		await loadDataset()
 	})
+
+	async function buildAssets(datasetAssets: DatasetAsset[]) {
+		const loadedAssets = datasetAssets.map((a) => ({
+			rowId: crypto.randomUUID(),
+			fileId: a.private_file_id ?? null,
+			name: a.asset_key,
+			path: a.resolved_private_path || a.private_path || '',
+			exists: true, // Default to true, will check below
+		}))
+
+		// Check which files exist
+		if (loadedAssets.length > 0) {
+			const paths = loadedAssets.map((a) => a.path)
+			const existsResults = await invoke<boolean[]>('check_files_exist', { paths })
+			loadedAssets.forEach((asset, i) => {
+				asset.exists = existsResults[i] ?? true
+			})
+		}
+
+		return loadedAssets
+	}
 
 	async function loadDataset() {
 		loading = true
@@ -215,24 +272,7 @@
 			description = dataset.description || ''
 			version = dataset.version || '1.0.0'
 
-			// Build initial assets list
-			const loadedAssets = datasetAssets.map((a) => ({
-				id: crypto.randomUUID(),
-				name: a.asset_key,
-				path: a.resolved_private_path || a.private_path || '',
-				exists: true, // Default to true, will check below
-			}))
-
-			// Check which files exist
-			if (loadedAssets.length > 0) {
-				const paths = loadedAssets.map((a) => a.path)
-				const existsResults = await invoke<boolean[]>('check_files_exist', { paths })
-				loadedAssets.forEach((asset, i) => {
-					asset.exists = existsResults[i] ?? true
-				})
-			}
-
-			assets = loadedAssets
+			assets = await buildAssets(datasetAssets)
 
 			originalDescription = description
 			originalVersion = version
@@ -240,6 +280,23 @@
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
 			loading = false
+		}
+	}
+
+	async function reloadAssets() {
+		try {
+			const datasets = await invoke<DatasetWithAssets[]>('list_datasets_with_assets')
+			const datasetWithAssets = datasets.find((d) => d.dataset.name === datasetName)
+
+			if (!datasetWithAssets) {
+				error = 'Dataset not found'
+				return
+			}
+
+			assets = await buildAssets(datasetWithAssets.assets)
+			rowSelection = {}
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
 		}
 	}
 
@@ -316,6 +373,7 @@
 		savingAssets = true
 		try {
 			await saveDataset()
+			await reloadAssets()
 			toast.success(`Added ${newAssets.length} file${newAssets.length === 1 ? '' : 's'}`)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
@@ -356,11 +414,12 @@
 			const selected = await openDialog({
 				multiple: true,
 				directory: false,
-				title: 'Select Files',
+				title: 'Add Files',
 			})
 			if (selected && Array.isArray(selected)) {
 				const newAssets = selected.map((filePath) => ({
-					id: crypto.randomUUID(),
+					rowId: crypto.randomUUID(),
+					fileId: null,
 					name: getFileName(filePath).split('.')[0] || '',
 					path: filePath,
 					exists: true,
@@ -379,42 +438,88 @@
 			const selectedDir = await openDialog({
 				multiple: false,
 				directory: true,
-				title: 'Select Folder',
+				title: 'Add Folder',
 			})
 			if (selectedDir && typeof selectedDir === 'string') {
 				// Get all extensions in the folder
-				const extensionCounts = await invoke<{ extension: string; count: number }[]>(
-					'get_extensions',
-					{ path: selectedDir }
-				)
-				const extensions = extensionCounts.map((e) => e.extension)
-
-				if (extensions.length === 0) {
-					toast.error('No files found in folder')
-					return
-				}
-
-				// Get all files with those extensions
-				const files = await invoke<string[]>('search_txt_files', {
+				const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
 					path: selectedDir,
-					extensions,
 				})
+				const normalized = extensionCounts.filter((ext) => ext.extension?.trim())
 
-				if (files.length === 0) {
-					toast.error('No files found in folder')
+				if (normalized.length === 0) {
+					toast.error('No file types found in folder')
 					return
 				}
 
-				const newAssets = files.map((filePath) => ({
-					id: crypto.randomUUID(),
-					name: getFileName(filePath).split('.')[0] || '',
-					path: filePath,
-					exists: true,
-				}))
-				await addAssetsWithDuplicateCheck(newAssets)
+				pendingFolderPath = selectedDir
+				fileTypeOptions = normalized
+				selectedExtensions = new Set(normalized.map((ext) => ext.extension))
+				fileTypeDialogOpen = true
 			}
 		} catch (e) {
 			console.error('Failed to open folder dialog:', e)
+			error = e instanceof Error ? e.message : String(e)
+		}
+	}
+
+	function toggleExtension(extension: string, checked: boolean) {
+		const next = new Set(selectedExtensions)
+		if (checked) {
+			next.add(extension)
+		} else {
+			next.delete(extension)
+		}
+		selectedExtensions = next
+	}
+
+	function toggleAllExtensions(checked: boolean) {
+		if (checked) {
+			selectedExtensions = new Set(fileTypeOptions.map((ext) => ext.extension))
+		} else {
+			selectedExtensions = new Set()
+		}
+	}
+
+	function closeFileTypeDialog() {
+		fileTypeDialogOpen = false
+		pendingFolderPath = null
+		fileTypeOptions = []
+		selectedExtensions = new Set()
+	}
+
+	async function confirmFileTypes() {
+		if (!pendingFolderPath) return
+
+		const extensions = Array.from(selectedExtensions)
+		if (extensions.length === 0) {
+			toast.error('Select at least one file type')
+			return
+		}
+
+		try {
+			const files = await invoke<string[]>('search_txt_files', {
+				path: pendingFolderPath,
+				extensions,
+			})
+
+			if (files.length === 0) {
+				toast.error('No files found for the selected types')
+				return
+			}
+
+			const newAssets = files.map((filePath) => ({
+				rowId: crypto.randomUUID(),
+				fileId: null,
+				name: getFileName(filePath).split('.')[0] || '',
+				path: filePath,
+				exists: true,
+			}))
+
+			closeFileTypeDialog()
+			await addAssetsWithDuplicateCheck(newAssets)
+		} catch (e) {
+			console.error('Failed to load files for selected types:', e)
 			error = e instanceof Error ? e.message : String(e)
 		}
 	}
@@ -432,7 +537,7 @@
 	async function executeDeleteAsset() {
 		if (!pendingDeleteAssetId) return
 
-		assets = assets.filter((a) => a.id !== pendingDeleteAssetId)
+		assets = assets.filter((a) => a.rowId !== pendingDeleteAssetId)
 		const newSelection = { ...rowSelection }
 		delete newSelection[pendingDeleteAssetId]
 		rowSelection = newSelection
@@ -444,6 +549,7 @@
 		savingAssets = true
 		try {
 			await saveDataset()
+			await reloadAssets()
 			toast.success('Asset removed')
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
@@ -459,7 +565,7 @@
 	async function executeDeleteSelected() {
 		const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id])
 		const count = selectedIds.length
-		assets = assets.filter((a) => !selectedIds.includes(a.id))
+		assets = assets.filter((a) => !selectedIds.includes(a.rowId))
 		rowSelection = {}
 
 		deleteBulkDialogOpen = false
@@ -468,6 +574,7 @@
 		savingAssets = true
 		try {
 			await saveDataset()
+			await reloadAssets()
 			toast.success(`Removed ${count} asset${count === 1 ? '' : 's'}`)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
@@ -522,7 +629,7 @@
 
 	function handleSearch(value: string) {
 		searchValue = value
-		table.getColumn('name')?.setFilterValue(value)
+		table.getColumn('path')?.setFilterValue(value)
 	}
 
 	// Unsaved changes guard
@@ -604,29 +711,29 @@
 			</div>
 		{:else}
 			<div class="max-w-5xl mx-auto p-6 space-y-6">
-			{#if error}
-				<div class="bg-destructive/10 text-destructive text-sm rounded-lg px-4 py-3">
-					{error}
-				</div>
-			{/if}
-
-			{#if missingCount > 0}
-				<div
-					class="flex items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3"
-				>
-					<AlertTriangleIcon class="size-5 text-destructive shrink-0 mt-0.5" />
-					<div class="text-sm">
-						<p class="font-medium text-destructive">Missing files detected</p>
-						<p class="text-muted-foreground mt-0.5">
-							{missingCount}
-							{missingCount === 1 ? 'asset is' : 'assets are'} pointing to files that no longer exist.
-							Consider removing them or updating the file paths.
-						</p>
+				{#if error}
+					<div class="bg-destructive/10 text-destructive text-sm rounded-lg px-4 py-3">
+						{error}
 					</div>
-				</div>
-			{/if}
+				{/if}
 
-			<!-- Basic Information -->
+				{#if missingCount > 0}
+					<div
+						class="flex items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3"
+					>
+						<AlertTriangleIcon class="size-5 text-destructive shrink-0 mt-0.5" />
+						<div class="text-sm">
+							<p class="font-medium text-destructive">Missing files detected</p>
+							<p class="text-muted-foreground mt-0.5">
+								{missingCount}
+								{missingCount === 1 ? 'asset is' : 'assets are'} pointing to files that no longer exist.
+								Consider removing them or updating the file paths.
+							</p>
+						</div>
+					</div>
+				{/if}
+
+				<!-- Basic Information -->
 				<Card.Root>
 					<Card.Header>
 						<div class="flex items-start justify-between">
@@ -664,13 +771,13 @@
 					</Card.Content>
 				</Card.Root>
 
-				<!-- Data Assets -->
+				<!-- Assets -->
 				<Card.Root>
 					<Card.Header>
 						<div class="flex items-center justify-between">
 							<div>
 								<Card.Title class="text-base flex items-center gap-2">
-									Data Assets
+									Assets
 									{#if assets.length > 0}
 										<Badge variant="outline">{assets.length}</Badge>
 									{/if}
@@ -701,11 +808,11 @@
 									<div class="flex gap-2 mt-2">
 										<Button variant="outline" onclick={addFiles}>
 											<FileIcon class="size-4" />
-											Select Files
+											Add Files
 										</Button>
 										<Button onclick={addFolder}>
 											<FolderIcon class="size-4" />
-											Select Folder
+											Add Folder
 										</Button>
 									</div>
 								</div>
@@ -735,11 +842,11 @@
 								<div class="flex gap-2">
 									<Button variant="outline" onclick={addFiles}>
 										<FileIcon class="size-4" />
-										Select Files
+										Add Files
 									</Button>
 									<Button onclick={addFolder}>
 										<FolderIcon class="size-4" />
-										Select Folder
+										Add Folder
 									</Button>
 								</div>
 							</div>
@@ -908,8 +1015,8 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Remove {selectedCount} Assets</AlertDialog.Title>
 			<AlertDialog.Description>
-				Are you sure you want to remove {selectedCount} asset{selectedCount === 1 ? '' : 's'} from
-				the dataset?
+				Are you sure you want to remove {selectedCount} asset{selectedCount === 1 ? '' : 's'} from the
+				dataset?
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
@@ -925,8 +1032,15 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Duplicate Assets Found</AlertDialog.Title>
 			<AlertDialog.Description>
-				{duplicateNames.length} asset{duplicateNames.length === 1 ? '' : 's'} already exist{duplicateNames.length === 1 ? 's' : ''} in
-				this dataset: <strong>{duplicateNames.slice(0, 3).join(', ')}{duplicateNames.length > 3 ? `, +${duplicateNames.length - 3} more` : ''}</strong>
+				{duplicateNames.length} asset{duplicateNames.length === 1 ? '' : 's'} already exist{duplicateNames.length ===
+				1
+					? 's'
+					: ''} in this dataset:
+				<strong
+					>{duplicateNames.slice(0, 3).join(', ')}{duplicateNames.length > 3
+						? `, +${duplicateNames.length - 3} more`
+						: ''}</strong
+				>
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
@@ -936,3 +1050,53 @@
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>
+
+<!-- File Types Dialog -->
+<Dialog.Root
+	bind:open={fileTypeDialogOpen}
+	onOpenChange={(open) => {
+		if (!open) closeFileTypeDialog()
+	}}
+>
+	<Dialog.Content class="max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Select file types to import</Dialog.Title>
+			<Dialog.Description>
+				Choose which file extensions from the folder should be included.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-3">
+			<label class="flex items-center justify-between rounded-md border px-3 py-2">
+				<div class="flex items-center gap-2">
+					<Checkbox
+						checked={allExtensionsSelected}
+						indeterminate={someExtensionsSelected}
+						onCheckedChange={(value) => toggleAllExtensions(!!value)}
+					/>
+					<span class="text-sm font-medium">All file types</span>
+				</div>
+				<Badge variant="outline">{fileTypeOptions.length}</Badge>
+			</label>
+			<div class="max-h-64 overflow-auto rounded-md border">
+				{#each sortedFileTypes as option (option.extension)}
+					<label class="flex items-center justify-between px-3 py-2">
+						<div class="flex items-center gap-2">
+							<Checkbox
+								checked={selectedExtensions.has(option.extension)}
+								onCheckedChange={(value) => toggleExtension(option.extension, !!value)}
+							/>
+							<span class="text-sm">{option.extension}</span>
+						</div>
+						<Badge variant="outline">{option.count}</Badge>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<Dialog.Footer class="mt-4">
+			<Button variant="outline" onclick={closeFileTypeDialog}>Cancel</Button>
+			<Button onclick={confirmFileTypes} disabled={selectedExtensions.size === 0}>
+				Import selected
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

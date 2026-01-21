@@ -136,7 +136,8 @@
 
     /* Offset the fixed sidebar to start below the header */
     [data-slot="sidebar-container"] {
-        top: 3rem !important; /* h-12 = 3rem */
+        top: 3rem !important;
+        /* h-12 = 3rem */
         height: calc(100svh - 3rem) !important;
     }
 
