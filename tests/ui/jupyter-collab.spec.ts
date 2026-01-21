@@ -1098,7 +1098,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		if (await doNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
 			console.log(`Opening ${NOTEBOOK_DO}.ipynb on Client1...`)
 			await doNotebook.dblclick()
-			await jupyterPage1.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+			await jupyterPage1.waitForSelector('.jp-NotebookPanel:not(.lm-mod-hidden)', {
+				timeout: 30_000,
+			})
 		} else {
 			console.log(`WARNING: ${NOTEBOOK_DO}.ipynb not found on Client1`)
 		}
@@ -1117,7 +1119,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			if (await dsNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
 				console.log(`Opening ${NOTEBOOK_DS}.ipynb on Client2...`)
 				await dsNotebook.dblclick()
-				await jupyterPage2.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+				await jupyterPage2.waitForSelector('.jp-NotebookPanel:not(.lm-mod-hidden)', {
+					timeout: 30_000,
+				})
 			} else {
 				console.log(`WARNING: ${NOTEBOOK_DS}.ipynb not found on Client2`)
 			}
@@ -1131,9 +1135,14 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		console.log('\n=== Step 7: Run all cells on both notebooks ===')
 
 		// Wait for notebooks to be ready
-		await jupyterPage1.waitForSelector('.jp-CodeCell', { timeout: 15_000 })
+		const waitForActiveNotebook = async (page) => {
+			const panel = page.locator('.jp-NotebookPanel:not(.lm-mod-hidden)').first()
+			await expect(panel).toBeVisible({ timeout: 30_000 })
+			await expect(panel.locator('.jp-CodeCell').first()).toBeVisible({ timeout: 30_000 })
+		}
+		await waitForActiveNotebook(jupyterPage1)
 		if (jupyterPage2) {
-			await jupyterPage2.waitForSelector('.jp-CodeCell', { timeout: 15_000 })
+			await waitForActiveNotebook(jupyterPage2)
 		}
 		await jupyterPage1.waitForTimeout(2000)
 

@@ -1930,10 +1930,18 @@ export function initOnboarding({
 			const emailInput = document.getElementById('onboarding-email')
 			const prefillNotice = document.getElementById('email-prefill-notice')
 			try {
-				const check = await invoke('profiles_check_home_for_existing_email', {
-					homePath: desiredHome,
-				})
-				if (check?.has_existing_config && check?.existing_email) {
+				const checkTimeoutMs = 5000
+				const check = await Promise.race([
+					invoke('profiles_check_home_for_existing_email', {
+						homePath: desiredHome,
+					}),
+					new Promise((resolve) => setTimeout(() => resolve(null), checkTimeoutMs)),
+				])
+				if (!check) {
+					if (prefillNotice) {
+						prefillNotice.style.display = 'none'
+					}
+				} else if (check?.has_existing_config && check?.existing_email) {
 					// Pre-fill email from existing config
 					if (emailInput) {
 						emailInput.value = check.existing_email
@@ -1979,15 +1987,25 @@ export function initOnboarding({
 
 		const desiredHome = (homeInput?.value || '').trim()
 
-		// If user picked a different BioVault home, create/switch profiles before continuing.
-		if (desiredHome) {
-			try {
-				const currentHome = await resolveCurrentHomeBestEffort()
-				if (!currentHome || desiredHome !== currentHome) {
-					try {
-						window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
-						window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
-					} catch (_err) {
+			const normalizeHomePath = (value) => {
+				const raw = String(value || '').trim()
+				if (!raw) return ''
+				const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
+				const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)
+				return isWindowsPath ? normalized.toLowerCase() : normalized
+			}
+
+			// If user picked a different BioVault home, create/switch profiles before continuing.
+			if (desiredHome) {
+				try {
+					const currentHome = await resolveCurrentHomeBestEffort()
+					const normalizedDesired = normalizeHomePath(desiredHome)
+					const normalizedCurrent = normalizeHomePath(currentHome)
+					if (normalizedCurrent && normalizedDesired && normalizedDesired !== normalizedCurrent) {
+						try {
+							window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
+							window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
+						} catch (_err) {
 						// ignore
 					}
 					try {

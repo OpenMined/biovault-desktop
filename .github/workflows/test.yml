@@ -295,7 +295,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src-tauri/resources/bundled
-          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh', 'scripts/windows/bundle-deps.ps1', 'scripts/bundled-deps.json') }}
 
       - name: Fetch bundled dependencies
         if: runner.os != 'Windows' && steps.cache-bundled.outputs.cache-hit != 'true'
@@ -305,10 +305,7 @@ jobs:
       - name: Fetch bundled dependencies (Windows)
         if: runner.os == 'Windows' && steps.cache-bundled.outputs.cache-hit != 'true'
         shell: pwsh
-        env:
-          BUNDLED_OS: windows
-          BUNDLED_ARCH: x86_64
-        run: .\win.ps1 ./scripts/fetch-bundled-deps.sh
+        run: .\scripts\windows\bundle-deps.ps1
 
       - name: Ensure bundled dependency permissions
         if: runner.os != 'Windows'
@@ -693,14 +690,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src-tauri/resources/bundled
-          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh', 'scripts/windows/bundle-deps.ps1', 'scripts/bundled-deps.json') }}
 
       - name: Fetch bundled dependencies
         if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
-        env:
-          BUNDLED_OS: windows
-          BUNDLED_ARCH: x86_64
-        run: .\win.ps1 ./scripts/fetch-bundled-deps.sh
+        run: .\scripts\windows\bundle-deps.ps1
 
       - name: Ensure bundled dependency permissions
         run: Write-Host "Skipping chmod on Windows."
