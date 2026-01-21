@@ -110,20 +110,34 @@ jobs:
           # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
           # don't support nested virtualization (Docker requires VMs on macOS).
           # pipelines-collab is fully tested on Linux which covers the core functionality.
-          # jupyter-collab on Windows - rust
-          - scenario: jupyter-collab
+          # pipelines-solo on Windows - rust (Podman Hyper-V)
+          - scenario: pipelines-solo
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # jupyter-collab on Windows - go
-          - scenario: jupyter-collab
+          # pipelines-collab on Windows - rust (Podman Hyper-V)
+          - scenario: pipelines-collab
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
-            client_mode: go
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
+          # jupyter-collab on Windows - rust
+          # - scenario: jupyter-collab
+          #   platform: windows-x86_64
+          #   runner: namespace-profile-windows-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
+          # jupyter-collab on Windows - go
+          # - scenario: jupyter-collab
+          #   platform: windows-x86_64
+          #   runner: namespace-profile-windows-medium
+          #   client_mode: go
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
 
     defaults:
       run:
@@ -361,6 +375,28 @@ jobs:
         run: maturin build --release
         working-directory: syftbox-sdk/python
 
+      - name: Setup Podman (Windows pipelines)
+        if: runner.os == 'Windows' && startsWith(matrix.scenario, 'pipelines-')
+        shell: pwsh
+        run: |
+          choco install podman-cli -y
+          $env:CONTAINERS_MACHINE_PROVIDER = "hyperv"
+          $machine = "podman-hyperv"
+          try {
+            podman machine init $machine
+          } catch {
+            Write-Host "podman machine init failed (maybe exists): $($_.Exception.Message)"
+          }
+          podman machine start $machine
+          try {
+            podman system connection default $machine
+          } catch {
+            Write-Host "Warning: failed to set default connection $machine"
+            podman system connection list
+          }
+          podman info
+          podman ps
+
       - name: Install biosynth CLI (Linux)
         if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
         run: |
@@ -418,6 +454,11 @@ jobs:
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
+          CONTAINERS_MACHINE_PROVIDER: "hyperv"
+          BIOVAULT_CONTAINER_RUNTIME: "podman"
+          BIOVAULT_HYPERV_MOUNT: "1"
+          BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
+          BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
         run: .\win.ps1 ./test-scenario.sh --pipelines-solo
 
       - name: Run pipelines collab scenario
@@ -432,6 +473,11 @@ jobs:
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
+          CONTAINERS_MACHINE_PROVIDER: "hyperv"
+          BIOVAULT_CONTAINER_RUNTIME: "podman"
+          BIOVAULT_HYPERV_MOUNT: "1"
+          BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
+          BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
         run: .\win.ps1 ./test-scenario.sh --pipelines-collab
 
       - name: Upload test artifacts on failure
