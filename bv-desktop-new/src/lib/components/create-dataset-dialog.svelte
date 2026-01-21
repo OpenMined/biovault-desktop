@@ -57,9 +57,9 @@
 					public_url: null,
 					private_url: null,
 					http_relay_servers: [],
-					assets: {}
+					assets: {},
 				},
-				originalName: null
+				originalName: null,
 			})
 
 			const datasetName = name.trim()
@@ -104,9 +104,7 @@
 
 		<div class="py-4">
 			<div class="space-y-2">
-				<label for="dataset-name" class="text-sm font-medium">
-					Dataset Name
-				</label>
+				<label for="dataset-name" class="text-sm font-medium"> Dataset Name </label>
 				<Input
 					id="dataset-name"
 					bind:value={name}

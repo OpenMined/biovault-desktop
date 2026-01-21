@@ -2,6 +2,7 @@
 	import './layout.css'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
+	import { Toaster } from '$lib/components/ui/sonner/index.js'
 	import AppSidebar from '$lib/components/app-sidebar.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -106,3 +107,5 @@
 		</div>
 	</div>
 </Sidebar.Provider>
+
+<Toaster />
