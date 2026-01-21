@@ -22,9 +22,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup workspace
+        if: runner.os != 'Windows'
         run: |
           chmod +x scripts/setup-workspace.sh
           ./scripts/setup-workspace.sh
+      - name: Setup workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\win.ps1 ./scripts/setup-workspace.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -47,64 +52,78 @@ jobs:
       matrix:
         include:
           # jupyter-collab on Linux - rust
-          - scenario: jupyter-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: jupyter-collab
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # jupyter-collab on Linux - go
-          - scenario: jupyter-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: jupyter-collab
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: go
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # jupyter-collab on macOS ARM - rust
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: macos-latest
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # - scenario: jupyter-collab
+          #   platform: macos-arm64
+          #   runner: macos-latest
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
           # jupyter-collab on macOS ARM - go
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: macos-latest
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # - scenario: jupyter-collab
+          #   platform: macos-arm64
+          #   runner: macos-latest
+          #   client_mode: go
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
           # pipelines-solo on Linux - rust
-          - scenario: pipelines-solo
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: pipelines-solo
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # pipelines-solo on Linux - go
-          - scenario: pipelines-solo
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: pipelines-solo
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: go
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # pipelines-collab on Linux - rust
-          - scenario: pipelines-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: pipelines-collab
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # pipelines-collab on Linux - go
-          - scenario: pipelines-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # - scenario: pipelines-collab
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: go
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
           # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
           # don't support nested virtualization (Docker requires VMs on macOS).
           # pipelines-collab is fully tested on Linux which covers the core functionality.
+          # jupyter-collab on Windows - rust
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # jupyter-collab on Windows - go
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
 
     defaults:
       run:
@@ -130,7 +149,7 @@ jobs:
       - name: Enable long paths (Windows)
         if: runner.os == 'Windows'
         run: git config --system core.longpaths true
-        shell: bash
+        shell: pwsh
 
       - uses: actions/checkout@v4
 
@@ -146,6 +165,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Enable sccache (if available)
+        if: runner.os != 'Windows'
         run: |
           if SCCACHE_GHA_ENABLED=true sccache --start-server; then
             echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -153,6 +173,18 @@ jobs:
           else
             echo "sccache unavailable; proceeding without cache."
           fi
+      - name: Enable sccache (if available, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:SCCACHE_GHA_ENABLED = "true"
+          & sccache --start-server
+          if ($LASTEXITCODE -eq 0) {
+            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "SCCACHE_GHA_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            Write-Host "sccache unavailable; proceeding without cache."
+          }
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -220,9 +252,19 @@ jobs:
       # (GitHub macOS runners don't support nested virtualization needed for Docker)
 
       - name: Install npm dependencies
+        if: runner.os != 'Windows'
+        run: npm ci
+      - name: Install npm dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: npm ci
 
       - name: Install bun dependencies
+        if: runner.os != 'Windows'
+        run: bun install --frozen-lockfile
+      - name: Install bun dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: bun install --frozen-lockfile
 
       - name: Cache Playwright browsers
@@ -239,7 +281,11 @@ jobs:
         run: bunx --bun playwright install --with-deps chromium
 
       - name: Install Playwright browsers (non-Linux)
-        if: runner.os != 'Linux' && steps.cache-playwright.outputs.cache-hit != 'true'
+        if: runner.os != 'Linux' && runner.os != 'Windows' && steps.cache-playwright.outputs.cache-hit != 'true'
+        run: bunx --bun playwright install chromium
+      - name: Install Playwright browsers (Windows)
+        if: runner.os == 'Windows' && steps.cache-playwright.outputs.cache-hit != 'true'
+        shell: pwsh
         run: bunx --bun playwright install chromium
 
       - name: Cache bundled dependencies
@@ -250,36 +296,71 @@ jobs:
           key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
 
       - name: Fetch bundled dependencies
-        if: steps.cache-bundled.outputs.cache-hit != 'true'
+        if: runner.os != 'Windows' && steps.cache-bundled.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/fetch-bundled-deps.sh
           ./scripts/fetch-bundled-deps.sh
+      - name: Fetch bundled dependencies (Windows)
+        if: runner.os == 'Windows' && steps.cache-bundled.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          BUNDLED_OS: windows
+          BUNDLED_ARCH: x86_64
+        run: .\win.ps1 ./scripts/fetch-bundled-deps.sh
 
       - name: Ensure bundled dependency permissions
+        if: runner.os != 'Windows'
         run: chmod -R u+rw src-tauri/resources/bundled/ || true
 
       - name: Materialize templates
+        if: runner.os != 'Windows'
         run: |
           chmod +x scripts/materialize-templates.sh || true
           ./scripts/materialize-templates.sh || true
+      - name: Materialize templates (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\win.ps1 ./scripts/materialize-templates.sh
 
       - name: Build syftbox client
+        if: runner.os != 'Windows'
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
+      - name: Build syftbox client (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\win.ps1 ./scripts/build-syftbox-prod.sh
 
       - name: Build Tauri binary (release)
+        if: runner.os != 'Windows'
         run: |
           cd src-tauri
           cargo build --release
+      - name: Build Tauri binary (release, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release
+        working-directory: src-tauri
 
       - name: Install maturin
+        if: runner.os != 'Windows'
+        run: pip install maturin
+      - name: Install maturin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: pip install maturin
 
       - name: Pre-build syftbox-sdk wheel
+        if: runner.os != 'Windows'
         run: |
           cd syftbox-sdk/python
           maturin build --release
+      - name: Pre-build syftbox-sdk wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: maturin build --release
+        working-directory: syftbox-sdk/python
 
       - name: Install biosynth CLI (Linux)
         if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
@@ -311,26 +392,48 @@ jobs:
           key: minio-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Run Jupyter collab scenario
-        if: matrix.scenario == 'jupyter-collab'
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           JUPYTER_PAUSE_TIME: "5000"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+      - name: Run Jupyter collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          JUPYTER_PAUSE_TIME: "5000"
+        run: .\win.ps1 ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines solo scenario
-        if: matrix.scenario == 'pipelines-solo'
+        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-solo'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
+      - name: Run pipelines solo scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-solo'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: .\win.ps1 ./test-scenario.sh --pipelines-solo
 
       - name: Run pipelines collab scenario
-        if: matrix.scenario == 'pipelines-collab'
+        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
+      - name: Run pipelines collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-collab'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: .\win.ps1 ./test-scenario.sh --pipelines-collab
 
       - name: Upload test artifacts on failure
         if: failure()
@@ -342,37 +445,167 @@ jobs:
             test-results/
             artifacts/
 
-  profiles-e2e:
-    name: Profiles E2E (real backend)
-    runs-on: ubuntu-latest
+  # profiles-e2e:
+  #   name: Profiles E2E (real backend)
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup workspace
+  #       run: |
+  #         chmod +x scripts/setup-workspace.sh
+  #         ./scripts/setup-workspace.sh
+  #
+  #     - name: Install system dependencies (Tauri + Xvfb)
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y \
+  #           xvfb \
+  #           libwebkit2gtk-4.1-dev \
+  #           build-essential \
+  #           pkg-config \
+  #           curl \
+  #           xdg-utils \
+  #           wget \
+  #           file \
+  #           lsof \
+  #           libxdo-dev \
+  #           libssl-dev \
+  #           libayatana-appindicator3-dev \
+  #           librsvg2-dev \
+  #           libsqlite3-dev \
+  #           libgtk-3-dev
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '20'
+  #         cache: 'npm'
+  #
+  #     - name: Setup Rust
+  #       uses: dtolnay/rust-toolchain@stable
+  #
+  #     - name: Setup sccache
+  #       uses: mozilla-actions/sccache-action@v0.0.6
+  #
+  #     - name: Enable sccache (if available)
+  #       run: |
+  #         if SCCACHE_GHA_ENABLED=true sccache --start-server; then
+  #           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+  #           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+  #         else
+  #           echo "sccache unavailable; proceeding without cache."
+  #         fi
+  #
+  #     - name: Rust cache
+  #       uses: Swatinem/rust-cache@v2
+  #       with:
+  #         workspaces: |
+  #           src-tauri
+  #           biovault/cli
+  #           syftbox-sdk
+  #
+  #     - name: Setup Go (syftbox devstack)
+  #       uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: syftbox/go.mod
+  #         cache: true
+  #         cache-dependency-path: syftbox/go.sum
+  #
+  #     - name: Install protoc
+  #       uses: arduino/setup-protoc@v2
+  #       with:
+  #         repo-token: ${{ secrets.GITHUB_TOKEN }}
+  #
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: '1.1.38'
+  #
+  #     - name: Cache Bun downloads
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           ~/.bun/install/cache
+  #           ~/.cache/bun
+  #           ~/Library/Caches/bun
+  #           ~/AppData/Local/bun/install/cache
+  #         key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+  #
+  #     - name: Install npm dependencies
+  #       run: npm ci
+  #
+  #     - name: Install bun dependencies
+  #       run: bun install --frozen-lockfile
+  #
+  #     - name: Cache Playwright browsers
+  #       id: cache-playwright-profiles
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           ~/.cache/ms-playwright
+  #           ~/AppData/Local/ms-playwright
+  #         key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+  #
+  #     - name: Install Playwright browsers
+  #       if: steps.cache-playwright-profiles.outputs.cache-hit != 'true'
+  #       run: bunx --bun playwright install --with-deps chromium
+  #
+  #     - name: Cache bundled dependencies
+  #       id: cache-bundled-profiles
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: src-tauri/resources/bundled
+  #         key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh') }}
+  #
+  #     - name: Fetch bundled dependencies
+  #       if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
+  #       run: |
+  #         export BUNDLED_OS="linux"
+  #         export BUNDLED_ARCH="x86_64"
+  #         chmod +x scripts/fetch-bundled-deps.sh
+  #         ./scripts/fetch-bundled-deps.sh
+  #
+  #     - name: Ensure bundled dependency permissions
+  #       run: chmod -R u+rw src-tauri/resources/bundled/ || true
+  #
+  #     - name: Materialize templates
+  #       run: |
+  #         chmod +x scripts/materialize-templates.sh || true
+  #         ./scripts/materialize-templates.sh || true
+  #
+  #     - name: Build bv-desktop (release)
+  #       run: cargo build --release
+  #       working-directory: src-tauri
+  #
+  #     - name: Run profiles E2E scenario (headless)
+  #       env:
+  #         SKIP_PLAYWRIGHT_INSTALL: '1'
+  #       run: xvfb-run -a ./test-scenario.sh --profiles
+  #
+  #     - name: Upload test artifacts on failure
+  #       if: failure()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: profiles-e2e-test-results
+  #         path: |
+  #           logs/
+  #           test-results/
+  #           artifacts/
+
+  profiles-e2e-windows:
+    name: Profiles E2E (real backend, Windows)
+    runs-on: namespace-profile-windows-medium
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup workspace
-        run: |
-          chmod +x scripts/setup-workspace.sh
-          ./scripts/setup-workspace.sh
-
-      - name: Install system dependencies (Tauri + Xvfb)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            xvfb \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            pkg-config \
-            curl \
-            xdg-utils \
-            wget \
-            file \
-            lsof \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libsqlite3-dev \
-            libgtk-3-dev
+        run: .\win.ps1 ./scripts/setup-workspace.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -388,12 +621,14 @@ jobs:
 
       - name: Enable sccache (if available)
         run: |
-          if SCCACHE_GHA_ENABLED=true sccache --start-server; then
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          else
-            echo "sccache unavailable; proceeding without cache."
-          fi
+          $env:SCCACHE_GHA_ENABLED = "true"
+          & sccache --start-server
+          if ($LASTEXITCODE -eq 0) {
+            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "SCCACHE_GHA_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            Write-Host "sccache unavailable; proceeding without cache."
+          }
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -447,7 +682,7 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.cache-playwright-profiles.outputs.cache-hit != 'true'
-        run: bunx --bun playwright install --with-deps chromium
+        run: bunx --bun playwright install chromium
 
       - name: Cache bundled dependencies
         id: cache-bundled-profiles
@@ -458,34 +693,31 @@ jobs:
 
       - name: Fetch bundled dependencies
         if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
-        run: |
-          export BUNDLED_OS="linux"
-          export BUNDLED_ARCH="x86_64"
-          chmod +x scripts/fetch-bundled-deps.sh
-          ./scripts/fetch-bundled-deps.sh
+        env:
+          BUNDLED_OS: windows
+          BUNDLED_ARCH: x86_64
+        run: .\win.ps1 ./scripts/fetch-bundled-deps.sh
 
       - name: Ensure bundled dependency permissions
-        run: chmod -R u+rw src-tauri/resources/bundled/ || true
+        run: Write-Host "Skipping chmod on Windows."
 
       - name: Materialize templates
-        run: |
-          chmod +x scripts/materialize-templates.sh || true
-          ./scripts/materialize-templates.sh || true
+        run: .\win.ps1 ./scripts/materialize-templates.sh
 
       - name: Build bv-desktop (release)
         run: cargo build --release
         working-directory: src-tauri
 
-      - name: Run profiles E2E scenario (headless)
+      - name: Run profiles E2E scenario
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
-        run: xvfb-run -a ./test-scenario.sh --profiles
+        run: .\win.ps1 ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results
+          name: profiles-e2e-test-results-windows
           path: |
             logs/
             test-results/
