@@ -2,8 +2,10 @@
 	import './layout.css'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
+	import * as Drawer from '$lib/components/ui/drawer/index.js'
 	import { Toaster } from '$lib/components/ui/sonner/index.js'
 	import AppSidebar from '$lib/components/app-sidebar.svelte'
+	import SqlPanel from '$lib/components/sql-panel.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
 	import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap'
@@ -12,6 +14,7 @@
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
 
 	let { children } = $props()
+	let sqlOpen = $state(false)
 </script>
 
 <Sidebar.Provider class="!min-h-0">
@@ -35,16 +38,27 @@
 						</Tooltip.Content>
 					</Tooltip.Root>
 
-					<Tooltip.Root>
-						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-						>
-							<DatabaseIcon class="size-5" />
-						</Tooltip.Trigger>
-						<Tooltip.Content>
-							<p>Database</p>
-						</Tooltip.Content>
-					</Tooltip.Root>
+					<Drawer.Root bind:open={sqlOpen}>
+						<Tooltip.Root>
+							<Tooltip.Trigger asChild>
+								<Drawer.Trigger
+									class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+								>
+									<DatabaseIcon class="size-5" />
+								</Drawer.Trigger>
+							</Tooltip.Trigger>
+							<Tooltip.Content>
+								<p>SQL Console</p>
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Drawer.Content class="!max-h-[95vh] h-[95vh]">
+							<div class="h-full px-6 pb-8 pt-4">
+								{#if sqlOpen}
+									<SqlPanel mode="sheet" />
+								{/if}
+							</div>
+						</Drawer.Content>
+					</Drawer.Root>
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
