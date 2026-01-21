@@ -374,6 +374,8 @@ async function runAllCellsAndWait(
 	const cellCount = await jupyterPage.locator('.jp-CodeCell').count()
 	console.log(`[${notebookName}] Found ${cellCount} code cells`)
 
+	await dismissJupyterDialogIfPresent(jupyterPage, notebookName)
+
 	// Click on the Run menu
 	const runMenu = jupyterPage.locator('div.lm-MenuBar-itemLabel:has-text("Run")')
 	await runMenu.click()
@@ -454,6 +456,36 @@ async function runAllCellsAndWait(
 	}
 
 	return { outputs: combinedOutput, errorCount: errorCount + tracebackCount }
+}
+
+async function dismissJupyterDialogIfPresent(jupyterPage: Page, label: string): Promise<void> {
+	const dialog = jupyterPage.locator('.jp-Dialog')
+	if (!(await dialog.isVisible())) return
+
+	console.log(`[${label}] Dismissing blocking Jupyter dialog...`)
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		if (!(await dialog.isVisible())) return
+
+		const acceptButton = dialog.locator('button.jp-mod-accept')
+		if ((await acceptButton.count()) > 0) {
+			await acceptButton.first().click()
+		} else {
+			const anyButton = dialog.locator('button')
+			if ((await anyButton.count()) > 0) {
+				await anyButton.first().click()
+			} else {
+				await jupyterPage.keyboard.press('Escape')
+			}
+		}
+
+		await jupyterPage.waitForTimeout(500)
+	}
+
+	if (await dialog.isVisible()) {
+		console.log(`[${label}] Dialog still visible; sending Escape`)
+		await jupyterPage.keyboard.press('Escape')
+		await jupyterPage.waitForTimeout(500)
+	}
 }
 
 // Timing helper for detailed performance analysis
