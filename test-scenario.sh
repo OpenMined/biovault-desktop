@@ -428,10 +428,21 @@ to_host_path() {
 find_bundled_uv() {
 	local os arch
 	read -r os arch <<<"$(detect_platform)"
-	local candidate="$ROOT_DIR/src-tauri/resources/bundled/uv/${os}-${arch}/uv"
-	if [[ -x "$candidate" ]]; then
-		echo "$candidate"
-		return 0
+	local dir="$ROOT_DIR/src-tauri/resources/bundled/uv/${os}-${arch}"
+	if [[ "$os" == "windows" ]]; then
+		local candidate
+		for candidate in "$dir/uv.exe" "$dir/uv"; do
+			if [[ -f "$candidate" ]]; then
+				echo "$candidate"
+				return 0
+			fi
+		done
+	else
+		local candidate="$dir/uv"
+		if [[ -x "$candidate" ]]; then
+			echo "$candidate"
+			return 0
+		fi
 	fi
 	return 1
 }
@@ -1035,8 +1046,8 @@ EOF
 		fi
 		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
 		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
-			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
-			if [[ -x "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv || true)"
+			if [[ -n "$bundled_uv" ]]; then
 				export BIOVAULT_BUNDLED_UV="$bundled_uv"
 			fi
 		fi
@@ -1046,8 +1057,8 @@ EOF
 		fi
 		# Prefer bundled uv for Jupyter if available (avoids missing uv on PATH)
 		if [[ -z "${BIOVAULT_BUNDLED_UV:-}" ]]; then
-			bundled_uv="$ROOT_DIR/src-tauri/resources/bundled/uv/linux-x86_64/uv"
-			if [[ -x "$bundled_uv" ]]; then
+			bundled_uv="$(find_bundled_uv || true)"
+			if [[ -n "$bundled_uv" ]]; then
 				export BIOVAULT_BUNDLED_UV="$bundled_uv"
 			fi
 		fi

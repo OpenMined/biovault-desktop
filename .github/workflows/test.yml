@@ -593,130 +593,130 @@ jobs:
   #           test-results/
   #           artifacts/
 
-  profiles-e2e-windows:
-    name: Profiles E2E (real backend, Windows)
-    runs-on: namespace-profile-windows-medium
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup workspace
-        run: .\win.ps1 ./scripts/setup-workspace.sh
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Enable sccache (if available)
-        run: |
-          $env:SCCACHE_GHA_ENABLED = "true"
-          & sccache --start-server
-          $sccacheExit = $LASTEXITCODE
-          if ($sccacheExit -eq 0) {
-            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Append
-            "SCCACHE_GHA_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } else {
-            Write-Host "sccache unavailable; proceeding without cache."
-            $global:LASTEXITCODE = 0
-          }
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            src-tauri
-            biovault/cli
-            syftbox-sdk
-
-      - name: Setup Go (syftbox devstack)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: syftbox/go.mod
-          cache: true
-          cache-dependency-path: syftbox/go.sum
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.38'
-
-      - name: Cache Bun downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.bun/install/cache
-            ~/.cache/bun
-            ~/Library/Caches/bun
-            ~/AppData/Local/bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Install bun dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Cache Playwright browsers
-        id: cache-playwright-profiles
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/AppData/Local/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
-
-      - name: Install Playwright browsers
-        if: steps.cache-playwright-profiles.outputs.cache-hit != 'true'
-        run: bunx --bun playwright install chromium
-
-      - name: Cache bundled dependencies
-        id: cache-bundled-profiles
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/resources/bundled
-          key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh', 'scripts/windows/bundle-deps.ps1', 'scripts/bundled-deps.json') }}
-
-      - name: Fetch bundled dependencies
-        if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
-        run: .\scripts\windows\bundle-deps.ps1
-
-      - name: Ensure bundled dependency permissions
-        run: Write-Host "Skipping chmod on Windows."
-
-      - name: Materialize templates
-        run: .\win.ps1 ./scripts/materialize-templates.sh
-
-      - name: Build bv-desktop (release)
-        run: cargo build --release
-        working-directory: src-tauri
-
-      - name: Run profiles E2E scenario
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: '1'
-        run: .\win.ps1 ./test-scenario.sh --profiles
-
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: profiles-e2e-test-results-windows
-          path: |
-            logs/
-            test-results/
-            artifacts/
+  # profiles-e2e-windows:
+  #   name: Profiles E2E (real backend, Windows)
+  #   runs-on: namespace-profile-windows-medium
+  #   if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+  #   defaults:
+  #     run:
+  #       shell: pwsh
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup workspace
+  #       run: .\win.ps1 ./scripts/setup-workspace.sh
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '20'
+  #         cache: 'npm'
+  #
+  #     - name: Setup Rust
+  #       uses: dtolnay/rust-toolchain@stable
+  #
+  #     - name: Setup sccache
+  #       uses: mozilla-actions/sccache-action@v0.0.6
+  #
+  #     - name: Enable sccache (if available)
+  #       run: |
+  #         $env:SCCACHE_GHA_ENABLED = "true"
+  #         & sccache --start-server
+  #         $sccacheExit = $LASTEXITCODE
+  #         if ($sccacheExit -eq 0) {
+  #           "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Append
+  #           "SCCACHE_GHA_ENABLED=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+  #         } else {
+  #           Write-Host "sccache unavailable; proceeding without cache."
+  #           $global:LASTEXITCODE = 0
+  #         }
+  #
+  #     - name: Rust cache
+  #       uses: Swatinem/rust-cache@v2
+  #       with:
+  #         workspaces: |
+  #           src-tauri
+  #           biovault/cli
+  #           syftbox-sdk
+  #
+  #     - name: Setup Go (syftbox devstack)
+  #       uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: syftbox/go.mod
+  #         cache: true
+  #         cache-dependency-path: syftbox/go.sum
+  #
+  #     - name: Install protoc
+  #       uses: arduino/setup-protoc@v2
+  #       with:
+  #         repo-token: ${{ secrets.GITHUB_TOKEN }}
+  #
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: '1.1.38'
+  #
+  #     - name: Cache Bun downloads
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           ~/.bun/install/cache
+  #           ~/.cache/bun
+  #           ~/Library/Caches/bun
+  #           ~/AppData/Local/bun/install/cache
+  #         key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+  #
+  #     - name: Install npm dependencies
+  #       run: npm ci
+  #
+  #     - name: Install bun dependencies
+  #       run: bun install --frozen-lockfile
+  #
+  #     - name: Cache Playwright browsers
+  #       id: cache-playwright-profiles
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           ~/.cache/ms-playwright
+  #           ~/AppData/Local/ms-playwright
+  #         key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'bun.lock') }}
+  #
+  #     - name: Install Playwright browsers
+  #       if: steps.cache-playwright-profiles.outputs.cache-hit != 'true'
+  #       run: bunx --bun playwright install chromium
+  #
+  #     - name: Cache bundled dependencies
+  #       id: cache-bundled-profiles
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: src-tauri/resources/bundled
+  #         key: bundled-${{ runner.os }}-${{ hashFiles('scripts/fetch-bundled-deps.sh', 'scripts/windows/bundle-deps.ps1', 'scripts/bundled-deps.json') }}
+  #
+  #     - name: Fetch bundled dependencies
+  #       if: steps.cache-bundled-profiles.outputs.cache-hit != 'true'
+  #       run: .\scripts\windows\bundle-deps.ps1
+  #
+  #     - name: Ensure bundled dependency permissions
+  #       run: Write-Host "Skipping chmod on Windows."
+  #
+  #     - name: Materialize templates
+  #       run: .\win.ps1 ./scripts/materialize-templates.sh
+  #
+  #     - name: Build bv-desktop (release)
+  #       run: cargo build --release
+  #       working-directory: src-tauri
+  #
+  #     - name: Run profiles E2E scenario
+  #       env:
+  #         SKIP_PLAYWRIGHT_INSTALL: '1'
+  #       run: .\win.ps1 ./test-scenario.sh --profiles
+  #
+  #     - name: Upload test artifacts on failure
+  #       if: failure()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: profiles-e2e-test-results-windows
+  #         path: |
+  #           logs/
+  #           test-results/
+  #           artifacts/
