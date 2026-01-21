@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount } from 'svelte'
+	import PageHeader from '$lib/components/page-header.svelte'
 	import * as Card from '$lib/components/ui/card/index.js'
 	import UserIcon from '@lucide/svelte/icons/user'
 	import MailIcon from '@lucide/svelte/icons/mail'
@@ -31,8 +32,11 @@
 	})
 </script>
 
-<div class="container mx-auto max-w-2xl space-y-6 p-6">
-	<h1 class="text-2xl font-bold">Settings</h1>
+<div class="flex h-full flex-col">
+	<PageHeader title="Settings" description="Configure your BioVault preferences" />
+
+	<div class="flex-1 overflow-auto p-6">
+		<div class="mx-auto max-w-2xl space-y-6">
 
 	{#if loading}
 		<div class="text-muted-foreground">Loading settings...</div>
@@ -97,4 +101,6 @@
 			</Card.Content>
 		</Card.Root>
 	{/if}
+		</div>
+	</div>
 </div>
