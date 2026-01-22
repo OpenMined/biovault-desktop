@@ -26,6 +26,11 @@ if ($help) {
 # Fix npm IS_WSL bug on Windows
 $env:IS_WSL = "0"
 
+# Ensure interactive runs are headed
+if ($interactive) {
+    $env:PLAYWRIGHT_HEADLESS = "false"
+}
+
 # Podman/Container configuration for Hyper-V (matching CI)
 $env:CONTAINERS_MACHINE_PROVIDER = "hyperv"
 $env:BIOVAULT_CONTAINER_RUNTIME = "podman"

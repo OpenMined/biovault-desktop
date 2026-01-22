@@ -1056,6 +1056,19 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const mockSyncStart = Date.now()
 			const MOCK_SYNC_TIMEOUT = 60_000 // 60 seconds
 
+			// DEBUG: First check what Client1 has in their dataset
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset Info ===')
+				console.log(`Dataset found: ${!!client1Dataset}`)
+				if (client1Dataset) {
+					console.log(`Assets: ${JSON.stringify(client1Dataset.assets, null, 2)}`)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 datasets:', err)
+			}
+
 			while (Date.now() - mockSyncStart < MOCK_SYNC_TIMEOUT) {
 				try {
 					// Trigger sync
@@ -1072,13 +1085,24 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 					if (targetDataset && targetDataset.assets?.length > 0) {
 						const asset = targetDataset.assets[0]
 						const mockCount = asset.mock_entries?.length || 0
-						console.log(`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}`)
+						const mockPath = asset.mock_path
+						console.log(`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}, mock_path: ${mockPath}`)
+
+						// DEBUG: Log each mock entry
+						if (asset.mock_entries?.length > 0) {
+							console.log('Mock entries:')
+							asset.mock_entries.forEach((entry: any, i: number) => {
+								console.log(`  [${i}] ${entry.participant_id}: ${entry.url}`)
+							})
+						}
 
 						if (mockCount >= EXPECTED_MOCK_FILES) {
 							console.log(`All ${EXPECTED_MOCK_FILES} mock files synced!`)
 							mockFilesReady = true
 							break
 						}
+					} else {
+						console.log(`Dataset "${datasetName}" not found or no assets yet`)
 					}
 				} catch (err) {
 					console.log('Error checking mock files:', err)
@@ -1191,6 +1215,22 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
 			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
 
+			// DEBUG: Log Client2 run metadata to see inputs used
+			console.log('\n=== DEBUG: Client2 Mock Run Metadata ===')
+			console.log(`Run ID: ${mockRun2Final.id}`)
+			console.log(`Work dir: ${mockRun2Final.work_dir}`)
+			console.log(`Results dir: ${mockRun2Final.results_dir}`)
+			if (mockRun2Final.metadata) {
+				try {
+					const meta = typeof mockRun2Final.metadata === 'string'
+						? JSON.parse(mockRun2Final.metadata)
+						: mockRun2Final.metadata
+					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
+				} catch (e) {
+					console.log(`Raw metadata: ${mockRun2Final.metadata}`)
+				}
+			}
+
 			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
 			await captureKeySnapshot('post-mock-run', 'client1', backend1, email1, email2, logSocket)
 
@@ -1299,6 +1339,22 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			log(logSocket, { event: 'step-8', action: 'run-pipeline' })
 			console.log('\n=== Step 8: Client1 runs pipeline on mock + private data ===')
 
+			// DEBUG: Check what mock files Client1 sees before running
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset before run ===')
+				if (client1Dataset && client1Dataset.assets?.length > 0) {
+					const asset = client1Dataset.assets[0]
+					console.log(`Asset key: ${asset.key}`)
+					console.log(`Mock path: ${asset.mock_path}`)
+					console.log(`Mock file ID: ${asset.mock_file_id}`)
+					console.log(`Resolved mock path: ${asset.resolved_mock_path}`)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 dataset:', err)
+			}
+
 			const mockRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'mock')
 			console.log(`Pipeline mock run started: ${mockRun1.id}`)
 			const { status: mockStatus, run: mockRun1Final } = await waitForRunCompletion(
@@ -1311,6 +1367,23 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
 			client1MockResult = await readTextFileWithRetry(mockResultPath1)
+
+			// DEBUG: Log Client1 run metadata to see inputs used
+			console.log('\n=== DEBUG: Client1 Mock Run Metadata ===')
+			console.log(`Run ID: ${mockRun1Final.id}`)
+			console.log(`Work dir: ${mockRun1Final.work_dir}`)
+			console.log(`Results dir: ${mockRun1Final.results_dir}`)
+			if (mockRun1Final.metadata) {
+				try {
+					const meta = typeof mockRun1Final.metadata === 'string'
+						? JSON.parse(mockRun1Final.metadata)
+						: mockRun1Final.metadata
+					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
+				} catch (e) {
+					console.log(`Raw metadata: ${mockRun1Final.metadata}`)
+				}
+			}
+
 			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
 			console.log(`[TSV Compare] client1MockResult length: ${client1MockResult.length}`)
 			console.log(`[TSV Compare] client2MockResult length: ${client2MockResult.length}`)
