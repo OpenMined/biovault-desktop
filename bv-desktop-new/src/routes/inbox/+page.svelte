@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount, onDestroy } from 'svelte'
+	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import PageHeader from '$lib/components/page-header.svelte'
+	import SyftboxSignInDialog from '$lib/components/syftbox-sign-in-dialog.svelte'
 	import * as Empty from '$lib/components/ui/empty/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
@@ -17,6 +19,16 @@
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
+	import LogInIcon from '@lucide/svelte/icons/log-in'
+	import ExternalLinkIcon from '@lucide/svelte/icons/external-link'
+
+	async function openUrl(url: string) {
+		try {
+			await invoke('open_url', { url })
+		} catch {
+			window.open(url, '_blank')
+		}
+	}
 
 	// Types matching backend
 	interface MessageThreadSummary {
@@ -61,6 +73,27 @@
 	// Refresh interval
 	let refreshInterval: ReturnType<typeof setInterval> | null = null
 	const AUTO_REFRESH_MS = 10000
+
+	// SyftBox auth state
+	let signInDialogOpen = $state(false)
+	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
+	const isCheckingAuth = $derived(syftboxAuthStore.isChecking)
+
+	// Load data when user signs in
+	$effect(() => {
+		if (isAuthenticated && threads.length === 0 && !loading) {
+			loadThreads(true)
+			// Start auto-refresh if not already running
+			if (!refreshInterval) {
+				refreshInterval = setInterval(() => {
+					loadThreads(true)
+					if (selectedThread) {
+						loadMessages(selectedThread.thread_id)
+					}
+				}, AUTO_REFRESH_MS)
+			}
+		}
+	})
 
 	// Filtered threads based on search
 	const filteredThreads = $derived(
@@ -259,17 +292,26 @@
 	}
 
 	onMount(async () => {
+		// Check auth first
+		await syftboxAuthStore.checkAuth()
+		
 		currentUserEmail = await getCurrentUserEmail()
-		await loadThreads(true)
+		
+		// Only load threads if authenticated
+		if (syftboxAuthStore.isAuthenticated) {
+			await loadThreads(true)
+		}
 		loading = false
 
-		// Start auto-refresh
-		refreshInterval = setInterval(() => {
-			loadThreads(true)
-			if (selectedThread) {
-				loadMessages(selectedThread.thread_id)
-			}
-		}, AUTO_REFRESH_MS)
+		// Start auto-refresh only if authenticated
+		if (syftboxAuthStore.isAuthenticated) {
+			refreshInterval = setInterval(() => {
+				loadThreads(true)
+				if (selectedThread) {
+					loadMessages(selectedThread.thread_id)
+				}
+			}, AUTO_REFRESH_MS)
+		}
 	})
 
 	onDestroy(() => {
@@ -287,9 +329,43 @@
 		</Button>
 	</PageHeader>
 
-	{#if loading}
+	{#if loading || isCheckingAuth}
 		<div class="flex h-full items-center justify-center">
 			<Loader2Icon class="size-8 animate-spin text-muted-foreground" />
+		</div>
+	{:else if !isAuthenticated}
+		<div class="flex h-full items-center justify-center p-6">
+			<Empty.Root>
+				<Empty.Header>
+					<Empty.Media variant="icon">
+						<LogInIcon class="size-6" />
+					</Empty.Media>
+					<Empty.Title>Connect to SyftBox</Empty.Title>
+					<Empty.Description>
+						Connect to SyftBox to access secure messaging and other network features.
+					</Empty.Description>
+				</Empty.Header>
+				<Empty.Content>
+					<Button onclick={() => (signInDialogOpen = true)}>
+						<LogInIcon class="size-4" />
+						Connect to SyftBox
+					</Button>
+				</Empty.Content>
+				<div class="mt-6 pt-6 border-t max-w-sm text-center">
+					<p class="text-xs font-medium text-muted-foreground mb-1">What is SyftBox?</p>
+					<p class="text-xs text-muted-foreground mb-3">
+						An open-source network for privacy-first, offline-capable AI. Build apps, run federated learning, and advance PETs research.
+					</p>
+					<button
+						type="button"
+						class="text-xs text-primary hover:underline inline-flex items-center gap-1"
+						onclick={() => openUrl('https://www.syftbox.net/')}
+					>
+						Learn more at syftbox.net
+						<ExternalLinkIcon class="size-3" />
+					</button>
+				</div>
+			</Empty.Root>
 		</div>
 	{:else if threads.length === 0 && !isComposing}
 		<div class="flex h-full items-center justify-center p-6">
@@ -540,3 +616,5 @@
 		</div>
 	{/if}
 </div>
+
+<SyftboxSignInDialog bind:open={signInDialogOpen} />
