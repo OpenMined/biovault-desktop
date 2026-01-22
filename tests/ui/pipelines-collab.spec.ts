@@ -390,6 +390,63 @@ async function waitForFilesOnDisk(
 	throw new Error(`[${label}] Mock files not present on disk after ${timeoutMs}ms`)
 }
 
+function computeFileHash(filePath: string): string {
+	const crypto = require('crypto')
+	const content = fs.readFileSync(filePath)
+	return crypto.createHash('md5').update(content).digest('hex')
+}
+
+async function waitForFilesContentMatch(
+	sourceDir: string,
+	destDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		let allMatch = true
+		const mismatches: string[] = []
+		for (const name of filenames) {
+			const srcPath = path.join(sourceDir, name)
+			const destPath = path.join(destDir, name)
+			if (!fs.existsSync(srcPath) || !fs.existsSync(destPath)) {
+				allMatch = false
+				mismatches.push(`${name} (missing)`)
+				continue
+			}
+			const srcHash = computeFileHash(srcPath)
+			const destHash = computeFileHash(destPath)
+			if (srcHash !== destHash) {
+				allMatch = false
+				const srcSize = fs.statSync(srcPath).size
+				const destSize = fs.statSync(destPath).size
+				mismatches.push(`${name} (src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)})`)
+			}
+		}
+		if (allMatch) {
+			console.log(`[Content Match] All ${filenames.length} files have matching content`)
+			return
+		}
+		console.log(`[Content Match] Waiting for ${mismatches.length} files to match: ${mismatches.slice(0, 3).join(', ')}${mismatches.length > 3 ? '...' : ''}`)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	// Log final state for debugging
+	console.log('[Content Match] TIMEOUT - Final file state:')
+	for (const name of filenames) {
+		const srcPath = path.join(sourceDir, name)
+		const destPath = path.join(destDir, name)
+		const srcExists = fs.existsSync(srcPath)
+		const destExists = fs.existsSync(destPath)
+		const srcHash = srcExists ? computeFileHash(srcPath) : 'N/A'
+		const destHash = destExists ? computeFileHash(destPath) : 'N/A'
+		const srcSize = srcExists ? fs.statSync(srcPath).size : 0
+		const destSize = destExists ? fs.statSync(destPath).size : 0
+		console.log(`  ${name}: src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)}, match=${srcHash === destHash}`)
+	}
+	throw new Error(`[Content Match] Files did not match after ${timeoutMs}ms`)
+}
+
 function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
 	return page.locator(
 		`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`,
@@ -659,7 +716,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const syntheticDataDir =
 			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
-		const datasetName = 'collab_genotype_dataset'
+		const datasetName = `collab_genotype_dataset_${Date.now()}`
+		console.log(`Using dataset name: ${datasetName}`)
 		let client2MockResult = ''
 		let client1MockResult = ''
 		let client1PrivateResult = ''
@@ -1202,6 +1260,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 				await waitForFilesOnDisk('Client1', assetsDir1, mockFilenames, 60_000)
 				await waitForFilesOnDisk('Client2', assetsDir2, mockFilenames, 60_000)
+
+				// Wait for file CONTENT to match between source and synced locations
+				// This catches cases where files exist but content hasn't fully synced
+				await waitForFilesContentMatch(assetsDir1, assetsDir2, mockFilenames, 90_000)
 
 				const csvPath1 = path.join(assetsDir1, `${assetKey}.csv`)
 				const csvPath2 = path.join(assetsDir2, `${assetKey}.csv`)
