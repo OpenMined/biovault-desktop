@@ -7,7 +7,7 @@ This repo is a kind of mono-repo for BioVault but uses Google's repo tool so the
 ### Workspace deps (repo tool)
 
 - Source of truth: `manifest.xml` pins each dependency repo to a commit.
-- Initialize/sync workspace: `repo init -u <manifest-url> -m manifest.xml` then `repo sync`
+- Initialize/sync workspace: `./repo --init` (recommended) then `./repo sync`
 - Status across repos: `repo status`
 - Branch all repos together: `repo forall -c 'git checkout -B <branch>'`
 - Local helper: `./repo` (tree view), `./repo --init`, `./repo sync`, `./repo pin`, `./repo ssh`
@@ -169,5 +169,6 @@ pinned to specific commits via `manifest.xml`.
 Initialize the workspace using the provided `manifest.xml`:
 
 ```bash
-repo init -u <manifest-url> -m manifest.xml
-repo sync
+./repo --init
+./repo sync
+
