@@ -16,6 +16,7 @@
 	import LearnSheet from '$lib/components/learn-sheet.svelte'
 	import SupportDialog from '$lib/components/support-dialog.svelte'
 	import AiAssistant from '$lib/components/ai-assistant.svelte'
+	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
 	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -96,6 +97,8 @@
 			</div>
 			<Tooltip.Provider delayDuration={0}>
 				<div class="flex items-center gap-1">
+					<DependenciesStatus />
+
 					<Drawer.Root bind:open={logsOpen}>
 						<Tooltip.Root>
 							<Drawer.Trigger>
