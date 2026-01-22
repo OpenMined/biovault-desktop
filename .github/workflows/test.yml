@@ -60,7 +60,7 @@ jobs:
           # jupyter-collab on macOS ARM - rust
           - scenario: jupyter-collab
             platform: macos-arm64
-            runner: macos-latest
+            runner: namespace-profile-mac-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""

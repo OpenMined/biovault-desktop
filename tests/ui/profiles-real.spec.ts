@@ -332,7 +332,7 @@ async function assertHomePrefilled(page, expectedHomeContains) {
 	}
 }
 
-test.describe('Profiles flow (real backend) @profiles-real', () => {
+test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => {
 	test('create profile via onboarding home switch, open picker, switch, delete', async ({
 		page,
 	}) => {

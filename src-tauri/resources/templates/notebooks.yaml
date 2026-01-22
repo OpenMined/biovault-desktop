@@ -19,6 +19,14 @@ dev:
     dest: 05-gwas-do.ipynb
   - source: 05-gwas-ds.ipynb
     dest: 05-gwas-ds.ipynb
+  - source: 06-ecg-do.ipynb
+    dest: 06-ecg-do.ipynb
+  - source: 06-ecg-ds.ipynb
+    dest: 06-ecg-ds.ipynb
+  - source: 07-single-cell-umap-do.ipynb
+    dest: 07-single-cell-umap-do.ipynb
+  - source: 07-single-cell-umap-ds.ipynb
+    dest: 07-single-cell-umap-ds.ipynb
 
 prod:
   - source: 01-hello-beaver.ipynb
@@ -41,3 +49,11 @@ prod:
     dest: 05-gwas-do.ipynb
   - source: 05-gwas-ds.ipynb
     dest: 05-gwas-ds.ipynb
+  - source: 06-ecg-do.ipynb
+    dest: 06-ecg-do.ipynb
+  - source: 06-ecg-ds.ipynb
+    dest: 06-ecg-ds.ipynb
+  - source: 07-single-cell-umap-do.ipynb
+    dest: 07-single-cell-umap-do.ipynb
+  - source: 07-single-cell-umap-ds.ipynb
+    dest: 07-single-cell-umap-ds.ipynb

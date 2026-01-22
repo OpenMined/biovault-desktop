@@ -1323,8 +1323,8 @@ ensure_playwright_browsers
 				export PROFILES_HOME_B="$CLIENT1_HOME/profiles/profileB"
 				# Match the BIOVAULT_PROFILES_DIR set in launch_instance for consistency.
 				export BIOVAULT_PROFILES_DIR="$CLIENT1_HOME/.bvprofiles"
-				timer_push "Playwright: @profiles-real"
-				run_ui_grep "@profiles-real" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B" "BIOVAULT_PROFILES_DIR=$BIOVAULT_PROFILES_DIR"
+				timer_push "Playwright: @profiles-real-linux"
+				run_ui_grep "@profiles-real-linux" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B" "BIOVAULT_PROFILES_DIR=$BIOVAULT_PROFILES_DIR"
 				timer_pop
 				;;
 			profiles-mock)
