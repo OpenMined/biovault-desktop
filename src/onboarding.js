@@ -1739,9 +1739,21 @@ export function initOnboarding({
 	const LOCAL_ONBOARD_EMAIL_KEY = 'bv_onboard_email'
 	const LOCAL_ONBOARD_HOME_KEY = 'bv_onboard_home'
 
+	function normalizeWindowsPath(p) {
+		if (!p || typeof p !== 'string') return ''
+		let s = p.trim()
+		if (!s) return ''
+		if (s.startsWith('\\\\?\\UNC\\')) {
+			s = '\\\\' + s.slice('\\\\?\\UNC\\'.length)
+		} else if (s.startsWith('\\\\?\\')) {
+			s = s.slice('\\\\?\\'.length)
+		}
+		return s
+	}
+
 	function dirnameFromPath(p) {
 		if (!p || typeof p !== 'string') return ''
-		const s = p.trim()
+		const s = normalizeWindowsPath(p).trim()
 		if (!s) return ''
 		const lastSlash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
 		if (lastSlash <= 0) return ''
@@ -1755,7 +1767,7 @@ export function initOnboarding({
 		try {
 			const pendingHome = window.localStorage.getItem(LOCAL_ONBOARD_HOME_KEY)
 			if (pendingHome && pendingHome.trim()) {
-				homeInput.value = pendingHome.trim()
+				homeInput.value = normalizeWindowsPath(pendingHome)
 				return
 			}
 		} catch (_err) {
@@ -1766,7 +1778,7 @@ export function initOnboarding({
 		try {
 			const defaultHome = await invoke('profiles_get_default_home')
 			if (defaultHome && String(defaultHome).trim()) {
-				homeInput.value = String(defaultHome).trim()
+				homeInput.value = normalizeWindowsPath(String(defaultHome))
 			}
 		} catch (_err) {
 			// ignore
@@ -1816,9 +1828,10 @@ export function initOnboarding({
 				if (!selection) return
 				const chosen = Array.isArray(selection) ? selection[0] : selection
 				if (!chosen) return
-				homeInput.value = chosen
+				const normalized = normalizeWindowsPath(chosen)
+				homeInput.value = normalized
 				try {
-					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, chosen)
+					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, normalized)
 				} catch (_err) {
 					// ignore
 				}
@@ -1976,10 +1989,10 @@ export function initOnboarding({
 			return
 		}
 
-		const desiredHome = (homeInput?.value || '').trim()
+		const desiredHome = normalizeWindowsPath(homeInput?.value || '')
 
 			const normalizeHomePath = (value) => {
-				const raw = String(value || '').trim()
+				const raw = normalizeWindowsPath(String(value || '')).trim()
 				if (!raw) return ''
 				const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
 				const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)

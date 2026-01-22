@@ -237,6 +237,28 @@ async function waitForNewRun(
 	throw new Error('Timed out waiting for new pipeline run')
 }
 
+async function clickImportResults(page: Page, timeoutMs = 30_000): Promise<void> {
+	const startTime = Date.now()
+	let attempt = 0
+	while (Date.now() - startTime < timeoutMs) {
+		attempt += 1
+		const importBtn = page
+			.locator('.message-pipeline-results button:has-text("Import Results")')
+			.first()
+		try {
+			await expect(importBtn).toBeVisible({ timeout: 3_000 })
+			await expect(importBtn).toBeEnabled({ timeout: 3_000 })
+			await importBtn.scrollIntoViewIfNeeded().catch(() => {})
+			await importBtn.click({ timeout: 5_000 })
+			return
+		} catch (err) {
+			console.log(`[Import Results] retry ${attempt}: ${err}`)
+			await page.waitForTimeout(750)
+		}
+	}
+	throw new Error(`Timed out clicking Import Results after ${timeoutMs}ms`)
+}
+
 function resolvePipelineResultPath(run: any): string {
 	const baseDir = run.results_dir || run.work_dir
 	return path.join(baseDir, 'herc2', 'result_HERC2.tsv')
@@ -1723,9 +1745,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const fileCount = await fileItems.count()
 			console.log(`Results contain ${fileCount} file(s)`)
 
-			const importResultsBtn = resultsCard.locator('button:has-text("Import Results")')
-			await expect(importResultsBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			await importResultsBtn.click()
+			await clickImportResults(page2, 60_000)
 			await page2.waitForTimeout(3000)
 
 			if (!client2BiovaultHome) {

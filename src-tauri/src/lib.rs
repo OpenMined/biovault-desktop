@@ -602,6 +602,14 @@ pub fn run() {
         }
     }
 
+    // In desktop mode, default SYFTBOX_DATA_DIR to BIOVAULT_HOME so SYC vault resolution works
+    // even before SyftBox config is available.
+    if !profile_picker_mode && std::env::var_os("SYFTBOX_DATA_DIR").is_none() {
+        if let Ok(home) = biovault::config::get_biovault_home() {
+            std::env::set_var("SYFTBOX_DATA_DIR", &home);
+        }
+    }
+
     // Acquire per-profile lock (no-op in picker mode). If lock conflicts, drop back into picker mode.
     if !profile_picker_mode {
         if let Ok(Some(lock)) = acquire_selected_profile_lock(&args) {

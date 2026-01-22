@@ -13,6 +13,8 @@ $useDesktop = $false
 $desktopWait = $false
 $sessionId = $null
 $psexecPath = $null
+$autoDesktop = $true
+$skipAutoDesktop = $false
 $forwardArgs = @()
 
 function Get-ActiveSessionId {
@@ -28,11 +30,31 @@ function Get-ActiveSessionId {
     return $null
 }
 
+function Get-CurrentSessionId {
+    try {
+        return (Get-Process -Id $PID -ErrorAction Stop).SessionId
+    } catch {
+        return $null
+    }
+}
+
+function Resolve-PsExecPath {
+    param([string]$Override)
+    if ($Override) { return $Override }
+    $psexecCmd = Get-Command psexec -ErrorAction SilentlyContinue
+    if ($psexecCmd) { return $psexecCmd.Source }
+    $defaultPsexec = "C:\Tools\PSTools\PsExec.exe"
+    if (Test-Path $defaultPsexec) { return $defaultPsexec }
+    return $null
+}
+
 for ($i = 0; $i -lt $args.Count; $i++) {
     $arg = $args[$i]
     switch ($arg) {
         "--desktop" { $useDesktop = $true; continue }
         "--desktop-wait" { $useDesktop = $true; $desktopWait = $true; continue }
+        "--no-desktop" { $autoDesktop = $false; continue }
+        "--desktop-internal" { $skipAutoDesktop = $true; continue }
         "--session" {
             if ($i + 1 -ge $args.Count) { Write-Host "Missing value for --session" -ForegroundColor Red; exit 1 }
             $sessionId = $args[++$i]; continue
@@ -45,15 +67,26 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     }
 }
 
+if (-not $useDesktop -and $autoDesktop -and -not $skipAutoDesktop) {
+    $currentSessionId = Get-CurrentSessionId
+    $activeSessionId = Get-ActiveSessionId
+    if ($activeSessionId -and $currentSessionId -and ($activeSessionId -ne $currentSessionId)) {
+        $resolvedPsExec = Resolve-PsExecPath -Override $psexecPath
+        if (-not $resolvedPsExec -or -not (Test-Path $resolvedPsExec)) {
+            Write-Host "PsExec not found; running in current session $currentSessionId (active session is $activeSessionId)." -ForegroundColor Yellow
+        } else {
+            $wd = (Get-Location).Path
+            $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "--desktop-internal") + $forwardArgs
+            $psexecArgs = @("-accepteula", "-i", $activeSessionId, "-w", $wd)
+            $psexecArgs += @("powershell.exe") + $psArgs
+            & $resolvedPsExec @psexecArgs
+            exit $LASTEXITCODE
+        }
+    }
+}
+
 if ($useDesktop) {
-    if (-not $psexecPath) {
-        $psexecCmd = Get-Command psexec -ErrorAction SilentlyContinue
-        if ($psexecCmd) { $psexecPath = $psexecCmd.Source }
-    }
-    if (-not $psexecPath) {
-        $defaultPsexec = "C:\Tools\PSTools\PsExec.exe"
-        if (Test-Path $defaultPsexec) { $psexecPath = $defaultPsexec }
-    }
+    $psexecPath = Resolve-PsExecPath -Override $psexecPath
     if (-not $psexecPath -or -not (Test-Path $psexecPath)) {
         Write-Host "PsExec not found. Install Sysinternals PsExec and ensure it's on PATH or pass --psexec <path> (default: C:\\Tools\\PSTools\\PsExec.exe)." -ForegroundColor Red
         exit 1
@@ -65,7 +98,7 @@ if ($useDesktop) {
     }
 
     $wd = (Get-Location).Path
-    $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath) + $forwardArgs
+    $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "--desktop-internal") + $forwardArgs
     $psexecArgs = @("-accepteula", "-i", $sessionId, "-w", $wd)
     if (-not $desktopWait) { $psexecArgs += "-d" }
     $psexecArgs += @("powershell.exe") + $psArgs
@@ -75,6 +108,7 @@ if ($useDesktop) {
 
 if ($forwardArgs.Count -eq 0) {
     Write-Host "Usage: .\win.ps1 [--desktop [--session <id>] [--desktop-wait] [--psexec <path>]] <script> [args...]" -ForegroundColor Yellow
+    Write-Host "Auto-desktop: by default, win.ps1 will re-run in the active desktop session when invoked from a different session. Use --no-desktop to disable." -ForegroundColor Yellow
     Write-Host "Example: .\win.ps1 ./test-scenario.sh --pipelines-collab --interactive"
     Write-Host "Example (desktop): .\win.ps1 --desktop --session 1 ./test-scenario.sh --pipelines-collab --interactive"
     exit 1
