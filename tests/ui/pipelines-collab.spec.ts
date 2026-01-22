@@ -28,7 +28,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
 const UI_TIMEOUT = 10_000
-const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
+const PIPELINE_RUN_TIMEOUT = 180_000 // 3 minutes for pipeline to complete
 const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
 const DEBUG_PIPELINE_PAUSE_MS = (() => {

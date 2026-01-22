@@ -1468,7 +1468,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "update_saved_dependency_states" => {
             // Run in blocking thread pool since this calls subprocess checks (java, docker, etc.)
-            tokio::task::spawn_blocking(|| crate::update_saved_dependency_states())
+            tokio::task::spawn_blocking(crate::update_saved_dependency_states)
                 .await
                 .map_err(|e| format!("Task join error: {}", e))?
                 .map_err(|e| e.to_string())?;

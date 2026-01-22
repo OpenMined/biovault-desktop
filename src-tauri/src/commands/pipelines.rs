@@ -453,11 +453,7 @@ fn load_pipeline_spec_from_storage(
         .map_err(|e| format!("Failed to convert flow spec: {}", e))
 }
 
-fn append_pipeline_log(
-    window: Option<&tauri::WebviewWindow>,
-    log_path: &Path,
-    message: &str,
-) {
+fn append_pipeline_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
             crate::desktop_log!(
@@ -1001,7 +997,11 @@ pub async fn run_pipeline_impl(
             ),
         );
     } else {
-        append_pipeline_log(window.as_ref(), &log_path, "🔍 Selection payload: none provided");
+        append_pipeline_log(
+            window.as_ref(),
+            &log_path,
+            "🔍 Selection payload: none provided",
+        );
     }
 
     if let Some(sel) = selection {
