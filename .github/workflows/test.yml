@@ -46,7 +46,6 @@ jobs:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     strategy:
       fail-fast: false
       matrix:
@@ -443,7 +442,6 @@ jobs:
   profiles-e2e:
     name: Profiles E2E (real backend)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     steps:
       - uses: actions/checkout@v4
 
@@ -592,7 +590,6 @@ jobs:
   profiles-e2e-macos:
     name: Profiles E2E (real backend, macOS)
     runs-on: macos-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     steps:
       - uses: actions/checkout@v4
 
@@ -718,7 +715,6 @@ jobs:
   profiles-e2e-windows:
     name: Profiles E2E (real backend, Windows)
     runs-on: namespace-profile-windows-medium
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     defaults:
       run:
         shell: pwsh
