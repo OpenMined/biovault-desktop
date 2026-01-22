@@ -28,7 +28,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 
 const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
 const UI_TIMEOUT = 10_000
-const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
+const PIPELINE_RUN_TIMEOUT = 180_000 // 3 minutes for pipeline to complete
 const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
 const DEBUG_PIPELINE_PAUSE_MS = (() => {
@@ -346,6 +346,113 @@ function normalizeTsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
+function normalizeCsvResult(content: string): string {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return lines.join('\n')
+	const [header, ...rows] = lines
+	rows.sort((a, b) => a.localeCompare(b))
+	return [header, ...rows].join('\n')
+}
+
+function extractMockFilenames(entries: any[]): string[] {
+	if (!Array.isArray(entries)) return []
+	const filenames = entries
+		.map((entry) => {
+			const url = entry?.url || ''
+			if (typeof url !== 'string' || !url) return ''
+			const name = url.split('/').next_back?.() ?? url.split('/').pop()
+			return name || ''
+		})
+		.filter((name) => typeof name === 'string' && name.length > 0)
+	return Array.from(new Set(filenames))
+}
+
+async function waitForFilesOnDisk(
+	label: string,
+	baseDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		const missing = filenames.filter((name) => !fs.existsSync(path.join(baseDir, name)))
+		if (missing.length === 0) {
+			console.log(`[${label}] All mock files present on disk (${filenames.length})`)
+			return
+		}
+		console.log(`[${label}] Waiting for ${missing.length} mock files: ${missing.join(', ')}`)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	throw new Error(`[${label}] Mock files not present on disk after ${timeoutMs}ms`)
+}
+
+function computeFileHash(filePath: string): string {
+	const crypto = require('crypto')
+	const content = fs.readFileSync(filePath)
+	return crypto.createHash('md5').update(content).digest('hex')
+}
+
+async function waitForFilesContentMatch(
+	sourceDir: string,
+	destDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		let allMatch = true
+		const mismatches: string[] = []
+		for (const name of filenames) {
+			const srcPath = path.join(sourceDir, name)
+			const destPath = path.join(destDir, name)
+			if (!fs.existsSync(srcPath) || !fs.existsSync(destPath)) {
+				allMatch = false
+				mismatches.push(`${name} (missing)`)
+				continue
+			}
+			const srcHash = computeFileHash(srcPath)
+			const destHash = computeFileHash(destPath)
+			if (srcHash !== destHash) {
+				allMatch = false
+				const srcSize = fs.statSync(srcPath).size
+				const destSize = fs.statSync(destPath).size
+				mismatches.push(`${name} (src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)})`)
+			}
+		}
+		if (allMatch) {
+			console.log(`[Content Match] All ${filenames.length} files have matching content`)
+			return
+		}
+		console.log(`[Content Match] Waiting for ${mismatches.length} files to match: ${mismatches.slice(0, 3).join(', ')}${mismatches.length > 3 ? '...' : ''}`)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	// Log final state for debugging
+	console.log('[Content Match] TIMEOUT - Final file state:')
+	for (const name of filenames) {
+		const srcPath = path.join(sourceDir, name)
+		const destPath = path.join(destDir, name)
+		const srcExists = fs.existsSync(srcPath)
+		const destExists = fs.existsSync(destPath)
+		const srcHash = srcExists ? computeFileHash(srcPath) : 'N/A'
+		const destHash = destExists ? computeFileHash(destPath) : 'N/A'
+		const srcSize = srcExists ? fs.statSync(srcPath).size : 0
+		const destSize = destExists ? fs.statSync(destPath).size : 0
+		console.log(`  ${name}: src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)}, match=${srcHash === destHash}`)
+	}
+	throw new Error(`[Content Match] Files did not match after ${timeoutMs}ms`)
+}
+
+function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
+	return page.locator(
+		`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`,
+	)
+}
+
 async function runDatasetPipeline(
 	page: Page,
 	backend: Backend,
@@ -609,7 +716,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const syntheticDataDir =
 			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
-		const datasetName = 'collab_genotype_dataset'
+		const datasetName = `collab_genotype_dataset_${Date.now()}`
+		console.log(`Using dataset name: ${datasetName}`)
 		let client2MockResult = ''
 		let client1MockResult = ''
 		let client1PrivateResult = ''
@@ -997,6 +1105,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Wait for Client1's dataset to appear
 			const syncTimer = timer('Dataset sync to network')
 			let datasetFound = false
+			let targetDatasetForMock: any = null
 			const syncStart = Date.now()
 
 			// Wait for dataset cards to render (they might already be there)
@@ -1015,11 +1124,18 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				// Network datasets use .dataset-item class (not .dataset-card which is for local datasets)
 				const datasetCards = page2.locator('.dataset-item')
 				const count = await datasetCards.count()
-				console.log(`Checking for dataset cards... found: ${count}`)
+				const targetDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
+				const targetCount = await targetDatasetCard.count()
+				console.log(`Checking for dataset cards... found: ${count} (target: ${targetCount})`)
 
-				if (count > 0) {
-					console.log(`Found ${count} dataset(s) on network!`)
+				if (targetCount > 0) {
+					console.log(`Found target dataset "${datasetName}" on network!`)
 					datasetFound = true
+					try {
+						const scanResult = await backend2.invoke('network_scan_datasets')
+						const datasets = scanResult?.datasets || []
+						targetDatasetForMock = datasets.find((d: any) => d.name === datasetName)
+					} catch {}
 					break
 				}
 
@@ -1045,6 +1161,121 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			syncTimer.stop()
 			if (!datasetFound) {
 				throw new Error('Dataset not found on network within timeout')
+			}
+
+			// Wait for all mock files to sync (5 files expected - test adds 5 mock + 5 private)
+			// This prevents race condition where Client2 runs pipeline before all files are available
+			const EXPECTED_MOCK_FILES = 5
+			const mockSyncTimer = timer('Mock files sync')
+			console.log(`\nWaiting for all ${EXPECTED_MOCK_FILES} mock files to sync...`)
+			let mockFilesReady = false
+			const mockSyncStart = Date.now()
+			const MOCK_SYNC_TIMEOUT = 60_000 // 60 seconds
+
+			// DEBUG: First check what Client1 has in their dataset
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset Info ===')
+				console.log(`Dataset found: ${!!client1Dataset}`)
+				if (client1Dataset) {
+					console.log(`Assets: ${JSON.stringify(client1Dataset.assets, null, 2)}`)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 datasets:', err)
+			}
+
+			while (Date.now() - mockSyncStart < MOCK_SYNC_TIMEOUT) {
+				try {
+					// Trigger sync
+					await Promise.all([
+						backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+						backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+					])
+					await page2.waitForTimeout(2000)
+
+					const scanResult = await backend2.invoke('network_scan_datasets')
+					const datasets = scanResult?.datasets || []
+					const targetDataset = datasets.find((d: any) => d.name === datasetName)
+
+					if (targetDataset && targetDataset.assets?.length > 0) {
+						const asset = targetDataset.assets[0]
+						const mockCount = asset.mock_entries?.length || 0
+						const mockPath = asset.mock_path
+						console.log(`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}, mock_path: ${mockPath}`)
+
+						// DEBUG: Log each mock entry
+						if (asset.mock_entries?.length > 0) {
+							console.log('Mock entries:')
+							asset.mock_entries.forEach((entry: any, i: number) => {
+								console.log(`  [${i}] ${entry.participant_id}: ${entry.url}`)
+							})
+						}
+
+						if (mockCount >= EXPECTED_MOCK_FILES) {
+							console.log(`All ${EXPECTED_MOCK_FILES} mock files synced!`)
+							mockFilesReady = true
+							break
+						}
+					} else {
+						console.log(`Dataset "${datasetName}" not found or no assets yet`)
+					}
+				} catch (err) {
+					console.log('Error checking mock files:', err)
+				}
+				await page2.waitForTimeout(3000)
+			}
+			mockSyncTimer.stop()
+
+			if (!mockFilesReady) {
+				console.warn(`Warning: Only partial mock files synced, proceeding anyway`)
+			}
+
+			if (targetDatasetForMock?.assets?.length) {
+				const asset = targetDatasetForMock.assets[0]
+				const mockEntries = asset.mock_entries || []
+				const mockFilenames = extractMockFilenames(mockEntries)
+				const assetKey = asset.key || 'asset_1'
+
+				const dataDir1 = await getSyftboxDataDir(backend1)
+				const dataDir2 = await getSyftboxDataDir(backend2)
+				const assetsDir1 = path.join(
+					resolveDatasitesRoot(dataDir1),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+				const assetsDir2 = path.join(
+					resolveDatasitesRoot(dataDir2),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+
+				await waitForFilesOnDisk('Client1', assetsDir1, mockFilenames, 60_000)
+				await waitForFilesOnDisk('Client2', assetsDir2, mockFilenames, 60_000)
+
+				// Wait for file CONTENT to match between source and synced locations
+				// This catches cases where files exist but content hasn't fully synced
+				await waitForFilesContentMatch(assetsDir1, assetsDir2, mockFilenames, 90_000)
+
+				const csvPath1 = path.join(assetsDir1, `${assetKey}.csv`)
+				const csvPath2 = path.join(assetsDir2, `${assetKey}.csv`)
+				const csv1 = await readTextFileWithRetry(csvPath1, 30_000)
+				const csv2 = await readTextFileWithRetry(csvPath2, 30_000)
+				const normalizedCsv1 = normalizeCsvResult(csv1)
+				const normalizedCsv2 = normalizeCsvResult(csv2)
+				if (normalizedCsv1 !== normalizedCsv2) {
+					console.log(`[CSV Compare] Client1: ${normalizedCsv1}`)
+					console.log(`[CSV Compare] Client2: ${normalizedCsv2}`)
+					throw new Error('Mock CSV mismatch between Client1 and Client2 assets')
+				}
 			}
 
 			// ============================================================
@@ -1082,7 +1313,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Find the dataset card and click "Run Pipeline" button
 			// This button appears for trusted peer datasets that have mock data
-			const networkDatasetCardForRun = page2.locator('.dataset-item').first()
+			const networkDatasetCardForRun = getNetworkDatasetItem(page2, datasetName, email1)
 			const runPipelineOnMockBtn = networkDatasetCardForRun.locator('.run-pipeline-btn')
 			await expect(runPipelineOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Run Pipeline button for mock data, clicking...')
@@ -1147,6 +1378,30 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
 			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
 
+			// DEBUG: Log Client2 run metadata to see inputs used
+			console.log('\n=== DEBUG: Client2 Mock Run Metadata ===')
+			console.log(`Run ID: ${mockRun2Final.id}`)
+			console.log(`Work dir: ${mockRun2Final.work_dir}`)
+			console.log(`Results dir: ${mockRun2Final.results_dir}`)
+			if (mockRun2Final.metadata) {
+				try {
+					const meta = typeof mockRun2Final.metadata === 'string'
+						? JSON.parse(mockRun2Final.metadata)
+						: mockRun2Final.metadata
+					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
+				} catch (e) {
+					console.log(`Raw metadata: ${mockRun2Final.metadata}`)
+				}
+			}
+			// Read and log samplesheet for Client2
+			const samplesheetPath2 = path.join(mockRun2Final.results_dir, 'inputs', 'selected_participants.csv')
+			try {
+				const samplesheet2 = await readTextFileWithRetry(samplesheetPath2, 5000)
+				console.log(`\n=== DEBUG: Client2 Samplesheet ===\n${samplesheet2}`)
+			} catch (e) {
+				console.log(`DEBUG: Could not read Client2 samplesheet: ${e}`)
+			}
+
 			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
 			await captureKeySnapshot('post-mock-run', 'client1', backend1, email1, email2, logSocket)
 
@@ -1185,7 +1440,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Find the dataset card and click "Request Run" button
 			// The "Request Run" button is visible for peer datasets (not "Run Pipeline" which is for own datasets)
-			const networkDatasetCard = page2.locator('.dataset-item').first()
+			const networkDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
 			const requestRunBtn = networkDatasetCard.locator('.request-run-btn')
 			await expect(requestRunBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Request Run button, clicking...')
@@ -1255,6 +1510,22 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			log(logSocket, { event: 'step-8', action: 'run-pipeline' })
 			console.log('\n=== Step 8: Client1 runs pipeline on mock + private data ===')
 
+			// DEBUG: Check what mock files Client1 sees before running
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset before run ===')
+				if (client1Dataset && client1Dataset.assets?.length > 0) {
+					const asset = client1Dataset.assets[0]
+					console.log(`Asset key: ${asset.key}`)
+					console.log(`Mock path: ${asset.mock_path}`)
+					console.log(`Mock file ID: ${asset.mock_file_id}`)
+					console.log(`Resolved mock path: ${asset.resolved_mock_path}`)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 dataset:', err)
+			}
+
 			const mockRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'mock')
 			console.log(`Pipeline mock run started: ${mockRun1.id}`)
 			const { status: mockStatus, run: mockRun1Final } = await waitForRunCompletion(
@@ -1267,6 +1538,31 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
 			client1MockResult = await readTextFileWithRetry(mockResultPath1)
+
+			// DEBUG: Log Client1 run metadata to see inputs used
+			console.log('\n=== DEBUG: Client1 Mock Run Metadata ===')
+			console.log(`Run ID: ${mockRun1Final.id}`)
+			console.log(`Work dir: ${mockRun1Final.work_dir}`)
+			console.log(`Results dir: ${mockRun1Final.results_dir}`)
+			if (mockRun1Final.metadata) {
+				try {
+					const meta = typeof mockRun1Final.metadata === 'string'
+						? JSON.parse(mockRun1Final.metadata)
+						: mockRun1Final.metadata
+					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
+				} catch (e) {
+					console.log(`Raw metadata: ${mockRun1Final.metadata}`)
+				}
+			}
+			// Read and log samplesheet for Client1
+			const samplesheetPath1 = path.join(mockRun1Final.results_dir, 'inputs', 'selected_participants.csv')
+			try {
+				const samplesheet1 = await readTextFileWithRetry(samplesheetPath1, 5000)
+				console.log(`\n=== DEBUG: Client1 Samplesheet ===\n${samplesheet1}`)
+			} catch (e) {
+				console.log(`DEBUG: Could not read Client1 samplesheet: ${e}`)
+			}
+
 			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
 			console.log(`[TSV Compare] client1MockResult length: ${client1MockResult.length}`)
 			console.log(`[TSV Compare] client2MockResult length: ${client2MockResult.length}`)

@@ -1578,7 +1578,19 @@ pub fn get_syftbox_diagnostics() -> Result<SyftBoxDiagnostics, String> {
 
 #[tauri::command]
 pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
-    let cfg = load_syftbox_client_config()?;
+    let cfg = match load_syftbox_client_config() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return Ok(SyftBoxQueueStatus {
+                control_plane_url: None,
+                data_dir: None,
+                sync: None,
+                uploads: None,
+                status: None,
+                error: Some(err),
+            });
+        }
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()

@@ -286,6 +286,23 @@ class WsBridge {
 			'install_command_line_tools',
 			'import_pipeline_with_deps',
 			'import_pipeline',
+			// Dependency checks call subprocess commands (java -version, docker info, etc.)
+			// which can be slow on Windows, especially first time or with antivirus scanning
+			'check_dependencies',
+			'check_single_dependency',
+			'update_saved_dependency_states',
+			'complete_onboarding',
+			'get_saved_dependency_states',
+			// Docker/Podman checks can be slow on Windows, especially with Hyper-V
+			'check_docker_running',
+			'check_container_runtime',
+			// Pipeline execution can involve Docker/Podman container operations
+			'run_pipeline',
+			'get_pipeline_runs',
+			// Key/vault operations can be slow on Windows
+			'key_check_vault_debug',
+			'check_is_onboarded',
+			'get_dev_mode_info',
 		])
 		const timeoutMs = Math.max(
 			1000,

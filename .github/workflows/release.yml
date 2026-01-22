@@ -216,7 +216,7 @@ jobs:
 
           if is_enabled('BUILD_WINDOWS_X64'):
               entries.append({
-                  'runs-on': 'windows-latest',
+                  'runs-on': 'namespace-profile-windows-medium',
                   'args': 'x86_64-pc-windows-msvc',
                   'build_kind': 'tauri',
                   'target': 'windows-x64',
@@ -224,7 +224,7 @@ jobs:
 
           if is_enabled('BUILD_LINUX_X64'):
               entries.append({
-                  'runs-on': 'ubuntu-22.04',
+                  'runs-on': 'namespace-profile-linux-medium',
                   'args': 'x86_64-unknown-linux-gnu',
                   'build_kind': 'tauri',
                   'target': 'linux-x64',

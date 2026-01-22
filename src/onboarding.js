@@ -1639,21 +1639,12 @@ export function initOnboarding({
 				}
 
 				try {
-					const ciFlag =
-						window?.process?.env?.CI === '1' ||
-						window?.process?.env?.CI === 'true' ||
-						window?.process?.env?.GITHUB_ACTIONS === 'true' ||
-						window?.__IS_CI__ === true
-					const wsTimeoutMs = ciFlag ? 15000 : 5000
+					// Dependency checks use longRunning timeout (180s) in tauri-shim.js
+					// subprocess calls for java/docker/nextflow are slow on Windows
 					const start = Date.now()
-					console.log(
-						`[onboarding] update_saved_dependency_states start (timeout=${wsTimeoutMs}ms)`,
-					)
-					console.log(
-						`[onboarding] env CI=${window?.process?.env?.CI || ''} GITHUB_ACTIONS=${window?.process?.env?.GITHUB_ACTIONS || ''}`,
-					)
-					// Do not block the UI on potentially slow dependency checks in CI.
-					void invoke('update_saved_dependency_states', { __wsTimeoutMs: wsTimeoutMs })
+					console.log('[onboarding] update_saved_dependency_states start (using longRunning timeout)')
+					// Do not block the UI on potentially slow dependency checks.
+					void invoke('update_saved_dependency_states')
 						.then((result) => {
 							console.log(
 								`[onboarding] update_saved_dependency_states ok (${Date.now() - start}ms)`,
@@ -1930,10 +1921,18 @@ export function initOnboarding({
 			const emailInput = document.getElementById('onboarding-email')
 			const prefillNotice = document.getElementById('email-prefill-notice')
 			try {
-				const check = await invoke('profiles_check_home_for_existing_email', {
-					homePath: desiredHome,
-				})
-				if (check?.has_existing_config && check?.existing_email) {
+				const checkTimeoutMs = 5000
+				const check = await Promise.race([
+					invoke('profiles_check_home_for_existing_email', {
+						homePath: desiredHome,
+					}),
+					new Promise((resolve) => setTimeout(() => resolve(null), checkTimeoutMs)),
+				])
+				if (!check) {
+					if (prefillNotice) {
+						prefillNotice.style.display = 'none'
+					}
+				} else if (check?.has_existing_config && check?.existing_email) {
 					// Pre-fill email from existing config
 					if (emailInput) {
 						emailInput.value = check.existing_email
@@ -1979,15 +1978,25 @@ export function initOnboarding({
 
 		const desiredHome = (homeInput?.value || '').trim()
 
-		// If user picked a different BioVault home, create/switch profiles before continuing.
-		if (desiredHome) {
-			try {
-				const currentHome = await resolveCurrentHomeBestEffort()
-				if (!currentHome || desiredHome !== currentHome) {
-					try {
-						window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
-						window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
-					} catch (_err) {
+			const normalizeHomePath = (value) => {
+				const raw = String(value || '').trim()
+				if (!raw) return ''
+				const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
+				const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)
+				return isWindowsPath ? normalized.toLowerCase() : normalized
+			}
+
+			// If user picked a different BioVault home, create/switch profiles before continuing.
+			if (desiredHome) {
+				try {
+					const currentHome = await resolveCurrentHomeBestEffort()
+					const normalizedDesired = normalizeHomePath(desiredHome)
+					const normalizedCurrent = normalizeHomePath(currentHome)
+					if (normalizedCurrent && normalizedDesired && normalizedDesired !== normalizedCurrent) {
+						try {
+							window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
+							window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
+						} catch (_err) {
 						// ignore
 					}
 					try {

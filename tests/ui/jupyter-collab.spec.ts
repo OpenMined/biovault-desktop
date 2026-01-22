@@ -374,6 +374,8 @@ async function runAllCellsAndWait(
 	const cellCount = await jupyterPage.locator('.jp-CodeCell').count()
 	console.log(`[${notebookName}] Found ${cellCount} code cells`)
 
+	await dismissJupyterDialogIfPresent(jupyterPage, notebookName)
+
 	// Click on the Run menu
 	const runMenu = jupyterPage.locator('div.lm-MenuBar-itemLabel:has-text("Run")')
 	await runMenu.click()
@@ -454,6 +456,36 @@ async function runAllCellsAndWait(
 	}
 
 	return { outputs: combinedOutput, errorCount: errorCount + tracebackCount }
+}
+
+async function dismissJupyterDialogIfPresent(jupyterPage: Page, label: string): Promise<void> {
+	const dialog = jupyterPage.locator('.jp-Dialog')
+	if (!(await dialog.isVisible())) return
+
+	console.log(`[${label}] Dismissing blocking Jupyter dialog...`)
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		if (!(await dialog.isVisible())) return
+
+		const acceptButton = dialog.locator('button.jp-mod-accept')
+		if ((await acceptButton.count()) > 0) {
+			await acceptButton.first().click()
+		} else {
+			const anyButton = dialog.locator('button')
+			if ((await anyButton.count()) > 0) {
+				await anyButton.first().click()
+			} else {
+				await jupyterPage.keyboard.press('Escape')
+			}
+		}
+
+		await jupyterPage.waitForTimeout(500)
+	}
+
+	if (await dialog.isVisible()) {
+		console.log(`[${label}] Dialog still visible; sending Escape`)
+		await jupyterPage.keyboard.press('Escape')
+		await jupyterPage.waitForTimeout(500)
+	}
 }
 
 // Timing helper for detailed performance analysis
@@ -1098,7 +1130,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		if (await doNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
 			console.log(`Opening ${NOTEBOOK_DO}.ipynb on Client1...`)
 			await doNotebook.dblclick()
-			await jupyterPage1.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+			await jupyterPage1.waitForSelector('.jp-NotebookPanel:not(.lm-mod-hidden)', {
+				timeout: 30_000,
+			})
 		} else {
 			console.log(`WARNING: ${NOTEBOOK_DO}.ipynb not found on Client1`)
 		}
@@ -1117,7 +1151,9 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 			if (await dsNotebook.isVisible({ timeout: 5000 }).catch(() => false)) {
 				console.log(`Opening ${NOTEBOOK_DS}.ipynb on Client2...`)
 				await dsNotebook.dblclick()
-				await jupyterPage2.waitForSelector('.jp-NotebookPanel', { timeout: 15_000 })
+				await jupyterPage2.waitForSelector('.jp-NotebookPanel:not(.lm-mod-hidden)', {
+					timeout: 30_000,
+				})
 			} else {
 				console.log(`WARNING: ${NOTEBOOK_DS}.ipynb not found on Client2`)
 			}
@@ -1131,9 +1167,14 @@ test.describe('Jupyter Collaboration @jupyter-collab', () => {
 		console.log('\n=== Step 7: Run all cells on both notebooks ===')
 
 		// Wait for notebooks to be ready
-		await jupyterPage1.waitForSelector('.jp-CodeCell', { timeout: 15_000 })
+		const waitForActiveNotebook = async (page) => {
+			const panel = page.locator('.jp-NotebookPanel:not(.lm-mod-hidden)').first()
+			await expect(panel).toBeVisible({ timeout: 30_000 })
+			await expect(panel.locator('.jp-CodeCell').first()).toBeVisible({ timeout: 30_000 })
+		}
+		await waitForActiveNotebook(jupyterPage1)
 		if (jupyterPage2) {
-			await jupyterPage2.waitForSelector('.jp-CodeCell', { timeout: 15_000 })
+			await waitForActiveNotebook(jupyterPage2)
 		}
 		await jupyterPage1.waitForTimeout(2000)
 

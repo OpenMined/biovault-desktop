@@ -453,7 +453,7 @@ fn load_pipeline_spec_from_storage(
         .map_err(|e| format!("Failed to convert flow spec: {}", e))
 }
 
-fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
+fn append_pipeline_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
             crate::desktop_log!(
@@ -478,7 +478,9 @@ fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: 
         }
     }
 
-    let _ = window.emit("pipeline-log-line", message.to_string());
+    if let Some(w) = window {
+        let _ = w.emit("pipeline-log-line", message.to_string());
+    }
 }
 
 #[tauri::command]
@@ -910,6 +912,26 @@ pub async fn run_pipeline(
     state: tauri::State<'_, AppState>,
     window: tauri::WebviewWindow,
     pipeline_id: i64,
+    input_overrides: HashMap<String, String>,
+    results_dir: Option<String>,
+    selection: Option<PipelineRunSelection>,
+) -> Result<PipelineRun, String> {
+    run_pipeline_impl(
+        state,
+        Some(window),
+        pipeline_id,
+        input_overrides,
+        results_dir,
+        selection,
+    )
+    .await
+}
+
+/// Internal implementation that takes an optional window (for WS bridge mode)
+pub async fn run_pipeline_impl(
+    state: tauri::State<'_, AppState>,
+    window: Option<tauri::WebviewWindow>,
+    pipeline_id: i64,
     mut input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
     selection: Option<PipelineRunSelection>,
@@ -950,19 +972,19 @@ pub async fn run_pipeline(
 
     let log_path = results_path.join("pipeline.log");
     append_pipeline_log(
-        &window,
+        window.as_ref(),
         &log_path,
         &format!("📦 Pipeline: {}", pipeline_name),
     );
     append_pipeline_log(
-        &window,
+        window.as_ref(),
         &log_path,
         &format!("📂 Results directory: {}", results_path.display()),
     );
 
     if let Some(sel) = &selection {
         append_pipeline_log(
-            &window,
+            window.as_ref(),
             &log_path,
             &format!(
                 "🔍 Selection payload: files={} participants={} dataset={}",
@@ -975,7 +997,11 @@ pub async fn run_pipeline(
             ),
         );
     } else {
-        append_pipeline_log(&window, &log_path, "🔍 Selection payload: none provided");
+        append_pipeline_log(
+            window.as_ref(),
+            &log_path,
+            "🔍 Selection payload: none provided",
+        );
     }
 
     if let Some(sel) = selection {
@@ -1187,7 +1213,7 @@ pub async fn run_pipeline(
 
                 if !local_path.exists() {
                     append_pipeline_log(
-                        &window,
+                        window.as_ref(),
                         &log_path,
                         &format!("⚠️  File not found for URL: {} -> {:?}", url, local_path),
                     );
@@ -1365,7 +1391,7 @@ pub async fn run_pipeline(
 
     if let Some((file_count, participant_count)) = selection_counts {
         append_pipeline_log(
-            &window,
+            window.as_ref(),
             &log_path,
             &format!(
                 "📥 Inputs: {} file(s), {} participant(s)",
@@ -1376,7 +1402,7 @@ pub async fn run_pipeline(
 
     if let Some(path) = &generated_samplesheet_path {
         append_pipeline_log(
-            &window,
+            window.as_ref(),
             &log_path,
             &format!("📝 Generated samplesheet: {}", path),
         );
@@ -1442,7 +1468,7 @@ pub async fn run_pipeline(
     command_preview.push_str(&quote_arg(&results_dir_str));
 
     append_pipeline_log(
-        &window,
+        window.as_ref(),
         &log_path,
         &format!("▶️  Command: {}", command_preview),
     );
@@ -1471,22 +1497,22 @@ pub async fn run_pipeline(
 
     tauri::async_runtime::spawn(async move {
         append_pipeline_log(
-            &window_clone,
+            window_clone.as_ref(),
             &log_path_clone,
             &format!("🚀 Starting pipeline run: {}", pipeline_name_clone),
         );
         append_pipeline_log(
-            &window_clone,
+            window_clone.as_ref(),
             &log_path_clone,
             &format!("📄 Pipeline YAML: {}", yaml_path_spawn),
         );
         append_pipeline_log(
-            &window_clone,
+            window_clone.as_ref(),
             &log_path_clone,
             &format!("📂 Results dir: {}", results_dir_spawn),
         );
         append_pipeline_log(
-            &window_clone,
+            window_clone.as_ref(),
             &log_path_clone,
             &format!("🔧 Extra args: {:?}", extra_args_spawn),
         );
@@ -1504,7 +1530,7 @@ pub async fn run_pipeline(
         let status = match &result {
             Err(err) => {
                 append_pipeline_log(
-                    &window_clone,
+                    window_clone.as_ref(),
                     &log_path_clone,
                     &format!("❌ Pipeline run failed: {}", err),
                 );
@@ -1512,7 +1538,7 @@ pub async fn run_pipeline(
             }
             Ok(()) => {
                 append_pipeline_log(
-                    &window_clone,
+                    window_clone.as_ref(),
                     &log_path_clone,
                     "✅ Pipeline run completed successfully",
                 );
@@ -1525,7 +1551,9 @@ pub async fn run_pipeline(
             let _ = biovault_db.update_pipeline_run_status(run_id_clone, status, true);
         }
 
-        let _ = window_clone.emit("pipeline-complete", status);
+        if let Some(w) = &window_clone {
+            let _ = w.emit("pipeline-complete", status);
+        }
     });
 
     Ok(PipelineRun {
