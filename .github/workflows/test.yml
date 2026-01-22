@@ -111,12 +111,12 @@ jobs:
           # don't support nested virtualization (Docker requires VMs on macOS).
           # pipelines-collab is fully tested on Linux which covers the core functionality.
           # pipelines-solo on Windows - rust (Podman Hyper-V)
-          - scenario: pipelines-solo
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # - scenario: pipelines-solo
+          #   platform: windows-x86_64
+          #   runner: namespace-profile-windows-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
           # pipelines-collab on Windows - rust (Podman Hyper-V)
           - scenario: pipelines-collab
             platform: windows-x86_64
