@@ -1047,6 +1047,50 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				throw new Error('Dataset not found on network within timeout')
 			}
 
+			// Wait for all mock files to sync (5 files expected - test adds 5 mock + 5 private)
+			// This prevents race condition where Client2 runs pipeline before all files are available
+			const EXPECTED_MOCK_FILES = 5
+			const mockSyncTimer = timer('Mock files sync')
+			console.log(`\nWaiting for all ${EXPECTED_MOCK_FILES} mock files to sync...`)
+			let mockFilesReady = false
+			const mockSyncStart = Date.now()
+			const MOCK_SYNC_TIMEOUT = 60_000 // 60 seconds
+
+			while (Date.now() - mockSyncStart < MOCK_SYNC_TIMEOUT) {
+				try {
+					// Trigger sync
+					await Promise.all([
+						backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+						backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+					])
+					await page2.waitForTimeout(2000)
+
+					const scanResult = await backend2.invoke('network_scan_datasets')
+					const datasets = scanResult?.datasets || []
+					const targetDataset = datasets.find((d: any) => d.name === datasetName)
+
+					if (targetDataset && targetDataset.assets?.length > 0) {
+						const asset = targetDataset.assets[0]
+						const mockCount = asset.mock_entries?.length || 0
+						console.log(`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}`)
+
+						if (mockCount >= EXPECTED_MOCK_FILES) {
+							console.log(`All ${EXPECTED_MOCK_FILES} mock files synced!`)
+							mockFilesReady = true
+							break
+						}
+					}
+				} catch (err) {
+					console.log('Error checking mock files:', err)
+				}
+				await page2.waitForTimeout(3000)
+			}
+			mockSyncTimer.stop()
+
+			if (!mockFilesReady) {
+				console.warn(`Warning: Only partial mock files synced, proceeding anyway`)
+			}
+
 			// ============================================================
 			// Step 5: Client2 runs imported pipeline on peer's mock data
 			// ============================================================

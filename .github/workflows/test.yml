@@ -357,20 +357,20 @@ jobs:
         working-directory: src-tauri
 
       - name: Install maturin
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         run: pip install maturin
       - name: Install maturin (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         shell: pwsh
         run: pip install maturin
 
       - name: Pre-build syftbox-sdk wheel
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         run: |
           cd syftbox-sdk/python
           maturin build --release
       - name: Pre-build syftbox-sdk wheel (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         shell: pwsh
         run: maturin build --release
         working-directory: syftbox-sdk/python
