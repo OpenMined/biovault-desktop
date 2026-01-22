@@ -2743,10 +2743,8 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             Ok(serde_json::to_value(result).unwrap())
         }
         "run_pipeline" => {
-            // Get the main window for event emission
-            let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| "Main window not found".to_string())?;
+            // Try to get the main window for event emission (optional in WS bridge mode)
+            let window = app.get_webview_window("main");
 
             let pipeline_id: i64 = serde_json::from_value(
                 args.get("pipelineId")
@@ -2771,7 +2769,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("selection")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-            let result = crate::commands::pipelines::run_pipeline(
+            let result = crate::commands::pipelines::run_pipeline_impl(
                 state.clone(),
                 window,
                 pipeline_id,
