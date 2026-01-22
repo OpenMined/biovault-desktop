@@ -180,3 +180,9 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.439 0 0);
 }
+
+/* Sonner toast description styling */
+[data-sonner-toast] [data-description] {
+    opacity: 0.8 !important;
+    color: var(--color-muted-foreground) !important;
+}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { profilesStore, type ProfileSummary } from '$lib/stores/profiles.svelte'
+	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
@@ -11,6 +12,7 @@
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import CheckIcon from '@lucide/svelte/icons/check'
+	import LogOutIcon from '@lucide/svelte/icons/log-out'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import FolderIcon from '@lucide/svelte/icons/folder'
 	import { open as openDialog, message as showMessage, confirm } from '@tauri-apps/plugin-dialog'
@@ -26,9 +28,21 @@
 	let deleting = $state<string | null>(null)
 	let deleteConfirmOpen = $state(false)
 	let profileToDelete = $state<ProfileSummary | null>(null)
+	let signOutConfirmOpen = $state(false)
+	let signingOut = $state(false)
 
 	const profiles = $derived(profilesStore.profiles)
 	const loading = $derived(profilesStore.loading)
+	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
+
+	// Reload profiles when auth state changes (e.g., after signing in)
+	$effect(() => {
+		// Track isAuthenticated changes
+		const _ = isAuthenticated
+		if (open) {
+			profilesStore.load()
+		}
+	})
 
 	function handleOpenChange(newOpen: boolean) {
 		open = newOpen
@@ -72,6 +86,20 @@
 			await showMessage(String(e), { title: 'Failed to Delete Profile', kind: 'error' })
 		} finally {
 			deleting = null
+		}
+	}
+
+	async function handleSignOut() {
+		signingOut = true
+		try {
+			await syftboxAuthStore.disconnect()
+			signOutConfirmOpen = false
+			handleOpenChange(false)
+		} catch (e) {
+			console.error('Failed to sign out:', e)
+			await showMessage(String(e), { title: 'Failed to Sign Out', kind: 'error' })
+		} finally {
+			signingOut = false
 		}
 	}
 
@@ -137,7 +165,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-	<Dialog.Content class="sm:max-w-lg">
+	<Dialog.Content class="sm:max-w-2xl">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2">
 				<UsersIcon class="size-5" />
@@ -193,6 +221,26 @@
 									<CheckIcon class="size-4 text-primary" />
 								{/if}
 							</div>
+
+							{#if profile.is_current && isAuthenticated}
+								<Button
+									variant="ghost"
+									size="icon"
+									class="shrink-0 text-muted-foreground hover:text-foreground"
+									onclick={(e) => {
+										e.stopPropagation()
+										signOutConfirmOpen = true
+									}}
+									disabled={signingOut}
+									title="Sign out from SyftBox"
+								>
+									{#if signingOut}
+										<Loader2Icon class="size-4 animate-spin" />
+									{:else}
+										<LogOutIcon class="size-4" />
+									{/if}
+								</Button>
+							{/if}
 
 							{#if !profile.is_current && !profile.running}
 								<Button
@@ -250,6 +298,28 @@
 					Deleting...
 				{:else}
 					Delete Profile
+				{/if}
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
+
+<AlertDialog.Root bind:open={signOutConfirmOpen}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Sign out from SyftBox?</AlertDialog.Title>
+			<AlertDialog.Description>
+				You will be disconnected from the SyftBox network for this profile. You can reconnect at
+				any time.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel disabled={signingOut}>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={handleSignOut} disabled={signingOut}>
+				{#if signingOut}
+					Signing out...
+				{:else}
+					Sign Out
 				{/if}
 			</AlertDialog.Action>
 		</AlertDialog.Footer>

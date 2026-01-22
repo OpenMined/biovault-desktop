@@ -51,10 +51,6 @@
 	let disconnecting = $state(false)
 	let profileSwitcherOpen = $state(false)
 
-	// Profiles state
-	const profilesEnabled = $derived(profilesStore.enabled)
-	const hasMultipleProfiles = $derived(profilesStore.hasMultipleProfiles)
-
 	// Derive display name from email (part before @)
 	const userName = $derived(userEmail ? userEmail.split('@')[0] : 'Not signed in')
 
@@ -84,11 +80,8 @@
 	onMount(async () => {
 		try {
 			// Check SyftBox auth status and load profiles in parallel
-			await Promise.all([
-				syftboxAuthStore.checkAuth(),
-				profilesStore.load()
-			])
-			
+			await Promise.all([syftboxAuthStore.checkAuth(), profilesStore.load()])
+
 			// Get email from settings
 			const settings = await invoke<{ email: string }>('get_settings')
 			userEmail = settings.email || ''
@@ -150,32 +143,32 @@
 								class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 							>
 								<Tooltip.Provider delayDuration={0}>
-								<Tooltip.Root>
-									<Tooltip.Trigger class="relative">
-										<Avatar.Root class="h-8 w-8 rounded-lg">
-											<Avatar.Fallback class="rounded-lg">
-												{userLoading ? '...' : userInitials}
-											</Avatar.Fallback>
-										</Avatar.Root>
-										{#if isAuthenticated}
-											<span
-												class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-sidebar {isOnline
-													? 'bg-emerald-500'
-													: 'bg-slate-400'}"
-											></span>
-										{/if}
-									</Tooltip.Trigger>
-									<Tooltip.Content side="top">
-										{#if !isAuthenticated}
-											Not connected to SyftBox
-										{:else if isOnline}
-											SyftBox Online
-										{:else}
-											SyftBox Offline
-										{/if}
-									</Tooltip.Content>
-								</Tooltip.Root>
-							</Tooltip.Provider>
+									<Tooltip.Root>
+										<Tooltip.Trigger class="relative">
+											<Avatar.Root class="h-8 w-8 rounded-lg">
+												<Avatar.Fallback class="rounded-lg">
+													{userLoading ? '...' : userInitials}
+												</Avatar.Fallback>
+											</Avatar.Root>
+											{#if isAuthenticated}
+												<span
+													class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-sidebar {isOnline
+														? 'bg-emerald-500'
+														: 'bg-slate-400'}"
+												></span>
+											{/if}
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top">
+											{#if !isAuthenticated}
+												Not connected to SyftBox
+											{:else if isOnline}
+												SyftBox Online
+											{:else}
+												SyftBox Offline
+											{/if}
+										</Tooltip.Content>
+									</Tooltip.Root>
+								</Tooltip.Provider>
 								<div
 									class="group-data-[collapsible=icon]:hidden grid flex-1 text-left text-sm leading-tight"
 								>
@@ -208,20 +201,14 @@
 						</DropdownMenu.Label>
 						<DropdownMenu.Separator />
 						<DropdownMenu.Group>
-							<DropdownMenu.Item onclick={() => goto('/profile')}>
-								<UserIcon />
-								Profile
-							</DropdownMenu.Item>
 							<DropdownMenu.Item onclick={() => goto('/settings')}>
 								<SettingsIcon />
 								Settings
 							</DropdownMenu.Item>
-							{#if profilesEnabled}
-								<DropdownMenu.Item onclick={() => (profileSwitcherOpen = true)}>
-									<ArrowRightLeftIcon />
-									Switch Profile
-								</DropdownMenu.Item>
-							{/if}
+							<DropdownMenu.Item onclick={() => (profileSwitcherOpen = true)}>
+								<ArrowRightLeftIcon />
+								Switch Profile
+							</DropdownMenu.Item>
 						</DropdownMenu.Group>
 						<DropdownMenu.Separator />
 						{#if isAuthenticated}
@@ -283,7 +270,8 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Disconnect from SyftBox?</AlertDialog.Title>
 			<AlertDialog.Description>
-				You will be disconnected from the SyftBox network. You can reconnect at any time by signing in again.
+				You will be disconnected from the SyftBox network. You can reconnect at any time by signing
+				in again.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
