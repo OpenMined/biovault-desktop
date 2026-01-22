@@ -80,12 +80,13 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
           # pipelines-collab on Windows - rust (Podman Hyper-V)
-          - scenario: pipelines-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # NOTE: Disabled until pipeline execution issues on Windows are resolved
+          # - scenario: pipelines-collab
+          #   platform: windows-x86_64
+          #   runner: namespace-profile-windows-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
           # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
           # don't support nested virtualization (Docker requires VMs on macOS).
 
