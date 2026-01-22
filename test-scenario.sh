@@ -171,11 +171,13 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--headed)
 			FORWARD_ARGS+=(--headed)
+			export PLAYWRIGHT_HEADLESS=false
 			shift
 			;;
 		--interactive|-i)
 			# Interactive = headed browser (visible windows)
 			FORWARD_ARGS+=(--headed)
+			export PLAYWRIGHT_HEADLESS=false
 			INTERACTIVE_MODE=1
 			shift
 			;;

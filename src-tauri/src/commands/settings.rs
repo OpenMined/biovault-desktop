@@ -411,7 +411,14 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     crate::desktop_log!("✅ Init complete, now saving dependency states...");
 
     // Also save the current dependency states for later retrieval
-    match super::dependencies::save_dependency_states(&biovault_path) {
+    // Run in blocking thread pool since this calls subprocess checks (java, docker, etc.)
+    let biovault_path_clone = biovault_path.clone();
+    match tokio::task::spawn_blocking(move || {
+        super::dependencies::save_dependency_states(&biovault_path_clone)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    {
         Ok(_) => {
             eprintln!("DEBUG: save_dependency_states() returned OK");
             crate::desktop_log!("✅ Dependency states saved successfully");

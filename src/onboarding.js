@@ -1639,21 +1639,12 @@ export function initOnboarding({
 				}
 
 				try {
-					const ciFlag =
-						window?.process?.env?.CI === '1' ||
-						window?.process?.env?.CI === 'true' ||
-						window?.process?.env?.GITHUB_ACTIONS === 'true' ||
-						window?.__IS_CI__ === true
-					const wsTimeoutMs = ciFlag ? 15000 : 5000
+					// Dependency checks use longRunning timeout (180s) in tauri-shim.js
+					// subprocess calls for java/docker/nextflow are slow on Windows
 					const start = Date.now()
-					console.log(
-						`[onboarding] update_saved_dependency_states start (timeout=${wsTimeoutMs}ms)`,
-					)
-					console.log(
-						`[onboarding] env CI=${window?.process?.env?.CI || ''} GITHUB_ACTIONS=${window?.process?.env?.GITHUB_ACTIONS || ''}`,
-					)
-					// Do not block the UI on potentially slow dependency checks in CI.
-					void invoke('update_saved_dependency_states', { __wsTimeoutMs: wsTimeoutMs })
+					console.log('[onboarding] update_saved_dependency_states start (using longRunning timeout)')
+					// Do not block the UI on potentially slow dependency checks.
+					void invoke('update_saved_dependency_states')
 						.then((result) => {
 							console.log(
 								`[onboarding] update_saved_dependency_states ok (${Date.now() - start}ms)`,

@@ -792,6 +792,7 @@ fn spawn_with_profile(
 ) -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| format!("Failed to locate current exe: {}", e))?;
     let mut cmd = Command::new(exe);
+    super::hide_console_window(&mut cmd);
     cmd.arg("--profile-id").arg(profile_id);
     if wait_for_lock {
         cmd.arg("--wait-for-profile-lock");
@@ -830,6 +831,7 @@ fn spawn_with_profile(
 fn spawn_picker_instance() -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| format!("Failed to locate current exe: {}", e))?;
     let mut cmd = Command::new(exe);
+    super::hide_console_window(&mut cmd);
     cmd.env_remove("BIOVAULT_HOME");
     cmd.env_remove("BIOVAULT_PROFILE_PICKER");
     cmd.env_remove("BIOVAULT_PROFILE_LOCK_CONFLICT");

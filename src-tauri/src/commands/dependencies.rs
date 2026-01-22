@@ -134,9 +134,13 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
 pub async fn check_dependencies() -> Result<DependencyCheckResult, String> {
     crate::desktop_log!("🔍 check_dependencies called");
 
-    // Call the library function directly
-    biovault::cli::commands::check::check_dependencies_result()
-        .map_err(|e| format!("Failed to check dependencies: {}", e))
+    // Run in blocking thread pool since this calls subprocess checks (java, docker, etc.)
+    tokio::task::spawn_blocking(|| {
+        biovault::cli::commands::check::check_dependencies_result()
+            .map_err(|e| format!("Failed to check dependencies: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -150,9 +154,13 @@ pub async fn check_single_dependency(
         path
     );
 
-    // Call the library function to check just this one dependency
-    biovault::cli::commands::check::check_single_dependency(&name, path)
-        .map_err(|e| format!("Failed to check dependency: {}", e))
+    // Run in blocking thread pool since this calls subprocess checks
+    tokio::task::spawn_blocking(move || {
+        biovault::cli::commands::check::check_single_dependency(&name, path)
+            .map_err(|e| format!("Failed to check dependency: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Returns saved dependency states from disk cache.
@@ -248,24 +256,41 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
 #[tauri::command]
 pub async fn check_docker_running() -> Result<bool, String> {
-    // Prefer configured docker path, fall back to PATH
-    let docker_bin = biovault::config::Config::load()
-        .ok()
-        .and_then(|cfg| cfg.get_binary_path("docker"))
-        .unwrap_or_else(|| "docker".to_string());
+    // Check BIOVAULT_CONTAINER_RUNTIME env var first (e.g., "podman" on Windows)
+    // Then fall back to configured docker path, then to "docker"
+    let docker_bin = if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+        let trimmed = runtime.trim();
+        if !trimmed.is_empty() {
+            trimmed.to_string()
+        } else {
+            biovault::config::Config::load()
+                .ok()
+                .and_then(|cfg| cfg.get_binary_path("docker"))
+                .unwrap_or_else(|| "docker".to_string())
+        }
+    } else {
+        biovault::config::Config::load()
+            .ok()
+            .and_then(|cfg| cfg.get_binary_path("docker"))
+            .unwrap_or_else(|| "docker".to_string())
+    };
 
-    // Run a quick health check
-    let mut cmd = Command::new(&docker_bin);
-    cmd.arg("info");
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    configure_child_process(&mut cmd);
+    // Run in spawn_blocking to avoid blocking the Tokio runtime
+    let result = tokio::task::spawn_blocking(move || {
+        let mut cmd = Command::new(&docker_bin);
+        cmd.arg("info");
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        configure_child_process(&mut cmd);
 
-    let status = cmd
-        .status()
-        .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))?;
+        cmd.status()
+            .map(|s| s.success())
+            .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))??;
 
-    Ok(status.success())
+    Ok(result)
 }
 
 #[tauri::command]
