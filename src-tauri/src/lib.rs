@@ -18,7 +18,13 @@ mod ws_bridge;
 // Module declarations
 mod commands;
 mod logging;
+#[cfg(feature = "telemetry")]
 mod telemetry;
+#[cfg(not(feature = "telemetry"))]
+mod telemetry {
+    pub fn init() {}
+    pub fn shutdown() {}
+}
 mod types;
 
 // Import types from types module

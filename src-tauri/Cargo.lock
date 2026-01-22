@@ -573,7 +573,7 @@ checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 
 [[package]]
 name = "biovault"
-version = "0.1.146"
+version = "0.1.147"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -594,9 +594,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "notify",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "rand 0.9.2",
  "regex",
  "reqwest",
@@ -614,7 +611,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
  "walkdir",

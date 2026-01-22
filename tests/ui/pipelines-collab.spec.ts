@@ -21,6 +21,7 @@
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
+import { createHash } from 'node:crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
@@ -391,9 +392,8 @@ async function waitForFilesOnDisk(
 }
 
 function computeFileHash(filePath: string): string {
-	const crypto = require('crypto')
 	const content = fs.readFileSync(filePath)
-	return crypto.createHash('md5').update(content).digest('hex')
+	return createHash('md5').update(content).digest('hex')
 }
 
 async function waitForFilesContentMatch(
