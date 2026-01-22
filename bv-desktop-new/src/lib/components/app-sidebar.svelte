@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
 	import { page } from '$app/stores'
-	import ChartBarIcon from '@lucide/svelte/icons/chart-bar'
+	import PlayCircleIcon from '@lucide/svelte/icons/play-circle'
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up'
 	import CompassIcon from '@lucide/svelte/icons/compass'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -24,11 +24,11 @@
 	// Navigation items
 	const navItems = [
 		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
+		{ title: 'Runs', url: '/runs', icon: PlayCircleIcon },
+		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 		{ title: 'Explore', url: '/explore', icon: CompassIcon },
 		{ title: 'Inbox', url: '/inbox', icon: InboxIcon },
 		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon },
-		{ title: 'Results', url: '/results', icon: ChartBarIcon },
-		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 	]
 
 	// User identity from BioVault settings

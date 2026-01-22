@@ -6,6 +6,7 @@
 	import { Toaster } from '$lib/components/ui/sonner/index.js'
 	import AppSidebar from '$lib/components/app-sidebar.svelte'
 	import SqlPanel from '$lib/components/sql-panel.svelte'
+	import LogsPanel from '$lib/components/logs-panel.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
 	import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap'
@@ -15,6 +16,7 @@
 
 	let { children } = $props()
 	let sqlOpen = $state(false)
+	let logsOpen = $state(false)
 </script>
 
 <Sidebar.Provider class="!min-h-0">
@@ -27,26 +29,43 @@
 			<div class="ps-16"></div>
 			<Tooltip.Provider delayDuration={0}>
 				<div class="flex items-center gap-1">
-					<Tooltip.Root>
-						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-						>
-							<SquareTerminalIcon class="size-5" />
-						</Tooltip.Trigger>
-						<Tooltip.Content>
-							<p>Logs</p>
-						</Tooltip.Content>
-					</Tooltip.Root>
+					<Drawer.Root bind:open={logsOpen}>
+						<Tooltip.Root>
+							<Drawer.Trigger>
+								{#snippet child({ props })}
+									<Tooltip.Trigger
+										{...props}
+										class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+									>
+										<SquareTerminalIcon class="size-5" />
+									</Tooltip.Trigger>
+								{/snippet}
+							</Drawer.Trigger>
+							<Tooltip.Content>
+								<p>Logs</p>
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Drawer.Content class="!max-h-[85vh] h-[85vh]">
+							<div class="h-full px-6 pb-8 pt-4">
+								{#if logsOpen}
+									<LogsPanel mode="sheet" />
+								{/if}
+							</div>
+						</Drawer.Content>
+					</Drawer.Root>
 
 					<Drawer.Root bind:open={sqlOpen}>
 						<Tooltip.Root>
-							<Tooltip.Trigger asChild>
-								<Drawer.Trigger
-									class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-								>
-									<DatabaseIcon class="size-5" />
-								</Drawer.Trigger>
-							</Tooltip.Trigger>
+							<Drawer.Trigger>
+								{#snippet child({ props })}
+									<Tooltip.Trigger
+										{...props}
+										class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+									>
+										<DatabaseIcon class="size-5" />
+									</Tooltip.Trigger>
+								{/snippet}
+							</Drawer.Trigger>
 							<Tooltip.Content>
 								<p>SQL Console</p>
 							</Tooltip.Content>
