@@ -216,7 +216,9 @@ jobs:
 
           if is_enabled('BUILD_WINDOWS_X64'):
               entries.append({
-                  'runs-on': 'namespace-profile-windows-medium',
+                  # NOTE: Using windows-latest instead of namespace runner due to
+                  # Cargo cache path mismatch (D:\a\ vs C:\Users\runneradmin\work\)
+                  'runs-on': 'windows-latest',
                   'args': 'x86_64-pc-windows-msvc',
                   'build_kind': 'tauri',
                   'target': 'windows-x64',
