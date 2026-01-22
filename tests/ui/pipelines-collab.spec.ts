@@ -346,6 +346,12 @@ function normalizeTsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
+function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
+	return page.locator(
+		`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`,
+	)
+}
+
 async function runDatasetPipeline(
 	page: Page,
 	backend: Backend,
@@ -1015,10 +1021,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				// Network datasets use .dataset-item class (not .dataset-card which is for local datasets)
 				const datasetCards = page2.locator('.dataset-item')
 				const count = await datasetCards.count()
-				console.log(`Checking for dataset cards... found: ${count}`)
+				const targetDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
+				const targetCount = await targetDatasetCard.count()
+				console.log(`Checking for dataset cards... found: ${count} (target: ${targetCount})`)
 
-				if (count > 0) {
-					console.log(`Found ${count} dataset(s) on network!`)
+				if (targetCount > 0) {
+					console.log(`Found target dataset "${datasetName}" on network!`)
 					datasetFound = true
 					break
 				}
@@ -1150,7 +1158,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Find the dataset card and click "Run Pipeline" button
 			// This button appears for trusted peer datasets that have mock data
-			const networkDatasetCardForRun = page2.locator('.dataset-item').first()
+			const networkDatasetCardForRun = getNetworkDatasetItem(page2, datasetName, email1)
 			const runPipelineOnMockBtn = networkDatasetCardForRun.locator('.run-pipeline-btn')
 			await expect(runPipelineOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Run Pipeline button for mock data, clicking...')
@@ -1269,7 +1277,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Find the dataset card and click "Request Run" button
 			// The "Request Run" button is visible for peer datasets (not "Run Pipeline" which is for own datasets)
-			const networkDatasetCard = page2.locator('.dataset-item').first()
+			const networkDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
 			const requestRunBtn = networkDatasetCard.locator('.request-run-btn')
 			await expect(requestRunBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Request Run button, clicking...')
