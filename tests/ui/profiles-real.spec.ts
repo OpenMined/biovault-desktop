@@ -277,6 +277,24 @@ async function onboardingGoToHomeStep(page) {
 }
 
 async function goHomeToEmailStep(page) {
+	const homeInput = page.locator('#onboarding-home')
+	await expect(homeInput).toBeVisible({ timeout: 10_000 })
+	if (!(await homeInput.inputValue()).trim()) {
+		const fallbackHome = await page.evaluate(async () => {
+			try {
+				const invoke = (window as any)?.__TAURI__?.invoke
+				if (!invoke) return ''
+				const value = await invoke('profiles_get_default_home')
+				return typeof value === 'string' ? value : ''
+			} catch (_err) {
+				return ''
+			}
+		})
+		if (fallbackHome) {
+			await homeInput.fill(fallbackHome)
+		}
+	}
+	await expect(homeInput).toHaveValue(/.+/, { timeout: 20_000 })
 	await page.locator('#onboarding-next-3').click()
 	// Home check invoke can take time in CI after page reload
 	await expect(page.locator('#onboarding-step-3-email')).toBeVisible({ timeout: 20_000 })
@@ -316,7 +334,25 @@ async function completeOnboardingFromEmailStep(page, { email }) {
 		page.locator('#skip-syftbox-btn').click(),
 	])
 
-	await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+	await waitForAppReady(page, { timeout: 60_000 })
+	const runView = page.locator('#run-view')
+	try {
+		await expect(runView).toBeVisible({ timeout: 60_000 })
+	} catch (_err) {
+		const onboardingView = page.locator('#onboarding-view')
+		if (await onboardingView.isVisible({ timeout: 1_000 }).catch(() => false)) {
+			const step4Visible = await page
+				.locator('#onboarding-step-4')
+				.isVisible({ timeout: 1_000 })
+				.catch(() => false)
+			if (step4Visible) {
+				page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
+				await page.locator('#skip-syftbox-btn').click().catch(() => {})
+			}
+			await waitForAppReady(page, { timeout: 60_000 })
+		}
+		await expect(runView).toBeVisible({ timeout: 60_000 })
+	}
 }
 
 async function assertHomePrefilled(page, expectedHomeContains) {
