@@ -1,22 +1,79 @@
 <script lang="ts">
 	import './layout.css'
+	import { onMount } from 'svelte'
+	import { invoke } from '@tauri-apps/api/core'
+	import { listen } from '@tauri-apps/api/event'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import * as Drawer from '$lib/components/ui/drawer/index.js'
 	import { Toaster } from '$lib/components/ui/sonner/index.js'
+	import { toast } from 'svelte-sonner'
 	import AppSidebar from '$lib/components/app-sidebar.svelte'
 	import SqlPanel from '$lib/components/sql-panel.svelte'
 	import LogsPanel from '$lib/components/logs-panel.svelte'
+	import NotificationsSheet from '$lib/components/notifications-sheet.svelte'
+	import LearnSheet from '$lib/components/learn-sheet.svelte'
+	import SupportDialog from '$lib/components/support-dialog.svelte'
+	import AiAssistant from '$lib/components/ai-assistant.svelte'
+	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
-	import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap'
-	import SparklesIcon from '@lucide/svelte/icons/sparkles'
+	import LibraryBigIcon from '@lucide/svelte/icons/library-big'
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
 
 	let { children } = $props()
 	let sqlOpen = $state(false)
 	let logsOpen = $state(false)
+	let notificationsOpen = $state(false)
+	let learnOpen = $state(false)
+	let supportOpen = $state(false)
+
+	// Send native system notification
+	async function sendNativeNotification(title: string, body: string) {
+		try {
+			// Try AppleScript notification first (most reliable on macOS)
+			await invoke('send_notification_applescript', { title, body })
+		} catch {
+			// Fallback to mac-notification-sys
+			try {
+				await invoke('send_native_notification', { title, body })
+			} catch {
+				// Silent fallback - toast notification already shown
+			}
+		}
+	}
+
+	onMount(() => {
+		// Listen for pipeline completion events
+		const unlistenPromise = listen<string>('pipeline-complete', (event) => {
+			const status = event.payload
+
+			if (status === 'success') {
+				// Add to notification store
+				addNotification('Flow Completed', 'Your flow has completed successfully.', 'success')
+
+				// Show toast
+				toast.success('Flow completed successfully')
+
+				// Send native notification
+				sendNativeNotification('Flow Completed', 'Your flow has completed successfully.')
+			} else if (status === 'failed') {
+				// Add to notification store
+				addNotification('Flow Failed', 'Your flow encountered an error.', 'error')
+
+				// Show toast
+				toast.error('Flow failed')
+
+				// Send native notification
+				sendNativeNotification('Flow Failed', 'Your flow encountered an error.')
+			}
+		})
+
+		return () => {
+			unlistenPromise.then((unlisten) => unlisten())
+		}
+	})
 </script>
 
 <Sidebar.Provider class="!min-h-0">
@@ -82,39 +139,44 @@
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+							onclick={() => (learnOpen = true)}
 						>
-							<GraduationCapIcon class="size-5" />
+							<LibraryBigIcon class="size-5" />
 						</Tooltip.Trigger>
 						<Tooltip.Content>
 							<p>Learn</p>
 						</Tooltip.Content>
 					</Tooltip.Root>
 
+					<!-- Notifications Bell with Badge -->
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
-						>
-							<SparklesIcon class="size-5" />
-						</Tooltip.Trigger>
-						<Tooltip.Content>
-							<p>AI Assistant</p>
-						</Tooltip.Content>
-					</Tooltip.Root>
-
-					<Tooltip.Root>
-						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors relative"
+							onclick={() => (notificationsOpen = true)}
 						>
 							<BellIcon class="size-5" />
+							{#if notificationsStore.unreadCount > 0}
+								<span
+									class="absolute -top-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground text-xs font-medium"
+								>
+									{notificationsStore.unreadCount > 9 ? '9+' : notificationsStore.unreadCount}
+								</span>
+							{/if}
 						</Tooltip.Trigger>
 						<Tooltip.Content>
-							<p>Notifications</p>
+							<p>
+								Notifications
+								{#if notificationsStore.unreadCount > 0}
+									({notificationsStore.unreadCount} unread)
+								{/if}
+							</p>
 						</Tooltip.Content>
 					</Tooltip.Root>
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+							onclick={() => (supportOpen = true)}
 						>
 							<CircleHelpIcon class="size-5" />
 						</Tooltip.Trigger>
@@ -141,4 +203,8 @@
 	</div>
 </Sidebar.Provider>
 
+<NotificationsSheet bind:open={notificationsOpen} />
+<LearnSheet bind:open={learnOpen} />
+<SupportDialog bind:open={supportOpen} />
+<AiAssistant />
 <Toaster />
