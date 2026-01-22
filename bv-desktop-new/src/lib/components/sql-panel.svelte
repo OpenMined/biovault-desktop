@@ -455,7 +455,9 @@
 									{#each paginatedRows() as row, rowIdx (rowIdx)}
 										<Table.Row>
 											{#each row as cell, idx (idx)}
-												<Table.Cell class="text-xs font-mono py-1 whitespace-nowrap">{cell}</Table.Cell>
+												<Table.Cell class="text-xs font-mono py-1 whitespace-nowrap"
+													>{cell}</Table.Cell
+												>
 											{/each}
 										</Table.Row>
 									{:else}

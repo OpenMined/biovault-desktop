@@ -10,7 +10,6 @@
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import UploadIcon from '@lucide/svelte/icons/upload'
 	import PackageIcon from '@lucide/svelte/icons/package'
-	import FileIcon from '@lucide/svelte/icons/file'
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
 
 	interface DatasetAsset {
@@ -124,24 +123,6 @@
 						</div>
 						{#if item.dataset.description}
 							<p class="text-muted-foreground text-sm mt-3 line-clamp-2">{item.dataset.description}</p>
-						{/if}
-						{#if item.assets && item.assets.length > 0}
-							<div class="mt-4 pt-4 border-t">
-								<p class="text-xs font-medium text-muted-foreground mb-2">Assets</p>
-								<div class="space-y-1.5">
-									{#each item.assets.slice(0, 3) as asset}
-										<div class="flex items-center gap-2 text-sm">
-											<FileIcon class="size-3.5 text-muted-foreground" />
-											<span class="truncate">{asset.asset_key}</span>
-										</div>
-									{/each}
-									{#if item.assets.length > 3}
-										<p class="text-xs text-muted-foreground">
-											+{item.assets.length - 3} more
-										</p>
-									{/if}
-								</div>
-							</div>
 						{/if}
 					</button>
 				{/each}
