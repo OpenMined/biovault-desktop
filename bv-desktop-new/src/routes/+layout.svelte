@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte'
 	import { invoke } from '@tauri-apps/api/core'
 	import { listen } from '@tauri-apps/api/event'
+	import { getVersion } from '@tauri-apps/api/app'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import * as Drawer from '$lib/components/ui/drawer/index.js'
@@ -28,6 +29,7 @@
 	let notificationsOpen = $state(false)
 	let learnOpen = $state(false)
 	let supportOpen = $state(false)
+	let appVersion = $state('')
 
 	// Send native system notification
 	async function sendNativeNotification(title: string, body: string) {
@@ -45,6 +47,9 @@
 	}
 
 	onMount(() => {
+		// Get app version
+		getVersion().then((v) => (appVersion = v)).catch(() => {})
+
 		// Listen for pipeline completion events
 		const unlistenPromise = listen<string>('pipeline-complete', (event) => {
 			const status = event.payload
@@ -81,9 +86,14 @@
 		<!-- Full-width header/titlebar at top -->
 		<header
 			data-tauri-drag-region
-			class="bg-background fixed top-0 left-0 right-0 z-20 flex h-12 shrink-0 items-center justify-between border-b px-4"
+			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-12 shrink-0 items-center justify-between border-b border-primary/80 px-4"
 		>
-			<div class="ps-16"></div>
+			<div class="ps-20 flex items-center gap-2">
+				<span class="text-primary-foreground font-bold text-base">BioVault Desktop</span>
+				{#if appVersion}
+					<span class="text-primary-foreground/60 text-xs">v{appVersion}</span>
+				{/if}
+			</div>
 			<Tooltip.Provider delayDuration={0}>
 				<div class="flex items-center gap-1">
 					<Drawer.Root bind:open={logsOpen}>
@@ -92,7 +102,7 @@
 								{#snippet child({ props })}
 									<Tooltip.Trigger
 										{...props}
-										class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
 									>
 										<SquareTerminalIcon class="size-5" />
 									</Tooltip.Trigger>
@@ -117,7 +127,7 @@
 								{#snippet child({ props })}
 									<Tooltip.Trigger
 										{...props}
-										class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
 									>
 										<DatabaseIcon class="size-5" />
 									</Tooltip.Trigger>
@@ -138,7 +148,7 @@
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
 							onclick={() => (learnOpen = true)}
 						>
 							<LibraryBigIcon class="size-5" />
@@ -151,7 +161,7 @@
 					<!-- Notifications Bell with Badge -->
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors relative"
+							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors relative"
 							onclick={() => (notificationsOpen = true)}
 						>
 							<BellIcon class="size-5" />
@@ -175,7 +185,7 @@
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-muted-foreground hover:text-foreground rounded-md p-2 transition-colors"
+							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
 							onclick={() => (supportOpen = true)}
 						>
 							<CircleHelpIcon class="size-5" />
