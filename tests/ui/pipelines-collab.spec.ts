@@ -346,6 +346,50 @@ function normalizeTsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
+function normalizeCsvResult(content: string): string {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return lines.join('\n')
+	const [header, ...rows] = lines
+	rows.sort((a, b) => a.localeCompare(b))
+	return [header, ...rows].join('\n')
+}
+
+function extractMockFilenames(entries: any[]): string[] {
+	if (!Array.isArray(entries)) return []
+	const filenames = entries
+		.map((entry) => {
+			const url = entry?.url || ''
+			if (typeof url !== 'string' || !url) return ''
+			const name = url.split('/').next_back?.() ?? url.split('/').pop()
+			return name || ''
+		})
+		.filter((name) => typeof name === 'string' && name.length > 0)
+	return Array.from(new Set(filenames))
+}
+
+async function waitForFilesOnDisk(
+	label: string,
+	baseDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		const missing = filenames.filter((name) => !fs.existsSync(path.join(baseDir, name)))
+		if (missing.length === 0) {
+			console.log(`[${label}] All mock files present on disk (${filenames.length})`)
+			return
+		}
+		console.log(`[${label}] Waiting for ${missing.length} mock files: ${missing.join(', ')}`)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	throw new Error(`[${label}] Mock files not present on disk after ${timeoutMs}ms`)
+}
+
 function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
 	return page.locator(
 		`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`,
@@ -1003,6 +1047,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Wait for Client1's dataset to appear
 			const syncTimer = timer('Dataset sync to network')
 			let datasetFound = false
+			let targetDatasetForMock: any = null
 			const syncStart = Date.now()
 
 			// Wait for dataset cards to render (they might already be there)
@@ -1028,6 +1073,11 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				if (targetCount > 0) {
 					console.log(`Found target dataset "${datasetName}" on network!`)
 					datasetFound = true
+					try {
+						const scanResult = await backend2.invoke('network_scan_datasets')
+						const datasets = scanResult?.datasets || []
+						targetDatasetForMock = datasets.find((d: any) => d.name === datasetName)
+					} catch {}
 					break
 				}
 
@@ -1121,6 +1171,49 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			if (!mockFilesReady) {
 				console.warn(`Warning: Only partial mock files synced, proceeding anyway`)
+			}
+
+			if (targetDatasetForMock?.assets?.length) {
+				const asset = targetDatasetForMock.assets[0]
+				const mockEntries = asset.mock_entries || []
+				const mockFilenames = extractMockFilenames(mockEntries)
+				const assetKey = asset.key || 'asset_1'
+
+				const dataDir1 = await getSyftboxDataDir(backend1)
+				const dataDir2 = await getSyftboxDataDir(backend2)
+				const assetsDir1 = path.join(
+					resolveDatasitesRoot(dataDir1),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+				const assetsDir2 = path.join(
+					resolveDatasitesRoot(dataDir2),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+
+				await waitForFilesOnDisk('Client1', assetsDir1, mockFilenames, 60_000)
+				await waitForFilesOnDisk('Client2', assetsDir2, mockFilenames, 60_000)
+
+				const csvPath1 = path.join(assetsDir1, `${assetKey}.csv`)
+				const csvPath2 = path.join(assetsDir2, `${assetKey}.csv`)
+				const csv1 = await readTextFileWithRetry(csvPath1, 30_000)
+				const csv2 = await readTextFileWithRetry(csvPath2, 30_000)
+				const normalizedCsv1 = normalizeCsvResult(csv1)
+				const normalizedCsv2 = normalizeCsvResult(csv2)
+				if (normalizedCsv1 !== normalizedCsv2) {
+					console.log(`[CSV Compare] Client1: ${normalizedCsv1}`)
+					console.log(`[CSV Compare] Client2: ${normalizedCsv2}`)
+					throw new Error('Mock CSV mismatch between Client1 and Client2 assets')
+				}
 			}
 
 			// ============================================================
@@ -1237,6 +1330,14 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				} catch (e) {
 					console.log(`Raw metadata: ${mockRun2Final.metadata}`)
 				}
+			}
+			// Read and log samplesheet for Client2
+			const samplesheetPath2 = path.join(mockRun2Final.results_dir, 'inputs', 'selected_participants.csv')
+			try {
+				const samplesheet2 = await readTextFileWithRetry(samplesheetPath2, 5000)
+				console.log(`\n=== DEBUG: Client2 Samplesheet ===\n${samplesheet2}`)
+			} catch (e) {
+				console.log(`DEBUG: Could not read Client2 samplesheet: ${e}`)
 			}
 
 			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
@@ -1390,6 +1491,14 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				} catch (e) {
 					console.log(`Raw metadata: ${mockRun1Final.metadata}`)
 				}
+			}
+			// Read and log samplesheet for Client1
+			const samplesheetPath1 = path.join(mockRun1Final.results_dir, 'inputs', 'selected_participants.csv')
+			try {
+				const samplesheet1 = await readTextFileWithRetry(samplesheetPath1, 5000)
+				console.log(`\n=== DEBUG: Client1 Samplesheet ===\n${samplesheet1}`)
+			} catch (e) {
+				console.log(`DEBUG: Could not read Client1 samplesheet: ${e}`)
 			}
 
 			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
