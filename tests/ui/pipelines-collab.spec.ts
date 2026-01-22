@@ -21,6 +21,7 @@
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
+import { createHash } from 'node:crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
@@ -391,9 +392,8 @@ async function waitForFilesOnDisk(
 }
 
 function computeFileHash(filePath: string): string {
-	const crypto = require('crypto')
 	const content = fs.readFileSync(filePath)
-	return crypto.createHash('md5').update(content).digest('hex')
+	return createHash('md5').update(content).digest('hex')
 }
 
 async function waitForFilesContentMatch(
@@ -780,22 +780,43 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 		try {
 			const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
+			console.log('Navigating to UI...')
 			await page1.goto(`${baseUrl}?ws=${wsPort1}&real=1`)
 			await page2.goto(`${baseUrl}?ws=${wsPort2}&real=1`)
+			console.log('Applying window layouts...')
 			await applyWindowLayout(page1, 0, 'client1')
 			await applyWindowLayout(page2, 1, 'client2')
-			await waitForAppReady(page1, { timeout: 10_000 })
-			await waitForAppReady(page2, { timeout: 10_000 })
+			console.log('Waiting for apps to be ready...')
+			await waitForAppReady(page1, { timeout: 15_000 })
+			console.log('Client1 app ready')
+			await waitForAppReady(page2, { timeout: 15_000 })
+			console.log('Client2 app ready')
 			await ensureProfilePickerClosed(page1)
+			console.log('Client1 profile picker closed')
 			await ensureProfilePickerClosed(page2)
+			console.log('Client2 profile picker closed')
 
 			await captureKeySnapshot('initial', 'client1', backend1, email1, email2, logSocket)
 			await captureKeySnapshot('initial', 'client2', backend2, email2, email1, logSocket)
 
 			// Check if clients are onboarded
-			const isOnboarded1 = await backend1.invoke('check_is_onboarded')
-			const isOnboarded2 = await backend2.invoke('check_is_onboarded')
-			console.log(`Client1 onboarded: ${isOnboarded1}, Client2 onboarded: ${isOnboarded2}`)
+			console.log('Checking onboarding status...')
+			let isOnboarded1: boolean
+			let isOnboarded2: boolean
+			try {
+				isOnboarded1 = await backend1.invoke('check_is_onboarded')
+				console.log(`Client1 onboarded: ${isOnboarded1}`)
+			} catch (err) {
+				console.error(`Failed to check client1 onboarding: ${err}`)
+				throw err
+			}
+			try {
+				isOnboarded2 = await backend2.invoke('check_is_onboarded')
+				console.log(`Client2 onboarded: ${isOnboarded2}`)
+			} catch (err) {
+				console.error(`Failed to check client2 onboarding: ${err}`)
+				throw err
+			}
 
 			// Do onboarding if needed
 			if (!isOnboarded1 || !isOnboarded2) {

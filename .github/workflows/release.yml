@@ -198,8 +198,8 @@ jobs:
 
           if is_enabled('BUILD_MACOS_ARM64'):
               entries.append({
-                  # GitHub-hosted "macos-latest" is Apple Silicon; keep this on latest for arm64.
-                  'runs-on': 'macos-latest',
+                  # Use namespace runner for macOS arm64 builds.
+                  'runs-on': 'namespace-profile-mac-medium',
                   'args': 'aarch64-apple-darwin',
                   'build_kind': 'tauri',
                   'target': 'macos-arm64',
@@ -216,6 +216,7 @@ jobs:
 
           if is_enabled('BUILD_WINDOWS_X64'):
               entries.append({
+                  # Use namespace runner for Windows builds.
                   'runs-on': 'namespace-profile-windows-medium',
                   'args': 'x86_64-pc-windows-msvc',
                   'build_kind': 'tauri',
