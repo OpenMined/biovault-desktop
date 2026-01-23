@@ -29,15 +29,15 @@ use commands::agent_api::*;
 use commands::datasets::*;
 use commands::dependencies::*;
 use commands::files::*;
+use commands::flows::*;
 use commands::jupyter::*;
 use commands::key::*;
 use commands::logs::*;
 use commands::messages::{load_biovault_email, *};
+use commands::modules::*;
 use commands::notifications::*;
 use commands::participants::*;
-use commands::pipelines::*;
 use commands::profiles::*;
-use commands::projects::*;
 use commands::runs::*;
 use commands::sessions::*;
 use commands::settings::*;
@@ -671,7 +671,7 @@ pub fn run() {
             Arc::new(AtomicBool::new(true)),
         )
     } else {
-        // Desktop DB for runs/projects (keep separate for now)
+        // Desktop DB for runs/modules (keep separate for now)
         let db_path = biovault_home_dir.join("biovault.db");
         crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
         let conn = Connection::open(&db_path).expect("Could not open database");
@@ -1214,26 +1214,26 @@ pub fn run() {
             delete_failed_message,
             sync_messages_with_failures,
             refresh_messages_batched,
-            send_pipeline_request,
-            send_pipeline_request_results,
+            send_flow_request,
+            send_flow_request_results,
             list_results_tree,
-            import_pipeline_results,
-            send_pipeline_results,
-            // Projects commands
-            import_project,
-            import_project_from_folder,
-            import_pipeline_with_deps,
-            import_pipeline_from_request,
-            get_projects,
-            delete_project,
-            delete_project_folder,
-            create_project,
-            get_available_project_examples,
-            get_default_project_path,
-            load_project_editor,
-            save_project_editor,
-            preview_project_spec,
-            get_project_spec_digest,
+            import_flow_results,
+            send_flow_results,
+            // Modules commands
+            import_module,
+            import_module_from_folder,
+            import_flow_with_deps,
+            import_flow_from_request,
+            get_modules,
+            delete_module,
+            delete_module_folder,
+            create_module,
+            get_available_module_examples,
+            get_default_module_path,
+            load_module_editor,
+            save_module_editor,
+            preview_module_spec,
+            get_module_spec_digest,
             get_supported_input_types,
             get_supported_output_types,
             get_supported_parameter_types,
@@ -1251,23 +1251,23 @@ pub fn run() {
             get_run_logs_tail,
             get_run_logs_full,
             delete_run,
-            // Pipeline commands
-            get_pipelines,
+            // Flow commands
+            get_flows,
             get_runs_base_dir,
-            create_pipeline,
-            load_pipeline_editor,
-            save_pipeline_editor,
-            delete_pipeline,
-            validate_pipeline,
+            create_flow,
+            load_flow_editor,
+            save_flow_editor,
+            delete_flow,
+            validate_flow,
             save_run_config,
             list_run_configs,
             get_run_config,
             delete_run_config,
-            run_pipeline,
-            get_pipeline_runs,
-            delete_pipeline_run,
-            preview_pipeline_spec,
-            import_pipeline_from_message,
+            run_flow,
+            get_flow_runs,
+            delete_flow_run,
+            preview_flow_spec,
+            import_flow_from_message,
             // SQL commands
             sql_list_tables,
             sql_get_table_schema,
@@ -1442,14 +1442,14 @@ pub fn run() {
             if env.jupyter_pid.is_none() && env.jupyter_port.is_none() {
                 continue;
             }
-            let project_path = env.project_path.clone();
-            crate::desktop_log!("Exit: Stopping Jupyter for project: {}", project_path);
-            if let Err(err) = tauri::async_runtime::block_on(
-                biovault::cli::commands::jupyter::stop(&project_path),
-            ) {
+            let module_path = env.module_path.clone();
+            crate::desktop_log!("Exit: Stopping Jupyter for module: {}", module_path);
+            if let Err(err) =
+                tauri::async_runtime::block_on(biovault::cli::commands::jupyter::stop(&module_path))
+            {
                 crate::desktop_log!(
                     "⚠️ Exit: Failed to stop Jupyter for {}: {}",
-                    project_path,
+                    module_path,
                     err
                 );
             }

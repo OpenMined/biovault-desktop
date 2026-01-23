@@ -73,9 +73,9 @@ Scenario Options (pick one):
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
-  --pipelines-solo     Run pipeline UI test only (single client)
-  --pipelines-gwas     Run GWAS pipeline UI test only (single client)
-  --pipelines-collab   Run two-client pipeline collaboration test
+  --flows-solo     Run flow UI test only (single client)
+  --flows-gwas     Run GWAS flow UI test only (single client)
+  --flows-collab   Run two-client flow collaboration test
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -89,11 +89,11 @@ Other Options:
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
-Environment Variables (pipelines-solo):
+Environment Variables (flows-solo):
   FORCE_REGEN_SYNTHETIC=1   Force regenerate synthetic data even if it exists
   CLEANUP_SYNTHETIC=1       Remove synthetic data after test (default: keep for reuse)
 
-Environment Variables (pipelines-gwas):
+Environment Variables (flows-gwas):
   GWAS_DATA_DIR             GWAS dataset directory (default: /Users/madhavajay/dev/biovaults/datasets/jordan_gwas)
 
 Examples:
@@ -103,9 +103,9 @@ Examples:
   ./test-scenario.sh --interactive --onboarding  # Run onboarding with visible browser
   ./test-scenario.sh --interactive --profiles    # Run profiles UI flow (real backend) with visible browser
   ./test-scenario.sh --interactive --profiles-mock    # Run profiles UI flow (mock) with visible browser
-  ./test-scenario.sh --pipelines-solo   # Run pipeline test with synthetic data
-  ./test-scenario.sh --pipelines-gwas   # Run GWAS pipeline test
-  FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --pipelines-solo  # Force regenerate data
+  ./test-scenario.sh --flows-solo   # Run flow test with synthetic data
+  ./test-scenario.sh --flows-gwas   # Run GWAS flow test
+  FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
 
@@ -139,16 +139,16 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="messaging-core"
 			shift
 			;;
-		--pipelines-solo)
-			SCENARIO="pipelines-solo"
+		--flows-solo)
+			SCENARIO="flows-solo"
 			shift
 			;;
-		--pipelines-gwas)
-			SCENARIO="pipelines-gwas"
+		--flows-gwas)
+			SCENARIO="flows-gwas"
 			shift
 			;;
-		--pipelines-collab)
-			SCENARIO="pipelines-collab"
+		--flows-collab)
+			SCENARIO="flows-collab"
 			shift
 			;;
 		--file-transfer)
@@ -1427,9 +1427,9 @@ PY
 		run_ui_grep "@messaging-core-ui"
 		timer_pop
 		;;
-	pipelines-gwas)
+	flows-gwas)
 		start_static_server
-		# GWAS pipelines test only needs a single client; keep it lightweight.
+		# GWAS flows test only needs a single client; keep it lightweight.
 		TAURI_BINARY="${TAURI_BINARY:-$ROOT_DIR/src-tauri/target/release/bv-desktop}"
 		if [[ ! -x "$TAURI_BINARY" ]]; then
 			debug_bin="$ROOT_DIR/src-tauri/target/debug/bv-desktop"
@@ -1450,15 +1450,15 @@ PY
 			export USE_REAL_INVOKE=true
 			info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 		else
-			info "Tauri binary not found at $TAURI_BINARY; running pipelines tests in mock mode (no backend)"
+			info "Tauri binary not found at $TAURI_BINARY; running flows tests in mock mode (no backend)"
 			export USE_REAL_INVOKE=false
 		fi
 		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 		GWAS_DATA_DIR="${GWAS_DATA_DIR:-/Users/madhavajay/dev/biovaults/datasets/jordan_gwas}"
 		export GWAS_DATA_DIR
 
-		timer_push "Playwright: pipelines-gwas"
-		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" GWAS_DATA_DIR="$GWAS_DATA_DIR" bun run test:ui tests/ui/pipelines-gwas.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
+		timer_push "Playwright: flows-gwas"
+		UI_PORT="$UI_PORT" UI_BASE_URL="$UI_BASE_URL" GWAS_DATA_DIR="$GWAS_DATA_DIR" bun run test:ui tests/ui/flows-gwas.spec.ts ${PLAYWRIGHT_OPTS[@]+"${PLAYWRIGHT_OPTS[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"} | tee -a "$LOG_FILE"
 		timer_pop
 		;;
 	jupyter)
@@ -1594,11 +1594,11 @@ PY
 			while true; do sleep 1; done
 		fi
 		;;
-	pipelines-collab)
+	flows-collab)
 		start_static_server
 		start_tauri_instances
 
-		# Synthetic data configuration (same as pipelines-solo)
+		# Synthetic data configuration (same as flows-solo)
 		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
 		EXPECTED_FILE_COUNT=10
 		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
@@ -1656,10 +1656,10 @@ PY
 			info "Using existing synthetic data ($EXISTING_COUNT files)"
 		fi
 
-		# Run pipelines collaboration test
-		info "=== Running Pipelines Collaboration Test ==="
-		timer_push "Playwright: @pipelines-collab"
-		run_ui_grep "@pipelines-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		# Run flows collaboration test
+		info "=== Running Flows Collaboration Test ==="
+		timer_push "Playwright: @flows-collab"
+		run_ui_grep "@flows-collab" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		timer_pop
 
 		# In wait mode, keep everything running
@@ -1701,9 +1701,9 @@ PY
 			while true; do sleep 1; done
 		fi
 		;;
-	pipelines-solo)
+	flows-solo)
 		start_static_server
-		# Pipelines test only needs one client
+		# Flows test only needs one client
 		assert_tauri_binary_present
 		assert_tauri_binary_fresh
 
@@ -1791,10 +1791,10 @@ PY
 		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 		info "Synthetic data dir: $SYNTHETIC_DATA_DIR"
 
-		# Run pipelines solo test
-		info "=== Pipelines Solo Test ==="
-		timer_push "Playwright: @pipelines-solo"
-		run_ui_grep "@pipelines-solo" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		# Run flows solo test
+		info "=== Flows Solo Test ==="
+		timer_push "Playwright: @flows-solo"
+		run_ui_grep "@flows-solo" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		timer_pop
 
 		# Cleanup synthetic data (optional, disabled by default for caching)

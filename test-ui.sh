@@ -103,7 +103,7 @@ done
 info "Running Playwright tests"
 export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 # Exclude integration tests that require real backend or devstack (use test-scenario.sh for those)
-EXCLUDE_PATTERN="@messages-two|@messaging-core-ui|@messaging-sessions|@onboarding-two|@chaos|@pipelines-solo|@jupyter-session|@jupyter-collab"
+EXCLUDE_PATTERN="@messages-two|@messaging-core-ui|@messaging-sessions|@onboarding-two|@chaos|@flows-solo|@jupyter-session|@jupyter-collab"
 if [[ -n "${UI_TEST_GREP_INVERT_EXTRA:-}" ]]; then
 	EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|${UI_TEST_GREP_INVERT_EXTRA}"
 fi

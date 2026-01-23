@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./test-scenario-obs.sh messaging
-#   ./test-scenario-obs.sh pipelines-collab
+#   ./test-scenario-obs.sh flows-collab
 #   ./test-scenario-obs.sh all
 #
 # View traces: http://localhost:16686

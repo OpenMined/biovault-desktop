@@ -284,8 +284,8 @@ class WsBridge {
 			'install_dependency',
 			'install_brew',
 			'install_command_line_tools',
-			'import_pipeline_with_deps',
-			'import_pipeline',
+			'import_flow_with_deps',
+			'import_flow',
 		])
 		const timeoutMs = Math.max(
 			1000,
@@ -366,7 +366,7 @@ async function mockInvoke(cmd, args = {}) {
 			return []
 		case 'get_files':
 			return []
-		case 'get_projects':
+		case 'get_modules':
 			return []
 		case 'get_runs':
 			return []

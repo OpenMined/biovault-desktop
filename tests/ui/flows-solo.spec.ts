@@ -1,19 +1,19 @@
 /**
- * Pipelines Solo Test
- * Tests the complete pipeline and dataset workflow:
+ * Flows Solo Test
+ * Tests the complete flow and dataset workflow:
  * 1. Import synthetic genotype data
- * 2. Create HERC2 pipeline
+ * 2. Create HERC2 flow
  * 3. Create dataset with 5 private + 5 mock files
  * 4. Edit dataset and verify files persist
  * 5. Publish dataset and verify YAML
  * 6. Edit dataset and remove 1 mock file
  * 7. Verify republish and changes
- * 8. Run pipeline on dataset mock data
+ * 8. Run flow on dataset mock data
  *
  * Usage:
- *   ./test-scenario.sh --pipelines-solo
+ *   ./test-scenario.sh --flows-solo
  *
- * @tag pipelines-solo
+ * @tag flows-solo
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
@@ -24,7 +24,7 @@ import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboardin
 
 const TEST_TIMEOUT = 300_000 // 5 minutes max
 const UI_TIMEOUT = 10_000
-const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
+const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for flow to complete
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -91,7 +91,7 @@ async function connectBackend(port: number): Promise<Backend> {
 	return { invoke, close }
 }
 
-// Helper to wait for pipeline run to complete
+// Helper to wait for flow run to complete
 async function waitForRunCompletion(
 	page: Page,
 	backend: Backend,
@@ -103,7 +103,7 @@ async function waitForRunCompletion(
 
 	while (Date.now() - startTime < timeoutMs) {
 		try {
-			const runs = await backend.invoke('get_pipeline_runs', {})
+			const runs = await backend.invoke('get_flow_runs', {})
 			const run = runs.find((r: any) => r.id === runId)
 			if (run) {
 				lastStatus = run.status
@@ -120,17 +120,17 @@ async function waitForRunCompletion(
 		await page.waitForTimeout(2000)
 	}
 
-	throw new Error(`Pipeline run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
+	throw new Error(`Flow run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
 }
 
-test.describe('Pipelines Solo @pipelines-solo', () => {
-	test('import data, create dataset, run pipeline on mock data', async ({ browser }, testInfo) => {
+test.describe('Flows Solo @flows-solo', () => {
+	test('import data, create dataset, run flow on mock data', async ({ browser }, testInfo) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const email = process.env.TEST_EMAIL || 'client1@sandbox.local'
 		const syntheticDataDir =
 			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
 
-		console.log('Setting up pipelines solo test')
+		console.log('Setting up flows solo test')
 		console.log(`Client: ${email} (port ${wsPort})`)
 		console.log(`Synthetic data dir: ${syntheticDataDir}`)
 
@@ -274,24 +274,22 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 			expect(importedCount).toBeGreaterThan(0)
 
 			// ============================================================
-			// Step 2: Create HERC2 Pipeline
+			// Step 2: Create HERC2 Flow
 			// ============================================================
-			log(logSocket, { event: 'step-2', action: 'create-pipeline' })
-			console.log('\n=== Step 2: Create HERC2 Pipeline ===')
+			log(logSocket, { event: 'step-2', action: 'create-flow' })
+			console.log('\n=== Step 2: Create HERC2 Flow ===')
 
-			// Navigate to Pipelines tab
+			// Navigate to Flows tab
 			await page.locator('.nav-item[data-tab="run"]').click()
 			await expect(page.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
 
-			// Click create pipeline button
-			const createPipelineBtn = page
-				.locator('#create-pipeline-btn, #empty-create-pipeline-btn')
-				.first()
-			await expect(createPipelineBtn).toBeVisible()
-			await createPipelineBtn.click()
+			// Click create flow button
+			const createFlowBtn = page.locator('#create-flow-btn, #empty-create-flow-btn').first()
+			await expect(createFlowBtn).toBeVisible()
+			await createFlowBtn.click()
 
 			// Wait for template picker modal
-			await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 10_000 })
+			await page.waitForSelector('#flow-picker-modal', { state: 'visible', timeout: 10_000 })
 
 			// Handle any dialogs (overwrite confirmation)
 			page.on('dialog', async (dialog) => {
@@ -304,40 +302,40 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 			})
 
 			// Click HERC2 Classifier template
-			const herc2Card = page.locator('button.new-pipeline-template-card:has-text("HERC2")')
+			const herc2Card = page.locator('button.new-flow-template-card:has-text("HERC2")')
 			await expect(herc2Card).toBeVisible()
 			await herc2Card.click()
 
 			// Wait for import modal to appear and then disappear (import complete)
-			const pipelineImportModal = page.locator('.modal-overlay:has-text("Importing")')
-			await expect(pipelineImportModal)
+			const flowImportModal = page.locator('.modal-overlay:has-text("Importing")')
+			await expect(flowImportModal)
 				.toBeVisible({ timeout: 5000 })
 				.catch(() => {})
 			// Wait for import to complete - modal disappears
-			await expect(pipelineImportModal).toBeHidden({ timeout: 60_000 })
-			console.log('Pipeline import completed!')
+			await expect(flowImportModal).toBeHidden({ timeout: 60_000 })
+			console.log('Flow import completed!')
 
 			// Close picker modal if still open
 			const pickerCloseBtn = page.locator(
-				'#pipeline-picker-modal button[data-modal-close="pipeline-picker"]',
+				'#flow-picker-modal button[data-modal-close="flow-picker"]',
 			)
 			if (await pickerCloseBtn.isVisible().catch(() => false)) {
 				await pickerCloseBtn.click()
 			}
 
-			// Trigger pipelines reload
+			// Trigger flows reload
 			await page.evaluate(() => {
 				const w = window as any
-				if (w.pipelineModule?.loadPipelines) {
-					w.pipelineModule.loadPipelines()
+				if (w.flowModule?.loadFlows) {
+					w.flowModule.loadFlows()
 				}
 			})
 			await page.waitForTimeout(2000)
 
-			// Verify pipeline was created
-			const pipelinesGrid = page.locator('#pipelines-grid')
-			await expect(pipelinesGrid).toContainText(/HERC2/i, { timeout: 10_000 })
-			console.log('HERC2 pipeline created!')
+			// Verify flow was created
+			const flowsGrid = page.locator('#flows-grid')
+			await expect(flowsGrid).toContainText(/HERC2/i, { timeout: 10_000 })
+			console.log('HERC2 flow created!')
 
 			// ============================================================
 			// Step 3: Create dataset with paired assets (5 private + 5 mock)
@@ -620,10 +618,10 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 			console.log('✓ Republish verified - changes reflected correctly!')
 
 			// ============================================================
-			// Step 8: Run pipeline on dataset mock data
+			// Step 8: Run flow on dataset mock data
 			// ============================================================
-			log(logSocket, { event: 'step-8', action: 'run-pipeline-mock' })
-			console.log('\n=== Step 8: Run pipeline on dataset mock data ===')
+			log(logSocket, { event: 'step-8', action: 'run-flow-mock' })
+			console.log('\n=== Step 8: Run flow on dataset mock data ===')
 
 			// Navigate back to datasets if needed
 			await page.locator('.nav-item[data-tab="data"]').click()
@@ -639,44 +637,42 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 				await page.waitForTimeout(500)
 			}
 
-			// Click "Run Pipeline" button on the dataset card
+			// Click "Run Flow" button on the dataset card
 			const datasetCard3 = page
 				.locator('#datasets-grid .dataset-card')
 				.filter({ hasText: 'test_genotype_dataset' })
 			await expect(datasetCard3).toBeVisible()
 
-			const runPipelineBtn = datasetCard3.locator('.btn-run-pipeline')
-			await expect(runPipelineBtn).toBeVisible()
-			await runPipelineBtn.click()
+			const runFlowBtn = datasetCard3.locator('.btn-run-flow')
+			await expect(runFlowBtn).toBeVisible()
+			await runFlowBtn.click()
 
-			// Wait for run pipeline modal
-			const runPipelineModal = page.locator('#run-pipeline-modal')
-			await expect(runPipelineModal).toBeVisible({ timeout: 5000 })
+			// Wait for run flow modal
+			const runFlowModal = page.locator('#run-flow-modal')
+			await expect(runFlowModal).toBeVisible({ timeout: 5000 })
 
 			// Select "Mock Data" option
-			const mockDataOption = runPipelineModal.locator(
-				'input[name="pipeline-data-type"][value="mock"]',
-			)
+			const mockDataOption = runFlowModal.locator('input[name="flow-data-type"][value="mock"]')
 			await mockDataOption.check()
 
-			// Click "Run Pipeline" button in modal
-			const runPipelineConfirmBtn = runPipelineModal.locator('#run-pipeline-confirm')
-			await expect(runPipelineConfirmBtn).toBeVisible()
-			await runPipelineConfirmBtn.click()
+			// Click "Run Flow" button in modal
+			const runFlowConfirmBtn = runFlowModal.locator('#run-flow-confirm')
+			await expect(runFlowConfirmBtn).toBeVisible()
+			await runFlowConfirmBtn.click()
 
-			// Wait for modal to close - this triggers navigation to pipelines
-			await expect(runPipelineModal).toBeHidden({ timeout: 5000 })
-			console.log('Pipeline run modal closed, navigating to pipelines...')
+			// Wait for modal to close - this triggers navigation to flows
+			await expect(runFlowModal).toBeHidden({ timeout: 5000 })
+			console.log('Flow run modal closed, navigating to flows...')
 
-			// Wait for pipelines tab to be active and modal to appear
+			// Wait for flows tab to be active and modal to appear
 			await page.waitForTimeout(2000)
 
-			// The openRunPipelineWithDataset function should show the data run modal
-			// Look for the data-run modal or the pipeline selection
+			// The openRunFlowWithDataset function should show the data run modal
+			// Look for the data-run modal or the flow selection
 			const dataRunModal = page.locator('#data-run-modal, .data-run-modal')
 			if (await dataRunModal.isVisible({ timeout: 3000 }).catch(() => false)) {
-				console.log('Data run modal visible, selecting HERC2 pipeline...')
-				// Click on HERC2 pipeline option
+				console.log('Data run modal visible, selecting HERC2 flow...')
+				// Click on HERC2 flow option
 				const herc2Option = dataRunModal.locator('text=HERC2')
 				if (await herc2Option.isVisible().catch(() => false)) {
 					await herc2Option.click()
@@ -684,20 +680,20 @@ test.describe('Pipelines Solo @pipelines-solo', () => {
 				}
 			}
 
-			// Check if we're on pipelines view and a run has started
+			// Check if we're on flows view and a run has started
 			await page.waitForTimeout(3000)
 
-			// Get pipeline runs
-			const runs = await backend.invoke('get_pipeline_runs', {})
+			// Get flow runs
+			const runs = await backend.invoke('get_flow_runs', {})
 			if (runs && runs.length > 0) {
 				const latestRun = runs[0]
-				console.log(`Pipeline run started: ${latestRun.id} (status: ${latestRun.status})`)
+				console.log(`Flow run started: ${latestRun.id} (status: ${latestRun.status})`)
 
 				// Wait for run to complete
 				const { status } = await waitForRunCompletion(page, backend, latestRun.id)
-				console.log(`Pipeline run completed with status: ${status}`)
+				console.log(`Flow run completed with status: ${status}`)
 			} else {
-				console.log('No pipeline run started yet - this may require manual pipeline selection')
+				console.log('No flow run started yet - this may require manual flow selection')
 			}
 
 			console.log('\n=== TEST COMPLETED SUCCESSFULLY ===')

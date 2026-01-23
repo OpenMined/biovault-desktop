@@ -74,37 +74,37 @@ jobs:
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # pipelines-solo on Linux - rust
-          - scenario: pipelines-solo
+          # flows-solo on Linux - rust
+          - scenario: flows-solo
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-solo on Linux - go
-          - scenario: pipelines-solo
+          # flows-solo on Linux - go
+          - scenario: flows-solo
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-collab on Linux - rust
-          - scenario: pipelines-collab
+          # flows-collab on Linux - rust
+          - scenario: flows-collab
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-collab on Linux - go
-          - scenario: pipelines-collab
+          # flows-collab on Linux - go
+          - scenario: flows-collab
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: go
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
+          # NOTE: flows-collab on macOS is skipped because GitHub macOS runners
           # don't support nested virtualization (Docker requires VMs on macOS).
-          # pipelines-collab is fully tested on Linux which covers the core functionality.
+          # flows-collab is fully tested on Linux which covers the core functionality.
 
     defaults:
       run:
@@ -282,21 +282,21 @@ jobs:
           maturin build --release
 
       - name: Install biosynth CLI (Linux)
-        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'Linux' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Install biosynth CLI (macOS)
-        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'macOS' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Cache genostats database
-        if: matrix.scenario == 'pipelines-solo'
+        if: matrix.scenario == 'flows-solo'
         id: cache-genostats
         uses: actions/cache@v4
         with:
@@ -318,19 +318,19 @@ jobs:
           JUPYTER_PAUSE_TIME: "5000"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
-      - name: Run pipelines solo scenario
-        if: matrix.scenario == 'pipelines-solo'
+      - name: Run flows solo scenario
+        if: matrix.scenario == 'flows-solo'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-solo
 
-      - name: Run pipelines collab scenario
-        if: matrix.scenario == 'pipelines-collab'
+      - name: Run flows collab scenario
+        if: matrix.scenario == 'flows-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
 
       - name: Upload test artifacts on failure
         if: failure()

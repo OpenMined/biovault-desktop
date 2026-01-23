@@ -1,5 +1,5 @@
 /**
- * Project Spec Form with Modal + Clean List
+ * Module Spec Form with Modal + Clean List
  * Much better UX - matches CLI flow
  */
 
@@ -432,7 +432,7 @@ function createListItem(entry, type, onEdit, onRemove) {
 }
 
 // Main form creator
-export function createProjectSpecForm({ container, invoke, onChange }) {
+export function createModuleSpecForm({ container, invoke, onChange }) {
 	invokeFunction = invoke // Store for type loading
 
 	let state = {
@@ -633,7 +633,7 @@ export function createProjectSpecForm({ container, invoke, onChange }) {
 				<div class="add-zone-icon">📤</div>
 				<div class="add-zone-text">
 					<strong>Add Output</strong>
-					<p>Files and directories this project creates</p>
+					<p>Files and directories this module creates</p>
 				</div>
 			`
 			addZone.addEventListener('click', () => showSpecModal('output', 'add'))

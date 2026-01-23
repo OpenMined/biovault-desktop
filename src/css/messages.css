@@ -479,7 +479,7 @@
 	font-weight: 600;
 }
 
-.message-thread-project {
+.message-thread-module {
 	padding: 2px 6px;
 	background: #dbeafe;
 	color: #1d4ed8;
@@ -931,8 +931,8 @@
 	box-shadow: 0 3px 6px rgba(245, 158, 11, 0.4);
 }
 
-/* Pipeline Request Card */
-.message-pipeline-request {
+/* Flow Request Card */
+.message-flow-request {
 	margin-top: 10px;
 	padding: 14px 16px;
 	background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
@@ -942,7 +942,7 @@
 	position: relative;
 }
 
-.message-pipeline-request::before {
+.message-flow-request::before {
 	content: '🔧';
 	position: absolute;
 	top: 8px;
@@ -951,13 +951,13 @@
 	opacity: 0.6;
 }
 
-.message-bubble.outgoing .message-pipeline-request {
+.message-bubble.outgoing .message-flow-request {
 	background: linear-gradient(135deg, rgba(239, 246, 255, 0.95), rgba(219, 234, 254, 0.95));
 	border-color: #3b82f6;
 	color: #1e3a8a;
 }
 
-.message-pipeline-request h5 {
+.message-flow-request h5 {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -968,7 +968,7 @@
 	flex-wrap: wrap;
 }
 
-.message-pipeline-request .invite-label {
+.message-flow-request .invite-label {
 	display: inline-block;
 	padding: 2px 6px;
 	background: #2563eb;
@@ -980,7 +980,7 @@
 	letter-spacing: 0.3px;
 }
 
-.message-pipeline-request .version-badge {
+.message-flow-request .version-badge {
 	display: inline-block;
 	padding: 2px 6px;
 	background: rgba(37, 99, 235, 0.15);
@@ -990,13 +990,13 @@
 	font-weight: 500;
 }
 
-.message-pipeline-request .invite-meta {
+.message-flow-request .invite-meta {
 	font-size: 12px;
 	color: #1e40af;
 	margin: 0 0 4px 0;
 }
 
-.message-pipeline-request .invite-actions {
+.message-flow-request .invite-actions {
 	display: flex;
 	gap: 8px;
 	margin-top: 12px;
@@ -1005,7 +1005,7 @@
 	flex-wrap: wrap;
 }
 
-.message-pipeline-request .invite-actions button {
+.message-flow-request .invite-actions button {
 	padding: 8px 16px;
 	background: linear-gradient(135deg, #2563eb, #1d4ed8);
 	color: #fff;
@@ -1017,28 +1017,28 @@
 	transition: all 0.15s ease;
 }
 
-.message-pipeline-request .invite-actions button:hover {
+.message-flow-request .invite-actions button:hover {
 	background: linear-gradient(135deg, #1d4ed8, #1e40af);
 	transform: translateY(-1px);
 	box-shadow: 0 3px 6px rgba(37, 99, 235, 0.4);
 }
 
-.message-pipeline-request .invite-actions button.secondary {
+.message-flow-request .invite-actions button.secondary {
 	background: transparent;
 	border: 1px solid #3b82f6;
 	color: #2563eb;
 }
 
-.message-pipeline-request .invite-actions button.secondary:hover {
+.message-flow-request .invite-actions button.secondary:hover {
 	background: rgba(59, 130, 246, 0.1);
 	transform: translateY(-1px);
 }
 
 /* ============================================================================
-   PIPELINE RESULTS (received results from pipeline runs)
+   PIPELINE RESULTS (received results from flow runs)
    ============================================================================ */
 
-.message-pipeline-results {
+.message-flow-results {
 	margin-top: 10px;
 	padding: 14px 16px;
 	background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
@@ -1048,7 +1048,7 @@
 	position: relative;
 }
 
-.message-pipeline-results::before {
+.message-flow-results::before {
 	content: '📊';
 	position: absolute;
 	top: 8px;
@@ -1057,13 +1057,13 @@
 	opacity: 0.6;
 }
 
-.message-bubble.outgoing .message-pipeline-results {
+.message-bubble.outgoing .message-flow-results {
 	background: linear-gradient(135deg, rgba(240, 253, 244, 0.95), rgba(220, 252, 231, 0.95));
 	border-color: #10b981;
 	color: #065f46;
 }
 
-.message-pipeline-results h5 {
+.message-flow-results h5 {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -1074,7 +1074,7 @@
 	flex-wrap: wrap;
 }
 
-.message-pipeline-results .results-label {
+.message-flow-results .results-label {
 	display: inline-block;
 	padding: 2px 6px;
 	background: #059669;
@@ -1086,20 +1086,20 @@
 	letter-spacing: 0.3px;
 }
 
-.message-pipeline-results .invite-meta {
+.message-flow-results .invite-meta {
 	font-size: 12px;
 	color: #065f46;
 	margin: 0 0 4px 0;
 }
 
-.message-pipeline-results .results-files-list {
+.message-flow-results .results-files-list {
 	margin-top: 10px;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
 }
 
-.message-pipeline-results .result-file {
+.message-flow-results .result-file {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -1109,11 +1109,11 @@
 	border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
-.message-pipeline-results .result-file .file-icon {
+.message-flow-results .result-file .file-icon {
 	font-size: 14px;
 }
 
-.message-pipeline-results .result-file .file-name {
+.message-flow-results .result-file .file-name {
 	flex: 1;
 	font-size: 12px;
 	font-weight: 600;
@@ -1121,13 +1121,13 @@
 	font-family: 'SF Mono', Monaco, monospace;
 }
 
-.message-pipeline-results .result-file .file-size {
+.message-flow-results .result-file .file-size {
 	font-size: 11px;
 	color: #047857;
 	opacity: 0.8;
 }
 
-.message-pipeline-results .invite-actions {
+.message-flow-results .invite-actions {
 	display: flex;
 	gap: 8px;
 	margin-top: 12px;
@@ -1135,7 +1135,7 @@
 	border-top: 1px solid rgba(16, 185, 129, 0.3);
 }
 
-.message-pipeline-results .invite-actions button {
+.message-flow-results .invite-actions button {
 	padding: 8px 16px;
 	background: linear-gradient(135deg, #10b981, #059669);
 	color: #fff;
@@ -1147,7 +1147,7 @@
 	transition: all 0.15s ease;
 }
 
-.message-pipeline-results .invite-actions button:hover {
+.message-flow-results .invite-actions button:hover {
 	background: linear-gradient(135deg, #059669, #047857);
 	transform: translateY(-1px);
 	box-shadow: 0 3px 6px rgba(16, 185, 129, 0.4);
@@ -1332,13 +1332,13 @@
    PROJECT PANEL
    ============================================================================ */
 
-.msg-project-panel {
+.msg-module-panel {
 	padding: 12px 16px;
 	background: #f8fafc;
 	border-top: 1px solid #e2e8f0;
 }
 
-.msg-project-header {
+.msg-module-header {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -1350,18 +1350,18 @@
 	margin-bottom: 8px;
 }
 
-.msg-project-header svg {
+.msg-module-header svg {
 	color: #10b981;
 }
 
-.msg-project-body,
-#message-project-details {
+.msg-module-body,
+#message-module-details {
 	font-size: 12px;
 	color: #475569;
 }
 
-.msg-project-body p,
-#message-project-details p {
+.msg-module-body p,
+#message-module-details p {
 	margin: 0 0 4px 0;
 }
 

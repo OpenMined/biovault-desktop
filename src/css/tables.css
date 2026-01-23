@@ -222,7 +222,7 @@ tr.review-row-complete:hover {
 	font-weight: 700;
 }
 
-.message-thread-project {
+.message-thread-module {
 	font-size: 10px;
 	background: #ecfdf3;
 	color: #0f9f6e;
@@ -275,14 +275,14 @@ tr.review-row-complete:hover {
 	min-width: 200px;
 }
 
-.project-edit-path {
+.module-edit-path {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
 	max-width: 360px;
 }
 
-.project-edit-tree {
+.module-edit-tree {
 	width: 320px;
 	padding: 20px;
 	border-right: 1px solid #ddd;
@@ -290,16 +290,16 @@ tr.review-row-complete:hover {
 	background: #f8f9fb;
 }
 
-.project-file-tree {
+.module-file-tree {
 	max-height: 100%;
 	overflow-y: auto;
 }
 
-.project-file-tree details {
+.module-file-tree details {
 	margin-left: 12px;
 }
 
-.project-file-tree summary {
+.module-file-tree summary {
 	list-style: none;
 	display: flex;
 	align-items: center;
@@ -309,7 +309,7 @@ tr.review-row-complete:hover {
 	font-size: 13px;
 }
 
-.project-file-tree details > summary::before {
+.module-file-tree details > summary::before {
 	content: '▶';
 	font-size: 10px;
 	display: inline-block;
@@ -318,15 +318,15 @@ tr.review-row-complete:hover {
 	color: #555;
 }
 
-.project-file-tree details[open] > summary::before {
+.module-file-tree details[open] > summary::before {
 	transform: rotate(90deg);
 }
 
-.project-file-tree summary::-webkit-details-marker {
+.module-file-tree summary::-webkit-details-marker {
 	display: none;
 }
 
-.project-file-tree .tree-leaf {
+.module-file-tree .tree-leaf {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -335,13 +335,13 @@ tr.review-row-complete:hover {
 	font-size: 13px;
 }
 
-.project-path-input {
+.module-path-input {
 	display: flex;
 	gap: 8px;
 	align-items: center;
 }
 
-.project-path-input input {
+.module-path-input input {
 	flex: 1;
 	padding: 10px;
 	border: 1px solid #ddd;

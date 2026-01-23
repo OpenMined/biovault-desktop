@@ -705,7 +705,7 @@ h3 {
 
 .empty-state,
 .files-empty-state,
-.pipelines-empty-state {
+.flows-empty-state {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -717,14 +717,14 @@ h3 {
 
 .empty-state svg,
 .files-empty-state svg,
-.pipelines-empty-state svg {
+.flows-empty-state svg {
 	margin-bottom: 16px;
 	color: #cbd5e1;
 }
 
 .empty-state h3,
 .files-empty-state h3,
-.pipelines-empty-state h3 {
+.flows-empty-state h3 {
 	font-size: 16px;
 	font-weight: 600;
 	color: #475569;
@@ -733,7 +733,7 @@ h3 {
 
 .empty-state p,
 .files-empty-state p,
-.pipelines-empty-state p {
+.flows-empty-state p {
 	font-size: 14px;
 	color: #94a3b8;
 	margin: 0;

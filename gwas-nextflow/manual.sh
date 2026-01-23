@@ -21,7 +21,7 @@ EOF
 
 nextflow run "$BIOVAULT_DIR/cli/src/templates/dynamic/template.nf" -with-docker \
     --work_flow_file "$SCRIPT_DIR/workflow.nf" \
-    --project_spec "$SCRIPT_DIR/module.yaml" \
+    --module_spec "$SCRIPT_DIR/module.yaml" \
     --inputs_json "{\"datasets\":{\"type\":\"Map[String, Record{bed: File, bim: File, fam: File}]\",\"format\":\"json\",\"path\":\"$DATASETS_JSON\",\"mapping\":null}}" \
     --params_json "{\"assets_dir\":\"$SCRIPT_DIR/assets\",\"output_prefix\":\"combined_gwas\",\"n_pcs\":10,\"annotation_pval\":\"1e-5\",\"gw_sig\":\"5e-8\",\"threads\":4}" \
     --results_dir "$SCRIPT_DIR/test/results"

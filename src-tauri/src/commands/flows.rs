@@ -9,30 +9,28 @@ use tauri::Emitter;
 use walkdir::WalkDir;
 
 // Use CLI library types and functions
-use biovault::cli::commands::pipeline::run_pipeline as cli_run_pipeline;
-use biovault::cli::commands::project_management::{
-    resolve_pipeline_dependencies, DependencyContext,
-};
+use biovault::cli::commands::flow::run_flow as cli_run_flow;
+use biovault::cli::commands::module_management::{resolve_flow_dependencies, DependencyContext};
 use biovault::data::BioVaultDb;
-pub use biovault::data::{Pipeline, PipelineRun, RunConfig};
+pub use biovault::data::{Flow, FlowRun, RunConfig};
 use biovault::flow_spec::FlowFile;
+pub use biovault::flow_spec::FlowSpec;
+use biovault::flow_spec::FLOW_YAML_FILE;
 use biovault::module_spec::ModuleFile;
-pub use biovault::pipeline_spec::PipelineSpec;
-use biovault::pipeline_spec::FLOW_YAML_FILE;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PipelineCreateRequest {
+pub struct FlowCreateRequest {
     pub name: String,
     pub directory: Option<String>,
-    pub pipeline_file: Option<String>,
+    pub flow_file: Option<String>,
     #[serde(default)]
     pub overwrite: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PipelineRunSelection {
+pub struct FlowRunSelection {
     /// Legacy: database file IDs (deprecated, use urls instead)
     #[serde(default, alias = "file_ids")]
     pub file_ids: Vec<i64>,
@@ -58,22 +56,22 @@ pub struct PipelineRunSelection {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineEditorPayload {
-    pub pipeline_id: Option<i64>,
-    pub pipeline_path: String,
-    pub spec: Option<PipelineSpec>,
-    pub projects: Vec<ProjectInfo>, // Available projects for dropdown
+pub struct FlowEditorPayload {
+    pub flow_id: Option<i64>,
+    pub flow_path: String,
+    pub spec: Option<FlowSpec>,
+    pub modules: Vec<ModuleInfo>, // Available modules for dropdown
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProjectInfo {
+pub struct ModuleInfo {
     pub id: i64,
     pub name: String,
     pub path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineValidationResult {
+pub struct FlowValidationResult {
     pub valid: bool,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
@@ -419,16 +417,16 @@ fn build_dataset_input_value(
     }
 }
 
-fn get_pipelines_dir() -> Result<PathBuf, String> {
+fn get_flows_dir() -> Result<PathBuf, String> {
     let home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
-    Ok(home.join("pipelines"))
+    Ok(home.join("flows"))
 }
 
-fn get_projects_dir() -> Result<PathBuf, String> {
+fn get_modules_dir() -> Result<PathBuf, String> {
     let home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
-    Ok(home.join("projects"))
+    Ok(home.join("modules"))
 }
 
 fn syftbox_storage_from_config(
@@ -440,27 +438,20 @@ fn syftbox_storage_from_config(
     Ok(SyftBoxStorage::new(&data_dir))
 }
 
-fn load_pipeline_spec_from_storage(
-    storage: &SyftBoxStorage,
-    path: &Path,
-) -> Result<PipelineSpec, String> {
+fn load_flow_spec_from_storage(storage: &SyftBoxStorage, path: &Path) -> Result<FlowSpec, String> {
     let bytes = storage
         .read_with_shadow(path)
         .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
     let flow: FlowFile =
         serde_yaml::from_slice(&bytes).map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-    flow.to_pipeline_spec()
+    flow.to_flow_spec()
         .map_err(|e| format!("Failed to convert flow spec: {}", e))
 }
 
-fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
+fn append_flow_log(window: &tauri::WebviewWindow, log_path: &Path, message: &str) {
     if let Some(parent) = log_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
-            crate::desktop_log!(
-                "Failed to ensure pipeline log directory {:?}: {}",
-                parent,
-                err
-            );
+            crate::desktop_log!("Failed to ensure flow log directory {:?}: {}", parent, err);
         }
     }
 
@@ -470,7 +461,7 @@ fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: 
         }
         Err(err) => {
             crate::desktop_log!(
-                "Failed to write pipeline log at {:?}: {} | message: {}",
+                "Failed to write flow log at {:?}: {} | message: {}",
                 log_path,
                 err,
                 message
@@ -478,16 +469,16 @@ fn append_pipeline_log(window: &tauri::WebviewWindow, log_path: &Path, message: 
         }
     }
 
-    let _ = window.emit("pipeline-log-line", message.to_string());
+    let _ = window.emit("flow-log-line", message.to_string());
 }
 
 #[tauri::command]
-pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipeline>, String> {
+pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<Flow>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    let pipelines = biovault_db.list_pipelines().map_err(|e| e.to_string())?;
+    let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
 
-    for pipeline in &pipelines {
-        match pipeline.spec.as_ref() {
+    for flow in &flows {
+        match flow.spec.as_ref() {
             Some(spec) => {
                 let input_types: Vec<String> = spec
                     .inputs
@@ -495,23 +486,23 @@ pub async fn get_pipelines(state: tauri::State<'_, AppState>) -> Result<Vec<Pipe
                     .map(|(name, input)| format!("{}:{}", name, input.raw_type()))
                     .collect();
                 crate::desktop_log!(
-                    "Pipeline spec debug: '{}' inputs [{}] steps {}",
-                    pipeline.name,
+                    "Flow spec debug: '{}' inputs [{}] steps {}",
+                    flow.name,
                     input_types.join(", "),
                     spec.steps.len()
                 );
             }
             None => {
                 crate::desktop_log!(
-                    "Pipeline spec debug: '{}' missing spec (path: {})",
-                    pipeline.name,
-                    pipeline.pipeline_path
+                    "Flow spec debug: '{}' missing spec (path: {})",
+                    flow.name,
+                    flow.flow_path
                 );
             }
         }
     }
 
-    Ok(pipelines)
+    Ok(flows)
 }
 
 #[tauri::command]
@@ -524,43 +515,43 @@ pub async fn get_runs_base_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn create_pipeline(
+pub async fn create_flow(
     state: tauri::State<'_, AppState>,
-    request: PipelineCreateRequest,
-) -> Result<Pipeline, String> {
-    let PipelineCreateRequest {
+    request: FlowCreateRequest,
+) -> Result<Flow, String> {
+    let FlowCreateRequest {
         mut name,
         directory,
-        pipeline_file,
+        flow_file,
         overwrite,
     } = request;
 
-    let pipelines_dir = get_pipelines_dir()?;
-    fs::create_dir_all(&pipelines_dir)
-        .map_err(|e| format!("Failed to create pipelines directory: {}", e))?;
+    let flows_dir = get_flows_dir()?;
+    fs::create_dir_all(&flows_dir)
+        .map_err(|e| format!("Failed to create flows directory: {}", e))?;
 
     let is_import_dir = directory.is_some();
-    let mut pipeline_dir = if let Some(dir) = directory {
+    let mut flow_dir = if let Some(dir) = directory {
         PathBuf::from(dir)
     } else {
-        pipelines_dir.join(&name)
+        flows_dir.join(&name)
     };
 
     // If the provided directory points to a file, fall back to its parent directory
-    if let Ok(metadata) = fs::metadata(&pipeline_dir) {
+    if let Ok(metadata) = fs::metadata(&flow_dir) {
         if metadata.is_file() {
-            if let Some(parent) = pipeline_dir.parent() {
-                pipeline_dir = parent.to_path_buf();
+            if let Some(parent) = flow_dir.parent() {
+                flow_dir = parent.to_path_buf();
             }
         }
     }
 
-    let mut flow_yaml_path = pipeline_dir.join(FLOW_YAML_FILE);
-    let mut imported_spec: Option<PipelineSpec> = None;
+    let mut flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
+    let mut imported_spec: Option<FlowSpec> = None;
 
     // If importing from a file, always copy to managed directory (like GitHub imports)
-    if let Some(pipeline_file_path) = pipeline_file {
-        let source_flow_yaml_path = PathBuf::from(&pipeline_file_path);
+    if let Some(flow_file_path) = flow_file {
+        let source_flow_yaml_path = PathBuf::from(&flow_file_path);
         if !source_flow_yaml_path.exists() {
             return Err(format!(
                 "Selected flow.yaml does not exist at {}",
@@ -586,27 +577,27 @@ pub async fn create_pipeline(
             )
         })?;
 
-        // Create pipeline directory in managed location
-        let managed_pipeline_dir = pipelines_dir.join(&name);
+        // Create flow directory in managed location
+        let managed_flow_dir = flows_dir.join(&name);
 
-        if managed_pipeline_dir.exists() {
+        if managed_flow_dir.exists() {
             if overwrite {
-                fs::remove_dir_all(&managed_pipeline_dir)
-                    .map_err(|e| format!("Failed to remove existing pipeline directory: {}", e))?;
+                fs::remove_dir_all(&managed_flow_dir)
+                    .map_err(|e| format!("Failed to remove existing flow directory: {}", e))?;
             } else {
                 return Err(format!(
-                    "Pipeline '{}' already exists at {}. Use overwrite to replace.",
+                    "Flow '{}' already exists at {}. Use overwrite to replace.",
                     name,
-                    managed_pipeline_dir.display()
+                    managed_flow_dir.display()
                 ));
             }
         }
 
-        fs::create_dir_all(&managed_pipeline_dir)
-            .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+        fs::create_dir_all(&managed_flow_dir)
+            .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
-        pipeline_dir = managed_pipeline_dir.clone();
-        flow_yaml_path = managed_pipeline_dir.join(FLOW_YAML_FILE);
+        flow_dir = managed_flow_dir.clone();
+        flow_yaml_path = managed_flow_dir.join(FLOW_YAML_FILE);
 
         // Resolve and import dependencies
         // Use spawn_blocking because BioVaultDb is not Send
@@ -620,7 +611,7 @@ pub async fn create_pipeline(
             tauri::async_runtime::block_on(async {
                 let mut flow = FlowFile::parse_yaml(&yaml_str)
                     .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-                resolve_pipeline_dependencies(
+                resolve_flow_dependencies(
                     &mut flow,
                     &dependency_context,
                     &flow_yaml_path_clone,
@@ -637,17 +628,17 @@ pub async fn create_pipeline(
 
         let flow = flow_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
         let spec = flow
-            .to_pipeline_spec()
+            .to_flow_spec()
             .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
-        // Note: resolve_pipeline_dependencies already saves the spec (with description preserved)
+        // Note: resolve_flow_dependencies already saves the spec (with description preserved)
         imported_spec = Some(spec);
     } else {
-        fs::create_dir_all(&pipeline_dir)
-            .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+        fs::create_dir_all(&flow_dir)
+            .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
         crate::desktop_log!(
-            "create_pipeline debug: name='{}' dir_present={} flow_yaml_exists={} overwrite={} path={}",
+            "create_flow debug: name='{}' dir_present={} flow_yaml_exists={} overwrite={} path={}",
             name,
             is_import_dir,
             flow_yaml_path.exists(),
@@ -657,7 +648,7 @@ pub async fn create_pipeline(
 
         if flow_yaml_path.exists() {
             if is_import_dir {
-                imported_spec = PipelineSpec::load(&flow_yaml_path).ok();
+                imported_spec = FlowSpec::load(&flow_yaml_path).ok();
             } else if !overwrite {
                 return Err(format!(
                     "flow.yaml already exists at {}",
@@ -665,22 +656,22 @@ pub async fn create_pipeline(
                 ));
             }
         } else if is_import_dir {
-            return Err(format!("flow.yaml not found in {}", pipeline_dir.display()));
+            return Err(format!("flow.yaml not found in {}", flow_dir.display()));
         }
 
         if !flow_yaml_path.exists() || (!is_import_dir && overwrite) {
             crate::desktop_log!(
-                "create_pipeline debug: writing default flow.yaml to {}",
+                "create_flow debug: writing default flow.yaml to {}",
                 flow_yaml_path.display()
             );
-            let default_spec = PipelineSpec {
+            let default_spec = FlowSpec {
                 name: name.clone(),
                 description: None,
                 context: None,
                 inputs: Default::default(),
                 steps: Vec::new(),
             };
-            let flow = FlowFile::from_pipeline_spec(&default_spec)
+            let flow = FlowFile::from_flow_spec(&default_spec)
                 .map_err(|e| format!("Failed to build default flow spec: {}", e))?;
             let yaml = serde_yaml::to_string(&flow)
                 .map_err(|e| format!("Failed to serialize flow.yaml: {}", e))?;
@@ -689,34 +680,34 @@ pub async fn create_pipeline(
         }
     }
 
-    let pipeline_dir_str = pipeline_dir.to_string_lossy().to_string();
+    let flow_dir_str = flow_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     if overwrite {
         let existing = biovault_db
-            .list_pipelines()
+            .list_flows()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .find(|p| p.name == name || p.pipeline_path == pipeline_dir_str);
+            .find(|p| p.name == name || p.flow_path == flow_dir_str);
 
-        if let Some(existing_pipeline) = existing {
+        if let Some(existing_flow) = existing {
             biovault_db
-                .delete_pipeline(existing_pipeline.id)
+                .delete_flow(existing_flow.id)
                 .map_err(|e| e.to_string())?;
         }
     }
 
     // Register in database using CLI library
     let id = biovault_db
-        .register_pipeline(&name, &pipeline_dir_str)
+        .register_flow(&name, &flow_dir_str)
         .map_err(|e| e.to_string())?;
 
     let timestamp = chrono::Local::now().to_rfc3339();
 
-    Ok(Pipeline {
+    Ok(Flow {
         id,
         name,
-        pipeline_path: pipeline_dir_str,
+        flow_path: flow_dir_str,
         created_at: timestamp.clone(),
         updated_at: timestamp,
         spec: imported_spec,
@@ -724,71 +715,71 @@ pub async fn create_pipeline(
 }
 
 #[tauri::command]
-pub async fn load_pipeline_editor(
+pub async fn load_flow_editor(
     state: tauri::State<'_, AppState>,
-    pipeline_id: Option<i64>,
-    pipeline_path: Option<String>,
-) -> Result<PipelineEditorPayload, String> {
-    let path = if let Some(id) = pipeline_id {
+    flow_id: Option<i64>,
+    flow_path: Option<String>,
+) -> Result<FlowEditorPayload, String> {
+    let path = if let Some(id) = flow_id {
         // Load from database using CLI library
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-        let pipeline = biovault_db
-            .get_pipeline(id)
+        let flow = biovault_db
+            .get_flow(id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Pipeline {} not found", id))?;
-        PathBuf::from(pipeline.pipeline_path)
-    } else if let Some(p) = pipeline_path {
+            .ok_or_else(|| format!("Flow {} not found", id))?;
+        PathBuf::from(flow.flow_path)
+    } else if let Some(p) = flow_path {
         PathBuf::from(p)
     } else {
-        return Err("Either pipeline_id or pipeline_path must be provided".to_string());
+        return Err("Either flow_id or flow_path must be provided".to_string());
     };
 
     let yaml_path = path.join(FLOW_YAML_FILE);
 
-    // Load pipeline spec if file exists
+    // Load flow spec if file exists
     let spec = if yaml_path.exists() {
         let content = fs::read_to_string(&yaml_path)
             .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
         let flow = FlowFile::parse_yaml(&content).ok();
-        flow.and_then(|f| f.to_pipeline_spec().ok())
+        flow.and_then(|f| f.to_flow_spec().ok())
     } else {
         None
     };
 
-    // Get available projects from database using CLI library
+    // Get available modules from database using CLI library
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    let projects_list = biovault_db.list_projects().map_err(|e| e.to_string())?;
+    let modules_list = biovault_db.list_modules().map_err(|e| e.to_string())?;
     drop(biovault_db); // Release lock
 
-    let projects = projects_list
+    let modules = modules_list
         .iter()
-        .map(|p| ProjectInfo {
+        .map(|p| ModuleInfo {
             id: p.id,
             name: p.name.clone(),
-            path: p.project_path.clone(),
+            path: p.module_path.clone(),
         })
         .collect::<Vec<_>>();
 
-    Ok(PipelineEditorPayload {
-        pipeline_id,
-        pipeline_path: path.to_string_lossy().to_string(),
+    Ok(FlowEditorPayload {
+        flow_id,
+        flow_path: path.to_string_lossy().to_string(),
         spec,
-        projects,
+        modules,
     })
 }
 
 #[tauri::command]
-pub async fn save_pipeline_editor(
+pub async fn save_flow_editor(
     state: tauri::State<'_, AppState>,
-    pipeline_id: Option<i64>,
-    pipeline_path: String,
-    spec: PipelineSpec,
-) -> Result<Pipeline, String> {
-    let path = PathBuf::from(&pipeline_path);
+    flow_id: Option<i64>,
+    flow_path: String,
+    spec: FlowSpec,
+) -> Result<Flow, String> {
+    let path = PathBuf::from(&flow_path);
     let yaml_path = path.join(FLOW_YAML_FILE);
 
-    let flow = FlowFile::from_pipeline_spec(&spec)
-        .map_err(|e| format!("Failed to convert pipeline spec to flow: {}", e))?;
+    let flow = FlowFile::from_flow_spec(&spec)
+        .map_err(|e| format!("Failed to convert flow spec to flow: {}", e))?;
     let yaml_content = serde_yaml::to_string(&flow)
         .map_err(|e| format!("Failed to serialize flow.yaml: {}", e))?;
 
@@ -797,25 +788,25 @@ pub async fn save_pipeline_editor(
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     // Update or insert into database using CLI library
-    if let Some(id) = pipeline_id {
+    if let Some(id) = flow_id {
         // Update timestamp using CLI library
-        biovault_db.touch_pipeline(id).map_err(|e| e.to_string())?;
+        biovault_db.touch_flow(id).map_err(|e| e.to_string())?;
 
         // Get updated record
         biovault_db
-            .get_pipeline(id)
+            .get_flow(id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Pipeline not found after update".to_string())
+            .ok_or_else(|| "Flow not found after update".to_string())
     } else {
-        // Register new pipeline
+        // Register new flow
         let id = biovault_db
-            .register_pipeline(&spec.name, &pipeline_path)
+            .register_flow(&spec.name, &flow_path)
             .map_err(|e| e.to_string())?;
 
-        Ok(Pipeline {
+        Ok(Flow {
             id,
             name: spec.name.clone(),
-            pipeline_path: pipeline_path.clone(),
+            flow_path: flow_path.clone(),
             created_at: chrono::Local::now().to_rfc3339(),
             updated_at: chrono::Local::now().to_rfc3339(),
             spec: Some(spec), // Return the spec that was just saved
@@ -824,31 +815,26 @@ pub async fn save_pipeline_editor(
 }
 
 #[tauri::command]
-pub async fn delete_pipeline(
-    state: tauri::State<'_, AppState>,
-    pipeline_id: i64,
-) -> Result<(), String> {
+pub async fn delete_flow(state: tauri::State<'_, AppState>, flow_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get pipeline before deleting
-    let pipeline = biovault_db
-        .get_pipeline(pipeline_id)
-        .map_err(|e| e.to_string())?;
+    // Get flow before deleting
+    let flow = biovault_db.get_flow(flow_id).map_err(|e| e.to_string())?;
 
-    if let Some(p) = pipeline {
+    if let Some(p) = flow {
         // Delete from database using CLI library
         biovault_db
-            .delete_pipeline(pipeline_id)
+            .delete_flow(flow_id)
             .map_err(|e| e.to_string())?;
 
-        // Delete directory if it exists and is in the pipelines folder
-        let pipelines_dir = get_pipelines_dir()?;
-        let path_buf = PathBuf::from(p.pipeline_path);
+        // Delete directory if it exists and is in the flows folder
+        let flows_dir = get_flows_dir()?;
+        let path_buf = PathBuf::from(p.flow_path);
 
-        // Only delete if the path is within the pipelines directory
-        if path_buf.starts_with(&pipelines_dir) && path_buf.exists() {
+        // Only delete if the path is within the flows directory
+        if path_buf.starts_with(&flows_dir) && path_buf.exists() {
             fs::remove_dir_all(&path_buf)
-                .map_err(|e| format!("Failed to delete pipeline directory: {}", e))?;
+                .map_err(|e| format!("Failed to delete flow directory: {}", e))?;
         }
     }
 
@@ -856,18 +842,18 @@ pub async fn delete_pipeline(
 }
 
 #[tauri::command]
-pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidationResult, String> {
+pub async fn validate_flow(flow_path: String) -> Result<FlowValidationResult, String> {
     use std::process::Command as ProcessCommand;
 
-    let flow_path = PathBuf::from(&pipeline_path).join(FLOW_YAML_FILE);
+    let flow_path = PathBuf::from(&flow_path).join(FLOW_YAML_FILE);
     let target = if flow_path.exists() {
         flow_path.to_string_lossy().to_string()
     } else {
-        pipeline_path
+        flow_path
     };
 
     let mut cmd = ProcessCommand::new("bv");
-    cmd.args(["pipeline", "validate", "--diagram", &target]);
+    cmd.args(["flow", "validate", "--diagram", &target]);
     super::hide_console_window(&mut cmd);
     let output = cmd
         .output()
@@ -877,7 +863,7 @@ pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidati
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if output.status.success() {
-        Ok(PipelineValidationResult {
+        Ok(FlowValidationResult {
             valid: true,
             errors: vec![],
             warnings: vec![],
@@ -896,7 +882,7 @@ pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidati
             .map(|s| s.to_string())
             .collect();
 
-        Ok(PipelineValidationResult {
+        Ok(FlowValidationResult {
             valid: false,
             errors,
             warnings,
@@ -906,14 +892,14 @@ pub async fn validate_pipeline(pipeline_path: String) -> Result<PipelineValidati
 }
 
 #[tauri::command]
-pub async fn run_pipeline(
+pub async fn run_flow(
     state: tauri::State<'_, AppState>,
     window: tauri::WebviewWindow,
-    pipeline_id: i64,
+    flow_id: i64,
     mut input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
-    selection: Option<PipelineRunSelection>,
-) -> Result<PipelineRun, String> {
+    selection: Option<FlowRunSelection>,
+) -> Result<FlowRun, String> {
     use chrono::Local;
 
     let home = biovault::config::get_biovault_home()
@@ -925,43 +911,39 @@ pub async fn run_pipeline(
 
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get pipeline using CLI library
-    let pipeline = biovault_db
-        .get_pipeline(pipeline_id)
+    // Get flow using CLI library
+    let flow = biovault_db
+        .get_flow(flow_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Pipeline {} not found", pipeline_id))?;
+        .ok_or_else(|| format!("Flow {} not found", flow_id))?;
 
-    let pipeline_name = pipeline.name.clone();
-    let pipeline_path = pipeline.pipeline_path.clone();
+    let flow_name = flow.name.clone();
+    let flow_path = flow.flow_path.clone();
 
-    let yaml_path = PathBuf::from(&pipeline_path).join(FLOW_YAML_FILE);
+    let yaml_path = PathBuf::from(&flow_path).join(FLOW_YAML_FILE);
 
     // Generate results directory
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let results_path = if let Some(dir) = &results_dir {
         PathBuf::from(dir)
     } else {
-        home.join("runs").join(format!("pipeline_{}", timestamp))
+        home.join("runs").join(format!("flow_{}", timestamp))
     };
 
     // Create results directory
     fs::create_dir_all(&results_path)
         .map_err(|e| format!("Failed to create results directory: {}", e))?;
 
-    let log_path = results_path.join("pipeline.log");
-    append_pipeline_log(
-        &window,
-        &log_path,
-        &format!("📦 Pipeline: {}", pipeline_name),
-    );
-    append_pipeline_log(
+    let log_path = results_path.join("flow.log");
+    append_flow_log(&window, &log_path, &format!("📦 Flow: {}", flow_name));
+    append_flow_log(
         &window,
         &log_path,
         &format!("📂 Results directory: {}", results_path.display()),
     );
 
     if let Some(sel) = &selection {
-        append_pipeline_log(
+        append_flow_log(
             &window,
             &log_path,
             &format!(
@@ -975,11 +957,11 @@ pub async fn run_pipeline(
             ),
         );
     } else {
-        append_pipeline_log(&window, &log_path, "🔍 Selection payload: none provided");
+        append_flow_log(&window, &log_path, "🔍 Selection payload: none provided");
     }
 
     if let Some(sel) = selection {
-        let PipelineRunSelection {
+        let FlowRunSelection {
             file_ids,
             urls,
             participant_ids,
@@ -1043,7 +1025,7 @@ pub async fn run_pipeline(
         if let Some(dataset_name) = dataset_name.clone() {
             if is_network_dataset {
                 eprintln!(
-                    "[pipeline] Skipping local DB lookup for network dataset '{}', using URLs instead",
+                    "[flow] Skipping local DB lookup for network dataset '{}', using URLs instead",
                     dataset_name
                 );
             } else {
@@ -1082,24 +1064,21 @@ pub async fn run_pipeline(
                 // List-shaped datasets need URL selection, fall through to URL/file_id paths
                 if let ShapeExpr::List(inner_type) = &shape_expr {
                     eprintln!(
-                    "[pipeline] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
+                    "[flow] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
                     dataset_name, inner_type
                 );
                 } else {
-                    let spec = PipelineSpec::load(&yaml_path)
-                        .map_err(|e| format!("Failed to load pipeline spec: {}", e))?;
+                    let spec = FlowSpec::load(&yaml_path)
+                        .map_err(|e| format!("Failed to load flow spec: {}", e))?;
                     let input_name = spec
                         .inputs
                         .iter()
                         .find(|(_, input_spec)| {
-                            biovault::project_spec::types_compatible(&shape, input_spec.raw_type())
+                            biovault::module_spec::types_compatible(&shape, input_spec.raw_type())
                         })
                         .map(|(name, _)| name.clone())
                         .ok_or_else(|| {
-                            format!(
-                                "Pipeline does not declare an input compatible with '{}'",
-                                shape
-                            )
+                            format!("Flow does not declare an input compatible with '{}'", shape)
                         })?;
 
                     let (dataset_value, file_count) = build_dataset_input_value(
@@ -1174,7 +1153,7 @@ pub async fn run_pipeline(
             }
 
             if unique_urls.is_empty() {
-                return Err("No valid URLs were provided for the pipeline run.".to_string());
+                return Err("No valid URLs were provided for the flow run.".to_string());
             }
 
             let mut rows = Vec::new();
@@ -1186,7 +1165,7 @@ pub async fn run_pipeline(
                     .map_err(|e| format!("Failed to resolve URL '{}': {}", url, e))?;
 
                 if !local_path.exists() {
-                    append_pipeline_log(
+                    append_flow_log(
                         &window,
                         &log_path,
                         &format!("⚠️  File not found for URL: {} -> {:?}", url, local_path),
@@ -1273,7 +1252,7 @@ pub async fn run_pipeline(
             }
 
             if unique_file_ids.is_empty() {
-                return Err("No valid file IDs were provided for the pipeline run.".to_string());
+                return Err("No valid file IDs were provided for the flow run.".to_string());
             }
 
             let mut rows = Vec::new();
@@ -1364,7 +1343,7 @@ pub async fn run_pipeline(
     }
 
     if let Some((file_count, participant_count)) = selection_counts {
-        append_pipeline_log(
+        append_flow_log(
             &window,
             &log_path,
             &format!(
@@ -1375,7 +1354,7 @@ pub async fn run_pipeline(
     }
 
     if let Some(path) = &generated_samplesheet_path {
-        append_pipeline_log(
+        append_flow_log(
             &window,
             &log_path,
             &format!("📝 Generated samplesheet: {}", path),
@@ -1432,7 +1411,7 @@ pub async fn run_pipeline(
         }
     };
 
-    let mut command_preview = format!("bv pipeline run {}", quote_arg(&yaml_path_str));
+    let mut command_preview = format!("bv flow run {}", quote_arg(&yaml_path_str));
     for arg in &extra_args {
         command_preview.push(' ');
         command_preview.push_str(&quote_arg(arg));
@@ -1441,16 +1420,16 @@ pub async fn run_pipeline(
     command_preview.push_str("--results-dir ");
     command_preview.push_str(&quote_arg(&results_dir_str));
 
-    append_pipeline_log(
+    append_flow_log(
         &window,
         &log_path,
         &format!("▶️  Command: {}", command_preview),
     );
 
-    // Create pipeline run record using CLI library with metadata
+    // Create flow run record using CLI library with metadata
     let run_id = biovault_db
-        .create_pipeline_run_with_metadata(
-            pipeline_id,
+        .create_flow_run_with_metadata(
+            flow_id,
             &results_path.to_string_lossy(),
             Some(&results_path.to_string_lossy()),
             Some(&metadata_str),
@@ -1459,40 +1438,40 @@ pub async fn run_pipeline(
 
     drop(biovault_db); // Release lock
 
-    // Spawn async task to run pipeline (so we can return immediately)
+    // Spawn async task to run flow (so we can return immediately)
     let window_clone = window.clone();
     let biovault_db_clone = state.biovault_db.clone();
     let run_id_clone = run_id;
     let log_path_clone = log_path.clone();
-    let pipeline_name_clone = pipeline_name.clone();
+    let flow_name_clone = flow_name.clone();
     let yaml_path_spawn = yaml_path_str.clone();
     let results_dir_spawn = results_dir_str.clone();
     let extra_args_spawn = extra_args.clone();
 
     tauri::async_runtime::spawn(async move {
-        append_pipeline_log(
+        append_flow_log(
             &window_clone,
             &log_path_clone,
-            &format!("🚀 Starting pipeline run: {}", pipeline_name_clone),
+            &format!("🚀 Starting flow run: {}", flow_name_clone),
         );
-        append_pipeline_log(
+        append_flow_log(
             &window_clone,
             &log_path_clone,
-            &format!("📄 Pipeline YAML: {}", yaml_path_spawn),
+            &format!("📄 Flow YAML: {}", yaml_path_spawn),
         );
-        append_pipeline_log(
+        append_flow_log(
             &window_clone,
             &log_path_clone,
             &format!("📂 Results dir: {}", results_dir_spawn),
         );
-        append_pipeline_log(
+        append_flow_log(
             &window_clone,
             &log_path_clone,
             &format!("🔧 Extra args: {:?}", extra_args_spawn),
         );
 
         // Call CLI library function directly
-        let result = cli_run_pipeline(
+        let result = cli_run_flow(
             &yaml_path_spawn,
             extra_args_spawn.clone(),
             false, // dry_run
@@ -1503,18 +1482,18 @@ pub async fn run_pipeline(
 
         let status = match &result {
             Err(err) => {
-                append_pipeline_log(
+                append_flow_log(
                     &window_clone,
                     &log_path_clone,
-                    &format!("❌ Pipeline run failed: {}", err),
+                    &format!("❌ Flow run failed: {}", err),
                 );
                 "failed"
             }
             Ok(()) => {
-                append_pipeline_log(
+                append_flow_log(
                     &window_clone,
                     &log_path_clone,
-                    "✅ Pipeline run completed successfully",
+                    "✅ Flow run completed successfully",
                 );
                 "success"
             }
@@ -1522,15 +1501,15 @@ pub async fn run_pipeline(
 
         // Update status using CLI library
         if let Ok(biovault_db) = biovault_db_clone.lock() {
-            let _ = biovault_db.update_pipeline_run_status(run_id_clone, status, true);
+            let _ = biovault_db.update_flow_run_status(run_id_clone, status, true);
         }
 
-        let _ = window_clone.emit("pipeline-complete", status);
+        let _ = window_clone.emit("flow-complete", status);
     });
 
-    Ok(PipelineRun {
+    Ok(FlowRun {
         id: run_id,
-        pipeline_id: Some(pipeline_id),
+        flow_id: Some(flow_id),
         step_id: None,
         status: "running".to_string(),
         work_dir: results_path.to_string_lossy().to_string(),
@@ -1543,28 +1522,23 @@ pub async fn run_pipeline(
 }
 
 #[tauri::command]
-pub async fn get_pipeline_runs(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<PipelineRun>, String> {
+pub async fn get_flow_runs(state: tauri::State<'_, AppState>) -> Result<Vec<FlowRun>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    biovault_db.list_pipeline_runs().map_err(|e| e.to_string())
+    biovault_db.list_flow_runs().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn delete_pipeline_run(
-    state: tauri::State<'_, AppState>,
-    run_id: i64,
-) -> Result<(), String> {
+pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     // Get work directory before deleting
     let run = biovault_db
-        .get_pipeline_run(run_id)
+        .get_flow_run(run_id)
         .map_err(|e| e.to_string())?;
 
     // Delete from database
     biovault_db
-        .delete_pipeline_run(run_id)
+        .delete_flow_run(run_id)
         .map_err(|e| e.to_string())?;
 
     // Delete work directory if it exists
@@ -1579,61 +1553,60 @@ pub async fn delete_pipeline_run(
 }
 
 #[tauri::command]
-pub async fn preview_pipeline_spec(spec: PipelineSpec) -> Result<String, String> {
-    let flow = FlowFile::from_pipeline_spec(&spec)
-        .map_err(|e| format!("Failed to convert pipeline preview: {}", e))?;
+pub async fn preview_flow_spec(spec: FlowSpec) -> Result<String, String> {
+    let flow = FlowFile::from_flow_spec(&spec)
+        .map_err(|e| format!("Failed to convert flow preview: {}", e))?;
     serde_yaml::to_string(&flow).map_err(|e| format!("Failed to generate flow preview: {}", e))
 }
 
-/// Import a pipeline from a message (received via pipeline request)
+/// Import a flow from a message (received via flow request)
 #[tauri::command]
-pub async fn import_pipeline_from_message(
+pub async fn import_flow_from_message(
     state: tauri::State<'_, AppState>,
     name: String,
     _version: String,
     spec: serde_json::Value,
 ) -> Result<i64, String> {
-    let pipelines_dir = get_pipelines_dir()?;
-    let pipeline_dir = pipelines_dir.join(&name);
+    let flows_dir = get_flows_dir()?;
+    let flow_dir = flows_dir.join(&name);
 
-    // Check if pipeline already exists
-    if pipeline_dir.exists() {
+    // Check if flow already exists
+    if flow_dir.exists() {
         // For now, we'll overwrite - in the future could prompt user
         // or rename with version suffix
-        fs::remove_dir_all(&pipeline_dir)
-            .map_err(|e| format!("Failed to remove existing pipeline: {}", e))?;
+        fs::remove_dir_all(&flow_dir)
+            .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
     }
 
-    // Create pipeline directory
-    fs::create_dir_all(&pipeline_dir)
-        .map_err(|e| format!("Failed to create pipeline directory: {}", e))?;
+    // Create flow directory
+    fs::create_dir_all(&flow_dir).map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
     let flow: FlowFile = serde_json::from_value(spec)
         .map_err(|e| format!("Failed to parse flow spec from message: {}", e))?;
     let yaml_content = serde_yaml::to_string(&flow)
         .map_err(|e| format!("Failed to convert flow spec to YAML: {}", e))?;
 
-    let flow_yaml_path = pipeline_dir.join(FLOW_YAML_FILE);
+    let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
     fs::write(&flow_yaml_path, &yaml_content)
         .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
 
     // Register in database
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    let pipeline_dir_str = pipeline_dir.to_string_lossy().to_string();
+    let flow_dir_str = flow_dir.to_string_lossy().to_string();
 
-    // Check if pipeline with same name exists in DB - delete then re-register
-    let existing = db.list_pipelines().map_err(|e| e.to_string())?;
-    if let Some(existing_pipeline) = existing.iter().find(|p| p.name == name) {
-        db.delete_pipeline(existing_pipeline.id)
-            .map_err(|e| format!("Failed to remove existing pipeline from database: {}", e))?;
+    // Check if flow with same name exists in DB - delete then re-register
+    let existing = db.list_flows().map_err(|e| e.to_string())?;
+    if let Some(existing_flow) = existing.iter().find(|p| p.name == name) {
+        db.delete_flow(existing_flow.id)
+            .map_err(|e| format!("Failed to remove existing flow from database: {}", e))?;
     }
 
-    // Register pipeline
-    let pipeline_id = db
-        .register_pipeline(&name, &pipeline_dir_str)
-        .map_err(|e| format!("Failed to register pipeline in database: {}", e))?;
+    // Register flow
+    let flow_id = db
+        .register_flow(&name, &flow_dir_str)
+        .map_err(|e| format!("Failed to register flow in database: {}", e))?;
 
-    Ok(pipeline_id)
+    Ok(flow_id)
 }
 
 fn should_skip_request_path(rel: &Path) -> bool {
@@ -1665,11 +1638,7 @@ fn should_skip_request_path(rel: &Path) -> bool {
     })
 }
 
-fn copy_pipeline_request_dir(
-    storage: &SyftBoxStorage,
-    src: &Path,
-    dest: &Path,
-) -> Result<(), String> {
+fn copy_flow_request_dir(storage: &SyftBoxStorage, src: &Path, dest: &Path) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| format!("Failed to create destination: {}", e))?;
 
     for entry in WalkDir::new(src)
@@ -1711,12 +1680,12 @@ fn copy_pipeline_request_dir(
 }
 
 #[tauri::command]
-pub async fn import_pipeline_from_request(
+pub async fn import_flow_from_request(
     state: tauri::State<'_, AppState>,
     name: Option<String>,
-    pipeline_location: String,
+    flow_location: String,
     overwrite: bool,
-) -> Result<Pipeline, String> {
+) -> Result<Flow, String> {
     let config =
         biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
     let data_dir = config
@@ -1724,11 +1693,11 @@ pub async fn import_pipeline_from_request(
         .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
     let storage = syftbox_storage_from_config(&config)?;
 
-    let source_root = biovault::data::resolve_syft_url(&data_dir, &pipeline_location)
-        .map_err(|e| format!("Failed to resolve pipeline location: {}", e))?;
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &flow_location)
+        .map_err(|e| format!("Failed to resolve flow location: {}", e))?;
     if !source_root.exists() {
         return Err(format!(
-            "Pipeline source folder not found at {}",
+            "Flow source folder not found at {}",
             source_root.display()
         ));
     }
@@ -1738,55 +1707,55 @@ pub async fn import_pipeline_from_request(
         return Err(format!("flow.yaml not found in {}", source_root.display()));
     }
 
-    let spec = load_pipeline_spec_from_storage(&storage, &flow_yaml)?;
+    let spec = load_flow_spec_from_storage(&storage, &flow_yaml)?;
     let resolved_name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(spec.name.clone());
 
-    let pipelines_dir = get_pipelines_dir()?;
-    fs::create_dir_all(&pipelines_dir)
-        .map_err(|e| format!("Failed to create pipelines directory: {}", e))?;
+    let flows_dir = get_flows_dir()?;
+    fs::create_dir_all(&flows_dir)
+        .map_err(|e| format!("Failed to create flows directory: {}", e))?;
 
-    let dest_dir = pipelines_dir.join(&resolved_name);
+    let dest_dir = flows_dir.join(&resolved_name);
     if dest_dir.exists() {
         if overwrite {
             fs::remove_dir_all(&dest_dir)
-                .map_err(|e| format!("Failed to remove existing pipeline: {}", e))?;
+                .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
         } else {
             return Err(format!(
-                "Pipeline '{}' already exists at {}. Use overwrite to replace.",
+                "Flow '{}' already exists at {}. Use overwrite to replace.",
                 resolved_name,
                 dest_dir.display()
             ));
         }
     }
 
-    copy_pipeline_request_dir(&storage, &source_root, &dest_dir)?;
+    copy_flow_request_dir(&storage, &source_root, &dest_dir)?;
 
-    let projects_source = source_root.join("projects");
-    if projects_source.exists() {
-        let projects_dir = get_projects_dir()?;
-        fs::create_dir_all(&projects_dir)
-            .map_err(|e| format!("Failed to create projects directory: {}", e))?;
+    let modules_source = source_root.join("modules");
+    if modules_source.exists() {
+        let modules_dir = get_modules_dir()?;
+        fs::create_dir_all(&modules_dir)
+            .map_err(|e| format!("Failed to create modules directory: {}", e))?;
 
-        for entry in fs::read_dir(&projects_source)
-            .map_err(|e| format!("Failed to read projects folder: {}", e))?
+        for entry in fs::read_dir(&modules_source)
+            .map_err(|e| format!("Failed to read modules folder: {}", e))?
         {
-            let entry = entry.map_err(|e| format!("Failed to read project entry: {}", e))?;
+            let entry = entry.map_err(|e| format!("Failed to read module entry: {}", e))?;
             let entry_path = entry.path();
             if !entry_path.is_dir() {
                 continue;
             }
 
-            let project_dir_name = entry.file_name().to_string_lossy().to_string();
-            let dest_project_dir = projects_dir.join(&project_dir_name);
+            let module_dir_name = entry.file_name().to_string_lossy().to_string();
+            let dest_module_dir = modules_dir.join(&module_dir_name);
 
-            if dest_project_dir.exists() {
+            if dest_module_dir.exists() {
                 if overwrite {
-                    fs::remove_dir_all(&dest_project_dir).map_err(|e| {
+                    fs::remove_dir_all(&dest_module_dir).map_err(|e| {
                         format!(
-                            "Failed to remove existing project directory {}: {}",
-                            dest_project_dir.display(),
+                            "Failed to remove existing module directory {}: {}",
+                            dest_module_dir.display(),
                             e
                         )
                     })?;
@@ -1795,9 +1764,9 @@ pub async fn import_pipeline_from_request(
                 }
             }
 
-            copy_pipeline_request_dir(&storage, &entry_path, &dest_project_dir)?;
+            copy_flow_request_dir(&storage, &entry_path, &dest_module_dir)?;
 
-            let module_yaml_path = dest_project_dir.join("module.yaml");
+            let module_yaml_path = dest_module_dir.join("module.yaml");
             if !module_yaml_path.exists() {
                 continue;
             }
@@ -1816,7 +1785,7 @@ pub async fn import_pipeline_from_request(
                     e
                 )
             })?;
-            let project_yaml = module.to_project_spec().map_err(|e| {
+            let module_yaml = module.to_module_spec().map_err(|e| {
                 format!(
                     "Failed to convert module.yaml at {}: {}",
                     module_yaml_path.display(),
@@ -1826,8 +1795,8 @@ pub async fn import_pipeline_from_request(
 
             let identifier = format!(
                 "{}@{}",
-                project_yaml.name,
-                project_yaml
+                module_yaml.name,
+                module_yaml
                     .version
                     .clone()
                     .unwrap_or_else(|| "0.1.0".to_string())
@@ -1836,74 +1805,74 @@ pub async fn import_pipeline_from_request(
 
             if overwrite {
                 if db
-                    .get_project(&identifier)
+                    .get_module(&identifier)
                     .map_err(|e| e.to_string())?
                     .is_some()
                 {
-                    db.update_project(
-                        &project_yaml.name,
-                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
-                        &project_yaml.author,
-                        &project_yaml.workflow,
-                        project_yaml.template.as_deref().unwrap_or("imported"),
-                        &dest_project_dir,
+                    db.update_module(
+                        &module_yaml.name,
+                        module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                        &module_yaml.author,
+                        &module_yaml.workflow,
+                        module_yaml.template.as_deref().unwrap_or("imported"),
+                        &dest_module_dir,
                     )
                     .map_err(|e| e.to_string())?;
                 } else {
-                    db.register_project(
-                        &project_yaml.name,
-                        project_yaml.version.as_deref().unwrap_or("0.1.0"),
-                        &project_yaml.author,
-                        &project_yaml.workflow,
-                        project_yaml.template.as_deref().unwrap_or("imported"),
-                        &dest_project_dir,
+                    db.register_module(
+                        &module_yaml.name,
+                        module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                        &module_yaml.author,
+                        &module_yaml.workflow,
+                        module_yaml.template.as_deref().unwrap_or("imported"),
+                        &dest_module_dir,
                     )
                     .map_err(|e| e.to_string())?;
                 }
             } else if db
-                .get_project(&identifier)
+                .get_module(&identifier)
                 .map_err(|e| e.to_string())?
                 .is_none()
             {
-                db.register_project(
-                    &project_yaml.name,
-                    project_yaml.version.as_deref().unwrap_or("0.1.0"),
-                    &project_yaml.author,
-                    &project_yaml.workflow,
-                    project_yaml.template.as_deref().unwrap_or("imported"),
-                    &dest_project_dir,
+                db.register_module(
+                    &module_yaml.name,
+                    module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                    &module_yaml.author,
+                    &module_yaml.workflow,
+                    module_yaml.template.as_deref().unwrap_or("imported"),
+                    &dest_module_dir,
                 )
                 .map_err(|e| e.to_string())?;
             }
         }
     }
 
-    let pipeline_dir_str = dest_dir.to_string_lossy().to_string();
+    let flow_dir_str = dest_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
     if overwrite {
         let existing = biovault_db
-            .list_pipelines()
+            .list_flows()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .find(|p| p.name == resolved_name || p.pipeline_path == pipeline_dir_str);
-        if let Some(existing_pipeline) = existing {
+            .find(|p| p.name == resolved_name || p.flow_path == flow_dir_str);
+        if let Some(existing_flow) = existing {
             biovault_db
-                .delete_pipeline(existing_pipeline.id)
+                .delete_flow(existing_flow.id)
                 .map_err(|e| e.to_string())?;
         }
     }
 
     let id = biovault_db
-        .register_pipeline(&resolved_name, &pipeline_dir_str)
+        .register_flow(&resolved_name, &flow_dir_str)
         .map_err(|e| e.to_string())?;
 
     let timestamp = chrono::Local::now().to_rfc3339();
 
-    Ok(Pipeline {
+    Ok(Flow {
         id,
         name: resolved_name,
-        pipeline_path: pipeline_dir_str,
+        flow_path: flow_dir_str,
         created_at: timestamp.clone(),
         updated_at: timestamp,
         spec: Some(spec),
@@ -1917,22 +1886,22 @@ pub async fn import_pipeline_from_request(
 #[tauri::command]
 pub async fn save_run_config(
     state: tauri::State<'_, AppState>,
-    pipeline_id: i64,
+    flow_id: i64,
     name: String,
     config_data: serde_json::Value,
 ) -> Result<i64, String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.save_run_config(pipeline_id, &name, &config_data)
+    db.save_run_config(flow_id, &name, &config_data)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn list_run_configs(
     state: tauri::State<'_, AppState>,
-    pipeline_id: i64,
+    flow_id: i64,
 ) -> Result<Vec<RunConfig>, String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.list_run_configs(pipeline_id).map_err(|e| e.to_string())
+    db.list_run_configs(flow_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
