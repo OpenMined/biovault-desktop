@@ -11,7 +11,6 @@
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up'
 	import CompassIcon from '@lucide/svelte/icons/compass'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
-	import InboxIcon from '@lucide/svelte/icons/inbox'
 	import LogOutIcon from '@lucide/svelte/icons/log-out'
 	import LogInIcon from '@lucide/svelte/icons/log-in'
 	import SettingsIcon from '@lucide/svelte/icons/settings'
@@ -36,11 +35,10 @@
 	// Navigation items
 	const navItems = [
 		{ title: 'Explore', url: '/explore', icon: CompassIcon },
-		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
-		{ title: 'Results', url: '/runs', icon: PlayCircleIcon },
+		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon },
-		{ title: 'Inbox', url: '/inbox', icon: InboxIcon },
+		{ title: 'Results', url: '/runs', icon: PlayCircleIcon },
 	]
 
 	// User identity from BioVault settings

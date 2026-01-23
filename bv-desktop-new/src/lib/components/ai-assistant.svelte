@@ -672,13 +672,11 @@ Be concise and action-oriented.${hasTools ? ' Execute commands when asked.' : ''
 <div class="fixed bottom-6 right-6 z-50">
 	<Popover.Root bind:open>
 		<Popover.Trigger>
-			<button
-				type="button"
-				class="group flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all hover:scale-105 hover:shadow-xl active:scale-95"
-			>
-				<SparklesIcon
-					class="size-6 transition-transform group-hover:rotate-12 group-hover:scale-110"
-				/>
+		<button
+			type="button"
+			class="flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+		>
+			<SparklesIcon class="size-6" />
 				<span class="sr-only">AI Assistant</span>
 			</button>
 		</Popover.Trigger>
