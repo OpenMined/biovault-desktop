@@ -15,6 +15,7 @@
 	import NotificationsSheet from '$lib/components/notifications-sheet.svelte'
 	import LearnSheet from '$lib/components/learn-sheet.svelte'
 	import SupportDialog from '$lib/components/support-dialog.svelte'
+	import InviteDialog from '$lib/components/invite-dialog.svelte'
 	import AiAssistant from '$lib/components/ai-assistant.svelte'
 	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
 	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
@@ -23,6 +24,7 @@
 	import LibraryBigIcon from '@lucide/svelte/icons/library-big'
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus'
 
 	let { children } = $props()
 	let sqlOpen = $state(false)
@@ -30,6 +32,7 @@
 	let notificationsOpen = $state(false)
 	let learnOpen = $state(false)
 	let supportOpen = $state(false)
+	let inviteOpen = $state(false)
 	let appVersion = $state('')
 
 	// Send native system notification
@@ -189,6 +192,18 @@
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
+							onclick={() => (inviteOpen = true)}
+						>
+							<UserPlusIcon class="size-5" />
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>Invite to BioVault</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
+
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
 							onclick={() => (supportOpen = true)}
 						>
 							<CircleHelpIcon class="size-5" />
@@ -219,5 +234,6 @@
 <NotificationsSheet bind:open={notificationsOpen} />
 <LearnSheet bind:open={learnOpen} />
 <SupportDialog bind:open={supportOpen} />
+<InviteDialog bind:open={inviteOpen} />
 <AiAssistant />
 <Toaster />

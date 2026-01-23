@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { profilesStore, type ProfileSummary } from '$lib/stores/profiles.svelte'
-	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
@@ -12,7 +11,6 @@
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import CheckIcon from '@lucide/svelte/icons/check'
-	import LogOutIcon from '@lucide/svelte/icons/log-out'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import FolderIcon from '@lucide/svelte/icons/folder'
 	import { open as openDialog, message as showMessage, confirm } from '@tauri-apps/plugin-dialog'
@@ -28,21 +26,9 @@
 	let deleting = $state<string | null>(null)
 	let deleteConfirmOpen = $state(false)
 	let profileToDelete = $state<ProfileSummary | null>(null)
-	let signOutConfirmOpen = $state(false)
-	let signingOut = $state(false)
 
 	const profiles = $derived(profilesStore.profiles)
 	const loading = $derived(profilesStore.loading)
-	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
-
-	// Reload profiles when auth state changes (e.g., after signing in)
-	$effect(() => {
-		// Track isAuthenticated changes
-		const _ = isAuthenticated
-		if (open) {
-			profilesStore.load()
-		}
-	})
 
 	function handleOpenChange(newOpen: boolean) {
 		open = newOpen
@@ -86,20 +72,6 @@
 			await showMessage(String(e), { title: 'Failed to Delete Profile', kind: 'error' })
 		} finally {
 			deleting = null
-		}
-	}
-
-	async function handleSignOut() {
-		signingOut = true
-		try {
-			await syftboxAuthStore.disconnect()
-			signOutConfirmOpen = false
-			handleOpenChange(false)
-		} catch (e) {
-			console.error('Failed to sign out:', e)
-			await showMessage(String(e), { title: 'Failed to Sign Out', kind: 'error' })
-		} finally {
-			signingOut = false
 		}
 	}
 
@@ -190,67 +162,48 @@
 				<div class="space-y-2 max-h-[300px] overflow-y-auto">
 					{#each profiles as profile (profile.id)}
 						{@const status = getStatusBadge(profile)}
-						<button
-							type="button"
-							class="w-full flex items-center gap-3 p-3 rounded-lg border transition-colors hover:bg-muted/50 {profile.is_current
+						<div
+							class="w-full flex items-center gap-3 p-3 rounded-lg border transition-colors {profile.is_current
 								? 'border-primary bg-primary/5'
-								: 'border-border'}"
-							onclick={() => handleSwitch(profile)}
-							disabled={profile.is_current || switching}
+								: 'border-border hover:bg-muted/50'}"
 						>
-							<Avatar.Root class="size-10">
-								<Avatar.Fallback>{getInitials(profile)}</Avatar.Fallback>
-							</Avatar.Root>
+							<button
+								type="button"
+								class="flex-1 flex items-center gap-3 text-left"
+								onclick={() => handleSwitch(profile)}
+								disabled={profile.is_current || switching}
+							>
+								<Avatar.Root class="size-10">
+									<Avatar.Fallback>{getInitials(profile)}</Avatar.Fallback>
+								</Avatar.Root>
 
-							<div class="flex-1 text-left min-w-0">
-								<div class="font-medium truncate">
-									{profile.email || '(Not set up)'}
+								<div class="flex-1 min-w-0">
+									<div class="font-medium truncate">
+										{profile.email || '(Not set up)'}
+									</div>
+									<div
+										class="text-xs text-muted-foreground truncate flex items-center gap-1"
+										title={profile.biovault_home}
+									>
+										<FolderIcon class="size-3 shrink-0" />
+										{shortenPath(profile.biovault_home)}
+									</div>
 								</div>
-								<div
-									class="text-xs text-muted-foreground truncate flex items-center gap-1"
-									title={profile.biovault_home}
-								>
-									<FolderIcon class="size-3 shrink-0" />
-									{shortenPath(profile.biovault_home)}
-								</div>
-							</div>
 
-							<div class="flex items-center gap-2 shrink-0">
-								<Badge variant={status.variant}>{status.text}</Badge>
-								{#if profile.is_current}
-									<CheckIcon class="size-4 text-primary" />
-								{/if}
-							</div>
-
-							{#if profile.is_current && isAuthenticated}
-								<Button
-									variant="ghost"
-									size="icon"
-									class="shrink-0 text-muted-foreground hover:text-foreground"
-									onclick={(e) => {
-										e.stopPropagation()
-										signOutConfirmOpen = true
-									}}
-									disabled={signingOut}
-									title="Sign out from SyftBox"
-								>
-									{#if signingOut}
-										<Loader2Icon class="size-4 animate-spin" />
-									{:else}
-										<LogOutIcon class="size-4" />
+								<div class="flex items-center gap-2 shrink-0">
+									<Badge variant={status.variant}>{status.text}</Badge>
+									{#if profile.is_current}
+										<CheckIcon class="size-4 text-primary" />
 									{/if}
-								</Button>
-							{/if}
+								</div>
+							</button>
 
 							{#if !profile.is_current && !profile.running}
 								<Button
 									variant="ghost"
 									size="icon"
 									class="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-									onclick={(e) => {
-										e.stopPropagation()
-										confirmDelete(profile)
-									}}
+									onclick={() => confirmDelete(profile)}
 									disabled={deleting === profile.id}
 								>
 									{#if deleting === profile.id}
@@ -260,7 +213,7 @@
 									{/if}
 								</Button>
 							{/if}
-						</button>
+						</div>
 					{/each}
 				</div>
 			{/if}
@@ -304,24 +257,3 @@
 	</AlertDialog.Content>
 </AlertDialog.Root>
 
-<AlertDialog.Root bind:open={signOutConfirmOpen}>
-	<AlertDialog.Content>
-		<AlertDialog.Header>
-			<AlertDialog.Title>Sign out from SyftBox?</AlertDialog.Title>
-			<AlertDialog.Description>
-				You will be disconnected from the SyftBox network for this profile. You can reconnect at
-				any time.
-			</AlertDialog.Description>
-		</AlertDialog.Header>
-		<AlertDialog.Footer>
-			<AlertDialog.Cancel disabled={signingOut}>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action onclick={handleSignOut} disabled={signingOut}>
-				{#if signingOut}
-					Signing out...
-				{:else}
-					Sign Out
-				{/if}
-			</AlertDialog.Action>
-		</AlertDialog.Footer>
-	</AlertDialog.Content>
-</AlertDialog.Root>

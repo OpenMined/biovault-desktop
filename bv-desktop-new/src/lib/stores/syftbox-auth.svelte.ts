@@ -115,6 +115,19 @@ export const syftboxAuthStore = {
 			email,
 			server_url: serverUrl || null
 		})
+
+		// Update profile email to match the signed-in account
+		try {
+			const currentSettings = await invoke<{ email?: string }>('get_settings')
+			if (currentSettings.email !== email) {
+				await invoke('save_settings', {
+					settings: { ...currentSettings, email }
+				})
+			}
+		} catch (e) {
+			console.error('Failed to update profile email:', e)
+		}
+
 		// Re-check auth after successful OTP submission
 		await this.checkAuth()
 		// Auto go online after signing in
