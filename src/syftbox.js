@@ -2,7 +2,12 @@
  * SyftBox module - Sync explorer and status management
  */
 
-export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }) {
+export function createSyftBoxModule({
+	invoke,
+	dialog,
+	templateLoader: _templateLoader,
+	shellApi: _shellApi,
+}) {
 	let _initialized = false
 	let _refreshTimer = null
 	let _globalStatusTimer = null // Timer for updating global status bar "Xs ago" text
@@ -1206,7 +1211,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 	}
 
 	function handleSyncEvent(event) {
-		const { type, path, state, progress, conflict_state, error } = event
+		const { type: _type, path, state, progress, conflict_state, error } = event
 
 		// Update last successful check timestamp (we received a server event)
 		_status.lastSuccessfulCheck = Date.now()
@@ -1721,7 +1726,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		})
 	}
 
-	async function showDetails(path, isFolder) {
+	async function showDetails(path, _isFolder) {
 		const detailsPane = document.getElementById('sync-tree-details')
 		if (!detailsPane) return
 
@@ -2036,7 +2041,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		}
 	}
 
-	function formatTimeAgo(timestamp) {
+	function _formatTimeAgo(timestamp) {
 		const diffMs = Date.now() - timestamp
 		// Show ms until 5 seconds, in thousands (rounded to nearest 100ms)
 		if (diffMs < 5000) {
@@ -2419,7 +2424,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		}
 	}
 
-	async function refreshAll(showLoading = false) {
+	async function refreshAll(_showLoading = false) {
 		// Load status first to get current user email
 		await refreshStatus()
 		// Load trusted contacts from vault

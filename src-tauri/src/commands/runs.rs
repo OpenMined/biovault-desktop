@@ -14,6 +14,7 @@ fn dependency_binaries() -> Vec<&'static str> {
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
+    deps.push("syqure");
     deps.push("uv");
     deps
 }
@@ -145,7 +146,7 @@ pub fn start_analysis(
 
     // Create run using CLI library (unified runs table)
     let run_id = biovault_db
-        .create_step_run(
+        .create_module_run(
             module_id,
             run_dir.to_str().unwrap(),
             participant_ids.len() as i32,
@@ -572,6 +573,7 @@ fn bundled_env_var(name: &str) -> Option<&'static str> {
         "nextflow" => Some("BIOVAULT_BUNDLED_NEXTFLOW"),
         "uv" => Some("BIOVAULT_BUNDLED_UV"),
         "syftbox" => Some("SYFTBOX_BINARY"),
+        "syqure" => Some("SEQURE_NATIVE_BIN"),
         _ => None,
     }
 }

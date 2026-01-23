@@ -74,8 +74,29 @@ fi
 chmod +x scripts/build-syftbox-prod-signed.sh scripts/fetch-bundled-deps.sh scripts/sign-bundled-deps.sh
 ./scripts/build-syftbox-prod-signed.sh
 
-# Fetch bundled deps then sign them
+# Fetch bundled deps
 ./scripts/fetch-bundled-deps.sh
+
+# Build syqure (fat binary) using existing syqure build script (non-Windows)
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    echo "Skipping syqure build on Windows (Docker runtime only)."
+    ;;
+  *)
+    chmod +x syqure/syqure_bins.sh
+    ./syqure/syqure_bins.sh
+    mkdir -p src-tauri/resources/syqure
+    if [[ -f syqure/target/debug/syqure ]]; then
+      cp syqure/target/debug/syqure src-tauri/resources/syqure/syqure
+      chmod +x src-tauri/resources/syqure/syqure
+    else
+      echo "❌ syqure binary not found at syqure/target/debug/syqure" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# Sign bundled deps (including syqure)
 ./scripts/sign-bundled-deps.sh
 
 # Materialize notebooks into a real templates directory for bundling

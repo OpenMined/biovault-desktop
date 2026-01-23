@@ -219,7 +219,7 @@ const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shel
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
 let importSetLastImportView = () => console.warn('setLastImportView not yet initialized')
-const importModule = createImportModule({
+const fileImportModule = createImportModule({
 	invoke,
 	open,
 	dialog,
@@ -261,7 +261,7 @@ const {
 	toggleIncompleteReviewFilter,
 	jumpToNextIncompleteReview,
 	getIsImportInProgress,
-} = importModule
+} = fileImportModule
 
 const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView } =
 	createDashboardShell({
@@ -402,7 +402,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		document.body.insertAdjacentHTML('beforeend', importModalHtml)
 
 		// Initialize drag-and-drop for folder selection (async now)
-		await importModule.initFolderDropzone()
+		await fileImportModule.initFolderDropzone()
 
 		await initializeSqlTab()
 

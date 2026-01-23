@@ -249,7 +249,7 @@ fn parse_spec_payload(data: SaveModulePayload) -> Result<(ModuleMetadata, Module
         name: name_trimmed.to_string(),
         author: author_value.clone(),
         workflow: workflow_trimmed.to_string(),
-        template: template_value.clone(),
+        runtime: template_value.clone(),
         version: Some(version_value.clone()),
         assets: cleaned_assets.clone(),
         parameters: parameter_specs.clone(),
@@ -262,7 +262,7 @@ fn parse_spec_payload(data: SaveModulePayload) -> Result<(ModuleMetadata, Module
         author: author_value,
         workflow: workflow_trimmed.to_string(),
         description: None,
-        template: template_value,
+        runtime: template_value,
         version: Some(version_value),
         datasites: None,
         env: BTreeMap::new(),
@@ -271,6 +271,7 @@ fn parse_spec_payload(data: SaveModulePayload) -> Result<(ModuleMetadata, Module
         inputs: input_specs,
         outputs: output_specs,
         steps: Vec::new(),
+        runner: None,
     };
 
     Ok((metadata, spec))
@@ -397,7 +398,7 @@ pub fn import_module_from_folder(
         name: spec.name,
         author: spec.author,
         workflow: spec.workflow,
-        template: spec.template,
+        runtime: spec.runtime,
         version: spec.version,
         assets: spec.assets,
         parameters: spec.parameters,
@@ -423,7 +424,7 @@ pub fn import_module_from_folder(
     }
 
     // Extract template and version with default values
-    let template = metadata.template.unwrap_or_else(|| "imported".to_string());
+    let template = metadata.runtime.unwrap_or_else(|| "imported".to_string());
     let version = metadata.version.unwrap_or_else(|| "1.0.0".to_string());
 
     // Register the new module
@@ -915,7 +916,7 @@ pub fn load_module_editor(
             .unwrap_or_else(|| directory_name.clone()),
         author: default_author.clone(),
         workflow: "workflow.nf".into(),
-        template: None,
+        runtime: None,
         version: None,
         assets: Vec::new(),
         parameters: Vec::new(),
@@ -988,8 +989,8 @@ pub fn save_module_editor(
     biovault::data::save_module_metadata(&module_path_buf, &metadata)
         .map_err(|e| format!("Failed to save module.yaml: {}", e))?;
 
-    // Regenerate workflow.nf if template is dynamic-nextflow
-    if metadata.template.as_deref() == Some("dynamic-nextflow") {
+    // Regenerate workflow.nf if runtime is dynamic-nextflow
+    if metadata.runtime.as_deref() == Some("dynamic-nextflow") {
         let workflow_stub = module_spec::generate_workflow_stub(&spec)
             .map_err(|e| format!("Failed to generate workflow stub: {}", e))?;
         let workflow_path = module_path_buf.join(&metadata.workflow);
@@ -998,7 +999,7 @@ pub fn save_module_editor(
     }
 
     let template_for_db = metadata
-        .template
+        .runtime
         .clone()
         .unwrap_or_else(|| "custom".to_string());
     let version_for_db = metadata

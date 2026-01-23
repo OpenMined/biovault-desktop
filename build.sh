@@ -23,6 +23,25 @@ fi
 chmod +x scripts/fetch-bundled-deps.sh
 ./scripts/fetch-bundled-deps.sh
 
+# Build syqure (fat binary) using existing syqure build script (non-Windows)
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    echo "Skipping syqure build on Windows (Docker runtime only)."
+    ;;
+  *)
+    chmod +x syqure/syqure_bins.sh
+    ./syqure/syqure_bins.sh
+    mkdir -p src-tauri/resources/syqure
+    if [[ -f syqure/target/debug/syqure ]]; then
+      cp syqure/target/debug/syqure src-tauri/resources/syqure/syqure
+      chmod +x src-tauri/resources/syqure/syqure
+    else
+      echo "❌ syqure binary not found at syqure/target/debug/syqure" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # Materialize notebooks into a real templates directory for bundling
 chmod +x scripts/materialize-templates.sh
 ./scripts/materialize-templates.sh
@@ -31,6 +50,7 @@ chmod +x scripts/materialize-templates.sh
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "Stripping extended attributes..."
   for root in \
+    src-tauri/resources/syqure \
     src-tauri/resources/bundled/uv \
     src-tauri/resources/bundled/java \
     src-tauri/resources/bundled/nextflow; do
@@ -43,7 +63,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
   # Ad-hoc sign all bundled executables and dylibs
   echo "Ad-hoc signing bundled executables..."
-  find src-tauri/resources/bundled -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
+  find src-tauri/resources/bundled src-tauri/resources/syqure -type f \( -perm +111 -o -name "*.dylib" -o -name "*.jnilib" \) -print0 2>/dev/null | while IFS= read -r -d '' f; do
     codesign --force --sign - "$f" 2>/dev/null || true
   done || true
 

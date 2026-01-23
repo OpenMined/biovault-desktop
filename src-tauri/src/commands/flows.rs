@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 use biovault::cli::commands::flow::run_flow as cli_run_flow;
 use biovault::cli::commands::module_management::{resolve_flow_dependencies, DependencyContext};
 use biovault::data::BioVaultDb;
-pub use biovault::data::{Flow, FlowRun, RunConfig};
+pub use biovault::data::{Flow, Run, RunConfig};
 use biovault::flow_spec::FlowFile;
 pub use biovault::flow_spec::FlowSpec;
 use biovault::flow_spec::FLOW_YAML_FILE;
@@ -668,8 +668,12 @@ pub async fn create_flow(
                 name: name.clone(),
                 description: None,
                 context: None,
+                vars: Default::default(),
+                coordination: None,
+                mpc: None,
                 inputs: Default::default(),
                 steps: Vec::new(),
+                datasites: Vec::new(),
             };
             let flow = FlowFile::from_flow_spec(&default_spec)
                 .map_err(|e| format!("Failed to build default flow spec: {}", e))?;
@@ -846,11 +850,7 @@ pub async fn validate_flow(flow_path: String) -> Result<FlowValidationResult, St
     use std::process::Command as ProcessCommand;
 
     let flow_path = PathBuf::from(&flow_path).join(FLOW_YAML_FILE);
-    let target = if flow_path.exists() {
-        flow_path.to_string_lossy().to_string()
-    } else {
-        flow_path
-    };
+    let target = flow_path.to_string_lossy().to_string();
 
     let mut cmd = ProcessCommand::new("bv");
     cmd.args(["flow", "validate", "--diagram", &target]);
@@ -899,7 +899,8 @@ pub async fn run_flow(
     mut input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
     selection: Option<FlowRunSelection>,
-) -> Result<FlowRun, String> {
+    run_id: Option<String>,
+) -> Result<Run, String> {
     use chrono::Local;
 
     let home = biovault::config::get_biovault_home()
@@ -1427,7 +1428,7 @@ pub async fn run_flow(
     );
 
     // Create flow run record using CLI library with metadata
-    let run_id = biovault_db
+    let run_db_id = biovault_db
         .create_flow_run_with_metadata(
             flow_id,
             &results_path.to_string_lossy(),
@@ -1436,17 +1437,27 @@ pub async fn run_flow(
         )
         .map_err(|e| e.to_string())?;
 
+    let run_record = biovault_db
+        .get_flow_run(run_db_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Flow run record not found after creation".to_string())?;
+
     drop(biovault_db); // Release lock
 
     // Spawn async task to run flow (so we can return immediately)
     let window_clone = window.clone();
     let biovault_db_clone = state.biovault_db.clone();
-    let run_id_clone = run_id;
+    let run_id_clone = run_db_id;
     let log_path_clone = log_path.clone();
     let flow_name_clone = flow_name.clone();
     let yaml_path_spawn = yaml_path_str.clone();
     let results_dir_spawn = results_dir_str.clone();
     let extra_args_spawn = extra_args.clone();
+
+    let run_id_override = run_id
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
 
     tauri::async_runtime::spawn(async move {
         append_flow_log(
@@ -1471,6 +1482,16 @@ pub async fn run_flow(
         );
 
         // Call CLI library function directly
+        let previous_run_id = std::env::var("BIOVAULT_FLOW_RUN_ID").ok();
+        if let Some(run_id) = run_id_override.as_ref() {
+            std::env::set_var("BIOVAULT_FLOW_RUN_ID", run_id);
+            append_flow_log(
+                &window_clone,
+                &log_path_clone,
+                &format!("🔧 Using BIOVAULT_FLOW_RUN_ID={}", run_id),
+            );
+        }
+
         let result = cli_run_flow(
             &yaml_path_spawn,
             extra_args_spawn.clone(),
@@ -1479,6 +1500,12 @@ pub async fn run_flow(
             Some(results_dir_spawn.clone()),
         )
         .await;
+
+        match (run_id_override.as_ref(), previous_run_id) {
+            (Some(_), Some(prev)) => std::env::set_var("BIOVAULT_FLOW_RUN_ID", prev),
+            (Some(_), None) => std::env::remove_var("BIOVAULT_FLOW_RUN_ID"),
+            _ => {}
+        }
 
         let status = match &result {
             Err(err) => {
@@ -1507,22 +1534,11 @@ pub async fn run_flow(
         let _ = window_clone.emit("flow-complete", status);
     });
 
-    Ok(FlowRun {
-        id: run_id,
-        flow_id: Some(flow_id),
-        step_id: None,
-        status: "running".to_string(),
-        work_dir: results_path.to_string_lossy().to_string(),
-        results_dir: Some(results_path.to_string_lossy().to_string()),
-        participant_count: None,
-        metadata: Some(metadata_str),
-        created_at: chrono::Local::now().to_rfc3339(),
-        completed_at: None,
-    })
+    Ok(run_record)
 }
 
 #[tauri::command]
-pub async fn get_flow_runs(state: tauri::State<'_, AppState>) -> Result<Vec<FlowRun>, String> {
+pub async fn get_flow_runs(state: tauri::State<'_, AppState>) -> Result<Vec<Run>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     biovault_db.list_flow_runs().map_err(|e| e.to_string())
 }
@@ -1814,7 +1830,7 @@ pub async fn import_flow_from_request(
                         module_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &module_yaml.author,
                         &module_yaml.workflow,
-                        module_yaml.template.as_deref().unwrap_or("imported"),
+                        module_yaml.runtime.as_deref().unwrap_or("imported"),
                         &dest_module_dir,
                     )
                     .map_err(|e| e.to_string())?;
@@ -1824,7 +1840,7 @@ pub async fn import_flow_from_request(
                         module_yaml.version.as_deref().unwrap_or("0.1.0"),
                         &module_yaml.author,
                         &module_yaml.workflow,
-                        module_yaml.template.as_deref().unwrap_or("imported"),
+                        module_yaml.runtime.as_deref().unwrap_or("imported"),
                         &dest_module_dir,
                     )
                     .map_err(|e| e.to_string())?;
@@ -1839,7 +1855,7 @@ pub async fn import_flow_from_request(
                     module_yaml.version.as_deref().unwrap_or("0.1.0"),
                     &module_yaml.author,
                     &module_yaml.workflow,
-                    module_yaml.template.as_deref().unwrap_or("imported"),
+                    module_yaml.runtime.as_deref().unwrap_or("imported"),
                     &dest_module_dir,
                 )
                 .map_err(|e| e.to_string())?;
@@ -1891,7 +1907,7 @@ pub async fn save_run_config(
     config_data: serde_json::Value,
 ) -> Result<i64, String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.save_run_config(flow_id, &name, &config_data)
+    db.save_flow_run_config(flow_id, &name, &config_data)
         .map_err(|e| e.to_string())
 }
 
@@ -1901,7 +1917,7 @@ pub async fn list_run_configs(
     flow_id: i64,
 ) -> Result<Vec<RunConfig>, String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.list_run_configs(flow_id).map_err(|e| e.to_string())
+    db.list_flow_run_configs(flow_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1910,7 +1926,7 @@ pub async fn get_run_config(
     config_id: i64,
 ) -> Result<Option<RunConfig>, String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.get_run_config(config_id).map_err(|e| e.to_string())
+    db.get_flow_run_config(config_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1919,5 +1935,6 @@ pub async fn delete_run_config(
     config_id: i64,
 ) -> Result<(), String> {
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-    db.delete_run_config(config_id).map_err(|e| e.to_string())
+    db.delete_flow_run_config(config_id)
+        .map_err(|e| e.to_string())
 }
