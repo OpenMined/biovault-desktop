@@ -55,7 +55,9 @@
 
 	onMount(() => {
 		// Get app version
-		getVersion().then((v) => (appVersion = v)).catch(() => {})
+		getVersion()
+			.then((v) => (appVersion = v))
+			.catch(() => {})
 
 		// Listen for pipeline completion events
 		const unlistenPromise = listen<string>('pipeline-complete', (event) => {

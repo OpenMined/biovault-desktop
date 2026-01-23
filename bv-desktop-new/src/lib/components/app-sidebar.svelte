@@ -35,12 +35,12 @@
 
 	// Navigation items
 	const navItems = [
-		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
-		{ title: 'Runs', url: '/runs', icon: PlayCircleIcon },
-		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
 		{ title: 'Explore', url: '/explore', icon: CompassIcon },
-		{ title: 'Inbox', url: '/inbox', icon: InboxIcon },
+		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
+		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
+		{ title: 'Results', url: '/runs', icon: PlayCircleIcon },
 		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon },
+		{ title: 'Inbox', url: '/inbox', icon: InboxIcon },
 	]
 
 	// User identity from BioVault settings
