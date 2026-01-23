@@ -2,6 +2,7 @@
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 	import { cn, type WithElementRef } from "$lib/utils.js";
 	import type { HTMLAttributes } from "svelte/elements";
+	import { MediaQuery } from "svelte/reactivity";
 	import {
 		SIDEBAR_COOKIE_MAX_AGE,
 		SIDEBAR_COOKIE_NAME,
@@ -22,6 +23,12 @@
 		open?: boolean;
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
+
+	const isDesktop = new MediaQuery("(min-width: 1200px)");
+
+	$effect(() => {
+		open = isDesktop.current;
+	});
 
 	const sidebar = setSidebar({
 		open: () => open,

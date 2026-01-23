@@ -39,8 +39,13 @@
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left'
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
 	import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
+	import InfoIcon from '@lucide/svelte/icons/info'
+	import GlobeIcon from '@lucide/svelte/icons/globe'
 	import AssetDeleteButton from './asset-delete-button.svelte'
 	import AssetFileCell from './asset-file-cell.svelte'
+	import AssetMockCell from './asset-mock-cell.svelte'
+	import AssetMockButton from './asset-mock-button.svelte'
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 
 	interface Asset {
 		rowId: string
@@ -48,6 +53,8 @@
 		name: string
 		path: string
 		exists: boolean
+		mockPath?: string
+		mockExists: boolean
 	}
 
 	interface DatasetAsset {
@@ -91,16 +98,24 @@
 	let loading = $state(true)
 	let saving = $state(false)
 	let error = $state<string | null>(null)
+	let isPublished = $state(false)
 
 	// Form state
+	let currentName = $state($page.params.name)
 	let description = $state('')
 	let version = $state('1.0.0')
 	let assets = $state<Asset[]>([])
 
 	// Track changes for basic info only (assets auto-save)
+	let originalName = $state($page.params.name)
 	let originalDescription = $state('')
 	let originalVersion = $state('1.0.0')
-	let hasInfoChanges = $derived(description !== originalDescription || version !== originalVersion)
+	let hasInfoChanges = $derived(
+		currentName !== originalName || description !== originalDescription || version !== originalVersion,
+	)
+
+	let allAssetsHaveMocks = $derived(assets.length > 0 && assets.every((a) => a.mockPath))
+	let missingMockCount = $derived(assets.filter((a) => !a.mockPath).length)
 
 	// Table state
 	let pagination = $state<PaginationState>({ pageIndex: 0, pageSize: 20 })
@@ -150,13 +165,46 @@
 		},
 		{
 			accessorKey: 'path',
-			header: 'File',
+			header: 'Private File',
 			cell: ({ row }) => {
 				const { path, exists } = row.original
 				if (!path) return '—'
 				return renderComponent(AssetFileCell, {
 					filename: getFileName(path),
 					exists,
+				})
+			},
+		},
+		{
+			id: 'mock',
+			header: 'Mock File',
+			cell: ({ row }) => {
+				const { mockPath, mockExists, rowId } = row.original
+				if (!mockPath) {
+					return renderComponent(AssetMockButton, {
+						assetId: rowId,
+						hasMock: false,
+						onSet: setMockData,
+						onRemove: removeMockData,
+					})
+				}
+				return renderComponent(AssetMockCell, {
+					filename: getFileName(mockPath),
+					exists: mockExists,
+				})
+			},
+		},
+		{
+			id: 'mockActions',
+			header: '',
+			cell: ({ row }) => {
+				const { mockPath, rowId } = row.original
+				if (!mockPath) return ''
+				return renderComponent(AssetMockButton, {
+					assetId: rowId,
+					hasMock: true,
+					onSet: setMockData,
+					onRemove: removeMockData,
 				})
 			},
 		},
@@ -239,15 +287,28 @@
 			fileId: a.private_file_id ?? null,
 			name: a.asset_key,
 			path: a.resolved_private_path || a.private_path || '',
-			exists: true, // Default to true, will check below
+			exists: true,
+			mockPath: a.resolved_mock_path || a.mock_path || '',
+			mockExists: true,
 		}))
 
 		// Check which files exist
-		if (loadedAssets.length > 0) {
-			const paths = loadedAssets.map((a) => a.path)
-			const existsResults = await invoke<boolean[]>('check_files_exist', { paths })
-			loadedAssets.forEach((asset, i) => {
-				asset.exists = existsResults[i] ?? true
+		const pathsToCheck: string[] = []
+		for (const a of loadedAssets) {
+			if (a.path) pathsToCheck.push(a.path)
+			if (a.mockPath) pathsToCheck.push(a.mockPath)
+		}
+
+		if (pathsToCheck.length > 0) {
+			const existsResults = await invoke<boolean[]>('check_files_exist', { paths: pathsToCheck })
+			let resultIdx = 0
+			loadedAssets.forEach((asset) => {
+				if (asset.path) {
+					asset.exists = existsResults[resultIdx++] ?? true
+				}
+				if (asset.mockPath) {
+					asset.mockExists = existsResults[resultIdx++] ?? true
+				}
 			})
 		}
 
@@ -269,13 +330,17 @@
 
 			const { dataset, assets: datasetAssets } = datasetWithAssets
 
+			currentName = dataset.name
 			description = dataset.description || ''
 			version = dataset.version || '1.0.0'
 
 			assets = await buildAssets(datasetAssets)
 
+			originalName = currentName
 			originalDescription = description
 			originalVersion = version
+
+			await checkPublishStatus()
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -314,18 +379,19 @@
 			}
 		> = {}
 
-		for (const asset of assets.filter((a) => a.name && a.path)) {
+		for (const asset of assets.filter((a) => a.name && (a.path || a.mockPath))) {
 			manifestAssets[asset.name] = {
 				kind: 'twin',
 				mappings: {
-					private: { file_path: asset.path },
+					private: asset.path ? { file_path: asset.path } : undefined,
+					mock: asset.mockPath ? { file_path: asset.mockPath } : undefined,
 				},
 			}
 		}
 
 		await invoke('save_dataset_with_files', {
 			manifest: {
-				name: datasetName,
+				name: currentName.trim(),
 				description: description.trim() || null,
 				version: version.trim() || '1.0.0',
 				schema: 'net.biovault.datasets:1.0.0',
@@ -335,7 +401,7 @@
 				http_relay_servers: [],
 				assets: manifestAssets,
 			},
-			originalName: datasetName,
+			originalName: originalName,
 		})
 	}
 
@@ -589,9 +655,19 @@
 
 		try {
 			await saveDataset()
+
+			const oldName = originalName
+			const newName = currentName.trim()
+
+			originalName = newName
 			originalDescription = description
 			originalVersion = version
+
 			toast.success('Dataset saved')
+
+			if (oldName !== newName) {
+				goto(`/datasets/${newName}`, { replaceState: true })
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 			toast.error('Failed to save dataset')
@@ -600,12 +676,112 @@
 		}
 	}
 
+	async function checkPublishStatus() {
+		try {
+			isPublished = await invoke('is_dataset_published', { name: originalName })
+		} catch (e) {
+			console.error('Failed to check publish status:', e)
+		}
+	}
+
+	async function setMockData(assetId: string) {
+		try {
+			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+			const selected = await openDialog({
+				multiple: false,
+				directory: false,
+				title: 'Select Mock File',
+			})
+			if (selected && typeof selected === 'string') {
+				assets = assets.map((a) => {
+					if (a.rowId === assetId) {
+						return { ...a, mockPath: selected, mockExists: true }
+					}
+					return a
+				})
+
+				// Auto-save
+				savingAssets = true
+				try {
+					await saveDataset()
+					await reloadAssets()
+					toast.success('Mock data added')
+				} catch (e) {
+					error = e instanceof Error ? e.message : String(e)
+				} finally {
+					savingAssets = false
+				}
+			}
+		} catch (e) {
+			console.error('Failed to open file dialog:', e)
+			error = e instanceof Error ? e.message : String(e)
+		}
+	}
+
+	async function removeMockData(assetId: string) {
+		assets = assets.map((a) => {
+			if (a.rowId === assetId) {
+				return { ...a, mockPath: '', mockExists: false }
+			}
+			return a
+		})
+
+		// Auto-save
+		savingAssets = true
+		try {
+			await saveDataset()
+			await reloadAssets()
+			toast.success('Mock data removed')
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			savingAssets = false
+		}
+	}
+
+	let publishing = $state(false)
+	let publishConfirmOpen = $state(false)
+
+	async function handlePublish() {
+		publishConfirmOpen = false
+		publishing = true
+		try {
+			await invoke('publish_dataset', {
+				name: currentName,
+				copyMock: true,
+			})
+			toast.success('Dataset published successfully!')
+			await checkPublishStatus()
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : String(e))
+		} finally {
+			publishing = false
+		}
+	}
+
+	let unpublishing = $state(false)
+	let unpublishConfirmOpen = $state(false)
+
+	async function handleUnpublish() {
+		unpublishConfirmOpen = false
+		unpublishing = true
+		try {
+			await invoke('unpublish_dataset', { name: currentName })
+			toast.success('Dataset unpublished successfully')
+			await checkPublishStatus()
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : String(e))
+		} finally {
+			unpublishing = false
+		}
+	}
+
 	function getFileName(path: string): string {
 		return path.split('/').pop() || path
 	}
 
-	let validAssetCount = $derived(assets.filter((a) => a.name && a.path).length)
-	let missingCount = $derived(assets.filter((a) => !a.exists).length)
+	let validAssetCount = $derived(assets.filter((a) => a.name && (a.path || a.mockPath)).length)
+	let missingCount = $derived(assets.filter((a) => !a.exists || (a.mockPath && !a.mockExists)).length)
 	let selectedCount = $derived(Object.keys(rowSelection).filter((id) => rowSelection[id]).length)
 
 	let deleting = $state(false)
@@ -679,7 +855,7 @@
 					<PackageIcon class="size-5 text-primary" />
 				</div>
 				<div class="min-w-0">
-					<h1 class="font-semibold text-lg truncate">{datasetName}</h1>
+					<h1 class="font-semibold text-lg truncate">{currentName}</h1>
 					<p class="text-sm text-muted-foreground">
 						v{version} • {validAssetCount}
 						{validAssetCount === 1 ? 'asset' : 'assets'}
@@ -687,12 +863,68 @@
 				</div>
 			</div>
 
-			{#if savingAssets}
-				<Badge variant="secondary" class="gap-1">
-					<Loader2Icon class="size-3 animate-spin" />
-					Saving...
-				</Badge>
-			{/if}
+			<div class="flex items-center gap-2">
+				{#if savingAssets}
+					<Badge variant="secondary" class="gap-1 px-2">
+						<Loader2Icon class="size-3 animate-spin" />
+						Saving...
+					</Badge>
+				{/if}
+
+				<Tooltip.Provider>
+					<Tooltip.Root delayDuration={0}>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<div {...props}>
+									{#if isPublished}
+										<Button
+											size="sm"
+											variant="outline"
+											disabled={unpublishing}
+											onclick={() => (unpublishConfirmOpen = true)}
+											class="gap-2"
+										>
+											{#if unpublishing}
+												<Loader2Icon class="size-4 animate-spin" />
+												Unpublishing...
+											{:else}
+												<GlobeIcon class="size-4 text-primary" />
+												Unpublish
+											{/if}
+										</Button>
+									{:else}
+										<Button
+											size="sm"
+											variant="default"
+											disabled={!allAssetsHaveMocks || publishing}
+											onclick={() => (publishConfirmOpen = true)}
+										>
+											{#if publishing}
+												<Loader2Icon class="size-4 animate-spin" />
+												Publishing...
+											{:else}
+												<GlobeIcon class="size-4" />
+												Publish
+											{/if}
+										</Button>
+									{/if}
+								</div>
+							{/snippet}
+						</Tooltip.Trigger>
+						{#if !allAssetsHaveMocks}
+							<Tooltip.Content side="bottom" class="max-w-xs">
+								<div class="flex items-start gap-2">
+									<AlertTriangleIcon class="size-4 text-warning shrink-0 mt-0.5" />
+									<p>
+										You must add mock data for all <b>{missingMockCount}</b> remaining assets in order
+										to publish your dataset.
+									</p>
+								</div>
+							</Tooltip.Content>
+						{/if}
+					</Tooltip.Root>
+				</Tooltip.Provider>
+			</div>
 		</div>
 	</div>
 
@@ -753,6 +985,17 @@
 						</div>
 					</Card.Header>
 					<Card.Content class="space-y-4">
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="space-y-2">
+								<label for="name" class="text-sm font-medium">Dataset Name</label>
+								<Input id="name" bind:value={currentName} placeholder="Dataset name" />
+							</div>
+							<div class="space-y-2">
+								<label for="version" class="text-sm font-medium">Version</label>
+								<Input id="version" bind:value={version} placeholder="1.0.0" />
+							</div>
+						</div>
+
 						<div class="space-y-2">
 							<label for="description" class="text-sm font-medium">Description</label>
 							<textarea
@@ -762,11 +1005,6 @@
 								rows="3"
 								class="border-input bg-background placeholder:text-muted-foreground flex w-full rounded-md border px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] resize-none"
 							></textarea>
-						</div>
-
-						<div class="space-y-2">
-							<label for="version" class="text-sm font-medium">Version</label>
-							<Input id="version" bind:value={version} placeholder="1.0.0" class="max-w-32" />
 						</div>
 					</Card.Content>
 				</Card.Root>
@@ -957,7 +1195,7 @@
 									<AlertDialog.Header>
 										<AlertDialog.Title>Delete Dataset</AlertDialog.Title>
 										<AlertDialog.Description>
-											Are you sure you want to delete <strong>{datasetName}</strong>? This action
+											Are you sure you want to delete <strong>{currentName}</strong>? This action
 											cannot be undone.
 										</AlertDialog.Description>
 									</AlertDialog.Header>
@@ -1100,3 +1338,39 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+<!-- Publish Confirmation Dialog -->
+<AlertDialog.Root bind:open={publishConfirmOpen}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Publish Dataset</AlertDialog.Title>
+			<AlertDialog.Description>
+				Are you sure you want to publish <strong>{currentName}</strong>? This will make the dataset
+				metadata and mock files visible to your peers on SyftBox.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={handlePublish}>Publish</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
+
+<!-- Unpublish Confirmation Dialog -->
+<AlertDialog.Root bind:open={unpublishConfirmOpen}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Unpublish Dataset</AlertDialog.Title>
+			<AlertDialog.Description>
+				Are you sure you want to unpublish <strong>{currentName}</strong>? This will remove the
+				dataset from the public index on SyftBox.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={handleUnpublish} class="bg-destructive text-white hover:bg-destructive/90">
+				Unpublish
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

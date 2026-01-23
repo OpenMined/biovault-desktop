@@ -1,256 +1,215 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
-# Launch one or two BioVault Desktop instances using the NEW UI (bv-desktop-new).
-# Based on dev-two-live.sh but using the SvelteKit UI with tauri.conf.new-ui.json.
+# =============================================================================
+# dev-two-new-ui.sh - Launch TWO clients with NEW UI against SyftBox devstack
+# =============================================================================
+#
+# This is a variant of dev-two.sh that launches the new Svelte-based UI
+# (bv-desktop-new) instead of the legacy one.
 #
 # Usage:
-#   ./dev-two-new-ui.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]
+#   ./dev-two-new-ui.sh --reset               # fresh stack + two desktops
+#   ./dev-two-new-ui.sh --stop                # stop everything
 #
-# Examples:
-#   ./dev-two-new-ui.sh                              # Two clients: client1@sandbox.local, client2@sandbox.local
-#   ./dev-two-new-ui.sh --single                     # Single client: client1@sandbox.local
-#   ./dev-two-new-ui.sh --clients alice,bob          # Two clients: alice, bob
-#   ./dev-two-new-ui.sh --reset                      # Reset client directories before starting
-#   ./dev-two-new-ui.sh --path ~/my-vaults           # Use custom sandbox directory
+# =============================================================================
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$SCRIPT_DIR}"
 BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
-SYFTBOX_URL="${SYFTBOX_URL:-https://dev.syftbox.net}"
-SYFTBOX_AUTH_ENABLED="${SYFTBOX_AUTH_ENABLED:-1}"
-SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
-LOG_DIR="$ROOT_DIR/logs"
-CLIENTS=()
-SINGLE_MODE=0
-SINGLE_TARGET=""
-STOP_ONLY=0
-RESET_FLAG=0
+SYFTBOX_DIR="${SYFTBOX_DIR:-$WORKSPACE_ROOT/syftbox}"
+DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
+SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
+WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
+
+# Default clients
+DEFAULT_CLIENT1="client1@sandbox.local"
+DEFAULT_CLIENT2="client2@sandbox.local"
+
+# State
 VITE_PID=""
 
-mkdir -p "$LOG_DIR"
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
-DEFAULT_CLIENT2="${CLIENT2_EMAIL:-client2@sandbox.local}"
+log_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
+log_success() { echo -e "${GREEN}✓ $1${NC}"; }
+log_warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+log_error() { echo -e "${RED}✗ $1${NC}"; }
+log_header() { echo -e "\n${CYAN}═══════════════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}\n"; }
 
-# Build syftbox-rs (embedded backend)
-build_syftbox_rust() {
-  echo "[new-ui] Building syftbox-rs (embedded)..."
-  (cd "$ROOT_DIR" && ./scripts/build-syftbox-rust.sh)
-  local bin="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
-  if [[ ! -x "$bin" ]]; then
-    echo "[new-ui] ERROR: syftbox-rs binary missing at $bin" >&2
-    exit 1
-  fi
-  echo "[new-ui] syftbox-rs ready"
-}
+# 1. Reuse devstack logic by sourcing it or calling as sub-shell
+# For simplicity, we'll implement the core launch logic here to handle Vite.
 
-# Provision a client directory
-provision_client() {
-  local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
-  
-  if (( RESET_FLAG )) && [[ -d "$client_dir" ]]; then
-    echo "[new-ui] Resetting client $email (--reset flag)"
-    # Stop any Jupyter processes for this client
-    pkill -f "jupyter.*$client_dir" 2>/dev/null || true
-    rm -rf "$client_dir"
-  fi
-  
-  mkdir -p "$client_dir"
-  echo "[new-ui] Client directory ready: $client_dir"
-}
+if [[ ! -f "$DEVSTACK_SCRIPT" ]]; then
+  log_error "Missing devstack script at $DEVSTACK_SCRIPT"
+  exit 1
+fi
 
-# Launch a Tauri instance (Vite is shared)
-launch_tauri_instance() {
-  local home="$1"
-  local tag="$2"
-  local email="$3"
-  
-  echo "[new-ui] Launching Tauri ($tag) with BIOVAULT_HOME=$home email=$email"
-  
-  (
-    cd "$ROOT_DIR/src-tauri"
-    
-    # Export environment for this client
-    export BIOVAULT_HOME="$home"
-    export BV_SYFTBOX_BACKEND="embedded"
-    export SYFTBOX_SERVER_URL="$SYFTBOX_URL"
-    export SYFTBOX_EMAIL="$email"
-    export SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED"
-    export SYFTBOX_CONFIG_PATH="$home/syftbox/config.json"
-    export SYFTBOX_DATA_DIR="$home"
-    export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
-    export BIOVAULT_DEV_MODE=1
-    export BIOVAULT_DEV_SYFTBOX=1
-    export BIOVAULT_DEBUG_BANNER=1
-    export BIOVAULT_DISABLE_PROFILES=1
-    
-    bunx tauri dev --config tauri.conf.new-ui.json 2>&1 | while read -r line; do
-      echo "[$tag] $line"
-    done
-  )
-}
+# Flags
+RESET_FLAG=0
+STOP_FLAG=0
+CLIENTS=()  # Start empty to allow --client overrides
 
-cleanup() {
-  echo "[new-ui] Cleaning up..."
-  
-  # Kill Vite process
-  if [[ -n "$VITE_PID" ]] && ps -p "$VITE_PID" >/dev/null 2>&1; then
-    kill "$VITE_PID" 2>/dev/null || true
-  fi
-  
-  # Kill any remaining bun/vite processes for bv-desktop-new
-  pkill -f "bun.*bv-desktop-new" 2>/dev/null || true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset) RESET_FLAG=1 ;;
+    --stop) STOP_FLAG=1 ;;
+    --client) CLIENTS+=("$2"); shift ;;
+    *) log_error "Unknown option: $1"; exit 1 ;;
+  esac
+  shift
+done
+
+if [[ ${#CLIENTS[@]} -eq 0 ]]; then
+  CLIENTS=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
+fi
+
+stop_all() {
+  log_header "Stopping everything"
+  pkill -f "tauri dev.*new-ui" 2>/dev/null || true
   pkill -f "vite.*1420" 2>/dev/null || true
   
-  # Kill Tauri dev processes
-  pkill -f "tauri dev.*new-ui" 2>/dev/null || true
-  pkill -f "cargo-tauri" 2>/dev/null || true
-  
-  # Stop Jupyter processes for clients
-  local targets=("${CLIENTS[@]:-}")
-  if ((${#targets[@]} == 0)); then
-    targets=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
-  fi
-  for email in "${targets[@]}"; do
-    local client_dir="$SANDBOX_DIR/$email"
-    pkill -f "jupyter.*$client_dir" 2>/dev/null || true
-  done
-  
-  echo "[new-ui] Done"
-}
-
-trap cleanup EXIT INT TERM
-
-main() {
-  # Parse args
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --client)
-        CLIENTS+=("${2:?--client requires an email}")
-        shift
-        ;;
-      --clients)
-        IFS=',' read -r -a parsed_clients <<<"${2:?--clients requires a list}"
-        CLIENTS+=("${parsed_clients[@]}")
-        shift
-        ;;
-      --single)
-        SINGLE_MODE=1
-        if [[ -n "${2:-}" && "$2" != --* ]]; then
-          SINGLE_TARGET="$2"
-          shift
-        fi
-        ;;
-      --stop)
-        STOP_ONLY=1
-        ;;
-      --reset)
-        RESET_FLAG=1
-        ;;
-      --path)
-        SANDBOX_DIR="${2:?--path requires a directory}"
-        shift
-        ;;
-      -h|--help)
-        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR]"
-        echo ""
-        echo "Options:"
-        echo "  --client EMAIL    Add a client by email (can be used multiple times)"
-        echo "  --clients a,b     Add multiple clients (comma-separated)"
-        echo "  --single [EMAIL]  Run only one client (defaults to first client)"
-        echo "  --stop            Stop running instances and exit"
-        echo "  --reset           Reset client directories before starting"
-        echo "  --path DIR        Use custom sandbox directory (default: ./sandbox)"
-        echo ""
-        echo "Examples:"
-        echo "  $0                              # Two default clients"
-        echo "  $0 --single                     # Single default client"
-        echo "  $0 --clients alice,bob --reset  # Two custom clients, reset first"
-        exit 0
-        ;;
-      *)
-        echo "Unknown option: $1" >&2
-        exit 1
-        ;;
-    esac
-    shift
-  done
-
-  if (( STOP_ONLY )); then
-    cleanup
-    exit 0
-  fi
-
+  # Stop devstack
+  bash "$DEVSTACK_SCRIPT" --sandbox "$SANDBOX_ROOT" --stop || true
   if (( RESET_FLAG )); then
-    echo "[new-ui] Will reset individual client directories"
+    bash "$DEVSTACK_SCRIPT" --sandbox "$SANDBOX_ROOT" --stop --reset || true
   fi
-
-  # Default clients if none specified
-  if ((${#CLIENTS[@]} == 0)); then
-    CLIENTS=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
-  fi
-
-  # Single mode
-  if (( SINGLE_MODE )); then
-    if [[ -n "$SINGLE_TARGET" ]]; then
-      CLIENTS=("$SINGLE_TARGET")
-    else
-      CLIENTS=("${CLIENTS[0]}")
-    fi
-  fi
-
-  # Build syftbox-rs
-  build_syftbox_rust
-
-  # Provision all clients first
-  declare -a PROVISIONED=()
-  for email in "${CLIENTS[@]}"; do
-    provision_client "$email"
-    PROVISIONED+=("$email")
-  done
-
-  # Start shared Vite dev server
-  echo "[new-ui] Starting shared Vite dev server on port 1420..."
-  (cd "$ROOT_DIR/bv-desktop-new" && bun run dev) &
-  VITE_PID=$!
-  
-  # Wait for Vite to be ready
-  echo "[new-ui] Waiting for Vite to start..."
-  sleep 4
-
-  # Launch Tauri instances
-  if ((${#PROVISIONED[@]} > 1)); then
-    local a="${PROVISIONED[0]}"
-    local b="${PROVISIONED[1]}"
-    local a_dir="$SANDBOX_DIR/$a"
-    local b_dir="$SANDBOX_DIR/$b"
-    
-    echo "[new-ui] Launching two clients..."
-    launch_tauri_instance "$a_dir" "client1" "$a" &
-    local pid1=$!
-    
-    # Small delay to avoid port conflicts during Tauri build
-    sleep 2
-    
-    launch_tauri_instance "$b_dir" "client2" "$b" &
-    local pid2=$!
-    
-    echo "[new-ui] client1 PID: $pid1"
-    echo "[new-ui] client2 PID: $pid2"
-  else
-    local only="${PROVISIONED[0]}"
-    local only_dir="$SANDBOX_DIR/$only"
-    
-    launch_tauri_instance "$only_dir" "client" "$only" &
-    local pid1=$!
-    
-    echo "[new-ui] client PID: $pid1"
-  fi
-
-  echo "[new-ui] Press Ctrl+C to stop all instances"
-  wait
+  log_success "Stopped"
 }
 
-main "$@"
+if (( STOP_FLAG )); then
+  stop_all
+  exit 0
+fi
+
+# Build BioVault CLI and embedded syftbox
+log_info "Building BioVault CLI (release)..."
+(cd "$BIOVAULT_DIR/cli" && cargo build --release)
+BV_CLI_BIN="$BIOVAULT_DIR/cli/target/release/bv"
+
+log_info "Building syftbox-rs (embedded)..."
+./scripts/build-syftbox-rust.sh
+
+# Start Stack
+log_header "Starting SyftBox devstack"
+client_csv="$(IFS=,; echo "${CLIENTS[*]}")"
+devstack_args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv")
+(( RESET_FLAG )) && devstack_args+=(--reset)
+
+# Ensure embedded mode for desktop instances
+export BV_DEVSTACK_CLIENT_MODE=embedded
+export BV_SYFTBOX_BACKEND=embedded
+export SYFTBOX_AUTH_ENABLED=0  # Disable OAuth for devstack
+export BIOVAULT_DEBUG_BANNER=1
+export BIOVAULT_DISABLE_PROFILES=1
+
+bash "$DEVSTACK_SCRIPT" "${devstack_args[@]}"
+
+# Load state to get ports/paths
+STATE_FILE="$SANDBOX_ROOT/state.json"
+[[ ! -f "$STATE_FILE" ]] && STATE_FILE="$SANDBOX_ROOT/relay/state.json"
+
+if [[ ! -f "$STATE_FILE" ]]; then
+  log_error "Failed to find devstack state file"
+  exit 1
+fi
+
+SERVER_PORT="$(python3 -c "import json; print(json.load(open('$STATE_FILE'))['server']['port'])")"
+SERVER_URL="http://127.0.0.1:$SERVER_PORT"
+
+# Start Vite
+log_header "Starting Vite dev server (New UI)"
+(
+  cd "$SCRIPT_DIR/bv-desktop-new"
+  npm run dev -- --port 1420 2>&1 | sed "s/^/[VITE] /"
+) &
+VITE_PID=$!
+
+log_info "Waiting for Vite on :1420..."
+for i in {1..30}; do
+  if curl -s http://localhost:1420 >/dev/null 2>&1; then
+    log_success "Vite ready"
+    break
+  fi
+  sleep 1
+done
+
+provision_identities() {
+  log_header "Provisioning BioVault identities"
+  for email in "${CLIENTS[@]}"; do
+    local home config
+    home="$(python3 -c "import json; state=json.load(open('$STATE_FILE')); print([c['home_path'] for c in state['clients'] if c['email']=='$email'][0])")"
+    config="$(python3 -c "import json; state=json.load(open('$STATE_FILE')); print([c['config'] for c in state['clients'] if c['email']=='$email'][0])")"
+    local data_dir="$home"
+
+    if [[ ! -f "$home/config.yaml" ]] || (( RESET_FLAG )); then
+      log_info "Initializing BioVault for $email in $home"
+      rm -f "$home/config.yaml" 2>/dev/null || true
+      BIOVAULT_HOME="$home" \
+        SYFTBOX_CONFIG_PATH="$config" \
+        SYFTBOX_DATA_DIR="$data_dir" \
+        SYFTBOX_EMAIL="$email" \
+        "$BV_CLI_BIN" init "$email" --quiet
+    else
+      log_info "BioVault already initialized for $email"
+    fi
+  done
+}
+
+provision_identities
+
+launch_instance() {
+  local email="$1"
+  local idx="$2"
+  local mode="$3"
+  local ws_port=$((WS_PORT_BASE + idx - 1))
+  
+  # Get client info from state
+  local home config
+  home="$(python3 -c "import json; state=json.load(open('$STATE_FILE')); print([c['home_path'] for c in state['clients'] if c['email']=='$email'][0])")"
+  config="$(python3 -c "import json; state=json.load(open('$STATE_FILE')); print([c['config'] for c in state['clients'] if c['email']=='$email'][0])")"
+
+  log_info "Launching $email (Client $idx) on WS port $ws_port"
+  
+  (
+    export BIOVAULT_HOME="$home"
+    export BIOVAULT_DEV_MODE=1
+    export BIOVAULT_DEV_SYFTBOX=1
+    export BIOVAULT_DISABLE_PROFILES=1
+    export BV_SYFTBOX_BACKEND=embedded
+    export SYFTBOX_SERVER_URL="$SERVER_URL"
+    export SYFTBOX_EMAIL="$email"
+    export SYFTBOX_CONFIG_PATH="$config"
+    export SYFTBOX_DATA_DIR="$home"
+    export SYC_VAULT="$home/.syc"
+    export DEV_WS_BRIDGE=1
+    export DEV_WS_BRIDGE_PORT="$ws_port"
+    export DISABLE_UPDATER=1
+    
+    cd "$SCRIPT_DIR/src-tauri"
+    # bunx is used in dev-new-ui.sh, so we'll use it here too if available, otherwise npm
+    if command -v bun >/dev/null 2>&1; then
+      bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../bv-desktop-new/build"}}' 2>&1 | sed "s/^/[client$idx] /"
+    else
+      npm run tauri -- dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../bv-desktop-new/build"}}' 2>&1 | sed "s/^/[client$idx] /"
+    fi
+  ) &
+  
+  if [[ "$mode" == "fg" ]]; then
+    wait $!
+  fi
+}
+
+# Cleanup on exit
+trap "kill $VITE_PID 2>/dev/null || true; pkill -f 'tauri dev.*new-ui' 2>/dev/null || true; exit" INT TERM EXIT
+
+# Launch clients
+launch_instance "${CLIENTS[1]}" 2 "bg"
+sleep 5
+launch_instance "${CLIENTS[0]}" 1 "fg"

@@ -11,22 +11,27 @@
 		"windows": [
 			{
 				"title": "BioVault",
-				"width": 1100,
+				"width": 1250,
 				"height": 700,
-				"minWidth": 900,
+				"minWidth": 1000,
 				"minHeight": 600,
-				"devtools": true
+				"devtools": true,
+				"titleBarStyle": "Overlay",
+				"hiddenTitle": true
 			}
 		],
-
 		"security": {
 			"csp": null,
 			"capabilities": [
 				{
 					"identifier": "main-capability",
-					"windows": ["main"],
+					"windows": [
+						"main"
+					],
 					"permissions": [
 						"core:default",
+						"core:window:default",
+						"core:window:allow-start-dragging",
 						"dialog:allow-open",
 						"dialog:allow-confirm",
 						"dialog:allow-ask",
@@ -59,7 +64,12 @@
 			"entitlements": "./Entitlements.plist",
 			"minimumSystemVersion": "10.13"
 		},
-		"targets": ["app", "appimage", "dmg", "nsis"],
+		"targets": [
+			"app",
+			"appimage",
+			"dmg",
+			"nsis"
+		],
 		"resources": [
 			"resources/templates",
 			"resources/bundled/README.txt",
@@ -78,7 +88,9 @@
 		},
 		"deep-link": {
 			"desktop": {
-				"schemes": ["biovault"]
+				"schemes": [
+					"biovault"
+				]
 			}
 		}
 	}

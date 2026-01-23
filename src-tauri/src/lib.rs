@@ -625,9 +625,7 @@ pub fn run() {
     telemetry::init();
 
     let biovault_db = if profile_picker_mode {
-        BioVaultDb {
-            conn: Connection::open_in_memory().expect("Could not open in-memory BioVault database"),
-        }
+        biovault::data::BioVaultDb::new_in_memory().expect("Could not open in-memory BioVault database")
     } else {
         // Initialize shared BioVaultDb (handles files/participants)
         // This automatically creates the directory via get_biovault_home() if needed

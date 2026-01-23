@@ -26,8 +26,11 @@ mkdir -p "$LOG_DIR"
 
 DEFAULT_CLIENT="${CLIENT_EMAIL:-kj@kj.dev}"
 
-# Build syftbox-rs (embedded backend)
-build_syftbox_rust() {
+# Build BioVault CLI and embedded syftbox
+build_binaries() {
+  echo "[new-ui] Building BioVault CLI (release)..."
+  (cd "$BIOVAULT_DIR/cli" && cargo build --release)
+  
   echo "[new-ui] Building syftbox-rs (embedded)..."
   (cd "$ROOT_DIR" && ./scripts/build-syftbox-rust.sh)
   local bin="$ROOT_DIR/src-tauri/resources/syftbox/syftbox"
@@ -35,7 +38,7 @@ build_syftbox_rust() {
     echo "[new-ui] ERROR: syftbox-rs binary missing at $bin" >&2
     exit 1
   fi
-  echo "[new-ui] syftbox-rs ready"
+  echo "[new-ui] Binaries ready"
 }
 
 # Provision a client directory
@@ -121,8 +124,9 @@ launch_tauri_instance() {
     export BIOVAULT_DEV_MODE=1
     export BIOVAULT_DEV_SYFTBOX=1
     export BIOVAULT_DEBUG_BANNER=1
+    export BIOVAULT_DISABLE_PROFILES=1
     
-    bunx tauri dev --config tauri.conf.new-ui.json 2>&1 | while read -r line; do
+    bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../bv-desktop-new/build"}}' 2>&1 | while read -r line; do
       echo "[TAURI] $line"
     done
   )
@@ -178,8 +182,8 @@ echo " SyftBox: $SYFTBOX_URL"
 echo " Sandbox: $SANDBOX_DIR"
 echo "=============================================="
 
-# Build embedded syftbox
-build_syftbox_rust
+# Build binaries
+build_binaries
 
 # Provision client
 provision_client "$CLIENT_EMAIL"
