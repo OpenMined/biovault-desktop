@@ -24,7 +24,7 @@
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
 
-	const isDesktop = new MediaQuery("(min-width: 1200px)");
+	const isDesktop = new MediaQuery("(min-width: 1000px)");
 
 	$effect(() => {
 		open = isDesktop.current;
