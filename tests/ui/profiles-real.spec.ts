@@ -347,7 +347,10 @@ async function completeOnboardingFromEmailStep(page, { email }) {
 				.catch(() => false)
 			if (step4Visible) {
 				page.once('dialog', (dialog) => dialog.accept().catch(() => {}))
-				await page.locator('#skip-syftbox-btn').click().catch(() => {})
+				await page
+					.locator('#skip-syftbox-btn')
+					.click()
+					.catch(() => {})
 			}
 			await waitForAppReady(page, { timeout: 60_000 })
 		}

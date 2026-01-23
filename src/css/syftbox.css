@@ -1870,3 +1870,125 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+/* ============================================================================
+   DISCOVERY SECTION (Available to Sync)
+   ============================================================================ */
+
+.discovery-section {
+	border-top: 1px dashed #e5e7eb;
+	margin-top: 8px;
+	padding-top: 8px;
+}
+
+.discovery-section .tree-section-header {
+	color: #6b7280;
+}
+
+.discovery-section .section-title {
+	color: #4b5563;
+}
+
+.discovery-datasite {
+	margin-bottom: 12px;
+}
+
+.discovery-datasite-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: #f9fafb;
+	border-radius: 6px;
+	margin-bottom: 4px;
+}
+
+.discovery-datasite-name {
+	flex: 1;
+	font-size: 13px;
+	font-weight: 500;
+	color: #374151;
+}
+
+.discovery-folder {
+	margin-left: 20px;
+	margin-bottom: 4px;
+}
+
+.discovery-folder-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	opacity: 0.8;
+}
+
+.discovery-folder-path {
+	flex: 1;
+	font-size: 12px;
+	color: #6b7280;
+	font-family: monospace;
+}
+
+.discovery-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px 4px 32px;
+	margin-left: 20px;
+	border-radius: 4px;
+	opacity: 0.7;
+	border: 1px dashed transparent;
+	transition: all 0.15s ease;
+}
+
+.discovery-file:hover {
+	background: #f3f4f6;
+	opacity: 1;
+	border-color: #e5e7eb;
+}
+
+.discovery-file-name {
+	flex: 1;
+	font-size: 13px;
+	color: #6b7280;
+}
+
+.discovery-file-size {
+	font-size: 11px;
+	color: #9ca3af;
+	font-family: monospace;
+}
+
+.btn-subscribe-all,
+.btn-subscribe-folder,
+.btn-subscribe-file {
+	padding: 2px 8px;
+	font-size: 11px;
+	background: #3b82f6;
+	color: white;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background 0.15s ease;
+}
+
+.btn-subscribe-all:hover,
+.btn-subscribe-folder:hover,
+.btn-subscribe-file:hover {
+	background: #2563eb;
+}
+
+.btn-subscribe-all:disabled,
+.btn-subscribe-folder:disabled,
+.btn-subscribe-file:disabled {
+	background: #9ca3af;
+	cursor: not-allowed;
+}
+
+.btn-subscribe-file {
+	padding: 2px 6px;
+	min-width: 22px;
+	text-align: center;
+}

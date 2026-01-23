@@ -938,3 +938,26 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
         current_identity: current_email,
     })
 }
+
+/// Subscribe to a dataset from another user to start syncing it.
+/// This uses the SyftBox subscription API to opt-in to syncing the dataset files.
+#[tauri::command]
+pub async fn subscribe_to_dataset(owner: String, dataset_name: String) -> Result<(), String> {
+    // Subscribe to the dataset folder
+    let dataset_path = format!("{}/public/biovault/datasets/{}", owner, dataset_name);
+    crate::commands::syftbox::syftbox_subscribe(
+        Some(owner.clone()),
+        dataset_path.clone(),
+        Some(true),
+    )
+    .await?;
+
+    // Also subscribe to the dataset index for this owner
+    let index_path = format!("{}/public/biovault/datasets.yaml", owner);
+    crate::commands::syftbox::syftbox_subscribe(Some(owner), index_path, Some(false)).await?;
+
+    // Trigger a sync to start downloading
+    crate::commands::syftbox::trigger_syftbox_sync().await?;
+
+    Ok(())
+}

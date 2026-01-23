@@ -294,6 +294,11 @@ fn get_commands_list() -> serde_json::Value {
         cmd("is_dev_syftbox_enabled", "syftbox", true),
         cmd_async("check_dev_syftbox_server", "syftbox", true),
         cmd_async("trigger_syftbox_sync", "syftbox", false),
+        cmd_async("syftbox_ensure_default_subscriptions", "syftbox", false),
+        cmd_async("syftbox_discovery_files", "syftbox", true),
+        cmd_async("syftbox_get_subscriptions", "syftbox", true),
+        cmd_async("syftbox_subscribe", "syftbox", false),
+        cmd_async("syftbox_unsubscribe", "syftbox", false),
         cmd_async("syftbox_queue_status", "syftbox", true),
         cmd("get_syftbox_diagnostics", "syftbox", true),
         cmd_long("syftbox_upload_action", "syftbox", false),
@@ -324,6 +329,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("network_trust_changed_key", "network", false),
         cmd("network_scan_datasites", "network", true),
         cmd("network_scan_datasets", "network", true),
+        cmd_async("subscribe_to_dataset", "datasets", false),
         // Messages
         cmd_long("sync_messages", "messages", false),
         cmd_long("sync_messages_with_failures", "messages", false),
@@ -1878,6 +1884,58 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
+        "syftbox_ensure_default_subscriptions" => {
+            let result = crate::commands::syftbox::syftbox_ensure_default_subscriptions()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "syftbox_discovery_files" => {
+            let result = crate::commands::syftbox::syftbox_discovery_files()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "syftbox_get_subscriptions" => {
+            let result = crate::commands::syftbox::syftbox_get_subscriptions()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "syftbox_subscribe" => {
+            let datasite: Option<String> = args
+                .get("datasite")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let is_folder: Option<bool> = args
+                .get("isFolder")
+                .or_else(|| args.get("is_folder"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            crate::commands::syftbox::syftbox_subscribe(datasite, path, is_folder)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "syftbox_unsubscribe" => {
+            let datasite: Option<String> = args
+                .get("datasite")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            crate::commands::syftbox::syftbox_unsubscribe(datasite, path)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "syftbox_upload_action" => {
             let id: String = serde_json::from_value(
                 args.get("id")
@@ -2517,6 +2575,25 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         "network_scan_datasets" => {
             let result = crate::commands::datasets::network_scan_datasets()?;
             Ok(serde_json::to_value(result).unwrap())
+        }
+        "subscribe_to_dataset" => {
+            let owner: String = serde_json::from_value(
+                args.get("owner")
+                    .cloned()
+                    .ok_or_else(|| "Missing owner".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse owner: {}", e))?;
+            let dataset_name: String = serde_json::from_value(
+                args.get("datasetName")
+                    .or_else(|| args.get("dataset_name"))
+                    .cloned()
+                    .ok_or_else(|| "Missing datasetName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse datasetName: {}", e))?;
+            crate::commands::datasets::subscribe_to_dataset(owner, dataset_name)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "is_dev_syftbox_enabled" => {
             let result = crate::commands::settings::is_dev_syftbox_enabled();

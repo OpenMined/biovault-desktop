@@ -8,8 +8,9 @@ set -euo pipefail
 # - Cleans up sbenv daemons on exit when process mode is used.
 
 # Usage:
-#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]
+#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go] [--prod]
 # Defaults: client1=client1@sandbox.local, client2=client2@sandbox.local
+# Use --prod to enable production-like mode (enables authentication buttons)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
@@ -36,6 +37,7 @@ SINGLE_MODE=0
 SINGLE_TARGET=""
 STOP_ONLY=0
 RESET_FLAG=0
+PROD_MODE=0
 mkdir -p "$LOG_DIR"
 
 DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
@@ -278,7 +280,6 @@ launch_instance() {
     cmd+=(
       "BIOVAULT_HOME=$home"
       "BIOVAULT_DEV_MODE=1"
-      "BIOVAULT_DEV_SYFTBOX=1"
       "BIOVAULT_DISABLE_PROFILES=1"
       "BV_SYFTBOX_BACKEND=$backend"
       "SYFTBOX_SERVER_URL=$SYFTBOX_URL"
@@ -286,9 +287,13 @@ launch_instance() {
       "SYFTBOX_AUTH_ENABLED=$SYFTBOX_AUTH_ENABLED"
       "SYFTBOX_CONFIG_PATH=$env_config"
       "SYFTBOX_DATA_DIR=$env_data"
-      "SYC_VAULT=$SYFTBOX_DATA_DIR/.syc"
+      "SYC_VAULT=$env_data/.syc"
       "BIOVAULT_DEBUG_BANNER=1"
     )
+    # Only set BIOVAULT_DEV_SYFTBOX in non-prod mode (enables auth bypass)
+    if (( ! PROD_MODE )); then
+      cmd+=("BIOVAULT_DEV_SYFTBOX=1")
+    fi
     if [[ "$backend" == "process" ]]; then
       cmd+=(
         "SYFTBOX_BINARY=$env_binary"
@@ -356,12 +361,16 @@ main() {
       --reset)
         RESET_FLAG=1
         ;;
+      --prod)
+        PROD_MODE=1
+        ;;
       --path)
         SANDBOX_DIR="${2:?--path requires a directory}"
         shift
         ;;
       -h|--help)
-        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]"
+        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go] [--prod]"
+        echo "  --prod  Enable production mode (allows authentication, disables dev syftbox bypass)"
         exit 0
         ;;
       *)

@@ -264,6 +264,36 @@
 	color: #075985;
 }
 
+.network-section .status-badge.availability.status-partial {
+	background: #fef3c7;
+	color: #92400e;
+}
+
+.network-section .subscribe-dataset-btn {
+	padding: 4px 12px;
+	font-size: 12px;
+	margin-left: 8px;
+	background: #3b82f6;
+	color: white;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background 0.15s ease;
+}
+
+.network-section .subscribe-dataset-btn:hover {
+	background: #2563eb;
+}
+
+.network-section .subscribe-dataset-btn:disabled {
+	background: #9ca3af;
+	cursor: not-allowed;
+}
+
+.network-section .subscribe-dataset-btn.subscribed {
+	background: #10b981;
+}
+
 /* ============================================================================
    ACTION BUTTONS
    ============================================================================ */

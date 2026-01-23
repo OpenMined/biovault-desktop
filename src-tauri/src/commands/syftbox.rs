@@ -1,5 +1,7 @@
-use crate::types::{SyftBoxConfigInfo, SyftBoxState};
+use crate::types::{SyftBoxConfigInfo, SyftBoxState, DEFAULT_SYFTBOX_SERVER_URL};
 use chrono::{DateTime, Utc};
+use futures_util::{SinkExt, StreamExt};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
@@ -9,14 +11,50 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use syftbox_sdk::syftbox::control as syftctl;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
+use tokio::sync::watch;
+use tokio_tungstenite::connect_async_with_config;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
+static WS_EVENTS_HANDLE: once_cell::sync::Lazy<Mutex<Option<WsEventsHandle>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+struct WsEventsHandle {
+    shutdown: watch::Sender<bool>,
+    task: tauri::async_runtime::JoinHandle<()>,
+}
+
+#[derive(Debug, Clone)]
+struct SyftBoxWsConfig {
+    server_url: String,
+    email: Option<String>,
+    access_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SyftBoxWsStatusPayload {
+    status: String,
+    url: String,
+    message: Option<String>,
+    details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtt_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SyftBoxWsEventPayload {
+    kind: String,
+    bytes: usize,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPlaneLogEntry {
@@ -60,6 +98,70 @@ fn load_runtime_config() -> Result<syftbox_sdk::syftbox::config::SyftboxRuntimeC
         .map_err(|e| format!("SyftBox config is incomplete: {}", e))
 }
 
+fn load_syftbox_ws_config() -> Result<SyftBoxWsConfig, String> {
+    let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+    let creds = cfg.syftbox_credentials.clone().unwrap_or_default();
+    let server_url = if crate::commands::settings::is_dev_syftbox_enabled() {
+        crate::commands::settings::get_dev_syftbox_server_url()
+            .or(creds.server_url.clone())
+            .unwrap_or_else(|| DEFAULT_SYFTBOX_SERVER_URL.to_string())
+    } else {
+        creds
+            .server_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SYFTBOX_SERVER_URL.to_string())
+    };
+    let email = creds
+        .email
+        .clone()
+        .filter(|e| !e.trim().is_empty())
+        .or_else(|| {
+            let trimmed = cfg.email.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+    let access_token = creds.access_token.clone().filter(|t| !t.trim().is_empty());
+
+    Ok(SyftBoxWsConfig {
+        server_url,
+        email,
+        access_token,
+    })
+}
+
+fn build_ws_url(cfg: &SyftBoxWsConfig) -> Result<Url, String> {
+    let mut ws_url = Url::parse(&cfg.server_url).map_err(|e| e.to_string())?;
+    let scheme = match ws_url.scheme() {
+        "https" => "wss",
+        "http" => "ws",
+        other => other,
+    }
+    .to_string();
+    ws_url
+        .set_scheme(&scheme)
+        .map_err(|_| "failed to set websocket scheme".to_string())?;
+    ws_url.set_path("/api/v1/events");
+    if let Some(email) = cfg.email.as_ref() {
+        ws_url.query_pairs_mut().append_pair("user", email);
+    }
+    Ok(ws_url)
+}
+
+fn emit_ws_status(app: &AppHandle, payload: SyftBoxWsStatusPayload) {
+    if let Err(err) = app.emit("syftbox_ws_status", payload) {
+        crate::desktop_log!("⚠️ Failed to emit syftbox_ws_status: {}", err);
+    }
+}
+
+fn emit_ws_event(app: &AppHandle, payload: SyftBoxWsEventPayload) {
+    if let Err(err) = app.emit("syftbox_ws_event", payload) {
+        crate::desktop_log!("⚠️ Failed to emit syftbox_ws_event: {}", err);
+    }
+}
+
 fn ensure_syftbox_config(
     runtime: &syftbox_sdk::syftbox::config::SyftboxRuntimeConfig,
 ) -> Result<(), String> {
@@ -77,10 +179,16 @@ fn ensure_syftbox_config(
                 .to_string(),
         );
     }
-    let server_url = creds
-        .server_url
-        .clone()
-        .unwrap_or_else(|| "https://syftbox.net".to_string());
+    let server_url = if crate::commands::settings::is_dev_syftbox_enabled() {
+        crate::commands::settings::get_dev_syftbox_server_url()
+            .or(creds.server_url.clone())
+            .unwrap_or_else(|| DEFAULT_SYFTBOX_SERVER_URL.to_string())
+    } else {
+        creds
+            .server_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SYFTBOX_SERVER_URL.to_string())
+    };
     let client_url =
         resolve_or_assign_client_url(&creds, &runtime.config_path, Some(&runtime.data_dir))?;
 
@@ -1228,7 +1336,7 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
 
 #[tauri::command]
 pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
-    let (running, mode, mut log_path, error, pid, client_url, tx_bytes, rx_bytes) =
+    let (running, mode, mut log_path, error, pid, client_url, client_token, tx_bytes, rx_bytes) =
         match load_runtime_config() {
             Ok(runtime) => {
                 let state = syftctl::state(&runtime).map_err(|e| e.to_string())?;
@@ -1238,15 +1346,22 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
                 let pids = find_syftbox_pids(&runtime);
                 let pid = pids.first().copied();
 
-                // Get client_url from config
-                let client_url = fs::read_to_string(&runtime.config_path)
+                // Get client_url and client_token from config
+                let config_json = fs::read_to_string(&runtime.config_path)
                     .ok()
-                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                    .and_then(|val| {
-                        val.get("client_url")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                    });
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+
+                let client_url = config_json.as_ref().and_then(|val| {
+                    val.get("client_url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+
+                let client_token = config_json.as_ref().and_then(|val| {
+                    val.get("client_token")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
 
                 // Get TX/RX bytes from status endpoint
                 let (tx_bytes, rx_bytes) = get_tx_rx_bytes(&client_url);
@@ -1258,6 +1373,7 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
                     None::<String>,
                     pid,
                     client_url,
+                    client_token,
                     tx_bytes,
                     rx_bytes,
                 )
@@ -1269,6 +1385,7 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
                     syftctl::SyftBoxMode::Direct,
                     None,
                     Some(e),
+                    None,
                     None,
                     None,
                     0,
@@ -1288,6 +1405,7 @@ pub fn get_syftbox_state() -> Result<SyftBoxState, String> {
         error,
         pid,
         client_url,
+        client_token,
         tx_bytes,
         rx_bytes,
     })
@@ -1369,14 +1487,19 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
             // Get updated state info
             let pids = find_syftbox_pids(&runtime);
             let pid = pids.first().copied();
-            let client_url = fs::read_to_string(&runtime.config_path)
+            let config_json = fs::read_to_string(&runtime.config_path)
                 .ok()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                .and_then(|val| {
-                    val.get("client_url")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                });
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+            let client_url = config_json.as_ref().and_then(|val| {
+                val.get("client_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+            let client_token = config_json.as_ref().and_then(|val| {
+                val.get("client_token")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
             let (tx_bytes, rx_bytes) = get_tx_rx_bytes(&client_url);
 
             Ok(SyftBoxState {
@@ -1391,6 +1514,7 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
                 error: None,
                 pid,
                 client_url,
+                client_token,
                 tx_bytes,
                 rx_bytes,
             })
@@ -1425,6 +1549,7 @@ pub fn stop_syftbox_client() -> Result<SyftBoxState, String> {
                 error: None,
                 pid: None,
                 client_url: None,
+                client_token: None,
                 tx_bytes: 0,
                 rx_bytes: 0,
             })
@@ -1691,6 +1816,417 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SyftBoxSseProbeResult {
+    pub url: String,
+    pub http_status: Option<u16>,
+    pub content_type: Option<String>,
+    pub first_event: Option<String>,
+    pub bytes_read: usize,
+    pub duration_ms: u128,
+    pub error: Option<String>,
+    pub auth_mode: Option<String>,
+}
+
+#[tauri::command]
+pub async fn syftbox_probe_sse(timeout_ms: Option<u64>) -> Result<SyftBoxSseProbeResult, String> {
+    let cfg = load_syftbox_client_config()?;
+    let url = format!(
+        "{}/{}",
+        cfg.client_url.trim_end_matches('/'),
+        "v1/sync/events".trim_start_matches('/')
+    );
+    let timeout_ms = timeout_ms.unwrap_or(3000);
+    let start = Instant::now();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let mut result = SyftBoxSseProbeResult {
+        url: url.clone(),
+        http_status: None,
+        content_type: None,
+        first_event: None,
+        bytes_read: 0,
+        duration_ms: 0,
+        error: None,
+        auth_mode: None,
+    };
+
+    let url_with_token = format!("{}?token={}", url, cfg.client_token);
+    let attempts = [
+        ("query", url_with_token.clone(), false),
+        ("bearer", url.clone(), true),
+    ];
+    let mut response = None;
+
+    for (mode, target_url, use_bearer) in attempts {
+        let req = client
+            .get(&target_url)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        let req = if use_bearer {
+            req.bearer_auth(cfg.client_token.clone())
+        } else {
+            req
+        };
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                result.url = target_url;
+                result.http_status = Some(status.as_u16());
+                result.auth_mode = Some(mode.to_string());
+                response = Some(resp);
+                if status.is_success() {
+                    break;
+                }
+            }
+            Err(err) => {
+                result.error = Some(format!("request failed: {}", err));
+                result.duration_ms = start.elapsed().as_millis();
+                crate::desktop_log!(
+                    "📡 SSE probe failed: {} ({}ms)",
+                    result.error.clone().unwrap_or_default(),
+                    result.duration_ms
+                );
+                return Ok(result);
+            }
+        }
+    }
+
+    let response = match response {
+        Some(resp) => resp,
+        None => {
+            result.error = Some("no response".to_string());
+            result.duration_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+    };
+
+    result.content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+
+    let status_ok = response.status().is_success();
+    let content_is_sse = result
+        .content_type
+        .as_deref()
+        .map(|v| v.contains("text/event-stream"))
+        .unwrap_or(false);
+
+    result.duration_ms = start.elapsed().as_millis();
+
+    if status_ok && content_is_sse {
+        crate::desktop_log!(
+            "📡 SSE probe ready ({}ms) auth={:?}",
+            result.duration_ms,
+            result.auth_mode
+        );
+        return Ok(result);
+    }
+
+    result.error = Some(format!(
+        "unexpected response: status={} content-type={}",
+        response.status().as_u16(),
+        result.content_type.clone().unwrap_or_default()
+    ));
+    crate::desktop_log!(
+        "📡 SSE probe failed: {} ({}ms)",
+        result.error.clone().unwrap_or_default(),
+        result.duration_ms
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn syftbox_ws_start(app: AppHandle) -> Result<(), String> {
+    let cfg = load_syftbox_ws_config()?;
+    let ws_url = build_ws_url(&cfg)?;
+    let ws_url_str = ws_url.to_string();
+    let token = cfg.access_token.clone();
+
+    let mut guard = WS_EVENTS_HANDLE.lock().unwrap();
+    if let Some(existing) = guard.take() {
+        let _ = existing.shutdown.send(true);
+        existing.task.abort();
+    }
+
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let app_handle = app.clone();
+    let task = tauri::async_runtime::spawn(async move {
+        let config = WebSocketConfig {
+            max_message_size: Some(8 * 1024 * 1024),
+            max_frame_size: Some(8 * 1024 * 1024),
+            ..Default::default()
+        };
+        let mut backoff = Duration::from_millis(250);
+
+        loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            emit_ws_status(
+                &app_handle,
+                SyftBoxWsStatusPayload {
+                    status: "connecting".to_string(),
+                    url: ws_url_str.clone(),
+                    message: Some("Connecting to SyftBox WS".to_string()),
+                    details: None,
+                    rtt_ms: None,
+                },
+            );
+
+            let mut req = match ws_url.as_str().into_client_request() {
+                Ok(req) => req,
+                Err(err) => {
+                    emit_ws_status(
+                        &app_handle,
+                        SyftBoxWsStatusPayload {
+                            status: "error".to_string(),
+                            url: ws_url_str.clone(),
+                            message: Some("Failed to build WS request".to_string()),
+                            details: Some(err.to_string()),
+                            rtt_ms: None,
+                        },
+                    );
+                    break;
+                }
+            };
+            req.headers_mut().insert(
+                "X-Syft-WS-Encodings",
+                HeaderValue::from_static("msgpack,json"),
+            );
+            if let Some(token) = token.as_ref() {
+                let value = format!("Bearer {token}");
+                if let Ok(header) = HeaderValue::from_str(&value) {
+                    req.headers_mut().insert("Authorization", header);
+                }
+            }
+
+            let connect = tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    break;
+                }
+                res = connect_async_with_config(req, Some(config), false) => res,
+            };
+
+            let (ws_stream, resp) = match connect {
+                Ok(ok) => ok,
+                Err(err) => {
+                    emit_ws_status(
+                        &app_handle,
+                        SyftBoxWsStatusPayload {
+                            status: "error".to_string(),
+                            url: ws_url_str.clone(),
+                            message: Some("WS connect error".to_string()),
+                            details: Some(err.to_string()),
+                            rtt_ms: None,
+                        },
+                    );
+                    let sleep = tokio::time::sleep(backoff);
+                    tokio::select! {
+                        _ = shutdown_rx.changed() => break,
+                        _ = sleep => {}
+                    }
+                    backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
+                    continue;
+                }
+            };
+
+            backoff = Duration::from_millis(250);
+            let enc = resp
+                .headers()
+                .get("X-Syft-WS-Encoding")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("json");
+
+            emit_ws_status(
+                &app_handle,
+                SyftBoxWsStatusPayload {
+                    status: "connected".to_string(),
+                    url: ws_url_str.clone(),
+                    message: Some("WS connected".to_string()),
+                    details: Some(format!("encoding={}", enc)),
+                    rtt_ms: None,
+                },
+            );
+
+            let (mut write, mut read) = ws_stream.split();
+
+            let mut shutdown_rx = shutdown_rx.clone();
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        let _ = write.close().await;
+                        return;
+                    }
+                    msg = read.next() => {
+                        match msg {
+                            Some(Ok(WsMessage::Ping(payload))) => {
+                                let _ = write.send(WsMessage::Pong(payload)).await;
+                            }
+                            Some(Ok(WsMessage::Pong(_))) => {}
+                            Some(Ok(WsMessage::Text(text))) => {
+                                emit_ws_event(&app_handle, SyftBoxWsEventPayload {
+                                    kind: "text".to_string(),
+                                    bytes: text.len(),
+                                });
+                            }
+                            Some(Ok(WsMessage::Binary(bin))) => {
+                                emit_ws_event(&app_handle, SyftBoxWsEventPayload {
+                                    kind: "binary".to_string(),
+                                    bytes: bin.len(),
+                                });
+                            }
+                            Some(Ok(WsMessage::Close(_))) => {
+                                emit_ws_status(
+                                    &app_handle,
+                                    SyftBoxWsStatusPayload {
+                                        status: "disconnected".to_string(),
+                                        url: ws_url_str.clone(),
+                                        message: Some("WS closed".to_string()),
+                                        details: None,
+                                        rtt_ms: None,
+                                    },
+                                );
+                                break;
+                            }
+                            Some(Ok(WsMessage::Frame(_))) => {}
+                            Some(Err(err)) => {
+                                emit_ws_status(
+                                    &app_handle,
+                                    SyftBoxWsStatusPayload {
+                                        status: "error".to_string(),
+                                        url: ws_url_str.clone(),
+                                        message: Some("WS read error".to_string()),
+                                        details: Some(err.to_string()),
+                                        rtt_ms: None,
+                                    },
+                                );
+                                break;
+                            }
+                            None => {
+                                emit_ws_status(
+                                    &app_handle,
+                                    SyftBoxWsStatusPayload {
+                                        status: "disconnected".to_string(),
+                                        url: ws_url_str.clone(),
+                                        message: Some("WS disconnected".to_string()),
+                                        details: None,
+                                        rtt_ms: None,
+                                    },
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let sleep = tokio::time::sleep(backoff);
+            tokio::select! {
+                _ = shutdown_rx.changed() => break,
+                _ = sleep => {}
+            }
+            backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
+        }
+    });
+
+    *guard = Some(WsEventsHandle {
+        shutdown: shutdown_tx,
+        task,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn syftbox_ws_stop() -> Result<(), String> {
+    let mut guard = WS_EVENTS_HANDLE.lock().unwrap();
+    if let Some(existing) = guard.take() {
+        let _ = existing.shutdown.send(true);
+        existing.task.abort();
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ServerLatencyResult {
+    pub samples: Vec<u64>,
+    #[serde(rename = "avgMs")]
+    pub avg_ms: u64,
+    #[serde(rename = "minMs")]
+    pub min_ms: u64,
+    #[serde(rename = "maxMs")]
+    pub max_ms: u64,
+    #[serde(rename = "serverUrl")]
+    pub server_url: String,
+}
+
+static SERVER_LATENCY_SAMPLES: once_cell::sync::Lazy<Mutex<Vec<u64>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
+
+#[tauri::command]
+pub async fn syftbox_measure_latency() -> Result<ServerLatencyResult, String> {
+    let cfg = load_syftbox_ws_config()?;
+    let server_url = cfg.server_url.clone();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    // Measure RTT to the server's root endpoint (returns version info)
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .get(&server_url)
+        .send()
+        .await
+        .map_err(|e| format!("Latency request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Server returned {}", resp.status()));
+    }
+
+    let rtt_ms = start.elapsed().as_millis() as u64;
+
+    // Store the sample
+    let mut samples = SERVER_LATENCY_SAMPLES.lock().unwrap();
+    samples.push(rtt_ms);
+    if samples.len() > 60 {
+        samples.remove(0);
+    }
+
+    let samples_vec = samples.clone();
+    drop(samples);
+
+    if samples_vec.is_empty() {
+        return Ok(ServerLatencyResult {
+            samples: vec![],
+            avg_ms: 0,
+            min_ms: 0,
+            max_ms: 0,
+            server_url,
+        });
+    }
+
+    let avg_ms = samples_vec.iter().sum::<u64>() / samples_vec.len() as u64;
+    let min_ms = *samples_vec.iter().min().unwrap_or(&0);
+    let max_ms = *samples_vec.iter().max().unwrap_or(&0);
+
+    Ok(ServerLatencyResult {
+        samples: samples_vec,
+        avg_ms,
+        min_ms,
+        max_ms,
+        server_url,
+    })
+}
+
 #[tauri::command]
 pub async fn syftbox_upload_action(id: String, action: String) -> Result<(), String> {
     let cfg = load_syftbox_client_config()?;
@@ -1799,4 +2335,296 @@ fn load_existing_client_token(config_path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+// ============================================================================
+// Subscription Management Commands
+// ============================================================================
+
+use crate::types::{DiscoveryFile, DiscoveryResponse, SubscriptionsResponse};
+
+/// Default subscription rules for essential BioVault functionality.
+/// These ensure identity discovery and RPC messaging work out of the box.
+const DEFAULT_SUBSCRIPTION_RULES: &[(&str, &str)] = &[
+    ("*/public/crypto/did.json", "allow"),   // Identity discovery
+    ("*/app_data/biovault/rpc/**", "allow"), // RPC messages
+    ("**/syft.pub.yaml", "allow"),           // ACL metadata
+];
+
+/// Ensure default subscription rules are configured.
+/// Called on first launch or when subscriptions are empty.
+#[tauri::command]
+pub async fn syftbox_ensure_default_subscriptions() -> Result<bool, String> {
+    let cfg = match load_syftbox_client_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            crate::desktop_log!("⚠️ syftbox_ensure_default_subscriptions: {}", e);
+            return Ok(false);
+        }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    // Check current subscriptions
+    let url = format!("{}/v1/subscriptions", cfg.client_url.trim_end_matches('/'));
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&cfg.client_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get subscriptions: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        crate::desktop_log!("⚠️ Failed to get subscriptions: HTTP {}", status);
+        return Ok(false);
+    }
+
+    let subs: SubscriptionsResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse subscriptions: {}", e))?;
+
+    // Check if default rules already exist
+    let has_default_rules = DEFAULT_SUBSCRIPTION_RULES
+        .iter()
+        .all(|(path, _)| subs.config.rules.iter().any(|r| r.path == *path));
+
+    if has_default_rules {
+        crate::desktop_log!("ℹ️ Default subscription rules already configured");
+        return Ok(false);
+    }
+
+    // Add missing default rules
+    let mut added = 0;
+    for (path, action) in DEFAULT_SUBSCRIPTION_RULES {
+        if subs.config.rules.iter().any(|r| r.path == *path) {
+            continue;
+        }
+
+        let rule_url = format!(
+            "{}/v1/subscriptions/rules",
+            cfg.client_url.trim_end_matches('/')
+        );
+        let body = serde_json::json!({
+            "rule": {
+                "action": action,
+                "path": path
+            }
+        });
+
+        let resp = client
+            .post(&rule_url)
+            .bearer_auth(&cfg.client_token)
+            .json(&body)
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                added += 1;
+                record_control_plane_event("POST", &rule_url, Some(r.status().as_u16()), None);
+            }
+            Ok(r) => {
+                let err = format!("Failed to add rule {}: HTTP {}", path, r.status());
+                record_control_plane_event("POST", &rule_url, Some(r.status().as_u16()), Some(err));
+            }
+            Err(e) => {
+                record_control_plane_event("POST", &rule_url, None, Some(e.to_string()));
+            }
+        }
+    }
+
+    crate::desktop_log!("✅ Added {} default subscription rules", added);
+    Ok(added > 0)
+}
+
+/// Get files available to subscribe to (not currently synced).
+#[tauri::command]
+pub async fn syftbox_discovery_files() -> Result<Vec<DiscoveryFile>, String> {
+    let cfg = load_syftbox_client_config()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let url = format!(
+        "{}/v1/discovery/files",
+        cfg.client_url.trim_end_matches('/')
+    );
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&cfg.client_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get discovery files: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let err = format!("Failed to get discovery files: HTTP {}", status);
+        record_control_plane_event("GET", &url, Some(status.as_u16()), Some(err.clone()));
+        return Err(err);
+    }
+
+    record_control_plane_event("GET", &url, Some(status.as_u16()), None);
+
+    let discovery: DiscoveryResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse discovery response: {}", e))?;
+
+    crate::desktop_log!(
+        "📡 Discovery found {} available files",
+        discovery.files.len()
+    );
+    Ok(discovery.files)
+}
+
+/// Get current subscription configuration.
+#[tauri::command]
+pub async fn syftbox_get_subscriptions() -> Result<SubscriptionsResponse, String> {
+    let cfg = load_syftbox_client_config()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let url = format!("{}/v1/subscriptions", cfg.client_url.trim_end_matches('/'));
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&cfg.client_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get subscriptions: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let err = format!("Failed to get subscriptions: HTTP {}", status);
+        record_control_plane_event("GET", &url, Some(status.as_u16()), Some(err.clone()));
+        return Err(err);
+    }
+
+    record_control_plane_event("GET", &url, Some(status.as_u16()), None);
+
+    let subs: SubscriptionsResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse subscriptions: {}", e))?;
+
+    Ok(subs)
+}
+
+/// Subscribe to a path pattern.
+/// If the path is a folder, subscribes with pattern `{path}/**`.
+#[tauri::command]
+pub async fn syftbox_subscribe(
+    datasite: Option<String>,
+    path: String,
+    is_folder: Option<bool>,
+) -> Result<(), String> {
+    let cfg = load_syftbox_client_config()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    // For folders, subscribe to all contents
+    let subscribe_path = if is_folder.unwrap_or(false) && !path.ends_with("/**") {
+        format!("{}/**", path.trim_end_matches('/'))
+    } else {
+        path.clone()
+    };
+
+    let url = format!(
+        "{}/v1/subscriptions/rules",
+        cfg.client_url.trim_end_matches('/')
+    );
+
+    let mut rule = serde_json::json!({
+        "action": "allow",
+        "path": subscribe_path
+    });
+
+    if let Some(ds) = &datasite {
+        rule["datasite"] = serde_json::Value::String(ds.clone());
+    }
+
+    let body = serde_json::json!({ "rule": rule });
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&cfg.client_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to subscribe: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let err = format!("Failed to subscribe to {}: HTTP {}", path, status);
+        record_control_plane_event("POST", &url, Some(status.as_u16()), Some(err.clone()));
+        return Err(err);
+    }
+
+    record_control_plane_event("POST", &url, Some(status.as_u16()), None);
+    crate::desktop_log!("✅ Subscribed to {}", subscribe_path);
+
+    Ok(())
+}
+
+/// Unsubscribe from a path pattern.
+#[tauri::command]
+pub async fn syftbox_unsubscribe(datasite: Option<String>, path: String) -> Result<(), String> {
+    let cfg = load_syftbox_client_config()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let base_url = format!(
+        "{}/v1/subscriptions/rules",
+        cfg.client_url.trim_end_matches('/')
+    );
+
+    let mut query_params = vec![("path", path.clone()), ("action", "allow".to_string())];
+
+    if let Some(ds) = &datasite {
+        query_params.push(("datasite", ds.clone()));
+    }
+
+    let resp = client
+        .delete(&base_url)
+        .bearer_auth(&cfg.client_token)
+        .query(&query_params)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to unsubscribe: {}", e))?;
+
+    let status = resp.status();
+    let url_for_log = format!("{}?path={}", base_url, path);
+    if !status.is_success() {
+        let err = format!("Failed to unsubscribe from {}: HTTP {}", path, status);
+        record_control_plane_event(
+            "DELETE",
+            &url_for_log,
+            Some(status.as_u16()),
+            Some(err.clone()),
+        );
+        return Err(err);
+    }
+
+    record_control_plane_event("DELETE", &url_for_log, Some(status.as_u16()), None);
+    crate::desktop_log!("✅ Unsubscribed from {}", path);
+
+    Ok(())
 }

@@ -76,7 +76,7 @@ Scenario Options (pick one):
   --pipelines-solo     Run pipeline UI test only (single client)
   --pipelines-gwas     Run GWAS pipeline UI test only (single client)
   --pipelines-collab   Run two-client pipeline collaboration test
-  --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
+  --syftbox-sync       Run two-client SyftBox sync test (subscriptions, large files, pause/resume)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
                        Run two-client Jupyter collaboration tests
@@ -151,8 +151,8 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="pipelines-collab"
 			shift
 			;;
-		--file-transfer)
-			SCENARIO="file-transfer"
+		--syftbox-sync)
+			SCENARIO="syftbox-sync"
 			shift
 			;;
 		--jupyter)
@@ -1681,16 +1681,16 @@ PY
 			while true; do sleep 1; done
 		fi
 		;;
-	file-transfer)
+	syftbox-sync)
 		start_static_server
 		start_tauri_instances
 
-		# Create a large test file for transfer testing
-		TRANSFER_TEST_DIR="$ROOT_DIR/test-data/file-transfer"
+		# Create a large test file for sync testing (optional)
+		SYNC_TEST_DIR="$ROOT_DIR/test-data/syftbox-sync"
 		LARGE_FILE_SIZE="${LARGE_FILE_SIZE_MB:-50}" # Default 50MB
-		mkdir -p "$TRANSFER_TEST_DIR"
+		mkdir -p "$SYNC_TEST_DIR"
 
-		LARGE_FILE_PATH="$TRANSFER_TEST_DIR/large-test-file.bin"
+		LARGE_FILE_PATH="$SYNC_TEST_DIR/large-test-file.bin"
 		if [[ ! -f "$LARGE_FILE_PATH" ]] || [[ "$(stat -f%z "$LARGE_FILE_PATH" 2>/dev/null || stat -c%s "$LARGE_FILE_PATH" 2>/dev/null)" -lt $((LARGE_FILE_SIZE * 1024 * 1024)) ]]; then
 			info "Creating ${LARGE_FILE_SIZE}MB test file..."
 			timer_push "Create test file"
@@ -1700,12 +1700,12 @@ PY
 			info "Using existing test file: $LARGE_FILE_PATH"
 		fi
 
-		export TRANSFER_TEST_DIR
+		export SYNC_TEST_DIR
 		export LARGE_FILE_PATH
 
-		info "=== Running File Transfer Test ==="
-		timer_push "Playwright: @file-transfer"
-		run_ui_grep "@file-transfer" "TRANSFER_TEST_DIR=$TRANSFER_TEST_DIR" "LARGE_FILE_PATH=$LARGE_FILE_PATH" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		info "=== Running SyftBox Sync Test ==="
+		timer_push "Playwright: @syftbox-sync"
+		run_ui_grep "@syftbox-sync" "SYNC_TEST_DIR=$SYNC_TEST_DIR" "LARGE_FILE_PATH=$LARGE_FILE_PATH" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		timer_pop
 
 		# In wait mode, keep everything running

@@ -2,7 +2,12 @@
  * SyftBox module - Sync explorer and status management
  */
 
-export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }) {
+export function createSyftBoxModule({
+	invoke,
+	dialog,
+	templateLoader: _templateLoader,
+	shellApi: _shellApi,
+}) {
 	let _initialized = false
 	let _refreshTimer = null
 	let _globalStatusTimer = null // Timer for updating global status bar "Xs ago" text
@@ -14,14 +19,23 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 	let _fastPollingTimer = null // Timer for fast polling when SSE unavailable
 	const FAST_POLL_INTERVAL = 1000 // Poll every 1s when SSE unavailable and actively syncing
 	const NORMAL_POLL_INTERVAL = 5000 // Poll every 5s when idle
+	let _lastSseProbeAt = 0
+	const SSE_PROBE_COOLDOWN_MS = 15000
+	let _ssePreferredAuth = 'query' // 'query' | 'bearer'
+	const SSE_ENABLED = false
+	let _wsEventsActive = false
+	let _wsEventListenerCleanup = null
+	let _wsStatusListenerCleanup = null
+	let _lastWsEventAt = 0
 	let _treeState = {
 		nodes: new Map(),
 		expanded: new Set(),
 		selected: null,
 		loading: new Set(),
 		trustedDatasites: new Set(), // Datasites the user has subscribed to
-		collapsedSections: new Set(['network']), // Collapsed section IDs (network collapsed by default)
+		collapsedSections: new Set(['network', 'discovery']), // Collapsed section IDs (network and discovery collapsed by default)
 		currentUserEmail: null, // Current user's email for identifying "Your Files"
+		discoveryFiles: [], // Files available to subscribe to (from /v1/discovery/files)
 	}
 	let _currentView = 'tree' // 'tree', 'log', or 'conn'
 	let _activityLog = [] // Array of activity events, newest first
@@ -36,6 +50,126 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 	const CONN_LOG_STORAGE_KEY = 'syftbox_connection_log'
 	let _lastControlPlaneErrorLog = null // Timestamp of last error log to avoid flooding
 	let _lastControlPlaneSuccessLog = null // Timestamp of last success log to avoid flooding
+
+	function redactTokenFromUrl(url) {
+		if (!url) return url
+		try {
+			const parsed = new URL(url)
+			if (parsed.searchParams.has('token')) {
+				parsed.searchParams.set('token', '[redacted]')
+			}
+			return parsed.toString()
+		} catch (_e) {
+			return url.replace(/token=[^&]+/gi, 'token=[redacted]')
+		}
+	}
+
+	function createTauriSSEConnection({ url, token, includeAuthHeader, onOpen, onMessage, onError }) {
+		const controller = new AbortController()
+		let closed = false
+		let readyState = 0 // 0=connecting, 1=open, 2=closed
+		const hasTokenParam = typeof url === 'string' && url.includes('token=')
+
+		const connection = {
+			close: () => {
+				if (closed) return
+				closed = true
+				readyState = 2
+				controller.abort()
+			},
+			get readyState() {
+				return readyState
+			},
+		}
+
+		;(async () => {
+			try {
+				const makeRequest = async (useAuthHeader) => {
+					const headers = { Accept: 'text/event-stream' }
+					if (useAuthHeader && token) {
+						headers.Authorization = `Bearer ${token}`
+					}
+					return fetch(url, {
+						method: 'GET',
+						headers,
+						cache: 'no-store',
+						signal: controller.signal,
+					})
+				}
+
+				let response = await makeRequest(includeAuthHeader)
+				console.log('[SyftBox] SSE fetch response', {
+					url: redactTokenFromUrl(url),
+					status: response.status,
+					authHeaderUsed: Boolean(includeAuthHeader),
+				})
+				if (!response.ok && (response.status === 401 || response.status === 403) && hasTokenParam) {
+					// Retry without Authorization header if token query param exists.
+					response = await makeRequest(false)
+					console.log('[SyftBox] SSE fetch retry (no auth header)', {
+						url: redactTokenFromUrl(url),
+						status: response.status,
+						authHeaderUsed: false,
+					})
+				}
+
+				if (!response.ok) {
+					const err = new Error(`HTTP ${response.status}`)
+					err.httpStatus = response.status
+					onError(err)
+					return
+				}
+
+				if (!response.body) {
+					onError(new Error('SSE response body is missing'))
+					return
+				}
+
+				readyState = 1
+				onOpen()
+
+				const reader = response.body.getReader()
+				const decoder = new TextDecoder()
+				let buffer = ''
+				let eventData = ''
+
+				while (!closed) {
+					const { done, value } = await reader.read()
+					if (done) break
+					buffer += decoder.decode(value, { stream: true })
+					const lines = buffer.split(/\r?\n/)
+					buffer = lines.pop() || ''
+
+					for (const line of lines) {
+						if (line.startsWith('data:')) {
+							eventData += line.slice(5).trimStart()
+							eventData += '\n'
+							continue
+						}
+						if (line.startsWith(':')) {
+							continue
+						}
+						if (line === '') {
+							if (eventData) {
+								const data = eventData.replace(/\n$/, '')
+								eventData = ''
+								onMessage({ data })
+							}
+						}
+					}
+				}
+
+				if (!closed) {
+					onError(new Error('SSE stream closed'))
+				}
+			} catch (err) {
+				if (closed) return
+				onError(err)
+			}
+		})()
+
+		return connection
+	}
 
 	// Load activity log from localStorage on module init
 	function loadActivityLog() {
@@ -211,8 +345,10 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		wsConnected: false,
 		lastSuccessfulCheck: null, // timestamp of last successful status check
 		checkHistory: [], // Array of { timestamp, interval } for sparkline and average
+		latencyHistory: [], // Array of latency samples (ms) from existing checks - no extra traffic
 	}
 	const CHECK_HISTORY_MAX = 60 // Keep last 60 check intervals (about 3 mins at 3s polling)
+	const LATENCY_HISTORY_MAX = 60 // Keep last 60 latency samples
 	const MIN_CHECK_INTERVAL = 500 // Ignore intervals smaller than 500ms (likely anomalies)
 	let _checkDisplayMode = 'avg' // 'avg' or 'last' - toggles on click
 	let _queueSummary = {
@@ -336,11 +472,18 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		// Load initial status, trusted contacts, shared items, then tree (in order)
 		await refreshStatus()
 		console.log('[SyftBox] Current user email:', _treeState.currentUserEmail)
+		await startWsEvents()
 		await refreshQueue() // Get initial WebSocket status for global status bar
 		await refreshTrustedContacts()
 		console.log('[SyftBox] Trusted datasites:', Array.from(_treeState.trustedDatasites))
 		await refreshSharedWithMe()
 		await refreshTree()
+
+		// Ensure default subscription rules are set up
+		await ensureDefaultSubscriptions()
+
+		// Load discovery files (available to sync)
+		await refreshDiscoveryFiles()
 
 		// Start polling for updates
 		startPolling()
@@ -356,7 +499,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		// Refresh button
 		const refreshBtn = document.getElementById('syftbox-refresh-btn')
 		if (refreshBtn) {
-			refreshBtn.addEventListener('click', () => refreshAll(true))
+			refreshBtn.addEventListener('click', () => refreshAll())
 		}
 
 		// Tree refresh button
@@ -713,6 +856,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			_status.serverUrl = configInfo.server_url || ''
 			_status.email = configInfo.email || ''
 			_status.clientUrl = syftboxState.client_url || ''
+			_status.clientToken = syftboxState.client_token || ''
 			_status.pid = syftboxState.pid || null
 			_status.txBytes = syftboxState.tx_bytes || 0
 			_status.rxBytes = syftboxState.rx_bytes || 0
@@ -749,6 +893,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				}
 			} else if (!_status.daemonRunning && _sseConnection) {
 				disconnectSSE()
+				clearLatencyHistory()
 			}
 		} catch (err) {
 			console.error('[SyftBox] Failed to refresh status:', err)
@@ -804,6 +949,13 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			if (queueStatus && !queueStatus.error) {
 				const latencyMs = Date.now() - requestStart
 
+				// Record latency sample from this check (no extra traffic - uses existing poll)
+				_status.latencyHistory.push(latencyMs)
+				if (_status.latencyHistory.length > LATENCY_HISTORY_MAX) {
+					_status.latencyHistory.shift()
+				}
+				updateServerLatencyDisplay()
+
 				// Record interval since last check for sparkline (using saved previous time)
 				if (previousCheckTime) {
 					const interval = now - previousCheckTime
@@ -853,13 +1005,25 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 	}
 
 	function connectSSE() {
+		if (!SSE_ENABLED) {
+			enableSSEFallbackMode()
+			return
+		}
 		if (_sseConnection) {
 			_sseConnection.close()
 			_sseConnection = null
 		}
 
 		if (!_status.clientUrl || !_status.daemonRunning) {
-			console.log('[SyftBox] SSE not connecting - no client URL or daemon not running')
+			console.log('[SyftBox] SSE not connecting - no client URL or daemon not running', {
+				clientUrl: _status.clientUrl || null,
+				daemonRunning: _status.daemonRunning,
+			})
+			return
+		}
+
+		// If WS events are active, skip SSE to avoid duplicate streams
+		if (_wsEventsActive) {
 			return
 		}
 
@@ -868,16 +1032,40 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			return
 		}
 
-		const sseUrl = `${_status.clientUrl}/v1/sync/events`
+		console.log('[SyftBox] SSE diagnostics', {
+			clientUrl: _status.clientUrl,
+			daemonRunning: _status.daemonRunning,
+			hasToken: Boolean(_status.clientToken),
+			tokenLength: _status.clientToken?.length || 0,
+			reconnectAttempts: _sseReconnectAttempts,
+			fallbackMode: _sseFallbackMode,
+			preferredAuth: _ssePreferredAuth,
+		})
 
-		// In browser mode (not Tauri), SSE will fail due to CORS - skip directly to fallback
+		const sseUrl = _status.clientToken
+			? `${_status.clientUrl}/v1/sync/events?token=${encodeURIComponent(_status.clientToken)}`
+			: `${_status.clientUrl}/v1/sync/events`
+		const safeSseUrl = redactTokenFromUrl(sseUrl)
+
+		// In browser mode (not Tauri), SSE connections to different ports always fail due to CORS
+		// The control plane runs on a different port than the dev server, so always use polling
 		const isBrowserMode = typeof window !== 'undefined' && !window.__TAURI__
 		if (isBrowserMode) {
 			try {
 				const sseOrigin = new URL(sseUrl).origin
 				const currentOrigin = window.location.origin
-				if (sseOrigin !== currentOrigin) {
-					console.log('[SyftBox] SSE skipped in browser mode (CORS), using polling fallback')
+				// Normalize localhost/127.0.0.1/[::1] for comparison
+				const normalizeHost = (origin) => {
+					return origin
+						.replace('://localhost:', '://127.0.0.1:')
+						.replace('://[::1]:', '://127.0.0.1:')
+				}
+				const normalizedSse = normalizeHost(sseOrigin)
+				const normalizedCurrent = normalizeHost(currentOrigin)
+				if (normalizedSse !== normalizedCurrent) {
+					console.log(
+						`[SyftBox] SSE skipped in browser mode (CORS: ${normalizedSse} !== ${normalizedCurrent}), using polling fallback`,
+					)
 					enableSSEFallbackMode()
 					return
 				}
@@ -886,22 +1074,23 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			}
 		}
 
-		console.log('[SyftBox] Connecting to SSE:', sseUrl)
+		console.log('[SyftBox] Connecting to SSE:', safeSseUrl)
 
 		// Log connection attempt
 		addConnectionLogEntry({
 			type: 'sse',
 			status: 'connecting',
-			url: sseUrl,
+			url: safeSseUrl,
 			protocol: sseUrl.startsWith('https') ? 'https' : 'http',
 			message: 'Initiating SSE connection',
 		})
 
 		try {
 			const connectStart = Date.now()
-			_sseConnection = new EventSource(sseUrl)
+			const isTauri = typeof window !== 'undefined' && window.__TAURI__
+			const useFetchSSE = isTauri && _status.clientToken
 
-			_sseConnection.onopen = () => {
+			const onOpen = () => {
 				console.log('[SyftBox] SSE connected')
 				_sseReconnectAttempts = 0
 				_status.wsConnected = true
@@ -913,14 +1102,14 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				addConnectionLogEntry({
 					type: 'sse',
 					status: 'connected',
-					url: sseUrl,
+					url: safeSseUrl,
 					protocol: sseUrl.startsWith('https') ? 'https' : 'http',
 					latencyMs: Date.now() - connectStart,
 					message: 'SSE connection established',
 				})
 			}
 
-			_sseConnection.onmessage = (event) => {
+			const onMessage = (event) => {
 				try {
 					const data = JSON.parse(event.data)
 					handleSyncEvent(data)
@@ -929,17 +1118,29 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				}
 			}
 
-			_sseConnection.onerror = (err) => {
+			const onError = (err) => {
+				const readyState = _sseConnection?.readyState
 				console.warn('[SyftBox] SSE error:', err)
+				console.warn('[SyftBox] SSE error details:', {
+					url: safeSseUrl,
+					readyState,
+					reconnectAttempts: _sseReconnectAttempts,
+					hasToken: Boolean(_status.clientToken),
+					tokenLength: _status.clientToken?.length || 0,
+					preferredAuth: _ssePreferredAuth,
+					usingFetchSSE: useFetchSSE,
+				})
 
 				// Log SSE error
 				addConnectionLogEntry({
 					type: 'sse',
 					status: 'error',
-					url: sseUrl,
+					url: safeSseUrl,
 					protocol: sseUrl.startsWith('https') ? 'https' : 'http',
+					httpStatus: err?.httpStatus || null,
 					message: 'SSE connection error',
-					details: err?.message || 'Connection failed or lost',
+					details:
+						err?.message || `Connection failed or lost (readyState=${readyState ?? 'unknown'})`,
 				})
 
 				_sseConnection?.close()
@@ -948,6 +1149,8 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				updateConnectionIndicator(false)
 				updateGlobalStatusBar()
 
+				maybeProbeSSE()
+
 				// After 2 failed attempts, switch to polling fallback mode
 				// (CORS errors in browser mode will fail immediately)
 				if (_sseReconnectAttempts >= 2) {
@@ -955,6 +1158,30 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				} else {
 					scheduleSSEReconnect()
 				}
+			}
+
+			if (useFetchSSE) {
+				const includeAuthHeader = _ssePreferredAuth === 'bearer'
+				console.log('[SyftBox] Using fetch-based SSE', {
+					authMode: _ssePreferredAuth,
+					includeAuthHeader,
+				})
+				_sseConnection = createTauriSSEConnection({
+					url: sseUrl,
+					token: _status.clientToken,
+					includeAuthHeader,
+					onOpen,
+					onMessage,
+					onError,
+				})
+			} else {
+				if (isTauri && _ssePreferredAuth === 'query') {
+					console.log('[SyftBox] Using EventSource SSE with token query param')
+				}
+				_sseConnection = new EventSource(sseUrl)
+				_sseConnection.onopen = onOpen
+				_sseConnection.onmessage = onMessage
+				_sseConnection.onerror = onError
 			}
 		} catch (err) {
 			console.error('[SyftBox] Failed to create SSE connection:', err)
@@ -1001,6 +1228,106 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		_fastPollingTimer = setInterval(() => {
 			pollSyncStatus()
 		}, FAST_POLL_INTERVAL)
+	}
+
+	async function startWsEvents() {
+		const isTauri = typeof window !== 'undefined' && window.__TAURI__
+		if (!isTauri || _wsEventListenerCleanup) return
+
+		try {
+			await invoke('syftbox_ws_start')
+		} catch (err) {
+			console.warn('[SyftBox] Failed to start WS events:', err)
+			return
+		}
+
+		const { event } = window.__TAURI__
+		_wsEventListenerCleanup = await event.listen('syftbox_ws_event', () => {
+			const now = Date.now()
+			if (now - _lastWsEventAt < 250) return
+			_lastWsEventAt = now
+			refreshQueue()
+		})
+
+		_wsStatusListenerCleanup = await event.listen('syftbox_ws_status', (e) => {
+			const payload = e?.payload || {}
+			if (payload.status === 'connected') {
+				_wsEventsActive = true
+				disconnectSSE()
+			} else if (payload.status === 'disconnected') {
+				_wsEventsActive = false
+			}
+			addConnectionLogEntry({
+				type: 'websocket',
+				status: payload.status || 'unknown',
+				url: payload.url || '',
+				protocol: payload.url?.startsWith('wss') ? 'wss' : 'ws',
+				message: payload.message || 'WS event stream',
+				details: payload.details || null,
+			})
+		})
+	}
+
+	async function stopWsEvents() {
+		const isTauri = typeof window !== 'undefined' && window.__TAURI__
+		if (!isTauri) return
+
+		try {
+			await invoke('syftbox_ws_stop')
+		} catch (err) {
+			console.warn('[SyftBox] Failed to stop WS events:', err)
+		}
+
+		if (_wsEventListenerCleanup) {
+			_wsEventListenerCleanup()
+			_wsEventListenerCleanup = null
+		}
+		if (_wsStatusListenerCleanup) {
+			_wsStatusListenerCleanup()
+			_wsStatusListenerCleanup = null
+		}
+		_wsEventsActive = false
+	}
+
+	async function maybeProbeSSE() {
+		const now = Date.now()
+		if (now - _lastSseProbeAt < SSE_PROBE_COOLDOWN_MS) return
+		_lastSseProbeAt = now
+
+		const isTauri = typeof window !== 'undefined' && window.__TAURI__
+		if (!isTauri || !_status.clientToken) return
+
+		try {
+			const result = await invoke('syftbox_probe_sse', { timeoutMs: 3000 })
+			if (result?.auth_mode) {
+				_ssePreferredAuth = result.auth_mode
+			}
+			const truncatedEvent =
+				typeof result?.first_event === 'string' ? result.first_event.slice(0, 200) : null
+			console.log('[SyftBox] SSE probe result:', result)
+			addConnectionLogEntry({
+				type: 'sse',
+				status: result?.error ? 'error' : 'connected',
+				url: redactTokenFromUrl(result?.url || ''),
+				protocol: result?.url?.startsWith('https') ? 'https' : 'http',
+				httpStatus: result?.http_status ?? null,
+				message: result?.error ? 'SSE probe failed' : 'SSE probe success',
+				details: JSON.stringify({
+					authMode: result?.auth_mode || null,
+					contentType: result?.content_type || null,
+					bytesRead: result?.bytes_read ?? null,
+					firstEvent: truncatedEvent,
+					error: result?.error || null,
+				}),
+			})
+			if (_sseFallbackMode && !result?.error && _status.daemonRunning) {
+				_sseFallbackMode = false
+				_sseReconnectAttempts = 0
+				setTimeout(() => connectSSE(), 250)
+			}
+		} catch (err) {
+			console.warn('[SyftBox] SSE probe error:', err)
+		}
 	}
 
 	function stopFastPolling() {
@@ -1206,7 +1533,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 	}
 
 	function handleSyncEvent(event) {
-		const { type, path, state, progress, conflict_state, error } = event
+		const { path, state, progress } = event
 
 		// Update last successful check timestamp (we received a server event)
 		_status.lastSuccessfulCheck = Date.now()
@@ -1232,7 +1559,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			direction: event.direction || (state === 'syncing' ? 'download' : null),
 			size: event.size,
 			is_dir: event.is_dir,
-			error: error,
+			error: event.error,
 			timestamp: new Date().toISOString(),
 		})
 
@@ -1241,14 +1568,14 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		if (node) {
 			if (state) node.sync_state = state
 			if (progress !== undefined) node.progress = progress
-			if (conflict_state) node.conflict_state = conflict_state
+			if (event.conflict_state) node.conflict_state = event.conflict_state
 
 			// Re-render the specific node
 			rerenderNode(relativePath)
 
 			// Update details pane if this node is selected
 			if (_treeState.selected === relativePath) {
-				showDetails(relativePath, node.is_dir)
+				showDetails(relativePath)
 			}
 		}
 
@@ -1328,6 +1655,83 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 
 				rerenderNode(parentPath)
 			}
+		}
+	}
+
+	async function refreshDiscoveryFiles() {
+		try {
+			const files = await invoke('syftbox_discovery_files')
+			_treeState.discoveryFiles = files || []
+			console.log('[SyftBox] Discovery found', _treeState.discoveryFiles.length, 'available files')
+			renderTreeFromNodes()
+		} catch (err) {
+			console.warn('[SyftBox] Failed to refresh discovery files:', err)
+			_treeState.discoveryFiles = []
+		}
+	}
+
+	async function ensureDefaultSubscriptions() {
+		try {
+			const added = await invoke('syftbox_ensure_default_subscriptions')
+			if (added) {
+				console.log('[SyftBox] Default subscriptions initialized')
+			}
+		} catch (err) {
+			console.warn('[SyftBox] Failed to ensure default subscriptions:', err)
+		}
+	}
+
+	async function subscribeToPath(path, isFolder = false) {
+		try {
+			await invoke('syftbox_subscribe', { path, isFolder })
+			console.log('[SyftBox] Subscribed to:', path)
+			// Refresh discovery files to remove the subscribed item
+			await refreshDiscoveryFiles()
+			// Trigger a sync to start downloading
+			await invoke('trigger_syftbox_sync').catch(() => {})
+		} catch (err) {
+			console.error('[SyftBox] Failed to subscribe:', err)
+			throw err
+		}
+	}
+
+	async function handleDiscoverySubscribe(event) {
+		event.stopPropagation()
+		const btn = event.currentTarget
+		const path = btn.dataset.path
+		const isFolder = btn.classList.contains('btn-subscribe-folder')
+
+		btn.disabled = true
+		btn.textContent = '...'
+
+		try {
+			await subscribeToPath(path, isFolder)
+		} catch (err) {
+			console.error('[SyftBox] Subscribe failed:', err)
+			alert(`Failed to subscribe: ${err.message || err}`)
+		} finally {
+			btn.disabled = false
+			btn.textContent = isFolder ? 'Subscribe' : '+'
+		}
+	}
+
+	async function handleDiscoverySubscribeAll(event) {
+		event.stopPropagation()
+		const btn = event.currentTarget
+		const datasite = btn.dataset.datasite
+
+		btn.disabled = true
+		btn.textContent = '...'
+
+		try {
+			// Subscribe to the entire datasite's public folder
+			await subscribeToPath(`${datasite}/public`, true)
+		} catch (err) {
+			console.error('[SyftBox] Subscribe all failed:', err)
+			alert(`Failed to subscribe: ${err.message || err}`)
+		} finally {
+			btn.disabled = false
+			btn.textContent = 'Subscribe All'
 		}
 	}
 
@@ -1472,6 +1876,12 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			html += renderSection('network', '🌐 Other Users', theNetwork, isCollapsed)
 		}
 
+		// Available to Sync section (discovery files)
+		if (_treeState.discoveryFiles.length > 0) {
+			const isCollapsed = _treeState.collapsedSections.has('discovery')
+			html += renderDiscoverySection(isCollapsed)
+		}
+
 		treeList.innerHTML = html
 
 		// Bind section toggle handlers
@@ -1485,6 +1895,14 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		// Set indeterminate state on checkboxes (must be done via JS after render)
 		treeList.querySelectorAll('.sync-checkbox[data-indeterminate="true"]').forEach((checkbox) => {
 			checkbox.indeterminate = true
+		})
+
+		// Bind discovery subscribe button handlers
+		treeList.querySelectorAll('.btn-subscribe-file, .btn-subscribe-folder').forEach((btn) => {
+			btn.addEventListener('click', handleDiscoverySubscribe)
+		})
+		treeList.querySelectorAll('.btn-subscribe-all').forEach((btn) => {
+			btn.addEventListener('click', handleDiscoverySubscribeAll)
 		})
 	}
 
@@ -1505,6 +1923,80 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 
 		for (const node of nodes) {
 			html += renderNode(node, 0)
+		}
+
+		html += '</div></div>'
+		return html
+	}
+
+	function renderDiscoverySection(isCollapsed) {
+		const files = _treeState.discoveryFiles
+		const collapseIcon = isCollapsed ? '▶' : '▼'
+		const contentStyle = isCollapsed ? 'display: none;' : ''
+		const count = files.length
+
+		// Group files by datasite (first path segment)
+		const byDatasite = new Map()
+		for (const file of files) {
+			const parts = file.path.split('/')
+			const datasite = parts[0] || 'unknown'
+			if (!byDatasite.has(datasite)) {
+				byDatasite.set(datasite, [])
+			}
+			byDatasite.get(datasite).push(file)
+		}
+
+		let html = `
+			<div class="tree-section discovery-section" data-section="discovery">
+				<div class="tree-section-header ${isCollapsed ? 'collapsed' : ''}" data-section="discovery">
+					<span class="section-icon">${collapseIcon}</span>
+					<span class="section-title">📥 Available to Sync</span>
+					<span class="section-count">(${count} files)</span>
+				</div>
+				<div class="tree-section-content" style="${contentStyle}">
+		`
+
+		for (const [datasite, datasiteFiles] of byDatasite) {
+			html += `<div class="discovery-datasite" data-datasite="${escapeHtml(datasite)}">`
+			html += `<div class="discovery-datasite-header">
+				<span class="tree-icon">📁</span>
+				<span class="discovery-datasite-name">${escapeHtml(datasite)}</span>
+				<button class="btn-subscribe-all" data-datasite="${escapeHtml(datasite)}" title="Subscribe to all files from this datasite">Subscribe All</button>
+			</div>`
+
+			// Group by folder paths
+			const byFolder = new Map()
+			for (const file of datasiteFiles) {
+				const pathParts = file.path.split('/')
+				const folderPath = pathParts.slice(0, -1).join('/')
+				if (!byFolder.has(folderPath)) {
+					byFolder.set(folderPath, [])
+				}
+				byFolder.get(folderPath).push(file)
+			}
+
+			for (const [folderPath, folderFiles] of byFolder) {
+				const displayPath = folderPath.split('/').slice(1).join('/') || '/'
+				html += `<div class="discovery-folder">
+					<div class="discovery-folder-header">
+						<span class="discovery-folder-path">${escapeHtml(displayPath)}</span>
+						<button class="btn-subscribe-folder" data-path="${escapeHtml(folderPath)}" title="Subscribe to this folder">Subscribe</button>
+					</div>
+				</div>`
+
+				for (const file of folderFiles) {
+					const fileName = file.path.split('/').pop()
+					const sizeStr = file.size ? formatBytes(file.size) : ''
+					html += `<div class="discovery-file" data-path="${escapeHtml(file.path)}">
+						<span class="tree-icon">${getFileIcon(fileName)}</span>
+						<span class="discovery-file-name">${escapeHtml(fileName)}</span>
+						<span class="discovery-file-size">${sizeStr}</span>
+						<button class="btn-subscribe-file" data-path="${escapeHtml(file.path)}" title="Subscribe to this file">+</button>
+					</div>`
+				}
+			}
+
+			html += '</div>'
 		}
 
 		html += '</div></div>'
@@ -1706,7 +2198,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				explorer.classList.remove('no-selection')
 			}
 
-			showDetails(path, isFolder)
+			showDetails(path)
 		}
 	}
 
@@ -1721,7 +2213,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		})
 	}
 
-	async function showDetails(path, isFolder) {
+	async function showDetails(path) {
 		const detailsPane = document.getElementById('sync-tree-details')
 		if (!detailsPane) return
 
@@ -1913,7 +2405,8 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			if (_status.daemonRunning && _status.authenticated) {
 				dot?.classList.add('connected')
 				dot?.classList.remove('disconnected', 'connecting')
-				if (text) text.textContent = `Connected to ${_status.serverUrl || 'syftbox.net'}`
+				if (text)
+					text.textContent = `Connected to ${_status.serverUrl || 'https://dev.syftbox.net'}`
 			} else if (_status.daemonRunning) {
 				dot?.classList.add('connecting')
 				dot?.classList.remove('connected', 'disconnected')
@@ -1978,17 +2471,18 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			}
 		}
 
-		// Last successful check with sparkline and average/last (click to toggle)
+		// Server RTT with sparkline and average/last (click to toggle)
+		// Uses latency from existing checks - no extra traffic created
 		if (els.lastSync) {
-			if (_status.lastSuccessfulCheck) {
-				const stats = getCheckStats()
+			if (_status.latencyHistory && _status.latencyHistory.length > 0) {
+				const stats = getServerLatencyStats()
 				let text = ''
 				if (_checkDisplayMode === 'avg' && stats.avg > 0) {
-					text = `avg ${stats.avg}ms`
+					text = `rtt avg ${stats.avg}ms`
 				} else if (_checkDisplayMode === 'last' && stats.last > 0) {
-					text = `last ${stats.last}ms`
+					text = `rtt last ${stats.last}ms`
 				} else if (stats.avg > 0) {
-					text = `avg ${stats.avg}ms`
+					text = `rtt avg ${stats.avg}ms`
 				}
 				if (stats.sparkline) {
 					text += ` ${stats.sparkline}`
@@ -1996,7 +2490,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 				els.lastSync.textContent = text || 'checking...'
 				els.lastSync.classList.toggle('recent', Date.now() - _status.lastSuccessfulCheck < 10000)
 				els.lastSync.classList.add('clickable')
-				els.lastSync.title = `Click to show ${_checkDisplayMode === 'avg' ? 'last' : 'average'} interval`
+				els.lastSync.title = `Click to show ${_checkDisplayMode === 'avg' ? 'last' : 'average'} RTT (from existing checks)`
 				// Bind click handler if not already bound
 				if (!els.lastSync.dataset.bound) {
 					els.lastSync.dataset.bound = 'true'
@@ -2006,7 +2500,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 					})
 				}
 			} else {
-				els.lastSync.textContent = 'Last check: -'
+				els.lastSync.textContent = 'RTT: -'
 				els.lastSync.classList.remove('recent')
 			}
 		}
@@ -2034,21 +2528,6 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		if (els.rx) {
 			els.rx.textContent = `RX: ${formatBytes(_status.rxBytes || 0)}`
 		}
-	}
-
-	function formatTimeAgo(timestamp) {
-		const diffMs = Date.now() - timestamp
-		// Show ms until 5 seconds, in thousands (rounded to nearest 100ms)
-		if (diffMs < 5000) {
-			const rounded = Math.round(diffMs / 100) * 100
-			return `${rounded}ms`
-		}
-		const seconds = Math.floor(diffMs / 1000)
-		if (seconds < 60) return `${seconds}s`
-		const minutes = Math.floor(seconds / 60)
-		if (minutes < 60) return `${minutes}m`
-		const hours = Math.floor(minutes / 60)
-		return `${hours}h`
 	}
 
 	function getCheckStats() {
@@ -2082,6 +2561,71 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 			.join('')
 
 		return { avg, last, sparkline }
+	}
+
+	function getServerLatencyStats() {
+		const samples = _status.latencyHistory || []
+		if (samples.length === 0) return { avg: 0, last: 0, sparkline: '' }
+		const avg = Math.round(samples.reduce((sum, v) => sum + v, 0) / samples.length)
+		const last = samples[samples.length - 1] || 0
+
+		let sparkline = ''
+		if (samples.length >= 2) {
+			const blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+			const recent = samples.slice(-20)
+			const min = Math.min(...recent)
+			const max = Math.max(...recent)
+			const range = max - min || 1
+			sparkline = recent
+				.map((v) => {
+					const idx = Math.min(7, Math.floor(((v - min) / range) * 7))
+					return blocks[idx]
+				})
+				.join('')
+		}
+
+		return { avg, last, sparkline }
+	}
+
+	function updateServerLatencyDisplay() {
+		const el = document.getElementById('diag-server-latency')
+		if (!el) return
+
+		const samples = _status.latencyHistory
+		if (!samples || samples.length === 0) {
+			el.textContent = 'RTT: -'
+			el.title = 'Server round-trip time (from existing checks - no extra traffic)'
+			return
+		}
+
+		const avgMs = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+		const minMs = Math.min(...samples)
+		const maxMs = Math.max(...samples)
+		const lastMs = samples[samples.length - 1]
+
+		// Generate sparkline for latency samples
+		let sparkline = ''
+		if (samples.length >= 2) {
+			const blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+			const min = minMs
+			const max = maxMs
+			const range = max - min || 1
+			sparkline = samples
+				.slice(-20)
+				.map((v) => {
+					const idx = Math.min(7, Math.floor(((v - min) / range) * 7))
+					return blocks[idx]
+				})
+				.join('')
+		}
+
+		el.textContent = `${avgMs}ms ${sparkline}`
+		el.title = `Server: ${_status.serverUrl || _status.clientUrl}\nAvg: ${avgMs}ms, Min: ${minMs}ms, Max: ${maxMs}ms, Last: ${lastMs}ms\n${samples.length} samples (from existing checks)`
+	}
+
+	function clearLatencyHistory() {
+		_status.latencyHistory = []
+		updateServerLatencyDisplay()
 	}
 
 	async function refreshTrustedContacts() {
@@ -2419,7 +2963,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		}
 	}
 
-	async function refreshAll(showLoading = false) {
+	async function refreshAll() {
 		// Load status first to get current user email
 		await refreshStatus()
 		// Load trusted contacts from vault
@@ -2473,6 +3017,7 @@ export function createSyftBoxModule({ invoke, dialog, templateLoader, shellApi }
 		stopPolling()
 		stopFastPolling()
 		disconnectSSE()
+		stopWsEvents()
 	}
 
 	// Expose for onclick handlers

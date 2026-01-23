@@ -443,14 +443,18 @@ async function waitForFilesContentMatch(
 				allMatch = false
 				const srcSize = fs.statSync(srcPath).size
 				const destSize = fs.statSync(destPath).size
-				mismatches.push(`${name} (src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)})`)
+				mismatches.push(
+					`${name} (src=${srcSize}/${srcHash.slice(0, 8)}, dest=${destSize}/${destHash.slice(0, 8)})`,
+				)
 			}
 		}
 		if (allMatch) {
 			console.log(`[Content Match] All ${filenames.length} files have matching content`)
 			return
 		}
-		console.log(`[Content Match] Waiting for ${mismatches.length} files to match: ${mismatches.slice(0, 3).join(', ')}${mismatches.length > 3 ? '...' : ''}`)
+		console.log(
+			`[Content Match] Waiting for ${mismatches.length} files to match: ${mismatches.slice(0, 3).join(', ')}${mismatches.length > 3 ? '...' : ''}`,
+		)
 		await new Promise((r) => setTimeout(r, 2000))
 	}
 	// Log final state for debugging
@@ -464,15 +468,15 @@ async function waitForFilesContentMatch(
 		const destHash = destExists ? computeFileHash(destPath) : 'N/A'
 		const srcSize = srcExists ? fs.statSync(srcPath).size : 0
 		const destSize = destExists ? fs.statSync(destPath).size : 0
-		console.log(`  ${name}: src=${srcSize}/${srcHash.slice(0,8)}, dest=${destSize}/${destHash.slice(0,8)}, match=${srcHash === destHash}`)
+		console.log(
+			`  ${name}: src=${srcSize}/${srcHash.slice(0, 8)}, dest=${destSize}/${destHash.slice(0, 8)}, match=${srcHash === destHash}`,
+		)
 	}
 	throw new Error(`[Content Match] Files did not match after ${timeoutMs}ms`)
 }
 
 function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
-	return page.locator(
-		`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`,
-	)
+	return page.locator(`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`)
 }
 
 async function runDatasetPipeline(
@@ -1245,7 +1249,9 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 						const asset = targetDataset.assets[0]
 						const mockCount = asset.mock_entries?.length || 0
 						const mockPath = asset.mock_path
-						console.log(`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}, mock_path: ${mockPath}`)
+						console.log(
+							`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}, mock_path: ${mockPath}`,
+						)
 
 						// DEBUG: Log each mock entry
 						if (asset.mock_entries?.length > 0) {
@@ -1428,16 +1434,21 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`Results dir: ${mockRun2Final.results_dir}`)
 			if (mockRun2Final.metadata) {
 				try {
-					const meta = typeof mockRun2Final.metadata === 'string'
-						? JSON.parse(mockRun2Final.metadata)
-						: mockRun2Final.metadata
+					const meta =
+						typeof mockRun2Final.metadata === 'string'
+							? JSON.parse(mockRun2Final.metadata)
+							: mockRun2Final.metadata
 					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
 				} catch (e) {
 					console.log(`Raw metadata: ${mockRun2Final.metadata}`)
 				}
 			}
 			// Read and log samplesheet for Client2
-			const samplesheetPath2 = path.join(mockRun2Final.results_dir, 'inputs', 'selected_participants.csv')
+			const samplesheetPath2 = path.join(
+				mockRun2Final.results_dir,
+				'inputs',
+				'selected_participants.csv',
+			)
 			try {
 				const samplesheet2 = await readTextFileWithRetry(samplesheetPath2, 5000)
 				console.log(`\n=== DEBUG: Client2 Samplesheet ===\n${samplesheet2}`)
@@ -1589,16 +1600,21 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`Results dir: ${mockRun1Final.results_dir}`)
 			if (mockRun1Final.metadata) {
 				try {
-					const meta = typeof mockRun1Final.metadata === 'string'
-						? JSON.parse(mockRun1Final.metadata)
-						: mockRun1Final.metadata
+					const meta =
+						typeof mockRun1Final.metadata === 'string'
+							? JSON.parse(mockRun1Final.metadata)
+							: mockRun1Final.metadata
 					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
 				} catch (e) {
 					console.log(`Raw metadata: ${mockRun1Final.metadata}`)
 				}
 			}
 			// Read and log samplesheet for Client1
-			const samplesheetPath1 = path.join(mockRun1Final.results_dir, 'inputs', 'selected_participants.csv')
+			const samplesheetPath1 = path.join(
+				mockRun1Final.results_dir,
+				'inputs',
+				'selected_participants.csv',
+			)
 			try {
 				const samplesheet1 = await readTextFileWithRetry(samplesheetPath1, 5000)
 				console.log(`\n=== DEBUG: Client1 Samplesheet ===\n${samplesheet1}`)

@@ -380,6 +380,10 @@ export function createSettingsModule({
 			if (syftboxServerInput) {
 				syftboxServerInput.value = settings.syftbox_server_url || defaultSyftboxServerUrl
 				syftboxServerInput.placeholder = defaultSyftboxServerUrl || 'https://your-syftbox-host'
+				// Store initial value to detect changes
+				syftboxServerInput.dataset.initialValue = syftboxServerInput.value
+				// Enable auth button when server URL changes
+				syftboxServerInput.addEventListener('input', handleServerUrlChange)
 			}
 
 			document.getElementById('setting-ai-url').value = settings.ai_api_url || ''
@@ -1410,12 +1414,29 @@ export function createSettingsModule({
 		keyHandlersBound = true
 	}
 
+	function handleServerUrlChange(event) {
+		const input = event.target
+		const authBtn = document.getElementById('syftbox-auth-btn')
+		const currentValue = input.value.trim()
+		const initialValue = input.dataset.initialValue || ''
+
+		if (!authBtn) return
+
+		// Always enable the button when URL changes - user should be able to authenticate
+		if (currentValue !== initialValue) {
+			authBtn.disabled = false
+			authBtn.textContent = 'Authenticate'
+			input.classList.add('changed')
+		} else {
+			input.classList.remove('changed')
+			// Re-check status to restore proper button state
+			checkSyftBoxStatus()
+		}
+	}
+
 	async function checkSyftBoxStatus() {
 		const statusBadge = document.getElementById('syftbox-status-badge')
 		const authBtn = document.getElementById('syftbox-auth-btn')
-		const serverLabel =
-			(currentSettings?.syftbox_server_url && currentSettings.syftbox_server_url.trim()) ||
-			defaultSyftboxServerUrl
 
 		if (!statusBadge) return
 
@@ -1426,7 +1447,11 @@ export function createSettingsModule({
 
 			statusBadge.classList.remove('connected', 'disconnected', 'checking')
 
-			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+			// Check if server URL has been changed by user
+			const serverInput = document.getElementById('setting-syftbox-server')
+			const urlChanged = serverInput && serverInput.classList.contains('changed')
+
+			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox && !urlChanged) {
 				statusBadge.innerHTML = '🧪 Dev Mode'
 				statusBadge.classList.add('connected')
 				if (authBtn) {

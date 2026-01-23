@@ -240,6 +240,16 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 16px;
+	min-width: 0;
+}
+
+.status-bar-left {
+	flex: 1;
+	overflow: hidden;
+}
+
+.status-bar-right {
+	flex-shrink: 0;
 }
 
 .ws-status {
@@ -275,6 +285,11 @@ body {
 
 .last-sync {
 	color: #64748b;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 200px;
+	min-width: 60px;
 }
 
 .last-sync.recent {

@@ -176,10 +176,8 @@ check_requirements() {
 
 ensure_bv_cli() {
   local target="$BIOVAULT_DIR/cli/target/release/bv"
-  if [[ ! -x "$target" ]]; then
-    log_info "Building BioVault CLI (cargo build --release)..."
-    (cd "$BIOVAULT_DIR/cli" && cargo build --release >/dev/null 2>&1)
-  fi
+  log_info "Checking BioVault CLI build..."
+  (cd "$BIOVAULT_DIR/cli" && cargo build --release)
   BV_CLI_BIN="$target"
 }
 
@@ -336,9 +334,8 @@ PY
   local args=(--sandbox "$SANDBOX_ROOT" --clients "$client_csv")
   (( RESET_FLAG )) && args+=(--reset)
   (( SKIP_SYNC_CHECK )) && args+=(--skip-sync-check)
-  if [[ "${BV_DEVSTACK_SKIP_KEYS:-0}" == "1" ]]; then
-    args+=(--skip-keys)
-  fi
+  # Always skip key generation so onboarding can create keys manually.
+  args+=(--skip-keys)
 
   local -a env_prefix=(BIOVAULT_DISABLE_PROFILES=1)
   if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then

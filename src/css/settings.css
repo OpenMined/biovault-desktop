@@ -852,7 +852,8 @@
 	font-weight: 500;
 }
 
-.identity-email-row .setting-input.changed {
+.identity-email-row .setting-input.changed,
+#setting-syftbox-server.changed {
 	border-color: #f59e0b;
 	background: #fffbeb;
 }

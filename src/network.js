@@ -371,7 +371,7 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
 		const statusContainer = row.querySelector('.dataset-row-status')
 
-		// Availability badge (Available vs Downloading)
+		// Availability badge (Available vs Downloading) and Subscribe button
 		if (statusContainer) {
 			let availability = statusContainer.querySelector('.status-badge.availability')
 			if (!availability) {
@@ -384,11 +384,47 @@ export function createNetworkModule({ invoke, shellApi }) {
 			if (dataset.available) {
 				availability.textContent = total ? `Available (${have}/${total})` : 'Available'
 				availability.classList.add('status-available')
-				availability.classList.remove('status-downloading')
-			} else {
-				availability.textContent = total ? `Downloading (${have}/${total})` : 'Downloading'
+				availability.classList.remove('status-downloading', 'status-partial')
+			} else if (have > 0) {
+				availability.textContent = total ? `Syncing (${have}/${total})` : 'Syncing'
 				availability.classList.add('status-downloading')
-				availability.classList.remove('status-available')
+				availability.classList.remove('status-available', 'status-partial')
+			} else {
+				availability.textContent = total ? `Not Synced (0/${total})` : 'Not Synced'
+				availability.classList.add('status-partial')
+				availability.classList.remove('status-available', 'status-downloading')
+			}
+
+			// Add Subscribe button for datasets that aren't fully synced
+			if (!dataset.is_own && !dataset.available) {
+				let subscribeBtn = statusContainer.querySelector('.subscribe-dataset-btn')
+				if (!subscribeBtn) {
+					subscribeBtn = document.createElement('button')
+					subscribeBtn.className = 'btn btn-primary btn-small subscribe-dataset-btn'
+					subscribeBtn.innerHTML = '<span>Subscribe</span>'
+					subscribeBtn.title = 'Subscribe to sync this dataset'
+					statusContainer.appendChild(subscribeBtn)
+				}
+				subscribeBtn.addEventListener('click', async (e) => {
+					e.stopPropagation()
+					subscribeBtn.disabled = true
+					subscribeBtn.innerHTML = '<span>Subscribing...</span>'
+					try {
+						await invoke('subscribe_to_dataset', {
+							owner: dataset.owner,
+							datasetName: dataset.name,
+						})
+						subscribeBtn.innerHTML = '<span>✓ Subscribed</span>'
+						subscribeBtn.classList.add('subscribed')
+						// Refresh dataset list after a short delay
+						setTimeout(() => scanNetwork(), 2000)
+					} catch (err) {
+						console.error('[Network] Failed to subscribe to dataset:', err)
+						subscribeBtn.innerHTML = '<span>Subscribe</span>'
+						subscribeBtn.disabled = false
+						alert(`Failed to subscribe: ${err.message || err}`)
+					}
+				})
 			}
 		}
 

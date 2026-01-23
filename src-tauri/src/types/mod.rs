@@ -302,6 +302,8 @@ pub struct SyftBoxState {
     pub pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_token: Option<String>,
     #[serde(default)]
     pub tx_bytes: u64,
     #[serde(default)]
@@ -483,4 +485,45 @@ pub struct SessionMessage {
     pub sender: String,
     pub body: String,
     pub created_at: String,
+}
+
+// SyftBox Subscription Types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionRule {
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datasite: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionConfig {
+    pub version: i32,
+    pub defaults: std::collections::HashMap<String, String>,
+    pub rules: Vec<SubscriptionRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionsResponse {
+    pub path: String,
+    pub config: SubscriptionConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryFile {
+    pub path: String,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub size: Option<i64>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryResponse {
+    pub files: Vec<DiscoveryFile>,
 }
