@@ -1156,6 +1156,28 @@ pub fn check_syftbox_auth() -> Result<bool, String> {
 }
 
 #[tauri::command]
+pub fn clear_syftbox_credentials() -> Result<(), String> {
+    crate::desktop_log!("🔐 clear_syftbox_credentials called");
+
+    let config_path = biovault::config::Config::get_config_path().map_err(|e| e.to_string())?;
+    let mut config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+
+    // Clear the credentials
+    if let Some(ref mut creds) = config.syftbox_credentials {
+        creds.access_token = None;
+        creds.refresh_token = None;
+    }
+
+    config
+        .save(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    crate::desktop_log!("✅ SyftBox credentials cleared");
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
     crate::desktop_log!("🔍 get_syftbox_config_info called");
 

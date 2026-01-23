@@ -1292,6 +1292,7 @@ pub fn run() {
             reset_everything,
             get_autostart_enabled,
             set_autostart_enabled,
+            set_syftbox_prefer_online,
             // Profiles
             profiles_get_boot_state,
             profiles_get_default_home,
@@ -1354,6 +1355,7 @@ pub fn run() {
             get_env_var,
             get_default_syftbox_server_url,
             check_syftbox_auth,
+            clear_syftbox_credentials,
             get_syftbox_config_info,
             get_syftbox_state,
             start_syftbox_client,

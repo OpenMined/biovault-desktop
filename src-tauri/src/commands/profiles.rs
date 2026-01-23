@@ -730,11 +730,36 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
             let trimmed = home.trim();
             if !trimmed.is_empty() {
                 let normalized = normalize_home_input(trimmed);
+                // Try to find existing profile for this home
                 current = store
                     .profiles
                     .iter()
                     .find(|p| normalize_home_input(&p.biovault_home) == normalized)
                     .map(|p| p.id.clone());
+
+                // Auto-register current BIOVAULT_HOME as a profile if not found
+                if current.is_none() && normalized.exists() {
+                    let email = read_home_email(&normalized);
+                    let home_canon = canonicalize_best_effort(&normalized);
+                    let home_str = home_canon.to_string_lossy().to_string();
+                    let id = uuid::Uuid::new_v4().to_string();
+                    let entry = ProfileEntry {
+                        id: id.clone(),
+                        email,
+                        biovault_home: home_str,
+                        created_at: now_rfc3339(),
+                        last_used_at: Some(now_rfc3339()),
+                        cached_fingerprint: None,
+                    };
+                    store.profiles.push(entry);
+                    store.current_profile_id = Some(id.clone());
+                    let _ = save_store(&store);
+                    current = Some(id);
+                    crate::desktop_log!(
+                        "✅ Auto-registered current BIOVAULT_HOME as profile: {}",
+                        normalized.display()
+                    );
+                }
             }
         }
     }

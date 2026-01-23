@@ -1019,3 +1019,15 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
             .map_err(|e| format!("Failed to disable autostart: {}", e))
     }
 }
+
+#[tauri::command]
+pub fn set_syftbox_prefer_online(enabled: bool) -> Result<(), String> {
+    let mut settings = get_settings()?;
+    settings.syftbox_prefer_online = enabled;
+    save_settings(settings)?;
+    crate::desktop_log!(
+        "⚙️ set_syftbox_prefer_online: {}",
+        if enabled { "true" } else { "false" }
+    );
+    Ok(())
+}

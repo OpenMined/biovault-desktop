@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount } from 'svelte'
+	import { goto } from '$app/navigation'
+	import { toast } from 'svelte-sonner'
 	import PageHeader from '$lib/components/page-header.svelte'
+	import { flowTemplates, templateColors, type FlowTemplate } from '$lib/data/flow-templates'
 	import * as Empty from '$lib/components/ui/empty/index.js'
 	import * as Card from '$lib/components/ui/card/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
@@ -22,6 +25,10 @@
 	import SparklesIcon from '@lucide/svelte/icons/sparkles'
 	import RocketIcon from '@lucide/svelte/icons/rocket'
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
+	import DnaIcon from '@lucide/svelte/icons/dna'
+	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
+	import CheckIcon from '@lucide/svelte/icons/check'
+	import UsersIcon from '@lucide/svelte/icons/users'
 
 	interface DiscoveredDataset {
 		name: string
@@ -55,6 +62,64 @@
 	let searchQuery = $state('')
 	let datasets = $state<DiscoveredDataset[]>([])
 	let currentIdentity = $state('')
+
+	// Pipelines state
+	interface InstalledPipeline {
+		id: number
+		name: string
+		pipeline_path: string
+	}
+	let installedPipelines = $state<InstalledPipeline[]>([])
+	let installingPipeline = $state<string | null>(null)
+
+	// Check if a template is already installed
+	function isInstalled(templateId: string): boolean {
+		const templateName = flowTemplates.find((t) => t.id === templateId)?.name.toLowerCase()
+		if (!templateName) return false
+		return installedPipelines.some((p) => p.name.toLowerCase().includes(templateId))
+	}
+
+	// Get icon component for template
+	function getTemplateIcon(icon: FlowTemplate['icon']) {
+		switch (icon) {
+			case 'dna':
+				return DnaIcon
+			case 'user':
+				return UserIcon
+			case 'scan-eye':
+				return ScanEyeIcon
+		}
+	}
+
+	async function loadInstalledPipelines() {
+		try {
+			installedPipelines = await invoke<InstalledPipeline[]>('get_pipelines')
+		} catch (e) {
+			console.error('Failed to load pipelines:', e)
+		}
+	}
+
+	async function installPipeline(template: FlowTemplate) {
+		installingPipeline = template.id
+		try {
+			await invoke('import_pipeline_with_deps', {
+				url: template.sourceUrl,
+				nameOverride: null,
+				overwrite: true
+			})
+			await loadInstalledPipelines()
+			toast.success(`Installed ${template.name}`, {
+				description: 'Flow is now available in your Flows page'
+			})
+		} catch (e) {
+			console.error('Failed to install pipeline:', e)
+			toast.error(`Failed to install ${template.name}`, {
+				description: e instanceof Error ? e.message : String(e)
+			})
+		} finally {
+			installingPipeline = null
+		}
+	}
 
 	// Filter datasets based on search query
 	const filteredDatasets = $derived(() => {
@@ -90,7 +155,7 @@
 	}
 
 	onMount(async () => {
-		await loadDatasets()
+		await Promise.all([loadDatasets(), loadInstalledPipelines()])
 		loading = false
 	})
 
@@ -165,7 +230,7 @@
 						>
 							<WorkflowIcon class="size-4" />
 							Pipelines
-							<Badge variant="outline" class="ml-1 text-xs text-muted-foreground">Soon</Badge>
+							<Badge variant="secondary" class="ml-1 text-xs">{flowTemplates.length}</Badge>
 						</button>
 						<button
 							class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors {activeTab === 'results' ? 'bg-background shadow-sm' : 'hover:bg-background/50'}"
@@ -180,136 +245,180 @@
 
 				<!-- All Tab -->
 				{#if activeTab === 'all'}
-					{#if datasets.length === 0}
-						<Empty.Root>
-							<Empty.Header>
-								<Empty.Media variant="icon">
-									<CompassIcon class="size-6" />
-								</Empty.Media>
-								<Empty.Title>No Items Yet</Empty.Title>
-								<Empty.Description>
-									Datasets from your network will appear here. Make sure you're connected to peers who have published datasets.
-								</Empty.Description>
-							</Empty.Header>
-						</Empty.Root>
-					{:else}
-						<!-- Your Datasets Section -->
-						{#if ownDatasets.length > 0}
-							<div class="mb-8">
-								<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
-									<UserIcon class="size-4" />
-									Your Published Datasets
-								</h3>
-								<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-									{#each ownDatasets as dataset}
-										<Card.Root class="hover:border-primary/50 transition-colors">
-											<Card.Header class="pb-3">
-												<div class="flex items-start justify-between gap-2">
-													<div class="flex items-center gap-3">
-														<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
-															<DatabaseIcon class="size-5 text-primary" />
-														</div>
-														<div>
-															<Card.Title class="text-base">{dataset.name}</Card.Title>
-															<p class="text-xs text-muted-foreground">by you</p>
-														</div>
+					<!-- Official Pipelines Section -->
+					<div class="mb-8">
+						<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
+							<ShieldCheckIcon class="size-4" />
+							Official Pipelines
+						</h3>
+						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+							{#each flowTemplates as template (template.id)}
+								{@const Icon = getTemplateIcon(template.icon)}
+								{@const colors = templateColors[template.color]}
+								{@const installed = isInstalled(template.id)}
+								<Card.Root class="hover:border-primary/50 transition-colors">
+									<Card.Header class="pb-2">
+										<div class="flex items-center gap-3">
+											<div
+												class="size-9 rounded-lg bg-gradient-to-br {colors.gradient} flex items-center justify-center text-white"
+											>
+												<Icon class="size-4" />
+											</div>
+											<div class="flex-1 min-w-0">
+												<Card.Title class="text-sm">{template.name}</Card.Title>
+												<p class="text-xs text-muted-foreground">{template.description}</p>
+											</div>
+										</div>
+									</Card.Header>
+									<Card.Content class="pt-2">
+										<div class="flex items-center justify-between">
+											<Badge variant="secondary" class="text-xs">Pipeline</Badge>
+											{#if installed}
+												<Badge variant="outline" class="text-xs text-green-600">
+													<CheckIcon class="size-3 mr-1" />
+													Installed
+												</Badge>
+											{:else}
+												<Button
+													variant="ghost"
+													size="sm"
+													class="h-7 text-xs"
+													onclick={() => installPipeline(template)}
+													disabled={installingPipeline !== null}
+												>
+													{#if installingPipeline === template.id}
+														<Loader2Icon class="size-3 animate-spin" />
+													{:else}
+														<DownloadIcon class="size-3" />
+														Install
+													{/if}
+												</Button>
+											{/if}
+										</div>
+									</Card.Content>
+								</Card.Root>
+							{/each}
+						</div>
+					</div>
+
+					<!-- Your Datasets Section -->
+					{#if ownDatasets.length > 0}
+						<div class="mb-8">
+							<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
+								<UserIcon class="size-4" />
+								Your Published Datasets
+							</h3>
+							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+								{#each ownDatasets as dataset}
+									<Card.Root class="hover:border-primary/50 transition-colors">
+										<Card.Header class="pb-3">
+											<div class="flex items-start justify-between gap-2">
+												<div class="flex items-center gap-3">
+													<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
+														<DatabaseIcon class="size-5 text-primary" />
 													</div>
-													<Badge variant="secondary">Yours</Badge>
+													<div>
+														<Card.Title class="text-base">{dataset.name}</Card.Title>
+														<p class="text-xs text-muted-foreground">by you</p>
+													</div>
 												</div>
-											</Card.Header>
-											<Card.Content>
-												{#if dataset.description}
-													<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+												<Badge variant="secondary">Yours</Badge>
+											</div>
+										</Card.Header>
+										<Card.Content>
+											{#if dataset.description}
+												<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+											{/if}
+											<div class="flex items-center gap-4 text-xs text-muted-foreground">
+												<span class="flex items-center gap-1">
+													<FileIcon class="size-3" />
+													{dataset.total_assets} files
+												</span>
+												{#if dataset.downloaded_bytes > 0}
+													<span>{formatFileSize(dataset.downloaded_bytes)}</span>
 												{/if}
+											</div>
+										</Card.Content>
+									</Card.Root>
+								{/each}
+							</div>
+						</div>
+					{/if}
+
+					<!-- Community Datasets Section -->
+					{#if communityDatasets.length > 0}
+						<div class="mb-8">
+							<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
+								<GlobeIcon class="size-4" />
+								Community Datasets
+							</h3>
+							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+								{#each communityDatasets as dataset}
+									<Card.Root class="hover:border-primary/50 transition-colors">
+										<Card.Header class="pb-3">
+											<div class="flex items-start justify-between gap-2">
+												<div class="flex items-center gap-3">
+													<Avatar.Root class="size-10">
+														<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
+													</Avatar.Root>
+													<div>
+														<Card.Title class="text-base">{dataset.name}</Card.Title>
+														<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
+															{dataset.owner}
+														</p>
+													</div>
+												</div>
+												{#if dataset.is_trusted}
+													<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
+														<ShieldCheckIcon class="size-3 mr-1" />
+														Trusted
+													</Badge>
+												{/if}
+											</div>
+										</Card.Header>
+										<Card.Content>
+											{#if dataset.description}
+												<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+											{/if}
+											<div class="flex items-center justify-between">
 												<div class="flex items-center gap-4 text-xs text-muted-foreground">
 													<span class="flex items-center gap-1">
 														<FileIcon class="size-3" />
 														{dataset.total_assets} files
 													</span>
-													{#if dataset.downloaded_bytes > 0}
-														<span>{formatFileSize(dataset.downloaded_bytes)}</span>
+													{#if dataset.expected_bytes}
+														<span>{formatFileSize(dataset.expected_bytes)}</span>
 													{/if}
 												</div>
-											</Card.Content>
-										</Card.Root>
-									{/each}
-								</div>
-							</div>
-						{/if}
-
-						<!-- Community Datasets Section -->
-						{#if communityDatasets.length > 0}
-							<div>
-								<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
-									<GlobeIcon class="size-4" />
-									From the Community
-								</h3>
-								<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-									{#each communityDatasets as dataset}
-										<Card.Root class="hover:border-primary/50 transition-colors">
-											<Card.Header class="pb-3">
-												<div class="flex items-start justify-between gap-2">
-													<div class="flex items-center gap-3">
-														<Avatar.Root class="size-10">
-															<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
-														</Avatar.Root>
-														<div>
-															<Card.Title class="text-base">{dataset.name}</Card.Title>
-															<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
-																{dataset.owner}
-															</p>
-														</div>
-													</div>
-													{#if dataset.is_trusted}
-														<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
-															<ShieldCheckIcon class="size-3 mr-1" />
-															Trusted
-														</Badge>
-													{/if}
-												</div>
-											</Card.Header>
-											<Card.Content>
-												{#if dataset.description}
-													<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+												{#if dataset.available}
+													<Badge variant="secondary" class="text-xs">
+														<DownloadIcon class="size-3 mr-1" />
+														Available
+													</Badge>
+												{:else if dataset.missing_assets > 0}
+													<Badge variant="outline" class="text-xs">
+														{dataset.present_assets}/{dataset.total_assets} synced
+													</Badge>
 												{/if}
-												<div class="flex items-center justify-between">
-													<div class="flex items-center gap-4 text-xs text-muted-foreground">
-														<span class="flex items-center gap-1">
-															<FileIcon class="size-3" />
-															{dataset.total_assets} files
-														</span>
-														{#if dataset.expected_bytes}
-															<span>{formatFileSize(dataset.expected_bytes)}</span>
-														{/if}
-													</div>
-													{#if dataset.available}
-														<Badge variant="secondary" class="text-xs">
-															<DownloadIcon class="size-3 mr-1" />
-															Available
-														</Badge>
-													{:else if dataset.missing_assets > 0}
-														<Badge variant="outline" class="text-xs">
-															{dataset.present_assets}/{dataset.total_assets} synced
-														</Badge>
-													{/if}
-												</div>
-											</Card.Content>
-										</Card.Root>
-									{/each}
-								</div>
+											</div>
+										</Card.Content>
+									</Card.Root>
+								{/each}
 							</div>
-						{/if}
+						</div>
+					{/if}
 
-						<!-- Coming Soon Teaser -->
-						<div class="mt-8 p-6 rounded-lg border border-dashed bg-muted/30">
+					<!-- Empty state if nothing at all -->
+					{#if datasets.length === 0}
+						<div class="mt-4 p-6 rounded-lg border border-dashed bg-muted/30">
 							<div class="flex items-center gap-4">
-								<div class="size-12 rounded-full bg-primary/10 flex items-center justify-center">
-									<RocketIcon class="size-6 text-primary" />
+								<div class="size-12 rounded-full bg-muted flex items-center justify-center">
+									<DatabaseIcon class="size-6 text-muted-foreground" />
 								</div>
 								<div>
-									<h4 class="font-medium">More coming soon!</h4>
+									<h4 class="font-medium">No datasets discovered yet</h4>
 									<p class="text-sm text-muted-foreground">
-										Pipelines and Results will be available here. Stay tuned for workflow sharing, GitHub integration, and community showcases.
+										Connect to the SyftBox network to discover datasets from peers.
 									</p>
 								</div>
 							</div>
@@ -392,28 +501,91 @@
 					{/if}
 				{/if}
 
-				<!-- Pipelines Tab (Coming Soon) -->
+				<!-- Pipelines Tab -->
 				{#if activeTab === 'pipelines'}
-					<div class="flex items-center justify-center min-h-[400px]">
-						<Empty.Root>
-							<Empty.Header>
-								<Empty.Media variant="icon">
-									<WorkflowIcon class="size-6" />
-								</Empty.Media>
-								<Empty.Title>Pipelines Coming Soon</Empty.Title>
-								<Empty.Description class="max-w-md">
-									Discover and share analysis pipelines with the community. Browse workflows, see GitHub stars, and import pipelines directly into your projects.
-								</Empty.Description>
-							</Empty.Header>
-							<Empty.Content>
-								<div class="flex flex-wrap gap-2 justify-center">
-									<Badge variant="outline">Nextflow</Badge>
-									<Badge variant="outline">GitHub Integration</Badge>
-									<Badge variant="outline">Version Control</Badge>
-									<Badge variant="outline">Templates</Badge>
-								</div>
-							</Empty.Content>
-						</Empty.Root>
+					<!-- From BioVault Team Section -->
+					<div class="mb-8">
+						<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
+							<ShieldCheckIcon class="size-4" />
+							From BioVault Team
+						</h3>
+						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+							{#each flowTemplates as template (template.id)}
+								{@const Icon = getTemplateIcon(template.icon)}
+								{@const colors = templateColors[template.color]}
+								{@const installed = isInstalled(template.id)}
+								<Card.Root class="hover:border-primary/50 transition-colors">
+									<Card.Header class="pb-3">
+										<div class="flex items-start justify-between gap-2">
+											<div class="flex items-center gap-3">
+												<div
+													class="size-10 rounded-lg bg-gradient-to-br {colors.gradient} flex items-center justify-center text-white"
+												>
+													<Icon class="size-5" />
+												</div>
+												<div>
+													<Card.Title class="text-base">{template.name}</Card.Title>
+													<p class="text-xs text-muted-foreground">BioVault Team</p>
+												</div>
+											</div>
+											<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
+												<ShieldCheckIcon class="size-3 mr-1" />
+												Official
+											</Badge>
+										</div>
+									</Card.Header>
+									<Card.Content>
+										<p class="text-sm text-muted-foreground mb-4">{template.description}</p>
+										<div class="flex items-center justify-between">
+											<div class="flex items-center gap-2 text-xs text-muted-foreground">
+												<Badge variant="secondary" class="text-xs">Nextflow</Badge>
+											</div>
+											{#if installed}
+												<Button
+													variant="outline"
+													size="sm"
+													onclick={() => goto('/flows')}
+												>
+													<CheckIcon class="size-4 text-green-500" />
+													Installed
+												</Button>
+											{:else}
+												<Button
+													size="sm"
+													onclick={() => installPipeline(template)}
+													disabled={installingPipeline !== null}
+												>
+													{#if installingPipeline === template.id}
+														<Loader2Icon class="size-4 animate-spin" />
+														Installing...
+													{:else}
+														<DownloadIcon class="size-4" />
+														Install
+													{/if}
+												</Button>
+											{/if}
+										</div>
+									</Card.Content>
+								</Card.Root>
+							{/each}
+						</div>
+					</div>
+
+					<!-- From Community Section -->
+					<div>
+						<h3 class="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2">
+							<UsersIcon class="size-4" />
+							From Community
+						</h3>
+						<div class="flex items-center justify-center min-h-[200px] rounded-lg border border-dashed bg-muted/30">
+							<div class="text-center p-6">
+								<UsersIcon class="size-10 mx-auto mb-3 text-muted-foreground/50" />
+								<p class="text-sm font-medium text-muted-foreground">No community pipelines yet</p>
+								<p class="text-xs text-muted-foreground mt-1">
+									Community-shared pipelines will appear here
+								</p>
+							</div>
+						</div>
 					</div>
 				{/if}
 
