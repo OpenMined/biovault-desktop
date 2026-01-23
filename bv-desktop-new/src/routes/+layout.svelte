@@ -16,11 +16,13 @@
 	import LearnSheet from '$lib/components/learn-sheet.svelte'
 	import SupportDialog from '$lib/components/support-dialog.svelte'
 	import InviteDialog from '$lib/components/invite-dialog.svelte'
+	import SyftboxPanel from '$lib/components/syftbox-panel.svelte'
 	import AiAssistant from '$lib/components/ai-assistant.svelte'
 	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
 	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
+	import FolderSyncIcon from '@lucide/svelte/icons/folder-sync'
 	import LibraryBigIcon from '@lucide/svelte/icons/library-big'
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
@@ -29,6 +31,7 @@
 	let { children } = $props()
 	let sqlOpen = $state(false)
 	let logsOpen = $state(false)
+	let syftboxOpen = $state(false)
 	let notificationsOpen = $state(false)
 	let learnOpen = $state(false)
 	let supportOpen = $state(false)
@@ -147,6 +150,31 @@
 							<div class="h-full px-6 pb-8 pt-4">
 								{#if sqlOpen}
 									<SqlPanel mode="sheet" />
+								{/if}
+							</div>
+						</Drawer.Content>
+					</Drawer.Root>
+
+					<Drawer.Root bind:open={syftboxOpen}>
+						<Tooltip.Root>
+							<Drawer.Trigger>
+								{#snippet child({ props })}
+									<Tooltip.Trigger
+										{...props}
+										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
+									>
+										<FolderSyncIcon class="size-5" />
+									</Tooltip.Trigger>
+								{/snippet}
+							</Drawer.Trigger>
+							<Tooltip.Content>
+								<p>SyftBox Sync</p>
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Drawer.Content class="!max-h-[85vh] h-[85vh]">
+							<div class="h-full px-6 pb-8 pt-4">
+								{#if syftboxOpen}
+									<SyftboxPanel mode="sheet" />
 								{/if}
 							</div>
 						</Drawer.Content>

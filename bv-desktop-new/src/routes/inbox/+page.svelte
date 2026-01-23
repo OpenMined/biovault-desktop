@@ -21,6 +21,11 @@
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import LogInIcon from '@lucide/svelte/icons/log-in'
 	import ExternalLinkIcon from '@lucide/svelte/icons/external-link'
+	import UsersIcon from '@lucide/svelte/icons/users'
+	import MessageSquareIcon from '@lucide/svelte/icons/message-square'
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus'
+	import UserCheckIcon from '@lucide/svelte/icons/user-check'
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
 
 	async function openUrl(url: string) {
 		try {
@@ -54,6 +59,28 @@
 		thread_id?: string
 		metadata?: Record<string, unknown>
 	}
+
+	// Contact types
+	interface Contact {
+		identity: string
+		fingerprint?: string
+		local_bundle_path?: string
+		has_changed?: boolean
+	}
+
+	interface NetworkScanResult {
+		contacts: Contact[]
+		discovered: Contact[]
+	}
+
+	// Sidebar tab state
+	let activeTab = $state<'threads' | 'contacts'>('threads')
+
+	// Contacts state
+	let contacts = $state<Contact[]>([])
+	let discovered = $state<Contact[]>([])
+	let loadingContacts = $state(false)
+	let contactSearchQuery = $state('')
 
 	// State
 	let threads = $state<MessageThreadSummary[]>([])
@@ -109,6 +136,21 @@
 			: threads
 	)
 
+	// Filtered contacts based on search
+	const filteredContacts = $derived(
+		contactSearchQuery.trim()
+			? contacts.filter((c) => c.identity.toLowerCase().includes(contactSearchQuery.toLowerCase()))
+			: contacts
+	)
+
+	const filteredDiscovered = $derived(
+		contactSearchQuery.trim()
+			? discovered.filter((c) =>
+					c.identity.toLowerCase().includes(contactSearchQuery.toLowerCase())
+				)
+			: discovered
+	)
+
 	// Get current user email
 	let currentUserEmail = $state('')
 
@@ -140,6 +182,49 @@
 			console.error('Failed to load threads:', e)
 			error = e instanceof Error ? e.message : String(e)
 		}
+	}
+
+	async function loadContacts() {
+		loadingContacts = true
+		try {
+			const result = await invoke<NetworkScanResult>('network_scan_datasites')
+			contacts = result?.contacts || []
+			discovered = result?.discovered || []
+		} catch (e) {
+			console.error('Failed to load contacts:', e)
+		} finally {
+			loadingContacts = false
+		}
+	}
+
+	async function addContact(identity: string) {
+		try {
+			await invoke('network_import_contact', { identity })
+			await loadContacts()
+		} catch (e) {
+			console.error('Failed to add contact:', e)
+		}
+	}
+
+	async function removeContact(identity: string) {
+		if (!confirm(`Remove ${identity} from your contacts?`)) return
+		try {
+			await invoke('network_remove_contact', { identity })
+			await loadContacts()
+		} catch (e) {
+			console.error('Failed to remove contact:', e)
+		}
+	}
+
+	function messageContact(identity: string) {
+		// Switch to threads tab and start composing to this contact
+		activeTab = 'threads'
+		isComposing = true
+		selectedThread = null
+		messages = []
+		composeRecipient = identity
+		composeSubject = ''
+		composeBody = ''
 	}
 
 	async function loadMessages(threadId: string) {
@@ -297,9 +382,9 @@
 		
 		currentUserEmail = await getCurrentUserEmail()
 		
-		// Only load threads if authenticated
+		// Only load data if authenticated
 		if (syftboxAuthStore.isAuthenticated) {
-			await loadThreads(true)
+			await Promise.all([loadThreads(true), loadContacts()])
 		}
 		loading = false
 
@@ -389,79 +474,229 @@
 		</div>
 	{:else}
 		<div class="flex flex-1 overflow-hidden">
-			<!-- Thread List -->
+			<!-- Sidebar with Tabs -->
 			<div class="w-80 shrink-0 border-r flex flex-col bg-muted/30">
-				<!-- Search -->
-				<div class="p-3 border-b">
-					<div class="relative">
-						<SearchIcon
-							class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
-						/>
-						<Input
-							placeholder="Search messages..."
-							bind:value={searchQuery}
-							class="pl-9 h-9"
-						/>
-					</div>
+				<!-- Tab buttons -->
+				<div class="flex border-b">
+					<button
+						type="button"
+						onclick={() => (activeTab = 'threads')}
+						class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
+						'threads'
+							? 'text-foreground border-b-2 border-primary bg-background'
+							: 'text-muted-foreground hover:text-foreground'}"
+					>
+						<MessageSquareIcon class="size-4" />
+						Messages
+						{#if threads.filter((t) => t.unread_count > 0).length > 0}
+							<Badge variant="default" class="h-5 min-w-5 text-xs">
+								{threads.filter((t) => t.unread_count > 0).length}
+							</Badge>
+						{/if}
+					</button>
+					<button
+						type="button"
+						onclick={() => {
+							activeTab = 'contacts'
+							if (contacts.length === 0 && discovered.length === 0) {
+								loadContacts()
+							}
+						}}
+						class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
+						'contacts'
+							? 'text-foreground border-b-2 border-primary bg-background'
+							: 'text-muted-foreground hover:text-foreground'}"
+					>
+						<UsersIcon class="size-4" />
+						Contacts
+						{#if contacts.length > 0}
+							<span class="text-xs text-muted-foreground">({contacts.length})</span>
+						{/if}
+					</button>
 				</div>
 
-				<!-- Thread List -->
-				<div class="flex-1 overflow-auto">
-					{#each filteredThreads as thread (thread.thread_id)}
-						{@const otherParticipant = getOtherParticipant(thread.participants)}
-						<button
-							type="button"
-							onclick={() => selectThread(thread)}
-							class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors {selectedThread?.thread_id ===
-							thread.thread_id
-								? 'bg-muted'
-								: ''}"
-						>
-							<div class="flex gap-3">
-								<Avatar.Root class="size-10 shrink-0">
-									<Avatar.Fallback class="text-xs">
-										{thread.session_id ? '🔐' : getInitials(otherParticipant)}
-									</Avatar.Fallback>
-								</Avatar.Root>
-								<div class="flex-1 min-w-0">
-									<div class="flex items-center justify-between gap-2">
-										<span
-											class="font-medium truncate text-sm {thread.unread_count > 0
-												? 'text-foreground'
+				{#if activeTab === 'threads'}
+					<!-- Search Messages -->
+					<div class="p-3 border-b">
+						<div class="relative">
+							<SearchIcon
+								class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
+							/>
+							<Input placeholder="Search messages..." bind:value={searchQuery} class="pl-9 h-9" />
+						</div>
+					</div>
+
+					<!-- Thread List -->
+					<div class="flex-1 overflow-auto">
+						{#each filteredThreads as thread (thread.thread_id)}
+							{@const otherParticipant = getOtherParticipant(thread.participants)}
+							<button
+								type="button"
+								onclick={() => selectThread(thread)}
+								class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors {selectedThread?.thread_id ===
+								thread.thread_id
+									? 'bg-muted'
+									: ''}"
+							>
+								<div class="flex gap-3">
+									<Avatar.Root class="size-10 shrink-0">
+										<Avatar.Fallback class="text-xs">
+											{thread.session_id ? '🔐' : getInitials(otherParticipant)}
+										</Avatar.Fallback>
+									</Avatar.Root>
+									<div class="flex-1 min-w-0">
+										<div class="flex items-center justify-between gap-2">
+											<span
+												class="font-medium truncate text-sm {thread.unread_count > 0
+													? 'text-foreground'
+													: 'text-muted-foreground'}"
+											>
+												{thread.session_id
+													? thread.session_name || 'Secure Session'
+													: otherParticipant || 'Unknown'}
+											</span>
+											<span class="text-xs text-muted-foreground shrink-0">
+												{formatTime(thread.last_message_at)}
+											</span>
+										</div>
+										<p
+											class="text-sm truncate {thread.unread_count > 0
+												? 'font-medium text-foreground'
 												: 'text-muted-foreground'}"
 										>
-											{thread.session_id
-												? thread.session_name || 'Secure Session'
-												: otherParticipant || 'Unknown'}
-										</span>
-										<span class="text-xs text-muted-foreground shrink-0">
-											{formatTime(thread.last_message_at)}
-										</span>
+											{thread.subject}
+										</p>
+										<p class="text-xs text-muted-foreground truncate mt-0.5">
+											{thread.last_message_preview}
+										</p>
 									</div>
-									<p
-										class="text-sm truncate {thread.unread_count > 0
-											? 'font-medium text-foreground'
-											: 'text-muted-foreground'}"
-									>
-										{thread.subject}
-									</p>
-									<p class="text-xs text-muted-foreground truncate mt-0.5">
-										{thread.last_message_preview}
-									</p>
+									{#if thread.unread_count > 0}
+										<Badge variant="default" class="shrink-0 h-5 min-w-5 justify-center">
+											{thread.unread_count > 9 ? '9+' : thread.unread_count}
+										</Badge>
+									{/if}
 								</div>
-								{#if thread.unread_count > 0}
-									<Badge variant="default" class="shrink-0 h-5 min-w-5 justify-center">
-										{thread.unread_count > 9 ? '9+' : thread.unread_count}
-									</Badge>
-								{/if}
+							</button>
+						{:else}
+							<div class="p-6 text-center text-muted-foreground text-sm">
+								No conversations found
 							</div>
-						</button>
-					{:else}
-						<div class="p-6 text-center text-muted-foreground text-sm">
-							No conversations found
+						{/each}
+					</div>
+				{:else}
+					<!-- Contacts Tab -->
+					<div class="p-3 border-b flex gap-2">
+						<div class="relative flex-1">
+							<SearchIcon
+								class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
+							/>
+							<Input
+								placeholder="Search contacts..."
+								bind:value={contactSearchQuery}
+								class="pl-9 h-9"
+							/>
 						</div>
-					{/each}
-				</div>
+						<Button variant="outline" size="icon" class="h-9 w-9" onclick={loadContacts}>
+							<RefreshCwIcon class="size-4 {loadingContacts ? 'animate-spin' : ''}" />
+						</Button>
+					</div>
+
+					<div class="flex-1 overflow-auto">
+						{#if loadingContacts && contacts.length === 0}
+							<div class="flex items-center justify-center p-8">
+								<Loader2Icon class="size-6 animate-spin text-muted-foreground" />
+							</div>
+						{:else}
+							<!-- Trusted Contacts -->
+							{#if filteredContacts.length > 0}
+								<div class="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 flex items-center gap-1.5">
+									<UserCheckIcon class="size-3.5" />
+									Trusted Contacts ({filteredContacts.length})
+								</div>
+								{#each filteredContacts as contact (contact.identity)}
+									<div
+										class="flex items-center gap-3 p-3 border-b hover:bg-muted/50 transition-colors"
+									>
+										<Avatar.Root class="size-10 shrink-0">
+											<Avatar.Fallback class="text-xs">
+												{getInitials(contact.identity)}
+											</Avatar.Fallback>
+										</Avatar.Root>
+										<div class="flex-1 min-w-0">
+											<p class="font-medium text-sm truncate">{contact.identity}</p>
+											{#if contact.fingerprint}
+												<p class="text-xs text-muted-foreground truncate">
+													{contact.fingerprint.slice(0, 16)}...
+												</p>
+											{/if}
+										</div>
+										<div class="flex items-center gap-1">
+											<Button
+												variant="ghost"
+												size="icon"
+												class="h-8 w-8"
+												onclick={() => messageContact(contact.identity)}
+												title="Send message"
+											>
+												<MessageSquareIcon class="size-4" />
+											</Button>
+											<Button
+												variant="ghost"
+												size="icon"
+												class="h-8 w-8 text-muted-foreground hover:text-destructive"
+												onclick={() => removeContact(contact.identity)}
+												title="Remove contact"
+											>
+												<TrashIcon class="size-4" />
+											</Button>
+										</div>
+									</div>
+								{/each}
+							{/if}
+
+							<!-- Discovered Users -->
+							{#if filteredDiscovered.length > 0}
+								<div class="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 flex items-center gap-1.5 {filteredContacts.length > 0 ? 'mt-2' : ''}">
+									<UsersIcon class="size-3.5" />
+									Network ({filteredDiscovered.length})
+								</div>
+								{#each filteredDiscovered as user (user.identity)}
+									<div
+										class="flex items-center gap-3 p-3 border-b hover:bg-muted/50 transition-colors"
+									>
+										<Avatar.Root class="size-10 shrink-0">
+											<Avatar.Fallback class="text-xs bg-muted">
+												{getInitials(user.identity)}
+											</Avatar.Fallback>
+										</Avatar.Root>
+										<div class="flex-1 min-w-0">
+											<p class="text-sm truncate text-muted-foreground">{user.identity}</p>
+										</div>
+										<Button
+											variant="outline"
+											size="sm"
+											class="h-8 gap-1"
+											onclick={() => addContact(user.identity)}
+										>
+											<UserPlusIcon class="size-3.5" />
+											Add
+										</Button>
+									</div>
+								{/each}
+							{/if}
+
+							{#if filteredContacts.length === 0 && filteredDiscovered.length === 0}
+								<div class="p-6 text-center text-muted-foreground text-sm">
+									{#if contactSearchQuery}
+										No contacts found matching "{contactSearchQuery}"
+									{:else}
+										No contacts yet
+									{/if}
+								</div>
+							{/if}
+						{/if}
+					</div>
+				{/if}
 			</div>
 
 			<!-- Message View / Compose -->
