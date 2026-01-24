@@ -609,10 +609,13 @@ pub async fn create_flow(
 
         let flow_result = tauri::async_runtime::spawn_blocking(move || {
             tauri::async_runtime::block_on(async {
-                let mut flow = FlowFile::parse_yaml(&yaml_str)
+                let spec = FlowFile::parse_yaml(&yaml_str)
                     .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
+                let mut spec = spec
+                    .to_flow_spec()
+                    .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
                 resolve_flow_dependencies(
-                    &mut flow,
+                    &mut spec,
                     &dependency_context,
                     &flow_yaml_path_clone,
                     overwrite,
@@ -620,16 +623,13 @@ pub async fn create_flow(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok::<FlowFile, String>(flow)
+                Ok::<FlowSpec, String>(spec)
             })
         })
         .await
         .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
 
-        let flow = flow_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
-        let spec = flow
-            .to_flow_spec()
-            .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
+        let spec = flow_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
 
         // Note: resolve_flow_dependencies already saves the spec (with description preserved)
         imported_spec = Some(spec);
