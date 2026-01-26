@@ -1260,6 +1260,8 @@ pub fn run() {
             resolve_syft_url_to_local_path,
             resolve_syft_urls_batch,
             network_scan_datasets,
+            subscribe_dataset,
+            unsubscribe_dataset,
             // Participants commands
             get_participants,
             delete_participant,
@@ -1423,6 +1425,7 @@ pub fn run() {
             start_syftbox_client,
             stop_syftbox_client,
             get_syftbox_diagnostics,
+            syftbox_subscriptions_discovery,
             syftbox_queue_status,
             syftbox_upload_action,
             trigger_syftbox_sync,
@@ -1439,6 +1442,7 @@ pub fn run() {
             commands::sync_tree::sync_tree_get_shared_with_me,
             commands::sync_tree::sync_tree_subscribe,
             commands::sync_tree::sync_tree_unsubscribe,
+            commands::sync_tree::sync_tree_set_subscription,
             // Sessions commands
             get_sessions,
             list_sessions,

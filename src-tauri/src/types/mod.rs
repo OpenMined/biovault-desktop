@@ -336,6 +336,7 @@ pub struct SyncTreeNode {
     pub progress: Option<f64>,
     pub is_ignored: bool,
     pub is_essential: bool,
+    pub is_subscribed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_count: Option<u32>,
     pub has_mixed_state: bool,
