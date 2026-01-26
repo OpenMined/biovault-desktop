@@ -1194,6 +1194,7 @@ pub fn run() {
             resolve_syft_url_to_local_path,
             resolve_syft_urls_batch,
             network_scan_datasets,
+            import_network_dataset,
             // Participants commands
             get_participants,
             delete_participant,

@@ -95,7 +95,7 @@
 		<!-- Full-width header/titlebar at top -->
 		<header
 			data-tauri-drag-region
-			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-12 shrink-0 items-center justify-between border-b border-primary/80 px-4"
+			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-10 shrink-0 items-center justify-between border-b border-primary/80 px-4"
 		>
 			<div class="ps-20 flex items-center gap-2">
 				<span class="text-primary-foreground font-bold text-base">BioVault Desktop</span>
@@ -123,7 +123,7 @@
 								<p>Logs</p>
 							</Tooltip.Content>
 						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[85vh] h-[85vh]">
+						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
 							<div class="h-full px-6 pb-8 pt-4">
 								{#if logsOpen}
 									<LogsPanel mode="sheet" />
@@ -148,7 +148,7 @@
 								<p>SQL Console</p>
 							</Tooltip.Content>
 						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[95vh] h-[95vh]">
+						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
 							<div class="h-full px-6 pb-8 pt-4">
 								{#if sqlOpen}
 									<SqlPanel mode="sheet" />
@@ -173,7 +173,7 @@
 								<p>SyftBox Sync</p>
 							</Tooltip.Content>
 						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[85vh] h-[85vh]">
+						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
 							<div class="h-full px-6 pb-8 pt-4">
 								{#if syftboxOpen}
 									<SyftboxPanel mode="sheet" />
@@ -247,7 +247,7 @@
 		</header>
 
 		<!-- Spacer for fixed header -->
-		<div class="h-12 shrink-0"></div>
+		<div class="h-10 shrink-0"></div>
 
 		<!-- Sidebar + content below header -->
 		<div class="flex flex-1 overflow-hidden">

@@ -41,6 +41,7 @@
 	import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
 	import InfoIcon from '@lucide/svelte/icons/info'
 	import GlobeIcon from '@lucide/svelte/icons/globe'
+	import StarIcon from '@lucide/svelte/icons/star'
 	import AssetDeleteButton from './asset-delete-button.svelte'
 	import AssetFileCell from './asset-file-cell.svelte'
 	import AssetMockCell from './asset-mock-cell.svelte'
@@ -83,7 +84,7 @@
 			public_url?: string
 			private_url?: string
 			http_relay_servers: string[]
-			extra: unknown
+			extra: any
 		}
 		assets: DatasetAsset[]
 	}
@@ -99,6 +100,7 @@
 	let saving = $state(false)
 	let error = $state<string | null>(null)
 	let isPublished = $state(false)
+	let isNetwork = $state(false)
 
 	// Form state
 	let currentName = $state($page.params.name)
@@ -339,6 +341,8 @@
 			originalName = currentName
 			originalDescription = description
 			originalVersion = version
+
+			isNetwork = dataset.extra?.is_network === true
 
 			await checkPublishStatus()
 		} catch (e) {
@@ -850,18 +854,26 @@
 				<ArrowLeftIcon class="size-5" />
 			</Button>
 
-			<div class="flex items-center gap-3 flex-1 min-w-0">
-				<div class="flex size-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
-					<PackageIcon class="size-5 text-primary" />
+				<div class="flex items-center gap-3 flex-1 min-w-0">
+					<div class="flex size-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
+						<PackageIcon class="size-5 text-primary" />
+					</div>
+					<div class="min-w-0">
+						<div class="flex items-center gap-2">
+							<h1 class="font-semibold text-lg truncate">{currentName}</h1>
+							{#if isNetwork}
+								<Badge variant="secondary" class="h-5 text-[10px] uppercase font-bold tracking-wider">
+									<StarIcon class="size-2.5 mr-1 fill-primary text-primary" />
+									Network
+								</Badge>
+							{/if}
+						</div>
+						<p class="text-sm text-muted-foreground">
+							v{version} • {validAssetCount}
+							{validAssetCount === 1 ? 'asset' : 'assets'}
+						</p>
+					</div>
 				</div>
-				<div class="min-w-0">
-					<h1 class="font-semibold text-lg truncate">{currentName}</h1>
-					<p class="text-sm text-muted-foreground">
-						v{version} • {validAssetCount}
-						{validAssetCount === 1 ? 'asset' : 'assets'}
-					</p>
-				</div>
-			</div>
 
 			<div class="flex items-center gap-2">
 				{#if savingAssets}
@@ -871,59 +883,61 @@
 					</Badge>
 				{/if}
 
-				<Tooltip.Provider>
-					<Tooltip.Root delayDuration={0}>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<div {...props}>
-									{#if isPublished}
-										<Button
-											size="sm"
-											variant="outline"
-											disabled={unpublishing}
-											onclick={() => (unpublishConfirmOpen = true)}
-											class="gap-2"
-										>
-											{#if unpublishing}
-												<Loader2Icon class="size-4 animate-spin" />
-												Unpublishing...
-											{:else}
-												<GlobeIcon class="size-4 text-primary" />
-												Unpublish
-											{/if}
-										</Button>
-									{:else}
-										<Button
-											size="sm"
-											variant="default"
-											disabled={!allAssetsHaveMocks || publishing}
-											onclick={() => (publishConfirmOpen = true)}
-										>
-											{#if publishing}
-												<Loader2Icon class="size-4 animate-spin" />
-												Publishing...
-											{:else}
-												<GlobeIcon class="size-4" />
-												Publish
-											{/if}
-										</Button>
-									{/if}
-								</div>
-							{/snippet}
-						</Tooltip.Trigger>
-						{#if !allAssetsHaveMocks}
-							<Tooltip.Content side="bottom" class="max-w-xs">
-								<div class="flex items-start gap-2">
-									<AlertTriangleIcon class="size-4 text-warning shrink-0 mt-0.5" />
-									<p>
-										You must add mock data for all <b>{missingMockCount}</b> remaining assets in order
-										to publish your dataset.
-									</p>
-								</div>
-							</Tooltip.Content>
-						{/if}
-					</Tooltip.Root>
-				</Tooltip.Provider>
+				{#if !isNetwork}
+					<Tooltip.Provider>
+						<Tooltip.Root delayDuration={0}>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<div {...props}>
+										{#if isPublished}
+											<Button
+												size="sm"
+												variant="outline"
+												disabled={unpublishing}
+												onclick={() => (unpublishConfirmOpen = true)}
+												class="gap-2"
+											>
+												{#if unpublishing}
+													<Loader2Icon class="size-4 animate-spin" />
+													Unpublishing...
+												{:else}
+													<GlobeIcon class="size-4 text-primary" />
+													Unpublish
+												{/if}
+											</Button>
+										{:else}
+											<Button
+												size="sm"
+												variant="default"
+												disabled={!allAssetsHaveMocks || publishing}
+												onclick={() => (publishConfirmOpen = true)}
+											>
+												{#if publishing}
+													<Loader2Icon class="size-4 animate-spin" />
+													Publishing...
+												{:else}
+													<GlobeIcon class="size-4" />
+													Publish
+												{/if}
+											</Button>
+										{/if}
+									</div>
+								{/snippet}
+							</Tooltip.Trigger>
+							{#if !allAssetsHaveMocks}
+								<Tooltip.Content side="bottom" class="max-w-xs">
+									<div class="flex items-start gap-2">
+										<AlertTriangleIcon class="size-4 text-warning shrink-0 mt-0.5" />
+										<p>
+											You must add mock data for all <b>{missingMockCount}</b> remaining assets in order
+											to publish your dataset.
+										</p>
+									</div>
+								</Tooltip.Content>
+							{/if}
+						</Tooltip.Root>
+					</Tooltip.Provider>
+				{/if}
 			</div>
 		</div>
 	</div>

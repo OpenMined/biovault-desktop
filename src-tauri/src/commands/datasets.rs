@@ -938,3 +938,13 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
         current_identity: current_email,
     })
 }
+
+#[tauri::command]
+pub async fn import_network_dataset(
+    source: String,
+    name: Option<String>,
+) -> Result<(), String> {
+    biovault::cli::commands::datasets::import(source, name)
+        .await
+        .map_err(|e| format!("Failed to import network dataset: {}", e))
+}

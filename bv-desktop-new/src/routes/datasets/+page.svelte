@@ -11,6 +11,10 @@
 	import UploadIcon from '@lucide/svelte/icons/upload'
 	import PackageIcon from '@lucide/svelte/icons/package'
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
+	import StarIcon from '@lucide/svelte/icons/star'
+	import Loader2Icon from '@lucide/svelte/icons/loader-2'
+	import { Badge } from '$lib/components/ui/badge/index.js'
+	import { toast } from 'svelte-sonner'
 
 	interface DatasetAsset {
 		asset_key: string
@@ -24,6 +28,7 @@
 			version: string
 			author: string
 			description?: string
+			extra?: any
 		}
 		assets: DatasetAsset[]
 	}
@@ -32,6 +37,7 @@
 	let loading = $state(true)
 	let error: string | null = $state(null)
 	let createDialogOpen = $state(false)
+	let unpinning = $state<string | null>(null)
 
 	async function loadDatasets() {
 		try {
@@ -45,6 +51,19 @@
 	}
 
 	onMount(loadDatasets)
+
+	async function unpinDataset(name: string) {
+		unpinning = name
+		try {
+			await invoke('delete_dataset', { name })
+			toast.success(`Unstarred ${name}`)
+			await loadDatasets()
+		} catch (e) {
+			toast.error(`Failed to unstar dataset: ${e}`)
+		} finally {
+			unpinning = null
+		}
+	}
 
 	function handleDatasetCreated() {
 		loadDatasets()
@@ -110,7 +129,31 @@
 								<PackageIcon class="size-6" />
 							</div>
 							<div class="flex-1 min-w-0">
-								<h3 class="font-semibold truncate">{item.dataset.name}</h3>
+								<div class="flex items-center gap-2">
+									<h3 class="font-semibold truncate">{item.dataset.name}</h3>
+									{#if item.dataset.extra?.is_network}
+										<Badge variant="secondary" class="h-5 text-[10px] uppercase font-bold tracking-wider">
+											<StarIcon class="size-2.5 mr-1 fill-primary text-primary" />
+											Network
+										</Badge>
+										<Button
+											variant="ghost"
+											size="icon"
+											class="size-6 ml-auto -mr-1 text-muted-foreground hover:text-primary"
+											onclick={(e) => {
+												e.stopPropagation()
+												unpinDataset(item.dataset.name)
+											}}
+											disabled={unpinning === item.dataset.name}
+										>
+											{#if unpinning === item.dataset.name}
+												<Loader2Icon class="size-3 animate-spin" />
+											{:else}
+												<StarIcon class="size-3 fill-primary text-primary" />
+											{/if}
+										</Button>
+									{/if}
+								</div>
 								<p class="text-muted-foreground text-sm mt-0.5">
 									v{item.dataset.version || '1.0.0'}
 									{#if item.assets}

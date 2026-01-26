@@ -148,9 +148,9 @@
 
     /* Offset the fixed sidebar to start below the header */
     [data-slot="sidebar-container"] {
-        top: 3rem !important;
-        /* h-12 = 3rem */
-        height: calc(100svh - 3rem) !important;
+        top: 2.5rem !important;
+        /* h-10 = 2.5rem (40px) */
+        height: calc(100svh - 2.5rem) !important;
     }
 
     /* Also adjust the sidebar wrapper to not use full viewport height */

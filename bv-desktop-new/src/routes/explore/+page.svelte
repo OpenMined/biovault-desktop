@@ -11,7 +11,10 @@
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
+	import VerifyMockDialog from '$lib/components/verify-mock-dialog.svelte'
 	import CompassIcon from '@lucide/svelte/icons/compass'
+	import StarIcon from '@lucide/svelte/icons/star'
+	import CheckCircleIcon from '@lucide/svelte/icons/check-circle'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import SearchIcon from '@lucide/svelte/icons/search'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -30,6 +33,15 @@
 	import CheckIcon from '@lucide/svelte/icons/check'
 	import UsersIcon from '@lucide/svelte/icons/users'
 
+	interface DiscoveredDatasetAsset {
+		key: string
+		kind?: string
+		mock_url?: string
+		mock_size?: number
+		mock_path?: string
+		mock_entries: Array<{ url: string; participant_id?: string }>
+	}
+
 	interface DiscoveredDataset {
 		name: string
 		owner: string
@@ -40,7 +52,7 @@
 		author?: string
 		public_url?: string
 		dataset_path: string
-		assets: Array<{ name: string; size?: number }>
+		assets: DiscoveredDatasetAsset[]
 		is_trusted: boolean
 		is_own: boolean
 		available: boolean
@@ -62,6 +74,70 @@
 	let searchQuery = $state('')
 	let datasets = $state<DiscoveredDataset[]>([])
 	let currentIdentity = $state('')
+
+	let verifyDialogOpen = $state(false)
+	let selectedForVerify = $state<DiscoveredDataset | null>(null)
+	let pinning = $state<string | null>(null)
+	let unpinning = $state<string | null>(null)
+	let localDatasetNames = $state<Set<string>>(new Set())
+
+	async function loadLocalDatasetNames() {
+		try {
+			const localDatasets = await invoke<any[]>('list_datasets_with_assets')
+			localDatasetNames = new Set(localDatasets.map((d) => d.dataset.name))
+		} catch (e) {
+			console.error('Failed to load local datasets:', e)
+		}
+	}
+
+	async function pinDataset(dataset: DiscoveredDataset) {
+		if (!dataset.public_url) return
+		pinning = dataset.name
+		try {
+			await invoke('import_network_dataset', {
+				source: dataset.public_url,
+				nameOverride: null
+			})
+			toast.success(`Starred ${dataset.name}`)
+			await loadLocalDatasetNames()
+		} catch (e) {
+			toast.error(`Failed to star dataset: ${e}`)
+		} finally {
+			pinning = null
+		}
+	}
+
+	async function unpinDataset(dataset: DiscoveredDataset) {
+		unpinning = dataset.name
+		try {
+			await invoke('delete_dataset', { name: dataset.name })
+			toast.success(`Unstarred ${dataset.name}`)
+			await loadLocalDatasetNames()
+		} catch (e) {
+			toast.error(`Failed to unstar dataset: ${e}`)
+		} finally {
+			unpinning = null
+		}
+	}
+
+	function openVerifyDialog(dataset: DiscoveredDataset) {
+		selectedForVerify = dataset
+		verifyDialogOpen = true
+	}
+
+	function extractMockUrls(dataset: DiscoveredDataset): string[] {
+		const urls: string[] = []
+		for (const asset of dataset.assets) {
+			if (asset.mock_entries && asset.mock_entries.length > 0) {
+				for (const entry of asset.mock_entries) {
+					urls.push(entry.url)
+				}
+			} else if (asset.mock_url) {
+				urls.push(asset.mock_url)
+			}
+		}
+		return urls
+	}
 
 	// Pipelines state
 	interface InstalledPipeline {
@@ -155,7 +231,7 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadDatasets(), loadInstalledPipelines()])
+		await Promise.all([loadDatasets(), loadInstalledPipelines(), loadLocalDatasetNames()])
 		loading = false
 	})
 
@@ -401,6 +477,47 @@
 													</Badge>
 												{/if}
 											</div>
+											<div class="flex items-center gap-2 mt-4 pt-4 border-t">
+												<Button
+													variant="outline"
+													size="sm"
+													class="flex-1 text-xs"
+													onclick={() => openVerifyDialog(dataset)}
+												>
+													<RocketIcon class="size-3 mr-1" />
+													Verify Mock
+												</Button>
+												{#if localDatasetNames.has(dataset.name)}
+													<Button
+														variant="secondary"
+														size="sm"
+														class="text-xs gap-1.5"
+														onclick={() => unpinDataset(dataset)}
+														disabled={unpinning === dataset.name}
+													>
+														{#if unpinning === dataset.name}
+															<Loader2Icon class="size-3 animate-spin" />
+														{:else}
+															<StarIcon class="size-3 fill-primary text-primary" />
+															Starred
+														{/if}
+													</Button>
+												{:else}
+													<Button
+														variant="outline"
+														size="sm"
+														class="text-xs"
+														onclick={() => pinDataset(dataset)}
+														disabled={pinning === dataset.name}
+													>
+														{#if pinning === dataset.name}
+															<Loader2Icon class="size-3 animate-spin" />
+														{:else}
+															<StarIcon class="size-3" />
+														{/if}
+													</Button>
+												{/if}
+											</div>
 										</Card.Content>
 									</Card.Root>
 								{/each}
@@ -617,3 +734,15 @@
 		</div>
 	{/if}
 </div>
+
+{#if selectedForVerify}
+	<VerifyMockDialog
+		bind:open={verifyDialogOpen}
+		datasetName={selectedForVerify.name}
+		mockUrls={extractMockUrls(selectedForVerify)}
+		onRunStarted={() => {
+			toast.success('Verification run started')
+			goto('/runs')
+		}}
+	/>
+{/if}

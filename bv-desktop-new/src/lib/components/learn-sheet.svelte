@@ -65,7 +65,7 @@
 </script>
 
 <Sheet.Root bind:open onOpenChange={handleOpenChange}>
-	<Sheet.Content side="right" class="w-[400px] sm:w-[450px]">
+	<Sheet.Content side="right" class="!top-10 !bottom-0 !h-auto w-[400px] !m-0 rounded-l-xl border-l shadow-2xl sm:w-[450px]">
 		<Sheet.Header>
 			<div class="flex items-center gap-3">
 				<div class="flex size-10 items-center justify-center rounded-lg bg-primary/10">
