@@ -369,6 +369,7 @@ export function createNetworkModule({ invoke, shellApi }) {
 		const addPeerBtn = row.querySelector('.add-peer-btn')
 		const messagePeerBtn = row.querySelector('.message-peer-btn')
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
+		const subscribeBtn = row.querySelector('.dataset-subscribe-btn')
 		const statusContainer = row.querySelector('.dataset-row-status')
 
 		// Availability badge (Available vs Downloading)
@@ -399,6 +400,7 @@ export function createNetworkModule({ invoke, shellApi }) {
 			if (newSessionBtn) newSessionBtn.style.display = 'none'
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
+			if (subscribeBtn) subscribeBtn.style.display = 'none'
 			// Own dataset: can run flow on mock data locally
 			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			if (requestRunBtn) requestRunBtn.style.display = 'none'
@@ -409,13 +411,28 @@ export function createNetworkModule({ invoke, shellApi }) {
 			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			// Also show request run for running on their private data
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		} else {
 			if (addPeerBtn) addPeerBtn.style.display = 'inline-flex'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
 			// Untrusted peer: show request run but it will prompt to trust first
 			if (runFlowBtn) runFlowBtn.style.display = 'none'
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		}
+
+		function updateSubscribeButton() {
+			if (!subscribeBtn) return
+			const subscribed = Boolean(dataset.is_subscribed)
+			subscribeBtn.textContent = subscribed ? 'Unsubscribe' : 'Subscribe'
+			subscribeBtn.title = subscribed
+				? 'Unsubscribe and remove dataset data'
+				: 'Subscribe to dataset data'
+			subscribeBtn.classList.toggle('btn-primary', subscribed)
+			subscribeBtn.classList.toggle('btn-secondary', !subscribed)
+		}
+
+		updateSubscribeButton()
 
 		// Event handlers
 		if (!dataset.is_own && newSessionBtn) {
@@ -432,6 +449,37 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 		if (messagePeerBtn) {
 			messagePeerBtn.addEventListener('click', () => handleMessageContact(dataset.owner))
+		}
+		if (subscribeBtn && !dataset.is_own) {
+			subscribeBtn.addEventListener('click', async () => {
+				if (subscribeBtn.disabled) return
+				subscribeBtn.disabled = true
+				const originalText = subscribeBtn.textContent
+				subscribeBtn.textContent = dataset.is_subscribed ? 'Unsubscribing…' : 'Subscribing…'
+				try {
+					if (dataset.is_subscribed) {
+						await invoke('unsubscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = false
+					} else {
+						await invoke('subscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = true
+					}
+					await invoke('trigger_syftbox_sync').catch(() => {})
+				} catch (error) {
+					console.error('Failed to update dataset subscription:', error)
+					alert(`Failed to update subscription: ${error}`)
+				} finally {
+					subscribeBtn.disabled = false
+					subscribeBtn.textContent = originalText
+					updateSubscribeButton()
+				}
+			})
 		}
 		if (openDatasetBtn) {
 			openDatasetBtn.addEventListener('click', () => handleOpenDatasetFolder(dataset.dataset_path))

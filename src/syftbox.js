@@ -1379,6 +1379,13 @@ export function createSyftBoxModule({
 				}
 			}
 
+			// Merge available (not synced) files from subscriptions discovery at root
+			if (!parentPath) {
+				const available = await invoke('syftbox_subscriptions_discovery').catch(() => [])
+				_treeState.available = Array.isArray(available) ? available : []
+				mergeDiscoveryFiles(_treeState.available)
+			}
+
 			if (!parentPath && nodes.length === 0) {
 				treeList.innerHTML = `
 					<div class="tree-empty">
@@ -1405,6 +1412,42 @@ export function createSyftBoxModule({
 						<span>Failed to load: ${escapeHtml(err.message || String(err))}</span>
 					</div>
 				`
+			}
+		}
+	}
+
+	function mergeDiscoveryFiles(files) {
+		if (!Array.isArray(files) || files.length === 0) return
+		for (const file of files) {
+			const rawPath = file?.path || file?.Path
+			if (!rawPath) continue
+			const normalized = rawPath.replace(/\\/g, '/').replace(/^\/+/, '')
+			const parts = normalized.split('/').filter(Boolean)
+			if (parts.length === 0) continue
+
+			let currentPath = ''
+			for (let i = 0; i < parts.length; i++) {
+				const name = parts[i]
+				currentPath = currentPath ? `${currentPath}/${name}` : name
+				const isDir = i < parts.length - 1
+				if (_treeState.nodes.has(currentPath)) continue
+
+				_treeState.nodes.set(currentPath, {
+					name,
+					path: currentPath,
+					is_dir: isDir,
+					size: isDir ? null : file.size ?? null,
+					sync_state: 'completed',
+					conflict_state: 'none',
+					progress: null,
+					is_ignored: true,
+					is_essential: false,
+					is_subscribed: false,
+					child_count: null,
+					has_mixed_state: false,
+					has_mixed_ignore: false,
+					last_modified: file.lastModified || file.last_modified || null,
+				})
 			}
 		}
 	}
@@ -1550,7 +1593,8 @@ export function createSyftBoxModule({
 			? STATUS_ICONS.ignored
 			: STATUS_ICONS[node.sync_state] || STATUS_ICONS.completed
 		const statusClass = node.is_ignored ? 'ignored' : node.sync_state
-		const isChecked = !node.is_ignored
+		const isSubscribed = Boolean(node.is_subscribed)
+		const isChecked = isSubscribed || !node.is_ignored
 		const isEssential = node.is_essential || false
 
 		// Check if this is a root-level datasite that we've subscribed to (trusted)
@@ -1588,7 +1632,7 @@ export function createSyftBoxModule({
 
 		// Tracking status: tracked = NOT ignored (syncing), partial = some children tracked
 		// Own datasite is always tracked
-		const isTracked = isOwnDatasite || !node.is_ignored
+		const isTracked = isOwnDatasite || isSubscribed || !node.is_ignored
 		const isPartial = !isOwnDatasite && node.has_mixed_ignore
 
 		const nodeClasses = [
@@ -1642,24 +1686,11 @@ export function createSyftBoxModule({
 
 		checkbox.disabled = true
 		try {
-			if (shouldSync) {
-				// Remove from ignore (add whitelist pattern)
-				await invoke('sync_tree_remove_ignore', { pattern: path })
-				// Also try removing with trailing slash for directories
-				await invoke('sync_tree_remove_ignore', { pattern: `${path}/` }).catch(() => {})
-			} else {
-				// Add to ignore
-				await invoke('sync_tree_add_ignore', { pattern: path })
-			}
-
-			// Refresh the node
 			const nodeData = _treeState.nodes.get(path)
-			if (nodeData) {
-				nodeData.is_ignored = !shouldSync
-			}
-			renderTreeFromNodes()
-
-			// Refresh details if this node is selected
+			const isDir = Boolean(nodeData?.is_dir)
+			await invoke('sync_tree_set_subscription', { path, allow: shouldSync, isDir })
+			await invoke('trigger_syftbox_sync').catch(() => {})
+			await refreshTree()
 			if (_treeState.selected === path) {
 				showDetails(path, checkbox.closest('.tree-node').classList.contains('folder'))
 			}
@@ -1821,7 +1852,7 @@ export function createSyftBoxModule({
 				${renderFilePreview(details)}
 
 				<div class="detail-actions">
-					<button class="btn btn-secondary" onclick="window.__syftboxModule?.openInFinder('${escapeHtml(path)}')">
+					<button class="btn btn-secondary" onclick="window.__syftboxModule?.openInFinder('${escapeHtml(path)}', ${details.is_dir ? 'true' : 'false'})">
 						Open in Finder
 					</button>
 				</div>
@@ -1893,12 +1924,13 @@ export function createSyftBoxModule({
 		return html
 	}
 
-	async function openInFinder(path) {
+	async function openInFinder(path, isDir = false) {
 		try {
 			const configInfo = await invoke('get_syftbox_config_info').catch(() => ({}))
 			const dataDir = configInfo.data_dir
 			if (dataDir) {
-				const fullPath = `${dataDir}/datasites/${path}`
+				const folderPath = isDir ? path : path.split('/').slice(0, -1).join('/')
+				const fullPath = `${dataDir}/datasites${folderPath ? `/${folderPath}` : ''}`
 				await invoke('open_folder', { path: fullPath })
 			}
 		} catch (err) {

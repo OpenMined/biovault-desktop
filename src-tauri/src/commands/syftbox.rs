@@ -345,6 +345,27 @@ pub struct SyftBoxSyncStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SyftBoxDiscoveryFile {
+    pub path: String,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub last_modified: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub action: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyftBoxDiscoveryResponse {
+    #[serde(default)]
+    files: Vec<SyftBoxDiscoveryFile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyftBoxUploadInfo {
     pub id: String,
     pub key: String,
@@ -1677,6 +1698,25 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
             Some(errors.join("; "))
         },
     })
+}
+
+#[tauri::command]
+pub async fn syftbox_subscriptions_discovery() -> Result<Vec<SyftBoxDiscoveryFile>, String> {
+    let cfg = load_syftbox_client_config()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let resp: SyftBoxDiscoveryResponse = cp_get(
+        &client,
+        &cfg.client_url,
+        "/v1/subscriptions/discovery/files",
+        &cfg.client_token,
+    )
+    .await?;
+
+    Ok(resp.files)
 }
 
 #[tauri::command]

@@ -961,7 +961,12 @@ pub fn send_flow_request(
     }
 
     // Write permissions file for recipient access and results write-back
-    let perms = SyftPermissions::new_for_datasite(&recipient);
+    let mut perms = SyftPermissions::new_for_datasite(&recipient);
+    perms.add_rule(
+        "results/**",
+        vec![recipient.clone()],
+        vec![recipient.clone()],
+    );
     let perms_yaml = serde_yaml::to_string(&perms)
         .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
     let perms_path = submission_path.join("syft.pub.yaml");

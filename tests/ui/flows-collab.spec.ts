@@ -186,6 +186,80 @@ async function waitForPeerDid(
 	throw new Error(`Timed out waiting for peer DID file: ${didPaths.join(', ')}`)
 }
 
+async function waitForFlowRequestMetadata(
+	backend: Backend,
+	flowName: string,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<any> {
+	const start = Date.now()
+	const subjectPrefix = `Flow Request: ${flowName}`
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const threads = await backend.invoke('list_message_threads', {
+				scope: 'inbox',
+				limit: 50,
+			})
+			const flowThread = (threads || []).find((thread: any) =>
+				String(thread?.subject || '').includes(subjectPrefix),
+			)
+			if (flowThread?.thread_id) {
+				const messages = await backend.invoke('get_thread_messages', {
+					threadId: flowThread.thread_id,
+				})
+				for (const msg of messages || []) {
+					const flowRequest = msg?.metadata?.flow_request
+					if (flowRequest?.flow_location) {
+						return flowRequest
+					}
+				}
+			}
+		} catch (error) {
+			// Ignore and retry
+		}
+		try {
+			await backend.invoke('trigger_syftbox_sync')
+		} catch (error) {
+			// Ignore sync errors
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+	throw new Error(`Timed out waiting for flow request metadata for ${flowName}`)
+}
+
+async function waitForSyncedFlowFolder(
+	backend: Backend,
+	flowRequest: any,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<string> {
+	const start = Date.now()
+	const flowLocation = flowRequest?.flow_location
+	if (!flowLocation) {
+		throw new Error('Flow request missing flow_location')
+	}
+	const folderPath = await backend.invoke('resolve_syft_url_to_local_path', {
+		syftUrl: flowLocation,
+	})
+	const flowYaml = path.join(folderPath, 'flow.yaml')
+	const modulesDir = path.join(folderPath, 'modules')
+
+	while (Date.now() - start < timeoutMs) {
+		const flowYamlExists = fs.existsSync(flowYaml)
+		const modulesReady =
+			fs.existsSync(modulesDir) && (fs.readdirSync(modulesDir).length || 0) > 0
+		if (flowYamlExists && modulesReady) {
+			return folderPath
+		}
+		try {
+			await backend.invoke('trigger_syftbox_sync')
+		} catch (error) {
+			// Ignore sync errors
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+
+	throw new Error(`Timed out waiting for flow sync at ${flowYaml}`)
+}
+
 // Helper to wait for flow run to complete
 async function waitForRunCompletion(
 	page: Page,
@@ -1043,6 +1117,23 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				throw new Error('Dataset not found on network within timeout')
 			}
 
+			// Subscribe to dataset data so assets sync before running flows
+			const networkDatasetCard = page2
+				.locator('.dataset-item')
+				.filter({ hasText: datasetName })
+				.first()
+			const subscribeBtn = networkDatasetCard.locator('.dataset-subscribe-btn')
+			if (await subscribeBtn.isVisible().catch(() => false)) {
+				const label = (await subscribeBtn.textContent())?.trim().toLowerCase() || ''
+				if (label !== 'unsubscribe') {
+					console.log('Subscribing to dataset data...')
+					await subscribeBtn.click()
+					await expect(subscribeBtn).toHaveText(/Unsubscribe/i, { timeout: UI_TIMEOUT })
+					await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+					await page2.waitForTimeout(2000)
+				}
+			}
+
 			// ============================================================
 			// Step 5: Client2 runs imported flow on peer's mock data
 			// ============================================================
@@ -1181,8 +1272,8 @@ test.describe('Flows Collaboration @flows-collab', () => {
 
 			// Find the dataset card and click "Request Run" button
 			// The "Request Run" button is visible for peer datasets (not "Run Flow" which is for own datasets)
-			const networkDatasetCard = page2.locator('.dataset-item').first()
-			const requestRunBtn = networkDatasetCard.locator('.request-run-btn')
+			const networkDatasetCardForRequest = page2.locator('.dataset-item').first()
+			const requestRunBtn = networkDatasetCardForRequest.locator('.request-run-btn')
 			await expect(requestRunBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Request Run button, clicking...')
 			await requestRunBtn.click()
@@ -1236,6 +1327,22 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				'wait-request-card',
 			)
 			console.log('Flow request received!')
+
+			// Click Sync Request to pull the shared submission files
+			const syncRequestBtn = requestCard.locator('button:has-text("Sync Request")')
+			if (await syncRequestBtn.isVisible().catch(() => false)) {
+				await syncRequestBtn.click()
+				await page1.waitForTimeout(2000)
+				console.log('Flow request synced!')
+			}
+
+			const flowRequestMeta = await waitForFlowRequestMetadata(
+				backend1,
+				'herc2-classifier',
+				SYNC_TIMEOUT,
+			)
+			await waitForSyncedFlowFolder(backend1, flowRequestMeta, SYNC_TIMEOUT)
+			console.log('Flow request files synced to disk')
 
 			// Click Import Flow button if available
 			const importFlowBtn = requestCard.locator('button:has-text("Import Flow")')

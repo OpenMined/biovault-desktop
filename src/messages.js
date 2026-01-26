@@ -126,6 +126,40 @@ export function createMessagesModule({
 		}
 	}
 
+	function parseSyftUrl(syftUrl) {
+		if (!syftUrl || typeof syftUrl !== 'string') return null
+		const match = syftUrl.match(/^syft:\/\/([^/]+)\/(.+)$/i)
+		if (!match) return null
+		return { datasite: match[1], path: match[2] }
+	}
+
+	function buildFlowRequestSubscriptionPath(flowRequest) {
+		if (!flowRequest) return null
+		let datasite = flowRequest.sender
+		let path = null
+		const parsed = parseSyftUrl(flowRequest.flow_location)
+		if (parsed) {
+			datasite = parsed.datasite || datasite
+			path = parsed.path
+		}
+		if (!path && flowRequest.submission_id && flowRequest.sender) {
+			path = `shared/biovault/submissions/${flowRequest.submission_id}`
+		}
+		if (!datasite || !path) return null
+		path = path.replace(/^\/+/, '')
+		path = path.replace(/\/flow\.ya?ml$/i, '')
+		if (path.startsWith('datasites/')) {
+			const parts = path.split('/')
+			if (parts.length > 2) {
+				return `${parts[1]}/${parts.slice(2).join('/')}`
+			}
+		}
+		if (path.startsWith(`${datasite}/`)) {
+			return path
+		}
+		return `${datasite}/${path}`
+	}
+
 	function getFlowResultsFromMessage(msg) {
 		if (!msg) return null
 		const meta = normalizeMetadata(msg.metadata)
@@ -1873,6 +1907,42 @@ export function createMessagesModule({
 					}
 
 					if (!group.isOutgoing) {
+						const syncBtn = document.createElement('button')
+						syncBtn.className = 'secondary'
+						syncBtn.textContent = 'Sync Request'
+						syncBtn.addEventListener('click', async () => {
+							if (syncBtn.disabled) return
+							const targetPath = buildFlowRequestSubscriptionPath(flowRequest)
+							if (!targetPath) {
+								await dialog.message('Flow location not available for sync.', {
+									title: 'Sync Error',
+									type: 'error',
+								})
+								return
+							}
+							const originalText = syncBtn.textContent
+							syncBtn.disabled = true
+							syncBtn.textContent = 'Syncing…'
+							try {
+								await invoke('sync_tree_set_subscription', {
+									path: targetPath,
+									allow: true,
+									isDir: true,
+								})
+								await invoke('trigger_syftbox_sync')
+								syncBtn.textContent = 'Synced'
+							} catch (error) {
+								console.error('Failed to sync flow request:', error)
+								syncBtn.textContent = originalText
+								syncBtn.disabled = false
+								await dialog.message(`Failed to sync request: ${error?.message || error}`, {
+									title: 'Sync Error',
+									type: 'error',
+								})
+							}
+						})
+						actions.appendChild(syncBtn)
+
 						const importBtn = document.createElement('button')
 						importBtn.textContent = 'Import Flow'
 						importBtn.addEventListener('click', async () => {

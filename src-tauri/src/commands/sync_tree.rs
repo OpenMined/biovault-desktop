@@ -14,7 +14,8 @@ const ESSENTIAL_PATTERNS: &[&str] = &[
     "*/public/crypto/did.json",
     "*/public/crypto/*.yaml",
     // Dataset metadata (discover available datasets)
-    "*/public/biovault/datasets/*.yaml",
+    "*/public/biovault/datasets.yaml",
+    "*/public/biovault/datasets/*/dataset.yaml",
     "*/public/biovault/datasets/*.json",
     // RPC endpoint permissions
     "*/app_data/biovault/*.yaml",
@@ -38,6 +39,103 @@ fn get_datasites_path() -> Result<PathBuf, String> {
 fn get_syftignore_path() -> Result<PathBuf, String> {
     let runtime = load_runtime_config()?;
     Ok(PathBuf::from(&runtime.data_dir).join(".syftignore"))
+}
+
+fn get_syftsub_path() -> Result<PathBuf, String> {
+    let runtime = load_runtime_config()?;
+    Ok(PathBuf::from(&runtime.data_dir).join(".data").join("syft.sub.yaml"))
+}
+
+fn load_owner_email() -> String {
+    if let Ok(cfg) = biovault::config::Config::load() {
+        let trimmed = cfg.email.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let fallback = biovault::config::Config::new(String::new());
+    fallback
+        .get_syftbox_config_path()
+        .ok()
+        .and_then(|path| syftbox_sdk::syftbox::config::SyftBoxConfigFile::load(&path).ok())
+        .map(|cfg| cfg.email)
+        .unwrap_or_default()
+}
+
+fn split_datasite(rel: &str) -> (String, String) {
+    if rel.is_empty() {
+        return ("".to_string(), "".to_string());
+    }
+    let mut parts = rel.splitn(2, '/');
+    let ds = parts.next().unwrap_or("").to_string();
+    let rest = parts.next().unwrap_or("").to_string();
+    (ds, rest)
+}
+
+fn is_valid_datasite_selector(value: &str) -> bool {
+    if value == "*" {
+        return true;
+    }
+    value.contains('@')
+}
+
+fn sanitize_subscription_rules(cfg: &mut biovault::subscriptions::SubscriptionConfig) {
+    cfg.rules.retain(|rule| {
+        rule.datasite
+            .as_deref()
+            .map(is_valid_datasite_selector)
+            .unwrap_or(true)
+    });
+}
+
+fn normalize_subscription_path(path: &str) -> String {
+    let mut out = path.replace('\\', "/");
+    while out.starts_with('/') {
+        out.remove(0);
+    }
+    while out.contains("//") {
+        out = out.replace("//", "/");
+    }
+    out
+}
+
+fn strip_glob_suffix(path: &str) -> String {
+    let mut out = path.trim_end_matches("/**").to_string();
+    out = out.trim_end_matches('/').to_string();
+    out
+}
+
+fn essential_rules_for_subtree(datasite: &str, prefix: &str) -> Vec<biovault::subscriptions::Rule> {
+    let mut rules = Vec::new();
+    let normalized_prefix = if prefix == "**" { "" } else { prefix.trim_end_matches('/') };
+    for pattern in ESSENTIAL_PATTERNS {
+        if let Some(rest) = pattern.strip_prefix("*/") {
+            let rest = rest.trim_start_matches('/');
+            if normalized_prefix.is_empty()
+                || rest == normalized_prefix
+                || rest.starts_with(&format!("{}/", normalized_prefix))
+            {
+                rules.push(biovault::subscriptions::Rule {
+                    action: biovault::subscriptions::Action::Allow,
+                    datasite: Some(datasite.to_string()),
+                    path: rest.to_string(),
+                });
+            }
+        } else if let Some(rest) = pattern.strip_prefix("**/") {
+            let path = if normalized_prefix.is_empty() {
+                format!("**/{}", rest)
+            } else {
+                format!("{}/**/{}", normalized_prefix, rest)
+            };
+            rules.push(biovault::subscriptions::Rule {
+                action: biovault::subscriptions::Action::Allow,
+                datasite: Some(datasite.to_string()),
+                path,
+            });
+        }
+    }
+    rules
 }
 
 fn simple_glob_match(pattern: &str, path: &str) -> bool {
@@ -141,8 +239,16 @@ fn count_children(path: &Path) -> Option<u32> {
 pub async fn sync_tree_list_dir(path: Option<String>) -> Result<Vec<SyncTreeNode>, String> {
     let datasites_path = get_datasites_path()?;
     let syftignore_path = get_syftignore_path()?;
+    let syftsub_path = get_syftsub_path()?;
 
     let ignore_patterns = read_ignore_patterns(&syftignore_path);
+    let subs_cfg =
+        biovault::subscriptions::load(&syftsub_path).unwrap_or_else(|_| {
+            biovault::subscriptions::default_config()
+        });
+    let mut subs_cfg = subs_cfg;
+    sanitize_subscription_rules(&mut subs_cfg);
+    let owner_email = load_owner_email();
 
     let target_path = match &path {
         Some(p) => datasites_path.join(p),
@@ -173,9 +279,16 @@ pub async fn sync_tree_list_dir(path: Option<String>) -> Result<Vec<SyncTreeNode
         };
 
         let is_essential = is_path_essential(&relative_path);
-        let is_ignored = !is_essential
-            && is_path_ignored(&relative_path, &ignore_patterns).is_some()
+        let subscription_action =
+            biovault::subscriptions::action_for_path(&subs_cfg, &owner_email, &relative_path);
+        let is_subscribed = subscription_action == biovault::subscriptions::Action::Allow;
+        let base_ignored = is_path_ignored(&relative_path, &ignore_patterns).is_some()
             && !is_path_whitelisted(&relative_path, &ignore_patterns);
+        let is_ignored = if is_subscribed {
+            false
+        } else {
+            !is_essential && base_ignored
+        };
 
         let (child_count, has_mixed_state, has_mixed_ignore) = if is_dir {
             let count = count_children(&entry_path);
@@ -194,6 +307,7 @@ pub async fn sync_tree_list_dir(path: Option<String>) -> Result<Vec<SyncTreeNode
             progress: None,
             is_ignored,
             is_essential,
+            is_subscribed,
             child_count,
             has_mixed_state,
             has_mixed_ignore,
@@ -214,7 +328,15 @@ pub async fn sync_tree_list_dir(path: Option<String>) -> Result<Vec<SyncTreeNode
 pub async fn sync_tree_get_details(path: String) -> Result<SyncTreeDetails, String> {
     let datasites_path = get_datasites_path()?;
     let syftignore_path = get_syftignore_path()?;
+    let syftsub_path = get_syftsub_path()?;
     let ignore_patterns = read_ignore_patterns(&syftignore_path);
+    let subs_cfg =
+        biovault::subscriptions::load(&syftsub_path).unwrap_or_else(|_| {
+            biovault::subscriptions::default_config()
+        });
+    let mut subs_cfg = subs_cfg;
+    sanitize_subscription_rules(&mut subs_cfg);
+    let owner_email = load_owner_email();
 
     let full_path = datasites_path.join(&path);
 
@@ -243,8 +365,15 @@ pub async fn sync_tree_get_details(path: String) -> Result<SyncTreeDetails, Stri
     let essential_pattern = get_matching_essential_pattern(&path);
     let is_essential = essential_pattern.is_some();
     let ignore_match = is_path_ignored(&path, &ignore_patterns);
-    let is_ignored =
-        !is_essential && ignore_match.is_some() && !is_path_whitelisted(&path, &ignore_patterns);
+    let subscription_action =
+        biovault::subscriptions::action_for_path(&subs_cfg, &owner_email, &path);
+    let is_subscribed = subscription_action == biovault::subscriptions::Action::Allow;
+    let base_ignored = ignore_match.is_some() && !is_path_whitelisted(&path, &ignore_patterns);
+    let is_ignored = if is_subscribed {
+        false
+    } else {
+        !is_essential && base_ignored
+    };
 
     // Get file type and content for preview
     let (file_type, file_content, syft_pub_info) = if !is_dir {
@@ -272,7 +401,7 @@ pub async fn sync_tree_get_details(path: String) -> Result<SyncTreeDetails, Stri
         uploaded_bytes: None,
         total_bytes: None,
         is_ignored,
-        ignore_pattern: ignore_match,
+        ignore_pattern: if is_subscribed { None } else { ignore_match },
         is_essential,
         essential_pattern,
         is_priority: path.contains(".request") || path.contains(".response"),
@@ -432,7 +561,8 @@ pub async fn sync_tree_init_default_policy() -> Result<bool, String> {
         "".to_string(),
         "# Essential BioVault paths (whitelisted)".to_string(),
         "!*/public/crypto/did.json".to_string(),
-        "!*/public/biovault/datasets/*.yaml".to_string(),
+        "!*/public/biovault/datasets.yaml".to_string(),
+        "!*/public/biovault/datasets/*/dataset.yaml".to_string(),
         "!*/app_data/biovault/*.yaml".to_string(),
         "!**/syft.pub.yaml".to_string(),
         "".to_string(),
@@ -595,6 +725,81 @@ pub async fn sync_tree_unsubscribe(path: String) -> Result<(), String> {
     patterns.retain(|p| p != &whitelist && p != &whitelist_exact);
 
     write_ignore_patterns(&syftignore_path, &patterns)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_tree_set_subscription(
+    path: String,
+    allow: bool,
+    is_dir: bool,
+) -> Result<(), String> {
+    let syftsub_path = get_syftsub_path()?;
+    let mut cfg = biovault::subscriptions::load(&syftsub_path)
+        .unwrap_or_else(|_| biovault::subscriptions::default_config());
+    sanitize_subscription_rules(&mut cfg);
+
+    let normalized = normalize_subscription_path(&path);
+    let (datasite, rest) = split_datasite(&normalized);
+    if datasite.trim().is_empty() {
+        return Err("Invalid path (missing datasite)".to_string());
+    }
+    if !is_valid_datasite_selector(&datasite) {
+        return Err(format!(
+            "Invalid datasite selector: {} (expected '*' or email)",
+            datasite
+        ));
+    }
+
+    let path_within = if is_dir {
+        if rest.trim().is_empty() {
+            "**".to_string()
+        } else {
+            format!("{}/**", rest.trim_end_matches('/'))
+        }
+    } else {
+        rest.trim_end_matches('/').to_string()
+    };
+
+    let target_prefix = strip_glob_suffix(&path_within);
+    cfg.rules.retain(|rule| {
+        if rule
+            .datasite
+            .as_deref()
+            .map(|ds| ds.eq_ignore_ascii_case(&datasite))
+            .unwrap_or(false)
+        {
+            let rule_path = normalize_subscription_path(&rule.path);
+            let rule_prefix = strip_glob_suffix(&rule_path);
+            if is_dir {
+                return !rule_prefix.starts_with(&target_prefix);
+            }
+            return rule_prefix != target_prefix;
+        }
+        true
+    });
+
+    let action = if allow {
+        biovault::subscriptions::Action::Allow
+    } else {
+        biovault::subscriptions::Action::Block
+    };
+
+    cfg.rules.push(biovault::subscriptions::Rule {
+        action,
+        datasite: Some(datasite.clone()),
+        path: path_within,
+    });
+
+    if !allow && is_dir {
+        let essentials = essential_rules_for_subtree(&datasite, &target_prefix);
+        for rule in essentials {
+            cfg.rules.push(rule);
+        }
+    }
+
+    biovault::subscriptions::save(&syftsub_path, &cfg)
+        .map_err(|e| format!("Failed to write syft.sub.yaml: {}", e))?;
     Ok(())
 }
 
