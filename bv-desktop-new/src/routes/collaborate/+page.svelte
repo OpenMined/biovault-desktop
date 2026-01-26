@@ -184,9 +184,12 @@
 	const unreadMessageCount = $derived(threads.filter((t) => t.unread_count > 0).length)
 	const pendingInvitesCount = $derived(sessionInvitations.length)
 
+	let initialDataLoaded = $state(false)
+
 	// Load data when user signs in
 	$effect(() => {
-		if (isAuthenticated && threads.length === 0 && !loading) {
+		if (isAuthenticated && !initialDataLoaded && !loading) {
+			initialDataLoaded = true
 			loadAllData(true)
 			startAutoRefresh()
 		}

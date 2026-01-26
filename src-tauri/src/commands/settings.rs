@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
 
-const PLACEHOLDER_EMAIL: &str = "setup@pending";
+pub const PLACEHOLDER_EMAIL: &str = "setup@pending";
 
 fn normalize_server_url(url: &str) -> String {
     let trimmed = url.trim();

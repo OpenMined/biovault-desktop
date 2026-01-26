@@ -1048,6 +1048,15 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         crate::desktop_log!("ℹ️ SYFTBOX_SERVER_URL env: {}", env_server);
     }
 
+    let skip_auth = std::env::var("SYFTBOX_AUTH_ENABLED")
+        .map(|v| v == "0" || v.to_lowercase() == "false")
+        .unwrap_or(false);
+
+    if skip_auth {
+        crate::desktop_log!("🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend OTP request for {}", email);
+        return Ok(());
+    }
+
     match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await
     {
         Ok(_) => {}
@@ -1072,28 +1081,73 @@ pub async fn syftbox_submit_otp(
 ) -> Result<(), String> {
     crate::desktop_log!("🔐 syftbox_submit_otp called (server: {:?})", server_url);
 
-    match biovault::cli::commands::syftbox::submit_otp(
-        &code,
-        Some(email),
-        None,
-        server_url.clone(),
-        None,
-        None,
-    )
-    .await
-    {
-        Ok(_) => {}
-        Err(err) => {
-            crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
-            return Err(format!(
-                "Failed to verify OTP via {:?}: {}",
-                server_url, err
-            ));
+    let skip_auth = std::env::var("SYFTBOX_AUTH_ENABLED")
+        .map(|v| v == "0" || v.to_lowercase() == "false")
+        .unwrap_or(false);
+
+    if !skip_auth {
+        match biovault::cli::commands::syftbox::submit_otp(
+            &code,
+            Some(email.clone()),
+            None,
+            server_url.clone(),
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
+                return Err(format!(
+                    "Failed to verify OTP via {:?}: {}",
+                    server_url, err
+                ));
+            }
+        }
+    } else {
+        crate::desktop_log!("🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend verification for {}", email);
+        
+        // When skipping auth, we still need to ensure the BioVault config has the email
+        // and a dummy set of credentials so that check_syftbox_auth sees us as authenticated.
+        let config_result = (|| -> Result<(), String> {
+            let mut cfg = biovault::config::Config::load().unwrap_or_else(|_| {
+                // If load fails, we'll try to create a default config
+                biovault::config::Config {
+                    email: email.clone(),
+                    syftbox_config: None,
+                    version: None,
+                    binary_paths: None,
+                    syftbox_credentials: None,
+                    agent_bridge_enabled: None,
+                    agent_bridge_port: None,
+                    agent_bridge_http_port: None,
+                    agent_bridge_token: None,
+                    agent_bridge_blocklist: None,
+                }
+            });
+
+            cfg.email = email.clone();
+            
+            let mut creds = cfg.syftbox_credentials.clone().unwrap_or_default();
+            creds.email = Some(email.clone());
+            creds.access_token = Some("bypass-token".to_string());
+            creds.refresh_token = Some("bypass-token".to_string());
+            cfg.syftbox_credentials = Some(creds);
+
+            let config_path = biovault::config::Config::get_config_path().map_err(|e| e.to_string())?;
+            cfg.save(config_path).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+
+        if let Err(e) = config_result {
+            crate::desktop_log!("⚠️ Failed to save bypass config: {}", e);
+            // We still return Ok because the UI expects success to proceed, 
+            // but the state might be inconsistent.
         }
     }
 
-    // After auth, ensure `syftbox/config.json` exists so queue polling + control plane startup
-    // have the local client_url/token config available (matches macOS onboarding behavior).
+    // After auth, ensure `syftbox/config.json` exists
     match load_runtime_config() {
         Ok(runtime) => {
             let runtime_clone = runtime.clone();
@@ -1104,33 +1158,42 @@ pub async fn syftbox_submit_otp(
             {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
-                    crate::desktop_log!("⚠️ Failed to write syftbox/config.json after auth: {}", e);
+                    crate::desktop_log!("⚠️ Failed to write syftbox/config.json: {}", e);
                 }
                 Err(join_err) => {
                     crate::desktop_log!(
-                        "⚠️ Failed to write syftbox/config.json after auth (task join): {}",
+                        "⚠️ Failed to write syftbox/config.json (task join): {}",
                         join_err
                     );
                 }
             }
 
-            // Restart the local SyftBox daemon so it picks up fresh auth tokens.
-            let restart_runtime = runtime.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(e) = syftctl::stop_syftbox(&restart_runtime) {
-                    crate::desktop_log!("ℹ️ Failed to stop SyftBox after auth: {}", e);
-                }
-                if let Err(e) = syftctl::start_syftbox(&restart_runtime) {
-                    crate::desktop_log!("⚠️ Failed to restart SyftBox after auth: {}", e);
-                }
-            });
+            // Restart daemon ONLY if auth was NOT skipped AND we're NOT in a dev environment.
+            // In devstacks, the shell script manages the daemon, and app-side restarts 
+            // often trigger lock errors because of race conditions.
+            let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
+            
+            if !skip_auth && !is_devstack {
+                // Restart the local SyftBox daemon so it picks up fresh auth tokens.
+                let restart_runtime = runtime.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = syftctl::stop_syftbox(&restart_runtime) {
+                        crate::desktop_log!("ℹ️ Failed to stop SyftBox: {}", e);
+                    }
+                    if let Err(e) = syftctl::start_syftbox(&restart_runtime) {
+                        crate::desktop_log!("⚠️ Failed to restart SyftBox: {}", e);
+                    }
+                });
+            } else {
+                crate::desktop_log!("🛡️ Skipping SyftBox daemon restart (bypass mode or devstack)");
+            }
         }
         Err(e) => {
-            crate::desktop_log!("⚠️ Could not load runtime config after auth: {}", e);
+            crate::desktop_log!("⚠️ Could not load runtime config: {}", e);
         }
     }
 
-    crate::desktop_log!("✅ OTP verified and credentials stored");
+    crate::desktop_log!("✅ OTP verified and/or credentials stored");
     Ok(())
 }
 

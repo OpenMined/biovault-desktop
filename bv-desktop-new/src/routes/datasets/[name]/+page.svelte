@@ -35,6 +35,7 @@
 	import FileIcon from '@lucide/svelte/icons/file'
 	import FolderIcon from '@lucide/svelte/icons/folder'
 	import SearchIcon from '@lucide/svelte/icons/search'
+	import SendIcon from '@lucide/svelte/icons/send'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left'
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
@@ -47,6 +48,8 @@
 	import AssetMockCell from './asset-mock-cell.svelte'
 	import AssetMockButton from './asset-mock-button.svelte'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
+	import RequestRunDialog from '$lib/components/request-run-dialog.svelte'
+	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 
 	interface Asset {
 		rowId: string
@@ -101,6 +104,11 @@
 	let error = $state<string | null>(null)
 	let isPublished = $state(false)
 	let isNetwork = $state(false)
+	let author = $state('')
+	let requestRunDialogOpen = $state(false)
+
+	const currentUserEmail = $derived(syftboxAuthStore.email || '')
+	const canRequestRun = $derived(isNetwork && author && author.toLowerCase() !== currentUserEmail.toLowerCase())
 
 	// Form state
 	let currentName = $state($page.params.name)
@@ -343,6 +351,7 @@
 			originalVersion = version
 
 			isNetwork = dataset.extra?.is_network === true
+			author = dataset.author || ''
 
 			await checkPublishStatus()
 		} catch (e) {
@@ -875,8 +884,15 @@
 					</div>
 				</div>
 
-			<div class="flex items-center gap-2">
-				{#if savingAssets}
+					<div class="flex items-center gap-2">
+						{#if canRequestRun}
+							<Button variant="outline" size="sm" onclick={() => (requestRunDialogOpen = true)}>
+								<SendIcon class="size-4 mr-2" />
+								Request Run
+							</Button>
+						{/if}
+
+						{#if savingAssets}
 					<Badge variant="secondary" class="gap-1 px-2">
 						<Loader2Icon class="size-3 animate-spin" />
 						Saving...
@@ -1388,3 +1404,9 @@
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>
+
+<RequestRunDialog
+	bind:open={requestRunDialogOpen}
+	datasetName={datasetName}
+	authorEmail={author}
+/>

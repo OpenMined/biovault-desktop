@@ -85,11 +85,31 @@
 
 		try {
 			await syftboxAuthStore.requestOtp(email.trim())
-			step = 'otp'
+			
+			if (!syftboxAuthStore.isAuthEnabled) {
+				// Bypass OTP step in dev/test mode
+				console.log('Auth disabled, performing instant bypass...')
+				await syftboxAuthStore.submitOtp(email.trim(), '00000000')
+				
+				step = 'success'
+				setTimeout(() => {
+					handleOpenChange(false)
+				}, 1500)
+			} else {
+				step = 'otp'
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to send verification code'
+			console.error('handleRequestOtp error:', e)
+			error = e instanceof Error ? e.message : String(e)
+			// Special handling for lock errors to make them more user-friendly
+			if (error.includes('lock') || error.includes('acquire')) {
+				error = 'SyftBox is busy (lock error). Try again in a moment or check if SyftBox is already running.'
+			}
 		} finally {
-			loading = false
+			// Don't reset loading if we're moving to success or otp (they handle their own loading)
+			if (error || (syftboxAuthStore.isAuthEnabled && step === 'email')) {
+				loading = false
+			}
 		}
 	}
 
@@ -132,6 +152,7 @@
 				}, 1500)
 			}
 		} catch (e) {
+			console.error('handleSubmitOtp error:', e)
 			error = e instanceof Error ? e.message : 'Invalid verification code'
 			otp = ''
 		} finally {

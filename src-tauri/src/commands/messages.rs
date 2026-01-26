@@ -7,7 +7,9 @@ use biovault::flow_spec::FlowFile;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
+use biovault::syftbox::syc;
 use biovault::types::SyftPermissions;
+use syftbox_sdk;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -127,6 +129,62 @@ fn copy_pipeline_folder(
                 )
             })?;
     }
+
+    Ok(())
+}
+
+fn ensure_recipient_bundle_cached(
+    config: &biovault::config::Config,
+    recipient: &str,
+) -> Result<(), String> {
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to resolve SyftBox data dir: {}", e))?;
+
+    // Resolve vault path (local vault for encryption keys)
+    let vault_path = biovault::config::resolve_syc_vault_path()
+        .map_err(|e| format!("SYC_VAULT is required: {e}"))?;
+
+    let bundles_dir = vault_path.join("bundles");
+    let slug = syftbox_sdk::sanitize_identity(recipient);
+    let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
+
+    // If it already exists, we assume it's valid for now
+    if local_bundle_path.exists() {
+        return Ok(());
+    }
+
+    // Try to import from recipient's datasite if visible locally
+    let datasites_root = if data_dir.file_name().map_or(false, |n| n == "datasites") {
+        data_dir
+    } else {
+        data_dir.join("datasites")
+    };
+
+    let did_path = datasites_root
+        .join(recipient)
+        .join("public")
+        .join("crypto")
+        .join("did.json");
+
+    if !did_path.exists() {
+        return Err(format!(
+            "Recipient {} public key not found locally. They must be online and syncing for you to send a pipeline request.",
+            recipient
+        ));
+    }
+
+    // Double check the DID is valid before caching
+    syc::parse_public_bundle_file(&did_path)
+        .map_err(|e| format!("Invalid DID for {}: {}", recipient, e))?;
+
+    if !bundles_dir.exists() {
+        std::fs::create_dir_all(&bundles_dir)
+            .map_err(|e| format!("failed to create bundles directory: {e}"))?;
+    }
+
+    std::fs::copy(&did_path, &local_bundle_path)
+        .map_err(|e| format!("failed to cache recipient bundle: {e}"))?;
 
     Ok(())
 }
@@ -896,6 +954,9 @@ pub fn send_pipeline_request(
     let (db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
     let storage = syftbox_storage(&config)?;
+
+    // Ensure recipient bundle is cached for encryption
+    ensure_recipient_bundle_cached(&config, &recipient)?;
 
     // Look up the pipeline path from the database
     let biovault_db = biovault::data::BioVaultDb::new()

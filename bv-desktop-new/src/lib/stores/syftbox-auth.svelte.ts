@@ -20,6 +20,7 @@ interface SyftBoxAuthState {
 	email: string
 	isOnline: boolean
 	isTogglingOnline: boolean
+	isAuthEnabled: boolean
 }
 
 let state = $state<SyftBoxAuthState>({
@@ -27,7 +28,8 @@ let state = $state<SyftBoxAuthState>({
 	isChecking: true,
 	email: '',
 	isOnline: false,
-	isTogglingOnline: false
+	isTogglingOnline: false,
+	isAuthEnabled: true
 })
 
 // Cooldown to prevent rapid toggling (1 second)
@@ -59,14 +61,36 @@ export const syftboxAuthStore = {
 	get isTogglingOnline() {
 		return state.isTogglingOnline
 	},
+	get isAuthEnabled() {
+		return state.isAuthEnabled
+	},
+
+	async checkAuthEnabled() {
+		try {
+			const authEnabledVar = await invoke<string | null>('get_env_var', {
+				key: 'SYFTBOX_AUTH_ENABLED'
+			})
+			if (authEnabledVar === '0' || authEnabledVar === 'false') {
+				state.isAuthEnabled = false
+			} else {
+				state.isAuthEnabled = true
+			}
+		} catch (e) {
+			console.warn('Failed to check SYFTBOX_AUTH_ENABLED:', e)
+		}
+	},
 
 	async checkAuth() {
 		state.isChecking = true
+
+		// Check if auth is disabled via environment variable
+		await this.checkAuthEnabled()
+
 		try {
 			const isAuth = await invoke<boolean>('check_syftbox_auth')
 			state.isAuthenticated = isAuth
 
-			if (isAuth) {
+			if (state.isAuthenticated) {
 				// Get the email and preferences from settings
 				const settings = await invoke<{ email?: string; syftbox_prefer_online?: boolean }>(
 					'get_settings'
@@ -103,6 +127,9 @@ export const syftboxAuthStore = {
 	},
 
 	async requestOtp(email: string, serverUrl?: string): Promise<void> {
+		// Re-check bypass status immediately before request
+		await this.checkAuthEnabled()
+
 		await invoke('syftbox_request_otp', {
 			email,
 			server_url: serverUrl || null
@@ -110,11 +137,19 @@ export const syftboxAuthStore = {
 	},
 
 	async submitOtp(email: string, otp: string, serverUrl?: string): Promise<void> {
-		await invoke('syftbox_submit_otp', {
-			code: otp,
-			email,
-			server_url: serverUrl || null
-		})
+		// Re-check bypass status immediately before submit
+		await this.checkAuthEnabled()
+
+		try {
+			await invoke('syftbox_submit_otp', {
+				code: otp,
+				email,
+				server_url: serverUrl || null
+			})
+		} catch (e) {
+			console.error('Backend syftbox_submit_otp failed:', e)
+			throw e
+		}
 
 		// Update profile email to match the signed-in account
 		try {
