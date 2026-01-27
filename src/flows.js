@@ -6489,7 +6489,7 @@ steps:${
 							for (const entry of asset.mock_entries) {
 								if (entry?.url) {
 									mockEntryUrls.push(entry.url)
-									mockEntryParticipants.push(entry.participant_id || '')
+									mockEntryParticipants.push(String(entry.participant_id || ''))
 								}
 							}
 						}
@@ -6733,8 +6733,8 @@ steps:${
 						for (const mockEntry of mockRef.entries) {
 							if (mockEntry.url) {
 								mockUrls.push(mockEntry.url)
-								// Keep participant_ids aligned with urls
-								mockParticipantIds.push(mockEntry.participant_id || '')
+								// Keep participant_ids aligned with urls (coerce to string)
+								mockParticipantIds.push(String(mockEntry.participant_id || ''))
 							}
 						}
 					} else if (mockRef?.url) {
@@ -6755,11 +6755,11 @@ steps:${
 							// Private entries can have url (for remote lookup) or file_path (local path)
 							if (privEntry.url) {
 								realUrls.push(privEntry.url)
-								realParticipantIds.push(privEntry.participant_id || '')
+								realParticipantIds.push(String(privEntry.participant_id || ''))
 							} else if (privEntry.file_path) {
 								// For local private files, construct a file:// URL or use path directly
 								realUrls.push(`file://${privEntry.file_path}`)
-								realParticipantIds.push(privEntry.participant_id || '')
+								realParticipantIds.push(String(privEntry.participant_id || ''))
 							}
 						}
 					} else if (privateRef?.url) {

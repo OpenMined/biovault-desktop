@@ -901,7 +901,7 @@ pub async fn run_flow(
     input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
     selection: Option<FlowRunSelection>,
-) -> Result<FlowRun, String> {
+) -> Result<Run, String> {
     run_flow_impl(
         state,
         Some(window),
@@ -909,6 +909,7 @@ pub async fn run_flow(
         input_overrides,
         results_dir,
         selection,
+        None,
     )
     .await
 }
@@ -1516,7 +1517,7 @@ pub async fn run_flow_impl(
         if let Some(run_id) = run_id_override.as_ref() {
             std::env::set_var("BIOVAULT_FLOW_RUN_ID", run_id);
             append_flow_log(
-                &window_clone,
+                window_clone.as_ref(),
                 &log_path_clone,
                 &format!("🔧 Using BIOVAULT_FLOW_RUN_ID={}", run_id),
             );
