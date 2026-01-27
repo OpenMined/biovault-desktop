@@ -333,26 +333,31 @@ jobs:
         working-directory: src-tauri
 
       - name: Install maturin (uv)
-        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python maturin
       - name: Install maturin (uv, Windows)
-        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
         shell: pwsh
         run: |
           uv venv .venv
           uv pip install --python .venv\Scripts\python.exe maturin
 
       - name: Pre-build syftbox-sdk wheel
-        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
         run: |
           cd syftbox-sdk/python
-          ../../.venv/bin/maturin build --release
+          "${{ github.workspace }}/.venv/bin/maturin" build --release
       - name: Pre-build syftbox-sdk wheel (Windows)
-        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
         shell: pwsh
-        run: ..\..\..\.venv\Scripts\maturin.exe build --release
+        run: |
+          $maturin = Join-Path $env:GITHUB_WORKSPACE ".venv\\Scripts\\maturin.exe"
+          if (-not (Test-Path $maturin)) {
+            throw "maturin not found at $maturin"
+          }
+          & $maturin build --release
         working-directory: syftbox-sdk/python
 
       - name: Setup Podman (Windows)
@@ -471,7 +476,7 @@ jobs:
             artifacts/
 
   profiles-e2e:
-    name: Profiles E2E (real backend)
+    name: profiles-e2e (linux-x86_64)
     runs-on: namespace-profile-linux-medium
     env:
       BV_SKIP_SYQURE: "1"
@@ -631,14 +636,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results
+          name: profiles-e2e-test-results-linux-x86_64
           path: |
             logs/
             test-results/
             artifacts/
 
   profiles-e2e-macos:
-    name: Profiles E2E (real backend, macOS)
+    name: profiles-e2e (macos-arm64)
     runs-on: namespace-profile-mac-medium
     env:
       BV_SKIP_SYQURE: "1"
@@ -775,14 +780,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results-macos
+          name: profiles-e2e-test-results-macos-arm64
           path: |
             logs/
             test-results/
             artifacts/
 
   profiles-e2e-windows:
-    name: Profiles E2E (real backend, Windows)
+    name: profiles-e2e (windows-x86_64)
     runs-on: namespace-profile-windows-medium
     defaults:
       run:
@@ -921,7 +926,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results-windows
+          name: profiles-e2e-test-results-windows-x86_64
           path: |
             logs/
             test-results/
