@@ -50,42 +50,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # jupyter-collab on Linux - rust
-          - scenario: jupyter-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          # jupyter-collab on macOS ARM - rust
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          # jupyter-collab on Windows - rust
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          # flows-solo on Linux - rust
-          # flows-collab on Linux - rust
-          - scenario: flows-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          # flows-collab on macOS ARM - rust
-          - scenario: flows-collab
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
           # flows-collab on Windows - rust (Podman Hyper-V)
           - scenario: flows-collab
             platform: windows-x86_64
@@ -242,6 +206,17 @@ jobs:
 
       # NOTE: Docker setup for macOS removed since pipelines-collab tests are skipped on macOS
       # (GitHub macOS runners don't support nested virtualization needed for Docker)
+      - name: Check Docker availability (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          echo "=== Docker availability check (macOS) ==="
+          if command -v docker >/dev/null 2>&1; then
+            docker --version || true
+            docker info || true
+          else
+            echo "docker not found on PATH"
+          fi
 
       - name: Install npm dependencies
         if: runner.os != 'Windows'

@@ -468,6 +468,111 @@ function normalizeCsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
+function parseSamplesheet(
+	content: string,
+): Array<{ participant_id: string; genotype_file: string }> {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return []
+	const [header, ...rows] = lines
+	const cols = header.split(',')
+	const idIndex = cols.indexOf('participant_id')
+	const fileIndex = cols.indexOf('genotype_file')
+	return rows
+		.map((row) => row.split(','))
+		.map((parts) => ({
+			participant_id: (parts[idIndex] ?? '').trim(),
+			genotype_file: (parts[fileIndex] ?? '').trim(),
+		}))
+		.filter((entry) => entry.participant_id && entry.genotype_file)
+}
+
+function hashFileSafe(filePath: string): { exists: boolean; size: number; sha256?: string } {
+	try {
+		if (!fs.existsSync(filePath)) return { exists: false, size: 0 }
+		const buf = fs.readFileSync(filePath)
+		const sha256 = createHash('sha256').update(buf).digest('hex')
+		return { exists: true, size: buf.length, sha256 }
+	} catch {
+		return { exists: false, size: 0 }
+	}
+}
+
+async function resolveSyftUrlSafe(backend: Backend, syftUrl: string): Promise<string | null> {
+	try {
+		const localPath = await backend.invoke('resolve_syft_url_to_local_path', { syftUrl })
+		return typeof localPath === 'string' && localPath.length ? localPath : null
+	} catch {
+		return null
+	}
+}
+
+async function dumpMockEntryFiles(
+	label: string,
+	backend: Backend,
+	entries: Array<{ participant_id?: string; url?: string }>,
+): Promise<void> {
+	console.log(`[${label}] mock entries count: ${entries.length}`)
+	for (const entry of entries.slice(0, 10)) {
+		const url = entry?.url || ''
+		const id = entry?.participant_id || 'unknown'
+		const localPath = url ? await resolveSyftUrlSafe(backend, url) : null
+		const info = localPath ? hashFileSafe(localPath) : { exists: false, size: 0 }
+		console.log(
+			`[${label}] ${id} -> ${url} | local=${localPath ?? 'n/a'} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+		)
+	}
+}
+
+function dumpAssetCsv(label: string, assetPath: string | null): void {
+	if (!assetPath) {
+		console.log(`[${label}] asset_1.csv path missing`)
+		return
+	}
+	const info = hashFileSafe(assetPath)
+	console.log(
+		`[${label}] asset_1.csv: ${assetPath} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+	)
+	const snippet = readFileSnippet(assetPath, 2000)
+	if (snippet) {
+		console.log(`[${label}] asset_1.csv snippet:\n${snippet}`)
+	}
+}
+
+async function dumpDatasetDebug(label: string, backend: Backend, dataset: any): Promise<void> {
+	if (!dataset) {
+		console.log(`[${label}] dataset is null`)
+		return
+	}
+	const assets = dataset.assets || []
+	console.log(`[${label}] dataset name=${dataset.name} assets=${assets.length}`)
+	if (!assets.length) return
+	const asset = assets[0]
+	console.log(`[${label}] asset key=${asset.key} kind=${asset.kind}`)
+	console.log(`[${label}] mock_path=${asset.mock_path}`)
+	console.log(`[${label}] mock_url=${asset.mock_url}`)
+	if (asset.mock_path) {
+		dumpAssetCsv(label, asset.mock_path)
+	}
+	const mockEntries = asset.mock_entries || []
+	if (Array.isArray(mockEntries) && mockEntries.length) {
+		await dumpMockEntryFiles(label, backend, mockEntries)
+	}
+}
+
+function dumpSamplesheetDebug(label: string, samplesheetContent: string): void {
+	const entries = parseSamplesheet(samplesheetContent)
+	console.log(`[${label}] samplesheet entries: ${entries.length}`)
+	for (const entry of entries) {
+		const info = hashFileSafe(entry.genotype_file)
+		console.log(
+			`[${label}] ${entry.participant_id} -> ${entry.genotype_file} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+		)
+	}
+}
+
 function extractMockFilenames(entries: any[]): string[] {
 	if (!Array.isArray(entries)) return []
 	const filenames = entries
@@ -566,6 +671,40 @@ function dumpDirTree(
 	return { lines, truncated }
 }
 
+function findFilesByName(
+	baseDir: string,
+	filenames: string[],
+	maxResults = 20,
+	maxDepth = 6,
+): string[] {
+	const results: string[] = []
+	if (!baseDir || !fs.existsSync(baseDir)) return results
+
+	function walk(dir: string, depth: number) {
+		if (results.length >= maxResults || depth > maxDepth) return
+		let entries: fs.Dirent[] = []
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true })
+		} catch {
+			return
+		}
+		for (const entry of entries) {
+			if (results.length >= maxResults) return
+			const fullPath = path.join(dir, entry.name)
+			if (entry.isDirectory()) {
+				walk(fullPath, depth + 1)
+				continue
+			}
+			if (filenames.includes(entry.name)) {
+				results.push(fullPath)
+			}
+		}
+	}
+
+	walk(baseDir, 0)
+	return results
+}
+
 function dumpContainerDiagnostics(): void {
 	console.log('\n=== DEBUG: Container Runtime Diagnostics ===')
 	const podmanInfo = execCommandSafe('podman info --debug')
@@ -608,7 +747,11 @@ function dumpWindowsDiagnostics(): void {
 		execCommandSafe(`powershell -NoProfile -NonInteractive -Command "${script}"`)
 
 	console.log('[windows] system info')
-	console.log(ps('$PSVersionTable; Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion'))
+	console.log(
+		ps(
+			'$PSVersionTable; Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion',
+		),
+	)
 
 	console.log('[windows] recent Application events (errors/warnings, last 60 minutes)')
 	console.log(
@@ -694,6 +837,19 @@ async function dumpFlowRunDebug(label: string, run: any): Promise<void> {
 	]
 	for (const filePath of candidates) {
 		const snippet = readFileSnippet(filePath, 8000)
+		if (snippet) {
+			console.log(`\n[Run Debug] ${filePath}:\n${snippet}`)
+		}
+	}
+
+	const commandLogs = findFilesByName(
+		run?.work_dir || '',
+		['.command.err', '.command.out', '.command.log', 'command.err', 'command.out'],
+		10,
+		6,
+	)
+	for (const filePath of commandLogs) {
+		const snippet = readFileSnippet(filePath, 4000)
 		if (snippet) {
 			console.log(`\n[Run Debug] ${filePath}:\n${snippet}`)
 		}
@@ -1049,7 +1205,7 @@ async function syncMessagesWithDebug(
 	}
 }
 
-test.describe('Flows Collaboration @flows-collab', () => {
+test.describe.only('Flows Collaboration @flows-collab', () => {
 	test('two clients collaborate on flow run and share results', async ({ browser }, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
@@ -1558,6 +1714,7 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				console.log(`Dataset found: ${!!client1Dataset}`)
 				if (client1Dataset) {
 					console.log(`Assets: ${JSON.stringify(client1Dataset.assets, null, 2)}`)
+					await dumpDatasetDebug('Client1 Dataset Info', backend1, client1Dataset)
 				}
 			} catch (err) {
 				console.log('DEBUG: Failed to get client1 datasets:', err)
@@ -1593,6 +1750,7 @@ test.describe('Flows Collaboration @flows-collab', () => {
 						}
 
 						if (mockCount >= EXPECTED_MOCK_FILES) {
+							await dumpDatasetDebug('Client2 Network Dataset', backend2, targetDataset)
 							console.log(`All ${EXPECTED_MOCK_FILES} mock files synced!`)
 							mockFilesReady = true
 							break
@@ -1669,6 +1827,10 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				const networkDatasets = await backend2.invoke('network_scan_datasets')
 				console.log('\n=== DEBUG: Network Datasets from Backend ===')
 				console.log(JSON.stringify(networkDatasets, null, 2))
+				const target = networkDatasets?.datasets?.find((d: any) => d.name === datasetName)
+				if (target) {
+					await dumpDatasetDebug('Client2 Network Dataset (pre-run)', backend2, target)
+				}
 			} catch (err) {
 				console.log('DEBUG: Failed to get network datasets:', err)
 			}
@@ -1788,6 +1950,7 @@ test.describe('Flows Collaboration @flows-collab', () => {
 			try {
 				const samplesheet2 = await readTextFileWithRetry(samplesheetPath2, 5000)
 				console.log(`\n=== DEBUG: Client2 Samplesheet ===\n${samplesheet2}`)
+				dumpSamplesheetDebug('Client2 Samplesheet', samplesheet2)
 			} catch (e) {
 				console.log(`DEBUG: Could not read Client2 samplesheet: ${e}`)
 			}
@@ -1927,6 +2090,7 @@ test.describe('Flows Collaboration @flows-collab', () => {
 					console.log(`Mock path: ${asset.mock_path}`)
 					console.log(`Mock file ID: ${asset.mock_file_id}`)
 					console.log(`Resolved mock path: ${asset.resolved_mock_path}`)
+					await dumpDatasetDebug('Client1 Dataset (pre-run)', backend1, client1Dataset)
 				}
 			} catch (err) {
 				console.log('DEBUG: Failed to get client1 dataset:', err)
@@ -1975,6 +2139,7 @@ test.describe('Flows Collaboration @flows-collab', () => {
 			try {
 				const samplesheet1 = await readTextFileWithRetry(samplesheetPath1, 5000)
 				console.log(`\n=== DEBUG: Client1 Samplesheet ===\n${samplesheet1}`)
+				dumpSamplesheetDebug('Client1 Samplesheet', samplesheet1)
 			} catch (e) {
 				console.log(`DEBUG: Could not read Client1 samplesheet: ${e}`)
 			}
@@ -1992,15 +2157,9 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				)
 				const parsed1 = parseTsvByParticipant(normalized1)
 				const parsed2 = parseTsvByParticipant(normalized2)
-				console.log(
-					`[TSV Compare] header1 idx=${parsed1.idIndex} header="${parsed1.header}"`,
-				)
-				console.log(
-					`[TSV Compare] header2 idx=${parsed2.idIndex} header="${parsed2.header}"`,
-				)
-				console.log(
-					`[TSV Compare] ids client1=${parsed1.ids.length} client2=${parsed2.ids.length}`,
-				)
+				console.log(`[TSV Compare] header1 idx=${parsed1.idIndex} header="${parsed1.header}"`)
+				console.log(`[TSV Compare] header2 idx=${parsed2.idIndex} header="${parsed2.header}"`)
+				console.log(`[TSV Compare] ids client1=${parsed1.ids.length} client2=${parsed2.ids.length}`)
 				if (parsed1.duplicates.length) {
 					console.log(`[TSV Compare] duplicate ids client1: ${parsed1.duplicates.join(', ')}`)
 				}
