@@ -1316,7 +1316,10 @@ fn whitelist_log_files(data_dir: &Path, results_root: &Path) -> Result<(), Strin
             continue;
         }
         let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default();
         if !ext.eq_ignore_ascii_case("log") {
             continue;
         }

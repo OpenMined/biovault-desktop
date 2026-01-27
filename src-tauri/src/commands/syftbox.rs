@@ -7,14 +7,16 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use syftbox_sdk::syftbox::control as syftctl;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
+static SUBSCRIPTION_DISCOVERY_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+static LAST_SUBSCRIPTION_404_LOG: AtomicU64 = AtomicU64::new(0);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -400,7 +402,24 @@ pub struct SyftBoxQueueStatus {
     pub sync: Option<SyftBoxSyncStatus>,
     pub uploads: Option<Vec<SyftBoxUploadInfo>>,
     pub status: Option<SyftBoxStatus>,
+    pub latency: Option<SyftBoxLatencyStats>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SyftBoxLatencyStats {
+    #[serde(default, rename = "serverUrl")]
+    pub server_url: Option<String>,
+    #[serde(default)]
+    pub samples: Vec<u64>,
+    #[serde(default, rename = "avgMs")]
+    pub avg_ms: u64,
+    #[serde(default, rename = "minMs")]
+    pub min_ms: u64,
+    #[serde(default, rename = "maxMs")]
+    pub max_ms: u64,
+    #[serde(default, rename = "lastPingMs")]
+    pub last_ping_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1185,6 +1204,8 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
     let mut data_dir: Option<String> = None;
     let mut data_dir_error: Option<String> = None;
     let mut log_path: Option<String> = None;
+    let mut email: Option<String> = None;
+    let mut server_url: Option<String> = None;
 
     if let Some(cfg) = config.as_ref() {
         match cfg.get_syftbox_data_dir() {
@@ -1193,6 +1214,21 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
         }
         if let Ok(runtime) = cfg.to_syftbox_runtime_config() {
             log_path = resolve_syftbox_log_path(&runtime);
+        }
+        if !cfg.email.trim().is_empty() {
+            email = Some(cfg.email.clone());
+        }
+        if let Some(creds) = cfg.syftbox_credentials.as_ref() {
+            if let Some(creds_email) = creds.email.as_ref() {
+                if !creds_email.trim().is_empty() {
+                    email = Some(creds_email.clone());
+                }
+            }
+            if let Some(url) = creds.server_url.as_ref() {
+                if !url.trim().is_empty() {
+                    server_url = Some(url.clone());
+                }
+            }
         }
     } else if let Ok(env_dir) = std::env::var("SYFTBOX_DATA_DIR") {
         data_dir = Some(env_dir);
@@ -1235,12 +1271,31 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
     if log_path.is_none() {
         log_path = fallback_log_path();
     }
+    if server_url.is_none() {
+        if let Ok(raw) = std::fs::read_to_string(&config_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(url) = val.get("server_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        server_url = Some(url.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ref addr) = server_url {
+        crate::desktop_log!("  Server URL: {}", addr);
+    }
+    if let Some(ref email_val) = email {
+        crate::desktop_log!("  Email: {}", email_val);
+    }
 
     Ok(SyftBoxConfigInfo {
         is_authenticated,
         config_path,
         has_access_token,
         has_refresh_token,
+        email,
+        server_url,
         data_dir,
         data_dir_error,
         log_path,
@@ -1608,6 +1663,7 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
                 sync: None,
                 uploads: None,
                 status: None,
+                latency: None,
                 error: Some(err),
             });
         }
@@ -1620,6 +1676,7 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
     let mut sync: Option<SyftBoxSyncStatus> = None;
     let mut uploads: Option<Vec<SyftBoxUploadInfo>> = None;
     let mut status: Option<SyftBoxStatus> = None;
+    let mut latency: Option<SyftBoxLatencyStats> = None;
     let mut errors: Vec<String> = Vec::new();
 
     match cp_get::<SyftBoxSyncStatus>(
@@ -1659,6 +1716,23 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
         }
         Err(e) => {
             crate::desktop_log!("⚠️ syftbox_queue_status status: {}", e);
+            errors.push(e);
+        }
+    }
+
+    match cp_get::<SyftBoxLatencyStats>(
+        &client,
+        &cfg.client_url,
+        "/v1/stats/latency",
+        &cfg.client_token,
+    )
+    .await
+    {
+        Ok(s) => {
+            latency = Some(s);
+        }
+        Err(e) => {
+            crate::desktop_log!("⚠️ syftbox_queue_status latency: {}", e);
             errors.push(e);
         }
     }
@@ -1704,6 +1778,7 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
         sync,
         uploads,
         status,
+        latency,
         error: if errors.is_empty() {
             None
         } else {
@@ -1714,19 +1789,43 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
 
 #[tauri::command]
 pub async fn syftbox_subscriptions_discovery() -> Result<Vec<SyftBoxDiscoveryFile>, String> {
+    if SUBSCRIPTION_DISCOVERY_UNAVAILABLE.load(Ordering::Relaxed) {
+        return Ok(Vec::new());
+    }
     let cfg = load_syftbox_client_config()?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let resp: SyftBoxDiscoveryResponse = cp_get(
+    let resp: SyftBoxDiscoveryResponse = match cp_get(
         &client,
         &cfg.client_url,
         "/v1/subscriptions/discovery/files",
         &cfg.client_token,
     )
-    .await?;
+    .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            if e.contains("HTTP 404") {
+                SUBSCRIPTION_DISCOVERY_UNAVAILABLE.store(true, Ordering::Relaxed);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let last = LAST_SUBSCRIPTION_404_LOG.load(Ordering::Relaxed);
+                if now.saturating_sub(last) > 60 {
+                    LAST_SUBSCRIPTION_404_LOG.store(now, Ordering::Relaxed);
+                    crate::desktop_log!(
+                        "⚠️ syftbox_subscriptions_discovery unsupported (404). Disabling further checks."
+                    );
+                }
+                return Ok(Vec::new());
+            }
+            return Err(e);
+        }
+    };
 
     Ok(resp.files)
 }

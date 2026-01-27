@@ -293,7 +293,7 @@ pub async fn check_docker_running() -> Result<bool, String> {
             match cmd.status() {
                 Ok(status) => {
                     if status.success() {
-                        return true;
+                        return Ok(true);
                     }
                     last_err = Some(format!("'{} info' returned {}", bin, status));
                 }
@@ -305,12 +305,12 @@ pub async fn check_docker_running() -> Result<bool, String> {
         if let Some(err) = last_err {
             crate::desktop_log!("Container runtime check failed: {}", err);
         }
-        false
+        Ok(false)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?;
 
-    Ok(result)
+    result
 }
 
 #[tauri::command]

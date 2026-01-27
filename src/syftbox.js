@@ -216,6 +216,7 @@ export function createSyftBoxModule({
 		wsConnected: false,
 		lastSuccessfulCheck: null, // timestamp of last successful status check
 		checkHistory: [], // Array of { timestamp, interval } for sparkline and average
+		latency: null, // Control plane latency stats (if available)
 	}
 	const CHECK_HISTORY_MAX = 60 // Keep last 60 check intervals (about 3 mins at 3s polling)
 	const MIN_CHECK_INTERVAL = 500 // Ignore intervals smaller than 500ms (likely anomalies)
@@ -715,8 +716,8 @@ export function createSyftBoxModule({
 			_status.daemonRunning = syftboxState.running || false
 			_status.mode = syftboxState.mode || 'Unknown'
 			_status.backend = syftboxState.backend || 'Unknown'
-			_status.serverUrl = configInfo.server_url || ''
-			_status.email = configInfo.email || ''
+			_status.serverUrl = configInfo.server_url || configInfo.serverUrl || _status.serverUrl || ''
+			_status.email = configInfo.email || _status.email || ''
 			_status.clientUrl = syftboxState.client_url || ''
 			_status.pid = syftboxState.pid || null
 			_status.txBytes = syftboxState.tx_bytes || 0
@@ -792,6 +793,7 @@ export function createSyftBoxModule({
 			// Get WebSocket connected status from backend (SyftBox client -> SyftBox server)
 			const runtime = queueStatus?.status?.runtime
 			const ws = runtime?.websocket
+			const latency = queueStatus?.latency
 
 			if (ws) {
 				// Handle both boolean and string values for connected
@@ -803,6 +805,10 @@ export function createSyftBoxModule({
 				// Got status but no websocket info - treat as connected if we got any response
 				// If we can reach the control plane, the daemon is running and likely connected
 				_status.wsConnected = true
+			}
+
+			if (latency) {
+				_status.latency = latency
 			}
 
 			// If we got a successful response from the control plane, we're at least running
@@ -1470,32 +1476,32 @@ export function createSyftBoxModule({
 		}
 
 		// Organize into sections (case-insensitive comparison for email matching)
-		const currentUser = _treeState.currentUserEmail?.toLowerCase() || ''
+		const currentUser = (_treeState.currentUserEmail || _status.email || '').toLowerCase()
 		const trusted = _treeState.trustedDatasites
+		const trustedNormalized = new Set(
+			Array.from(trusted)
+				.map((t) => (t || '').toLowerCase())
+				.filter(Boolean)
+				.filter((t) => (currentUser ? t !== currentUser : true)),
+		)
 
 		const yourFiles = rootNodes.filter((n) => n.name.toLowerCase() === currentUser)
 		const yourContacts = rootNodes.filter((n) => {
 			const nameLower = n.name.toLowerCase()
 			if (nameLower === currentUser) return false
 			// Check if trusted (case-insensitive)
-			for (const t of trusted) {
-				if (t.toLowerCase() === nameLower) return true
-			}
-			return false
+			return trustedNormalized.has(nameLower)
 		})
 		const theNetwork = rootNodes.filter((n) => {
 			const nameLower = n.name.toLowerCase()
 			if (nameLower === currentUser) return false
 			// Check if NOT trusted
-			for (const t of trusted) {
-				if (t.toLowerCase() === nameLower) return false
-			}
-			return true
+			return !trustedNormalized.has(nameLower)
 		})
 
 		console.log('[SyftBox] Tree sections:', {
 			currentUser,
-			trustedSet: Array.from(trusted),
+			trustedSet: Array.from(trustedNormalized),
 			rootNodeNames: rootNodes.map((n) => n.name),
 			yourFiles: yourFiles.map((n) => n.name),
 			yourContacts: yourContacts.map((n) => n.name),
@@ -1600,7 +1606,12 @@ export function createSyftBoxModule({
 		// Check if this is a root-level datasite that we've subscribed to (trusted)
 		const isRootDatasite = depth === 0 && node.is_dir
 		let isTrusted = false
-		if (isRootDatasite) {
+
+		// Check if this node is in the user's own datasite (no checkbox needed)
+		const currentUser = _treeState.currentUserEmail?.toLowerCase() || ''
+		const pathRoot = node.path.split('/')[0].toLowerCase()
+		const isOwnDatasite = currentUser && pathRoot === currentUser
+		if (isRootDatasite && !isOwnDatasite) {
 			const nameLower = node.name.toLowerCase()
 			for (const t of _treeState.trustedDatasites) {
 				if (t.toLowerCase() === nameLower) {
@@ -1609,11 +1620,6 @@ export function createSyftBoxModule({
 				}
 			}
 		}
-
-		// Check if this node is in the user's own datasite (no checkbox needed)
-		const currentUser = _treeState.currentUserEmail?.toLowerCase() || ''
-		const pathRoot = node.path.split('/')[0].toLowerCase()
-		const isOwnDatasite = currentUser && pathRoot === currentUser
 
 		// Essential paths show a lock icon, own datasite shows nothing, others show checkbox
 		let syncControl = ''
@@ -2033,7 +2039,8 @@ export function createSyftBoxModule({
 				els.lastSync.textContent = text || 'checking...'
 				els.lastSync.classList.toggle('recent', Date.now() - _status.lastSuccessfulCheck < 10000)
 				els.lastSync.classList.add('clickable')
-				els.lastSync.title = `Click to show ${_checkDisplayMode === 'avg' ? 'last' : 'average'} interval`
+				const sourceLabel = stats.source === 'latency' ? 'latency' : 'interval'
+				els.lastSync.title = `Click to show ${_checkDisplayMode === 'avg' ? 'last' : 'average'} ${sourceLabel}`
 				// Bind click handler if not already bound
 				if (!els.lastSync.dataset.bound) {
 					els.lastSync.dataset.bound = 'true'
@@ -2089,6 +2096,31 @@ export function createSyftBoxModule({
 	}
 
 	function getCheckStats() {
+		const latency = _status.latency
+		if (latency && Array.isArray(latency.samples) && latency.samples.length > 0) {
+			const samples = latency.samples
+			const avg =
+				typeof latency.avgMs === 'number' && latency.avgMs > 0
+					? latency.avgMs
+					: Math.round(samples.reduce((acc, s) => acc + s, 0) / samples.length)
+			const last = samples[samples.length - 1] || 0
+			const recent = samples.slice(-20)
+			if (recent.length < 2) {
+				return { avg, last, sparkline: '', source: 'latency' }
+			}
+			const min = Math.min(...recent)
+			const max = Math.max(...recent)
+			const range = max - min || 1
+			const blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+			const sparkline = recent
+				.map((v) => {
+					const idx = Math.min(7, Math.floor(((v - min) / range) * 7))
+					return blocks[idx]
+				})
+				.join('')
+			return { avg, last, sparkline, source: 'latency' }
+		}
+
 		const history = _status.checkHistory
 		if (history.length === 0) return { avg: 0, last: 0, sparkline: '' }
 
@@ -2118,7 +2150,7 @@ export function createSyftBoxModule({
 			})
 			.join('')
 
-		return { avg, last, sparkline }
+		return { avg, last, sparkline, source: 'interval' }
 	}
 
 	async function refreshTrustedContacts() {
@@ -2126,7 +2158,10 @@ export function createSyftBoxModule({
 			// Get contacts from vault (imported keys = trusted)
 			const contacts = await invoke('key_list_contacts', { currentEmail: _status.email })
 			_treeState.trustedDatasites.clear()
+			const selfId = (_treeState.currentUserEmail || _status.email || '').toLowerCase()
 			for (const contact of contacts) {
+				const identity = (contact.identity || '').toLowerCase()
+				if (identity && identity === selfId) continue
 				_treeState.trustedDatasites.add(contact.identity)
 			}
 			console.log(
