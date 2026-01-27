@@ -1173,6 +1173,10 @@ pub fn send_flow_request_results(
         allowed_rel_paths.as_ref(),
     )?;
 
+    if let Err(err) = whitelist_log_files(&data_dir, &results_dest) {
+        crate::desktop_log!("⚠️ Failed to whitelist shared log files: {}", err);
+    }
+
     let mut files = Vec::new();
     for entry in WalkDir::new(&results_dest)
         .min_depth(1)
@@ -1296,6 +1300,75 @@ fn normalize_syft_url(value: &str) -> String {
 
 fn normalize_path_for_syft_url(value: &str) -> String {
     value.replace('\\', "/").trim_start_matches('/').to_string()
+}
+
+fn whitelist_log_files(data_dir: &Path, results_root: &Path) -> Result<(), String> {
+    let datasites_root = data_dir.join("datasites");
+    let mut patterns: Vec<String> = Vec::new();
+
+    for entry in WalkDir::new(results_root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+        if !ext.eq_ignore_ascii_case("log") {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(&datasites_root)
+            .map_err(|e| format!("Failed to resolve log path: {}", e))?;
+        let rel_str = normalize_path_for_syft_url(&rel.to_string_lossy());
+        if !rel_str.is_empty() {
+            patterns.push(format!("!{}", rel_str));
+        }
+    }
+
+    if patterns.is_empty() {
+        return Ok(());
+    }
+
+    let syftignore_path = data_dir.join(".syftignore");
+    let mut existing = read_ignore_patterns(&syftignore_path);
+    let mut changed = false;
+    for pattern in patterns {
+        if !existing.contains(&pattern) {
+            existing.push(pattern);
+            changed = true;
+        }
+    }
+
+    if changed {
+        write_ignore_patterns(&syftignore_path, &existing)?;
+    }
+
+    Ok(())
+}
+
+fn read_ignore_patterns(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .map(|content| {
+            content
+                .lines()
+                .map(|line| line.trim_end().to_string())
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_ignore_patterns(path: &Path, patterns: &[String]) -> Result<(), String> {
+    let mut content = patterns.join("\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    fs::write(path, content).map_err(|e| format!("Failed to write syftignore: {}", e))
 }
 
 #[derive(serde::Deserialize)]
