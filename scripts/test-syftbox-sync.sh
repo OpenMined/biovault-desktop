@@ -200,7 +200,8 @@ create_syftignore() {
 
 # Essential BioVault paths (whitelisted)
 !*/public/crypto/did.json
-!*/public/biovault/datasets/*.yaml
+!*/public/biovault/datasets.yaml
+!*/public/biovault/datasets/*/dataset.yaml
 !*/app_data/biovault/*.yaml
 !**/syft.pub.yaml
 
@@ -260,7 +261,8 @@ print_instructions() {
     echo ""
     echo "3. Essential paths (always synced, checkbox locked):"
     echo "   - */public/crypto/did.json"
-    echo "   - */public/biovault/datasets/*.yaml"
+    echo "   - */public/biovault/datasets.yaml"
+    echo "   - */public/biovault/datasets/*/dataset.yaml"
     echo "   - */app_data/biovault/*.yaml"
     echo "   - **/syft.pub.yaml"
     echo ""

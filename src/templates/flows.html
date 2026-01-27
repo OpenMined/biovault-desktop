@@ -3,13 +3,13 @@
 	<header class="page-header">
 		<div class="page-header-left">
 			<div class="page-header-title-row">
-				<h1 class="page-title">Pipelines</h1>
+				<h1 class="page-title">Flows</h1>
 			</div>
-			<p class="page-subtitle">Multi-step workflows and reusable computational projects</p>
+			<p class="page-subtitle">Multi-step workflows and reusable computational modules</p>
 		</div>
 		<div class="page-header-right">
 			<div class="page-header-actions">
-				<button id="create-pipeline-btn" class="btn-secondary">
+				<button id="create-flow-btn" class="btn-secondary">
 					<svg
 						width="14"
 						height="14"
@@ -21,9 +21,9 @@
 						<line x1="12" y1="5" x2="12" y2="19"></line>
 						<line x1="5" y1="12" x2="19" y2="12"></line>
 					</svg>
-					New Pipeline
+					New Flow
 				</button>
-				<button id="create-project-btn" class="btn-primary">
+				<button id="create-module-btn" class="btn-primary">
 					<svg
 						width="14"
 						height="14"
@@ -35,7 +35,7 @@
 						<line x1="12" y1="5" x2="12" y2="19"></line>
 						<line x1="5" y1="12" x2="19" y2="12"></line>
 					</svg>
-					New Project
+					New Module
 				</button>
 			</div>
 		</div>
@@ -43,9 +43,9 @@
 
 	<!-- Main Content -->
 	<div class="view-content">
-		<div class="pipelines-and-projects-container">
-			<!-- Pipelines Section -->
-			<div class="section-card pipelines-section">
+		<div class="flows-and-modules-container">
+			<!-- Flows Section -->
+			<div class="section-card flows-section">
 				<div class="section-header">
 					<div class="section-title">
 						<svg
@@ -60,10 +60,10 @@
 							<circle cx="19" cy="12" r="3" />
 							<line x1="8" y1="12" x2="16" y2="12" />
 						</svg>
-						<h3>Pipelines</h3>
-						<span class="section-count" id="pipelines-section-count">0</span>
+						<h3>Flows</h3>
+						<span class="section-count" id="flows-section-count">0</span>
 					</div>
-					<button id="create-pipeline-section-btn" class="btn-primary-small">
+					<button id="create-flow-section-btn" class="btn-primary-small">
 						<svg
 							width="12"
 							height="12"
@@ -75,19 +75,19 @@
 							<line x1="12" y1="5" x2="12" y2="19"></line>
 							<line x1="5" y1="12" x2="19" y2="12"></line>
 						</svg>
-						New Pipeline
+						New Flow
 					</button>
 				</div>
-				<div class="section-description">Multi-step workflows that chain projects together</div>
-				<div class="pipelines-list" id="pipelines-list">
+				<div class="section-description">Multi-step workflows that chain modules together</div>
+				<div class="flows-list" id="flows-list">
 					<p style="color: #666; padding: 20px; text-align: center">
-						No pipelines yet. Create one to get started.
+						No flows yet. Create one to get started.
 					</p>
 				</div>
 			</div>
 
-			<!-- Projects Section -->
-			<div class="section-card projects-section">
+			<!-- Modules Section -->
+			<div class="section-card modules-section">
 				<div class="section-header">
 					<div class="section-title">
 						<svg
@@ -101,8 +101,8 @@
 							<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
 							<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
 						</svg>
-						<h3>Projects</h3>
-						<span class="section-count" id="projects-section-count">0</span>
+						<h3>Modules</h3>
+						<span class="section-count" id="modules-section-count">0</span>
 					</div>
 					<div class="section-actions">
 						<button id="import-folder-btn" class="btn-secondary-small" title="Import from Folder">
@@ -120,7 +120,7 @@
 							</svg>
 							Import
 						</button>
-						<button id="create-project-section-btn" class="btn-primary-small">
+						<button id="create-module-section-btn" class="btn-primary-small">
 							<svg
 								width="12"
 								height="12"
@@ -132,38 +132,38 @@
 								<line x1="12" y1="5" x2="12" y2="19"></line>
 								<line x1="5" y1="12" x2="19" y2="12"></line>
 							</svg>
-							New Project
+							New Module
 						</button>
 					</div>
 				</div>
-				<div class="section-description">Reusable computational components used in pipelines</div>
+				<div class="section-description">Reusable computational components used in flows</div>
 				<div style="margin-top: 15px; margin-bottom: 15px">
 					<details class="import-details">
-						<summary>Import Project from URL</summary>
+						<summary>Import Module from URL</summary>
 						<div style="display: flex; gap: 10px; margin-top: 10px">
 							<input
 								type="text"
-								id="project-url-input"
-								placeholder="Paste GitHub URL to module.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/count-lines/module.yaml)"
+								id="module-url-input"
+								placeholder="Paste GitHub URL to module.yaml (e.g., https://github.com/OpenMined/biovault/blob/main/cli/examples/flow/count-lines/module.yaml)"
 								style="flex: 1"
 							/>
-							<button id="import-project-btn">Import</button>
+							<button id="import-module-btn">Import</button>
 						</div>
 					</details>
 				</div>
-				<div class="projects-list" id="projects-list">
-					<p style="color: #666; padding: 20px; text-align: center">No projects imported yet.</p>
+				<div class="modules-list" id="modules-list">
+					<p style="color: #666; padding: 20px; text-align: center">No modules imported yet.</p>
 				</div>
 			</div>
 		</div>
 
-		<!-- Create Project Modal -->
-		<div id="create-project-modal" class="project-create-overlay" style="display: none">
-			<div class="project-create-container">
+		<!-- Create Module Modal -->
+		<div id="create-module-modal" class="module-create-overlay" style="display: none">
+			<div class="module-create-container">
 				<!-- Simple Header -->
 				<header class="create-header">
-					<h2>Create New Project</h2>
-					<button id="create-project-cancel-top" class="close-btn" type="button">✕</button>
+					<h2>Create New Module</h2>
+					<button id="create-module-cancel-top" class="close-btn" type="button">✕</button>
 				</header>
 
 				<!-- Split Layout: Form + Preview -->
@@ -247,17 +247,17 @@
 						<section class="create-tab-content active" data-content="details">
 							<div class="form-section">
 								<label class="form-field full-width">
-									<span class="field-label">Project Name <span class="required">*</span></span>
+									<span class="field-label">Module Name <span class="required">*</span></span>
 									<input
 										type="text"
-										id="new-project-name"
+										id="new-module-name"
 										placeholder="my-analysis"
 										autocapitalize="none"
 										autocorrect="off"
 										spellcheck="false"
 									/>
 									<span
-										id="project-name-error"
+										id="module-name-error"
 										class="validation-error"
 										style="display: none"
 									></span>
@@ -265,15 +265,15 @@
 
 								<label class="form-field full-width">
 									<span class="field-label">Template</span>
-									<select id="new-project-template">
-										<option value="">Blank Project</option>
+									<select id="new-module-template">
+										<option value="">Blank Module</option>
 									</select>
 									<span class="field-hint">Start from scratch or use a pre-built example</span>
 								</label>
 							</div>
 
-							<!-- Blank Project Options -->
-							<div id="blank-project-options" class="blank-project-stack">
+							<!-- Blank Module Options -->
+							<div id="blank-module-options" class="blank-module-stack">
 								<div class="option-group">
 									<h4 class="option-group-title">Workflow Engine</h4>
 									<p class="option-group-hint">Choose your workflow orchestration system</p>
@@ -336,17 +336,17 @@
 								<div class="advanced-content">
 									<label class="form-field">
 										<span class="field-label">Destination Folder</span>
-										<input type="text" id="new-project-path" readonly />
+										<input type="text" id="new-module-path" readonly />
 										<div class="field-actions">
-											<button id="project-path-browse-btn" class="secondary-btn" type="button">
+											<button id="module-path-browse-btn" class="secondary-btn" type="button">
 												Browse…
 											</button>
-											<button id="project-path-reset-btn" class="secondary-btn" type="button">
+											<button id="module-path-reset-btn" class="secondary-btn" type="button">
 												Use Default
 											</button>
 										</div>
 										<span class="field-hint">
-											Defaults to BioVault projects folder. Choose custom location if needed.
+											Defaults to BioVault modules folder. Choose custom location if needed.
 										</span>
 									</label>
 
@@ -354,7 +354,7 @@
 										<span class="field-label">Contract Version</span>
 										<input
 											type="text"
-											id="new-project-version"
+											id="new-module-version"
 											placeholder="1.0.0"
 											value="1.0.0"
 											autocapitalize="none"
@@ -371,10 +371,10 @@
 							<div class="form-section">
 								<h3>Inputs</h3>
 								<p class="section-hint">
-									Define data files and directories your project will analyze
+									Define data files and directories your module will analyze
 								</p>
 							</div>
-							<div id="create-project-inputs"></div>
+							<div id="create-module-inputs"></div>
 						</section>
 
 						<!-- Parameters Tab -->
@@ -383,16 +383,16 @@
 								<h3>Parameters</h3>
 								<p class="section-hint">Configuration options like thresholds and toggles</p>
 							</div>
-							<div id="create-project-parameters"></div>
+							<div id="create-module-parameters"></div>
 						</section>
 
 						<!-- Outputs Tab -->
 						<section class="create-tab-content" data-content="outputs">
 							<div class="form-section">
 								<h3>Outputs</h3>
-								<p class="section-hint">Files and directories this project will create</p>
+								<p class="section-hint">Files and directories this module will create</p>
 							</div>
-							<div id="create-project-outputs"></div>
+							<div id="create-module-outputs"></div>
 						</section>
 					</main>
 
@@ -417,7 +417,7 @@
 							<div class="info-content">
 								<strong>Starter Template</strong>
 								<p>
-									The workflow.nf is a minimal starter. After creation, open the project editor to
+									The workflow.nf is a minimal starter. After creation, open the module editor to
 									add your custom processing logic.
 								</p>
 							</div>
@@ -425,12 +425,12 @@
 
 						<div class="preview-content">
 							<div class="preview-tab-content active" data-preview-content="yaml">
-								<pre class="code-block language-yaml" id="create-project-preview-yaml">
+								<pre class="code-block language-yaml" id="create-module-preview-yaml">
 Preview will appear as you fill in details...</pre
 								>
 							</div>
 							<div class="preview-tab-content" data-preview-content="workflow">
-								<pre class="code-block language-groovy" id="create-project-preview-template">
+								<pre class="code-block language-groovy" id="create-module-preview-template">
 Preview will appear as you fill in details...</pre
 								>
 							</div>
@@ -441,20 +441,20 @@ Preview will appear as you fill in details...</pre
 				<!-- Footer with Navigation -->
 				<footer class="create-footer">
 					<div class="footer-left">
-						<button id="create-project-cancel" class="link-button" type="button">Cancel</button>
+						<button id="create-module-cancel" class="link-button" type="button">Cancel</button>
 					</div>
 					<div class="footer-right">
-						<button id="create-project-back" class="secondary-btn" type="button">← Back</button>
-						<button id="create-project-next" class="primary-btn" type="button">
+						<button id="create-module-back" class="secondary-btn" type="button">← Back</button>
+						<button id="create-module-next" class="primary-btn" type="button">
 							Next: Inputs →
 						</button>
 						<button
-							id="create-project-confirm"
+							id="create-module-confirm"
 							class="primary-btn"
 							type="button"
 							style="display: none"
 						>
-							Create Project
+							Create Module
 						</button>
 					</div>
 				</footer>

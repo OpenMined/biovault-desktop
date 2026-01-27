@@ -387,6 +387,7 @@ repo_init() {
 
   ensure_origin_remotes
   ensure_syft_crypto_submodule
+  ensure_syqure_submodules
 }
 
 repo_init_with_https() {
@@ -485,6 +486,8 @@ PY
 
   run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
   ensure_origin_remotes "$tmpdir/$MANIFEST_FILE"
+  ensure_syft_crypto_submodule
+  ensure_syqure_submodules
   if [[ -n "$tmpdir" ]]; then
     rm -rf "$tmpdir"
   fi
@@ -492,6 +495,24 @@ PY
 
 ensure_syft_crypto_submodule() {
   local repo="syft-crypto-core"
+  if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$repo/.gitmodules" ]]; then
+    return 0
+  fi
+
+  echo -e "${CYAN}→ ${repo} submodules${NC}"
+  git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
+  if ! git -C "$repo" submodule update --init --recursive; then
+    echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
+    return 1
+  fi
+}
+
+ensure_syqure_submodules() {
+  local repo="syqure"
   if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
     return 0
   fi
@@ -533,6 +554,7 @@ repo_sync() {
     run_repo sync -d --force-sync
     checkout_manifest_branches
     ensure_syft_crypto_submodule
+    ensure_syqure_submodules
     return
   fi
 
@@ -541,6 +563,7 @@ repo_sync() {
     sync_manifest_branches
   fi
   ensure_syft_crypto_submodule
+  ensure_syqure_submodules
 }
 
 sync_manifest_branches() {

@@ -3,7 +3,7 @@ kind: Flow
 metadata:
   name: gwas-population-analysis
   version: 0.1.0
-  description: GWAS analysis pipeline for comparing two populations using PLINK and generating Manhattan/QQ plots.
+  description: GWAS analysis flow for comparing two populations using PLINK and generating Manhattan/QQ plots.
 spec:
   inputs:
     datasets:

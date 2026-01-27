@@ -51,7 +51,7 @@ function toPosix(p) {
 	return p.replace(/\\/g, '/')
 }
 
-test.describe('APOL1 Classifier Pipeline E2E', () => {
+test.describe('APOL1 Classifier Flow E2E', () => {
 	test.beforeAll(async () => {
 		await ensureLogSocket()
 	})
@@ -66,13 +66,13 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 		}
 	})
 
-	test('end-to-end APOL1 classifier pipeline workflow', async ({ page }, testInfo) => {
+	test('end-to-end APOL1 classifier flow workflow', async ({ page }, testInfo) => {
 		testInfo.setTimeout(120000) // 2 minutes for full e2e test
 		await ensureLogSocket()
 		page.on('console', (msg) => {
 			sendUnifiedLog({ source: 'browser', type: msg.type(), text: msg.text() })
 		})
-		sendUnifiedLog({ event: 'test-start', name: 'apol1-pipeline-flow' })
+		sendUnifiedLog({ event: 'test-start', name: 'apol1-flow-flow' })
 
 		// Prepare test data files (same as import test)
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'biovault-apol1-'))
@@ -111,9 +111,9 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 			participants: [],
 			nextFileId: 1,
 			nextParticipantId: 1,
-			nextPipelineId: 1,
+			nextFlowId: 1,
 			nextRunId: 1,
-			pipelines: [],
+			flows: [],
 			runs: [],
 		}
 
@@ -153,7 +153,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 							return state.participants.map((p) => ({ ...p }))
 						case 'get_files':
 							return state.importedFiles.map((f) => ({ ...f }))
-						case 'get_projects':
+						case 'get_modules':
 						case 'get_command_logs':
 							return []
 						case 'get_desktop_log_text':
@@ -162,10 +162,10 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 							return null
 						case 'get_desktop_log_dir':
 							return '/tmp'
-						case 'get_pipelines':
-							return state.pipelines.map((p) => ({ ...p }))
+						case 'get_flows':
+							return state.flows.map((p) => ({ ...p }))
 						case 'get_runs':
-						case 'get_pipeline_runs':
+						case 'get_flow_runs':
 							return state.runs.map((r) => ({ ...r }))
 						case 'get_runs_base_dir':
 							return '/tmp/runs'
@@ -258,29 +258,29 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 							})
 							return { success: true, conflicts: [], errors: [] }
 						}
-						case 'import_pipeline_from_url':
-						case 'import_pipeline_with_deps': {
+						case 'import_flow_from_url':
+						case 'import_flow_with_deps': {
 							const _url = args.url || ''
-							// Check if pipeline already exists (for overwrite scenario)
-							const existingPipeline = state.pipelines.find((p) => p.name === 'APOL1 Classifier')
+							// Check if flow already exists (for overwrite scenario)
+							const existingFlow = state.flows.find((p) => p.name === 'APOL1 Classifier')
 
-							if (existingPipeline && !args.overwrite) {
+							if (existingFlow && !args.overwrite) {
 								// Simulate "already exists" error
 								throw new Error(
-									`Pipeline "APOL1 Classifier" already exists. Do you want to overwrite it?`,
+									`Flow "APOL1 Classifier" already exists. Do you want to overwrite it?`,
 								)
 							}
 
 							// Remove existing if overwriting
-							if (existingPipeline && args.overwrite) {
-								state.pipelines = state.pipelines.filter((p) => p.id !== existingPipeline.id)
+							if (existingFlow && args.overwrite) {
+								state.flows = state.flows.filter((p) => p.id !== existingFlow.id)
 							}
 
-							const pipelineId = state.nextPipelineId++
-							const pipeline = {
-								id: pipelineId,
+							const flowId = state.nextFlowId++
+							const flow = {
+								id: flowId,
 								name: 'APOL1 Classifier',
-								pipeline_path: `/tmp/pipelines/apol1-classifier`,
+								flow_path: `/tmp/flows/apol1-classifier`,
 								spec: {
 									name: 'APOL1 Classifier',
 									inputs: {
@@ -291,7 +291,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 									steps: [
 										{
 											id: 'classify',
-											uses: 'apol1-classifier-project@1.0.0',
+											uses: 'apol1-classifier-module@1.0.0',
 											publish: {
 												results: 'File(results.csv)',
 											},
@@ -300,21 +300,21 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 								},
 								created_at: new Date().toISOString(),
 							}
-							state.pipelines.push(pipeline)
-							return pipeline
+							state.flows.push(flow)
+							return flow
 						}
-						case 'run_pipeline': {
-							const pipelineId = args.pipelineId
-							const pipeline = state.pipelines.find((p) => p.id === pipelineId)
-							if (!pipeline) {
-								throw new Error(`Pipeline ${pipelineId} not found`)
+						case 'run_flow': {
+							const flowId = args.flowId
+							const flow = state.flows.find((p) => p.id === flowId)
+							if (!flow) {
+								throw new Error(`Flow ${flowId} not found`)
 							}
 
 							const runId = state.nextRunId++
 							const run = {
 								id: runId,
-								pipeline_id: pipelineId,
-								pipeline_name: pipeline.name,
+								flow_id: flowId,
+								flow_name: flow.name,
 								status: 'running',
 								created_at: new Date().toISOString(),
 								results_dir: `/tmp/runs/${runId}`,
@@ -337,11 +337,11 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 
 							return run
 						}
-						case 'load_pipelines': {
-							// Return pipelines (used internally by loadPipelines)
-							return state.pipelines.map((p) => ({ ...p }))
+						case 'load_flows': {
+							// Return flows (used internally by loadFlows)
+							return state.flows.map((p) => ({ ...p }))
 						}
-						case 'get_pipeline_run_steps': {
+						case 'get_flow_run_steps': {
 							const runId = args.runId
 							const run = state.runs.find((r) => r.id === runId)
 							if (!run) {
@@ -353,7 +353,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 								return [
 									{
 										id: 'classify',
-										uses: 'apol1-classifier-project@1.0.0',
+										uses: 'apol1-classifier-module@1.0.0',
 										status: 'success',
 										publish: {
 											results: 'File(results.csv)',
@@ -366,24 +366,24 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 							return [
 								{
 									id: 'classify',
-									uses: 'apol1-classifier-project@1.0.0',
+									uses: 'apol1-classifier-module@1.0.0',
 									status: 'running',
 								},
 							]
 						}
-						case 'load_pipeline_editor': {
-							const pipeline = state.pipelines.find((p) => p.id === args.pipelineId)
+						case 'load_flow_editor': {
+							const flow = state.flows.find((p) => p.id === args.flowId)
 							return {
-								pipeline_path: pipeline?.pipeline_path || '/tmp/pipeline',
-								spec: pipeline?.spec || { name: '', inputs: {}, steps: [] },
+								flow_path: flow?.flow_path || '/tmp/flow',
+								spec: flow?.spec || { name: '', inputs: {}, steps: [] },
 							}
 						}
-						case 'load_project_editor': {
-							// Mock project editor for steps
+						case 'load_module_editor': {
+							// Mock module editor for steps
 							return {
-								project_path: '/tmp/project',
+								module_path: '/tmp/module',
 								metadata: {
-									name: 'apol1-classifier-project',
+									name: 'apol1-classifier-module',
 									inputs: [],
 									outputs: [
 										{ name: 'results', type: 'File', description: 'Classification results' },
@@ -413,21 +413,21 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 
-		sendUnifiedLog({ event: 'step-1', action: 'import-pipeline' })
+		sendUnifiedLog({ event: 'step-1', action: 'import-flow' })
 
-		// Step 1: Navigate to pipelines and create APOL1 pipeline
+		// Step 1: Navigate to flows and create APOL1 flow
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 		await expect(page.locator('#run-view')).toBeVisible()
 
-		// Click create pipeline button
-		const createBtn = page.locator('#create-pipeline-btn, #empty-create-pipeline-btn').first()
+		// Click create flow button
+		const createBtn = page.locator('#create-flow-btn, #empty-create-flow-btn').first()
 		await expect(createBtn).toBeVisible()
 		await createBtn.click()
 
 		// Wait for template picker modal
-		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
-		await expect(page.locator('#pipeline-picker-modal')).toContainText('APOL1 Classifier')
+		await page.waitForSelector('#flow-picker-modal', { state: 'visible', timeout: 5000 })
+		await expect(page.locator('#flow-picker-modal')).toContainText('APOL1 Classifier')
 
 		// Set up dialog handler before clicking (for overwrite confirmation)
 		page.on('dialog', async (dialog) => {
@@ -441,25 +441,25 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 		})
 
 		// Click APOL1 Classifier template
-		const apol1Card = page.locator('button.new-pipeline-template-card:has-text("APOL1 Classifier")')
+		const apol1Card = page.locator('button.new-flow-template-card:has-text("APOL1 Classifier")')
 		await expect(apol1Card).toBeVisible()
 		await apol1Card.click()
 
-		// Wait for loading modal (if any), then pipeline import
+		// Wait for loading modal (if any), then flow import
 		await page.waitForTimeout(3000)
 
-		// Check if pipeline was created by looking for it in the pipelines list
-		const pipelinesGrid = page.locator('#pipelines-grid')
-		// Refresh pipelines list
+		// Check if flow was created by looking for it in the flows list
+		const flowsGrid = page.locator('#flows-grid')
+		// Refresh flows list
 		await page.evaluate(() => {
-			if (window.pipelineModule?.loadPipelines) {
-				window.pipelineModule.loadPipelines()
+			if (window.flowModule?.loadFlows) {
+				window.flowModule.loadFlows()
 			}
 		})
 		await page.waitForTimeout(1000)
 
-		if ((await pipelinesGrid.count()) > 0) {
-			await expect(pipelinesGrid).toContainText('APOL1 Classifier', { timeout: 5000 })
+		if ((await flowsGrid.count()) > 0) {
+			await expect(flowsGrid).toContainText('APOL1 Classifier', { timeout: 5000 })
 		}
 
 		sendUnifiedLog({ event: 'step-2', action: 'import-data' })
@@ -540,7 +540,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 
 		sendUnifiedLog({ event: 'step-3', action: 'select-all-and-run' })
 
-		// Step 3: Select all files on Data page and run pipeline via modal
+		// Step 3: Select all files on Data page and run flow via modal
 		// Make sure we're on the Data page (should already be there after import)
 		await navigateToTab(page, 'data')
 		await expect(page.locator('#data-view.tab-content.active')).toBeVisible()
@@ -556,34 +556,34 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 		const selectedCount = await page.locator('.file-row.selected, tr.file-row.selected').count()
 		expect(selectedCount).toBeGreaterThan(0)
 
-		// Click Run Pipeline button on Data page (this opens the modal)
-		const runPipelineBtn = page.locator('#run-analysis-btn')
-		await expect(runPipelineBtn).toBeVisible()
-		await expect(runPipelineBtn).toBeEnabled()
-		await runPipelineBtn.click()
+		// Click Run Flow button on Data page (this opens the modal)
+		const runFlowBtn = page.locator('#run-analysis-btn')
+		await expect(runFlowBtn).toBeVisible()
+		await expect(runFlowBtn).toBeEnabled()
+		await runFlowBtn.click()
 
 		// Wait for data run modal to appear
 		const dataRunModal = page.locator('#data-run-modal')
 		await expect(dataRunModal).toBeVisible({ timeout: 5000 })
 
-		// Find and select APOL1 Classifier pipeline radio button
-		// The radio buttons are within the modal, find by pipeline name in label
+		// Find and select APOL1 Classifier flow radio button
+		// The radio buttons are within the modal, find by flow name in label
 		const apol1Option = dataRunModal.locator('label').filter({ hasText: /APOL1/i })
 
 		if ((await apol1Option.count()) > 0) {
 			// Click the label which will select the radio
 			await apol1Option.click()
 		} else {
-			// Fallback: try to find radio by value or just select first pipeline
-			const pipelineRadios = dataRunModal.locator('input[type="radio"][name="data-run-pipeline"]')
-			if ((await pipelineRadios.count()) > 0) {
-				await pipelineRadios.first().check()
+			// Fallback: try to find radio by value or just select first flow
+			const flowRadios = dataRunModal.locator('input[type="radio"][name="data-run-flow"]')
+			if ((await flowRadios.count()) > 0) {
+				await flowRadios.first().check()
 			}
 		}
 
 		await page.waitForTimeout(500)
 
-		// Click Run Pipeline button in the modal
+		// Click Run Flow button in the modal
 		const modalRunBtn = dataRunModal.locator('#data-run-run-btn')
 		await expect(modalRunBtn).toBeVisible()
 		await expect(modalRunBtn).toBeEnabled()
@@ -611,7 +611,7 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 		await page.waitForTimeout(2000)
 
 		// Find the latest run (should be first in the list)
-		const runCards = page.locator('.pipeline-run-card')
+		const runCards = page.locator('.flow-run-card')
 		await expect(runCards.first()).toBeVisible({ timeout: 10000 })
 
 		const latestRun = runCards.first()
@@ -651,6 +651,6 @@ test.describe('APOL1 Classifier Pipeline E2E', () => {
 
 		sendUnifiedLog({ event: 'step-5', action: 'verified-published-output' })
 
-		sendUnifiedLog({ event: 'test-complete', name: 'apol1-pipeline-flow' })
+		sendUnifiedLog({ event: 'test-complete', name: 'apol1-flow-flow' })
 	})
 })

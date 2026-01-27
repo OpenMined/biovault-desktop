@@ -1,15 +1,15 @@
 /**
- * Pipelines GWAS Test
- * Tests GWAS pipeline with PLINK-style dataset mapping:
+ * Flows GWAS Test
+ * Tests GWAS flow with PLINK-style dataset mapping:
  * 1. Import GWAS data (.bed/.bim/.fam)
- * 2. Import GWAS pipeline
+ * 2. Import GWAS flow
  * 3. Create dataset with PLINK files
- * 4. Run pipeline on real data
+ * 4. Run flow on real data
  *
  * Usage:
- *   ./test-scenario.sh --pipelines-gwas
+ *   ./test-scenario.sh --flows-gwas
  *
- * @tag pipelines-gwas
+ * @tag flows-gwas
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
@@ -100,7 +100,7 @@ async function waitForRunCompletion(
 
 	while (Date.now() - startTime < timeoutMs) {
 		try {
-			const runs = await backend.invoke('get_pipeline_runs', {})
+			const runs = await backend.invoke('get_flow_runs', {})
 			const run = runs.find((r: any) => r.id === runId)
 			if (run) {
 				lastStatus = run.status
@@ -117,20 +117,20 @@ async function waitForRunCompletion(
 		await page.waitForTimeout(2000)
 	}
 
-	throw new Error(`Pipeline run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
+	throw new Error(`Flow run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
 }
 
-async function waitForPipelineRun(
+async function waitForFlowRun(
 	backend: Backend,
-	pipelineId: number,
+	flowId: number,
 	createdAfterMs: number,
 	timeoutMs: number = PIPELINE_START_TIMEOUT,
 ): Promise<any> {
 	const startTime = Date.now()
 
 	while (Date.now() - startTime < timeoutMs) {
-		const runs = await backend.invoke('get_pipeline_runs', {})
-		const candidates = runs.filter((run: any) => run.pipeline_id === pipelineId)
+		const runs = await backend.invoke('get_flow_runs', {})
+		const candidates = runs.filter((run: any) => run.flow_id === flowId)
 		if (candidates.length > 0) {
 			const filtered = candidates.filter((run: any) => {
 				const createdAt = Date.parse(run.created_at || '')
@@ -145,7 +145,7 @@ async function waitForPipelineRun(
 		await new Promise((resolve) => setTimeout(resolve, 1000))
 	}
 
-	throw new Error('Timed out waiting for pipeline run to appear')
+	throw new Error('Timed out waiting for flow run to appear')
 }
 
 function collectFiles(root: string, maxDepth: number = 4): string[] {
@@ -194,8 +194,8 @@ function assertOutputFile(
 	return match
 }
 
-test.describe('Pipelines GWAS @pipelines-gwas', () => {
-	test('import gwas data, create dataset, run pipeline', async ({ browser }, testInfo) => {
+test.describe('Flows GWAS @flows-gwas', () => {
+	test('import gwas data, create dataset, run flow', async ({ browser }, testInfo) => {
 		const wsPort = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const email = process.env.TEST_EMAIL || 'client1@sandbox.local'
 		const gwasDataDir =
@@ -212,7 +212,7 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 
 		const mockFiles = ['mock.bed', 'mock.bim', 'mock.fam']
 
-		console.log('Setting up pipelines GWAS test')
+		console.log('Setting up flows GWAS test')
 		console.log(`Client: ${email} (port ${wsPort})`)
 		console.log(`GWAS data dir: ${gwasDataDir}`)
 
@@ -232,7 +232,7 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 		const page = await context.newPage()
 		let runStarted = false
 		let runId: number | null = null
-		let pipelineId: number | null = null
+		let flowId: number | null = null
 
 		page.on('console', (msg) => {
 			if (msg.type() === 'error') {
@@ -255,7 +255,7 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 			page.on('dialog', async (dialog) => {
 				const message = dialog.message()
 				console.log(`Dialog: ${message}`)
-				if (message.includes('Pipeline started!')) {
+				if (message.includes('Flow started!')) {
 					runStarted = true
 					const match = message.match(/run id:\s*(\d+)/i)
 					if (match) {
@@ -353,35 +353,35 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 			expect(importedCount).toBeGreaterThanOrEqual(requiredFiles.length)
 
 			// ============================================================
-			// Step 2: Import GWAS Pipeline
+			// Step 2: Import GWAS Flow
 			// ============================================================
-			log(logSocket, { event: 'step-2', action: 'import-gwas-pipeline' })
-			console.log('\n=== Step 2: Import GWAS Pipeline ===')
+			log(logSocket, { event: 'step-2', action: 'import-gwas-flow' })
+			console.log('\n=== Step 2: Import GWAS Flow ===')
 
-			const pipelinePath = path.join(process.cwd(), 'gwas-nextflow', 'flow.yaml')
-			const pipeline = await backend.invoke('create_pipeline', {
+			const flowPath = path.join(process.cwd(), 'gwas-nextflow', 'flow.yaml')
+			const flow = await backend.invoke('create_flow', {
 				request: {
 					name: 'gwas-population-analysis',
-					pipeline_file: pipelinePath,
+					flow_file: flowPath,
 					overwrite: true,
 				},
 			})
-			pipelineId = pipeline.id
+			flowId = flow.id
 
 			await page.locator('.nav-item[data-tab="run"]').click()
 			await expect(page.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
 
 			await page.evaluate(() => {
 				const w = window as any
-				if (w.pipelineModule?.loadPipelines) {
-					w.pipelineModule.loadPipelines()
+				if (w.flowModule?.loadFlows) {
+					w.flowModule.loadFlows()
 				}
 			})
 			await page.waitForTimeout(2000)
 
-			const pipelinesGrid = page.locator('#pipelines-grid')
-			await expect(pipelinesGrid).toContainText(/gwas-population-analysis/i, { timeout: 10_000 })
-			console.log('GWAS pipeline imported!')
+			const flowsGrid = page.locator('#flows-grid')
+			await expect(flowsGrid).toContainText(/gwas-population-analysis/i, { timeout: 10_000 })
+			console.log('GWAS flow imported!')
 
 			// ============================================================
 			// Step 3: Create dataset with PLINK files
@@ -486,10 +486,10 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 			)
 
 			// ============================================================
-			// Step 4: Run pipeline on real data
+			// Step 4: Run flow on real data
 			// ============================================================
-			log(logSocket, { event: 'step-4', action: 'run-gwas-pipeline' })
-			console.log('\n=== Step 4: Run GWAS pipeline ===')
+			log(logSocket, { event: 'step-4', action: 'run-gwas-flow' })
+			console.log('\n=== Step 4: Run GWAS flow ===')
 
 			const datasetsToggle2 = page.locator('#data-view-toggle .pill-button[data-view="datasets"]')
 			if (!(await datasetsToggle2.evaluate((el) => el.classList.contains('active')))) {
@@ -502,29 +502,27 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 				.filter({ hasText: 'gwas_dataset' })
 			await expect(datasetCard).toBeVisible()
 
-			const runPipelineBtn = datasetCard.locator('.btn-run-pipeline')
-			await expect(runPipelineBtn).toBeVisible()
-			await runPipelineBtn.click()
+			const runFlowBtn = datasetCard.locator('.btn-run-flow')
+			await expect(runFlowBtn).toBeVisible()
+			await runFlowBtn.click()
 
-			const runPipelineModal = page.locator('#run-pipeline-modal')
-			await expect(runPipelineModal).toBeVisible({ timeout: 5000 })
+			const runFlowModal = page.locator('#run-flow-modal')
+			await expect(runFlowModal).toBeVisible({ timeout: 5000 })
 
-			const realDataOption = runPipelineModal.locator(
-				'input[name="pipeline-data-type"][value="real"]',
-			)
+			const realDataOption = runFlowModal.locator('input[name="flow-data-type"][value="real"]')
 			await realDataOption.check()
 
-			const runPipelineConfirmBtn = runPipelineModal.locator('#run-pipeline-confirm')
-			await expect(runPipelineConfirmBtn).toBeVisible()
+			const runFlowConfirmBtn = runFlowModal.locator('#run-flow-confirm')
+			await expect(runFlowConfirmBtn).toBeVisible()
 			const runStartTime = Date.now()
-			await runPipelineConfirmBtn.click()
+			await runFlowConfirmBtn.click()
 
-			await expect(runPipelineModal).toBeHidden({ timeout: 5000 })
+			await expect(runFlowModal).toBeHidden({ timeout: 5000 })
 			await page.waitForTimeout(2000)
 
 			const dataRunModal = page.locator('#data-run-modal, .data-run-modal')
 			if (await dataRunModal.isVisible({ timeout: 3000 }).catch(() => false)) {
-				console.log('Data run modal visible, selecting GWAS pipeline...')
+				console.log('Data run modal visible, selecting GWAS flow...')
 				const gwasOption = dataRunModal.locator('text=gwas-population-analysis')
 				if (await gwasOption.isVisible().catch(() => false)) {
 					await gwasOption.click()
@@ -555,23 +553,23 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 
 			await page.waitForTimeout(1000)
 			if (runStarted) {
-				console.log('Pipeline run started (alert received)')
+				console.log('Flow run started (alert received)')
 			} else {
-				console.log('Pipeline started alert not captured yet')
+				console.log('Flow started alert not captured yet')
 			}
 
-			if (!pipelineId) {
-				throw new Error('Pipeline ID missing after import')
+			if (!flowId) {
+				throw new Error('Flow ID missing after import')
 			}
 
 			let resolvedRunId = runId
 			if (!resolvedRunId) {
-				const runRecord = await waitForPipelineRun(backend, pipelineId, runStartTime)
+				const runRecord = await waitForFlowRun(backend, flowId, runStartTime)
 				resolvedRunId = runRecord.id
 				console.log(`Resolved run ID from backend: ${resolvedRunId}`)
 			}
 			if (!resolvedRunId) {
-				throw new Error('Unable to resolve pipeline run ID')
+				throw new Error('Unable to resolve flow run ID')
 			}
 
 			const { status, run } = await waitForRunCompletion(
@@ -584,7 +582,7 @@ test.describe('Pipelines GWAS @pipelines-gwas', () => {
 
 			const resultsDir = run.results_dir || run.work_dir
 			if (!resultsDir) {
-				throw new Error('Pipeline run missing results directory')
+				throw new Error('Flow run missing results directory')
 			}
 			if (!fs.existsSync(resultsDir)) {
 				throw new Error(`Results directory not found: ${resultsDir}`)

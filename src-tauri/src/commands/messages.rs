@@ -4,8 +4,8 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::flow_spec::FlowFile;
+use biovault::flow_spec::FlowSpec;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
-use biovault::pipeline_spec::PipelineSpec;
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
 use chrono::Utc;
@@ -43,7 +43,7 @@ fn syftbox_storage(config: &biovault::config::Config) -> Result<SyftBoxStorage, 
     Ok(SyftBoxStorage::new(&data_dir))
 }
 
-fn should_skip_pipeline_path(rel: &Path) -> bool {
+fn should_skip_flow_path(rel: &Path) -> bool {
     if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
         return true;
     }
@@ -68,7 +68,7 @@ fn should_skip_pipeline_path(rel: &Path) -> bool {
     })
 }
 
-fn copy_pipeline_folder(
+fn copy_flow_folder(
     storage: &SyftBoxStorage,
     src: &Path,
     dest: &Path,
@@ -76,7 +76,7 @@ fn copy_pipeline_folder(
 ) -> Result<(), String> {
     storage
         .ensure_dir(dest)
-        .map_err(|e| format!("Failed to create pipeline submission folder: {}", e))?;
+        .map_err(|e| format!("Failed to create flow submission folder: {}", e))?;
 
     for entry in WalkDir::new(src)
         .min_depth(1)
@@ -87,9 +87,9 @@ fn copy_pipeline_folder(
         let path = entry.path();
         let rel = path
             .strip_prefix(src)
-            .map_err(|e| format!("Failed to resolve pipeline path: {}", e))?;
+            .map_err(|e| format!("Failed to resolve flow path: {}", e))?;
 
-        if should_skip_pipeline_path(rel) {
+        if should_skip_flow_path(rel) {
             continue;
         }
 
@@ -102,7 +102,7 @@ fn copy_pipeline_folder(
         }
 
         let bytes = fs::read(path)
-            .map_err(|e| format!("Failed to read pipeline file {}: {}", path.display(), e))?;
+            .map_err(|e| format!("Failed to read flow file {}: {}", path.display(), e))?;
         let hint = rel.to_string_lossy().to_string();
         let policy = WritePolicy::Envelope {
             recipients: vec![recipient.to_string()],
@@ -111,7 +111,7 @@ fn copy_pipeline_folder(
 
         if msg_debug_enabled() {
             println!(
-                "[messages][debug] encrypt pipeline file={} dest={} recipient={}",
+                "[messages][debug] encrypt flow file={} dest={} recipient={}",
                 path.display(),
                 dest_path.display(),
                 recipient
@@ -119,24 +119,18 @@ fn copy_pipeline_folder(
         }
         storage
             .write_with_shadow(&dest_path, &bytes, policy, true)
-            .map_err(|e| {
-                format!(
-                    "Failed to write pipeline file {}: {}",
-                    dest_path.display(),
-                    e
-                )
-            })?;
+            .map_err(|e| format!("Failed to write flow file {}: {}", dest_path.display(), e))?;
     }
 
     Ok(())
 }
 
-fn collect_pipeline_projects(
-    spec: &PipelineSpec,
-    pipeline_root: &Path,
+fn collect_flow_modules(
+    spec: &FlowSpec,
+    flow_root: &Path,
     db: &biovault::data::BioVaultDb,
 ) -> Result<Vec<PathBuf>, String> {
-    let mut projects = HashSet::new();
+    let mut modules = HashSet::new();
 
     for step in &spec.steps {
         let Some(uses) = step.uses.as_ref() else {
@@ -153,32 +147,31 @@ fn collect_pipeline_projects(
         if uses.starts_with('/') {
             let candidate = PathBuf::from(uses);
             if candidate.exists() {
-                projects.insert(candidate);
+                modules.insert(candidate);
             }
             continue;
         }
 
         if uses.starts_with('.') || uses.contains('/') || uses.contains('\\') {
-            let candidate = pipeline_root.join(uses);
+            let candidate = flow_root.join(uses);
             if candidate.exists() {
-                let should_include = match (candidate.canonicalize(), pipeline_root.canonicalize())
-                {
+                let should_include = match (candidate.canonicalize(), flow_root.canonicalize()) {
                     (Ok(candidate_path), Ok(root_path)) => !candidate_path.starts_with(root_path),
                     _ => false,
                 };
                 if should_include {
-                    projects.insert(candidate);
+                    modules.insert(candidate);
                 }
                 continue;
             }
         }
 
-        if let Ok(Some(project)) = db.get_project(uses) {
-            projects.insert(PathBuf::from(project.project_path));
+        if let Ok(Some(module)) = db.get_module(uses) {
+            modules.insert(PathBuf::from(module.module_path));
         }
     }
 
-    Ok(projects.into_iter().collect())
+    Ok(modules.into_iter().collect())
 }
 
 fn copy_results_folder_filtered(
@@ -441,9 +434,9 @@ pub fn list_message_threads(
                 .filter(|m| m.status == MessageStatus::Received)
                 .count();
 
-            let has_project = msgs
+            let has_module = msgs
                 .iter()
-                .any(|m| matches!(m.message_type, MessageType::Project { .. }));
+                .any(|m| matches!(m.message_type, MessageType::Module { .. }));
 
             // Detect session threads from metadata
             let mut session_id: Option<String> = None;
@@ -509,7 +502,7 @@ pub fn list_message_threads(
                 unread_count,
                 last_message_at: Some(last_msg.created_at.to_rfc3339()),
                 last_message_preview: preview,
-                has_project,
+                has_module,
                 session_id,
                 session_name,
             })
@@ -883,49 +876,51 @@ pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
     })
 }
 
-/// Send a pipeline request to a peer asking them to run it on their private data
+/// Send a flow request to a peer asking them to run it on their private data
 #[tauri::command]
-pub fn send_pipeline_request(
-    pipeline_name: String,
-    pipeline_version: String,
+pub fn send_flow_request(
+    flow_name: String,
+    flow_version: String,
     dataset_name: String,
     recipient: String,
     message: String,
+    run_id: Option<String>,
+    datasites: Option<Vec<String>>,
 ) -> Result<VaultMessage, String> {
     let config = load_config()?;
     let (db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
     let storage = syftbox_storage(&config)?;
 
-    // Look up the pipeline path from the database
+    // Look up the flow path from the database
     let biovault_db = biovault::data::BioVaultDb::new()
         .map_err(|e| format!("Failed to open BioVault database: {}", e))?;
 
-    let pipelines = biovault_db
-        .list_pipelines()
-        .map_err(|e| format!("Failed to list pipelines: {}", e))?;
+    let flows = biovault_db
+        .list_flows()
+        .map_err(|e| format!("Failed to list flows: {}", e))?;
 
-    let pipeline = pipelines
+    let flow = flows
         .iter()
-        .find(|p| p.name == pipeline_name)
-        .ok_or_else(|| format!("Pipeline '{}' not found in database", pipeline_name))?;
+        .find(|p| p.name == flow_name)
+        .ok_or_else(|| format!("Flow '{}' not found in database", flow_name))?;
 
-    let flow_yaml_path = std::path::PathBuf::from(&pipeline.pipeline_path).join("flow.yaml");
+    let flow_yaml_path = std::path::PathBuf::from(&flow.flow_path).join("flow.yaml");
     if !flow_yaml_path.exists() {
         return Err(format!(
-            "Pipeline '{}' not found at {:?}",
-            pipeline_name, flow_yaml_path
+            "Flow '{}' not found at {:?}",
+            flow_name, flow_yaml_path
         ));
     }
 
-    // Read pipeline spec
-    let pipeline_content = fs::read_to_string(&flow_yaml_path)
+    // Read flow spec
+    let flow_content = fs::read_to_string(&flow_yaml_path)
         .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
 
-    let flow: FlowFile = FlowFile::parse_yaml(&pipeline_content)
+    let flow_file: FlowFile = FlowFile::parse_yaml(&flow_content)
         .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-    let pipeline_spec_struct: PipelineSpec = flow
-        .to_pipeline_spec()
+    let flow_spec_struct: FlowSpec = flow_file
+        .to_flow_spec()
         .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
     let submission_root = config
@@ -934,45 +929,44 @@ pub fn send_pipeline_request(
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let mut hasher = Sha256::new();
-    hasher.update(pipeline_content.as_bytes());
-    let pipeline_hash = hex::encode(hasher.finalize());
-    let short_hash = pipeline_hash
-        .get(0..8)
-        .unwrap_or(&pipeline_hash)
-        .to_string();
-    let submission_folder_name = format!("{}-{}-{}", pipeline_name, timestamp, short_hash);
+    hasher.update(flow_content.as_bytes());
+    let flow_hash = hex::encode(hasher.finalize());
+    let short_hash = flow_hash.get(0..8).unwrap_or(&flow_hash).to_string();
+    let submission_folder_name = format!("{}-{}-{}", flow_name, timestamp, short_hash);
 
     let submission_path = submission_root.join(&submission_folder_name);
-    copy_pipeline_folder(
+    copy_flow_folder(
         &storage,
-        Path::new(&pipeline.pipeline_path),
+        Path::new(&flow.flow_path),
         &submission_path,
         &recipient,
     )?;
 
-    let project_paths = collect_pipeline_projects(
-        &pipeline_spec_struct,
-        Path::new(&pipeline.pipeline_path),
-        &biovault_db,
-    )?;
-    let projects_dest_root = submission_path.join("projects");
-    let mut included_projects: Vec<String> = Vec::new();
-    let mut seen_project_dirs = HashSet::new();
-    for project_path in project_paths {
-        let Some(project_dir_name) = project_path.file_name() else {
+    let module_paths =
+        collect_flow_modules(&flow_spec_struct, Path::new(&flow.flow_path), &biovault_db)?;
+    let modules_dest_root = submission_path.join("modules");
+    let mut included_modules: Vec<String> = Vec::new();
+    let mut seen_module_dirs = HashSet::new();
+    for module_path in module_paths {
+        let Some(module_dir_name) = module_path.file_name() else {
             continue;
         };
-        let project_dir_name = project_dir_name.to_string_lossy().to_string();
-        if !seen_project_dirs.insert(project_dir_name.clone()) {
+        let module_dir_name = module_dir_name.to_string_lossy().to_string();
+        if !seen_module_dirs.insert(module_dir_name.clone()) {
             continue;
         }
-        let dest_path = projects_dest_root.join(&project_dir_name);
-        copy_pipeline_folder(&storage, &project_path, &dest_path, &recipient)?;
-        included_projects.push(project_dir_name);
+        let dest_path = modules_dest_root.join(&module_dir_name);
+        copy_flow_folder(&storage, &module_path, &dest_path, &recipient)?;
+        included_modules.push(module_dir_name);
     }
 
     // Write permissions file for recipient access and results write-back
-    let perms = SyftPermissions::new_for_datasite(&recipient);
+    let mut perms = SyftPermissions::new_for_datasite(&recipient);
+    perms.add_rule(
+        "results/**",
+        vec![recipient.clone()],
+        vec![recipient.clone()],
+    );
     let perms_yaml = serde_yaml::to_string(&perms)
         .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
     let perms_path = submission_path.join("syft.pub.yaml");
@@ -1000,29 +994,55 @@ pub fn send_pipeline_request(
         config.email, submission_folder_name
     );
 
-    // Create the message with pipeline request metadata
+    let run_id = run_id.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let datasites = datasites.and_then(|values| {
+        let cleaned: Vec<String> = values
+            .into_iter()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
+        }
+    });
+
+    let collab = run_id.is_some() || datasites.is_some();
+
+    // Create the message with flow request metadata
     let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), message);
 
-    msg.subject = Some(format!("Pipeline Request: {}", pipeline_name));
+    msg.subject = Some(format!("Flow Request: {}", flow_name));
 
-    // Set metadata with pipeline info
+    // Set metadata with flow info
     msg.metadata = Some(serde_json::json!({
-        "pipeline_request": {
-            "pipeline_name": pipeline_name,
-            "pipeline_version": pipeline_version,
+        "flow_request": {
+            "flow_name": flow_name,
+            "flow_version": flow_version,
             "dataset_name": dataset_name,
             "sender": config.email,
             "flow_spec": flow,
-            "pipeline_location": submission_syft_url,
+            "flow_location": submission_syft_url,
             "submission_id": submission_folder_name,
             "sender_local_path": sender_local_path,
             "receiver_local_path_template": receiver_local_path_template,
-            "projects": included_projects,
+            "modules": included_modules,
+            "run_id": run_id,
+            "datasites": datasites,
+            "collab": collab,
         }
     }));
 
-    // Use thread_id based on pipeline + dataset for grouping related messages
-    msg.thread_id = Some(format!("pipeline-{}:{}", pipeline_name, dataset_name));
+    // Use thread_id based on flow + dataset for grouping related messages
+    msg.thread_id = Some(format!("flow-{}:{}", flow_name, dataset_name));
 
     // Insert and send
     db.insert_message(&msg)
@@ -1040,7 +1060,7 @@ pub fn send_pipeline_request(
 }
 
 #[tauri::command]
-pub fn send_pipeline_request_results(
+pub fn send_flow_request_results(
     request_id: String,
     run_id: i64,
     message: Option<String>,
@@ -1059,26 +1079,26 @@ pub fn send_pipeline_request_results(
     let meta = original
         .metadata
         .as_ref()
-        .ok_or_else(|| "Pipeline request metadata not found".to_string())?;
-    let pipeline_request = meta
-        .get("pipeline_request")
-        .ok_or_else(|| "Pipeline request metadata missing".to_string())?;
+        .ok_or_else(|| "Flow request metadata not found".to_string())?;
+    let flow_request = meta
+        .get("flow_request")
+        .ok_or_else(|| "Flow request metadata missing".to_string())?;
 
-    let pipeline_name = pipeline_request
-        .get("pipeline_name")
+    let flow_name = flow_request
+        .get("flow_name")
         .and_then(|v| v.as_str())
-        .unwrap_or("pipeline")
+        .unwrap_or("flow")
         .to_string();
-    let pipeline_location = pipeline_request
-        .get("pipeline_location")
+    let flow_location = flow_request
+        .get("flow_location")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "Pipeline location missing from request".to_string())?;
-    let sender = pipeline_request
+        .ok_or_else(|| "Flow location missing from request".to_string())?;
+    let sender = flow_request
         .get("sender")
         .and_then(|v| v.as_str())
         .unwrap_or(&original.from)
         .to_string();
-    let submission_id = pipeline_request
+    let submission_id = flow_request
         .get("submission_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
@@ -1086,9 +1106,9 @@ pub fn send_pipeline_request_results(
     let biovault_db = biovault::data::BioVaultDb::new()
         .map_err(|e| format!("Failed to open BioVault database: {}", e))?;
     let run = biovault_db
-        .get_pipeline_run(run_id)
-        .map_err(|e| format!("Failed to load pipeline run: {}", e))?
-        .ok_or_else(|| format!("Pipeline run {} not found", run_id))?;
+        .get_flow_run(run_id)
+        .map_err(|e| format!("Failed to load flow run: {}", e))?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
 
     let results_source = run
         .results_dir
@@ -1097,7 +1117,7 @@ pub fn send_pipeline_request_results(
     let results_source_path = PathBuf::from(&results_source);
     if !results_source_path.exists() {
         return Err(format!(
-            "Pipeline results not found at {}",
+            "Flow results not found at {}",
             results_source_path.display()
         ));
     }
@@ -1105,8 +1125,8 @@ pub fn send_pipeline_request_results(
     let data_dir = config
         .get_syftbox_data_dir()
         .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
-    let submission_root = biovault::data::resolve_syft_url(&data_dir, pipeline_location)
-        .map_err(|e| format!("Failed to resolve pipeline location: {}", e))?;
+    let submission_root = biovault::data::resolve_syft_url(&data_dir, flow_location)
+        .map_err(|e| format!("Failed to resolve flow location: {}", e))?;
     let results_dest_root = submission_root.join("results");
     let results_dest = results_dest_root.join(format!("run_{}", run_id));
 
@@ -1194,16 +1214,16 @@ pub fn send_pipeline_request_results(
 
     let body = message.unwrap_or_else(|| {
         format!(
-            "Pipeline results for {} are ready. You can find them under {}.",
-            pipeline_name, results_location
+            "Flow results for {} are ready. You can find them under {}.",
+            flow_name, results_location
         )
     });
 
     let mut reply = VaultMessage::reply_to(&original, config.email.clone(), body);
-    reply.subject = Some(format!("Pipeline Results: {}", pipeline_name));
+    reply.subject = Some(format!("Flow Results: {}", flow_name));
     reply.metadata = Some(serde_json::json!({
-        "pipeline_results": {
-            "pipeline_name": pipeline_name,
+        "flow_results": {
+            "flow_name": flow_name,
             "run_id": run_id,
             "sender": config.email,
             "results_location": results_location,
@@ -1225,13 +1245,13 @@ pub fn send_pipeline_request_results(
     Ok(updated)
 }
 
-/// Import pipeline results from a shared syft:// location into an unencrypted folder.
+/// Import flow results from a shared syft:// location into an unencrypted folder.
 #[tauri::command]
-pub fn import_pipeline_results(
+pub fn import_flow_results(
     results_location: String,
     submission_id: Option<String>,
     run_id: Option<i64>,
-    pipeline_name: Option<String>,
+    flow_name: Option<String>,
 ) -> Result<String, String> {
     let config = load_config()?;
     let storage = syftbox_storage(&config)?;
@@ -1253,8 +1273,8 @@ pub fn import_pipeline_results(
         .join("results");
     let folder_name = submission_id
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| pipeline_name.filter(|value| !value.trim().is_empty()))
-        .unwrap_or_else(|| "pipeline_results".to_string());
+        .or_else(|| flow_name.filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| "flow_results".to_string());
     let mut dest = base.join(folder_name);
     if let Some(run_id) = run_id {
         dest = dest.join(format!("run_{}", run_id));
@@ -1272,11 +1292,11 @@ pub struct OutputFile {
     pub file_name: String,
 }
 
-/// Send pipeline results (published outputs) to a recipient
+/// Send flow results (published outputs) to a recipient
 #[tauri::command]
-pub fn send_pipeline_results(
+pub fn send_flow_results(
     recipient: String,
-    pipeline_name: String,
+    flow_name: String,
     run_id: i64,
     outputs: Vec<OutputFile>,
     message: String,
@@ -1318,11 +1338,11 @@ pub fn send_pipeline_results(
         }
     }
 
-    // Create the message with pipeline results metadata
+    // Create the message with flow results metadata
     let body = if message.is_empty() {
         format!(
-            "Pipeline results from '{}' (Run #{}) - {} file(s)",
-            pipeline_name,
+            "Flow results from '{}' (Run #{}) - {} file(s)",
+            flow_name,
             run_id,
             results_data.len()
         )
@@ -1332,20 +1352,20 @@ pub fn send_pipeline_results(
 
     let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), body);
 
-    msg.subject = Some(format!("Pipeline Results: {}", pipeline_name));
+    msg.subject = Some(format!("Flow Results: {}", flow_name));
 
     // Set metadata with results
     msg.metadata = Some(serde_json::json!({
-        "pipeline_results": {
-            "pipeline_name": pipeline_name,
+        "flow_results": {
+            "flow_name": flow_name,
             "run_id": run_id,
             "sender": config.email,
             "files": results_data,
         }
     }));
 
-    // Use thread_id based on pipeline + run for grouping
-    msg.thread_id = Some(format!("pipeline-results-{}:{}", pipeline_name, run_id));
+    // Use thread_id based on flow + run for grouping
+    msg.thread_id = Some(format!("flow-results-{}:{}", flow_name, run_id));
 
     // Insert and send
     db.insert_message(&msg)
@@ -1422,9 +1442,9 @@ pub fn refresh_messages_batched(
                 .filter(|m| m.status == MessageStatus::Received)
                 .count();
 
-            let has_project = msgs
+            let has_module = msgs
                 .iter()
-                .any(|m| matches!(m.message_type, MessageType::Project { .. }));
+                .any(|m| matches!(m.message_type, MessageType::Module { .. }));
 
             // Detect session threads
             let mut session_id: Option<String> = None;
@@ -1488,7 +1508,7 @@ pub fn refresh_messages_batched(
                 unread_count,
                 last_message_at: Some(last_msg.created_at.to_rfc3339()),
                 last_message_preview: preview,
-                has_project,
+                has_module,
                 session_id,
                 session_name,
             })

@@ -5,7 +5,7 @@ use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_yaml;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 fn load_config_best_effort() -> biovault::config::Config {
@@ -659,12 +659,118 @@ pub struct DiscoveredDataset {
     pub missing_assets: usize,
     pub downloaded_bytes: u64,
     pub expected_bytes: Option<u64>,
+    pub is_subscribed: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
 pub struct NetworkDatasetScanResult {
     pub datasets: Vec<DiscoveredDataset>,
     pub current_identity: String,
+}
+
+fn subscriptions_path() -> Result<PathBuf, String> {
+    let config = load_config_best_effort();
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    Ok(data_dir.join(".data").join("syft.sub.yaml"))
+}
+
+fn load_subscriptions() -> Result<biovault::subscriptions::Subscriptions, String> {
+    let path = subscriptions_path()?;
+    biovault::subscriptions::load(&path).map_err(|e| format!("Failed to load syft.sub.yaml: {}", e))
+}
+
+fn save_subscriptions(cfg: &biovault::subscriptions::Subscriptions) -> Result<(), String> {
+    let path = subscriptions_path()?;
+    biovault::subscriptions::save(&path, cfg)
+        .map_err(|e| format!("Failed to write syft.sub.yaml: {}", e))
+}
+
+fn dataset_subscription_rule(owner: &str, name: &str) -> biovault::subscriptions::Rule {
+    biovault::subscriptions::Rule {
+        action: biovault::subscriptions::Action::Allow,
+        datasite: Some(owner.to_string()),
+        path: format!("public/biovault/datasets/{}/**", name),
+    }
+}
+
+fn is_dataset_subscribed(
+    cfg: &biovault::subscriptions::Subscriptions,
+    owner: &str,
+    name: &str,
+) -> bool {
+    let target = dataset_subscription_rule(owner, name);
+    cfg.rules.iter().any(|rule| {
+        rule.action == biovault::subscriptions::Action::Allow
+            && rule
+                .datasite
+                .as_deref()
+                .map(|ds| ds.eq_ignore_ascii_case(owner))
+                .unwrap_or(false)
+            && rule.path == target.path
+    })
+}
+
+fn add_dataset_subscription(
+    cfg: &mut biovault::subscriptions::Subscriptions,
+    owner: &str,
+    name: &str,
+) -> bool {
+    if is_dataset_subscribed(cfg, owner, name) {
+        return false;
+    }
+    cfg.rules.push(dataset_subscription_rule(owner, name));
+    true
+}
+
+fn remove_dataset_subscription(
+    cfg: &mut biovault::subscriptions::Subscriptions,
+    owner: &str,
+    name: &str,
+) -> bool {
+    let target_path = dataset_subscription_rule(owner, name).path;
+    let before = cfg.rules.len();
+    cfg.rules.retain(|rule| {
+        !(rule.action == biovault::subscriptions::Action::Allow
+            && rule
+                .datasite
+                .as_deref()
+                .map(|ds| ds.eq_ignore_ascii_case(owner))
+                .unwrap_or(false)
+            && rule.path == target_path)
+    });
+    before != cfg.rules.len()
+}
+
+#[tauri::command]
+pub fn subscribe_dataset(owner: String, name: String) -> Result<bool, String> {
+    let owner = owner.trim().to_string();
+    let name = name.trim().to_string();
+    if owner.is_empty() || name.is_empty() {
+        return Err("Missing dataset owner or name".to_string());
+    }
+    let mut cfg = load_subscriptions()?;
+    let changed = add_dataset_subscription(&mut cfg, &owner, &name);
+    if changed {
+        save_subscriptions(&cfg)?;
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn unsubscribe_dataset(owner: String, name: String) -> Result<bool, String> {
+    let owner = owner.trim().to_string();
+    let name = name.trim().to_string();
+    if owner.is_empty() || name.is_empty() {
+        return Err("Missing dataset owner or name".to_string());
+    }
+    let mut cfg = load_subscriptions()?;
+    let changed = remove_dataset_subscription(&mut cfg, &owner, &name);
+    if changed {
+        save_subscriptions(&cfg)?;
+    }
+    Ok(false)
 }
 
 #[tauri::command]
@@ -684,6 +790,8 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
 
     let mut datasets = Vec::new();
     let current_slug = syftbox_sdk::sanitize_identity(&current_email);
+    let subs_cfg =
+        load_subscriptions().unwrap_or_else(|_| biovault::subscriptions::default_config());
 
     if !datasites_dir.exists() {
         return Ok(NetworkDatasetScanResult {
@@ -921,6 +1029,7 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
                 } else {
                     None
                 },
+                is_subscribed: is_dataset_subscribed(&subs_cfg, &owner, &manifest.name),
             });
         }
     }

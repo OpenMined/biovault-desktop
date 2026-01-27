@@ -1642,7 +1642,9 @@ export function initOnboarding({
 					// Dependency checks use longRunning timeout (180s) in tauri-shim.js
 					// subprocess calls for java/docker/nextflow are slow on Windows
 					const start = Date.now()
-					console.log('[onboarding] update_saved_dependency_states start (using longRunning timeout)')
+					console.log(
+						'[onboarding] update_saved_dependency_states start (using longRunning timeout)',
+					)
 					// Do not block the UI on potentially slow dependency checks.
 					void invoke('update_saved_dependency_states')
 						.then((result) => {
@@ -1978,25 +1980,25 @@ export function initOnboarding({
 
 		const desiredHome = (homeInput?.value || '').trim()
 
-			const normalizeHomePath = (value) => {
-				const raw = String(value || '').trim()
-				if (!raw) return ''
-				const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
-				const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)
-				return isWindowsPath ? normalized.toLowerCase() : normalized
-			}
+		const normalizeHomePath = (value) => {
+			const raw = String(value || '').trim()
+			if (!raw) return ''
+			const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
+			const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)
+			return isWindowsPath ? normalized.toLowerCase() : normalized
+		}
 
-			// If user picked a different BioVault home, create/switch profiles before continuing.
-			if (desiredHome) {
-				try {
-					const currentHome = await resolveCurrentHomeBestEffort()
-					const normalizedDesired = normalizeHomePath(desiredHome)
-					const normalizedCurrent = normalizeHomePath(currentHome)
-					if (normalizedCurrent && normalizedDesired && normalizedDesired !== normalizedCurrent) {
-						try {
-							window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
-							window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
-						} catch (_err) {
+		// If user picked a different BioVault home, create/switch profiles before continuing.
+		if (desiredHome) {
+			try {
+				const currentHome = await resolveCurrentHomeBestEffort()
+				const normalizedDesired = normalizeHomePath(desiredHome)
+				const normalizedCurrent = normalizeHomePath(currentHome)
+				if (normalizedCurrent && normalizedDesired && normalizedDesired !== normalizedCurrent) {
+					try {
+						window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
+						window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
+					} catch (_err) {
 						// ignore
 					}
 					try {

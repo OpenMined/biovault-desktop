@@ -40,20 +40,20 @@ export function setupEventHandlers({
 	setSyftboxTarget,
 	getSyftboxStatus,
 	showMessagesInviteOptions,
-	// Projects
-	showCreateProjectModal,
-	hideCreateProjectModal,
-	handleProjectNameInputChange,
-	chooseProjectDirectory,
-	resetProjectDirectory,
-	importProject,
-	importProjectFromFolder,
-	handleSaveProjectEditor,
+	// Modules
+	showCreateModuleModal,
+	hideCreateModuleModal,
+	handleModuleNameInputChange,
+	chooseModuleDirectory,
+	resetModuleDirectory,
+	importModule,
+	importModuleFromFolder,
+	handleSaveModuleEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
-	handleOpenProjectFolder,
-	handleLeaveProjectEditor,
-	handleReloadProjectSpec,
+	handleOpenModuleFolder,
+	handleLeaveModuleEditor,
+	handleReloadModuleSpec,
 	// Runs
 	runAnalysis,
 	shareCurrentRunLogs,
@@ -256,10 +256,10 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Messages - View project
-	const projectBtn = document.getElementById('message-view-project-btn')
-	if (projectBtn) {
-		projectBtn.addEventListener('click', () => navigateTo('run'))
+	// Messages - View module
+	const moduleBtn = document.getElementById('message-view-module-btn')
+	if (moduleBtn) {
+		moduleBtn.addEventListener('click', () => navigateTo('run'))
 	}
 
 	// Messages - Compose keyboard shortcut
@@ -491,7 +491,7 @@ export function setupEventHandlers({
 	if (resetAllBtn) {
 		resetAllBtn.addEventListener('click', async () => {
 			const confirmed = await dialog.confirm(
-				'This will DELETE ALL DATA including participants, files, projects, and runs. It will also stop any running Jupyter sessions and the SyftBox background process.\n\nThis cannot be undone.\n\nAre you sure?',
+				'This will DELETE ALL DATA including participants, files, modules, and runs. It will also stop any running Jupyter sessions and the SyftBox background process.\n\nThis cannot be undone.\n\nAre you sure?',
 				{ title: 'Reset BioVault Data', type: 'warning' },
 			)
 
@@ -679,16 +679,16 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Projects - Create project modal (also used for "Create Step")
-	const createProjectBtn = document.getElementById('create-project-btn')
-	if (createProjectBtn) {
-		createProjectBtn.addEventListener('click', () => {
-			showCreateProjectModal()
+	// Modules - Create module modal (also used for "Create Step")
+	const createModuleBtn = document.getElementById('create-module-btn')
+	if (createModuleBtn) {
+		createModuleBtn.addEventListener('click', () => {
+			showCreateModuleModal()
 		})
 	}
 
-	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
-	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
+	// Note: All create module modal buttons (Cancel, Back, Next, Confirm)
+	// are set up when modal opens (see setupCreateTabHandlers in modules.js)
 
 	// Preview tab switching
 	document.querySelectorAll('.preview-tab').forEach((tab) => {
@@ -707,37 +707,37 @@ export function setupEventHandlers({
 	})
 
 	// Top close button
-	const topCloseBtn = document.getElementById('create-project-cancel-top')
+	const topCloseBtn = document.getElementById('create-module-cancel-top')
 	if (topCloseBtn) {
-		topCloseBtn.addEventListener('click', hideCreateProjectModal)
+		topCloseBtn.addEventListener('click', hideCreateModuleModal)
 	}
 	// Preview expand/collapse controls removed - now using split view
-	const newProjectNameInput = document.getElementById('new-project-name')
-	if (newProjectNameInput) {
-		newProjectNameInput.addEventListener('input', () => {
-			handleProjectNameInputChange()
+	const newModuleNameInput = document.getElementById('new-module-name')
+	if (newModuleNameInput) {
+		newModuleNameInput.addEventListener('input', () => {
+			handleModuleNameInputChange()
 		})
 	}
 
-	const projectPathBrowseBtn = document.getElementById('project-path-browse-btn')
-	if (projectPathBrowseBtn) {
-		projectPathBrowseBtn.addEventListener('click', async () => {
-			await chooseProjectDirectory()
+	const modulePathBrowseBtn = document.getElementById('module-path-browse-btn')
+	if (modulePathBrowseBtn) {
+		modulePathBrowseBtn.addEventListener('click', async () => {
+			await chooseModuleDirectory()
 		})
 	}
 
-	const projectPathResetBtn = document.getElementById('project-path-reset-btn')
-	if (projectPathResetBtn) {
-		projectPathResetBtn.addEventListener('click', async () => {
-			await resetProjectDirectory()
+	const modulePathResetBtn = document.getElementById('module-path-reset-btn')
+	if (modulePathResetBtn) {
+		modulePathResetBtn.addEventListener('click', async () => {
+			await resetModuleDirectory()
 		})
 	}
 
-	const importProjectBtn = document.getElementById('import-project-btn')
-	if (importProjectBtn) {
-		importProjectBtn.addEventListener('click', () => {
-			console.log('Import project button clicked')
-			importProject()
+	const importModuleBtn = document.getElementById('import-module-btn')
+	if (importModuleBtn) {
+		importModuleBtn.addEventListener('click', () => {
+			console.log('Import module button clicked')
+			importModule()
 		})
 	}
 
@@ -745,20 +745,20 @@ export function setupEventHandlers({
 	if (importFolderBtn) {
 		importFolderBtn.addEventListener('click', () => {
 			console.log('Import from folder button clicked')
-			importProjectFromFolder()
+			importModuleFromFolder()
 		})
 	}
 
-	// Wire up import step button to import project
+	// Wire up import step button to import module
 	const importStepBtn = document.getElementById('import-step-btn')
 	if (importStepBtn) {
 		importStepBtn.addEventListener('click', () => {
-			// Copy value from step input to project input
+			// Copy value from step input to module input
 			const stepUrlInput = document.getElementById('step-url-input')
-			const projectUrlInput = document.getElementById('project-url-input')
-			if (stepUrlInput && projectUrlInput) {
-				projectUrlInput.value = stepUrlInput.value
-				importProject()
+			const moduleUrlInput = document.getElementById('module-url-input')
+			if (stepUrlInput && moduleUrlInput) {
+				moduleUrlInput.value = stepUrlInput.value
+				importModule()
 			}
 		})
 	}
@@ -769,46 +769,46 @@ export function setupEventHandlers({
 		runBtn.addEventListener('click', runAnalysis)
 	}
 
-	// Projects - Edit buttons
-	const projectEditSaveBtn = document.getElementById('project-edit-save-btn')
-	if (projectEditSaveBtn) {
-		projectEditSaveBtn.addEventListener('click', handleSaveProjectEditor)
+	// Modules - Edit buttons
+	const moduleEditSaveBtn = document.getElementById('module-edit-save-btn')
+	if (moduleEditSaveBtn) {
+		moduleEditSaveBtn.addEventListener('click', handleSaveModuleEditor)
 	}
 
-	const projectEditCancelBtn = document.getElementById('project-edit-cancel-btn')
-	if (projectEditCancelBtn) {
-		projectEditCancelBtn.addEventListener('click', () => {
-			handleLeaveProjectEditor()
+	const moduleEditCancelBtn = document.getElementById('module-edit-cancel-btn')
+	if (moduleEditCancelBtn) {
+		moduleEditCancelBtn.addEventListener('click', () => {
+			handleLeaveModuleEditor()
 			navigateTo('run')
 		})
 	}
 
-	const projectEditBackBtn = document.getElementById('project-edit-back-btn')
-	if (projectEditBackBtn) {
-		projectEditBackBtn.addEventListener('click', () => {
-			handleLeaveProjectEditor()
+	const moduleEditBackBtn = document.getElementById('module-edit-back-btn')
+	if (moduleEditBackBtn) {
+		moduleEditBackBtn.addEventListener('click', () => {
+			handleLeaveModuleEditor()
 			navigateTo('run')
 		})
 	}
 	// Add event listeners only if elements exist (they won't during onboarding)
-	const openFolderBtn = document.getElementById('project-edit-open-folder-btn')
+	const openFolderBtn = document.getElementById('module-edit-open-folder-btn')
 	if (openFolderBtn) {
-		openFolderBtn.addEventListener('click', handleOpenProjectFolder)
+		openFolderBtn.addEventListener('click', handleOpenModuleFolder)
 	}
 
-	const launchJupyterBtn = document.getElementById('project-edit-launch-jupyter-btn')
+	const launchJupyterBtn = document.getElementById('module-edit-launch-jupyter-btn')
 	if (launchJupyterBtn) {
 		launchJupyterBtn.addEventListener('click', handleLaunchJupyter)
 	}
 
-	const resetJupyterBtn = document.getElementById('project-edit-reset-jupyter-btn')
+	const resetJupyterBtn = document.getElementById('module-edit-reset-jupyter-btn')
 	if (resetJupyterBtn) {
 		resetJupyterBtn.addEventListener('click', handleResetJupyter)
 	}
 
-	const projectSpecReloadBtn = document.getElementById('project-spec-reload-btn')
-	if (projectSpecReloadBtn) {
-		projectSpecReloadBtn.addEventListener('click', handleReloadProjectSpec)
+	const moduleSpecReloadBtn = document.getElementById('module-spec-reload-btn')
+	if (moduleSpecReloadBtn) {
+		moduleSpecReloadBtn.addEventListener('click', handleReloadModuleSpec)
 	}
 
 	// Runs - Select all participants (only exists if run analysis view is loaded)

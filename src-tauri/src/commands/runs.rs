@@ -14,6 +14,7 @@ fn dependency_binaries() -> Vec<&'static str> {
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
+    deps.push("syqure");
     deps.push("uv");
     deps
 }
@@ -22,17 +23,17 @@ fn dependency_binaries() -> Vec<&'static str> {
 pub fn start_analysis(
     state: tauri::State<AppState>,
     participant_ids: Vec<i64>,
-    project_id: i64,
+    module_id: i64,
 ) -> Result<RunStartResult, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Get project from CLI database
+    // Get module from CLI database
     let biovault_db = state.biovault_db.lock().unwrap();
-    let project_obj = biovault_db
-        .get_project(&project_id.to_string())
+    let module_obj = biovault_db
+        .get_module(&module_id.to_string())
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Project {} not found", project_id))?;
-    let project = (project_obj.name.clone(), project_obj.project_path.clone());
+        .ok_or_else(|| format!("Module {} not found", module_id))?;
+    let module = (module_obj.name.clone(), module_obj.module_path.clone());
 
     // Use BIOVAULT_HOME environment variable or default to Desktop/BioVault
     let biovault_home = env::var("BIOVAULT_HOME").unwrap_or_else(|_| {
@@ -50,7 +51,7 @@ pub fn start_analysis(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let run_dir = runs_dir.join(format!("{}_{}", project.0, timestamp));
+    let run_dir = runs_dir.join(format!("{}_{}", module.0, timestamp));
     let work_dir = run_dir.join("work");
     let results_dir = run_dir.join("results");
 
@@ -145,8 +146,8 @@ pub fn start_analysis(
 
     // Create run using CLI library (unified runs table)
     let run_id = biovault_db
-        .create_step_run(
-            project_id,
+        .create_module_run(
+            module_id,
             run_dir.to_str().unwrap(),
             participant_ids.len() as i32,
         )
@@ -179,14 +180,14 @@ pub async fn execute_analysis(
 ) -> Result<String, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let (project_path, work_dir): (String, String) = {
+    let (module_path, work_dir): (String, String) = {
         let biovault_db = state.biovault_db.lock().unwrap();
         biovault_db
             .conn
             .query_row(
-                "SELECT p.project_path, r.work_dir
+                "SELECT p.module_path, r.work_dir
          FROM runs r
-         JOIN projects p ON r.step_id = p.id
+         JOIN modules p ON r.step_id = p.id
          WHERE r.id = ?1",
                 params![run_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -197,7 +198,7 @@ pub async fn execute_analysis(
     let run_dir_path = PathBuf::from(&work_dir);
 
     // Derive biovault_home from work_dir path
-    // work_dir is like: /path/to/biovault/runs/project_timestamp
+    // work_dir is like: /path/to/biovault/runs/module_timestamp
     // So biovault_home is two levels up
     let biovault_home = run_dir_path
         .parent() // /path/to/biovault/runs
@@ -227,8 +228,8 @@ pub async fn execute_analysis(
     crate::desktop_log!("{}", start_line);
 
     let details_line = format!(
-        "Calling biovault::run directly with project: {} and samplesheet: {}",
-        project_path,
+        "Calling biovault::run directly with module: {} and samplesheet: {}",
+        module_path,
         samplesheet_path.display()
     );
     writeln!(log_file, "{}", details_line).map_err(|e| e.to_string())?;
@@ -243,8 +244,8 @@ pub async fn execute_analysis(
     let _ = window.emit(
         "log-line",
         format!(
-            "Running analysis for project: {} with samplesheet: {}",
-            project_path,
+            "Running analysis for module: {} with samplesheet: {}",
+            module_path,
             samplesheet_path.display()
         ),
     );
@@ -375,7 +376,7 @@ pub async fn execute_analysis(
 
     // Create RunParams struct to call the execute function directly
     let params = RunParams {
-        project_folder: project_path.clone(),
+        module_folder: module_path.clone(),
         participant_source: samplesheet_path.to_string_lossy().to_string(),
         test: false,
         download: false,
@@ -434,7 +435,7 @@ pub fn get_runs(state: tauri::State<AppState>) -> Result<Vec<Run>, String> {
         .prepare(
             "SELECT r.id, r.step_id, p.name, r.work_dir, r.participant_count, r.status, r.created_at
              FROM runs r
-             JOIN projects p ON r.step_id = p.id
+             JOIN modules p ON r.step_id = p.id
              WHERE r.step_id IS NOT NULL
              ORDER BY r.created_at DESC"
         )
@@ -444,8 +445,8 @@ pub fn get_runs(state: tauri::State<AppState>) -> Result<Vec<Run>, String> {
         .query_map([], |row| {
             Ok(Run {
                 id: row.get(0)?,
-                project_id: row.get(1)?,
-                project_name: row.get(2)?,
+                module_id: row.get(1)?,
+                module_name: row.get(2)?,
                 work_dir: row.get(3)?,
                 participant_count: row.get(4)?,
                 status: row.get(5)?,
@@ -572,6 +573,7 @@ fn bundled_env_var(name: &str) -> Option<&'static str> {
         "nextflow" => Some("BIOVAULT_BUNDLED_NEXTFLOW"),
         "uv" => Some("BIOVAULT_BUNDLED_UV"),
         "syftbox" => Some("SYFTBOX_BINARY"),
+        "syqure" => Some("SEQURE_NATIVE_BIN"),
         _ => None,
     }
 }

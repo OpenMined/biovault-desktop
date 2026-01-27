@@ -504,7 +504,7 @@ function buildOutputEntry(entry, update, typeInfo = null, formats = null) {
 	wrapper.innerHTML = `
 		<div class="spec-entry-header">
 			<strong>Output</strong>
-			<span class="entry-hint">File or directory this project creates</span>
+			<span class="entry-hint">File or directory this module creates</span>
 			<div class="spec-entry-actions">
 				<button type="button" class="link-button" data-action="duplicate">Duplicate</button>
 				<button type="button" class="link-button danger" data-action="remove">Remove</button>
@@ -698,9 +698,9 @@ function createEmptyEntry(kind) {
 	}
 }
 
-export function createProjectSpecForm({ container, onChange, invoke }) {
+export function createModuleSpecForm({ container, onChange, invoke }) {
 	if (!container) {
-		throw new Error('Missing container for project spec form')
+		throw new Error('Missing container for module spec form')
 	}
 
 	const state = {
@@ -811,7 +811,7 @@ export function createProjectSpecForm({ container, onChange, invoke }) {
 	const sectionDescriptions = {
 		parameters: 'Configuration settings like thresholds, toggles, and options',
 		inputs: 'Data files and directories to analyze',
-		outputs: 'Files and directories this project creates',
+		outputs: 'Files and directories this module creates',
 	}
 
 	Object.entries(sectionElements).forEach(([key, section]) => {
@@ -1058,7 +1058,7 @@ export function createProjectSpecForm({ container, onChange, invoke }) {
 
 export function generateContractAscii({ name, parameters, inputs, outputs }) {
 	const width = 60
-	const safeName = name || 'Project'
+	const safeName = name || 'Module'
 
 	const visualWidth = (text) => {
 		if (!text) return 0

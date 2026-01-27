@@ -157,7 +157,7 @@ test.describe('Import Data workflow', () => {
 							return state.participants.map((p) => ({ ...p }))
 						case 'get_files':
 							return state.importedFiles.map((f) => ({ ...f }))
-						case 'get_projects':
+						case 'get_modules':
 						case 'get_command_logs':
 							return []
 						case 'get_desktop_log_text':

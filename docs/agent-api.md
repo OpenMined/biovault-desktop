@@ -63,7 +63,7 @@ If WebSocket clients are not available, a lightweight HTTP fallback is available
 
 HTTP requests support the token in either the JSON body (`token`) or
 `Authorization: Bearer <token>` header. Streaming events are not supported over HTTP.
-For long-running operations, poll with normal status/list commands (e.g., `get_pipeline_runs`).
+For long-running operations, poll with normal status/list commands (e.g., `get_flow_runs`).
 Agents can use HTTP for bootstrap and switch to WebSocket for streaming events.
 
 Example:
@@ -192,7 +192,7 @@ async with BioVaultAgent() as agent:
 
 - `install_dependencies`, `install_dependency`, `install_brew`, `install_command_line_tools`
 - `sync_messages`, `sync_messages_with_failures`, `refresh_messages_batched`
-- `import_pipeline_with_deps`, `run_pipeline`
+- `import_flow_with_deps`, `run_flow`
 - `launch_jupyter`, `reset_jupyter`
 - `launch_session_jupyter`, `reset_session_jupyter`
 - `syftbox_upload_action`
@@ -203,7 +203,7 @@ Use `agent_api_events_info` to get the complete list at runtime.
 
 Arguments support both `camelCase` and `snake_case`. For example:
 
-- `projectPath` or `project_path`
+- `modulePath` or `module_path`
 - `profileId` or `profile_id`
 - `threadId` or `thread_id`
 
@@ -358,13 +358,13 @@ Commands for managing application settings.
 
 ### UI Control
 
-Commands for driving the local UI (navigation and pipeline import helpers).
+Commands for driving the local UI (navigation and flow import helpers).
 
-| Command                        | Description                                    | Read-Only | Async |
-| ------------------------------ | ---------------------------------------------- | --------- | ----- |
-| `ui_navigate`                  | Navigate to a tab/view                         | No        | No    |
-| `ui_pipeline_import_options`   | Open pipeline import options modal             | No        | No    |
-| `ui_pipeline_import_from_path` | Import a pipeline from a local path via the UI | No        | No    |
+| Command                    | Description                                | Read-Only | Async |
+| -------------------------- | ------------------------------------------ | --------- | ----- |
+| `ui_navigate`              | Navigate to a tab/view                     | No        | No    |
+| `ui_flow_import_options`   | Open flow import options modal             | No        | No    |
+| `ui_flow_import_from_path` | Import a flow from a local path via the UI | No        | No    |
 
 ### Dependencies
 
@@ -513,25 +513,25 @@ Commands for network discovery and contact management.
 | `network_scan_datasites` | Scan available datasites   | Yes       | No    |
 | `network_scan_datasets`  | Scan datasets on datasites | Yes       | No    |
 
-### Projects
+### Modules
 
-Commands for project management.
+Commands for module management.
 
-| Command                          | Description                      | Read-Only | Async |
-| -------------------------------- | -------------------------------- | --------- | ----- |
-| `get_projects`                   | List all projects                | Yes       | No    |
-| `create_project`                 | Create new project               | No        | No    |
-| `load_project_editor`            | Load project for editing         | Yes       | No    |
-| `save_project_editor`            | Save project changes             | No        | No    |
-| `get_available_project_examples` | List example projects            | Yes       | No    |
-| `get_default_project_path`       | Get default path for new project | Yes       | No    |
+| Command                         | Description                     | Read-Only | Async |
+| ------------------------------- | ------------------------------- | --------- | ----- |
+| `get_modules`                   | List all modules                | Yes       | No    |
+| `create_module`                 | Create new module               | No        | No    |
+| `load_module_editor`            | Load module for editing         | Yes       | No    |
+| `save_module_editor`            | Save module changes             | No        | No    |
+| `get_available_module_examples` | List example modules            | Yes       | No    |
+| `get_default_module_path`       | Get default path for new module | Yes       | No    |
 
-**Example: Create a project**
+**Example: Create a module**
 
 ```json
 {
 	"id": 1,
-	"cmd": "create_project",
+	"cmd": "create_module",
 	"args": {
 		"name": "my-analysis",
 		"createPythonScript": true,
@@ -540,34 +540,34 @@ Commands for project management.
 }
 ```
 
-### Pipelines
+### Flows
 
-Commands for pipeline management and execution.
+Commands for flow management and execution.
 
-| Command                        | Description               | Read-Only | Async | Long-Running |
-| ------------------------------ | ------------------------- | --------- | ----- | ------------ |
-| `get_pipelines`                | List pipelines            | Yes       | Yes   | No           |
-| `create_pipeline`              | Create pipeline           | No        | Yes   | No           |
-| `import_pipeline`              | Import pipeline from spec | No        | Yes   | No           |
-| `import_pipeline_from_message` | Import from message       | No        | Yes   | No           |
-| `import_pipeline_from_request` | Import from request       | No        | Yes   | No           |
-| `import_pipeline_with_deps`    | Import with dependencies  | No        | Yes   | Yes          |
-| `run_pipeline`                 | Execute pipeline          | No        | Yes   | Yes          |
-| `get_pipeline_runs`            | List runs                 | Yes       | Yes   | No           |
-| `get_runs_base_dir`            | Get runs directory        | Yes       | Yes   | No           |
-| `send_pipeline_request`        | Send execution request    | No        | No    | No           |
-| `send_pipeline_results`        | Send results to peer      | No        | No    | No           |
-| `import_pipeline_results`      | Import results            | No        | No    | No           |
-| `list_results_tree`            | List results directory    | Yes       | No    | No           |
+| Command                    | Description              | Read-Only | Async | Long-Running |
+| -------------------------- | ------------------------ | --------- | ----- | ------------ |
+| `get_flows`                | List flows               | Yes       | Yes   | No           |
+| `create_flow`              | Create flow              | No        | Yes   | No           |
+| `import_flow`              | Import flow from spec    | No        | Yes   | No           |
+| `import_flow_from_message` | Import from message      | No        | Yes   | No           |
+| `import_flow_from_request` | Import from request      | No        | Yes   | No           |
+| `import_flow_with_deps`    | Import with dependencies | No        | Yes   | Yes          |
+| `run_flow`                 | Execute flow             | No        | Yes   | Yes          |
+| `get_flow_runs`            | List runs                | Yes       | Yes   | No           |
+| `get_runs_base_dir`        | Get runs directory       | Yes       | Yes   | No           |
+| `send_flow_request`        | Send execution request   | No        | No    | No           |
+| `send_flow_results`        | Send results to peer     | No        | No    | No           |
+| `import_flow_results`      | Import results           | No        | No    | No           |
+| `list_results_tree`        | List results directory   | Yes       | No    | No           |
 
-**Example: Run a pipeline**
+**Example: Run a flow**
 
 ```json
 {
 	"id": 1,
-	"cmd": "run_pipeline",
+	"cmd": "run_flow",
 	"args": {
-		"pipelineId": 1,
+		"flowId": 1,
 		"inputOverrides": {
 			"samples": "/path/to/samples.csv"
 		}
@@ -628,14 +628,14 @@ Commands for collaborative sessions.
 
 ### Jupyter
 
-Commands for Jupyter notebook management (project-level).
+Commands for Jupyter notebook management (module-level).
 
-| Command              | Description            | Read-Only | Async | Long-Running |
-| -------------------- | ---------------------- | --------- | ----- | ------------ |
-| `get_jupyter_status` | Get status for project | Yes       | No    | No           |
-| `launch_jupyter`     | Start Jupyter server   | No        | Yes   | Yes          |
-| `stop_jupyter`       | Stop Jupyter server    | No        | Yes   | No           |
-| `reset_jupyter`      | Reset environment      | No        | Yes   | Yes          |
+| Command              | Description           | Read-Only | Async | Long-Running |
+| -------------------- | --------------------- | --------- | ----- | ------------ |
+| `get_jupyter_status` | Get status for module | Yes       | No    | No           |
+| `launch_jupyter`     | Start Jupyter server  | No        | Yes   | Yes          |
+| `stop_jupyter`       | Stop Jupyter server   | No        | Yes   | No           |
+| `reset_jupyter`      | Reset environment     | No        | Yes   | Yes          |
 
 ### Session Jupyter
 
@@ -655,7 +655,7 @@ Commands for Jupyter notebook management (session-level).
 	"id": 1,
 	"cmd": "launch_jupyter",
 	"args": {
-		"projectPath": "/home/user/BioVault/projects/my-project"
+		"modulePath": "/home/user/BioVault/modules/my-module"
 	}
 }
 ```
@@ -722,7 +722,7 @@ Direct database access commands.
 	"id": 1,
 	"cmd": "sql_run_query",
 	"args": {
-		"query": "SELECT * FROM projects LIMIT 10"
+		"query": "SELECT * FROM modules LIMIT 10"
 	}
 }
 ```
@@ -740,10 +740,10 @@ Commands that delete data. Use with caution.
 
 Different commands have different timeout expectations:
 
-| Category     | Default Timeout | Commands                                                                                     |
-| ------------ | --------------- | -------------------------------------------------------------------------------------------- |
-| Standard     | 30 seconds      | Most commands                                                                                |
-| Long-running | 3 minutes       | `launch_jupyter`, `install_dependencies`, `sync_messages`, `import_pipeline_with_deps`, etc. |
+| Category     | Default Timeout | Commands                                                                                 |
+| ------------ | --------------- | ---------------------------------------------------------------------------------------- |
+| Standard     | 30 seconds      | Most commands                                                                            |
+| Long-running | 3 minutes       | `launch_jupyter`, `install_dependencies`, `sync_messages`, `import_flow_with_deps`, etc. |
 
 When using the client, you may want to set appropriate timeouts based on the command type.
 
@@ -790,37 +790,37 @@ await ws_send({"id": 5, "cmd": "start_syftbox_client"})
 # Response: {"id": 5, "result": {"running": true}}
 ```
 
-### Example 2: Create and Run Pipeline
+### Example 2: Create and Run Flow
 
 ```python
-# 1. Create a project
+# 1. Create a module
 await ws_send({
     "id": 1,
-    "cmd": "create_project",
+    "cmd": "create_module",
     "args": {"name": "gwas-analysis"}
 })
 
-# 2. Create a pipeline
+# 2. Create a flow
 await ws_send({
     "id": 2,
-    "cmd": "create_pipeline",
+    "cmd": "create_flow",
     "args": {
         "request": {
-            "name": "gwas-pipeline",
-            "directory": "/home/user/BioVault/pipelines/gwas-pipeline"
+            "name": "gwas-flow",
+            "directory": "/home/user/BioVault/flows/gwas-flow"
         }
     }
 })
 
-# 3. Get pipeline ID from result
-pipeline_id = response["result"]["id"]
+# 3. Get flow ID from result
+flow_id = response["result"]["id"]
 
-# 4. Run the pipeline
+# 4. Run the flow
 await ws_send({
     "id": 3,
-    "cmd": "run_pipeline",
+    "cmd": "run_flow",
     "args": {
-        "pipelineId": pipeline_id,
+        "flowId": flow_id,
         "inputOverrides": {}
     }
 })
@@ -872,7 +872,7 @@ This document describes API version **1.4.2**.
 
 ### 1.4.1
 
-- Added UI control commands: `ui_navigate`, `ui_pipeline_import_options`, `ui_pipeline_import_from_path`
+- Added UI control commands: `ui_navigate`, `ui_flow_import_options`, `ui_flow_import_from_path`
 
 ### 1.4.0
 
@@ -880,9 +880,9 @@ This document describes API version **1.4.2**.
   - Files: `is_directory`, `import_files`, `import_files_with_metadata`, `delete_file`, `delete_files_bulk`, `analyze_file_types`, `process_queue`, `pause_queue_processor`, `resume_queue_processor`, `clear_pending_queue`
   - Participants: `delete_participant`, `delete_participants_bulk`
   - Messages: `dismiss_failed_message`, `delete_failed_message`
-  - Projects: `import_project`, `import_project_from_folder`, `delete_project`, `delete_project_folder`, `preview_project_spec`, `get_project_spec_digest`, `get_supported_input_types`, `get_supported_output_types`, `get_supported_parameter_types`, `get_common_formats`
+  - Modules: `import_module`, `import_module_from_folder`, `delete_module`, `delete_module_folder`, `preview_module_spec`, `get_module_spec_digest`, `get_supported_input_types`, `get_supported_output_types`, `get_supported_parameter_types`, `get_common_formats`
   - Runs: `start_analysis`
-  - Pipelines: `load_pipeline_editor`, `save_pipeline_editor`, `delete_pipeline`, `validate_pipeline`, `delete_pipeline_run`, `preview_pipeline_spec`, `save_run_config`, `list_run_configs`, `get_run_config`, `delete_run_config`
+  - Flows: `load_flow_editor`, `save_flow_editor`, `delete_flow`, `validate_flow`, `delete_flow_run`, `preview_flow_spec`, `save_run_config`, `list_run_configs`, `get_run_config`, `delete_run_config`
   - Datasets: `upsert_dataset_manifest`
   - Keys: `key_republish`, `key_refresh_contacts`
   - Network: `network_remove_contact`, `network_trust_changed_key`
@@ -896,5 +896,5 @@ This document describes API version **1.4.2**.
 - Added Files & Participants section
 - Added Network section
 - Added Session Jupyter section (separated from Jupyter)
-- Expanded Pipelines, Datasets, and Sessions sections with additional commands
+- Expanded Flows, Datasets, and Sessions sections with additional commands
 - Full command coverage now matches ws_bridge.rs (155 commands)

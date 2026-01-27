@@ -61,6 +61,7 @@
 		},
 		"targets": ["app", "appimage", "dmg", "nsis"],
 		"resources": [
+			"resources/syqure",
 			"resources/templates",
 			"resources/bundled/README.txt",
 			"resources/bundled/java",

@@ -7,6 +7,10 @@ sbenv
 syft-crypto-core
 syftbox
 syftbox-sdk
+syqure
+codon
+external/llvm-project
+syqure/sequre
 sandbox
 artifacts
 logs

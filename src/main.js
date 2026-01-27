@@ -4,8 +4,8 @@ import { createDashboardShell } from './dashboard.js'
 import { createDataModule } from './data.js'
 import { createLogsModule } from './logs.js'
 import { createRunsModule } from './runs.js'
-import { createProjectsModule } from './projects.js'
-import { createPipelinesModule } from './pipelines.js'
+import { createModulesModule } from './modules.js'
+import { createFlowsModule } from './flows.js'
 import { createMessagesModule } from './messages.js'
 import { createImportModule } from './import.js'
 import { createProgressUI } from './progress-ui.js'
@@ -95,65 +95,65 @@ const {
 	setNavigateTo: setRunNavigateTo,
 } = createRunsModule({ invoke, listen, dialog, refreshLogs })
 
-// Create projects module early with placeholder navigateTo
-let projectsNavigateTo = () => console.warn('navigateTo not yet initialized')
-let pipelineModule_addProjectAsStep = null // Will be set after pipelines module is created
+// Create modules module early with placeholder navigateTo
+let modulesNavigateTo = () => console.warn('navigateTo not yet initialized')
+let flowModule_addModuleAsStep = null // Will be set after flows module is created
 
-const projectsModule = createProjectsModule({
+const modulesModule = createModulesModule({
 	invoke,
 	dialog,
 	open,
 	shellApi,
-	addProjectAsPipelineStep: (projectPath, projectName) => {
-		// Delegate to pipelines module
-		if (pipelineModule_addProjectAsStep) {
-			return pipelineModule_addProjectAsStep(projectPath, projectName)
+	addModuleAsFlowStep: (modulePath, moduleName) => {
+		// Delegate to flows module
+		if (flowModule_addModuleAsStep) {
+			return flowModule_addModuleAsStep(modulePath, moduleName)
 		}
 	},
-	navigateTo: (...args) => projectsNavigateTo(...args),
+	navigateTo: (...args) => modulesNavigateTo(...args),
 })
 
-// Destructure projects module exports
+// Destructure modules module exports
 const {
-	loadProjects,
-	importProject,
-	importProjectFromFolder,
-	showCreateProjectModal,
-	openProjectEditor,
-	hideCreateProjectModal,
-	handleProjectNameInputChange,
-	chooseProjectDirectory,
-	resetProjectDirectory,
-	createProjectFromModal,
+	loadModules,
+	importModule,
+	importModuleFromFolder,
+	showCreateModuleModal,
+	openModuleEditor,
+	hideCreateModuleModal,
+	handleModuleNameInputChange,
+	chooseModuleDirectory,
+	resetModuleDirectory,
+	createModuleFromModal,
 	handleCreateWizardNext,
 	handleCreateWizardBack,
 	handleWizardStepClick,
-	handleSaveProjectEditor,
+	handleSaveModuleEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
-	handleOpenProjectFolder,
-	handleLeaveProjectEditor,
-	handleReloadProjectSpec,
-} = projectsModule
+	handleOpenModuleFolder,
+	handleLeaveModuleEditor,
+	handleReloadModuleSpec,
+} = modulesModule
 
-// Create pipelines module AFTER destructuring projectsModule
-const pipelinesModule = createPipelinesModule({
+// Create flows module AFTER destructuring modulesModule
+const flowsModule = createFlowsModule({
 	invoke,
 	dialog,
 	open,
-	navigateTo: (...args) => projectsNavigateTo(...args),
-	showCreateProjectModal,
-	openProjectEditor,
+	navigateTo: (...args) => modulesNavigateTo(...args),
+	showCreateModuleModal,
+	openModuleEditor,
 })
 
-// Wire up the callback so projects can add steps to pipelines
-pipelineModule_addProjectAsStep = pipelinesModule.addProjectAsStep
+// Wire up the callback so modules can add steps to flows
+flowModule_addModuleAsStep = flowsModule.addModuleAsStep
 
-// Expose pipelines module for data.js to call openRunPipelineWithDataset
-window.__pipelinesModule = pipelinesModule
+// Expose flows module for data.js to call openRunFlowWithDataset
+window.__flowsModule = flowsModule
 
 // Create messages module early with placeholder getActiveView
-let messagesGetActiveView = () => 'projects'
+let messagesGetActiveView = () => 'modules'
 const messagesModule = createMessagesModule({
 	invoke,
 	getCurrentUserEmail,
@@ -219,7 +219,7 @@ const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shel
 // Create import module with placeholder functions
 let importNavigateTo = () => console.warn('navigateTo not yet initialized')
 let importSetLastImportView = () => console.warn('setLastImportView not yet initialized')
-const importModule = createImportModule({
+const fileImportModule = createImportModule({
 	invoke,
 	open,
 	dialog,
@@ -261,7 +261,7 @@ const {
 	toggleIncompleteReviewFilter,
 	jumpToNextIncompleteReview,
 	getIsImportInProgress,
-} = importModule
+} = fileImportModule
 
 const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView } =
 	createDashboardShell({
@@ -273,8 +273,8 @@ const { navigateTo, registerNavigationHandlers, getActiveView, setLastImportView
 		},
 		loadParticipants: loadData,
 		loadFiles: loadData,
-		loadProjects,
-		loadPipelines: pipelinesModule.loadPipelines,
+		loadModules,
+		loadFlows: flowsModule.loadFlows,
 		prepareRunView,
 		loadRuns,
 		refreshLogs,
@@ -297,7 +297,7 @@ setRunNavigateTo(navigateTo)
 
 // Make navigateTo available globally for data module
 window.navigateTo = navigateTo
-// Expose clearAllSelections globally for pipelines module
+// Expose clearAllSelections globally for flows module
 window.clearAllDataSelections = clearAllSelections
 
 // Expose readiness markers for automated tests
@@ -333,7 +333,7 @@ async function checkKeyFingerprintMismatchOnStartup() {
 }
 
 // Now set the real functions for module placeholders
-projectsNavigateTo = navigateTo
+modulesNavigateTo = navigateTo
 messagesGetActiveView = getActiveView
 importNavigateTo = navigateTo
 importSetLastImportView = setLastImportView
@@ -380,8 +380,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 	try {
 		await Promise.all([
 			templateLoader.loadAndInject('onboarding', 'onboarding-view'),
-			// projects template is now merged into run template (Pipelines tab)
-			templateLoader.loadAndInject('project-edit', 'project-edit-view'),
+			// modules template is now merged into run template (Flows tab)
+			templateLoader.loadAndInject('module-edit', 'module-edit-view'),
 			templateLoader.loadAndInject('run', 'run-view'),
 			// import-review is now inside the import modal, no longer a separate view
 			templateLoader.loadAndInject('import-results', 'import-results-view'),
@@ -402,7 +402,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		document.body.insertAdjacentHTML('beforeend', importModalHtml)
 
 		// Initialize drag-and-drop for folder selection (async now)
-		await importModule.initFolderDropzone()
+		await fileImportModule.initFolderDropzone()
 
 		await initializeSqlTab()
 
@@ -439,7 +439,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		// Load initial data only if user is onboarded
 		refreshExistingFilePaths()
 		loadData()
-		loadProjects()
+		loadModules()
 		refreshLogs({ force: true })
 		await loadSettings()
 		await checkKeyFingerprintMismatchOnStartup()
@@ -453,7 +453,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 	registerNavigationHandlers()
 	window.__NAV_HANDLERS_READY__ = true
 	initializeDataTab()
-	pipelinesModule.initialize()
+	flowsModule.initialize()
 	initializeSessionsTab()
 	networkModule.init()
 	syftBoxModule.init()
@@ -466,30 +466,30 @@ window.addEventListener('DOMContentLoaded', async () => {
 		if (action === 'navigate') {
 			const rawTab = payload?.tab
 			if (!rawTab) return
-			const tab = rawTab === 'pipelines' ? 'run' : rawTab
+			const tab = rawTab === 'flows' ? 'run' : rawTab
 			navigateTo(tab)
 			return
 		}
 
-		if (action === 'pipeline_import_options') {
+		if (action === 'flow_import_options') {
 			navigateTo('run')
-			if (window.pipelineModule?.showImportOptions) {
-				window.pipelineModule.showImportOptions()
+			if (window.flowModule?.showImportOptions) {
+				window.flowModule.showImportOptions()
 			} else {
-				console.warn('[agent-ui] pipelineModule.showImportOptions not available')
+				console.warn('[agent-ui] flowModule.showImportOptions not available')
 			}
 			return
 		}
 
-		if (action === 'pipeline_import_from_path') {
+		if (action === 'flow_import_from_path') {
 			const path = payload?.path
 			const overwrite = Boolean(payload?.overwrite)
 			if (!path) return
 			navigateTo('run')
-			if (window.pipelineModule?.importExistingPipeline) {
-				await window.pipelineModule.importExistingPipeline(overwrite, path)
+			if (window.flowModule?.importExistingFlow) {
+				await window.flowModule.importExistingFlow(overwrite, path)
 			} else {
-				console.warn('[agent-ui] pipelineModule.importExistingPipeline not available')
+				console.warn('[agent-ui] flowModule.importExistingFlow not available')
 			}
 		}
 	})
@@ -547,23 +547,23 @@ window.addEventListener('DOMContentLoaded', async () => {
 		setSyftboxTarget,
 		getSyftboxStatus,
 		showMessagesInviteOptions,
-		showCreateProjectModal,
-		hideCreateProjectModal,
-		createProjectFromModal,
+		showCreateModuleModal,
+		hideCreateModuleModal,
+		createModuleFromModal,
 		handleCreateWizardNext,
 		handleCreateWizardBack,
 		handleWizardStepClick,
-		handleProjectNameInputChange,
-		chooseProjectDirectory,
-		resetProjectDirectory,
-		importProject,
-		importProjectFromFolder,
-		handleSaveProjectEditor,
+		handleModuleNameInputChange,
+		chooseModuleDirectory,
+		resetModuleDirectory,
+		importModule,
+		importModuleFromFolder,
+		handleSaveModuleEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,
-		handleOpenProjectFolder,
-		handleLeaveProjectEditor,
-		handleReloadProjectSpec,
+		handleOpenModuleFolder,
+		handleLeaveModuleEditor,
+		handleReloadModuleSpec,
 		runAnalysis,
 		shareCurrentRunLogs,
 		toggleSelectAllParticipants,

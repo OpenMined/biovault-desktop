@@ -1413,7 +1413,7 @@ export function createSettingsModule({
 	async function checkSyftBoxStatus() {
 		const statusBadge = document.getElementById('syftbox-status-badge')
 		const authBtn = document.getElementById('syftbox-auth-btn')
-		const serverLabel =
+		const _serverLabel =
 			(currentSettings?.syftbox_server_url && currentSettings.syftbox_server_url.trim()) ||
 			defaultSyftboxServerUrl
 

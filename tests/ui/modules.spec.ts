@@ -37,7 +37,7 @@ test.beforeEach(async ({ page, context }) => {
 		// Mock Tauri invoke commands for tests
 		window.__TEST_INVOKE_OVERRIDE__ = async (cmd, args) => {
 			switch (cmd) {
-				case 'get_projects':
+				case 'get_modules':
 					return []
 				case 'get_participants':
 					return []
@@ -69,9 +69,9 @@ test.beforeEach(async ({ page, context }) => {
 					return { installed: [], missing: [], errors: [] }
 				case 'check_is_onboarded':
 					return true
-				case 'get_default_project_path':
-					return '/tmp/biovault-projects'
-				case 'get_available_project_examples':
+				case 'get_default_module_path':
+					return '/tmp/biovault-modules'
+				case 'get_available_module_examples':
 					return {
 						'count-lines': {
 							name: 'Count Lines',
@@ -94,7 +94,7 @@ test.beforeEach(async ({ page, context }) => {
 					return ['String', 'Bool', 'Enum[...]']
 				case 'get_common_formats':
 					return ['csv', 'tsv', 'txt', 'json', 'vcf']
-				case 'preview_project_spec': {
+				case 'preview_module_spec': {
 					// Generate YAML from the spec data passed in args
 					const spec = args.spec || {}
 					const params = (spec.parameters || [])
@@ -137,21 +137,21 @@ test.beforeEach(async ({ page, context }) => {
 						template: 'workflow {\n  // Template\n}',
 					}
 				}
-				case 'create_project':
+				case 'create_module':
 					return {
 						id: 1,
-						name: args.name || 'test-project',
+						name: args.name || 'test-module',
 						author: 'test@example.com',
 						workflow: 'workflow.nf',
 						template: 'dynamic-nextflow',
-						project_path: '/tmp/test-project',
+						module_path: '/tmp/test-module',
 						created_at: new Date().toISOString(),
 					}
-				case 'load_project_editor':
+				case 'load_module_editor':
 					return {
-						project_path: '/tmp/test-project',
+						module_path: '/tmp/test-module',
 						metadata: {
-							name: 'test-project',
+							name: 'test-module',
 							author: 'test@example.com',
 							workflow: 'workflow.nf',
 							template: 'dynamic-nextflow',
@@ -185,63 +185,59 @@ test.afterEach(async () => {
 	}
 })
 
-test.describe('Pipeline Creation', () => {
-	test('should open create pipeline modal and navigate through wizard', async ({ page }) => {
-		sendUnifiedLog({ test: 'pipeline-wizard-navigation', action: 'start' })
+test.describe('Flow Creation', () => {
+	test('should open create flow modal and navigate through wizard', async ({ page }) => {
+		sendUnifiedLog({ test: 'flow-wizard-navigation', action: 'start' })
 
 		// Wait for app to be ready and ensure not in onboarding
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 
-		// Navigate to pipelines/run view
+		// Navigate to flows/run view
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
 		// Wait for run view to be visible
 		await expect(page.locator('#run-view')).toBeVisible()
 
-		// Click create pipeline button to open the wizard
-		const createBtn = page.locator('#create-pipeline-btn, #empty-create-pipeline-btn').first()
+		// Click create flow button to open the wizard
+		const createBtn = page.locator('#create-flow-btn, #empty-create-flow-btn').first()
 		await expect(createBtn).toBeVisible()
 		await createBtn.click()
 
 		// Wait for template picker modal (first screen)
-		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
+		await page.waitForSelector('#flow-picker-modal', { state: 'visible', timeout: 5000 })
 
 		// The template picker modal should have template options and "Import Your Own" button
-		await expect(page.locator('#pipeline-picker-modal')).toContainText('APOL1 Classifier')
-		await expect(page.locator('#pipeline-picker-modal')).toContainText('Import Your Own')
+		await expect(page.locator('#flow-picker-modal')).toContainText('APOL1 Classifier')
+		await expect(page.locator('#flow-picker-modal')).toContainText('Import Your Own')
 
 		// Click "Import Your Own" to show the import options modal
 		await page.click('button:has-text("Import Your Own")')
 
 		// Wait for import options modal (second screen)
-		await page.waitForSelector('#pipeline-import-options-modal', {
+		await page.waitForSelector('#flow-import-options-modal', {
 			state: 'visible',
 			timeout: 5000,
 		})
 
 		// The import options modal should have options
-		await expect(page.locator('#pipeline-import-options-modal')).toContainText(
-			'Create Blank Pipeline',
-		)
-		await expect(page.locator('#pipeline-import-options-modal')).toContainText('Import from GitHub')
+		await expect(page.locator('#flow-import-options-modal')).toContainText('Create Blank Flow')
+		await expect(page.locator('#flow-import-options-modal')).toContainText('Import from GitHub')
 
-		// Click "Create Blank Pipeline" to open name modal
-		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
+		// Click "Create Blank Flow" to open name modal
+		await page.click('#flow-import-options-modal button:has-text("Create Blank Flow")')
 
-		// Wait for pipeline name modal
-		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
+		// Wait for flow name modal
+		await page.waitForSelector('#flow-name-modal', { state: 'visible' })
 
 		// Verify the modal has proper elements
-		await expect(page.locator('#pipeline-name-input')).toBeVisible()
-		await expect(
-			page.locator('#pipeline-name-modal button:has-text("Create Pipeline")'),
-		).toBeVisible()
-		await expect(page.locator('#pipeline-name-modal button:has-text("Cancel")')).toBeVisible()
+		await expect(page.locator('#flow-name-input')).toBeVisible()
+		await expect(page.locator('#flow-name-modal button:has-text("Create Flow")')).toBeVisible()
+		await expect(page.locator('#flow-name-modal button:has-text("Cancel")')).toBeVisible()
 
-		// Fill in a pipeline name
-		await page.fill('#pipeline-name-input', 'Test Navigation Pipeline')
+		// Fill in a flow name
+		await page.fill('#flow-name-input', 'Test Navigation Flow')
 
 		// Set up dialog handler in case of any alerts
 		page.on('dialog', async (dialog) => {
@@ -249,16 +245,16 @@ test.describe('Pipeline Creation', () => {
 			await dialog.accept()
 		})
 
-		// Create the pipeline
-		await page.click('#pipeline-name-modal button:has-text("Create Pipeline")')
+		// Create the flow
+		await page.click('#flow-name-modal button:has-text("Create Flow")')
 
-		// Wait for modal to close and pipeline to be created
+		// Wait for modal to close and flow to be created
 		await page.waitForTimeout(2000)
 
-		// After creation, we should be in the pipeline editor view
-		// Check if we're redirected to the pipeline editor or back to list
-		const pipelineEditorVisible = await page
-			.locator('#pipeline-editor')
+		// After creation, we should be in the flow editor view
+		// Check if we're redirected to the flow editor or back to list
+		const flowEditorVisible = await page
+			.locator('#flow-editor')
 			.isVisible()
 			.catch(() => false)
 		const runViewVisible = await page
@@ -267,12 +263,12 @@ test.describe('Pipeline Creation', () => {
 			.catch(() => false)
 
 		// Verify we're either in the editor or back in the run view
-		expect(pipelineEditorVisible || runViewVisible).toBeTruthy()
+		expect(flowEditorVisible || runViewVisible).toBeTruthy()
 
-		sendUnifiedLog({ test: 'pipeline-wizard-navigation', action: 'complete' })
+		sendUnifiedLog({ test: 'flow-wizard-navigation', action: 'complete' })
 	})
 
-	// Skip the rest of the old project tests - they need complete rewrite for pipeline architecture
+	// Skip the rest of the old module tests - they need complete rewrite for flow architecture
 	test('should add and remove parameters using modal', async ({ page }) => {
 		sendUnifiedLog({ test: 'parameters-modal', action: 'start' })
 
@@ -280,18 +276,18 @@ test.describe('Pipeline Creation', () => {
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 
-		// Navigate to pipelines/run view
+		// Navigate to flows/run view
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// For now, just verify the pipeline view is visible
+		// For now, just verify the flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
 
 		sendUnifiedLog({ test: 'parameters-modal', action: 'skipped - needs rewrite' })
 	})
 
 	test('should add and remove parameters using modal - duplicate', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-parameters', action: 'start' })
+		sendUnifiedLog({ test: 'module-parameters', action: 'start' })
 
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
@@ -299,43 +295,43 @@ test.describe('Pipeline Creation', () => {
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// Just verify pipeline view is visible
+		// Just verify flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
-		sendUnifiedLog({ test: 'project-parameters', action: 'skipped' })
+		sendUnifiedLog({ test: 'module-parameters', action: 'skipped' })
 	})
 
 	test('should add inputs and outputs using modals', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-inputs-outputs', action: 'start' })
+		sendUnifiedLog({ test: 'module-inputs-outputs', action: 'start' })
 
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// Verify pipeline view is visible
+		// Verify flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
 
-		// Since the architecture changed from projects to pipelines,
-		// and pipelines don't have the same input/output modal system,
+		// Since the architecture changed from modules to flows,
+		// and flows don't have the same input/output modal system,
 		// we need to skip this test for now
 		sendUnifiedLog({
-			test: 'project-inputs-outputs',
-			action: 'skipped - needs pipeline-based implementation',
+			test: 'module-inputs-outputs',
+			action: 'skipped - needs flow-based implementation',
 		})
 
-		// TODO: Rewrite this test to work with the pipeline step creation flow
-		// Pipelines have steps, not direct inputs/outputs like projects had
+		// TODO: Rewrite this test to work with the flow step creation flow
+		// Flows have steps, not direct inputs/outputs like modules had
 	})
 
 	test('should validate required fields in modal', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-validation', action: 'start' })
+		sendUnifiedLog({ test: 'module-validation', action: 'start' })
 
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// Verify pipeline view is visible
+		// Verify flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
 
 		// Set up global dialog handler to auto-accept all dialogs
@@ -345,87 +341,87 @@ test.describe('Pipeline Creation', () => {
 			await dialog.accept()
 		})
 
-		// Click create pipeline button to open the wizard
-		const createBtn = page.locator('#create-pipeline-btn, #empty-create-pipeline-btn').first()
+		// Click create flow button to open the wizard
+		const createBtn = page.locator('#create-flow-btn, #empty-create-flow-btn').first()
 		await expect(createBtn).toBeVisible()
 		await createBtn.click()
 
 		// Wait for template picker modal (first screen)
-		await page.waitForSelector('#pipeline-picker-modal', { state: 'visible', timeout: 5000 })
+		await page.waitForSelector('#flow-picker-modal', { state: 'visible', timeout: 5000 })
 
 		// Click "Import Your Own" to show the import options modal
 		await page.click('button:has-text("Import Your Own")')
 
 		// Wait for import options modal (second screen)
-		await page.waitForSelector('#pipeline-import-options-modal', {
+		await page.waitForSelector('#flow-import-options-modal', {
 			state: 'visible',
 			timeout: 5000,
 		})
 
-		// Click "Create Blank Pipeline" option
-		await page.click('#pipeline-import-options-modal button:has-text("Create Blank Pipeline")')
+		// Click "Create Blank Flow" option
+		await page.click('#flow-import-options-modal button:has-text("Create Blank Flow")')
 
-		// Wait for pipeline name modal
-		await page.waitForSelector('#pipeline-name-modal', { state: 'visible' })
+		// Wait for flow name modal
+		await page.waitForSelector('#flow-name-modal', { state: 'visible' })
 
 		// Try to submit without entering a name (should trigger validation alert)
-		// The new modal uses inline styles, so we'll select by button text "Create Pipeline"
-		const submitBtn = page.locator('#pipeline-name-modal button:has-text("Create Pipeline")')
+		// The new modal uses inline styles, so we'll select by button text "Create Flow"
+		const submitBtn = page.locator('#flow-name-modal button:has-text("Create Flow")')
 		await submitBtn.click()
 
 		// Wait a bit for the validation to occur
 		await page.waitForTimeout(1000)
 
 		// Modal should still be open due to validation
-		await expect(page.locator('#pipeline-name-modal')).toBeVisible()
+		await expect(page.locator('#flow-name-modal')).toBeVisible()
 
 		// Now fill in a valid name
-		await page.fill('#pipeline-name-input', 'Test Validation Pipeline')
+		await page.fill('#flow-name-input', 'Test Validation Flow')
 
 		// Submit with valid name
 		await submitBtn.click()
 		await page.waitForTimeout(2000)
 
 		// Check if modal closed (successful creation) or still open (error)
-		const modalExists = await page.locator('#pipeline-name-modal').count()
+		const modalExists = await page.locator('#flow-name-modal').count()
 
-		// If modal is gone, test passed (pipeline created)
+		// If modal is gone, test passed (flow created)
 		// If modal still exists, it might have errored but that's okay - we tested validation
 		if (modalExists === 0) {
-			sendUnifiedLog({ test: 'project-validation', action: 'complete - pipeline created' })
+			sendUnifiedLog({ test: 'module-validation', action: 'complete - flow created' })
 		} else {
-			sendUnifiedLog({ test: 'project-validation', action: 'complete - validation tested' })
+			sendUnifiedLog({ test: 'module-validation', action: 'complete - validation tested' })
 		}
 
-		// Verify we're still in the pipeline view
+		// Verify we're still in the flow view
 		await expect(page.locator('#run-view')).toBeVisible()
 	})
 
 	test('should allow editing items via modal', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-edit-modal', action: 'start' })
+		sendUnifiedLog({ test: 'module-edit-modal', action: 'start' })
 
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// Just verify pipeline view is visible
+		// Just verify flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
-		sendUnifiedLog({ test: 'project-edit-modal', action: 'skipped - needs rewrite' })
-		return // Skip the rest - needs complete rewrite for pipeline architecture
+		sendUnifiedLog({ test: 'module-edit-modal', action: 'skipped - needs rewrite' })
+		return // Skip the rest - needs complete rewrite for flow architecture
 	})
 
 	test('should select workflow engine and script language with cards', async ({ page }) => {
-		sendUnifiedLog({ test: 'project-option-cards', action: 'start' })
+		sendUnifiedLog({ test: 'module-option-cards', action: 'start' })
 
 		await waitForAppReady(page)
 		await ensureNotInOnboarding(page)
 		await navigateToTab(page, 'run')
 		await page.waitForTimeout(500)
 
-		// Just verify pipeline view is visible
+		// Just verify flow view is visible
 		await expect(page.locator('#run-view')).toBeVisible()
-		sendUnifiedLog({ test: 'project-option-cards', action: 'skipped - needs rewrite' })
-		return // Skip the rest - needs complete rewrite for pipeline architecture
+		sendUnifiedLog({ test: 'module-option-cards', action: 'skipped - needs rewrite' })
+		return // Skip the rest - needs complete rewrite for flow architecture
 	})
 })

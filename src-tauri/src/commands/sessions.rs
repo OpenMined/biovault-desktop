@@ -12,6 +12,7 @@ use biovault::data::sessions::{
 };
 use biovault::data::BioVaultDb;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus};
+use biovault::subscriptions;
 use rand::Rng;
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
@@ -412,6 +413,46 @@ fn ensure_session_permissions(session_path: &Path, owner: &str, peer: &Option<St
     }
 }
 
+fn add_session_subscription(peer_email: &str, session_id: &str) -> Result<(), String> {
+    if peer_email.trim().is_empty() || !peer_email.contains('@') {
+        return Ok(());
+    }
+
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to resolve SyftBox data dir: {}", e))?;
+    let syftsub_path = data_dir.join(".data").join("syft.sub.yaml");
+
+    let mut cfg =
+        subscriptions::load(&syftsub_path).unwrap_or_else(|_| subscriptions::default_config());
+
+    let path = format!("shared/biovault/sessions/{}/**", session_id);
+
+    let exists = cfg.rules.iter().any(|rule| {
+        rule.action == subscriptions::Action::Allow
+            && rule
+                .datasite
+                .as_deref()
+                .map(|ds| ds.eq_ignore_ascii_case(peer_email))
+                .unwrap_or(false)
+            && rule.path == path
+    });
+
+    if !exists {
+        cfg.rules.push(subscriptions::Rule {
+            action: subscriptions::Action::Allow,
+            datasite: Some(peer_email.to_string()),
+            path,
+        });
+        subscriptions::save(&syftsub_path, &cfg)
+            .map_err(|e| format!("Failed to write syft.sub.yaml: {}", e))?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_sessions() -> Result<Vec<Session>, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open database: {}", e))?;
@@ -592,6 +633,10 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
             &owner,
             &request.description,
         );
+
+        if let Err(err) = add_session_subscription(peer_email, &session_id) {
+            eprintln!("[Sessions] Warning: failed to add subscription: {}", err);
+        }
     }
 
     get_session(session_id)
@@ -659,6 +704,10 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
             &owner,
             &session.description,
         );
+
+        if let Err(err) = add_session_subscription(peer_email, &session.session_id) {
+            eprintln!("[Sessions] Warning: failed to add subscription: {}", err);
+        }
     }
 
     Ok(session)
@@ -1144,6 +1193,9 @@ pub fn accept_session_invitation(session_id: String) -> Result<Session, String> 
         .map_err(|e| format!("Failed to create private data directory: {}", e))?;
 
     ensure_session_permissions(&session_path, &owner, &Some(invitation.requester.clone()));
+    if let Err(err) = add_session_subscription(&invitation.requester, &session_id) {
+        eprintln!("[Sessions] Warning: failed to add subscription: {}", err);
+    }
 
     // Note: Example notebooks are copied at launch time if user opts in
 

@@ -1,4 +1,4 @@
-use biovault::data::{ProjectFileNode, ProjectMetadata};
+use biovault::data::{ModuleFileNode, ModuleMetadata};
 use biovault::defaults::SYFTBOX_DEFAULT_SERVER_URL;
 use biovault::messages::MessageRpcWatcherHandle;
 use rusqlite::Connection;
@@ -162,48 +162,48 @@ pub struct FileRecord {
     pub updated_at: String,
 }
 
-// Project Types
+// Module Types
 #[derive(Serialize, Deserialize)]
-pub struct Project {
+pub struct Module {
     pub id: i64,
     pub name: String,
     pub version: String,
     pub author: String,
     pub workflow: String,
     pub template: String,
-    pub project_path: String,
+    pub module_path: String,
     pub created_at: String,
 }
 
 #[derive(Serialize)]
-pub struct ProjectListEntry {
+pub struct ModuleListEntry {
     pub id: Option<i64>,
     pub name: String,
     pub version: Option<String>,
     pub author: Option<String>,
     pub workflow: Option<String>,
     pub template: Option<String>,
-    pub project_path: String,
+    pub module_path: String,
     pub created_at: Option<String>,
     pub source: String,
     pub orphaned: bool,
 }
 
 #[derive(Serialize)]
-pub struct ProjectEditorLoadResponse {
-    pub project_id: Option<i64>,
-    pub project_path: String,
-    pub metadata: ProjectMetadata,
-    pub file_tree: Vec<ProjectFileNode>,
-    pub has_project_yaml: bool,
+pub struct ModuleEditorLoadResponse {
+    pub module_id: Option<i64>,
+    pub module_path: String,
+    pub metadata: ModuleMetadata,
+    pub file_tree: Vec<ModuleFileNode>,
+    pub has_module_yaml: bool,
 }
 
 // Run Types
 #[derive(Serialize)]
 pub struct Run {
     pub id: i64,
-    pub project_id: i64,
-    pub project_name: String,
+    pub module_id: i64,
+    pub module_name: String,
     pub work_dir: String,
     pub participant_count: i64,
     pub status: String,
@@ -243,7 +243,7 @@ pub struct MessageThreadSummary {
     pub unread_count: usize,
     pub last_message_at: Option<String>,
     pub last_message_preview: String,
-    pub has_project: bool,
+    pub has_module: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -336,6 +336,7 @@ pub struct SyncTreeNode {
     pub progress: Option<f64>,
     pub is_ignored: bool,
     pub is_essential: bool,
+    pub is_subscribed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_count: Option<u32>,
     pub has_mixed_state: bool,

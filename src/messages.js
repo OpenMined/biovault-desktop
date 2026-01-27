@@ -104,33 +104,70 @@ export function createMessagesModule({
 		}
 	}
 
-	function getPipelineRequestFromMessage(msg) {
+	function getFlowRequestFromMessage(msg) {
 		if (!msg) return null
 		const meta = normalizeMetadata(msg.metadata)
-		if (!meta || !meta.pipeline_request) return null
-		const request = meta.pipeline_request
-		if (!request.pipeline_name) return null
+		if (!meta || !meta.flow_request) return null
+		const request = meta.flow_request
+		if (!request.flow_name) return null
 		return {
-			pipeline_name: request.pipeline_name,
-			pipeline_version: request.pipeline_version || '1.0.0',
+			flow_name: request.flow_name,
+			flow_version: request.flow_version || '1.0.0',
 			dataset_name: request.dataset_name,
 			sender: request.sender || msg.from,
 			flow_spec: request.flow_spec,
-			pipeline_location: request.pipeline_location,
+			flow_location: request.flow_location,
 			submission_id: request.submission_id,
 			sender_local_path: request.sender_local_path,
 			receiver_local_path_template: request.receiver_local_path_template,
+			run_id: request.run_id,
+			datasites: Array.isArray(request.datasites) ? request.datasites : null,
+			collab: Boolean(request.collab),
 		}
 	}
 
-	function getPipelineResultsFromMessage(msg) {
+	function parseSyftUrl(syftUrl) {
+		if (!syftUrl || typeof syftUrl !== 'string') return null
+		const match = syftUrl.match(/^syft:\/\/([^/]+)\/(.+)$/i)
+		if (!match) return null
+		return { datasite: match[1], path: match[2] }
+	}
+
+	function buildFlowRequestSubscriptionPath(flowRequest) {
+		if (!flowRequest) return null
+		let datasite = flowRequest.sender
+		let path = null
+		const parsed = parseSyftUrl(flowRequest.flow_location)
+		if (parsed) {
+			datasite = parsed.datasite || datasite
+			path = parsed.path
+		}
+		if (!path && flowRequest.submission_id && flowRequest.sender) {
+			path = `shared/biovault/submissions/${flowRequest.submission_id}`
+		}
+		if (!datasite || !path) return null
+		path = path.replace(/^\/+/, '')
+		path = path.replace(/\/flow\.ya?ml$/i, '')
+		if (path.startsWith('datasites/')) {
+			const parts = path.split('/')
+			if (parts.length > 2) {
+				return `${parts[1]}/${parts.slice(2).join('/')}`
+			}
+		}
+		if (path.startsWith(`${datasite}/`)) {
+			return path
+		}
+		return `${datasite}/${path}`
+	}
+
+	function getFlowResultsFromMessage(msg) {
 		if (!msg) return null
 		const meta = normalizeMetadata(msg.metadata)
-		if (!meta || !meta.pipeline_results) return null
-		const results = meta.pipeline_results
-		if (!results.pipeline_name) return null
+		if (!meta || !meta.flow_results) return null
+		const results = meta.flow_results
+		if (!results.flow_name) return null
 		return {
-			pipeline_name: results.pipeline_name,
+			flow_name: results.flow_name,
 			run_id: results.run_id,
 			sender: results.sender || msg.from,
 			results_location: results.results_location,
@@ -1086,9 +1123,9 @@ export function createMessagesModule({
 				Session
 			</span>`
 				: ''
-			const projectBadge =
-				!thread.session_id && thread.has_project
-					? '<span class="message-thread-project">Project</span>'
+			const moduleBadge =
+				!thread.session_id && thread.has_module
+					? '<span class="message-thread-module">Module</span>'
 					: ''
 
 			// For session threads, show participants in subject line
@@ -1109,7 +1146,7 @@ export function createMessagesModule({
 							: ''
 					}
 					${sessionBadge}
-					${projectBadge}
+					${moduleBadge}
 				</div>
 				${sessionParticipantsLine}
 				<div class="message-thread-preview">${escapeHtml(thread.last_message_preview || '')}</div>
@@ -1138,32 +1175,32 @@ export function createMessagesModule({
 		})
 	}
 
-	function renderProjectPanel(messages) {
-		const panel = document.getElementById('message-project-panel')
-		const details = document.getElementById('message-project-details')
+	function renderModulePanel(messages) {
+		const panel = document.getElementById('message-module-panel')
+		const details = document.getElementById('message-module-details')
 		if (!panel || !details) return
 
-		const projectMessage = (messages || []).find((msg) => {
+		const moduleMessage = (messages || []).find((msg) => {
 			if (!msg || !msg.metadata) return false
-			return msg.metadata.project
+			return msg.metadata.module
 		})
 
-		if (!projectMessage) {
+		if (!moduleMessage) {
 			panel.style.display = 'none'
 			details.innerHTML = ''
 			return
 		}
 
-		const metadata = projectMessage.metadata || {}
-		const project = metadata.project || {}
-		const name = project.name || metadata.project_name || projectMessage.subject || 'Project'
+		const metadata = moduleMessage.metadata || {}
+		const module = metadata.module || {}
+		const name = module.name || metadata.module_name || moduleMessage.subject || 'Module'
 
 		let html = `<p><strong>Name:</strong> ${escapeHtml(name)}</p>`
-		if (metadata.project_location) {
-			html += `<p><strong>Location:</strong> ${escapeHtml(metadata.project_location)}</p>`
+		if (metadata.module_location) {
+			html += `<p><strong>Location:</strong> ${escapeHtml(metadata.module_location)}</p>`
 		}
-		if (project.workflow) {
-			html += `<p><strong>Workflow:</strong> ${escapeHtml(project.workflow)}</p>`
+		if (module.workflow) {
+			html += `<p><strong>Workflow:</strong> ${escapeHtml(module.workflow)}</p>`
 		}
 
 		details.innerHTML = html
@@ -1190,7 +1227,7 @@ export function createMessagesModule({
 			messageReplyTargetId = messages.length ? messages[messages.length - 1].id : null
 
 			renderConversation(messages)
-			renderProjectPanel(messages)
+			renderModulePanel(messages)
 
 			const summary = messageThreads.find((thread) => thread.thread_id === threadId)
 			const participants = summary ? summary.participants : collectParticipants(messages)
@@ -1294,8 +1331,8 @@ export function createMessagesModule({
 		const conversationDiv = document.getElementById('message-conversation')
 		if (conversationDiv) conversationDiv.innerHTML = ''
 
-		const projectPanel = document.getElementById('message-project-panel')
-		if (projectPanel) projectPanel.style.display = 'none'
+		const modulePanel = document.getElementById('message-module-panel')
+		if (modulePanel) modulePanel.style.display = 'none'
 
 		renderMessageThreads()
 		updateMessagesEmptyState()
@@ -1833,68 +1870,112 @@ export function createMessagesModule({
 					}
 				}
 
-				// Pipeline request card
-				const pipelineRequest = getPipelineRequestFromMessage(msg)
-				if (pipelineRequest) {
+				// Flow request card
+				const flowRequest = getFlowRequestFromMessage(msg)
+				if (flowRequest) {
 					const requestCard = document.createElement('div')
-					requestCard.className = 'message-pipeline-request'
+					requestCard.className = 'message-flow-request'
 
 					requestCard.innerHTML = `
-						<h5>🔧 ${escapeHtml(pipelineRequest.pipeline_name)} <span class="version-badge">v${escapeHtml(pipelineRequest.pipeline_version)}</span><span class="invite-label">Pipeline Request</span></h5>
-						<p class="invite-meta">Run on dataset: <strong>${escapeHtml(pipelineRequest.dataset_name || 'your data')}</strong></p>
-						<p class="invite-meta">From: ${escapeHtml(pipelineRequest.sender)}</p>
+						<h5>🔧 ${escapeHtml(flowRequest.flow_name)} <span class="version-badge">v${escapeHtml(flowRequest.flow_version)}</span><span class="invite-label">Flow Request</span></h5>
+						<p class="invite-meta">Run on dataset: <strong>${escapeHtml(flowRequest.dataset_name || 'your data')}</strong></p>
+						<p class="invite-meta">From: ${escapeHtml(flowRequest.sender)}</p>
+						${flowRequest.run_id ? `<p class="invite-meta">Run ID: <strong>${escapeHtml(flowRequest.run_id)}</strong></p>` : ''}
+						${
+							Array.isArray(flowRequest.datasites) && flowRequest.datasites.length > 0
+								? `<p class="invite-meta">Datasites: ${escapeHtml(flowRequest.datasites.join(', '))}</p>`
+								: ''
+						}
 					`
 
 					const actions = document.createElement('div')
 					actions.className = 'invite-actions'
 					let runActions = null
 					let runButtons = null
+					let joinBtn = null
 
-					const updateRunButtons = (pipeline) => {
+					const updateRunButtons = (flow) => {
 						if (!runButtons) return
-						const enabled = Boolean(pipeline && pipelineRequest.dataset_name)
-						runButtons.pipeline = pipeline || null
+						const enabled = Boolean(flow && flowRequest.dataset_name)
+						runButtons.flow = flow || null
 						runButtons.mock.disabled = !enabled
 						runButtons.real.disabled = !enabled
 						runButtons.both.disabled = !enabled
+						if (joinBtn) {
+							joinBtn.disabled = !(flow && flowRequest.run_id)
+						}
 					}
 
 					if (!group.isOutgoing) {
+						const syncBtn = document.createElement('button')
+						syncBtn.className = 'secondary'
+						syncBtn.textContent = 'Sync Request'
+						syncBtn.addEventListener('click', async () => {
+							if (syncBtn.disabled) return
+							const targetPath = buildFlowRequestSubscriptionPath(flowRequest)
+							if (!targetPath) {
+								await dialog.message('Flow location not available for sync.', {
+									title: 'Sync Error',
+									type: 'error',
+								})
+								return
+							}
+							const originalText = syncBtn.textContent
+							syncBtn.disabled = true
+							syncBtn.textContent = 'Syncing…'
+							try {
+								await invoke('sync_tree_set_subscription', {
+									path: targetPath,
+									allow: true,
+									isDir: true,
+								})
+								await invoke('trigger_syftbox_sync')
+								syncBtn.textContent = 'Synced'
+							} catch (error) {
+								console.error('Failed to sync flow request:', error)
+								syncBtn.textContent = originalText
+								syncBtn.disabled = false
+								await dialog.message(`Failed to sync request: ${error?.message || error}`, {
+									title: 'Sync Error',
+									type: 'error',
+								})
+							}
+						})
+						actions.appendChild(syncBtn)
+
 						const importBtn = document.createElement('button')
-						importBtn.textContent = 'Import Pipeline'
+						importBtn.textContent = 'Import Flow'
 						importBtn.addEventListener('click', async () => {
 							try {
-								if (!pipelineRequest.pipeline_location) {
-									await dialog.message('Pipeline folder not found in request', {
+								if (!flowRequest.flow_location) {
+									await dialog.message('Flow folder not found in request', {
 										title: 'Import Error',
 										type: 'error',
 									})
 									return
 								}
 
-								await invoke('import_pipeline_from_request', {
-									name: pipelineRequest.pipeline_name,
-									pipelineLocation: pipelineRequest.pipeline_location,
+								await invoke('import_flow_from_request', {
+									name: flowRequest.flow_name,
+									flowLocation: flowRequest.flow_location,
 									overwrite: false,
 								})
 
 								await dialog.message(
-									`Pipeline "${pipelineRequest.pipeline_name}" imported successfully!\n\nGo to Pipelines tab to view and run it.`,
-									{ title: 'Pipeline Imported', type: 'info' },
+									`Flow "${flowRequest.flow_name}" imported successfully!\n\nGo to Flows tab to view and run it.`,
+									{ title: 'Flow Imported', type: 'info' },
 								)
 
 								try {
-									const pipelines = await invoke('get_pipelines')
-									const pipeline = (pipelines || []).find(
-										(p) => p?.name === pipelineRequest.pipeline_name,
-									)
-									updateRunButtons(pipeline)
+									const flows = await invoke('get_flows')
+									const flow = (flows || []).find((p) => p?.name === flowRequest.flow_name)
+									updateRunButtons(flow)
 								} catch (error) {
-									console.warn('Failed to refresh pipeline availability:', error)
+									console.warn('Failed to refresh flow availability:', error)
 								}
 							} catch (error) {
-								console.error('Failed to import pipeline:', error)
-								await dialog.message('Failed to import pipeline: ' + (error?.message || error), {
+								console.error('Failed to import flow:', error)
+								await dialog.message('Failed to import flow: ' + (error?.message || error), {
 									title: 'Import Error',
 									type: 'error',
 								})
@@ -1908,19 +1989,19 @@ export function createMessagesModule({
 					openBtn.textContent = 'Open in Finder'
 					openBtn.addEventListener('click', async () => {
 						try {
-							if (!pipelineRequest.pipeline_location) {
-								await dialog.message('Pipeline folder not found in request', {
+							if (!flowRequest.flow_location) {
+								await dialog.message('Flow folder not found in request', {
 									title: 'Open Folder Error',
 									type: 'error',
 								})
 								return
 							}
 							const folderPath = await invoke('resolve_syft_url_to_local_path', {
-								syftUrl: pipelineRequest.pipeline_location,
+								syftUrl: flowRequest.flow_location,
 							})
 							await invoke('open_folder', { path: folderPath })
 						} catch (error) {
-							console.error('Failed to open pipeline folder:', error)
+							console.error('Failed to open flow folder:', error)
 							await dialog.message(`Failed to open folder: ${error?.message || error}`, {
 								title: 'Open Folder Error',
 								type: 'error',
@@ -1949,32 +2030,32 @@ export function createMessagesModule({
 						runBothBtn.textContent = 'Run Both'
 						runBothBtn.disabled = true
 
-						runButtons = { mock: runMockBtn, real: runRealBtn, both: runBothBtn, pipeline: null }
+						runButtons = { mock: runMockBtn, real: runRealBtn, both: runBothBtn, flow: null }
 
 						const runWithType = async (dataType) => {
-							const pipeline = runButtons?.pipeline
-							if (!pipeline) {
-								await dialog.message('Import the pipeline first before running.', {
-									title: 'Pipeline Required',
+							const flow = runButtons?.flow
+							if (!flow) {
+								await dialog.message('Import the flow first before running.', {
+									title: 'Flow Required',
 									type: 'warning',
 								})
 								return
 							}
-							if (!pipelineRequest.dataset_name) {
+							if (!flowRequest.dataset_name) {
 								await dialog.message('Dataset name missing from this request.', {
 									title: 'Missing Dataset',
 									type: 'error',
 								})
 								return
 							}
-							if (window.__pipelinesModule?.openRunPipelineWithDataset) {
-								window.__pipelinesModule.openRunPipelineWithDataset({
-									name: pipelineRequest.dataset_name,
+							if (window.__flowsModule?.openRunFlowWithDataset) {
+								window.__flowsModule.openRunFlowWithDataset({
+									name: flowRequest.dataset_name,
 									dataType,
-									pipelineId: pipeline.id,
+									flowId: flow.id,
 								})
 							} else if (typeof window.navigateTo === 'function') {
-								window.navigateTo('pipelines')
+								window.navigateTo('flows')
 							}
 						}
 
@@ -1985,6 +2066,46 @@ export function createMessagesModule({
 						runActions.appendChild(runMockBtn)
 						runActions.appendChild(runRealBtn)
 						runActions.appendChild(runBothBtn)
+
+						if (flowRequest.run_id) {
+							joinBtn = document.createElement('button')
+							joinBtn.textContent = 'Join Run'
+							joinBtn.className = 'secondary'
+							joinBtn.disabled = true
+							joinBtn.addEventListener('click', async () => {
+								const flow = runButtons?.flow
+								if (!flow) {
+									await dialog.message('Import the flow first before joining.', {
+										title: 'Flow Required',
+										type: 'warning',
+									})
+									return
+								}
+								const inputOverrides = {}
+								if (
+									flow?.spec?.inputs?.datasites &&
+									Array.isArray(flowRequest.datasites) &&
+									flowRequest.datasites.length > 0
+								) {
+									inputOverrides['inputs.datasites'] = flowRequest.datasites.join(',')
+								}
+								try {
+									await invoke('run_flow', {
+										flowId: flow.id,
+										inputOverrides,
+										runId: flowRequest.run_id,
+									})
+								} catch (error) {
+									console.error('Failed to start collaborative run:', error)
+									await dialog.message(
+										`Failed to start collaborative run: ${error?.message || error}`,
+										{ title: 'Run Error', type: 'error' },
+									)
+								}
+							})
+							runActions.appendChild(joinBtn)
+						}
+
 						requestCard.appendChild(runActions)
 
 						const resultsActions = document.createElement('div')
@@ -2034,8 +2155,8 @@ export function createMessagesModule({
 							if (!runId) return
 
 							const run = runSelect.__runMap?.get(runId)
-							const pipeline = runSelect.__pipelineRef
-							if (!run || !pipeline) {
+							const flow = runSelect.__flowRef
+							if (!run || !flow) {
 								await dialog.message('Run metadata not available.', {
 									title: 'Send Results Error',
 									type: 'error',
@@ -2248,7 +2369,7 @@ export function createMessagesModule({
 
 								try {
 									sendBtn.disabled = true
-									await invoke('send_pipeline_request_results', {
+									await invoke('send_flow_request_results', {
 										requestId: msg.id,
 										runId,
 										outputPaths: selected,
@@ -2259,7 +2380,7 @@ export function createMessagesModule({
 									})
 									closeModal()
 								} catch (error) {
-									console.error('Failed to send pipeline results:', error)
+									console.error('Failed to send flow results:', error)
 									await dialog.message(`Failed to send results: ${error?.message || error}`, {
 										title: 'Send Results Error',
 										type: 'error',
@@ -2276,21 +2397,19 @@ export function createMessagesModule({
 						requestCard.appendChild(resultsActions)
 						;(async () => {
 							try {
-								const [pipelines, runs] = await Promise.all([
-									invoke('get_pipelines'),
-									invoke('get_pipeline_runs'),
+								const [flows, runs] = await Promise.all([
+									invoke('get_flows'),
+									invoke('get_flow_runs'),
 								])
-								const pipeline = (pipelines || []).find(
-									(p) => p?.name === pipelineRequest.pipeline_name,
-								)
-								updateRunButtons(pipeline)
-								if (!pipeline) {
-									runSelect.innerHTML = '<option value="">Import pipeline first</option>'
+								const flow = (flows || []).find((p) => p?.name === flowRequest.flow_name)
+								updateRunButtons(flow)
+								if (!flow) {
+									runSelect.innerHTML = '<option value="">Import flow first</option>'
 									return
 								}
 
 								const matchingRuns = (runs || []).filter(
-									(run) => run.pipeline_id === pipeline.id && run.status === 'success',
+									(run) => run.flow_id === flow.id && run.status === 'success',
 								)
 								if (matchingRuns.length === 0) {
 									runSelect.innerHTML = '<option value="">No completed runs yet</option>'
@@ -2298,7 +2417,7 @@ export function createMessagesModule({
 								}
 
 								runSelect.__runMap = new Map(matchingRuns.map((run) => [run.id, run]))
-								runSelect.__pipelineRef = pipeline
+								runSelect.__flowRef = flow
 								runSelect.innerHTML = matchingRuns
 									.map(
 										(run) =>
@@ -2334,7 +2453,7 @@ export function createMessagesModule({
 								runSelect.addEventListener('change', updateActionState)
 								updateActionState()
 							} catch (error) {
-								console.error('Failed to load pipeline runs:', error)
+								console.error('Failed to load flow runs:', error)
 								runSelect.innerHTML = '<option value="">Failed to load runs</option>'
 							}
 						})()
@@ -2343,13 +2462,13 @@ export function createMessagesModule({
 					msgDiv.appendChild(requestCard)
 				}
 
-				// Pipeline results card
-				const pipelineResults = getPipelineResultsFromMessage(msg)
-				if (pipelineResults) {
+				// Flow results card
+				const flowResults = getFlowResultsFromMessage(msg)
+				if (flowResults) {
 					const resultsCard = document.createElement('div')
-					resultsCard.className = 'message-pipeline-results'
+					resultsCard.className = 'message-flow-results'
 
-					const filesHtml = pipelineResults.files
+					const filesHtml = flowResults.files
 						.map(
 							(file, idx) => `
 						<div class="result-file" data-file-idx="${idx}">
@@ -2362,28 +2481,28 @@ export function createMessagesModule({
 						.join('')
 
 					resultsCard.innerHTML = `
-						<h5>📊 ${escapeHtml(pipelineResults.pipeline_name)} <span class="results-label">Pipeline Results</span></h5>
-						<p class="invite-meta">Run #${pipelineResults.run_id} • ${pipelineResults.files.length} file(s)</p>
-						<p class="invite-meta">From: ${escapeHtml(pipelineResults.sender)}</p>
+						<h5>📊 ${escapeHtml(flowResults.flow_name)} <span class="results-label">Flow Results</span></h5>
+						<p class="invite-meta">Run #${flowResults.run_id} • ${flowResults.files.length} file(s)</p>
+						<p class="invite-meta">From: ${escapeHtml(flowResults.sender)}</p>
 						<div class="results-files-list">${filesHtml}</div>
 					`
 
 					const actions = document.createElement('div')
 					actions.className = 'invite-actions'
 
-					const hasInlineContent = pipelineResults.files.some((file) => file.content_base64)
+					const hasInlineContent = flowResults.files.some((file) => file.content_base64)
 
-					if (pipelineResults.results_location && !group.isOutgoing) {
+					if (flowResults.results_location && !group.isOutgoing) {
 						const importBtn = document.createElement('button')
 						importBtn.textContent = 'Import Results'
 						importBtn.addEventListener('click', async () => {
 							try {
 								importBtn.disabled = true
-								const destPath = await invoke('import_pipeline_results', {
-									resultsLocation: pipelineResults.results_location,
-									submissionId: pipelineResults.submission_id,
-									runId: pipelineResults.run_id,
-									pipelineName: pipelineResults.pipeline_name,
+								const destPath = await invoke('import_flow_results', {
+									resultsLocation: flowResults.results_location,
+									submissionId: flowResults.submission_id,
+									runId: flowResults.run_id,
+									flowName: flowResults.flow_name,
 								})
 								await invoke('open_folder', { path: destPath })
 							} catch (error) {
@@ -2405,7 +2524,7 @@ export function createMessagesModule({
 						saveBtn.addEventListener('click', async () => {
 							try {
 								// Save each file using save dialog
-								for (const file of pipelineResults.files) {
+								for (const file of flowResults.files) {
 									if (!file.content_base64) continue
 									const destPath = await dialog.save({
 										title: `Save ${file.file_name}`,
@@ -2425,7 +2544,7 @@ export function createMessagesModule({
 									})
 								}
 
-								await dialog.message(`Saved ${pipelineResults.files.length} file(s)`, {
+								await dialog.message(`Saved ${flowResults.files.length} file(s)`, {
 									title: 'Files Saved',
 									type: 'info',
 								})

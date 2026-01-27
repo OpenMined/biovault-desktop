@@ -71,22 +71,29 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # pipelines-collab on Linux - rust
-          - scenario: pipelines-collab
+          # flows-solo on Linux - rust
+          # flows-collab on Linux - rust
+          - scenario: flows-collab
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-collab on Windows - rust (Podman Hyper-V)
-          - scenario: pipelines-collab
+          # flows-collab on macOS ARM - rust
+          - scenario: flows-collab
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          # flows-collab on Windows - rust (Podman Hyper-V)
+          - scenario: flows-collab
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
-          # don't support nested virtualization (Docker requires VMs on macOS).
+          # NOTE: flows-collab on macOS runs with rust client mode only.
 
     defaults:
       run:
@@ -96,6 +103,7 @@ jobs:
       SKIP_PLAYWRIGHT_INSTALL: "1"
       AUTO_REBUILD_TAURI: "1"
       BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
+      BV_SKIP_SYQURE: "1"
 
     steps:
       - name: Free disk space (Linux)
@@ -115,6 +123,22 @@ jobs:
         shell: pwsh
 
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -191,6 +215,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -305,27 +332,36 @@ jobs:
         run: cargo build --release
         working-directory: src-tauri
 
-      - name: Install maturin
-        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
-        run: pip install maturin
-      - name: Install maturin (Windows)
-        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+      - name: Install maturin (uv)
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python maturin
+      - name: Install maturin (uv, Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
         shell: pwsh
-        run: pip install maturin
+        run: |
+          uv venv .venv
+          uv pip install --python .venv\Scripts\python.exe maturin
 
       - name: Pre-build syftbox-sdk wheel
-        if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
         run: |
           cd syftbox-sdk/python
-          maturin build --release
+          "${{ github.workspace }}/.venv/bin/maturin" build --release
       - name: Pre-build syftbox-sdk wheel (Windows)
-        if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
         shell: pwsh
-        run: maturin build --release
+        run: |
+          $maturin = Join-Path $env:GITHUB_WORKSPACE ".venv\\Scripts\\maturin.exe"
+          if (-not (Test-Path $maturin)) {
+            throw "maturin not found at $maturin"
+          }
+          & $maturin build --release
         working-directory: syftbox-sdk/python
 
-      - name: Setup Podman (Windows pipelines)
-        if: runner.os == 'Windows' && startsWith(matrix.scenario, 'pipelines-')
+      - name: Setup Podman (Windows)
+        if: runner.os == 'Windows' && (startsWith(matrix.scenario, 'pipelines-') || matrix.scenario == 'flows-collab')
         shell: pwsh
         run: |
           choco install podman-cli -y
@@ -347,21 +383,21 @@ jobs:
           podman ps
 
       - name: Install biosynth CLI (Linux)
-        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'Linux' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Install biosynth CLI (macOS)
-        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'macOS' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Cache genostats database
-        if: matrix.scenario == 'pipelines-solo'
+        if: matrix.scenario == 'flows-solo'
         id: cache-genostats
         uses: actions/cache@v4
         with:
@@ -391,14 +427,14 @@ jobs:
           JUPYTER_PAUSE_TIME: "5000"
         run: .\win.ps1 ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
-      - name: Run pipelines solo scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-solo'
+      - name: Run flows solo scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-solo'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
-      - name: Run pipelines solo scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-solo'
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-solo
+      - name: Run flows solo scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-solo'
         shell: pwsh
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
@@ -408,16 +444,16 @@ jobs:
           BIOVAULT_HYPERV_MOUNT: "1"
           BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
           BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --pipelines-solo
+        run: .\win.ps1 ./test-scenario.sh --flows-solo
 
-      - name: Run pipelines collab scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-collab'
+      - name: Run flows collab scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
-      - name: Run pipelines collab scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-collab'
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
+      - name: Run flows collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-collab'
         shell: pwsh
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
@@ -427,7 +463,7 @@ jobs:
           BIOVAULT_HYPERV_MOUNT: "1"
           BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
           BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --pipelines-collab
+        run: .\win.ps1 ./test-scenario.sh --flows-collab
 
       - name: Upload test artifacts on failure
         if: failure()
@@ -440,10 +476,28 @@ jobs:
             artifacts/
 
   profiles-e2e:
-    name: Profiles E2E (real backend)
-    runs-on: ubuntu-latest
+    name: profiles-e2e (linux-x86_64)
+    runs-on: namespace-profile-linux-medium
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -575,23 +629,42 @@ jobs:
       - name: Run profiles E2E scenario (headless)
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: xvfb-run -a ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results
+          name: profiles-e2e-test-results-linux-x86_64
           path: |
             logs/
             test-results/
             artifacts/
 
   profiles-e2e-macos:
-    name: Profiles E2E (real backend, macOS)
-    runs-on: macos-latest
+    name: profiles-e2e (macos-arm64)
+    runs-on: namespace-profile-mac-medium
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -700,26 +773,45 @@ jobs:
       - name: Run profiles E2E scenario
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results-macos
+          name: profiles-e2e-test-results-macos-arm64
           path: |
             logs/
             test-results/
             artifacts/
 
   profiles-e2e-windows:
-    name: Profiles E2E (real backend, Windows)
+    name: profiles-e2e (windows-x86_64)
     runs-on: namespace-profile-windows-medium
     defaults:
       run:
         shell: pwsh
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: .\win.ps1 ./scripts/setup-workspace.sh
@@ -827,13 +919,14 @@ jobs:
       - name: Run profiles E2E scenario
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: .\win.ps1 ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: profiles-e2e-test-results-windows
+          name: profiles-e2e-test-results-windows-x86_64
           path: |
             logs/
             test-results/

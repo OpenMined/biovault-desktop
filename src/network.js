@@ -364,11 +364,12 @@ export function createNetworkModule({ invoke, shellApi }) {
 
 		// Action buttons
 		const newSessionBtn = row.querySelector('.new-session-btn')
-		const runPipelineBtn = row.querySelector('.run-pipeline-btn')
+		const runFlowBtn = row.querySelector('.run-flow-btn')
 		const requestRunBtn = row.querySelector('.request-run-btn')
 		const addPeerBtn = row.querySelector('.add-peer-btn')
 		const messagePeerBtn = row.querySelector('.message-peer-btn')
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
+		const subscribeBtn = row.querySelector('.dataset-subscribe-btn')
 		const statusContainer = row.querySelector('.dataset-row-status')
 
 		// Availability badge (Available vs Downloading)
@@ -393,36 +394,52 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		// For own datasets: hide new session, add peer, and message buttons
-		// Show run pipeline for datasets with mock data (own or peer)
+		// Show run flow for datasets with mock data (own or peer)
 		// Show request run for peer datasets (to request run on private data)
 		if (dataset.is_own) {
 			if (newSessionBtn) newSessionBtn.style.display = 'none'
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
-			// Own dataset: can run pipeline on mock data locally
-			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'none'
+			// Own dataset: can run flow on mock data locally
+			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			if (requestRunBtn) requestRunBtn.style.display = 'none'
 		} else if (dataset.is_trusted) {
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'inline-flex'
-			// Peer dataset with mock data: can run pipeline locally on mock data
-			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			// Peer dataset with mock data: can run flow locally on mock data
+			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			// Also show request run for running on their private data
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		} else {
 			if (addPeerBtn) addPeerBtn.style.display = 'inline-flex'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
 			// Untrusted peer: show request run but it will prompt to trust first
-			if (runPipelineBtn) runPipelineBtn.style.display = 'none'
+			if (runFlowBtn) runFlowBtn.style.display = 'none'
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		}
+
+		function updateSubscribeButton() {
+			if (!subscribeBtn) return
+			const subscribed = Boolean(dataset.is_subscribed)
+			subscribeBtn.textContent = subscribed ? 'Unsubscribe' : 'Subscribe'
+			subscribeBtn.title = subscribed
+				? 'Unsubscribe and remove dataset data'
+				: 'Subscribe to dataset data'
+			subscribeBtn.classList.toggle('btn-primary', subscribed)
+			subscribeBtn.classList.toggle('btn-secondary', !subscribed)
+		}
+
+		updateSubscribeButton()
 
 		// Event handlers
 		if (!dataset.is_own && newSessionBtn) {
 			newSessionBtn.addEventListener('click', () => handleNewSession(dataset))
 		}
-		if (runPipelineBtn) {
-			runPipelineBtn.addEventListener('click', () => handleRunPipeline(dataset))
+		if (runFlowBtn) {
+			runFlowBtn.addEventListener('click', () => handleRunFlow(dataset))
 		}
 		if (requestRunBtn) {
 			requestRunBtn.addEventListener('click', () => handleRequestRun(dataset))
@@ -432,6 +449,37 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 		if (messagePeerBtn) {
 			messagePeerBtn.addEventListener('click', () => handleMessageContact(dataset.owner))
+		}
+		if (subscribeBtn && !dataset.is_own) {
+			subscribeBtn.addEventListener('click', async () => {
+				if (subscribeBtn.disabled) return
+				subscribeBtn.disabled = true
+				const originalText = subscribeBtn.textContent
+				subscribeBtn.textContent = dataset.is_subscribed ? 'Unsubscribing…' : 'Subscribing…'
+				try {
+					if (dataset.is_subscribed) {
+						await invoke('unsubscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = false
+					} else {
+						await invoke('subscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = true
+					}
+					await invoke('trigger_syftbox_sync').catch(() => {})
+				} catch (error) {
+					console.error('Failed to update dataset subscription:', error)
+					alert(`Failed to update subscription: ${error}`)
+				} finally {
+					subscribeBtn.disabled = false
+					subscribeBtn.textContent = originalText
+					updateSubscribeButton()
+				}
+			})
 		}
 		if (openDatasetBtn) {
 			openDatasetBtn.addEventListener('click', () => handleOpenDatasetFolder(dataset.dataset_path))
@@ -807,11 +855,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		}, 200)
 	}
 
-	// Run a pipeline on mock data for own datasets
-	async function handleRunPipeline(dataset) {
-		console.log('Running pipeline on dataset:', dataset.name)
+	// Run a flow on mock data for own datasets
+	async function handleRunFlow(dataset) {
+		console.log('Running flow on dataset:', dataset.name)
 
-		// Pre-seed selection so the pipeline run modal has data even if navigation races.
+		// Pre-seed selection so the flow run modal has data even if navigation races.
 		try {
 			const urls = []
 			const participantIds = []
@@ -844,18 +892,18 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 				sessionStorage.setItem('preselectedDataSource', 'network_dataset')
 			}
 		} catch (err) {
-			console.warn('Failed to pre-seed pipeline data selection:', err)
+			console.warn('Failed to pre-seed flow data selection:', err)
 		}
 
-		// Navigate to pipelines tab and trigger run modal with mock data
+		// Navigate to flows tab and trigger run modal with mock data
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('run')
 		}
 
 		// Wait for navigation, then open run modal with dataset
 		setTimeout(() => {
-			if (window.__pipelinesModule?.openRunPipelineWithDataset) {
-				window.__pipelinesModule.openRunPipelineWithDataset({
+			if (window.__flowsModule?.openRunFlowWithDataset) {
+				window.__flowsModule.openRunFlowWithDataset({
 					name: dataset.name,
 					dataType: 'mock',
 					entry: dataset,
@@ -864,36 +912,34 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		}, 200)
 	}
 
-	// Request a pipeline run on peer's private data
+	// Request a flow run on peer's private data
 	async function handleRequestRun(dataset) {
-		console.log('Requesting pipeline run on dataset:', dataset.name, 'from', dataset.owner)
+		console.log('Requesting flow run on dataset:', dataset.name, 'from', dataset.owner)
 
-		// Navigate to pipelines tab to select which pipeline to request
+		// Navigate to flows tab to select which flow to request
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('run')
 		}
 
-		// Wait for navigation, then open pipeline selection for request
+		// Wait for navigation, then open flow selection for request
 		setTimeout(() => {
-			if (window.__pipelinesModule?.openRequestPipelineRun) {
-				window.__pipelinesModule.openRequestPipelineRun({
+			if (window.__flowsModule?.openRequestFlowRun) {
+				window.__flowsModule.openRequestFlowRun({
 					datasetName: dataset.name,
 					datasetOwner: dataset.owner,
 					dataset: dataset,
 				})
 			} else {
-				// Fallback: store in sessionStorage for pipelines to pick up
+				// Fallback: store in sessionStorage for flows to pick up
 				sessionStorage.setItem(
-					'pendingPipelineRequest',
+					'pendingFlowRequest',
 					JSON.stringify({
 						datasetName: dataset.name,
 						datasetOwner: dataset.owner,
 						dataset: dataset,
 					}),
 				)
-				alert(
-					`Pipeline request flow coming soon!\n\nDataset: ${dataset.name}\nOwner: ${dataset.owner}`,
-				)
+				alert(`Flow request flow coming soon!\n\nDataset: ${dataset.name}\nOwner: ${dataset.owner}`)
 			}
 		}, 200)
 	}

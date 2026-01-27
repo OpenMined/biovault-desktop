@@ -1,4 +1,4 @@
-.pipeline-run-card {
+.flow-run-card {
 	background: white;
 	border: 1px solid #e5e7eb;
 	border-radius: 6px;
@@ -7,7 +7,7 @@
 	transition: all 0.15s;
 }
 
-.pipeline-run-card:hover {
+.flow-run-card:hover {
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
@@ -31,7 +31,7 @@
 	flex-shrink: 0;
 }
 
-.pipeline-run-card[data-expanded='true'] .run-chevron {
+.flow-run-card[data-expanded='true'] .run-chevron {
 	transform: rotate(90deg);
 }
 
@@ -278,14 +278,14 @@
    PIPELINES GRID VIEW - Card-based layout
    ============================================================================ */
 
-.pipelines-grid-view {
+.flows-grid-view {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	overflow: hidden;
 }
 
-.pipelines-grid {
+.flows-grid {
 	display: grid;
 	grid-template-columns: repeat(2, 1fr);
 	gap: 24px;
@@ -295,8 +295,8 @@
 	background: #f8f9fa;
 }
 
-/* Pipeline Card */
-.pipeline-card {
+/* Flow Card */
+.flow-card {
 	background: #ffffff;
 	border: 1px solid #e5e7eb;
 	border-radius: 12px;
@@ -309,20 +309,20 @@
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
-.pipeline-card:hover {
+.flow-card:hover {
 	border-color: #10b981;
 	box-shadow: 0 10px 24px rgba(16, 185, 129, 0.12);
 	transform: translateY(-2px);
 }
 
-.pipeline-card-header {
+.flow-card-header {
 	display: flex;
 	justify-content: space-between;
 	align-items: flex-start;
 	gap: 12px;
 }
 
-.pipeline-card-title {
+.flow-card-title {
 	margin: 0;
 	font-size: 18px;
 	font-weight: 600;
@@ -331,7 +331,7 @@
 	word-break: break-word;
 }
 
-.pipeline-card-menu {
+.flow-card-menu {
 	background: none;
 	border: none;
 	color: #9ca3af;
@@ -341,11 +341,11 @@
 	transition: color 0.2s;
 }
 
-.pipeline-card-menu:hover {
+.flow-card-menu:hover {
 	color: #6b7280;
 }
 
-.pipeline-card-description {
+.flow-card-description {
 	margin: 0;
 	font-size: 14px;
 	color: #6b7280;
@@ -353,13 +353,13 @@
 	flex-grow: 1;
 }
 
-.pipeline-card-tags {
+.flow-card-tags {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px;
 }
 
-.pipeline-tag {
+.flow-tag {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
@@ -371,7 +371,7 @@
 	font-weight: 500;
 }
 
-.pipeline-card-footer {
+.flow-card-footer {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -379,18 +379,18 @@
 	border-top: 1px solid #f3f4f6;
 }
 
-.pipeline-step-count {
+.flow-step-count {
 	font-size: 12px;
 	color: #6b7280;
 	font-weight: 500;
 }
 
-.pipeline-card-icons {
+.flow-card-icons {
 	display: flex;
 	gap: 12px;
 }
 
-.pipeline-card-icon-btn {
+.flow-card-icon-btn {
 	width: 28px;
 	height: 28px;
 	display: flex;
@@ -405,7 +405,7 @@
 	font-size: 14px;
 }
 
-.pipeline-card-icon-btn:hover {
+.flow-card-icon-btn:hover {
 	background: #10b981;
 	color: #ffffff;
 }
@@ -439,7 +439,7 @@
    PIPELINE DETAILS VIEW
    ============================================================================ */
 
-.pipeline-details-view {
+.flow-details-view {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
@@ -447,7 +447,7 @@
 	background: #f8f9fa;
 }
 
-.pipeline-details-header {
+.flow-details-header {
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
@@ -457,25 +457,25 @@
 	flex-shrink: 0;
 }
 
-.pipeline-details-header button {
+.flow-details-header button {
 	width: fit-content;
 }
 
-.pipeline-info h2 {
+.flow-info h2 {
 	margin: 0;
 	font-size: 24px;
 	font-weight: 600;
 	color: #1f2937;
 }
 
-.pipeline-info p {
+.flow-info p {
 	margin: 0;
 	font-size: 14px;
 	color: #6b7280;
 }
 
 /* Steps List */
-.pipeline-steps {
+.flow-steps {
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
@@ -484,7 +484,7 @@
 	flex: 1;
 }
 
-.pipeline-steps h3 {
+.flow-steps h3 {
 	margin: 0 0 16px 0;
 	font-size: 16px;
 	font-weight: 600;
@@ -681,7 +681,7 @@
    ============================================================================ */
 
 @media (max-width: 1024px) {
-	.pipelines-grid {
+	.flows-grid {
 		grid-template-columns: repeat(2, 1fr);
 		gap: 20px;
 		padding: 24px;
@@ -689,17 +689,17 @@
 }
 
 @media (max-width: 768px) {
-	.pipelines-grid {
+	.flows-grid {
 		grid-template-columns: 1fr;
 		gap: 16px;
 		padding: 16px;
 	}
 
-	.pipelines-grid-header {
+	.flows-grid-header {
 		padding: 16px;
 	}
 
-	.pipeline-card {
+	.flow-card {
 		padding: 16px;
 	}
 }

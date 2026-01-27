@@ -129,7 +129,7 @@ test.describe('Onboarding flow', () => {
 						case 'reset_everything':
 						case 'get_participants':
 						case 'get_files':
-						case 'get_projects':
+						case 'get_modules':
 						case 'get_runs':
 						case 'get_desktop_log_text':
 							return ''
@@ -208,7 +208,7 @@ test.describe('Onboarding flow', () => {
 			page.locator('#skip-syftbox-btn').click(),
 		])
 
-		// Should see the main app with run view (projects are part of pipelines now)
+		// Should see the main app with run view (modules are part of flows now)
 		await expect(page.locator('#run-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
 		const sessionFlag = await page.evaluate(
@@ -266,7 +266,7 @@ test.describe('Onboarding flow', () => {
 			page.locator('#verify-code-btn').click(),
 		])
 
-		// Should see the main app with run view (projects are part of pipelines now)
+		// Should see the main app with run view (modules are part of flows now)
 		await expect(page.locator('#run-view')).toBeVisible()
 		await expect(page.locator('#onboarding-view')).toBeHidden()
 		const sessionFlag = await page.evaluate(

@@ -590,7 +590,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const fileCount = selectedFileIds.length
 
 		if (fileCount > 0 && viewMode === 'participants') {
-			if (runText) runText.textContent = `Run Pipeline`
+			if (runText) runText.textContent = `Run Flow`
 
 			if (selectionActionsGroup) {
 				const countText = document.getElementById('selection-count-text')
@@ -600,7 +600,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				selectionActionsGroup.style.display = 'flex'
 			}
 		} else {
-			if (runText) runText.textContent = 'Run Pipeline'
+			if (runText) runText.textContent = 'Run Flow'
 			if (selectionActionsGroup) {
 				selectionActionsGroup.style.display = 'none'
 			}
@@ -1400,58 +1400,58 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		updateEditorPreview()
 	}
 
-	// Run Pipeline Modal state
-	let runPipelineDatasetName = null
-	let runPipelineDatasetEntry = null
+	// Run Flow Modal state
+	let runFlowDatasetName = null
+	let runFlowDatasetEntry = null
 
-	function openRunPipelineModal(datasetName, datasetEntry) {
-		runPipelineDatasetName = datasetName
-		runPipelineDatasetEntry = datasetEntry
+	function openRunFlowModal(datasetName, datasetEntry) {
+		runFlowDatasetName = datasetName
+		runFlowDatasetEntry = datasetEntry
 
-		const modal = document.getElementById('run-pipeline-modal')
+		const modal = document.getElementById('run-flow-modal')
 		if (modal) modal.classList.remove('hidden')
 
 		// Reset to mock selection
-		const mockRadio = document.querySelector('input[name="pipeline-data-type"][value="mock"]')
+		const mockRadio = document.querySelector('input[name="flow-data-type"][value="mock"]')
 		if (mockRadio) mockRadio.checked = true
 	}
 
-	function closeRunPipelineModal() {
-		const modal = document.getElementById('run-pipeline-modal')
+	function closeRunFlowModal() {
+		const modal = document.getElementById('run-flow-modal')
 		if (modal) modal.classList.add('hidden')
-		runPipelineDatasetName = null
-		runPipelineDatasetEntry = null
+		runFlowDatasetName = null
+		runFlowDatasetEntry = null
 	}
 
-	async function confirmRunPipeline() {
-		const selectedType = document.querySelector('input[name="pipeline-data-type"]:checked')?.value
-		if (!selectedType || !runPipelineDatasetName) {
-			closeRunPipelineModal()
+	async function confirmRunFlow() {
+		const selectedType = document.querySelector('input[name="flow-data-type"]:checked')?.value
+		if (!selectedType || !runFlowDatasetName) {
+			closeRunFlowModal()
 			return
 		}
 
-		const datasetName = runPipelineDatasetName
-		const entry = runPipelineDatasetEntry
-		closeRunPipelineModal()
+		const datasetName = runFlowDatasetName
+		const entry = runFlowDatasetEntry
+		closeRunFlowModal()
 
-		// Navigate to pipelines and pre-select this dataset
-		if (window.__pipelinesModule?.openRunPipelineWithDataset) {
-			// openRunPipelineWithDataset handles navigation internally
-			window.__pipelinesModule.openRunPipelineWithDataset({
+		// Navigate to flows and pre-select this dataset
+		if (window.__flowsModule?.openRunFlowWithDataset) {
+			// openRunFlowWithDataset handles navigation internally
+			window.__flowsModule.openRunFlowWithDataset({
 				name: datasetName,
 				dataType: selectedType,
 				entry,
 			})
 		} else if (window.navigateTo) {
-			// Fallback: store in sessionStorage for pipelines to pick up
+			// Fallback: store in sessionStorage for flows to pick up
 			sessionStorage.setItem(
-				'pendingPipelineRun',
+				'pendingFlowRun',
 				JSON.stringify({
 					datasetName,
 					dataType: selectedType,
 				}),
 			)
-			window.navigateTo('pipelines')
+			window.navigateTo('flows')
 		}
 	}
 
@@ -2233,7 +2233,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						f.file_path?.startsWith('syft://')
 					const entry = {
 						id: entryId,
-						// Full URL for pipeline runs (resolves to local path)
+						// Full URL for flow runs (resolves to local path)
 						url: isUrl
 							? f.file_path
 							: buildDatasetAssetSyftUrl(currentUserEmail, name, f.file_path),
@@ -2256,7 +2256,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						: `priv-${idx}-${i}-${Date.now()}`
 					const entry = {
 						id: entryId,
-						// Local file path for pipeline runs
+						// Local file path for flow runs
 						file_path: f.file_path,
 					}
 					if (f.participant_id) {
@@ -2266,7 +2266,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				})
 
 				// twin_list schema:
-				// - url: points to the mock CSV file (for pipeline sample sheets)
+				// - url: points to the mock CSV file (for flow sample sheets)
 				// - private: { url, type } - declares type so consumers know structure
 				// - mock: { url, type, entries } - public entries with URLs
 				// - mappings.private.entries: stores private entries for backend
@@ -2470,9 +2470,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 								<polygon points="5 3 19 12 5 21 5 3"></polygon>
 							</svg>
 						</button>
-						<button class="dataset-action-btn btn-run-pipeline" data-name="${
+						<button class="dataset-action-btn btn-run-flow" data-name="${
 							dataset.name
-						}" title="Run pipeline with this dataset">
+						}" title="Run flow with this dataset">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
 							</svg>
@@ -2530,10 +2530,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 
-			// Run Pipeline button
-			card.querySelector('.btn-run-pipeline')?.addEventListener('click', (e) => {
+			// Run Flow button
+			card.querySelector('.btn-run-flow')?.addEventListener('click', (e) => {
 				e.stopPropagation()
-				openRunPipelineModal(dataset.name, entry)
+				openRunFlowModal(dataset.name, entry)
 			})
 
 			// Publish/Unpublish button
@@ -2960,20 +2960,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Run Pipeline modal event handlers
-		const runPipelineClose = document.getElementById('run-pipeline-modal-close')
-		if (runPipelineClose) {
-			runPipelineClose.addEventListener('click', closeRunPipelineModal)
+		// Run Flow modal event handlers
+		const runFlowClose = document.getElementById('run-flow-modal-close')
+		if (runFlowClose) {
+			runFlowClose.addEventListener('click', closeRunFlowModal)
 		}
 
-		const runPipelineCancel = document.getElementById('run-pipeline-cancel')
-		if (runPipelineCancel) {
-			runPipelineCancel.addEventListener('click', closeRunPipelineModal)
+		const runFlowCancel = document.getElementById('run-flow-cancel')
+		if (runFlowCancel) {
+			runFlowCancel.addEventListener('click', closeRunFlowModal)
 		}
 
-		const runPipelineConfirm = document.getElementById('run-pipeline-confirm')
-		if (runPipelineConfirm) {
-			runPipelineConfirm.addEventListener('click', confirmRunPipeline)
+		const runFlowConfirm = document.getElementById('run-flow-confirm')
+		if (runFlowConfirm) {
+			runFlowConfirm.addEventListener('click', confirmRunFlow)
 		}
 
 		// Per-asset mode toggles are wired up in renderDatasetAssets()
@@ -3153,12 +3153,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					sessionStorage.removeItem('preselectedDatasetOwner')
 					sessionStorage.removeItem('preselectedAssetKeys')
 
-					// Trigger pipeline run modal via global pipeline module
-					if (
-						window.pipelineModule &&
-						typeof window.pipelineModule.showDataRunModal === 'function'
-					) {
-						await window.pipelineModule.showDataRunModal()
+					// Trigger flow run modal via global flow module
+					if (window.flowModule && typeof window.flowModule.showDataRunModal === 'function') {
+						await window.flowModule.showDataRunModal()
 					} else {
 						// Fallback: navigate if module not available
 						const navigateTo =
@@ -3293,7 +3290,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				),
 			]
 
-			// Sync to sessionStorage so pipelines view can detect it
+			// Sync to sessionStorage so flows view can detect it
 			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
 			sessionStorage.setItem('preselectedDataType', 'real')

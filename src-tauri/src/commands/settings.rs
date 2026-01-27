@@ -73,13 +73,13 @@ fn stop_all_jupyter_best_effort() {
             continue;
         }
 
-        let project_path = env.project_path.clone();
-        crate::desktop_log!("RESET: Stopping Jupyter for project: {}", project_path);
-        match tauri::async_runtime::block_on(jupyter_cli::stop(&project_path)) {
+        let module_path = env.module_path.clone();
+        crate::desktop_log!("RESET: Stopping Jupyter for module: {}", module_path);
+        match tauri::async_runtime::block_on(jupyter_cli::stop(&module_path)) {
             Ok(_) => {}
             Err(err) => crate::desktop_log!(
                 "⚠️ RESET: Failed to stop Jupyter for {}: {}",
-                project_path,
+                module_path,
                 err
             ),
         }
@@ -625,6 +625,7 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
             agent_bridge_http_port: None,
             agent_bridge_token: None,
             agent_bridge_blocklist: None,
+            syqure: None,
         }
     };
 
@@ -722,6 +723,7 @@ pub fn set_syftbox_dev_server(server_url: String) -> Result<(), String> {
             agent_bridge_http_port: None,
             agent_bridge_token: None,
             agent_bridge_blocklist: None,
+            syqure: None,
         }
     };
 

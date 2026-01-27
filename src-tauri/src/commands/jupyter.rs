@@ -3,16 +3,16 @@ use biovault::cli::commands::jupyter;
 use biovault::data::BioVaultDb;
 use std::path::Path;
 
-fn canonicalize_project_path(project_path: &str) -> String {
-    Path::new(project_path)
+fn canonicalize_module_path(module_path: &str) -> String {
+    Path::new(module_path)
         .canonicalize()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| project_path.to_string())
+        .unwrap_or_else(|_| module_path.to_string())
 }
 
-fn load_jupyter_status(project_path: &str) -> Result<JupyterStatus, String> {
+fn load_jupyter_status(module_path: &str) -> Result<JupyterStatus, String> {
     let db = BioVaultDb::new().map_err(|e| format!("Failed to open BioVault database: {}", e))?;
-    let canonical = canonicalize_project_path(project_path);
+    let canonical = canonicalize_module_path(module_path);
 
     let env = db
         .get_dev_env(&canonical)
@@ -36,40 +36,40 @@ fn load_jupyter_status(project_path: &str) -> Result<JupyterStatus, String> {
 
 #[tauri::command]
 pub async fn launch_jupyter(
-    project_path: String,
+    module_path: String,
     python_version: Option<String>,
 ) -> Result<JupyterStatus, String> {
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    let project_path_clone = project_path.clone();
+    let module_path_clone = module_path.clone();
     let version_clone = version.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::start(&project_path_clone, &version_clone))
+        tauri::async_runtime::block_on(jupyter::start(&module_path_clone, &version_clone))
     })
     .await
     .map_err(|e| format!("Failed to launch Jupyter (task join): {}", e))?
     .map_err(|e| format!("Failed to launch Jupyter: {}", e))?;
 
-    load_jupyter_status(&project_path)
+    load_jupyter_status(&module_path)
 }
 
 #[tauri::command]
 pub async fn reset_jupyter(
-    project_path: String,
+    module_path: String,
     python_version: Option<String>,
 ) -> Result<JupyterResetResult, String> {
     let version = python_version.unwrap_or_else(|| DEFAULT_JUPYTER_PYTHON.to_string());
-    let project_path_clone = project_path.clone();
+    let module_path_clone = module_path.clone();
     let version_clone = version.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::reset(&project_path_clone, &version_clone))
+        tauri::async_runtime::block_on(jupyter::reset(&module_path_clone, &version_clone))
     })
     .await
     .map_err(|e| format!("Failed to reset Jupyter (task join): {}", e))?
     .map_err(|e| format!("Failed to reset Jupyter: {}", e))?;
 
-    let stop_path = project_path.clone();
+    let stop_path = module_path.clone();
     match tauri::async_runtime::spawn_blocking(move || {
         tauri::async_runtime::block_on(jupyter::stop(&stop_path))
     })
@@ -83,7 +83,7 @@ pub async fn reset_jupyter(
         ),
     }
 
-    let status = load_jupyter_status(&project_path)?;
+    let status = load_jupyter_status(&module_path)?;
 
     Ok(JupyterResetResult {
         status,
@@ -92,19 +92,19 @@ pub async fn reset_jupyter(
 }
 
 #[tauri::command]
-pub async fn stop_jupyter(project_path: String) -> Result<JupyterStatus, String> {
-    let project_path_clone = project_path.clone();
+pub async fn stop_jupyter(module_path: String) -> Result<JupyterStatus, String> {
+    let module_path_clone = module_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(jupyter::stop(&project_path_clone))
+        tauri::async_runtime::block_on(jupyter::stop(&module_path_clone))
     })
     .await
     .map_err(|e| format!("Failed to stop Jupyter (task join): {}", e))?
     .map_err(|e| format!("Failed to stop Jupyter: {}", e))?;
 
-    load_jupyter_status(&project_path)
+    load_jupyter_status(&module_path)
 }
 
 #[tauri::command]
-pub fn get_jupyter_status(project_path: String) -> Result<JupyterStatus, String> {
-    load_jupyter_status(&project_path)
+pub fn get_jupyter_status(module_path: String) -> Result<JupyterStatus, String> {
+    load_jupyter_status(&module_path)
 }
