@@ -695,7 +695,11 @@ fn dataset_subscription_rule(owner: &str, name: &str) -> biovault::subscriptions
     }
 }
 
-fn is_dataset_subscribed(cfg: &biovault::subscriptions::Subscriptions, owner: &str, name: &str) -> bool {
+fn is_dataset_subscribed(
+    cfg: &biovault::subscriptions::Subscriptions,
+    owner: &str,
+    name: &str,
+) -> bool {
     let target = dataset_subscription_rule(owner, name);
     cfg.rules.iter().any(|rule| {
         rule.action == biovault::subscriptions::Action::Allow

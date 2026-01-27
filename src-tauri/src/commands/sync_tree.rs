@@ -43,7 +43,9 @@ fn get_syftignore_path() -> Result<PathBuf, String> {
 
 fn get_syftsub_path() -> Result<PathBuf, String> {
     let runtime = load_runtime_config()?;
-    Ok(PathBuf::from(&runtime.data_dir).join(".data").join("syft.sub.yaml"))
+    Ok(PathBuf::from(&runtime.data_dir)
+        .join(".data")
+        .join("syft.sub.yaml"))
 }
 
 fn load_owner_email() -> String {
@@ -80,7 +82,7 @@ fn is_valid_datasite_selector(value: &str) -> bool {
     value.contains('@')
 }
 
-fn sanitize_subscription_rules(cfg: &mut biovault::subscriptions::SubscriptionConfig) {
+fn sanitize_subscription_rules(cfg: &mut biovault::subscriptions::Subscriptions) {
     cfg.rules.retain(|rule| {
         rule.datasite
             .as_deref()
@@ -108,7 +110,11 @@ fn strip_glob_suffix(path: &str) -> String {
 
 fn essential_rules_for_subtree(datasite: &str, prefix: &str) -> Vec<biovault::subscriptions::Rule> {
     let mut rules = Vec::new();
-    let normalized_prefix = if prefix == "**" { "" } else { prefix.trim_end_matches('/') };
+    let normalized_prefix = if prefix == "**" {
+        ""
+    } else {
+        prefix.trim_end_matches('/')
+    };
     for pattern in ESSENTIAL_PATTERNS {
         if let Some(rest) = pattern.strip_prefix("*/") {
             let rest = rest.trim_start_matches('/');
@@ -242,10 +248,8 @@ pub async fn sync_tree_list_dir(path: Option<String>) -> Result<Vec<SyncTreeNode
     let syftsub_path = get_syftsub_path()?;
 
     let ignore_patterns = read_ignore_patterns(&syftignore_path);
-    let subs_cfg =
-        biovault::subscriptions::load(&syftsub_path).unwrap_or_else(|_| {
-            biovault::subscriptions::default_config()
-        });
+    let subs_cfg = biovault::subscriptions::load(&syftsub_path)
+        .unwrap_or_else(|_| biovault::subscriptions::default_config());
     let mut subs_cfg = subs_cfg;
     sanitize_subscription_rules(&mut subs_cfg);
     let owner_email = load_owner_email();
@@ -330,10 +334,8 @@ pub async fn sync_tree_get_details(path: String) -> Result<SyncTreeDetails, Stri
     let syftignore_path = get_syftignore_path()?;
     let syftsub_path = get_syftsub_path()?;
     let ignore_patterns = read_ignore_patterns(&syftignore_path);
-    let subs_cfg =
-        biovault::subscriptions::load(&syftsub_path).unwrap_or_else(|_| {
-            biovault::subscriptions::default_config()
-        });
+    let subs_cfg = biovault::subscriptions::load(&syftsub_path)
+        .unwrap_or_else(|_| biovault::subscriptions::default_config());
     let mut subs_cfg = subs_cfg;
     sanitize_subscription_rules(&mut subs_cfg);
     let owner_email = load_owner_email();
