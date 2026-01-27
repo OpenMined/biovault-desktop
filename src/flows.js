@@ -1,11 +1,5 @@
-/* global pipelineModule */
-export function createPipelinesModule({
-	invoke,
-	dialog,
-	open: _open,
-	navigateTo,
-	openProjectEditor,
-}) {
+/* global flowModule */
+export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, openModuleEditor }) {
 	// Helper function
 	function escapeHtml(text) {
 		const div = document.createElement('div')
@@ -21,9 +15,9 @@ export function createPipelinesModule({
 	}
 
 	// State management
-	const pipelineState = {
-		pipelines: [],
-		currentPipeline: null,
+	const flowState = {
+		flows: [],
+		currentFlow: null,
 		wizardStep: 0,
 		wizardData: {
 			name: '',
@@ -35,37 +29,37 @@ export function createPipelinesModule({
 		lastAutoOpenKey: null,
 	}
 
-	// Load pipelines list
-	async function loadPipelines() {
+	// Load flows list
+	async function loadFlows() {
 		try {
 			// Clear cached context to ensure fresh read from sessionStorage
-			pipelineState.pendingDataRun = null
+			flowState.pendingDataRun = null
 
-			const pipelines = await invoke('get_pipelines')
-			// Pre-load all projects for step resolution
-			const projects = await invoke('get_projects')
-			const projectsMap = new Map()
-			projects.forEach((p) => {
+			const flows = await invoke('get_flows')
+			// Pre-load all modules for step resolution
+			const modules = await invoke('get_modules')
+			const modulesMap = new Map()
+			modules.forEach((p) => {
 				const key = `${p.name}@${p.version}`
-				projectsMap.set(key, p)
+				modulesMap.set(key, p)
 				// Also allow lookup by name only (for latest version)
-				if (!projectsMap.has(p.name)) {
-					projectsMap.set(p.name, p)
+				if (!modulesMap.has(p.name)) {
+					modulesMap.set(p.name, p)
 				}
 			})
 
-			const gridContainer = document.getElementById('pipelines-grid')
-			const emptyState = document.getElementById('pipelines-empty-state')
+			const gridContainer = document.getElementById('flows-grid')
+			const emptyState = document.getElementById('flows-empty-state')
 
 			if (!gridContainer) {
-				console.error('pipelines-grid container not found')
+				console.error('flows-grid container not found')
 				return
 			}
 
-			if (!pipelines || pipelines.length === 0) {
+			if (!flows || flows.length === 0) {
 				gridContainer.innerHTML = ''
 				if (emptyState) emptyState.style.display = 'flex'
-				pipelineState.pipelines = []
+				flowState.flows = []
 				// Still render banner (it will clear itself if no selection)
 				renderDataRunBanner()
 				return
@@ -74,50 +68,49 @@ export function createPipelinesModule({
 			if (emptyState) emptyState.style.display = 'none'
 			gridContainer.innerHTML = ''
 
-			pipelines.forEach((pipeline) => {
-				renderPipelineCard(pipeline, gridContainer, projectsMap)
+			flows.forEach((flow) => {
+				renderFlowCard(flow, gridContainer, modulesMap)
 			})
 
-			pipelineState.pipelines = pipelines
-			logPipelineDebug('loadPipelines', pipelines)
+			flowState.flows = flows
+			logFlowDebug('loadFlows', flows)
 
 			renderDataRunBanner()
 
-			// Don't auto-open modal - let user choose from banner or pipeline cards
+			// Don't auto-open modal - let user choose from banner or flow cards
 		} catch (error) {
-			console.error('Error loading pipelines:', error)
+			console.error('Error loading flows:', error)
 		}
 	}
 
-	function renderPipelineCard(pipeline, container, projectsMap = new Map()) {
-		const stepCount = pipeline.spec?.steps?.length || 0
-		const description = pipeline.spec?.description || ''
+	function renderFlowCard(flow, container, modulesMap = new Map()) {
+		const stepCount = flow.spec?.steps?.length || 0
+		const description = flow.spec?.description || ''
 		const context = getPendingDataRunContext()
 		const hasDataSelected = hasPendingData(context)
-		const canRunWithData =
-			hasDataSelected && pipelineAcceptsShape(pipeline, context?.datasetShape || null)
+		const canRunWithData = hasDataSelected && flowAcceptsShape(flow, context?.datasetShape || null)
 
-		// Resolve step projects to get names and versions
-		const stepDetails = (pipeline.spec?.steps || [])
+		// Resolve step modules to get names and versions
+		const stepDetails = (flow.spec?.steps || [])
 			.map((step) => {
 				if (!step.uses) return null
 				const uses = step.uses
 
-				// Try to find project in map
-				let project = null
+				// Try to find module in map
+				let module = null
 				if (uses.includes('@')) {
 					// Has version: name@version
-					project = projectsMap.get(uses)
+					module = modulesMap.get(uses)
 				} else {
 					// No version: try by name
-					project = projectsMap.get(uses)
+					module = modulesMap.get(uses)
 				}
 
-				if (project) {
+				if (module) {
 					return {
 						id: step.id,
-						name: project.name,
-						version: project.version,
+						name: module.name,
+						version: module.version,
 					}
 				}
 
@@ -133,9 +126,9 @@ export function createPipelinesModule({
 			.filter((s) => s !== null)
 
 		const card = document.createElement('div')
-		card.className = 'pipeline-card'
+		card.className = 'flow-card'
 		if (canRunWithData) {
-			card.classList.add('pipeline-card-has-data')
+			card.classList.add('flow-card-has-data')
 			card.style.cssText =
 				'border: 2px solid rgba(29,78,216,0.4); box-shadow: 0 4px 12px rgba(29,78,216,0.15);'
 		}
@@ -151,15 +144,15 @@ export function createPipelinesModule({
 			: ''
 
 		card.innerHTML = `
-			<div class="pipeline-card-header">
-				<h3 class="pipeline-card-title">${pipeline.name}</h3>
-				<button class="pipeline-card-menu" onclick="event.stopPropagation(); pipelineModule.showPipelineMenu(${
-					pipeline.id
+			<div class="flow-card-header">
+				<h3 class="flow-card-title">${flow.name}</h3>
+				<button class="flow-card-menu" onclick="event.stopPropagation(); flowModule.showFlowMenu(${
+					flow.id
 				}, event)">⋯</button>
 			</div>
 			${dataBadge}
-			${description ? `<p class="pipeline-card-description">${description}</p>` : ''}
-			<div class="pipeline-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+			${description ? `<p class="flow-card-description">${description}</p>` : ''}
+			<div class="flow-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
 				${
 					stepDetails.length > 0
 						? `<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">${stepDetails
@@ -168,19 +161,19 @@ export function createPipelinesModule({
 									return `<span style="display: inline-block; padding: 4px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #475569;">${s.name}${versionText}</span>`
 								})
 								.join('')}</div>`
-						: `<span class="pipeline-step-badge">${stepCount} ${
+						: `<span class="flow-step-badge">${stepCount} ${
 								stepCount === 1 ? 'step' : 'steps'
 							}</span>`
 				}
 				${
 					canRunWithData
-						? `<button class="pipeline-run-data-btn" data-pipeline-id="${pipeline.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3);">
+						? `<button class="flow-run-data-btn" data-flow-id="${flow.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3);">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
 						Run with Selected Data
 					</button>`
-						: `<button class="pipeline-run-btn" data-pipeline-id="${pipeline.id}">▶ Run</button>`
+						: `<button class="flow-run-btn" data-flow-id="${flow.id}">▶ Run</button>`
 				}
 			</div>
 		`
@@ -189,42 +182,42 @@ export function createPipelinesModule({
 		container.appendChild(card)
 
 		if (canRunWithData) {
-			const runDataBtn = card.querySelector('.pipeline-run-data-btn')
+			const runDataBtn = card.querySelector('.flow-run-data-btn')
 			if (runDataBtn) {
 				runDataBtn.addEventListener('click', async (event) => {
 					event.stopPropagation()
-					await handlePipelineRunClick(pipeline.id)
+					await handleFlowRunClick(flow.id)
 				})
 			}
 		} else {
-			const runBtn = card.querySelector('.pipeline-run-btn')
+			const runBtn = card.querySelector('.flow-run-btn')
 			if (runBtn) {
 				runBtn.addEventListener('click', async (event) => {
 					event.stopPropagation()
-					await handlePipelineRunClick(pipeline.id)
+					await handleFlowRunClick(flow.id)
 				})
 			}
 		}
 	}
 
-	function refreshPipelineCards() {
-		const gridContainer = document.getElementById('pipelines-grid')
-		if (!gridContainer || !pipelineState.pipelines) return
+	function refreshFlowCards() {
+		const gridContainer = document.getElementById('flows-grid')
+		if (!gridContainer || !flowState.flows) return
 
-		const existingCards = Array.from(gridContainer.querySelectorAll('.pipeline-card'))
+		const existingCards = Array.from(gridContainer.querySelectorAll('.flow-card'))
 		if (existingCards.length === 0) return
 
 		// Re-render all cards with updated data selection state
 		const fragment = document.createDocumentFragment()
-		pipelineState.pipelines.forEach((pipeline) => {
+		flowState.flows.forEach((flow) => {
 			const existingCard = existingCards.find((card) => {
-				const runBtn = card.querySelector('[data-pipeline-id]')
-				return runBtn && parseInt(runBtn.dataset.pipelineId) === pipeline.id
+				const runBtn = card.querySelector('[data-flow-id]')
+				return runBtn && parseInt(runBtn.dataset.flowId) === flow.id
 			})
 			if (existingCard) {
 				existingCard.remove()
 			}
-			renderPipelineCard(pipeline, fragment)
+			renderFlowCard(flow, fragment)
 		})
 
 		gridContainer.appendChild(fragment)
@@ -233,7 +226,7 @@ export function createPipelinesModule({
 	function getPendingDataRunContext() {
 		// Always read fresh from sessionStorage - don't use cached state
 		// This ensures we see the latest selection state from Data tab
-		pipelineState.pendingDataRun = null
+		flowState.pendingDataRun = null
 
 		if (typeof sessionStorage === 'undefined') {
 			return null
@@ -249,7 +242,7 @@ export function createPipelinesModule({
 
 		if (!urlsRaw && !fileIdsRaw && !datasetNameRaw) {
 			// Explicitly clear cache if no data
-			pipelineState.pendingDataRun = null
+			flowState.pendingDataRun = null
 			return null
 		}
 
@@ -301,7 +294,7 @@ export function createPipelinesModule({
 			// Clear sessionStorage and cache if no valid data
 			sessionStorage.removeItem('preselectedUrls')
 			sessionStorage.removeItem('preselectedFileIds')
-			pipelineState.pendingDataRun = null
+			flowState.pendingDataRun = null
 			return null
 		}
 
@@ -416,12 +409,12 @@ export function createPipelinesModule({
 		}
 
 		// Cache for performance, but will be cleared on next check if sessionStorage changed
-		pipelineState.pendingDataRun = context
+		flowState.pendingDataRun = context
 		return context
 	}
 
 	function clearDataRunContext() {
-		pipelineState.pendingDataRun = null
+		flowState.pendingDataRun = null
 
 		if (typeof sessionStorage === 'undefined') {
 			return
@@ -451,8 +444,8 @@ export function createPipelinesModule({
 
 	function renderDataRunBanner() {
 		const context = getPendingDataRunContext()
-		const mainView = document.getElementById('pipelines-main-view')
-		const bannerId = 'pipelines-data-banner'
+		const mainView = document.getElementById('flows-main-view')
+		const bannerId = 'flows-data-banner'
 		let banner = document.getElementById(bannerId)
 
 		// Check for either URLs (new approach) or fileIds (legacy)
@@ -462,8 +455,8 @@ export function createPipelinesModule({
 				banner.remove()
 			}
 			renderDetailDataRunBanner(null)
-			// Refresh pipeline cards to remove data-specific UI
-			refreshPipelineCards()
+			// Refresh flow cards to remove data-specific UI
+			refreshFlowCards()
 			return
 		}
 
@@ -492,15 +485,15 @@ export function createPipelinesModule({
 		}
 
 		renderDetailDataRunBanner(context)
-		// Refresh pipeline cards to show data-specific UI
-		refreshPipelineCards()
+		// Refresh flow cards to show data-specific UI
+		refreshFlowCards()
 	}
 
 	function renderDetailDataRunBanner(context) {
-		const detailView = document.getElementById('pipeline-detail-view')
+		const detailView = document.getElementById('flow-detail-view')
 		if (!detailView) return
 
-		const bannerId = 'pipeline-detail-data-banner'
+		const bannerId = 'flow-detail-data-banner'
 		let banner = document.getElementById(bannerId)
 
 		const hasData = hasPendingData(context)
@@ -525,8 +518,8 @@ export function createPipelinesModule({
 			}
 		}
 
-		const preselectedPipelineId = pipelineState.currentPipeline?.id ?? null
-		populateDataRunBanner(banner, context, preselectedPipelineId)
+		const preselectedFlowId = flowState.currentFlow?.id ?? null
+		populateDataRunBanner(banner, context, preselectedFlowId)
 	}
 
 	function populateMainDataRunBanner(banner, context) {
@@ -537,8 +530,8 @@ export function createPipelinesModule({
 				? context.participantIds.length
 				: fileCount
 
-		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsShape(pipeline, context?.datasetShape || null),
+		const eligibleFlows = (flowState.flows || []).filter((flow) =>
+			flowAcceptsShape(flow, context?.datasetShape || null),
 		)
 
 		banner.innerHTML = `
@@ -549,7 +542,7 @@ export function createPipelinesModule({
 							<path d="M9 11l3 3L22 4"></path>
 							<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
 						</svg>
-						<strong style="font-size: 15px; color: #1e40af; line-height: 1.4;">Data Selected for Pipeline Run</strong>
+						<strong style="font-size: 15px; color: #1e40af; line-height: 1.4;">Data Selected for Flow Run</strong>
 					</div>
 					<div style="font-size: 14px; color: #475569; line-height: 1.6; margin-left: 32px;">
 						<strong style="color: #1e293b;">${fileCount}</strong> file${fileCount === 1 ? '' : 's'} selected
@@ -558,33 +551,31 @@ export function createPipelinesModule({
 							participantCount === 1 ? '' : 's'
 						}
 						${
-							eligiblePipelines.length > 0
+							eligibleFlows.length > 0
 								? `<span style="margin-left: 12px; padding: 4px 10px; background: rgba(34,197,94,0.1); color: #16a34a; border-radius: 4px; font-size: 13px; font-weight: 500;">
-								${eligiblePipelines.length} compatible pipeline${
-									eligiblePipelines.length === 1 ? '' : 's'
-								} available
+								${eligibleFlows.length} compatible flow${eligibleFlows.length === 1 ? '' : 's'} available
 							</span>`
 								: ''
 						}
 					</div>
 					${
-						eligiblePipelines.length > 1
+						eligibleFlows.length > 1
 							? `<div style="margin-left: 32px; font-size: 13px; color: #64748b; line-height: 1.5;">
-							Select a pipeline below, or click "Choose Pipeline" to see all options.
+							Select a flow below, or click "Choose Flow" to see all options.
 						</div>`
 							: ''
 					}
 				</div>
 				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex-shrink: 0;">
 					${
-						eligiblePipelines.length > 1
+						eligibleFlows.length > 1
 							? `<button type="button" class="btn-primary" data-role="data-run-choose" style="font-size: 13px; padding: 10px 18px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); border-radius: 6px; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; border: none; color: white; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<circle cx="5" cy="12" r="3" />
 								<circle cx="19" cy="12" r="3" />
 								<line x1="8" y1="12" x2="16" y2="12" />
 							</svg>
-							Choose Pipeline
+							Choose Flow
 						</button>`
 							: ''
 					}
@@ -621,7 +612,7 @@ export function createPipelinesModule({
 		if (chooseBtn) {
 			chooseBtn.addEventListener('click', async () => {
 				await startDataDrivenRun(null).catch((error) => {
-					console.error('Failed to open pipeline selection modal:', error)
+					console.error('Failed to open flow selection modal:', error)
 				})
 			})
 		}
@@ -639,7 +630,7 @@ export function createPipelinesModule({
 		}
 	}
 
-	function populateDataRunBanner(banner, context, preselectedPipelineId = null) {
+	function populateDataRunBanner(banner, context, preselectedFlowId = null) {
 		const fileCount =
 			(context.urls && context.urls.length) || (context.fileIds && context.fileIds.length) || 0
 		const participantCount =
@@ -657,7 +648,7 @@ export function createPipelinesModule({
 				</div>
 				<div style="display: flex; gap: 8px; align-items: center;">
 					<button type="button" class="btn-secondary" data-role="data-run-back">← Back to Data</button>
-					<button type="button" class="btn-primary" data-role="data-run-open">Select Pipeline</button>
+					<button type="button" class="btn-primary" data-role="data-run-open">Select Flow</button>
 					<button
 						type="button"
 						data-role="data-run-clear"
@@ -681,7 +672,7 @@ export function createPipelinesModule({
 		const openBtn = banner.querySelector('[data-role="data-run-open"]')
 		if (openBtn) {
 			openBtn.addEventListener('click', () => {
-				startDataDrivenRun(preselectedPipelineId).catch((error) => {
+				startDataDrivenRun(preselectedFlowId).catch((error) => {
 					console.error('Failed to open data-run modal:', error)
 				})
 			})
@@ -700,8 +691,8 @@ export function createPipelinesModule({
 		}
 	}
 
-	async function startDataDrivenRun(preselectedPipelineId = null) {
-		if (pipelineState.dataRunModalOpen) {
+	async function startDataDrivenRun(preselectedFlowId = null) {
+		if (flowState.dataRunModalOpen) {
 			return true
 		}
 
@@ -712,24 +703,24 @@ export function createPipelinesModule({
 			return false
 		}
 
-		// Load pipelines if not already loaded
-		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
-			await loadPipelines()
+		// Load flows if not already loaded
+		if (!flowState.flows || flowState.flows.length === 0) {
+			await loadFlows()
 		}
 
 		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
-		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsShape(pipeline, selectionShape),
+		const eligibleFlows = (flowState.flows || []).filter((flow) =>
+			flowAcceptsShape(flow, selectionShape),
 		)
 
-		if (eligiblePipelines.length === 0) {
-			logPipelineDebug('startDataDrivenRun no eligible pipelines', pipelineState.pipelines || [])
-			alert(`No pipelines are available that accept a ${selectionShape} input.`)
+		if (eligibleFlows.length === 0) {
+			logFlowDebug('startDataDrivenRun no eligible flows', flowState.flows || [])
+			alert(`No flows are available that accept a ${selectionShape} input.`)
 			clearDataRunContext()
 			return false
 		}
 
-		await showDataRunModal(context, eligiblePipelines, preselectedPipelineId)
+		await showDataRunModal(context, eligibleFlows, preselectedFlowId)
 		return true
 	}
 
@@ -788,7 +779,7 @@ export function createPipelinesModule({
 				try {
 					const running = await invoke('check_docker_running')
 					if (running) {
-						statusEl.textContent = 'Docker is running! Starting pipeline...'
+						statusEl.textContent = 'Docker is running! Starting flow...'
 						statusEl.style.color = '#15803d'
 						close()
 						await runAction()
@@ -817,7 +808,7 @@ export function createPipelinesModule({
 	}
 
 	// Public function to show modal directly (called from Data tab)
-	async function showDataRunModalDirect(preselectedPipelineId = null) {
+	async function showDataRunModalDirect(preselectedFlowId = null) {
 		const context = getPendingDataRunContext()
 		logDataRunContext('showDataRunModalDirect', context)
 		const hasData = hasPendingData(context)
@@ -825,40 +816,37 @@ export function createPipelinesModule({
 			return false
 		}
 
-		// Load pipelines if not already loaded
-		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
-			await loadPipelines()
+		// Load flows if not already loaded
+		if (!flowState.flows || flowState.flows.length === 0) {
+			await loadFlows()
 		}
 
 		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
-		const eligiblePipelines = (pipelineState.pipelines || []).filter((pipeline) =>
-			pipelineAcceptsShape(pipeline, selectionShape),
+		const eligibleFlows = (flowState.flows || []).filter((flow) =>
+			flowAcceptsShape(flow, selectionShape),
 		)
 
-		if (eligiblePipelines.length === 0) {
-			logPipelineDebug(
-				'showDataRunModalDirect no eligible pipelines',
-				pipelineState.pipelines || [],
-			)
+		if (eligibleFlows.length === 0) {
+			logFlowDebug('showDataRunModalDirect no eligible flows', flowState.flows || [])
 			if (dialog && dialog.message) {
 				await dialog.message(
-					`No pipelines are available that accept a ${selectionShape} input. Please create a compatible pipeline first.`,
-					{ title: 'No Compatible Pipelines', type: 'warning' },
+					`No flows are available that accept a ${selectionShape} input. Please create a compatible flow first.`,
+					{ title: 'No Compatible Flows', type: 'warning' },
 				)
 			} else {
-				alert(`No pipelines are available that accept a ${selectionShape} input.`)
+				alert(`No flows are available that accept a ${selectionShape} input.`)
 			}
 			clearDataRunContext()
 			return false
 		}
 
-		await showDataRunModal(context, eligiblePipelines, preselectedPipelineId)
+		await showDataRunModal(context, eligibleFlows, preselectedFlowId)
 		return true
 	}
 
-	async function handlePipelineRunClick(pipelineId) {
+	async function handleFlowRunClick(flowId) {
 		// Always use the new data-driven flow
-		const handled = await startDataDrivenRun(pipelineId)
+		const handled = await startDataDrivenRun(flowId)
 		if (!handled) {
 			// Check why it wasn't handled
 			const context = getPendingDataRunContext()
@@ -868,7 +856,7 @@ export function createPipelinesModule({
 				// No data selected - prompt user to select data first
 				if (dialog && dialog.confirm) {
 					const shouldNavigate = await dialog.confirm(
-						'No data selected. Would you like to go to the Data tab to select files before running this pipeline?',
+						'No data selected. Would you like to go to the Data tab to select files before running this flow?',
 						{ title: 'Select Data First', type: 'info' },
 					)
 					if (shouldNavigate && navigateTo) {
@@ -876,25 +864,25 @@ export function createPipelinesModule({
 					}
 				} else {
 					const shouldNavigate = confirm(
-						'No data selected. Would you like to go to the Data tab to select files before running this pipeline?',
+						'No data selected. Would you like to go to the Data tab to select files before running this flow?',
 					)
 					if (shouldNavigate && navigateTo) {
 						navigateTo('data')
 					}
 				}
 			} else {
-				// Data is selected but pipeline might not be compatible
-				const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+				// Data is selected but flow might not be compatible
+				const flow = flowState.flows.find((p) => p.id === flowId)
 				const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
-				if (pipeline && !pipelineAcceptsShape(pipeline, selectionShape)) {
+				if (flow && !flowAcceptsShape(flow, selectionShape)) {
 					if (dialog && dialog.message) {
 						await dialog.message(
-							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
-							{ title: 'Incompatible Pipeline', type: 'warning' },
+							`This flow does not accept ${selectionShape} input. Please select a compatible flow or modify this flow to accept the selected data.`,
+							{ title: 'Incompatible Flow', type: 'warning' },
 						)
 					} else {
 						alert(
-							`This pipeline does not accept ${selectionShape} input. Please select a compatible pipeline or modify this pipeline to accept the selected data.`,
+							`This flow does not accept ${selectionShape} input. Please select a compatible flow or modify this flow to accept the selected data.`,
 						)
 					}
 				}
@@ -1157,9 +1145,9 @@ export function createPipelinesModule({
 		return inferDatasetShapeFromAssets(assets, dataType)
 	}
 
-	function pipelineAcceptsShape(pipeline, shape) {
-		if (!pipeline) return false
-		const inputs = pipeline?.spec?.inputs || {}
+	function flowAcceptsShape(flow, shape) {
+		if (!flow) return false
+		const inputs = flow?.spec?.inputs || {}
 		const expectedShape = shape || 'List[GenotypeRecord]'
 		return Object.values(inputs).some((inputSpec) => {
 			const typeStr = describeInputType(inputSpec)
@@ -1167,37 +1155,37 @@ export function createPipelinesModule({
 		})
 	}
 
-	function pipelineAcceptsGenotypeInput(pipeline) {
-		return pipelineAcceptsShape(pipeline, 'List[GenotypeRecord]')
+	function flowAcceptsGenotypeInput(flow) {
+		return flowAcceptsShape(flow, 'List[GenotypeRecord]')
 	}
 
-	function logPipelineDebug(label, pipelines) {
-		if (!pipelines || pipelines.length === 0) {
-			console.log(`[Pipelines Debug] ${label}: no pipelines`)
+	function logFlowDebug(label, flows) {
+		if (!flows || flows.length === 0) {
+			console.log(`[Flows Debug] ${label}: no flows`)
 			return
 		}
 
-		const summary = pipelines.map((pipeline) => {
-			const inputs = pipeline?.spec?.inputs || {}
+		const summary = flows.map((flow) => {
+			const inputs = flow?.spec?.inputs || {}
 			const inputTypes = Object.entries(inputs).map(([key, spec]) => {
 				const typeStr = describeInputType(spec)
 				return typeStr ? `${key}:${typeStr}` : key
 			})
 
 			return {
-				id: pipeline?.id,
-				name: pipeline?.name,
+				id: flow?.id,
+				name: flow?.name,
 				inputs: inputTypes,
-				steps: pipeline?.spec?.steps?.length || 0,
-				acceptsGenotype: pipelineAcceptsGenotypeInput(pipeline),
+				steps: flow?.spec?.steps?.length || 0,
+				acceptsGenotype: flowAcceptsGenotypeInput(flow),
 			}
 		})
 
-		console.log(`[Pipelines Debug] ${label}`, summary)
+		console.log(`[Flows Debug] ${label}`, summary)
 	}
 
 	function logDataRunContext(label, context) {
-		console.log(`[Pipelines Debug] ${label} context`, {
+		console.log(`[Flows Debug] ${label} context`, {
 			hasContext: Boolean(context),
 			urls: context?.urls?.length || 0,
 			mockUrls: context?.mockUrls?.length || 0,
@@ -1222,7 +1210,7 @@ export function createPipelinesModule({
 		if (modal) {
 			modal.remove()
 		}
-		pipelineState.dataRunModalOpen = false
+		flowState.dataRunModalOpen = false
 
 		if (clearContext) {
 			clearDataRunContext()
@@ -1231,12 +1219,12 @@ export function createPipelinesModule({
 		renderDataRunBanner()
 	}
 
-	async function showDataRunModal(context, pipelines, preselectedPipelineId = null) {
-		if (!context || !pipelines || pipelines.length === 0) {
+	async function showDataRunModal(context, flows, preselectedFlowId = null) {
+		if (!context || !flows || flows.length === 0) {
 			return
 		}
 
-		pipelineState.dataRunModalOpen = true
+		flowState.dataRunModalOpen = true
 
 		let runsBaseDir = ''
 		try {
@@ -1279,31 +1267,31 @@ export function createPipelinesModule({
 				</div>`
 		const summaryFooterHtml = isDatasetSelection
 			? `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
-					We will pass the dataset map directly to the pipeline.
+					We will pass the dataset map directly to the flow.
 				</div>`
 			: `<div style="font-size: 13px; color: #64748b; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59,130,246,0.2); line-height: 1.5;">
 					We will generate a temporary samplesheet automatically for this run.
 				</div>`
 
-		const pipelineOptionsHtml = pipelines
-			.map((pipeline, index) => {
-				const isPreferred = preselectedPipelineId !== null && pipeline.id === preselectedPipelineId
-				const isDefault = isPreferred || (preselectedPipelineId === null && index === 0)
+		const flowOptionsHtml = flows
+			.map((flow, index) => {
+				const isPreferred = preselectedFlowId !== null && flow.id === preselectedFlowId
+				const isDefault = isPreferred || (preselectedFlowId === null && index === 0)
 				const isChecked = isDefault ? 'checked' : ''
-				const inputs = pipeline?.spec?.inputs || {}
+				const inputs = flow?.spec?.inputs || {}
 
 				const inputSummary = Object.entries(inputs)
 					.map(([key, value]) => `${key}: ${describeInputType(value)}`)
 					.join(', ')
 
-				const description = pipeline?.spec?.description
-					? `<div class="option-desc">${escapeHtml(pipeline.spec.description)}</div>`
+				const description = flow?.spec?.description
+					? `<div class="option-desc">${escapeHtml(flow.spec.description)}</div>`
 					: ''
 
-				const stepCount = pipeline.spec?.steps?.length || 0
+				const stepCount = flow.spec?.steps?.length || 0
 				return `
-					<label class="data-run-pipeline-option" data-pipeline-id="${
-						pipeline.id
+					<label class="data-run-flow-option" data-flow-id="${
+						flow.id
 					}" style="display: flex; align-items: flex-start; gap: 16px; border: 2px solid ${
 						isPreferred ? '#2563eb' : '#e2e8f0'
 					}; border-radius: 12px; padding: 20px 24px; cursor: pointer; background: ${
@@ -1313,13 +1301,13 @@ export function createPipelinesModule({
 							? 'box-shadow: 0 4px 12px rgba(37,99,235,0.15);'
 							: 'box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);'
 					};">
-						<input type="radio" name="data-run-pipeline" value="${
-							pipeline.id
+						<input type="radio" name="data-run-flow" value="${
+							flow.id
 						}" ${isChecked} style="margin-top: 4px; accent-color: #2563eb; width: 18px; height: 18px; cursor: pointer;">
 						<div class="option-details" style="flex: 1; min-width: 0;">
 							<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
 								<div class="option-title" style="font-weight: 700; font-size: 16px; color: #0f172a; letter-spacing: -0.01em;">
-									${escapeHtml(pipeline.name || `Pipeline #${pipeline.id}`)}
+									${escapeHtml(flow.name || `Flow #${flow.id}`)}
 								</div>
 								${
 									isPreferred
@@ -1395,7 +1383,7 @@ export function createPipelinesModule({
 				.data-run-modal .modal-close-btn:active {
 					transform: translateY(0);
 				}
-				.data-run-modal .data-run-pipeline-option:hover {
+				.data-run-modal .data-run-flow-option:hover {
 					border-color: #cbd5e1 !important;
 					box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
 				}
@@ -1419,7 +1407,7 @@ export function createPipelinesModule({
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
-						Run Pipeline with Selected Data
+						Run Flow with Selected Data
 					</h2>
 					<button type="button" class="modal-close-btn data-run-cancel" data-modal-close="data-run" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
 						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
@@ -1446,10 +1434,10 @@ export function createPipelinesModule({
 								<circle cx="19" cy="12" r="3" />
 								<line x1="8" y1="12" x2="16" y2="12" />
 							</svg>
-							Select a Pipeline
+							Select a Flow
 						</h3>
-						<div class="data-run-pipeline-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
-							${pipelineOptionsHtml}
+						<div class="data-run-flow-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
+							${flowOptionsHtml}
 						</div>
 					</div>
 					<div class="data-run-section" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px;">
@@ -1483,7 +1471,7 @@ export function createPipelinesModule({
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 								<polygon points="5 3 19 12 5 21 5 3"></polygon>
 							</svg>
-							Run Pipeline
+							Run Flow
 						</button>
 					</div>
 				</div>
@@ -1500,8 +1488,8 @@ export function createPipelinesModule({
 			})
 		}
 
-		// Add hover effects to pipeline options
-		const optionLabels = modal.querySelectorAll('.data-run-pipeline-option')
+		// Add hover effects to flow options
+		const optionLabels = modal.querySelectorAll('.data-run-flow-option')
 		function refreshOptionStyles() {
 			optionLabels.forEach((label) => {
 				const radio = label.querySelector('input[type="radio"]')
@@ -1511,7 +1499,7 @@ export function createPipelinesModule({
 					label.style.boxShadow = '0 4px 12px rgba(37,99,235,0.2)'
 					label.style.transform = 'translateY(-1px)'
 				} else {
-					const isPreferred = label.dataset.pipelineId === preselectedPipelineId?.toString()
+					const isPreferred = label.dataset.flowId === preselectedFlowId?.toString()
 					label.style.borderColor = isPreferred ? '#2563eb' : '#e2e8f0'
 					label.style.background = isPreferred
 						? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
@@ -1612,15 +1600,15 @@ export function createPipelinesModule({
 
 		const runBtn = modal.querySelector('#data-run-run-btn')
 		runBtn.addEventListener('click', async () => {
-			const selectedRadio = modal.querySelector('input[name="data-run-pipeline"]:checked')
+			const selectedRadio = modal.querySelector('input[name="data-run-flow"]:checked')
 			if (!selectedRadio) {
-				alert('Please select a pipeline to run.')
+				alert('Please select a flow to run.')
 				return
 			}
 
-			const pipelineId = parseInt(selectedRadio.value, 10)
-			if (!Number.isFinite(pipelineId)) {
-				alert('Invalid pipeline selection.')
+			const flowId = parseInt(selectedRadio.value, 10)
+			if (!Number.isFinite(flowId)) {
+				alert('Invalid flow selection.')
 				return
 			}
 
@@ -1685,7 +1673,7 @@ export function createPipelinesModule({
 
 				if (runSets.length === 0) {
 					runBtn.disabled = false
-					runBtn.textContent = 'Run Pipeline'
+					runBtn.textContent = 'Run Flow'
 					alert('No data selected to run.')
 					return
 				}
@@ -1706,8 +1694,8 @@ export function createPipelinesModule({
 						const resolvedResultsDir =
 							baseResultsDir && runSets.length > 1 ? `${baseResultsDir}/${label}` : baseResultsDir
 
-						const run = await invoke('run_pipeline', {
-							pipelineId,
+						const run = await invoke('run_flow', {
+							flowId,
 							inputOverrides,
 							resultsDir: resolvedResultsDir,
 							selection: {
@@ -1734,17 +1722,17 @@ export function createPipelinesModule({
 					}
 
 					const runIds = runs.map((run) => run.id).join(', ')
-					alert(`Pipeline started! Run ID${runs.length === 1 ? '' : 's'}: ${runIds}`)
+					alert(`Flow started! Run ID${runs.length === 1 ? '' : 's'}: ${runIds}`)
 
 					if (typeof navigateTo === 'function') {
 						navigateTo('runs')
 					}
 				} catch (error) {
-					console.error('Failed to start pipeline:', error)
-					alert('Failed to run pipeline: ' + error)
+					console.error('Failed to start flow:', error)
+					alert('Failed to run flow: ' + error)
 				} finally {
 					runBtn.disabled = false
-					runBtn.textContent = 'Run Pipeline'
+					runBtn.textContent = 'Run Flow'
 				}
 			}
 
@@ -1756,30 +1744,30 @@ export function createPipelinesModule({
 					await performRuns()
 				} else {
 					runBtn.disabled = false
-					runBtn.textContent = 'Run Pipeline'
+					runBtn.textContent = 'Run Flow'
 					await showDockerWarningModal(performRuns)
 				}
 			} catch (err) {
 				console.warn('Docker check failed (continuing):', err)
 				runBtn.disabled = false
-				runBtn.textContent = 'Run Pipeline'
+				runBtn.textContent = 'Run Flow'
 				await showDockerWarningModal(performRuns)
 			}
 		})
 	}
 
-	// Show pipeline creation options
-	async function showCreatePipelineWizard() {
-		showTemplatePipelinePicker()
+	// Show flow creation options
+	async function showCreateFlowWizard() {
+		showTemplateFlowPicker()
 	}
 
-	async function showTemplatePipelinePicker() {
-		// Add CSS for the new pipeline modal if not exists
-		if (!document.getElementById('new-pipeline-modal-styles')) {
+	async function showTemplateFlowPicker() {
+		// Add CSS for the new flow modal if not exists
+		if (!document.getElementById('new-flow-modal-styles')) {
 			const style = document.createElement('style')
-			style.id = 'new-pipeline-modal-styles'
+			style.id = 'new-flow-modal-styles'
 			style.textContent = `
-				.new-pipeline-modal .modal-backdrop {
+				.new-flow-modal .modal-backdrop {
 					position: absolute;
 					top: 0;
 					left: 0;
@@ -1797,32 +1785,32 @@ export function createPipelinesModule({
 					from { opacity: 0; transform: translateY(24px) scale(0.96); }
 					to { opacity: 1; transform: translateY(0) scale(1); }
 				}
-				.new-pipeline-modal .new-pipeline-modal-panel {
+				.new-flow-modal .new-flow-modal-panel {
 					animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 				}
-				.new-pipeline-template-card {
+				.new-flow-template-card {
 					transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 				}
-				.new-pipeline-template-card:hover {
+				.new-flow-template-card:hover {
 					transform: translateY(-2px);
 					box-shadow: 0 8px 24px rgba(37,99,235,0.15) !important;
 					border-color: #3b82f6 !important;
 				}
-				.new-pipeline-template-card:active {
+				.new-flow-template-card:active {
 					transform: translateY(0);
 				}
-				.new-pipeline-option-card {
+				.new-flow-option-card {
 					transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 				}
-				.new-pipeline-option-card:hover {
+				.new-flow-option-card:hover {
 					transform: translateY(-2px);
 					box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
 					border-color: #cbd5e1 !important;
 				}
-				.new-pipeline-option-card:active {
+				.new-flow-option-card:active {
 					transform: translateY(0);
 				}
-				.new-pipeline-modal .modal-close-btn:hover {
+				.new-flow-modal .modal-close-btn:hover {
 					background: #f8fafc !important;
 					color: #0f172a !important;
 					transform: translateY(-1px);
@@ -1832,34 +1820,34 @@ export function createPipelinesModule({
 		}
 
 		const modal = document.createElement('div')
-		modal.id = 'pipeline-picker-modal'
-		modal.className = 'modal new-pipeline-modal'
+		modal.id = 'flow-picker-modal'
+		modal.className = 'modal new-flow-modal'
 		modal.setAttribute('role', 'dialog')
 		modal.setAttribute('aria-modal', 'true')
 		modal.style.cssText =
 			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
 
 		modal.innerHTML = `
-			<div class="modal-backdrop" data-modal-close="new-pipeline"></div>
-			<div class="new-pipeline-modal-panel" style="position: relative; width: 900px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
-				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
-					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+			<div class="modal-backdrop" data-modal-close="new-flow"></div>
+			<div class="new-flow-modal-panel" style="position: relative; width: 900px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-flow-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-flow-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
 							<line x1="12" y1="5" x2="12" y2="19"></line>
 							<line x1="5" y1="12" x2="19" y2="12"></line>
 						</svg>
-						Create New Pipeline
+						Create New Flow
 					</h2>
-					<button type="button" class="modal-close-btn" data-modal-close="new-pipeline" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+					<button type="button" class="modal-close-btn" data-modal-close="new-flow" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
 						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
 							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
 						</svg>
 					</button>
 				</div>
-				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
+				<div class="new-flow-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
 					<div style="margin-bottom: 24px;">
 						<p style="font-size: 15px; color: #475569; line-height: 1.6; margin: 0;">
-							Choose a template to get started quickly, or import your own pipeline from GitHub or a local folder.
+							Choose a template to get started quickly, or import your own flow from GitHub or a local folder.
 						</p>
 					</div>
 					
@@ -1870,10 +1858,10 @@ export function createPipelinesModule({
 								<line x1="3" y1="9" x2="21" y2="9"></line>
 								<line x1="9" y1="21" x2="9" y2="9"></line>
 							</svg>
-							Template Pipelines
+							Template Flows
 						</h3>
 						<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
-							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('apol1')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('apol1')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="display: flex; align-items: center; gap: 12px;">
 									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
@@ -1884,7 +1872,7 @@ export function createPipelinesModule({
 									</div>
 								</div>
 							</button>
-							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('brca')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('brca')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="display: flex; align-items: center; gap: 12px;">
 									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 										<img src="assets/icons/user-round.svg" alt="User icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
@@ -1895,7 +1883,7 @@ export function createPipelinesModule({
 									</div>
 								</div>
 							</button>
-							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('herc2')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('herc2')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="display: flex; align-items: center; gap: 12px;">
 									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 										<img src="assets/icons/scan-eye.svg" alt="Scan eye icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
@@ -1906,7 +1894,7 @@ export function createPipelinesModule({
 									</div>
 								</div>
 							</button>
-							<button type="button" class="new-pipeline-template-card" onclick="pipelineModule.importTemplatePipeline('thalassemia')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('thalassemia')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="display: flex; align-items: center; gap: 12px;">
 									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
@@ -1930,7 +1918,7 @@ export function createPipelinesModule({
 							Other Options
 						</h3>
 						<div style="display: flex; flex-direction: column; gap: 12px;">
-							<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.showImportOptions()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+							<button type="button" class="new-flow-option-card" onclick="flowModule.showImportOptions()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 									<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -1940,7 +1928,7 @@ export function createPipelinesModule({
 								</div>
 								<div style="flex: 1; min-width: 0;">
 									<div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Import Your Own</div>
-									<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import from GitHub, local folder, or create a blank pipeline</div>
+									<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import from GitHub, local folder, or create a blank flow</div>
 								</div>
 								<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
 									<polyline points="9 18 15 12 9 6"></polyline>
@@ -1957,7 +1945,7 @@ export function createPipelinesModule({
 		// Handle backdrop click and escape key
 		const backdrop = modal.querySelector('.modal-backdrop')
 		const closeBtn = modal.querySelector('.modal-close-btn')
-		const closeModal = () => closePipelinePickerModal()
+		const closeModal = () => closeFlowPickerModal()
 
 		if (backdrop) {
 			backdrop.addEventListener('click', closeModal)
@@ -1967,7 +1955,7 @@ export function createPipelinesModule({
 		}
 
 		document.addEventListener('keydown', function escapeHandler(e) {
-			if (e.key === 'Escape' && document.getElementById('pipeline-picker-modal')) {
+			if (e.key === 'Escape' && document.getElementById('flow-picker-modal')) {
 				closeModal()
 				document.removeEventListener('keydown', escapeHandler)
 			}
@@ -1975,11 +1963,11 @@ export function createPipelinesModule({
 	}
 
 	async function showImportOptions() {
-		closePipelinePickerModal()
+		closeFlowPickerModal()
 
 		const modal = document.createElement('div')
-		modal.id = 'pipeline-import-options-modal'
-		modal.className = 'modal new-pipeline-modal'
+		modal.id = 'flow-import-options-modal'
+		modal.className = 'modal new-flow-modal'
 		modal.setAttribute('role', 'dialog')
 		modal.setAttribute('aria-modal', 'true')
 		modal.style.cssText =
@@ -1987,15 +1975,15 @@ export function createPipelinesModule({
 
 		modal.innerHTML = `
 			<div class="modal-backdrop" data-modal-close="import-options"></div>
-			<div class="new-pipeline-modal-panel" style="position: relative; width: 700px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
-				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
-					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+			<div class="new-flow-modal-panel" style="position: relative; width: 700px; max-width: 95vw; max-height: 90vh; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-flow-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-flow-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
 							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
 							<polyline points="17 8 12 3 7 8"></polyline>
 							<line x1="12" y1="3" x2="12" y2="15"></line>
 						</svg>
-						Import Pipeline
+						Import Flow
 					</h2>
 					<button type="button" class="modal-close-btn" data-modal-close="import-options" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
 						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
@@ -2003,9 +1991,9 @@ export function createPipelinesModule({
 						</svg>
 					</button>
 				</div>
-				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
+				<div class="new-flow-modal-body" style="flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px; background: #fafbfc;">
 					<div style="display: flex; flex-direction: column; gap: 14px;">
-						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.importPipelineFromURL()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+						<button type="button" class="new-flow-option-card" onclick="flowModule.importFlowFromURL()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #bfdbfe;">
 								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #2563eb;">
 									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -2014,13 +2002,13 @@ export function createPipelinesModule({
 							</div>
 							<div style="flex: 1; min-width: 0;">
 								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Import from GitHub</div>
-								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Download a pipeline and all its steps from a GitHub repository URL</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Download a flow and all its steps from a GitHub repository URL</div>
 							</div>
 							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
 								<polyline points="9 18 15 12 9 6"></polyline>
 							</svg>
 						</button>
-						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.importExistingPipeline()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+						<button type="button" class="new-flow-option-card" onclick="flowModule.importExistingFlow()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #bbf7d0;">
 								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #16a34a;">
 									<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
@@ -2028,13 +2016,13 @@ export function createPipelinesModule({
 							</div>
 							<div style="flex: 1; min-width: 0;">
 								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Browse Local Folder</div>
-								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import an existing pipeline from your computer</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Import an existing flow from your computer</div>
 							</div>
 							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
 								<polyline points="9 18 15 12 9 6"></polyline>
 							</svg>
 						</button>
-						<button type="button" class="new-pipeline-option-card" onclick="pipelineModule.createBlankPipeline()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+						<button type="button" class="new-flow-option-card" onclick="flowModule.createBlankFlow()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 22px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 							<div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid #fcd34d;">
 								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #d97706;">
 									<line x1="12" y1="5" x2="12" y2="19"></line>
@@ -2042,7 +2030,7 @@ export function createPipelinesModule({
 								</svg>
 							</div>
 							<div style="flex: 1; min-width: 0;">
-								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Create Blank Pipeline</div>
+								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Create Blank Flow</div>
 								<div style="font-size: 13px; color: #64748b; line-height: 1.5;">Start from scratch and add steps manually</div>
 							</div>
 							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #94a3b8; flex-shrink: 0;">
@@ -2069,7 +2057,7 @@ export function createPipelinesModule({
 		}
 
 		document.addEventListener('keydown', function escapeHandler(e) {
-			if (e.key === 'Escape' && document.getElementById('pipeline-import-options-modal')) {
+			if (e.key === 'Escape' && document.getElementById('flow-import-options-modal')) {
 				closeModal()
 				document.removeEventListener('keydown', escapeHandler)
 			}
@@ -2077,12 +2065,12 @@ export function createPipelinesModule({
 	}
 
 	function closeImportOptionsModal() {
-		const modal = document.getElementById('pipeline-import-options-modal')
+		const modal = document.getElementById('flow-import-options-modal')
 		if (modal) modal.remove()
 	}
 
-	async function importTemplatePipeline(templateName) {
-		closePipelinePickerModal()
+	async function importTemplateFlow(templateName) {
+		closeFlowPickerModal()
 
 		const templateUrls = {
 			apol1:
@@ -2102,7 +2090,7 @@ export function createPipelinesModule({
 
 		// Show loading state
 		const loadingHtml = `
-			<div id="pipeline-loading-modal" class="modal-overlay" style="display: flex;">
+			<div id="flow-loading-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 400px; text-align: center;">
 					<div class="modal-body" style="padding: 40px 20px;">
 						<div style="margin-bottom: 16px;">
@@ -2112,10 +2100,10 @@ export function createPipelinesModule({
 							</svg>
 						</div>
 						<h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #111827;">
-							Importing ${templateName.toUpperCase()} Pipeline...
+							Importing ${templateName.toUpperCase()} Flow...
 						</h3>
 						<p style="margin: 0; font-size: 14px; color: #6b7280;">
-							Downloading pipeline and all dependencies
+							Downloading flow and all dependencies
 						</p>
 					</div>
 				</div>
@@ -2130,80 +2118,80 @@ export function createPipelinesModule({
 		document.body.insertAdjacentHTML('beforeend', loadingHtml)
 
 		try {
-			// Use overwrite=true for template pipelines since they're predefined
+			// Use overwrite=true for template flows since they're predefined
 			// and user explicitly wants this specific template
-			await submitPipelineURL(true, url)
-			const loadingModal = document.getElementById('pipeline-loading-modal')
+			await submitFlowURL(true, url)
+			const loadingModal = document.getElementById('flow-loading-modal')
 			if (loadingModal) loadingModal.remove()
 		} catch (error) {
-			const loadingModal = document.getElementById('pipeline-loading-modal')
+			const loadingModal = document.getElementById('flow-loading-modal')
 			if (loadingModal) loadingModal.remove()
 			throw error
 		}
 	}
 
-	function closePipelinePickerModal() {
-		const modal = document.getElementById('pipeline-picker-modal')
+	function closeFlowPickerModal() {
+		const modal = document.getElementById('flow-picker-modal')
 		if (modal) modal.remove()
 	}
 
-	async function createBlankPipeline() {
-		closePipelinePickerModal()
+	async function createBlankFlow() {
+		closeFlowPickerModal()
 		closeImportOptionsModal()
 
 		const modal = document.createElement('div')
-		modal.id = 'pipeline-name-modal'
-		modal.className = 'modal new-pipeline-modal'
+		modal.id = 'flow-name-modal'
+		modal.className = 'modal new-flow-modal'
 		modal.setAttribute('role', 'dialog')
 		modal.setAttribute('aria-modal', 'true')
 		modal.style.cssText =
 			'position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; z-index: 1000;'
 
 		modal.innerHTML = `
-			<div class="modal-backdrop" data-modal-close="pipeline-name"></div>
-			<div class="new-pipeline-modal-panel" style="position: relative; width: 540px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
-				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
-					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+			<div class="modal-backdrop" data-modal-close="flow-name"></div>
+			<div class="new-flow-modal-panel" style="position: relative; width: 540px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-flow-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-flow-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
 							<line x1="12" y1="5" x2="12" y2="19"></line>
 							<line x1="5" y1="12" x2="19" y2="12"></line>
 						</svg>
-						Create Blank Pipeline
+						Create Blank Flow
 					</h2>
-					<button type="button" class="modal-close-btn" data-modal-close="pipeline-name" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
+					<button type="button" class="modal-close-btn" data-modal-close="flow-name" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
 						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
 							<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
 						</svg>
 					</button>
 				</div>
-				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
+				<div class="new-flow-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
 					<div style="margin-bottom: 20px;">
 						<label style="display: block; margin-bottom: 10px; font-weight: 700; color: #0f172a; font-size: 14px; letter-spacing: -0.01em;">
-							Pipeline Name
+							Flow Name
 						</label>
 						<input 
 							type="text" 
-							id="pipeline-name-input" 
-							placeholder="my-analysis-pipeline"
+							id="flow-name-input" 
+							placeholder="my-analysis-flow"
 							style="width: 100%; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; box-sizing: border-box; background: #ffffff; color: #0f172a; font-family: 'SF Mono', Monaco, monospace; transition: all 0.2s;"
 							onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'"
 							onblur="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none'"
 						>
 						<p style="font-size: 13px; color: #64748b; margin-top: 10px; line-height: 1.5;">
-							A blank pipeline will be created. You can add steps and configure it after creation.
+							A blank flow will be created. You can add steps and configure it after creation.
 						</p>
 					</div>
 				</div>
-				<div class="new-pipeline-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
-					<button type="button" onclick="pipelineModule.closePipelineNameModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
+				<div class="new-flow-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
+					<button type="button" onclick="flowModule.closeFlowNameModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
 						Cancel
 					</button>
-					<button type="button" onclick="pipelineModule.submitPipelineName()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+					<button type="button" onclick="flowModule.submitFlowName()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<line x1="12" y1="5" x2="12" y2="19"></line>
 							<line x1="5" y1="12" x2="19" y2="12"></line>
 						</svg>
-						Create Pipeline
+						Create Flow
 					</button>
 				</div>
 			</div>
@@ -2214,7 +2202,7 @@ export function createPipelinesModule({
 		// Handle backdrop click and escape key
 		const backdrop = modal.querySelector('.modal-backdrop')
 		const closeBtn = modal.querySelector('.modal-close-btn')
-		const closeModal = () => closePipelineNameModal()
+		const closeModal = () => closeFlowNameModal()
 
 		if (backdrop) {
 			backdrop.addEventListener('click', closeModal)
@@ -2224,7 +2212,7 @@ export function createPipelinesModule({
 		}
 
 		document.addEventListener('keydown', function escapeHandler(e) {
-			if (e.key === 'Escape' && document.getElementById('pipeline-name-modal')) {
+			if (e.key === 'Escape' && document.getElementById('flow-name-modal')) {
 				closeModal()
 				document.removeEventListener('keydown', escapeHandler)
 			}
@@ -2232,73 +2220,73 @@ export function createPipelinesModule({
 
 		// Focus on input
 		setTimeout(() => {
-			const input = document.getElementById('pipeline-name-input')
+			const input = document.getElementById('flow-name-input')
 			if (input) {
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitPipelineName()
+						flowModule.submitFlowName()
 					}
 				})
 			}
 		}, 100)
 	}
 
-	function closePipelineNameModal() {
-		const modal = document.getElementById('pipeline-name-modal')
+	function closeFlowNameModal() {
+		const modal = document.getElementById('flow-name-modal')
 		if (modal) modal.remove()
 	}
 
-	async function submitPipelineName() {
-		const input = document.getElementById('pipeline-name-input')
+	async function submitFlowName() {
+		const input = document.getElementById('flow-name-input')
 		if (!input) return
 
 		const name = input.value.trim()
 		if (!name) {
-			alert('Please enter a pipeline name')
+			alert('Please enter a flow name')
 			return
 		}
 
 		try {
-			closePipelineNameModal()
+			closeFlowNameModal()
 
-			// Create pipeline spec
+			// Create flow spec
 			const spec = {
 				name: name,
 				inputs: {},
 				steps: [],
 			}
 
-			// Invoke the create pipeline command
-			const result = await invoke('create_pipeline', {
+			// Invoke the create flow command
+			const result = await invoke('create_flow', {
 				request: {
 					name: name,
 					directory: null,
 				},
 			})
 
-			// Save the pipeline spec
-			await invoke('save_pipeline_editor', {
-				pipelineId: result.id,
-				pipelinePath: result.pipeline_path,
+			// Save the flow spec
+			await invoke('save_flow_editor', {
+				flowId: result.id,
+				flowPath: result.flow_path,
 				spec: spec,
 			})
 
-			await loadPipelines()
+			await loadFlows()
 		} catch (error) {
-			console.error('Error creating pipeline:', error)
+			console.error('Error creating flow:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
-			alert('Failed to create pipeline: ' + errorMsg)
+			alert('Failed to create flow: ' + errorMsg)
 		}
 	}
 
-	async function importPipelineFromURL() {
-		closePipelinePickerModal()
+	async function importFlowFromURL() {
+		closeFlowPickerModal()
 		closeImportOptionsModal()
 
 		const modal = document.createElement('div')
 		modal.id = 'url-input-modal'
-		modal.className = 'modal new-pipeline-modal'
+		modal.className = 'modal new-flow-modal'
 		modal.setAttribute('role', 'dialog')
 		modal.setAttribute('aria-modal', 'true')
 		modal.style.cssText =
@@ -2306,14 +2294,14 @@ export function createPipelinesModule({
 
 		modal.innerHTML = `
 			<div class="modal-backdrop" data-modal-close="url-input"></div>
-			<div class="new-pipeline-modal-panel" style="position: relative; width: 640px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
-				<div class="new-pipeline-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
-					<h2 class="new-pipeline-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
+			<div class="new-flow-modal-panel" style="position: relative; width: 640px; max-width: 95vw; background: #ffffff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; overflow: hidden;">
+				<div class="new-flow-modal-header" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; border-bottom: 1px solid #f1f5f9; background: #ffffff;">
+					<h2 class="new-flow-modal-title" style="margin: 0; font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px;">
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #2563eb;">
 							<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
 							<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
 						</svg>
-						Import Pipeline from GitHub
+						Import Flow from GitHub
 					</h2>
 					<button type="button" class="modal-close-btn" data-modal-close="url-input" aria-label="Close" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: #64748b; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
 						<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
@@ -2321,7 +2309,7 @@ export function createPipelinesModule({
 						</svg>
 					</button>
 				</div>
-				<div class="new-pipeline-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
+				<div class="new-flow-modal-body" style="flex: 1; min-height: 0; padding: 28px 32px; background: #fafbfc;">
 					<div style="margin-bottom: 20px;">
 						<label style="display: block; margin-bottom: 10px; font-weight: 700; color: #0f172a; font-size: 14px; letter-spacing: -0.01em;">
 							GitHub URL to flow.yaml
@@ -2329,19 +2317,19 @@ export function createPipelinesModule({
 						<div style="display: flex; gap: 10px; align-items: center;">
 							<input 
 								type="text" 
-								id="pipeline-url-input" 
-								placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/flow.yaml"
+								id="flow-url-input" 
+								placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/flow/flow.yaml"
 								style="flex: 1; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace; background: #ffffff; color: #0f172a; transition: all 0.2s;"
 								onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'"
 								onblur="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none'"
 							>
 							<button 
 								type="button"
-								onclick="document.getElementById('pipeline-url-input').value = 'https://github.com/OpenMined/biovault/blob/main/cli/examples/pipeline/flow.yaml'"
+								onclick="document.getElementById('flow-url-input').value = 'https://github.com/OpenMined/biovault/blob/main/cli/examples/flow/flow.yaml'"
 								style="padding: 12px 18px; background: white; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; white-space: nowrap; transition: all 0.2s;"
 								onmouseover="this.style.background='#f8fafc'; this.style.borderColor='#94a3b8'"
 								onmouseout="this.style.background='white'; this.style.borderColor='#cbd5e1'"
-								title="Fill with example pipeline URL"
+								title="Fill with example flow URL"
 							>
 								Example
 							</button>
@@ -2356,24 +2344,24 @@ export function createPipelinesModule({
 								<div style="flex: 1;">
 									<div style="font-size: 13px; color: #1e40af; font-weight: 600; margin-bottom: 4px;">Tip</div>
 									<div style="font-size: 12px; color: #1e3a8a; line-height: 1.5;">
-										Use GitHub raw URLs (<code style="background: rgba(30,58,138,0.1); padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace;">raw.githubusercontent.com</code>) to import pipelines. This will automatically download the pipeline and all referenced steps.
+										Use GitHub raw URLs (<code style="background: rgba(30,58,138,0.1); padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace;">raw.githubusercontent.com</code>) to import flows. This will automatically download the flow and all referenced steps.
 									</div>
 								</div>
 							</div>
 						</div>
 					</div>
 				</div>
-				<div class="new-pipeline-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
-					<button type="button" onclick="pipelineModule.closeURLInputModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
+				<div class="new-flow-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
+					<button type="button" onclick="flowModule.closeURLInputModal()" style="padding: 10px 20px; font-weight: 600; border-radius: 8px; background: white; border: 1.5px solid #cbd5e1; color: #475569; cursor: pointer; transition: all 0.2s;">
 						Cancel
 					</button>
-					<button type="button" onclick="pipelineModule.submitPipelineURL()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+					<button type="button" onclick="flowModule.submitFlowURL()" style="padding: 10px 24px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; box-shadow: 0 2px 8px rgba(37,99,235,0.3); border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
 							<polyline points="17 8 12 3 7 8"></polyline>
 							<line x1="12" y1="3" x2="12" y2="15"></line>
 						</svg>
-						Import Pipeline
+						Import Flow
 					</button>
 				</div>
 			</div>
@@ -2402,12 +2390,12 @@ export function createPipelinesModule({
 
 		// Focus on input
 		setTimeout(() => {
-			const input = document.getElementById('pipeline-url-input')
+			const input = document.getElementById('flow-url-input')
 			if (input) {
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitPipelineURL()
+						flowModule.submitFlowURL()
 					}
 				})
 			}
@@ -2419,8 +2407,8 @@ export function createPipelinesModule({
 		if (modal) modal.remove()
 	}
 
-	async function submitPipelineURL(overwrite = false, urlOverride = null) {
-		const input = document.getElementById('pipeline-url-input')
+	async function submitFlowURL(overwrite = false, urlOverride = null) {
+		const input = document.getElementById('flow-url-input')
 
 		let url = urlOverride
 		if (!url) {
@@ -2442,39 +2430,39 @@ export function createPipelinesModule({
 		try {
 			closeURLInputModal()
 
-			// Call CLI function that imports pipeline AND all its step dependencies!
-			await invoke('import_pipeline_with_deps', {
+			// Call CLI function that imports flow AND all its step dependencies!
+			await invoke('import_flow_with_deps', {
 				url: url,
 				nameOverride: null,
 				overwrite: overwrite,
 			})
 
-			await loadPipelines()
+			await loadFlows()
 
-			console.log('✅ Imported pipeline with all dependencies from URL:', url)
-			alert('Pipeline and all its steps imported successfully!')
+			console.log('✅ Imported flow with all dependencies from URL:', url)
+			alert('Flow and all its steps imported successfully!')
 		} catch (error) {
-			console.error('Error importing pipeline from URL:', error)
+			console.error('Error importing flow from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
 			// Only prompt for overwrite if we haven't already tried with overwrite=true
-			// and the error is specifically about the pipeline (not steps)
-			const isPipelineExists =
+			// and the error is specifically about the flow (not steps)
+			const isFlowExists =
 				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('pipeline') ||
+				(errorMsg.toLowerCase().includes('flow') ||
 					(!errorMsg.toLowerCase().includes('step') && !overwrite))
 
-			if (isPipelineExists && !overwrite) {
+			if (isFlowExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorMsg}\n\nDo you want to overwrite it?`,
-					{ title: 'Overwrite Pipeline?', type: 'warning' },
+					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
-					await submitPipelineURL(true, url)
+					await submitFlowURL(true, url)
 					return
 				}
 			} else {
-				let userMessage = 'Failed to import pipeline:\n\n' + errorMsg
+				let userMessage = 'Failed to import flow:\n\n' + errorMsg
 
 				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
 					userMessage += '\n\n💡 Tip: Make sure the URL points to a valid flow.yaml file.'
@@ -2490,8 +2478,8 @@ export function createPipelinesModule({
 		}
 	}
 
-	async function importExistingPipeline(overwrite = false, selectedPath = null) {
-		closePipelinePickerModal()
+	async function importExistingFlow(overwrite = false, selectedPath = null) {
+		closeFlowPickerModal()
 		closeImportOptionsModal()
 
 		let selected = selectedPath
@@ -2501,7 +2489,7 @@ export function createPipelinesModule({
 					multiple: false,
 					directory: false,
 					filters: [
-						{ name: 'Pipeline or Project YAML', extensions: ['yaml', 'yml'] },
+						{ name: 'Flow or Module YAML', extensions: ['yaml', 'yml'] },
 						{ name: 'All Files', extensions: ['*'] },
 					],
 				})
@@ -2540,101 +2528,101 @@ export function createPipelinesModule({
 			const lastParentName = getLastNonEmptySegment(parentSegments)
 
 			const lowerName = fileName.toLowerCase()
-			const isPipelineFile = lowerName === 'flow.yaml' || lowerName === 'flow.yml'
-			const isProjectFile = lowerName === 'module.yaml' || lowerName === 'module.yml'
+			const isFlowFile = lowerName === 'flow.yaml' || lowerName === 'flow.yml'
+			const isModuleFile = lowerName === 'module.yaml' || lowerName === 'module.yml'
 			const isYamlFile = lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')
 
-			let pipelineDir = selected
-			let pipelineFile = null
-			let inferredName = lastParentName || fileName || 'imported-pipeline'
+			let flowDir = selected
+			let flowFile = null
+			let inferredName = lastParentName || fileName || 'imported-flow'
 
 			if (isYamlFile) {
 				if (parentNormalized) {
-					pipelineDir = parentPath
+					flowDir = parentPath
 				}
 
-				if (isPipelineFile) {
-					pipelineFile = selected
+				if (isFlowFile) {
+					flowFile = selected
 					// Prefer folder name if present, otherwise strip extension
-					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
-				} else if (isProjectFile) {
-					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
+					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-flow'
+				} else if (isModuleFile) {
+					inferredName = lastParentName || fileName.replace(/\.[^.]+$/, '') || 'imported-flow'
 				} else {
-					// Other YAML file – treat basename as pipeline name
-					inferredName = fileName.replace(/\.[^.]+$/, '') || 'imported-pipeline'
+					// Other YAML file – treat basename as flow name
+					inferredName = fileName.replace(/\.[^.]+$/, '') || 'imported-flow'
 				}
 			} else if (!fileName) {
 				// If the selection ended with a slash, derive name from the last non-empty segment
-				inferredName = lastParentName || 'imported-pipeline'
+				inferredName = lastParentName || 'imported-flow'
 			}
 
-			if (!pipelineDir) {
-				pipelineDir = selected
+			if (!flowDir) {
+				flowDir = selected
 			}
 
 			const request = {
-				name: inferredName || 'imported-pipeline',
-				directory: pipelineDir,
+				name: inferredName || 'imported-flow',
+				directory: flowDir,
 				overwrite: overwrite,
 			}
 
-			if (pipelineFile) {
-				request.pipeline_file = pipelineFile
+			if (flowFile) {
+				request.flow_file = flowFile
 			}
 
-			await invoke('create_pipeline', { request })
+			await invoke('create_flow', { request })
 
-			closePipelinePickerModal()
-			await loadPipelines()
+			closeFlowPickerModal()
+			await loadFlows()
 
-			console.log('✅ Imported pipeline:', request.name)
+			console.log('✅ Imported flow:', request.name)
 		} catch (error) {
-			console.error('Error importing pipeline:', error)
+			console.error('Error importing flow:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
 			// Only prompt for overwrite if we haven't already tried with overwrite=true
-			// and the error is specifically about the pipeline (not steps)
-			const isPipelineExists =
+			// and the error is specifically about the flow (not steps)
+			const isFlowExists =
 				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('pipeline') ||
+				(errorMsg.toLowerCase().includes('flow') ||
 					(!errorMsg.toLowerCase().includes('step') && !overwrite))
 
-			if (isPipelineExists && !overwrite) {
+			if (isFlowExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorMsg}\n\nDo you want to overwrite it?`,
-					{ title: 'Overwrite Pipeline?', type: 'warning' },
+					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
-					await importExistingPipeline(true, selected)
+					await importExistingFlow(true, selected)
 					return
 				}
 			} else {
-				alert('Failed to import pipeline: ' + errorMsg)
+				alert('Failed to import flow: ' + errorMsg)
 			}
 		}
 	}
 
 	// Wizard navigation
 	function wizardNext() {
-		if (pipelineState.wizardStep < 3) {
+		if (flowState.wizardStep < 3) {
 			// Validate current step
-			if (pipelineState.wizardStep === 0) {
-				const name = document.getElementById('pipeline-name').value.trim()
+			if (flowState.wizardStep === 0) {
+				const name = document.getElementById('flow-name').value.trim()
 				if (!name) {
-					alert('Please enter a pipeline name')
+					alert('Please enter a flow name')
 					return
 				}
-				pipelineState.wizardData.name = name
+				flowState.wizardData.name = name
 			}
 
-			pipelineState.wizardStep++
+			flowState.wizardStep++
 			updateWizardView()
 		}
 	}
 
 	function wizardBack() {
-		if (pipelineState.wizardStep > 0) {
-			pipelineState.wizardStep--
+		if (flowState.wizardStep > 0) {
+			flowState.wizardStep--
 			updateWizardView()
 		}
 	}
@@ -2646,35 +2634,35 @@ export function createPipelinesModule({
 		})
 
 		// Show current step
-		document.getElementById(`step-${pipelineState.wizardStep}`).style.display = 'block'
+		document.getElementById(`step-${flowState.wizardStep}`).style.display = 'block'
 
 		// Update buttons
 		const backBtn = document.getElementById('wizard-back')
 		const nextBtn = document.getElementById('wizard-next')
 		const createBtn = document.getElementById('wizard-create')
 
-		backBtn.disabled = pipelineState.wizardStep === 0
+		backBtn.disabled = flowState.wizardStep === 0
 
-		if (pipelineState.wizardStep === 3) {
+		if (flowState.wizardStep === 3) {
 			nextBtn.style.display = 'none'
 			createBtn.style.display = 'inline-block'
-			updatePipelinePreview()
+			updateFlowPreview()
 		} else {
 			nextBtn.style.display = 'inline-block'
 			createBtn.style.display = 'none'
 		}
 	}
 
-	// Add pipeline input
-	function addPipelineInput() {
+	// Add flow input
+	function addFlowInput() {
 		// Suggest common inputs based on steps
 		const suggestedInputs = []
-		pipelineState.wizardData.steps.forEach((step) => {
+		flowState.wizardData.steps.forEach((step) => {
 			Object.keys(step.with).forEach((inputKey) => {
 				const value = step.with[inputKey]
 				if (value.startsWith('inputs.')) {
 					const inputName = value.replace('inputs.', '')
-					if (!pipelineState.wizardData.inputs[inputName] && !suggestedInputs.includes(inputName)) {
+					if (!flowState.wizardData.inputs[inputName] && !suggestedInputs.includes(inputName)) {
 						suggestedInputs.push(inputName)
 					}
 				}
@@ -2694,22 +2682,22 @@ export function createPipelinesModule({
 		const inputType = prompt('Input type (File, Directory, String):', 'File')
 		if (!inputType) return
 
-		pipelineState.wizardData.inputs[inputName] = inputType
-		updatePipelineInputsList()
+		flowState.wizardData.inputs[inputName] = inputType
+		updateFlowInputsList()
 	}
 
-	function updatePipelineInputsList() {
-		const container = document.getElementById('pipeline-inputs-list')
+	function updateFlowInputsList() {
+		const container = document.getElementById('flow-inputs-list')
 		container.innerHTML = ''
 
-		Object.entries(pipelineState.wizardData.inputs).forEach(([name, type]) => {
+		Object.entries(flowState.wizardData.inputs).forEach(([name, type]) => {
 			const div = document.createElement('div')
 			div.style.cssText =
 				'padding: 10px; background: #f5f5f5; margin-bottom: 10px; border-radius: 4px;'
 			div.innerHTML = `
 				<strong>${name}</strong>: ${type}
 				<button class="delete-btn" style="float: right; padding: 2px 8px;"
-					onclick="pipelineModule.removePipelineInput('${name}')">
+					onclick="flowModule.removeFlowInput('${name}')">
 					Remove
 				</button>
 			`
@@ -2717,24 +2705,24 @@ export function createPipelinesModule({
 		})
 	}
 
-	function removePipelineInput(name) {
-		delete pipelineState.wizardData.inputs[name]
-		updatePipelineInputsList()
+	function removeFlowInput(name) {
+		delete flowState.wizardData.inputs[name]
+		updateFlowInputsList()
 	}
 
-	// Add pipeline step
-	async function addPipelineStep() {
+	// Add flow step
+	async function addFlowStep() {
 		try {
-			// Get available projects from database
-			const projects = await invoke('get_projects')
+			// Get available modules from database
+			const modules = await invoke('get_modules')
 
 			// Create a modal for step configuration
 			const modalHtml = `
 				<div id="add-step-modal" class="modal-overlay" style="display: flex;">
 					<div class="modal-content" style="width: 600px;">
 						<div class="modal-header">
-							<h2>Add Pipeline Step</h2>
-							<button class="modal-close" onclick="pipelineModule.closeAddStepModal()">×</button>
+							<h2>Add Flow Step</h2>
+							<button class="modal-close" onclick="flowModule.closeAddStepModal()">×</button>
 						</div>
 						<div class="modal-body">
 							<label style="display: block; margin-bottom: 15px;">
@@ -2743,28 +2731,28 @@ export function createPipelinesModule({
 							</label>
 
 							<label style="display: block; margin-bottom: 15px;">
-								<span style="display: block; margin-bottom: 5px;">Select Project *</span>
-								<select id="project-select" style="width: 100%; margin-bottom: 10px;">
-									<option value="">-- Select from registered projects --</option>
-									${projects
+								<span style="display: block; margin-bottom: 5px;">Select Module *</span>
+								<select id="module-select" style="width: 100%; margin-bottom: 10px;">
+									<option value="">-- Select from registered modules --</option>
+									${modules
 										.map(
 											(p) =>
-												`<option value="${p.project_path}">${p.name} (${p.project_path})</option>`,
+												`<option value="${p.module_path}">${p.name} (${p.module_path})</option>`,
 										)
 										.join('')}
-									<option value="browse">-- Browse for project folder/yaml --</option>
+									<option value="browse">-- Browse for module folder/yaml --</option>
 								</select>
 							</label>
 
 							<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
 								<span style="color: #666;">OR</span>
-								<button class="secondary-btn" onclick="pipelineModule.browseForProject()">
-									Browse for Project...
+								<button class="secondary-btn" onclick="flowModule.browseForModule()">
+									Browse for Module...
 								</button>
 							</div>
 
-							<div id="selected-project-path" style="padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 15px; display: none;">
-								<strong>Selected:</strong> <span id="project-path-display"></span>
+							<div id="selected-module-path" style="padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 15px; display: none;">
+								<strong>Selected:</strong> <span id="module-path-display"></span>
 							</div>
 
 							<div id="step-bindings" style="display: none;">
@@ -2796,7 +2784,7 @@ export function createPipelinesModule({
 										</label>
 										<label style="display: block; margin-bottom: 10px;">
 											<span style="display: block; margin-bottom: 3px; font-size: 13px;">Table Name:</span>
-											<input type="text" id="store-table" placeholder="e.g., pipeline_counts_{run_id}" style="width: 100%;">
+											<input type="text" id="store-table" placeholder="e.g., flow_counts_{run_id}" style="width: 100%;">
 										</label>
 										<label style="display: block; margin-bottom: 10px;">
 											<span style="display: block; margin-bottom: 3px; font-size: 13px;">Key Column:</span>
@@ -2807,10 +2795,10 @@ export function createPipelinesModule({
 							</div>
 						</div>
 						<div class="modal-footer">
-							<button class="secondary-btn" onclick="pipelineModule.closeAddStepModal()">
+							<button class="secondary-btn" onclick="flowModule.closeAddStepModal()">
 								Cancel
 							</button>
-							<button class="primary-btn" onclick="pipelineModule.confirmAddStep()">
+							<button class="primary-btn" onclick="flowModule.confirmAddStep()">
 								Add Step
 							</button>
 						</div>
@@ -2823,17 +2811,17 @@ export function createPipelinesModule({
 			modalContainer.innerHTML = modalHtml
 			document.body.appendChild(modalContainer)
 
-			// Handle project selection change
-			document.getElementById('project-select').addEventListener('change', async (e) => {
+			// Handle module selection change
+			document.getElementById('module-select').addEventListener('change', async (e) => {
 				if (e.target.value === 'browse') {
-					await browseForProject()
+					await browseForModule()
 				} else if (e.target.value) {
-					showSelectedProject(e.target.value)
-					// Auto-populate step ID from project name if empty
+					showSelectedModule(e.target.value)
+					// Auto-populate step ID from module name if empty
 					const stepIdInput = document.getElementById('step-id-input')
 					if (!stepIdInput.value) {
-						const projectName = e.target.options[e.target.selectedIndex].text.split(' ')[0]
-						stepIdInput.value = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+						const moduleName = e.target.options[e.target.selectedIndex].text.split(' ')[0]
+						stepIdInput.value = moduleName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 					}
 				}
 			})
@@ -2891,81 +2879,81 @@ export function createPipelinesModule({
 				}
 			})
 
-			// Store selected project path in state for later use
-			pipelineState.tempStepProject = null
-			pipelineState.tempStepBindings = {}
+			// Store selected module path in state for later use
+			flowState.tempStepModule = null
+			flowState.tempStepBindings = {}
 		} catch (error) {
 			console.error('Error adding step:', error)
-			alert('Error loading projects: ' + error)
+			alert('Error loading modules: ' + error)
 		}
 	}
 
-	// Browse for project folder or yaml file
-	async function browseForProject() {
+	// Browse for module folder or yaml file
+	async function browseForModule() {
 		try {
 			const selected = await dialog.open({
 				multiple: false,
 				directory: false,
 				filters: [
-					{ name: 'Project Files', extensions: ['yaml', 'yml'] },
+					{ name: 'Module Files', extensions: ['yaml', 'yml'] },
 					{ name: 'All Files', extensions: ['*'] },
 				],
 			})
 
 			if (selected) {
 				// If user selected a module.yaml file, use the parent directory
-				let projectPath = selected
+				let modulePath = selected
 				if (selected.endsWith('.yaml') || selected.endsWith('.yml')) {
 					// Get parent directory
-					projectPath = selected.substring(0, selected.lastIndexOf('/'))
+					modulePath = selected.substring(0, selected.lastIndexOf('/'))
 				}
 
-				showSelectedProject(projectPath)
-				document.getElementById('project-select').value = ''
+				showSelectedModule(modulePath)
+				document.getElementById('module-select').value = ''
 
 				// Auto-populate step ID from folder name if empty
 				const stepIdInput = document.getElementById('step-id-input')
 				if (!stepIdInput.value) {
 					// Get the last folder name from the path
-					const folderName = projectPath.split('/').pop() || projectPath.split('\\').pop()
+					const folderName = modulePath.split('/').pop() || modulePath.split('\\').pop()
 					stepIdInput.value = folderName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 				}
 			}
 		} catch (error) {
-			console.error('Error browsing for project:', error)
+			console.error('Error browsing for module:', error)
 		}
 	}
 
-	// Show selected project and load bindings
-	function showSelectedProject(projectPath) {
-		pipelineState.tempStepProject = projectPath
+	// Show selected module and load bindings
+	function showSelectedModule(modulePath) {
+		flowState.tempStepModule = modulePath
 
 		// Show selected path
-		const display = document.getElementById('selected-project-path')
-		const pathDisplay = document.getElementById('project-path-display')
+		const display = document.getElementById('selected-module-path')
+		const pathDisplay = document.getElementById('module-path-display')
 		display.style.display = 'block'
-		pathDisplay.textContent = projectPath
+		pathDisplay.textContent = modulePath
 
 		// Show bindings section
 		const bindingsSection = document.getElementById('step-bindings')
 		bindingsSection.style.display = 'block'
 
-		// Create binding inputs for common project inputs
+		// Create binding inputs for common module inputs
 		const bindingsList = document.getElementById('step-bindings-list')
 		bindingsList.innerHTML = ''
 
 		const commonInputs = ['samplesheet', 'data_dir']
-		const isFirstStep = pipelineState.wizardData.steps.length === 0
+		const isFirstStep = flowState.wizardData.steps.length === 0
 
 		commonInputs.forEach((inputName) => {
 			let defaultBinding = ''
 
 			if (isFirstStep) {
-				// First step usually binds to pipeline inputs
+				// First step usually binds to flow inputs
 				defaultBinding = `inputs.${inputName}`
 			} else {
 				// Later steps might bind to previous step outputs
-				const prevStep = pipelineState.wizardData.steps[pipelineState.wizardData.steps.length - 1]
+				const prevStep = flowState.wizardData.steps[flowState.wizardData.steps.length - 1]
 				if (inputName === 'samplesheet' && prevStep.id.includes('filter')) {
 					defaultBinding = `step.${prevStep.id}.outputs.filtered_sheet`
 				} else if (inputName === 'data_dir') {
@@ -2997,8 +2985,8 @@ export function createPipelinesModule({
 		if (modal) {
 			modal.parentElement.remove()
 		}
-		pipelineState.tempStepProject = null
-		pipelineState.tempStepBindings = {}
+		flowState.tempStepModule = null
+		flowState.tempStepBindings = {}
 	}
 
 	// Confirm and add the step
@@ -3010,14 +2998,14 @@ export function createPipelinesModule({
 			return
 		}
 
-		if (!pipelineState.tempStepProject) {
-			alert('Please select a project')
+		if (!flowState.tempStepModule) {
+			alert('Please select a module')
 			return
 		}
 
 		const step = {
 			id: stepId,
-			uses: pipelineState.tempStepProject,
+			uses: flowState.tempStepModule,
 			with: {},
 			// Don't include publish/store if they're empty (CLI parity)
 		}
@@ -3064,16 +3052,16 @@ export function createPipelinesModule({
 			}
 		}
 
-		pipelineState.wizardData.steps.push(step)
-		updatePipelineStepsList()
+		flowState.wizardData.steps.push(step)
+		updateFlowStepsList()
 		closeAddStepModal()
 	}
 
-	function updatePipelineStepsList() {
-		const container = document.getElementById('pipeline-steps-list')
+	function updateFlowStepsList() {
+		const container = document.getElementById('flow-steps-list')
 		container.innerHTML = ''
 
-		pipelineState.wizardData.steps.forEach((step, index) => {
+		flowState.wizardData.steps.forEach((step, index) => {
 			const div = document.createElement('div')
 			div.style.cssText =
 				'padding: 15px; background: #f5f5f5; margin-bottom: 10px; border-radius: 4px;'
@@ -3095,11 +3083,11 @@ export function createPipelinesModule({
 				${hasStore ? `<br>💾 Stores to SQL: ${Object.keys(step.store).join(', ')}` : ''}
 				<div style="margin-top: 10px;">
 					<button class="secondary-btn" style="padding: 2px 8px;"
-						onclick="pipelineModule.moveStepUp(${index})">↑</button>
+						onclick="flowModule.moveStepUp(${index})">↑</button>
 					<button class="secondary-btn" style="padding: 2px 8px;"
-						onclick="pipelineModule.moveStepDown(${index})">↓</button>
+						onclick="flowModule.moveStepDown(${index})">↓</button>
 					<button class="delete-btn" style="float: right; padding: 2px 8px;"
-						onclick="pipelineModule.removeStep(${index})">Remove</button>
+						onclick="flowModule.removeStep(${index})">Remove</button>
 				</div>
 			`
 			container.appendChild(div)
@@ -3107,45 +3095,45 @@ export function createPipelinesModule({
 	}
 
 	function removeStep(index) {
-		pipelineState.wizardData.steps.splice(index, 1)
-		updatePipelineStepsList()
+		flowState.wizardData.steps.splice(index, 1)
+		updateFlowStepsList()
 	}
 
 	function moveStepUp(index) {
 		if (index > 0) {
-			const temp = pipelineState.wizardData.steps[index]
-			pipelineState.wizardData.steps[index] = pipelineState.wizardData.steps[index - 1]
-			pipelineState.wizardData.steps[index - 1] = temp
-			updatePipelineStepsList()
+			const temp = flowState.wizardData.steps[index]
+			flowState.wizardData.steps[index] = flowState.wizardData.steps[index - 1]
+			flowState.wizardData.steps[index - 1] = temp
+			updateFlowStepsList()
 		}
 	}
 
 	function moveStepDown(index) {
-		if (index < pipelineState.wizardData.steps.length - 1) {
-			const temp = pipelineState.wizardData.steps[index]
-			pipelineState.wizardData.steps[index] = pipelineState.wizardData.steps[index + 1]
-			pipelineState.wizardData.steps[index + 1] = temp
-			updatePipelineStepsList()
+		if (index < flowState.wizardData.steps.length - 1) {
+			const temp = flowState.wizardData.steps[index]
+			flowState.wizardData.steps[index] = flowState.wizardData.steps[index + 1]
+			flowState.wizardData.steps[index + 1] = temp
+			updateFlowStepsList()
 		}
 	}
 
 	// Update preview
-	function updatePipelinePreview() {
-		const preview = document.getElementById('pipeline-preview')
+	function updateFlowPreview() {
+		const preview = document.getElementById('flow-preview')
 
 		// Generate YAML-like preview
-		let yaml = `name: ${pipelineState.wizardData.name}\n`
+		let yaml = `name: ${flowState.wizardData.name}\n`
 
-		if (Object.keys(pipelineState.wizardData.inputs).length > 0) {
+		if (Object.keys(flowState.wizardData.inputs).length > 0) {
 			yaml += 'inputs:\n'
-			Object.entries(pipelineState.wizardData.inputs).forEach(([name, type]) => {
+			Object.entries(flowState.wizardData.inputs).forEach(([name, type]) => {
 				yaml += `  ${name}: ${type}\n`
 			})
 		}
 
-		if (pipelineState.wizardData.steps.length > 0) {
+		if (flowState.wizardData.steps.length > 0) {
 			yaml += '\nsteps:\n'
-			pipelineState.wizardData.steps.forEach((step) => {
+			flowState.wizardData.steps.forEach((step) => {
 				yaml += `  - id: ${step.id}\n`
 				yaml += `    uses: ${step.uses}\n`
 				if (step.with && Object.keys(step.with).length > 0) {
@@ -3177,59 +3165,59 @@ export function createPipelinesModule({
 		preview.textContent = yaml
 	}
 
-	// Create pipeline
-	async function createPipeline() {
+	// Create flow
+	async function createFlow() {
 		try {
-			const result = await invoke('create_pipeline', {
+			const result = await invoke('create_flow', {
 				request: {
-					name: pipelineState.wizardData.name,
+					name: flowState.wizardData.name,
 					directory: null,
 				},
 			})
 
-			// Save the pipeline spec
+			// Save the flow spec
 			const spec = {
-				name: pipelineState.wizardData.name,
-				inputs: pipelineState.wizardData.inputs,
-				steps: pipelineState.wizardData.steps,
+				name: flowState.wizardData.name,
+				inputs: flowState.wizardData.inputs,
+				steps: flowState.wizardData.steps,
 			}
 
-			await invoke('save_pipeline_editor', {
-				pipelineId: result.id,
-				pipelinePath: result.pipeline_path,
+			await invoke('save_flow_editor', {
+				flowId: result.id,
+				flowPath: result.flow_path,
 				spec: spec,
 			})
 
 			closeWizard()
-			await loadPipelines()
-			alert('Pipeline created successfully!')
+			await loadFlows()
+			alert('Flow created successfully!')
 		} catch (error) {
-			alert('Error creating pipeline: ' + error)
+			alert('Error creating flow: ' + error)
 		}
 	}
 
 	// Close wizard
 	function closeWizard() {
-		const modal = document.getElementById('pipeline-wizard-modal')
+		const modal = document.getElementById('flow-wizard-modal')
 		if (modal) {
 			modal.parentElement.remove()
 		}
 	}
 
-	// Show pipeline detail view
-	async function showPipelineDetails(pipelineId) {
+	// Show flow detail view
+	async function showFlowDetails(flowId) {
 		try {
-			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-			if (!pipeline) {
-				console.error('Pipeline not found:', pipelineId)
+			const flow = flowState.flows.find((p) => p.id === flowId)
+			if (!flow) {
+				console.error('Flow not found:', flowId)
 				return
 			}
 
-			pipelineState.currentPipeline = pipeline
+			flowState.currentFlow = flow
 
 			// Hide main view, show detail view
-			const mainView = document.getElementById('pipelines-main-view')
-			const detailView = document.getElementById('pipeline-detail-view')
+			const mainView = document.getElementById('flows-main-view')
+			const detailView = document.getElementById('flow-detail-view')
 
 			if (mainView) mainView.style.display = 'none'
 			if (detailView) detailView.style.display = 'flex'
@@ -3237,44 +3225,44 @@ export function createPipelinesModule({
 			renderDataRunBanner()
 
 			// Update header
-			const nameEl = document.getElementById('pipeline-detail-name')
+			const nameEl = document.getElementById('flow-detail-name')
 			if (nameEl) {
-				nameEl.textContent = pipeline.name
+				nameEl.textContent = flow.name
 			}
 
 			// Update metadata badges
-			const stepsCount = pipeline.spec?.steps?.length || 0
-			const inputsCount = Object.keys(pipeline.spec?.inputs || {}).length
+			const stepsCount = flow.spec?.steps?.length || 0
+			const inputsCount = Object.keys(flow.spec?.inputs || {}).length
 
-			const stepsCountEl = document.getElementById('pipeline-steps-count')
+			const stepsCountEl = document.getElementById('flow-steps-count')
 			if (stepsCountEl) {
 				stepsCountEl.textContent = `${stepsCount} step${stepsCount === 1 ? '' : 's'}`
 			}
 
-			const inputsCountEl = document.getElementById('pipeline-inputs-count')
+			const inputsCountEl = document.getElementById('flow-inputs-count')
 			if (inputsCountEl) {
 				inputsCountEl.textContent = `${inputsCount} input${inputsCount === 1 ? '' : 's'}`
 			}
 
 			// Load and display steps
-			await loadPipelineSteps(pipelineId)
+			await loadFlowSteps(flowId)
 
 			// Populate left panel (information and parameters)
-			await renderPipelineMetadata()
+			await renderFlowMetadata()
 			await renderParameterOverrides()
 		} catch (error) {
-			console.error('Error showing pipeline details:', error)
+			console.error('Error showing flow details:', error)
 		}
 	}
 
-	// Render pipeline metadata in the left sidebar
-	function renderPipelineMetadata() {
-		const metadataContainer = document.getElementById('pipeline-metadata')
-		if (!metadataContainer || !pipelineState.currentPipeline) return
+	// Render flow metadata in the left sidebar
+	function renderFlowMetadata() {
+		const metadataContainer = document.getElementById('flow-metadata')
+		if (!metadataContainer || !flowState.currentFlow) return
 
-		const pipeline = pipelineState.currentPipeline
-		const stepsCount = pipeline.spec?.steps?.length || 0
-		const inputsCount = Object.keys(pipeline.spec?.inputs || {}).length
+		const flow = flowState.currentFlow
+		const stepsCount = flow.spec?.steps?.length || 0
+		const inputsCount = Object.keys(flow.spec?.inputs || {}).length
 
 		metadataContainer.innerHTML = `
 			<div style="display: flex; flex-direction: column; gap: 12px;">
@@ -3294,18 +3282,18 @@ export function createPipelinesModule({
 	async function renderParameterOverrides() {
 		const paramsList = document.getElementById('config-parameters-list')
 		const paramCount = document.getElementById('param-override-count')
-		if (!paramsList || !pipelineState.currentPipeline) return
+		if (!paramsList || !flowState.currentFlow) return
 
-		const pipelineSpec = pipelineState.currentPipeline.spec
+		const flowSpec = flowState.currentFlow.spec
 		const stepParameters = []
 
-		if (pipelineSpec && pipelineSpec.steps) {
-			for (const step of pipelineSpec.steps) {
+		if (flowSpec && flowSpec.steps) {
+			for (const step of flowSpec.steps) {
 				try {
-					const projectSpec = await invoke('load_project_editor', {
-						projectPath: step.uses,
+					const moduleSpec = await invoke('load_module_editor', {
+						modulePath: step.uses,
 					})
-					const params = projectSpec.metadata?.parameters || []
+					const params = moduleSpec.metadata?.parameters || []
 					params.forEach((param) => {
 						stepParameters.push({
 							stepId: step.id,
@@ -3354,20 +3342,20 @@ export function createPipelinesModule({
 	}
 
 	// Show add/edit input modal
-	function showPipelineInputModal(existingName = null) {
+	function showFlowInputModal(existingName = null) {
 		const isEdit = existingName !== null
-		const existingInput = isEdit ? pipelineState.currentPipeline.spec?.inputs?.[existingName] : null
+		const existingInput = isEdit ? flowState.currentFlow.spec?.inputs?.[existingName] : null
 		const inputType =
 			typeof existingInput === 'string' ? existingInput : existingInput?.type || 'File'
 		const inputDefault =
 			typeof existingInput === 'object' && existingInput?.default ? existingInput.default : ''
 
 		const modalHtml = `
-			<div id="pipeline-input-modal" class="modal-overlay" style="display: flex;">
+			<div id="flow-input-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 500px;">
 					<div class="modal-header">
-						<h2>${isEdit ? 'Edit' : 'Add'} Pipeline Input</h2>
-						<button class="modal-close" onclick="pipelineModule.closePipelineInputModal()">×</button>
+						<h2>${isEdit ? 'Edit' : 'Add'} Flow Input</h2>
+						<button class="modal-close" onclick="flowModule.closeFlowInputModal()">×</button>
 					</div>
 					<div class="modal-body">
 						<div style="display: flex; flex-direction: column; gap: 16px;">
@@ -3424,8 +3412,8 @@ export function createPipelinesModule({
 						</div>
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closePipelineInputModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.savePipelineInput(${isEdit}, '${
+						<button class="secondary-btn" onclick="flowModule.closeFlowInputModal()">Cancel</button>
+						<button class="primary-btn" onclick="flowModule.saveFlowInput(${isEdit}, '${
 							existingName || ''
 						}')">${isEdit ? 'Update' : 'Add'} Input</button>
 					</div>
@@ -3441,12 +3429,12 @@ export function createPipelinesModule({
 		}, 100)
 	}
 
-	function closePipelineInputModal() {
-		const modal = document.getElementById('pipeline-input-modal')
+	function closeFlowInputModal() {
+		const modal = document.getElementById('flow-input-modal')
 		if (modal) modal.remove()
 	}
 
-	async function savePipelineInput(isEdit, oldName) {
+	async function saveFlowInput(isEdit, oldName) {
 		const nameInput = document.getElementById('input-name-field')
 		const typeSelect = document.getElementById('input-type-field')
 		const defaultInput = document.getElementById('input-default-field')
@@ -3461,9 +3449,9 @@ export function createPipelinesModule({
 		}
 
 		try {
-			// Load current pipeline
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
 			// Initialize inputs if needed
@@ -3487,39 +3475,39 @@ export function createPipelinesModule({
 			}
 
 			// Save
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
 			// Refresh
-			await loadPipelines()
-			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			await loadFlows()
+			const updated = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
 			if (updated) {
-				pipelineState.currentPipeline = updated
+				flowState.currentFlow = updated
 			}
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 
-			closePipelineInputModal()
-			console.log('✅ Saved pipeline input:', name)
+			closeFlowInputModal()
+			console.log('✅ Saved flow input:', name)
 		} catch (error) {
 			console.error('Error saving input:', error)
 			alert('Failed to save input: ' + error)
 		}
 	}
 
-	function editPipelineInput(inputName) {
-		showPipelineInputModal(inputName)
+	function editFlowInput(inputName) {
+		showFlowInputModal(inputName)
 	}
 
-	// Show pipeline YAML viewer/editor
-	async function showPipelineYAMLModal() {
-		if (!pipelineState.currentPipeline) return
+	// Show flow YAML viewer/editor
+	async function showFlowYAMLModal() {
+		if (!flowState.currentFlow) return
 
 		try {
 			// Get the current YAML
-			const spec = pipelineState.currentPipeline.spec
+			const spec = flowState.currentFlow.spec
 			const yamlContent = `name: ${spec.name}
 inputs:${
 				Object.keys(spec.inputs || {}).length > 0
@@ -3554,18 +3542,18 @@ steps:${
 					: ' []'
 			}`
 
-			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/flow.yaml'
+			const yamlPath = flowState.currentFlow.flow_path + '/flow.yaml'
 
 			const modalHtml = `
 				<div id="yaml-viewer-modal" class="modal-overlay" style="display: flex;">
 					<div class="modal-content" style="width: 800px; max-height: 85vh;">
 						<div class="modal-header">
-							<h2>Pipeline YAML</h2>
-							<button class="modal-close" onclick="pipelineModule.closeYAMLViewerModal()">×</button>
+							<h2>Flow YAML</h2>
+							<button class="modal-close" onclick="flowModule.closeYAMLViewerModal()">×</button>
 						</div>
 						<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
 							<div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
-								<button class="secondary-btn" onclick="pipelineModule.openYAMLInVSCode('${yamlPath}')">
+								<button class="secondary-btn" onclick="flowModule.openYAMLInVSCode('${yamlPath}')">
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
 										<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -3576,7 +3564,7 @@ steps:${
 							<pre style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace; line-height: 1.6; overflow-x: auto; margin: 0;">${yamlContent}</pre>
 						</div>
 						<div class="modal-footer">
-							<button class="secondary-btn" onclick="pipelineModule.closeYAMLViewerModal()">Close</button>
+							<button class="secondary-btn" onclick="flowModule.closeYAMLViewerModal()">Close</button>
 						</div>
 					</div>
 				</div>
@@ -3604,32 +3592,32 @@ steps:${
 		}
 	}
 
-	async function openPipelineYAMLInVSCode() {
-		if (!pipelineState.currentPipeline) return
+	async function openFlowYAMLInVSCode() {
+		if (!flowState.currentFlow) return
 
 		try {
-			const yamlPath = pipelineState.currentPipeline.pipeline_path + '/flow.yaml'
+			const yamlPath = flowState.currentFlow.flow_path + '/flow.yaml'
 			await invoke('open_in_vscode', { path: yamlPath })
 		} catch (error) {
-			console.error('Error opening pipeline YAML in VSCode:', error)
+			console.error('Error opening flow YAML in VSCode:', error)
 			alert('Failed to open in VSCode: ' + error.toString())
 		}
 	}
 
-	async function loadPipelineSteps(pipelineId) {
+	async function loadFlowSteps(flowId) {
 		try {
-			const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-			if (!pipeline) return
+			const flow = flowState.flows.find((p) => p.id === flowId)
+			if (!flow) return
 
-			const stepsContainer = document.getElementById('pipeline-steps-list')
+			const stepsContainer = document.getElementById('flow-steps-list')
 			if (!stepsContainer) return
 
-			const steps = pipeline.spec?.steps || []
+			const steps = flow.spec?.steps || []
 
 			if (steps.length === 0) {
 				stepsContainer.innerHTML = `
 				<div style="text-align: center; padding: 40px; color: #9ca3af;">
-					<p>No steps in this pipeline yet.</p>
+					<p>No steps in this flow yet.</p>
 					<p style="font-size: 13px; margin-top: 8px;">Click "+ Add Step" above to add your first step.</p>
 				</div>
 			`
@@ -3640,18 +3628,18 @@ steps:${
 
 			steps.forEach((step, index) => {
 				const stepDiv = document.createElement('div')
-				stepDiv.className = 'pipeline-step-item'
+				stepDiv.className = 'flow-step-item'
 
 				const stepName = step.id || `step-${index + 1}`
 				const stepUses = step.uses || 'Unknown step'
 
-				// Parse project name and version from uses field (supports name@version syntax)
-				let projectName = stepUses
-				let projectVersion = null
+				// Parse module name and version from uses field (supports name@version syntax)
+				let moduleName = stepUses
+				let moduleVersion = null
 				if (stepUses.includes('@')) {
 					const parts = stepUses.split('@')
-					projectName = parts[0]
-					projectVersion = parts[1]
+					moduleName = parts[0]
+					moduleVersion = parts[1]
 				}
 
 				// Count configuration details
@@ -3685,16 +3673,16 @@ steps:${
 				}
 
 				stepDiv.innerHTML = `
-			<div class="pipeline-step-header">
-				<div class="pipeline-step-number">${index + 1}</div>
-				<div class="pipeline-step-info">
+			<div class="flow-step-header">
+				<div class="flow-step-number">${index + 1}</div>
+				<div class="flow-step-info">
 					<h4>${stepName}</h4>
-					<p>Uses: ${projectName}${
-						projectVersion ? `<span class="version-tag">v${projectVersion}</span>` : ''
+					<p>Uses: ${moduleName}${
+						moduleVersion ? `<span class="version-tag">v${moduleVersion}</span>` : ''
 					}</p>
 					<div class="step-status-badges">${statusBadges.join('')}</div>
 				</div>
-					<button class="pipeline-step-menu-btn" data-step-index="${index}">
+					<button class="flow-step-menu-btn" data-step-index="${index}">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
 							<circle cx="12" cy="5" r="2"/>
 							<circle cx="12" cy="12" r="2"/>
@@ -3702,7 +3690,7 @@ steps:${
 						</svg>
 					</button>
 				</div>
-				<div class="pipeline-step-config" id="step-config-${index}" style="display: none;">
+				<div class="flow-step-config" id="step-config-${index}" style="display: none;">
 					<!-- Configuration will be loaded here when expanded -->
 				</div>
 			`
@@ -3710,22 +3698,22 @@ steps:${
 				stepsContainer.appendChild(stepDiv)
 
 				// Add menu button click handler
-				const menuBtn = stepDiv.querySelector('.pipeline-step-menu-btn')
+				const menuBtn = stepDiv.querySelector('.flow-step-menu-btn')
 				menuBtn?.addEventListener('click', (e) => {
 					e.stopPropagation()
 					showStepMenu(e, index, step)
 				})
 
 				// Add header click handler to toggle accordion
-				const header = stepDiv.querySelector('.pipeline-step-header')
+				const header = stepDiv.querySelector('.flow-step-header')
 				header?.addEventListener('click', (e) => {
 					// Don't toggle if clicking the menu button
-					if (e.target.closest('.pipeline-step-menu-btn')) return
+					if (e.target.closest('.flow-step-menu-btn')) return
 					toggleStepConfig(index)
 				})
 			})
 		} catch (error) {
-			console.error('Error loading pipeline steps:', error)
+			console.error('Error loading flow steps:', error)
 		}
 	}
 
@@ -3770,7 +3758,7 @@ steps:${
 
 				switch (action) {
 					case 'remove':
-						removePipelineStep(stepIndex)
+						removeFlowStep(stepIndex)
 						break
 				}
 			})
@@ -3788,7 +3776,7 @@ steps:${
 		if (!configDiv) return
 
 		// Close all other configs
-		document.querySelectorAll('.pipeline-step-config').forEach((div, idx) => {
+		document.querySelectorAll('.flow-step-config').forEach((div, idx) => {
 			if (idx !== stepIndex && div.style.display !== 'none') {
 				div.style.display = 'none'
 				div.innerHTML = ''
@@ -3809,9 +3797,9 @@ steps:${
 
 	// Load step configuration inline
 	async function loadStepConfigInline(stepIndex, container) {
-		if (!pipelineState.currentPipeline || !pipelineState.currentPipeline.spec) return
+		if (!flowState.currentFlow || !flowState.currentFlow.spec) return
 
-		const step = pipelineState.currentPipeline.spec.steps[stepIndex]
+		const step = flowState.currentFlow.spec.steps[stepIndex]
 		if (!step) return
 
 		// Show loading state
@@ -3825,19 +3813,19 @@ steps:${
 		`
 
 		try {
-			// Load the project spec
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: step.uses,
+			// Load the module spec
+			const moduleSpec = await invoke('load_module_editor', {
+				modulePath: step.uses,
 			})
 
 			// Get inputs and parameters
-			const projectInputs = projectSpec.metadata?.inputs || []
-			const projectParams = projectSpec.metadata?.parameters || []
+			const moduleInputs = moduleSpec.metadata?.inputs || []
+			const moduleParams = moduleSpec.metadata?.parameters || []
 
 			// Build bindings status
 			const bindingsHtml =
-				projectInputs.length > 0
-					? projectInputs
+				moduleInputs.length > 0
+					? moduleInputs
 							.map((input) => {
 								const binding = step.with?.[input.name] || ''
 								const isBound = !!binding
@@ -3859,7 +3847,7 @@ steps:${
 
 			// Build parameters display (read-only)
 			const paramsHtml =
-				projectParams.length > 0
+				moduleParams.length > 0
 					? `
 					<details class="inline-params-section">
 						<summary class="inline-section-summary">
@@ -3867,10 +3855,10 @@ steps:${
 								<circle cx="12" cy="12" r="3" />
 								<path d="M12 1v6m0 6v6m6.36-15.36-4.24 4.24m-4.24 4.24-4.24 4.24m15.36 0-4.24-4.24m-4.24-4.24-4.24-4.24" />
 							</svg>
-							<span>Parameters (${projectParams.length})</span>
+							<span>Parameters (${moduleParams.length})</span>
 						</summary>
 						<div class="inline-params-list">
-							${projectParams
+							${moduleParams
 								.map(
 									(param) => `
 								<div class="inline-param-item">
@@ -3966,20 +3954,20 @@ steps:${
 	// Helper function to open step in Jupyter from menu
 	async function openStepInJupyter(step) {
 		try {
-			// Load the project spec to get the path
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: step.uses,
+			// Load the module spec to get the path
+			const moduleSpec = await invoke('load_module_editor', {
+				modulePath: step.uses,
 			})
 
-			const projectPath = projectSpec.project_path
-			if (!projectPath) {
-				throw new Error('Project path not available')
+			const modulePath = moduleSpec.module_path
+			if (!modulePath) {
+				throw new Error('Module path not available')
 			}
 
-			console.log('🚀 Launching Jupyter for step at:', projectPath)
+			console.log('🚀 Launching Jupyter for step at:', modulePath)
 
 			await invoke('launch_jupyter', {
-				projectPath: projectPath,
+				modulePath: modulePath,
 			})
 		} catch (error) {
 			console.error('Error launching Jupyter:', error)
@@ -3990,27 +3978,27 @@ steps:${
 	// Helper function to open step in VSCode from menu
 	async function openStepInVSCode(step) {
 		try {
-			// Load the project spec to get the path
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: step.uses,
+			// Load the module spec to get the path
+			const moduleSpec = await invoke('load_module_editor', {
+				modulePath: step.uses,
 			})
 
-			const projectPath = projectSpec.project_path
-			if (!projectPath) {
-				throw new Error('Project path not available')
+			const modulePath = moduleSpec.module_path
+			if (!modulePath) {
+				throw new Error('Module path not available')
 			}
 
-			console.log('🚀 Opening VSCode for step at:', projectPath)
+			console.log('🚀 Opening VSCode for step at:', modulePath)
 
-			await _open(projectPath)
+			await _open(modulePath)
 		} catch (error) {
 			console.error('Error opening VSCode:', error)
 			alert('Failed to open VSCode: ' + error.toString())
 		}
 	}
 
-	// Validate pipeline configuration
-	async function validatePipelineConfig(spec) {
+	// Validate flow configuration
+	async function validateFlowConfig(spec) {
 		const validation = {
 			isValid: true,
 			issues: [],
@@ -4036,14 +4024,14 @@ steps:${
 				validation.warnings.push(`Step "${stepValidation.stepId}": No input bindings`)
 			}
 
-			// Try to load project spec to validate bindings
+			// Try to load module spec to validate bindings
 			try {
-				const projectSpec = await invoke('load_project_editor', {
-					projectPath: step.uses,
+				const moduleSpec = await invoke('load_module_editor', {
+					modulePath: step.uses,
 				})
 
 				const requiredInputs =
-					projectSpec.metadata?.inputs?.filter((i) => !i.type?.endsWith('?')) || []
+					moduleSpec.metadata?.inputs?.filter((i) => !i.type?.endsWith('?')) || []
 				const boundInputs = Object.keys(step.with || {})
 
 				// Check for missing required inputs
@@ -4060,7 +4048,7 @@ steps:${
 
 				// Check for extra bindings
 				boundInputs.forEach((bindingName) => {
-					const inputExists = projectSpec.metadata?.inputs?.find((i) => i.name === bindingName)
+					const inputExists = moduleSpec.metadata?.inputs?.find((i) => i.name === bindingName)
 					if (!inputExists) {
 						stepValidation.status = stepValidation.status === 'error' ? 'error' : 'warning'
 						stepValidation.issues.push(`Unknown input: ${bindingName}`)
@@ -4071,8 +4059,8 @@ steps:${
 				})
 			} catch (error) {
 				stepValidation.status = 'error'
-				stepValidation.issues.push(`Cannot load project: ${step.uses}`)
-				validation.issues.push(`Step "${stepValidation.stepId}": Cannot load project`)
+				stepValidation.issues.push(`Cannot load module: ${step.uses}`)
+				validation.issues.push(`Step "${stepValidation.stepId}": Cannot load module`)
 				validation.isValid = false
 			}
 
@@ -4083,7 +4071,7 @@ steps:${
 	}
 
 	// Show validation modal
-	async function showValidationModal(pipelineName, validation) {
+	async function showValidationModal(flowName, validation) {
 		const statusIcon = validation.isValid
 			? '<div style="width: 48px; height: 48px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px;">✓</div>'
 			: '<div style="width: 48px; height: 48px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px;">!</div>'
@@ -4124,8 +4112,8 @@ steps:${
 			<div id="validation-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 600px; max-height: 80vh;">
 					<div class="modal-header">
-						<h2>Pipeline Validation</h2>
-						<button class="modal-close" onclick="pipelineModule.closeValidationModal()">×</button>
+						<h2>Flow Validation</h2>
+						<button class="modal-close" onclick="flowModule.closeValidationModal()">×</button>
 					</div>
 					<div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
 						<div style="display: flex; align-items: center; gap: 16px; padding: 20px; background: #f9fafb; border-radius: 8px; margin-bottom: 20px;">
@@ -4150,8 +4138,8 @@ steps:${
 						}
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeValidationModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.confirmValidationAndRun()" ${
+						<button class="secondary-btn" onclick="flowModule.closeValidationModal()">Cancel</button>
+						<button class="primary-btn" onclick="flowModule.confirmValidationAndRun()" ${
 							!validation.isValid ? 'disabled' : ''
 						}>
 							${validation.isValid ? 'Continue to Run' : 'Fix Issues First'}
@@ -4164,11 +4152,11 @@ steps:${
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
 
 		return new Promise((resolve) => {
-			window.pipelineModule.confirmValidationAndRun = () => {
+			window.flowModule.confirmValidationAndRun = () => {
 				closeValidationModal()
 				resolve(true)
 			}
-			window.pipelineModule.closeValidationModal = () => {
+			window.flowModule.closeValidationModal = () => {
 				closeValidationModal()
 				resolve(false)
 			}
@@ -4180,39 +4168,39 @@ steps:${
 		if (modal) modal.remove()
 	}
 
-	// Go back to pipelines list
-	function backToPipelinesList() {
-		document.getElementById('pipeline-detail-view').style.display = 'none'
-		document.getElementById('pipelines-main-view').style.display = 'block'
-		pipelineState.currentPipeline = null
+	// Go back to flows list
+	function backToFlowsList() {
+		document.getElementById('flow-detail-view').style.display = 'none'
+		document.getElementById('flows-main-view').style.display = 'block'
+		flowState.currentFlow = null
 		renderDataRunBanner()
 	}
 
-	// Run pipeline with validation - reads config from sidebar
-	async function runPipeline(pipelineId) {
+	// Run flow with validation - reads config from sidebar
+	async function runFlow(flowId) {
 		const context = getPendingDataRunContext()
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
+		const flow = flowState.flows.find((p) => p.id === flowId)
 		const hasData = hasPendingData(context)
 		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 
-		if (hasData && pipeline && pipelineAcceptsShape(pipeline, selectionShape)) {
-			await startDataDrivenRun(pipelineId)
+		if (hasData && flow && flowAcceptsShape(flow, selectionShape)) {
+			await startDataDrivenRun(flowId)
 			return
 		}
 
 		try {
-			if (!pipeline) return
+			if (!flow) return
 
-			// Load pipeline to get inputs
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineId,
+			// Load flow to get inputs
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowId,
 			})
 
-			// Validate pipeline configuration
-			const validation = await validatePipelineConfig(editorData.spec)
+			// Validate flow configuration
+			const validation = await validateFlowConfig(editorData.spec)
 
 			// Show validation results
-			const proceed = await showValidationModal(pipeline.name, validation)
+			const proceed = await showValidationModal(flow.name, validation)
 			if (!proceed) return // User cancelled due to issues
 
 			// Configuration is now data-driven (no sidebar config)
@@ -4236,7 +4224,7 @@ steps:${
 
 			if (missingInputs.length > 0) {
 				alert(
-					`Cannot run pipeline. Missing required inputs:\n\n${missingInputs
+					`Cannot run flow. Missing required inputs:\n\n${missingInputs
 						.map((name) => `• ${name}`)
 						.join('\n')}\n\nPlease fill in all required inputs in the configuration panel.`,
 				)
@@ -4273,11 +4261,11 @@ steps:${
 				allOverrides[stepParam] = value
 			}
 
-			console.log('🚀 Running pipeline with overrides:', allOverrides)
+			console.log('🚀 Running flow with overrides:', allOverrides)
 
-			// Run the pipeline
-			const run = await invoke('run_pipeline', {
-				pipelineId: pipelineId,
+			// Run the flow
+			const run = await invoke('run_flow', {
+				flowId: flowId,
 				inputOverrides: allOverrides,
 				resultsDir: null,
 			})
@@ -4287,36 +4275,36 @@ steps:${
 				sessionStorage.setItem('autoExpandRunId', run.id.toString())
 			}
 
-			alert(`Pipeline started! Run ID: ${run.id}`)
+			alert(`Flow started! Run ID: ${run.id}`)
 
 			// Navigate to results tab if available
 			if (navigateTo) {
 				navigateTo('runs')
 			}
 		} catch (error) {
-			alert('Error running pipeline: ' + error)
+			alert('Error running flow: ' + error)
 		}
 	}
 
-	// Show pipeline input dialog with file/folder pickers and parameter overrides
-	async function _showPipelineInputDialog(pipelineName, requiredInputs, pipelineId, pipelineSpec) {
+	// Show flow input dialog with file/folder pickers and parameter overrides
+	async function _showFlowInputDialog(flowName, requiredInputs, flowId, flowSpec) {
 		// Load saved configurations from CLI database
 		let savedConfigs = []
 		try {
-			savedConfigs = await invoke('list_run_configs', { pipelineId })
+			savedConfigs = await invoke('list_run_configs', { flowId })
 		} catch (error) {
 			console.error('Failed to load saved configs:', error)
 		}
 
 		// Collect all parameters from all steps for override
 		const stepParameters = []
-		if (pipelineSpec && pipelineSpec.steps) {
-			for (const step of pipelineSpec.steps) {
+		if (flowSpec && flowSpec.steps) {
+			for (const step of flowSpec.steps) {
 				try {
-					const projectSpec = await invoke('load_project_editor', {
-						projectPath: step.uses,
+					const moduleSpec = await invoke('load_module_editor', {
+						modulePath: step.uses,
 					})
-					const params = projectSpec.metadata?.parameters || []
+					const params = moduleSpec.metadata?.parameters || []
 					params.forEach((param) => {
 						stepParameters.push({
 							stepId: step.id,
@@ -4357,22 +4345,22 @@ steps:${
 				? `<div style="margin-top: 24px;">
 					<h3>Parameter Overrides (Optional)</h3>
 					<p style="font-size: 13px; color: #6b7280; margin-bottom: 12px;">Override default parameter values for this run</p>
-					<div id="pipeline-parameter-fields"></div>
+					<div id="flow-parameter-fields"></div>
 				</div>`
 				: ''
 
 		// Create modal HTML
 		const modalHtml = `
-			<div id="pipeline-run-modal" class="modal-overlay" style="display: flex;">
+			<div id="flow-run-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 600px; max-height: 85vh;">
 					<div class="modal-header">
-						<h2>Run Pipeline: ${pipelineName}</h2>
-						<button class="modal-close" onclick="pipelineModule.closePipelineRunDialog()">×</button>
+						<h2>Run Flow: ${flowName}</h2>
+						<button class="modal-close" onclick="flowModule.closeFlowRunDialog()">×</button>
 					</div>
 					<div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
 						${configSelectHtml}
 						<h3>Configure Inputs</h3>
-						<div id="pipeline-input-fields"></div>
+						<div id="flow-input-fields"></div>
 						${parametersHtml}
 						<div style="margin-top: 16px;">
 							<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
@@ -4390,11 +4378,11 @@ steps:${
 						</div>
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closePipelineRunDialog()">
+						<button class="secondary-btn" onclick="flowModule.closeFlowRunDialog()">
 							Cancel
 						</button>
-						<button class="primary-btn" onclick="pipelineModule.confirmPipelineRun()">
-							Run Pipeline
+						<button class="primary-btn" onclick="flowModule.confirmFlowRun()">
+							Run Flow
 						</button>
 					</div>
 				</div>
@@ -4407,7 +4395,7 @@ steps:${
 		document.body.appendChild(modalContainer)
 
 		// Create input fields
-		const container = document.getElementById('pipeline-input-fields')
+		const container = document.getElementById('flow-input-fields')
 		let hasInputs = false
 
 		for (const [name, type] of Object.entries(requiredInputs)) {
@@ -4422,7 +4410,7 @@ steps:${
 					</label>
 					<div style="display: flex; gap: 10px;">
 						<input type="text" id="input-${name}" style="flex: 1;" placeholder="Select ${type.toLowerCase()}..." readonly autocomplete="off">
-						<button class="secondary-btn" onclick="pipelineModule.selectPath('${name}', '${type}')">
+						<button class="secondary-btn" onclick="flowModule.selectPath('${name}', '${type}')">
 							Browse...
 						</button>
 					</div>
@@ -4440,11 +4428,11 @@ steps:${
 		}
 
 		if (!hasInputs) {
-			container.innerHTML = '<p style="color: #666;">No inputs required for this pipeline.</p>'
+			container.innerHTML = '<p style="color: #666;">No inputs required for this flow.</p>'
 		}
 
 		// Create parameter override fields
-		const paramsContainer = document.getElementById('pipeline-parameter-fields')
+		const paramsContainer = document.getElementById('flow-parameter-fields')
 		if (paramsContainer && stepParameters.length > 0) {
 			stepParameters.forEach((param) => {
 				const fieldDiv = document.createElement('div')
@@ -4524,7 +4512,7 @@ steps:${
 
 		// Return a promise that resolves with the inputs AND parameter overrides
 		return new Promise((resolve) => {
-			window.pipelineModule.confirmPipelineRun = async () => {
+			window.flowModule.confirmFlowRun = async () => {
 				const inputs = {}
 				for (const name of Object.keys(requiredInputs)) {
 					const value = document.getElementById(`input-${name}`)?.value
@@ -4554,7 +4542,7 @@ steps:${
 
 					try {
 						await invoke('save_run_config', {
-							pipelineId,
+							flowId,
 							name: configName,
 							configData: { inputs, parameters },
 						})
@@ -4565,18 +4553,18 @@ steps:${
 					}
 				}
 
-				closePipelineRunDialog()
+				closeFlowRunDialog()
 				resolve({ inputs, parameters })
 			}
 
-			window.pipelineModule.closePipelineRunDialog = () => {
-				closePipelineRunDialog()
+			window.flowModule.closeFlowRunDialog = () => {
+				closeFlowRunDialog()
 				resolve(null)
 			}
 		})
 	}
-	function closePipelineRunDialog() {
-		const modal = document.getElementById('pipeline-run-modal')
+	function closeFlowRunDialog() {
+		const modal = document.getElementById('flow-run-modal')
 		if (modal) {
 			modal.parentElement.remove()
 		}
@@ -4607,10 +4595,10 @@ steps:${
 		}
 	}
 
-	// Delete pipeline
-	async function deletePipeline(pipelineId) {
-		const confirmed = await confirmWithDialog('Are you sure you want to delete this pipeline?', {
-			title: 'Delete Pipeline',
+	// Delete flow
+	async function deleteFlow(flowId) {
+		const confirmed = await confirmWithDialog('Are you sure you want to delete this flow?', {
+			title: 'Delete Flow',
 			type: 'warning',
 		})
 		if (!confirmed) {
@@ -4618,15 +4606,15 @@ steps:${
 		}
 
 		try {
-			await invoke('delete_pipeline', { pipelineId: pipelineId })
-			await loadPipelines()
+			await invoke('delete_flow', { flowId: flowId })
+			await loadFlows()
 		} catch (error) {
-			alert('Error deleting pipeline: ' + error)
+			alert('Error deleting flow: ' + error)
 		}
 	}
 
-	// Open pipeline folder
-	async function openPipelineFolder(path) {
+	// Open flow folder
+	async function openFlowFolder(path) {
 		try {
 			await invoke('open_folder', { path })
 		} catch (error) {
@@ -4634,21 +4622,21 @@ steps:${
 		}
 	}
 
-	// Edit pipeline (placeholder for now)
-	async function editPipeline(pipelineId) {
-		alert('Pipeline editor coming soon! For now, you can edit the flow.yaml file directly.')
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-		if (pipeline) {
-			await openPipelineFolder(pipeline.pipeline_path)
+	// Edit flow (placeholder for now)
+	async function editFlow(flowId) {
+		alert('Flow editor coming soon! For now, you can edit the flow.yaml file directly.')
+		const flow = flowState.flows.find((p) => p.id === flowId)
+		if (flow) {
+			await openFlowFolder(flow.flow_path)
 		}
 	}
 
-	// Show pipeline menu (for ... button)
-	function showPipelineMenu(pipelineId, event) {
+	// Show flow menu (for ... button)
+	function showFlowMenu(flowId, event) {
 		event.stopPropagation()
 
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId)
-		if (!pipeline) return
+		const flow = flowState.flows.find((p) => p.id === flowId)
+		if (!flow) return
 
 		// Create context menu
 		const menu = document.createElement('div')
@@ -4669,7 +4657,7 @@ steps:${
 					<polyline points="3 6 5 6 21 6"></polyline>
 					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
 				</svg>
-				Delete Pipeline
+				Delete Flow
 			</button>
 		`
 
@@ -4691,9 +4679,9 @@ steps:${
 				menu.remove()
 
 				if (action === 'open') {
-					await openPipelineFolder(pipeline.pipeline_path)
+					await openFlowFolder(flow.flow_path)
 				} else if (action === 'delete') {
-					await deletePipeline(pipelineId)
+					await deleteFlow(flowId)
 				}
 			})
 		})
@@ -4701,48 +4689,48 @@ steps:${
 
 	// Attach back button handler
 	function attachBackButton() {
-		const backBtn = document.getElementById('back-to-pipelines-btn')
+		const backBtn = document.getElementById('back-to-flows-btn')
 		if (backBtn) {
-			backBtn.addEventListener('click', backToPipelinesList)
+			backBtn.addEventListener('click', backToFlowsList)
 		}
 	}
 
 	// Attach detail view button handlers
 	function attachDetailViewButtons() {
-		const runBtn = document.getElementById('pipeline-detail-run')
+		const runBtn = document.getElementById('flow-detail-run')
 		if (runBtn) {
 			runBtn.addEventListener('click', async () => {
-				if (pipelineState.currentPipeline) {
-					await handlePipelineRunClick(pipelineState.currentPipeline.id)
+				if (flowState.currentFlow) {
+					await handleFlowRunClick(flowState.currentFlow.id)
 				}
 			})
 		}
 
-		const editBtn = document.getElementById('pipeline-detail-edit')
+		const editBtn = document.getElementById('flow-detail-edit')
 		if (editBtn) {
 			editBtn.addEventListener('click', () => {
-				if (pipelineState.currentPipeline) {
-					editPipeline(pipelineState.currentPipeline.id)
+				if (flowState.currentFlow) {
+					editFlow(flowState.currentFlow.id)
 				}
 			})
 		}
 
-		const addStepBtn = document.getElementById('add-step-to-pipeline')
+		const addStepBtn = document.getElementById('add-step-to-flow')
 		if (addStepBtn) {
 			addStepBtn.addEventListener('click', () => {
-				if (pipelineState.currentPipeline) {
+				if (flowState.currentFlow) {
 					showStepPickerModal()
 				} else {
-					console.error('Cannot add step: no current pipeline')
+					console.error('Cannot add step: no current flow')
 				}
 			})
 		}
 
-		const editPipelineBtn = document.getElementById('edit-pipeline-yaml-btn')
-		if (editPipelineBtn) {
-			editPipelineBtn.addEventListener('click', () => {
-				if (pipelineState.currentPipeline) {
-					openPipelineYAMLInVSCode()
+		const editFlowBtn = document.getElementById('edit-flow-yaml-btn')
+		if (editFlowBtn) {
+			editFlowBtn.addEventListener('click', () => {
+				if (flowState.currentFlow) {
+					openFlowYAMLInVSCode()
 				}
 			})
 		}
@@ -4751,11 +4739,11 @@ steps:${
 	// Initialization function
 	function initialize() {
 		// Set up listener to refresh banner when sessionStorage changes
-		// Use storage event (works across tabs) and also poll when Pipelines view is active
+		// Use storage event (works across tabs) and also poll when Flows view is active
 		let bannerCheckInterval = null
 
 		async function maybeAutoOpenDataRunModal() {
-			if (pipelineState.dataRunModalOpen) return
+			if (flowState.dataRunModalOpen) return
 			const context = getPendingDataRunContext()
 			const hasData =
 				context &&
@@ -4768,10 +4756,10 @@ steps:${
 				fileIds: context.fileIds || [],
 				participants: context.participantIds || [],
 			})
-			if (pipelineState.lastAutoOpenKey === contextKey) {
+			if (flowState.lastAutoOpenKey === contextKey) {
 				return
 			}
-			pipelineState.lastAutoOpenKey = contextKey
+			flowState.lastAutoOpenKey = contextKey
 			try {
 				await showDataRunModalDirect()
 			} catch (err) {
@@ -4780,12 +4768,10 @@ steps:${
 		}
 
 		function refreshBannerIfNeeded() {
-			const isPipelinesViewActive = document
-				.getElementById('run-view')
-				?.classList.contains('active')
-			if (isPipelinesViewActive) {
+			const isFlowsViewActive = document.getElementById('run-view')?.classList.contains('active')
+			if (isFlowsViewActive) {
 				// Clear cached context to force fresh read from sessionStorage
-				pipelineState.pendingDataRun = null
+				flowState.pendingDataRun = null
 				renderDataRunBanner()
 				maybeAutoOpenDataRunModal()
 			}
@@ -4805,7 +4791,7 @@ steps:${
 			}
 		})
 
-		// Also poll when Pipelines view is active (since storage events don't fire in same window)
+		// Also poll when Flows view is active (since storage events don't fire in same window)
 		function startBannerPolling() {
 			if (bannerCheckInterval) return
 			bannerCheckInterval = setInterval(refreshBannerIfNeeded, 500)
@@ -4820,10 +4806,8 @@ steps:${
 
 		// Check view state periodically
 		setInterval(() => {
-			const isPipelinesViewActive = document
-				.getElementById('run-view')
-				?.classList.contains('active')
-			if (isPipelinesViewActive) {
+			const isFlowsViewActive = document.getElementById('run-view')?.classList.contains('active')
+			if (isFlowsViewActive) {
 				startBannerPolling()
 			} else {
 				stopBannerPolling()
@@ -4832,105 +4816,103 @@ steps:${
 
 		// Initial check
 		setTimeout(() => {
-			const isPipelinesViewActive = document
-				.getElementById('run-view')
-				?.classList.contains('active')
-			if (isPipelinesViewActive) {
+			const isFlowsViewActive = document.getElementById('run-view')?.classList.contains('active')
+			if (isFlowsViewActive) {
 				startBannerPolling()
 			}
 		}, 100)
 
-		// Make functions available globally FIRST (before loading pipelines)
-		window.pipelineModule = {
-			editPipeline,
-			runPipeline,
-			openPipelineFolder,
-			deletePipeline,
+		// Make functions available globally FIRST (before loading flows)
+		window.flowModule = {
+			editFlow,
+			runFlow,
+			openFlowFolder,
+			deleteFlow,
 			closeWizard,
 			wizardNext,
 			wizardBack,
-			addPipelineInput,
-			addPipelineStep,
+			addFlowInput,
+			addFlowStep,
 			removeStep,
 			moveStepUp,
 			moveStepDown,
-			createPipeline,
+			createFlow,
 			selectPath,
-			closePipelineRunDialog,
-			browseForProject,
+			closeFlowRunDialog,
+			browseForModule,
 			closeAddStepModal,
 			confirmAddStep,
-			showPipelineDetails,
+			showFlowDetails,
 			configureStepBindings,
-			editPipelineStep,
-			removePipelineStep,
+			editFlowStep,
+			removeFlowStep,
 			editBinding,
 			removeBinding,
 			removePublishOutput,
 			removeSQLStore,
 			closeBindingConfigModal,
 			updateStepBindings,
-			showPipelineMenu,
-			backToPipelinesList,
-			showCreatePipelineWizard,
-			showTemplatePipelinePicker,
+			showFlowMenu,
+			backToFlowsList,
+			showCreateFlowWizard,
+			showTemplateFlowPicker,
 			showImportOptions,
 			closeImportOptionsModal,
-			importTemplatePipeline,
-			closePipelinePickerModal,
-			createBlankPipeline,
-			closePipelineNameModal,
-			submitPipelineName,
-			importPipelineFromURL,
+			importTemplateFlow,
+			closeFlowPickerModal,
+			createBlankFlow,
+			closeFlowNameModal,
+			submitFlowName,
+			importFlowFromURL,
 			closeURLInputModal,
-			submitPipelineURL,
-			importExistingPipeline,
+			submitFlowURL,
+			importExistingFlow,
 			importStepFromURL,
 			closeStepURLInputModal,
 			submitStepURL,
-			loadPipelineSteps,
+			loadFlowSteps,
 			closeStepPickerModal,
 			showDataRunModal: showDataRunModalDirect,
-			showExistingProjectsList,
-			closeProjectsListModal,
+			showExistingModulesList,
+			closeModulesListModal,
 			browseForStepFolder,
-			createNewStepProject,
+			createNewStepModule,
 			closeBlankStepModal,
 			submitBlankStepName,
 			saveStepWithBindings,
-			showPipelineInputModal,
-			closePipelineInputModal,
-			savePipelineInput,
-			editPipelineInput,
-			removePipelineInput,
-			showPipelineYAMLModal,
+			showFlowInputModal,
+			closeFlowInputModal,
+			saveFlowInput,
+			editFlowInput,
+			removeFlowInput,
+			showFlowYAMLModal,
 			closeYAMLViewerModal,
 			openYAMLInVSCode,
-			openPipelineYAMLInVSCode,
+			openFlowYAMLInVSCode,
 			launchJupyterForStep,
 			openVSCodeForStep,
 			editParameter,
 			resetParameter,
-			loadPipelines,
+			loadFlows,
 		}
 
-		// Load pipelines after setting up global handlers
-		loadPipelines()
+		// Load flows after setting up global handlers
+		loadFlows()
 
-		// Attach event handlers to all create pipeline buttons
-		const createBtn = document.getElementById('create-pipeline-btn')
+		// Attach event handlers to all create flow buttons
+		const createBtn = document.getElementById('create-flow-btn')
 		if (createBtn) {
-			createBtn.addEventListener('click', showCreatePipelineWizard)
+			createBtn.addEventListener('click', showCreateFlowWizard)
 		}
 
-		const emptyCreateBtn = document.getElementById('empty-create-pipeline-btn')
+		const emptyCreateBtn = document.getElementById('empty-create-flow-btn')
 		if (emptyCreateBtn) {
-			emptyCreateBtn.addEventListener('click', showCreatePipelineWizard)
+			emptyCreateBtn.addEventListener('click', showCreateFlowWizard)
 		}
 
-		const runCreateBtn = document.getElementById('run-create-pipeline-btn')
+		const runCreateBtn = document.getElementById('run-create-flow-btn')
 		if (runCreateBtn) {
-			runCreateBtn.addEventListener('click', showCreatePipelineWizard)
+			runCreateBtn.addEventListener('click', showCreateFlowWizard)
 		}
 
 		// Attach back button handler
@@ -4946,12 +4928,12 @@ steps:${
 			<div id="step-picker-modal" class="modal-overlay" style="display: flex;">
 				<div class="modal-content" style="width: 550px;">
 					<div class="modal-header">
-						<h2>Add Step to Pipeline</h2>
-						<button class="modal-close" onclick="pipelineModule.closeStepPickerModal()">×</button>
+						<h2>Add Step to Flow</h2>
+						<button class="modal-close" onclick="flowModule.closeStepPickerModal()">×</button>
 					</div>
 					<div class="modal-body">
 						<div style="display: flex; flex-direction: column; gap: 10px;">
-							<button class="action-btn-large" onclick="pipelineModule.importStepFromURL()">
+							<button class="action-btn-large" onclick="flowModule.importStepFromURL()">
 								<div class="action-btn-icon">
 									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -4963,7 +4945,7 @@ steps:${
 									<div class="action-btn-desc">Download a step from a GitHub URL</div>
 								</div>
 							</button>
-							<button class="action-btn-large" onclick="pipelineModule.showExistingProjectsList()">
+							<button class="action-btn-large" onclick="flowModule.showExistingModulesList()">
 								<div class="action-btn-icon">
 									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<rect x="3" y="3" width="7" height="7"></rect>
@@ -4973,11 +4955,11 @@ steps:${
 									</svg>
 								</div>
 								<div class="action-btn-content">
-									<div class="action-btn-title">Import Existing Project</div>
-									<div class="action-btn-desc">Select from your registered projects</div>
+									<div class="action-btn-title">Import Existing Module</div>
+									<div class="action-btn-desc">Select from your registered modules</div>
 								</div>
 							</button>
-							<button class="action-btn-large" onclick="pipelineModule.browseForStepFolder()">
+							<button class="action-btn-large" onclick="flowModule.browseForStepFolder()">
 								<div class="action-btn-icon">
 									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
@@ -4985,10 +4967,10 @@ steps:${
 								</div>
 								<div class="action-btn-content">
 									<div class="action-btn-title">Browse Local Folder</div>
-									<div class="action-btn-desc">Select a project folder on your computer</div>
+									<div class="action-btn-desc">Select a module folder on your computer</div>
 								</div>
 							</button>
-							<button class="action-btn-large" onclick="pipelineModule.createNewStepProject()">
+							<button class="action-btn-large" onclick="flowModule.createNewStepModule()">
 								<div class="action-btn-icon">
 									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<line x1="12" y1="5" x2="12" y2="19"></line>
@@ -4996,7 +4978,7 @@ steps:${
 									</svg>
 								</div>
 								<div class="action-btn-content">
-									<div class="action-btn-title">Create New Project</div>
+									<div class="action-btn-title">Create New Module</div>
 									<div class="action-btn-desc">Build a new step from scratch</div>
 								</div>
 							</button>
@@ -5009,35 +4991,35 @@ steps:${
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
 	}
 
-	// Show existing projects list (called from step picker)
-	async function showExistingProjectsList() {
+	// Show existing modules list (called from step picker)
+	async function showExistingModulesList() {
 		try {
-			const projects = await invoke('get_projects')
+			const modules = await invoke('get_modules')
 
 			const modalHtml = `
-				<div id="projects-list-modal" class="modal-overlay" style="display: flex;">
+				<div id="modules-list-modal" class="modal-overlay" style="display: flex;">
 					<div class="modal-content" style="width: 600px; max-height: 80vh;">
 						<div class="modal-header">
-							<button class="back-button-icon" onclick="pipelineModule.closeProjectsListModal(); pipelineModule.showStepPickerModal()">
+							<button class="back-button-icon" onclick="flowModule.closeModulesListModal(); flowModule.showStepPickerModal()">
 								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 									<polyline points="15 18 9 12 15 6"></polyline>
 								</svg>
 							</button>
-							<h2 style="margin: 0;">Select Project</h2>
-							<button class="modal-close" onclick="pipelineModule.closeProjectsListModal()">×</button>
+							<h2 style="margin: 0;">Select Module</h2>
+							<button class="modal-close" onclick="flowModule.closeModulesListModal()">×</button>
 						</div>
 						<div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
 							${
-								projects.length > 0
+								modules.length > 0
 									? `
-								<div class="project-select-list">
-									${projects
+								<div class="module-select-list">
+									${modules
 										.map(
 											(p) => `
-										<div class="project-select-item" data-path="${p.project_path}" data-name="${p.name}">
-											<div class="project-select-info">
-												<div class="project-select-name">${p.name}</div>
-												<div class="project-select-path">${p.project_path}</div>
+										<div class="module-select-item" data-path="${p.module_path}" data-name="${p.name}">
+											<div class="module-select-info">
+												<div class="module-select-name">${p.name}</div>
+												<div class="module-select-path">${p.module_path}</div>
 											</div>
 											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 												<polyline points="9 18 15 12 9 6"></polyline>
@@ -5048,7 +5030,7 @@ steps:${
 										.join('')}
 								</div>
 							`
-									: '<p style="color: #9ca3af; padding: 40px; text-align: center;">No projects registered yet. Import or create one!</p>'
+									: '<p style="color: #9ca3af; padding: 40px; text-align: center;">No modules registered yet. Import or create one!</p>'
 							}
 						</div>
 					</div>
@@ -5059,22 +5041,22 @@ steps:${
 			document.body.insertAdjacentHTML('beforeend', modalHtml)
 
 			// Add click handlers
-			document.querySelectorAll('.project-select-item').forEach((item) => {
+			document.querySelectorAll('.module-select-item').forEach((item) => {
 				item.addEventListener('click', async () => {
 					const path = item.dataset.path
 					const name = item.dataset.name
 					await addStepFromPath(path, name)
-					closeProjectsListModal()
+					closeModulesListModal()
 				})
 			})
 		} catch (error) {
-			console.error('Error showing projects list:', error)
-			alert('Failed to show projects: ' + error)
+			console.error('Error showing modules list:', error)
+			alert('Failed to show modules: ' + error)
 		}
 	}
 
-	function closeProjectsListModal() {
-		const modal = document.getElementById('projects-list-modal')
+	function closeModulesListModal() {
+		const modal = document.getElementById('modules-list-modal')
 		if (modal) modal.remove()
 	}
 
@@ -5092,7 +5074,7 @@ steps:${
 				<div class="modal-content" style="width: 650px;">
 					<div class="modal-header">
 						<h2>Import Step from GitHub</h2>
-						<button class="modal-close" onclick="pipelineModule.closeStepURLInputModal()">×</button>
+						<button class="modal-close" onclick="flowModule.closeStepURLInputModal()">×</button>
 					</div>
 					<div class="modal-body">
 						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
@@ -5101,18 +5083,18 @@ steps:${
 						<input 
 							type="text" 
 							id="step-url-input" 
-							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/cli/examples/pipeline/count-lines/module.yaml"
+							placeholder="https://raw.githubusercontent.com/OpenMined/biovault/main/cli/examples/flow/count-lines/module.yaml"
 							style="width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace;"
 						>
 						<p style="font-size: 13px; color: #6b7280; margin-top: 8px;">
-							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import projects.
+							📝 Use GitHub raw URLs (raw.githubusercontent.com) to import modules.
 							<br>
 							This will download the module.yaml and assets, then add it as a step.
 						</p>
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeStepURLInputModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.submitStepURL()">Import & Add Step</button>
+						<button class="secondary-btn" onclick="flowModule.closeStepURLInputModal()">Cancel</button>
+						<button class="primary-btn" onclick="flowModule.submitStepURL()">Import & Add Step</button>
 					</div>
 				</div>
 			</div>
@@ -5127,7 +5109,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitStepURL()
+						flowModule.submitStepURL()
 					}
 				})
 			}
@@ -5163,21 +5145,21 @@ steps:${
 			closeStepURLInputModal()
 
 			// Call CLI library to import from URL
-			const result = await invoke('import_project', {
+			const result = await invoke('import_module', {
 				url: url,
 				overwrite: overwrite,
 			})
 
 			// Validate the result
-			if (!result.project_path) {
-				throw new Error('Import succeeded but no project path returned')
+			if (!result.module_path) {
+				throw new Error('Import succeeded but no module path returned')
 			}
 
-			// Add the imported project as a step
-			await addStepFromPath(result.project_path, result.name)
+			// Add the imported module as a step
+			await addStepFromPath(result.module_path, result.name)
 
 			console.log('✅ Imported and added step from URL:', url)
-			alert(`Successfully imported project: ${result.name}`)
+			alert(`Successfully imported module: ${result.name}`)
 		} catch (error) {
 			console.error('Error importing from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
@@ -5185,18 +5167,18 @@ steps:${
 			if (errorMsg.includes('already exists')) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorMsg}\n\nDo you want to overwrite it?`,
-					{ title: 'Overwrite Project?', type: 'warning' },
+					{ title: 'Overwrite Module?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
 					await submitStepURL(true, url)
 					return
 				}
 			} else {
-				let userMessage = 'Failed to import project:\n\n' + errorMsg
+				let userMessage = 'Failed to import module:\n\n' + errorMsg
 
 				if (errorMsg.includes('not found') || errorMsg.includes('404')) {
 					userMessage +=
-						'\n\n💡 Tip: Make sure the URL points to a valid module.yaml file or project directory.'
+						'\n\n💡 Tip: Make sure the URL points to a valid module.yaml file or module directory.'
 				}
 
 				if (url.includes('github.com')) {
@@ -5220,9 +5202,9 @@ steps:${
 			}
 
 			if (selected) {
-				// Import/register the project first so it appears in the list
+				// Import/register the module first so it appears in the list
 				try {
-					await invoke('import_project_from_folder', {
+					await invoke('import_module_from_folder', {
 						folderPath: selected,
 						overwrite: overwrite,
 					})
@@ -5231,7 +5213,7 @@ steps:${
 					if (errorStr.includes('already exists')) {
 						const shouldOverwrite = await confirmWithDialog(
 							`${errorStr}\n\nDo you want to overwrite it?`,
-							{ title: 'Overwrite Project?', type: 'warning' },
+							{ title: 'Overwrite Module?', type: 'warning' },
 						)
 						if (shouldOverwrite) {
 							await browseForStepFolder(true, selected)
@@ -5242,7 +5224,7 @@ steps:${
 						}
 					}
 					// Might already be registered for other reasons, that's ok
-					console.log('Project may already be registered:', e)
+					console.log('Module may already be registered:', e)
 				}
 
 				// Extract name from path
@@ -5255,7 +5237,7 @@ steps:${
 		}
 	}
 
-	function createNewStepProject() {
+	function createNewStepModule() {
 		closeStepPickerModal()
 
 		// Show simple name input (no wizard)
@@ -5264,7 +5246,7 @@ steps:${
 				<div class="modal-content" style="width: 450px;">
 					<div class="modal-header">
 						<h2>Create Blank Step</h2>
-						<button class="modal-close" onclick="pipelineModule.closeBlankStepModal()">×</button>
+						<button class="modal-close" onclick="flowModule.closeBlankStepModal()">×</button>
 					</div>
 					<div class="modal-body">
 						<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
@@ -5285,8 +5267,8 @@ steps:${
 						</p>
 					</div>
 					<div class="modal-footer">
-						<button class="secondary-btn" onclick="pipelineModule.closeBlankStepModal()">Cancel</button>
-						<button class="primary-btn" onclick="pipelineModule.submitBlankStepName()">Create Step</button>
+						<button class="secondary-btn" onclick="flowModule.closeBlankStepModal()">Cancel</button>
+						<button class="primary-btn" onclick="flowModule.submitBlankStepName()">Create Step</button>
 					</div>
 				</div>
 			</div>
@@ -5300,7 +5282,7 @@ steps:${
 				input.focus()
 				input.addEventListener('keypress', (e) => {
 					if (e.key === 'Enter') {
-						pipelineModule.submitBlankStepName()
+						flowModule.submitBlankStepName()
 					}
 				})
 			}
@@ -5325,8 +5307,8 @@ steps:${
 		try {
 			closeBlankStepModal()
 
-			// Create blank project
-			const result = await invoke('create_project', {
+			// Create blank module
+			const result = await invoke('create_module', {
 				name: name,
 				example: null,
 				directory: null,
@@ -5334,8 +5316,8 @@ steps:${
 				scriptName: null,
 			})
 
-			// Add to pipeline
-			await addStepFromPath(result.project_path, result.name)
+			// Add to flow
+			await addStepFromPath(result.module_path, result.name)
 
 			console.log('✅ Created blank step:', name)
 		} catch (error) {
@@ -5345,40 +5327,40 @@ steps:${
 		}
 	}
 
-	async function addStepFromPath(projectPath, projectName) {
-		if (!pipelineState.currentPipeline) return
+	async function addStepFromPath(modulePath, moduleName) {
+		if (!flowState.currentFlow) return
 
 		try {
-			console.log('➕ Adding step to pipeline:')
-			console.log('   Project Name:', projectName)
-			console.log('   Project Path:', projectPath)
+			console.log('➕ Adding step to flow:')
+			console.log('   Module Name:', moduleName)
+			console.log('   Module Path:', modulePath)
 
-			// Ensure the project is registered in the database
+			// Ensure the module is registered in the database
 			try {
-				await invoke('import_project_from_folder', {
-					folderPath: projectPath,
+				await invoke('import_module_from_folder', {
+					folderPath: modulePath,
 					overwrite: false,
 				})
-				console.log('✅ Project registered in database:', projectName)
+				console.log('✅ Module registered in database:', moduleName)
 			} catch (e) {
 				// Might already be registered, that's ok
-				console.log('ℹ️ Project may already be registered:', e.toString())
+				console.log('ℹ️ Module may already be registered:', e.toString())
 			}
 
-			// Load current pipeline
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
-			// Create step using project NAME (not path) for portability
-			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+			// Create step using module NAME (not path) for portability
+			const stepId = moduleName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 			const newStep = {
 				id: stepId,
-				uses: projectName, // Use name for database lookup (portable!)
+				uses: moduleName, // Use name for database lookup (portable!)
 				with: {}, // Empty - configure later via button
 			}
 
-			console.log('📝 Adding step to pipeline spec:', newStep)
+			console.log('📝 Adding step to flow spec:', newStep)
 
 			// Add step
 			if (!editorData.spec.steps) {
@@ -5387,19 +5369,19 @@ steps:${
 			editorData.spec.steps.push(newStep)
 
 			// Save
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
 			// Refresh
-			await loadPipelines()
-			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			await loadFlows()
+			const updated = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
 			if (updated) {
-				pipelineState.currentPipeline = updated
+				flowState.currentFlow = updated
 			}
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 
 			console.log('✅ Successfully added step:', stepId)
 		} catch (error) {
@@ -5415,7 +5397,7 @@ steps:${
 		hideConfigureStepModal()
 	}
 
-	async function saveStepWithBindings(projectPath, stepId) {
+	async function saveStepWithBindings(modulePath, stepId) {
 		try {
 			// Collect bindings from inputs
 			const bindings = {}
@@ -5427,15 +5409,15 @@ steps:${
 				}
 			})
 
-			// Load current pipeline
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
 			// Create step with bindings
 			const newStep = {
 				id: stepId,
-				uses: projectPath,
+				uses: modulePath,
 				with: bindings,
 			}
 
@@ -5446,19 +5428,19 @@ steps:${
 			editorData.spec.steps.push(newStep)
 
 			// Save
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
 			// Refresh
-			await loadPipelines()
-			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			await loadFlows()
+			const updated = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
 			if (updated) {
-				pipelineState.currentPipeline = updated
+				flowState.currentFlow = updated
 			}
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 
 			closeBindingConfigModal()
 			console.log('✅ Added step with bindings:', stepId)
@@ -5475,7 +5457,7 @@ steps:${
 	let configureStepState = {
 		stepIndex: -1,
 		step: null,
-		projectSpec: null,
+		moduleSpec: null,
 		bindings: {},
 		parameters: {},
 		publish: {},
@@ -5485,36 +5467,36 @@ steps:${
 
 	// Configure step bindings
 	async function configureStepBindings(stepIndex) {
-		if (!pipelineState.currentPipeline) return
+		if (!flowState.currentFlow) return
 
-		const step = pipelineState.currentPipeline.spec?.steps?.[stepIndex]
+		const step = flowState.currentFlow.spec?.steps?.[stepIndex]
 		if (!step) return
 
 		try {
 			console.log('📋 Configuring step:', step.id, '- uses:', step.uses)
 
-			// Load project spec to get inputs
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: step.uses,
+			// Load module spec to get inputs
+			const moduleSpec = await invoke('load_module_editor', {
+				modulePath: step.uses,
 			})
 
-			console.log('✅ Loaded project spec from path:', projectSpec.project_path)
-			console.log('   Inputs:', projectSpec.metadata?.inputs?.length || 0)
-			console.log('   Parameters:', projectSpec.metadata?.parameters?.length || 0)
-			console.log('   Outputs:', projectSpec.metadata?.outputs?.length || 0)
+			console.log('✅ Loaded module spec from path:', moduleSpec.module_path)
+			console.log('   Inputs:', moduleSpec.metadata?.inputs?.length || 0)
+			console.log('   Parameters:', moduleSpec.metadata?.parameters?.length || 0)
+			console.log('   Outputs:', moduleSpec.metadata?.outputs?.length || 0)
 
 			// Show new visual config modal
-			await showVisualConfigModal(step, stepIndex, projectSpec)
+			await showVisualConfigModal(step, stepIndex, moduleSpec)
 		} catch (error) {
-			console.error('Error loading project for configuration:', error)
-			alert('Failed to load project: ' + error)
+			console.error('Error loading module for configuration:', error)
+			alert('Failed to load module: ' + error)
 		}
 	}
 
-	async function showVisualConfigModal(step, stepIndex, projectSpec) {
+	async function showVisualConfigModal(step, stepIndex, moduleSpec) {
 		configureStepState.stepIndex = stepIndex
 		configureStepState.step = step
-		configureStepState.projectSpec = projectSpec
+		configureStepState.moduleSpec = moduleSpec
 		configureStepState.bindings = { ...(step.with || {}) }
 		configureStepState.parameters = { ...(step.parameters || {}) }
 		configureStepState.publish = { ...(step.publish || {}) }
@@ -5541,7 +5523,7 @@ steps:${
 		const container = document.getElementById('step-parameters-list')
 		if (!container) return
 
-		const parameters = configureStepState.projectSpec.metadata?.parameters || []
+		const parameters = configureStepState.moduleSpec.metadata?.parameters || []
 
 		if (parameters.length === 0) {
 			container.innerHTML =
@@ -5578,7 +5560,7 @@ steps:${
 		const container = document.getElementById('step-bindings-list')
 		if (!container) return
 
-		const inputs = configureStepState.projectSpec.metadata?.inputs || []
+		const inputs = configureStepState.moduleSpec.metadata?.inputs || []
 
 		if (inputs.length === 0) {
 			container.innerHTML = '<div class="empty-state">This step has no inputs to configure.</div>'
@@ -5601,12 +5583,12 @@ steps:${
 							<div class="binding-value">${isBound ? escapeHtml(bindingText) : '⚠️ ' + bindingText}</div>
 						</div>
 						<div class="binding-actions">
-							<button class="btn-bind" onclick="pipelineModule.editBinding('${escapeHtml(input.name)}')">
+							<button class="btn-bind" onclick="flowModule.editBinding('${escapeHtml(input.name)}')">
 								${isBound ? 'Change' : 'Set Binding'}
 							</button>
 							${
 								isBound
-									? `<button class="btn-unbind" onclick="pipelineModule.removeBinding('${escapeHtml(
+									? `<button class="btn-unbind" onclick="flowModule.removeBinding('${escapeHtml(
 											input.name,
 										)}')">Clear</button>`
 									: ''
@@ -5681,7 +5663,7 @@ steps:${
 	}
 
 	function editParameter(paramName) {
-		const param = configureStepState.projectSpec.metadata?.parameters?.find(
+		const param = configureStepState.moduleSpec.metadata?.parameters?.find(
 			(p) => p.name === paramName,
 		)
 		if (!param) return
@@ -5714,7 +5696,7 @@ steps:${
 		configureStepState = {
 			stepIndex: -1,
 			step: null,
-			projectSpec: null,
+			moduleSpec: null,
 			bindings: {},
 			parameters: {},
 			publish: {},
@@ -5724,19 +5706,19 @@ steps:${
 	}
 
 	async function launchJupyterForStep() {
-		if (!configureStepState.projectSpec) return
+		if (!configureStepState.moduleSpec) return
 
 		try {
-			// Use the resolved project path from projectSpec, not step.uses
-			const projectPath = configureStepState.projectSpec.project_path
-			if (!projectPath) {
-				throw new Error('Project path not available')
+			// Use the resolved module path from moduleSpec, not step.uses
+			const modulePath = configureStepState.moduleSpec.module_path
+			if (!modulePath) {
+				throw new Error('Module path not available')
 			}
 
-			console.log('🚀 Launching Jupyter for project at:', projectPath)
+			console.log('🚀 Launching Jupyter for module at:', modulePath)
 
 			await invoke('launch_jupyter', {
-				projectPath: projectPath,
+				modulePath: modulePath,
 			})
 		} catch (error) {
 			console.error('Error launching Jupyter:', error)
@@ -5745,19 +5727,19 @@ steps:${
 	}
 
 	async function openVSCodeForStep() {
-		if (!configureStepState.projectSpec) return
+		if (!configureStepState.moduleSpec) return
 
 		try {
-			// Use the resolved project path from projectSpec, not step.uses
-			const projectPath = configureStepState.projectSpec.project_path
-			if (!projectPath) {
-				throw new Error('Project path not available')
+			// Use the resolved module path from moduleSpec, not step.uses
+			const modulePath = configureStepState.moduleSpec.module_path
+			if (!modulePath) {
+				throw new Error('Module path not available')
 			}
 
-			console.log('📂 Opening VSCode for project at:', projectPath)
+			console.log('📂 Opening VSCode for module at:', modulePath)
 
 			await invoke('open_in_vscode', {
-				path: projectPath,
+				path: modulePath,
 			})
 		} catch (error) {
 			console.error('Error opening VSCode:', error)
@@ -5767,9 +5749,9 @@ steps:${
 
 	async function saveStepConfiguration() {
 		try {
-			// Load current pipeline
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
 			// Update step
@@ -5794,19 +5776,19 @@ steps:${
 			}
 
 			// Save
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
 			// Refresh
-			await loadPipelines()
-			const updated = pipelineState.pipelines.find((p) => p.id === pipelineState.currentPipeline.id)
+			await loadFlows()
+			const updated = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
 			if (updated) {
-				pipelineState.currentPipeline = updated
+				flowState.currentFlow = updated
 			}
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 
 			hideConfigureStepModal()
 		} catch (error) {
@@ -5820,7 +5802,7 @@ steps:${
 		const currentBinding = configureStepState.bindings[inputName] || ''
 
 		// Get input type for compatibility checking
-		const input = configureStepState.projectSpec.metadata?.inputs?.find((i) => i.name === inputName)
+		const input = configureStepState.moduleSpec.metadata?.inputs?.find((i) => i.name === inputName)
 		const expectedType = input?.type || 'File'
 
 		// Set input name and show expected type
@@ -5843,11 +5825,11 @@ steps:${
 		const sourceTypeSelect = document.getElementById('binding-source-type')
 
 		if (binding.startsWith('inputs.')) {
-			// Pipeline input
-			sourceTypeSelect.value = 'pipeline-input'
+			// Flow input
+			sourceTypeSelect.value = 'flow-input'
 			updateBindingSelectors()
 			const inputName = binding.replace('inputs.', '')
-			document.getElementById('binding-pipeline-input-select').value = inputName
+			document.getElementById('binding-flow-input-select').value = inputName
 		} else if (binding.startsWith('step.')) {
 			// Step output: step.stepId.outputs.outputName
 			sourceTypeSelect.value = 'step-output'
@@ -5874,29 +5856,29 @@ steps:${
 		const sourceType = document.getElementById('binding-source-type').value
 
 		// Hide all selectors
-		document.getElementById('binding-pipeline-input-selector').style.display = 'none'
+		document.getElementById('binding-flow-input-selector').style.display = 'none'
 		document.getElementById('binding-step-output-selector').style.display = 'none'
 		document.getElementById('binding-literal-selector').style.display = 'none'
 		document.getElementById('binding-preview').style.display = 'none'
 
-		if (sourceType === 'pipeline-input') {
-			// Populate pipeline inputs with type checking
-			const pipelineInputs = pipelineState.currentPipeline.spec?.inputs || {}
-			const select = document.getElementById('binding-pipeline-input-select')
+		if (sourceType === 'flow-input') {
+			// Populate flow inputs with type checking
+			const flowInputs = flowState.currentFlow.spec?.inputs || {}
+			const select = document.getElementById('binding-flow-input-select')
 
 			// Get expected input type
 			const inputName = configureStepState.editingBindingInput
-			const input = configureStepState.projectSpec.metadata?.inputs?.find(
+			const input = configureStepState.moduleSpec.metadata?.inputs?.find(
 				(i) => i.name === inputName,
 			)
 			const expectedType = input?.type?.replace('?', '') || 'File'
 
 			select.innerHTML =
 				'<option value="">-- Select Input --</option>' +
-				Object.entries(pipelineInputs)
+				Object.entries(flowInputs)
 					.map(([key, spec]) => {
-						const pipelineInputType = typeof spec === 'string' ? spec : spec.type || 'File'
-						const cleanType = pipelineInputType.replace('?', '')
+						const flowInputType = typeof spec === 'string' ? spec : spec.type || 'File'
+						const cleanType = flowInputType.replace('?', '')
 						const isCompatible =
 							cleanType === expectedType ||
 							expectedType.startsWith('String') ||
@@ -5911,11 +5893,11 @@ steps:${
 						)})</option>`
 					})
 					.join('')
-			document.getElementById('binding-pipeline-input-selector').style.display = 'block'
+			document.getElementById('binding-flow-input-selector').style.display = 'block'
 			select.onchange = () => updateBindingPreview()
 		} else if (sourceType === 'step-output') {
 			// Populate previous steps
-			const steps = pipelineState.currentPipeline.spec?.steps || []
+			const steps = flowState.currentFlow.spec?.steps || []
 			const currentIndex = configureStepState.stepIndex
 			const previousSteps = steps.slice(0, currentIndex)
 
@@ -5945,23 +5927,23 @@ steps:${
 			return
 		}
 
-		// Find the step and load its project to get outputs
-		const step = pipelineState.currentPipeline.spec?.steps?.find((s) => s.id === stepId)
+		// Find the step and load its module to get outputs
+		const step = flowState.currentFlow.spec?.steps?.find((s) => s.id === stepId)
 		if (!step) return
 
 		try {
 			// Get expected input type for compatibility checking
 			const inputName = configureStepState.editingBindingInput
-			const input = configureStepState.projectSpec.metadata?.inputs?.find(
+			const input = configureStepState.moduleSpec.metadata?.inputs?.find(
 				(i) => i.name === inputName,
 			)
 			const expectedType = input?.type?.replace('?', '') || 'File' // Remove optional marker
 
-			const projectSpec = await invoke('load_project_editor', {
-				projectPath: step.uses,
+			const moduleSpec = await invoke('load_module_editor', {
+				modulePath: step.uses,
 			})
 
-			const outputs = projectSpec.metadata?.outputs || []
+			const outputs = moduleSpec.metadata?.outputs || []
 			outputSelect.innerHTML =
 				'<option value="">-- Select Output --</option>' +
 				outputs
@@ -5983,7 +5965,7 @@ steps:${
 					.join('')
 			outputSelect.onchange = () => updateBindingPreview()
 		} catch (error) {
-			console.error('Failed to load project outputs:', error)
+			console.error('Failed to load module outputs:', error)
 			outputSelect.innerHTML = '<option value="">-- Error loading outputs --</option>'
 		}
 	}
@@ -5995,8 +5977,8 @@ steps:${
 
 		let binding = ''
 
-		if (sourceType === 'pipeline-input') {
-			const inputName = document.getElementById('binding-pipeline-input-select').value
+		if (sourceType === 'flow-input') {
+			const inputName = document.getElementById('binding-flow-input-select').value
 			if (inputName) {
 				binding = `inputs.${inputName}`
 			}
@@ -6033,13 +6015,13 @@ steps:${
 		const sourceType = document.getElementById('binding-source-type').value
 		let binding = ''
 
-		if (sourceType === 'pipeline-input') {
-			const pipelineInput = document.getElementById('binding-pipeline-input-select').value
-			if (!pipelineInput) {
-				alert('Please select a pipeline input')
+		if (sourceType === 'flow-input') {
+			const flowInput = document.getElementById('binding-flow-input-select').value
+			if (!flowInput) {
+				alert('Please select a flow input')
 				return
 			}
-			binding = `inputs.${pipelineInput}`
+			binding = `inputs.${flowInput}`
 		} else if (sourceType === 'step-output') {
 			const stepId = document.getElementById('binding-step-select').value
 			const outputName = document.getElementById('binding-output-select').value
@@ -6130,7 +6112,7 @@ steps:${
 					<div class="publish-item-name">${escapeHtml(name)}</div>
 					<div class="publish-item-value">${escapeHtml(value)}</div>
 				</div>
-				<button class="publish-item-remove" onclick="pipelineModule.removePublishOutput('${escapeHtml(
+				<button class="publish-item-remove" onclick="flowModule.removePublishOutput('${escapeHtml(
 					name,
 				)}')">&times;</button>
 			</div>
@@ -6152,7 +6134,7 @@ steps:${
 
 		// Populate source select with available outputs
 		const sourceSelect = document.getElementById('store-source')
-		const outputs = configureStepState.projectSpec.metadata?.outputs || []
+		const outputs = configureStepState.moduleSpec.metadata?.outputs || []
 		const publishedOutputs = Object.keys(configureStepState.publish)
 
 		const allOutputs = [...outputs.map((o) => o.name), ...publishedOutputs]
@@ -6228,7 +6210,7 @@ steps:${
 						<div class="store-item-name">${escapeHtml(name)}</div>
 						<div class="store-item-value">${escapeHtml(details)}</div>
 					</div>
-					<button class="store-item-remove" onclick="pipelineModule.removeSQLStore('${escapeHtml(
+					<button class="store-item-remove" onclick="flowModule.removeSQLStore('${escapeHtml(
 						name,
 					)}')">&times;</button>
 				</div>
@@ -6247,102 +6229,100 @@ steps:${
 		await saveStepConfiguration()
 	}
 
-	// Edit a pipeline step - opens the project editor for that step
-	async function editPipelineStep(stepIndex) {
-		if (!pipelineState.currentPipeline) {
-			console.error('No current pipeline')
+	// Edit a flow step - opens the module editor for that step
+	async function editFlowStep(stepIndex) {
+		if (!flowState.currentFlow) {
+			console.error('No current flow')
 			return
 		}
 
-		const step = pipelineState.currentPipeline.spec?.steps?.[stepIndex]
+		const step = flowState.currentFlow.spec?.steps?.[stepIndex]
 		if (!step) {
 			console.error('Step not found at index:', stepIndex)
 			return
 		}
 
-		// Open the project editor for this step's project
-		if (openProjectEditor && step.uses) {
-			await openProjectEditor({ projectPath: step.uses })
+		// Open the module editor for this step's module
+		if (openModuleEditor && step.uses) {
+			await openModuleEditor({ modulePath: step.uses })
 		} else {
-			console.error('Cannot open project editor: missing function or project path')
+			console.error('Cannot open module editor: missing function or module path')
 		}
 	}
 
-	// Remove a pipeline step
-	async function removePipelineStep(stepIndex) {
-		if (!pipelineState.currentPipeline) {
-			console.error('No current pipeline')
+	// Remove a flow step
+	async function removeFlowStep(stepIndex) {
+		if (!flowState.currentFlow) {
+			console.error('No current flow')
 			return
 		}
 
-		if (!confirm('Are you sure you want to remove this step from the pipeline?')) {
+		if (!confirm('Are you sure you want to remove this step from the flow?')) {
 			return
 		}
 
 		try {
-			// Load current pipeline spec
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow spec
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
 			// Remove the step
 			editorData.spec.steps.splice(stepIndex, 1)
 
-			// Save updated pipeline
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			// Save updated flow
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
-			// Reload pipelines and steps
-			await loadPipelines()
+			// Reload flows and steps
+			await loadFlows()
 
-			const updatedPipeline = pipelineState.pipelines.find(
-				(p) => p.id === pipelineState.currentPipeline.id,
-			)
-			if (updatedPipeline) {
-				pipelineState.currentPipeline = updatedPipeline
+			const updatedFlow = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
+			if (updatedFlow) {
+				flowState.currentFlow = updatedFlow
 			}
 
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 
-			console.log('✅ Removed step from pipeline')
+			console.log('✅ Removed step from flow')
 		} catch (error) {
 			console.error('Error removing step:', error)
 			alert('Failed to remove step: ' + error.message)
 		}
 	}
 
-	// Add a newly created project as a step to the current pipeline
-	async function addProjectAsStep(projectPath, projectName) {
-		if (!pipelineState.currentPipeline) {
-			console.error('No current pipeline to add step to')
+	// Add a newly created module as a step to the current flow
+	async function addModuleAsStep(modulePath, moduleName) {
+		if (!flowState.currentFlow) {
+			console.error('No current flow to add step to')
 			return
 		}
 
 		try {
-			console.log('🔧 Adding step to pipeline:', pipelineState.currentPipeline.name)
+			console.log('🔧 Adding step to flow:', flowState.currentFlow.name)
 
-			// Load current pipeline spec
-			const editorData = await invoke('load_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
+			// Load current flow spec
+			const editorData = await invoke('load_flow_editor', {
+				flowId: flowState.currentFlow.id,
 			})
 
-			console.log('📄 Loaded pipeline spec:', editorData.spec)
+			console.log('📄 Loaded flow spec:', editorData.spec)
 
 			// Create new step (CLI parity - only include non-empty fields)
-			const stepId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+			const stepId = moduleName.toLowerCase().replace(/[^a-z0-9]/g, '-')
 			const newStep = {
 				id: stepId,
-				uses: projectPath,
+				uses: modulePath,
 				with: {},
 				// Don't include publish/store unless they have values (CLI parity)
 			}
 
 			console.log('➕ New step:', newStep)
 
-			// Add step to pipeline
+			// Add step to flow
 			if (!editorData.spec.steps) {
 				editorData.spec.steps = []
 			}
@@ -6350,47 +6330,42 @@ steps:${
 
 			console.log('📝 Updated spec with', editorData.spec.steps.length, 'steps')
 
-			// Save updated pipeline
-			await invoke('save_pipeline_editor', {
-				pipelineId: pipelineState.currentPipeline.id,
-				pipelinePath: pipelineState.currentPipeline.pipeline_path,
+			// Save updated flow
+			await invoke('save_flow_editor', {
+				flowId: flowState.currentFlow.id,
+				flowPath: flowState.currentFlow.flow_path,
 				spec: editorData.spec,
 			})
 
-			console.log('💾 Saved pipeline')
+			console.log('💾 Saved flow')
 
-			// Reload pipelines list (now includes spec from YAML files)
-			await loadPipelines()
-			console.log('🔄 Reloaded pipelines list')
+			// Reload flows list (now includes spec from YAML files)
+			await loadFlows()
+			console.log('🔄 Reloaded flows list')
 
-			// Update current pipeline reference with fresh data
-			const updatedPipeline = pipelineState.pipelines.find(
-				(p) => p.id === pipelineState.currentPipeline.id,
-			)
-			if (updatedPipeline) {
-				pipelineState.currentPipeline = updatedPipeline
-				console.log(
-					'✅ Updated current pipeline, steps count:',
-					updatedPipeline.spec?.steps?.length || 0,
-				)
+			// Update current flow reference with fresh data
+			const updatedFlow = flowState.flows.find((p) => p.id === flowState.currentFlow.id)
+			if (updatedFlow) {
+				flowState.currentFlow = updatedFlow
+				console.log('✅ Updated current flow, steps count:', updatedFlow.spec?.steps?.length || 0)
 			}
 
 			// Reload the steps display
-			await loadPipelineSteps(pipelineState.currentPipeline.id)
+			await loadFlowSteps(flowState.currentFlow.id)
 			console.log('🎉 Refreshed step display')
 
-			console.log(`✅ Added step "${stepId}" to pipeline "${pipelineState.currentPipeline.name}"`)
+			console.log(`✅ Added step "${stepId}" to flow "${flowState.currentFlow.name}"`)
 		} catch (error) {
-			console.error('Error adding step to pipeline:', error)
-			alert('Failed to add step to pipeline: ' + error.message)
+			console.error('Error adding step to flow:', error)
+			alert('Failed to add step to flow: ' + error.message)
 		}
 	}
 
-	// Open run pipeline modal with dataset context
-	// Called from Data tab when user clicks "Run Pipeline" on a dataset card
+	// Open run flow modal with dataset context
+	// Called from Data tab when user clicks "Run Flow" on a dataset card
 	// Also called from Network tab for peer datasets with mock data
-	async function openRunPipelineWithDataset({ name, dataType, entry, pipelineId }) {
-		console.log('openRunPipelineWithDataset called with:', { name, dataType, entry, pipelineId })
+	async function openRunFlowWithDataset({ name, dataType, entry, flowId }) {
+		console.log('openRunFlowWithDataset called with:', { name, dataType, entry, flowId })
 
 		try {
 			let assets = []
@@ -6531,8 +6506,8 @@ steps:${
 
 						setTimeout(async () => {
 							try {
-								await loadPipelines()
-								await showDataRunModalDirect(pipelineId)
+								await loadFlows()
+								await showDataRunModalDirect(flowId)
 							} catch (err) {
 								console.error('Error showing data run modal:', err)
 							}
@@ -6581,7 +6556,7 @@ steps:${
 							dataSource: 'network_dataset',
 						})
 						console.log('Using network mock paths:', mockPaths)
-						// Set paths directly for pipeline run
+						// Set paths directly for flow run
 						sessionStorage.removeItem('preselectedDatasetName')
 						sessionStorage.removeItem('preselectedDatasetShape')
 						sessionStorage.removeItem('preselectedDatasetDataType')
@@ -6594,7 +6569,7 @@ steps:${
 							mockParticipantIds: mockParticipants,
 						})
 
-						// Navigate to pipelines tab
+						// Navigate to flows tab
 						if (navigateTo) {
 							navigateTo('run')
 						}
@@ -6602,8 +6577,8 @@ steps:${
 						// Wait for navigation and then show modal
 						setTimeout(async () => {
 							try {
-								await loadPipelines()
-								await showDataRunModalDirect(pipelineId)
+								await loadFlows()
+								await showDataRunModalDirect(flowId)
 							} catch (err) {
 								console.error('Error showing data run modal:', err)
 							}
@@ -6819,7 +6794,7 @@ steps:${
 				)
 			}
 
-			// Set in sessionStorage for pipeline selection (using new URLs-based approach)
+			// Set in sessionStorage for flow selection (using new URLs-based approach)
 			storeDataSelection({
 				urls,
 				participantIds,
@@ -6830,23 +6805,23 @@ steps:${
 			})
 
 			// Clear cached context to force fresh read
-			pipelineState.pendingDataRun = null
+			flowState.pendingDataRun = null
 
-			// Navigate to pipelines tab
+			// Navigate to flows tab
 			if (navigateTo) {
-				navigateTo('pipelines')
+				navigateTo('flows')
 			}
 
 			// Wait for navigation and then show modal
 			setTimeout(async () => {
 				try {
-					await loadPipelines()
-					await showDataRunModalDirect(pipelineId)
+					await loadFlows()
+					await showDataRunModalDirect(flowId)
 				} catch (err) {
 					console.error('Error showing data run modal:', err)
 					const errMsg = err?.message || String(err) || 'Unknown error'
 					if (dialog?.message) {
-						await dialog.message('Failed to show pipeline selection: ' + errMsg, {
+						await dialog.message('Failed to show flow selection: ' + errMsg, {
 							title: 'Error',
 							type: 'error',
 						})
@@ -6854,10 +6829,10 @@ steps:${
 				}
 			}, 100)
 		} catch (error) {
-			console.error('Error in openRunPipelineWithDataset:', error)
+			console.error('Error in openRunFlowWithDataset:', error)
 			const errorMsg = error?.message || String(error) || 'Unknown error'
 			if (dialog?.message) {
-				await dialog.message('Failed to prepare pipeline run: ' + errorMsg, {
+				await dialog.message('Failed to prepare flow run: ' + errorMsg, {
 					title: 'Error',
 					type: 'error',
 				})
@@ -6865,33 +6840,33 @@ steps:${
 		}
 	}
 
-	// State for pipeline request flow
-	let pendingPipelineRequest = null
+	// State for flow request flow
+	let pendingFlowRequest = null
 
-	// Open modal to select a pipeline to request run on peer's private data
-	async function openRequestPipelineRun({ datasetName, datasetOwner, dataset }) {
-		console.log('openRequestPipelineRun:', { datasetName, datasetOwner, dataset })
+	// Open modal to select a flow to request run on peer's private data
+	async function openRequestFlowRun({ datasetName, datasetOwner, dataset }) {
+		console.log('openRequestFlowRun:', { datasetName, datasetOwner, dataset })
 
-		pendingPipelineRequest = { datasetName, datasetOwner, dataset }
+		pendingFlowRequest = { datasetName, datasetOwner, dataset }
 
-		// Ensure we're on pipelines tab
+		// Ensure we're on flows tab
 		if (navigateTo) {
-			navigateTo('pipelines')
+			navigateTo('flows')
 		}
 
-		// Load pipelines if not already loaded
-		await loadPipelines()
+		// Load flows if not already loaded
+		await loadFlows()
 
-		// Show pipeline selection modal for request
-		showRequestPipelineModal()
+		// Show flow selection modal for request
+		showRequestFlowModal()
 	}
 
-	function showRequestPipelineModal() {
-		// Check if we have any pipelines
-		if (!pipelineState.pipelines || pipelineState.pipelines.length === 0) {
+	function showRequestFlowModal() {
+		// Check if we have any flows
+		if (!flowState.flows || flowState.flows.length === 0) {
 			if (dialog?.message) {
-				dialog.message('You need to create a pipeline first before you can request a run.', {
-					title: 'No Pipelines',
+				dialog.message('You need to create a flow first before you can request a run.', {
+					title: 'No Flows',
 					type: 'warning',
 				})
 			}
@@ -6900,11 +6875,11 @@ steps:${
 
 		// Create modal HTML
 		const modalHtml = `
-			<div id="request-pipeline-modal" class="modal-overlay">
-				<div class="modal-content request-pipeline-modal">
+			<div id="request-flow-modal" class="modal-overlay">
+				<div class="modal-content request-flow-modal">
 					<div class="modal-header">
-						<h3>Request Pipeline Run</h3>
-						<button class="modal-close" onclick="document.getElementById('request-pipeline-modal').remove()">
+						<h3>Request Flow Run</h3>
+						<button class="modal-close" onclick="document.getElementById('request-flow-modal').remove()">
 							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<line x1="18" y1="6" x2="6" y2="18"></line>
 								<line x1="6" y1="6" x2="18" y2="18"></line>
@@ -6913,23 +6888,23 @@ steps:${
 					</div>
 					<div class="modal-body">
 						<p style="margin-bottom: 16px; color: var(--text-secondary);">
-							Select a pipeline to send to <strong>${escapeHtml(pendingPipelineRequest?.datasetOwner || '')}</strong>
-							for running on their private data in dataset <strong>${escapeHtml(pendingPipelineRequest?.datasetName || '')}</strong>.
+							Select a flow to send to <strong>${escapeHtml(pendingFlowRequest?.datasetOwner || '')}</strong>
+							for running on their private data in dataset <strong>${escapeHtml(pendingFlowRequest?.datasetName || '')}</strong>.
 						</p>
 						<div class="form-group">
-							<label>Select Pipeline</label>
-							<select id="request-pipeline-select" class="form-control">
-								${pipelineState.pipelines.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (v${p.version || '1.0.0'})</option>`).join('')}
+							<label>Select Flow</label>
+							<select id="request-flow-select" class="form-control">
+								${flowState.flows.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (v${p.version || '1.0.0'})</option>`).join('')}
 							</select>
 						</div>
 						<div class="form-group">
 							<label>Message (optional)</label>
-							<textarea id="request-pipeline-message" class="form-control" rows="3" placeholder="Add a message for the recipient..."></textarea>
+							<textarea id="request-flow-message" class="form-control" rows="3" placeholder="Add a message for the recipient..."></textarea>
 						</div>
 					</div>
 					<div class="modal-footer">
-						<button class="btn btn-secondary" onclick="document.getElementById('request-pipeline-modal').remove()">Cancel</button>
-						<button class="btn btn-primary" id="send-pipeline-request-btn">
+						<button class="btn btn-secondary" onclick="document.getElementById('request-flow-modal').remove()">Cancel</button>
+						<button class="btn btn-primary" id="send-flow-request-btn">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<line x1="22" y1="2" x2="11" y2="13"></line>
 								<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -6942,65 +6917,65 @@ steps:${
 		`
 
 		// Remove existing modal if any
-		document.getElementById('request-pipeline-modal')?.remove()
+		document.getElementById('request-flow-modal')?.remove()
 
 		// Add modal to DOM
 		document.body.insertAdjacentHTML('beforeend', modalHtml)
 
 		// Wire up send button
 		document
-			.getElementById('send-pipeline-request-btn')
-			?.addEventListener('click', handleSendPipelineRequest)
+			.getElementById('send-flow-request-btn')
+			?.addEventListener('click', handleSendFlowRequest)
 	}
 
-	async function handleSendPipelineRequest() {
-		const select = document.getElementById('request-pipeline-select')
-		const messageInput = document.getElementById('request-pipeline-message')
-		const pipelineName = select?.value
+	async function handleSendFlowRequest() {
+		const select = document.getElementById('request-flow-select')
+		const messageInput = document.getElementById('request-flow-message')
+		const flowName = select?.value
 		const message = messageInput?.value || ''
 
-		if (!pipelineName || !pendingPipelineRequest) {
+		if (!flowName || !pendingFlowRequest) {
 			return
 		}
 
-		const { datasetName, datasetOwner, dataset: _dataset } = pendingPipelineRequest
+		const { datasetName, datasetOwner, dataset: _dataset } = pendingFlowRequest
 
-		// Find the selected pipeline
-		const pipeline = pipelineState.pipelines.find((p) => p.name === pipelineName)
-		if (!pipeline) {
+		// Find the selected flow
+		const flow = flowState.flows.find((p) => p.name === flowName)
+		if (!flow) {
 			if (dialog?.message) {
-				await dialog.message('Pipeline not found', { title: 'Error', type: 'error' })
+				await dialog.message('Flow not found', { title: 'Error', type: 'error' })
 			}
 			return
 		}
 
-		console.log('Sending pipeline request:', { pipeline, datasetName, datasetOwner, message })
+		console.log('Sending flow request:', { flow, datasetName, datasetOwner, message })
 
 		try {
-			// Send the pipeline request via messaging system
-			// This will package the pipeline and send it as a message
-			const sentMessage = await invoke('send_pipeline_request', {
-				pipelineName: pipeline.name,
-				pipelineVersion: pipeline.version || '1.0.0',
+			// Send the flow request via messaging system
+			// This will package the flow and send it as a message
+			const sentMessage = await invoke('send_flow_request', {
+				flowName: flow.name,
+				flowVersion: flow.version || '1.0.0',
 				datasetName,
 				recipient: datasetOwner,
 				message:
 					message ||
-					`Please run the ${pipeline.name} pipeline on your private data in dataset ${datasetName}.`,
+					`Please run the ${flow.name} flow on your private data in dataset ${datasetName}.`,
 			})
 
 			// Close modal
-			document.getElementById('request-pipeline-modal')?.remove()
-			pendingPipelineRequest = null
+			document.getElementById('request-flow-modal')?.remove()
+			pendingFlowRequest = null
 
 			if (dialog?.message) {
 				await dialog.message(
-					`Pipeline request sent to ${datasetOwner}.\n\nThey will receive a message with the pipeline and can choose to run it on their private data.`,
+					`Flow request sent to ${datasetOwner}.\n\nThey will receive a message with the flow and can choose to run it on their private data.`,
 					{ title: 'Request Sent', type: 'info' },
 				)
 			}
 
-			const threadId = sentMessage?.thread_id || `pipeline-${pipeline.name}:${datasetName}`
+			const threadId = sentMessage?.thread_id || `flow-${flow.name}:${datasetName}`
 			if (typeof window.navigateTo === 'function') {
 				window.navigateTo('messages')
 			}
@@ -7009,10 +6984,10 @@ steps:${
 				window.__messagesModule?.openThread?.(threadId)
 			}, 250)
 		} catch (error) {
-			console.error('Failed to send pipeline request:', error)
+			console.error('Failed to send flow request:', error)
 			const errorMsg = error?.message || String(error) || 'Unknown error'
 			if (dialog?.message) {
-				await dialog.message('Failed to send pipeline request: ' + errorMsg, {
+				await dialog.message('Failed to send flow request: ' + errorMsg, {
 					title: 'Error',
 					type: 'error',
 				})
@@ -7022,11 +6997,11 @@ steps:${
 
 	return {
 		initialize,
-		loadPipelines,
-		showPipelineDetails,
-		backToPipelinesList,
-		addProjectAsStep, // Expose for project creation to call
-		openRunPipelineWithDataset, // Expose for dataset "Run Pipeline" button
-		openRequestPipelineRun, // Expose for network "Request Run" button
+		loadFlows,
+		showFlowDetails,
+		backToFlowsList,
+		addModuleAsStep, // Expose for module creation to call
+		openRunFlowWithDataset, // Expose for dataset "Run Flow" button
+		openRequestFlowRun, // Expose for network "Request Run" button
 	}
 }

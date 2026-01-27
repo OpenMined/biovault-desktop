@@ -1,23 +1,23 @@
 /**
- * Pipelines Collaboration Test (Two Clients)
- * Tests the full collaborative pipeline workflow:
+ * Flows Collaboration Test (Two Clients)
+ * Tests the full collaborative flow workflow:
  * 1. Client1 (Alice) creates dataset with private + mock data
- * 2. Client1 creates HERC2 pipeline (or imports from local bioscript)
- * 3. Client2 (Bob) imports HERC2 pipeline
+ * 2. Client1 creates HERC2 flow (or imports from local bioscript)
+ * 3. Client2 (Bob) imports HERC2 flow
  * 4. Client2 sees Alice's dataset on Network > Datasets tab
- * 5. Client2 runs HERC2 pipeline on mock data (verifies it works locally)
+ * 5. Client2 runs HERC2 flow on mock data (verifies it works locally)
  * 6. Client2 sends "Request Run" for private data
  * 7. Client1 receives request in Messages
- * 8. Client1 runs pipeline on mock data, then real data
+ * 8. Client1 runs flow on mock data, then real data
  * 9. Client1 shares results back to Client2
  * 10. Client2 receives and verifies results
  *
  * This is the UI version of inbox-ping-pong.yaml
  *
  * Usage:
- *   ./test-scenario.sh --pipelines-collab
+ *   ./test-scenario.sh --flows-collab
  *
- * @tag pipelines-collab
+ * @tag flows-collab
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
@@ -27,9 +27,9 @@ import * as path from 'path'
 import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
-const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
+const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + flow runs)
 const UI_TIMEOUT = 10_000
-const PIPELINE_RUN_TIMEOUT = 180_000 // 3 minutes for pipeline to complete
+const FLOW_RUN_TIMEOUT = 180_000 // 3 minutes for flow to complete
 const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
 const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
 const DEBUG_PIPELINE_PAUSE_MS = (() => {
@@ -187,7 +187,7 @@ async function waitForPeerDid(
 	throw new Error(`Timed out waiting for peer DID file: ${didPaths.join(', ')}`)
 }
 
-// Helper to wait for pipeline run to complete
+// Helper to wait for flow run to complete
 async function waitForRunCompletion(
 	page: Page,
 	backend: Backend,
@@ -199,7 +199,7 @@ async function waitForRunCompletion(
 
 	while (Date.now() - startTime < timeoutMs) {
 		try {
-			const runs = await backend.invoke('get_pipeline_runs', {})
+			const runs = await backend.invoke('get_flow_runs', {})
 			const run = runs.find((r: any) => r.id === runId)
 			if (run) {
 				lastStatus = run.status
@@ -216,7 +216,7 @@ async function waitForRunCompletion(
 		await page.waitForTimeout(2000)
 	}
 
-	throw new Error(`Pipeline run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
+	throw new Error(`Flow run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
 }
 
 async function waitForNewRun(
@@ -226,7 +226,7 @@ async function waitForNewRun(
 ): Promise<any> {
 	const startTime = Date.now()
 	while (Date.now() - startTime < timeoutMs) {
-		const runs = await backend.invoke('get_pipeline_runs', {})
+		const runs = await backend.invoke('get_flow_runs', {})
 		const newRuns = (runs || []).filter((run: any) => !existingIds.has(run.id))
 		if (newRuns.length > 0) {
 			newRuns.sort((a: any, b: any) => b.id - a.id)
@@ -234,10 +234,10 @@ async function waitForNewRun(
 		}
 		await new Promise((r) => setTimeout(r, 1000))
 	}
-	throw new Error('Timed out waiting for new pipeline run')
+	throw new Error('Timed out waiting for new flow run')
 }
 
-function resolvePipelineResultPath(run: any): string {
+function resolveFlowResultPath(run: any): string {
 	const baseDir = run.results_dir || run.work_dir
 	return path.join(baseDir, 'herc2', 'result_HERC2.tsv')
 }
@@ -453,12 +453,12 @@ function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
 	)
 }
 
-async function runDatasetPipeline(
+async function runDatasetFlow(
 	page: Page,
 	backend: Backend,
 	datasetName: string,
 	dataType: 'mock' | 'real',
-	pipelineMatch = 'herc2',
+	flowMatch = 'herc2',
 ): Promise<any> {
 	await page.locator('.nav-item[data-tab="data"]').click()
 	await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
@@ -470,27 +470,27 @@ async function runDatasetPipeline(
 	const datasetCard = page.locator('#datasets-grid .dataset-card').filter({ hasText: datasetName })
 	await expect(datasetCard).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const runPipelineBtn = datasetCard.locator('.btn-run-pipeline')
-	await expect(runPipelineBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	const runFlowBtn = datasetCard.locator('.btn-run-flow')
+	await expect(runFlowBtn).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const runsBefore = await backend.invoke('get_pipeline_runs', {})
+	const runsBefore = await backend.invoke('get_flow_runs', {})
 	const previousIds = new Set((runsBefore || []).map((run: any) => run.id))
 
-	await runPipelineBtn.click()
+	await runFlowBtn.click()
 
-	const runModal = page.locator('#run-pipeline-modal')
+	const runModal = page.locator('#run-flow-modal')
 	await expect(runModal).toBeVisible({ timeout: UI_TIMEOUT })
-	await runModal.locator(`input[name="pipeline-data-type"][value="${dataType}"]`).check()
-	await runModal.locator('#run-pipeline-confirm').click()
+	await runModal.locator(`input[name="flow-data-type"][value="${dataType}"]`).check()
+	await runModal.locator('#run-flow-confirm').click()
 
 	const dataRunModal = page.locator('#data-run-modal')
 	await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const pipelineOption = dataRunModal.locator(
-		`input[name="data-run-pipeline"][value*="${pipelineMatch}"], .data-run-pipeline-option:has-text("${pipelineMatch}")`,
+	const flowOption = dataRunModal.locator(
+		`input[name="data-run-flow"][value*="${flowMatch}"], .data-run-flow-option:has-text("${flowMatch}")`,
 	)
-	if (await pipelineOption.isVisible().catch(() => false)) {
-		await pipelineOption.first().click()
+	if (await flowOption.isVisible().catch(() => false)) {
+		await flowOption.first().click()
 	}
 
 	const runBtn = dataRunModal.locator('#data-run-run-btn')
@@ -705,10 +705,8 @@ async function syncMessagesWithDebug(
 	}
 }
 
-test.describe('Pipelines Collaboration @pipelines-collab', () => {
-	test('two clients collaborate on pipeline run and share results', async ({
-		browser,
-	}, testInfo) => {
+test.describe('Flows Collaboration @flows-collab', () => {
+	test('two clients collaborate on flow run and share results', async ({ browser }, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const wsPort2 = wsPort1 + 1
@@ -724,7 +722,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 		let client1PrivateRunId: number | null = null
 		let client2BiovaultHome = ''
 
-		console.log('Setting up pipelines collaboration test')
+		console.log('Setting up flows collaboration test')
 		console.log(`Client1 (Alice): ${email1} (port ${wsPort1})`)
 		console.log(`Client2 (Bob): ${email2} (port ${wsPort2})`)
 		console.log(`Synthetic data dir: ${syntheticDataDir}`)
@@ -986,9 +984,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Fill dataset form
 			await page1.locator('#dataset-form-name').fill(datasetName)
-			await page1
-				.locator('#dataset-form-description')
-				.fill('Dataset for pipeline collaboration test')
+			await page1.locator('#dataset-form-description').fill('Dataset for flow collaboration test')
 
 			// Add asset with private + mock files
 			const addAssetBtn = page1.locator('#dataset-add-asset')
@@ -1074,10 +1070,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('Dataset published!')
 
 			// ============================================================
-			// Step 3: Client2 (data scientist) imports HERC2 Pipeline
+			// Step 3: Client2 (data scientist) imports HERC2 Flow
 			// ============================================================
-			log(logSocket, { event: 'step-3', action: 'import-pipeline' })
-			console.log('\n=== Step 3: Client2 imports HERC2 Pipeline ===')
+			log(logSocket, { event: 'step-3', action: 'import-flow' })
+			console.log('\n=== Step 3: Client2 imports HERC2 Flow ===')
 
 			// Import HERC2 from local bioscript examples (faster than GitHub)
 			const herc2LocalPath = path.join(
@@ -1091,16 +1087,16 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`Importing HERC2 from: ${herc2FlowPath}`)
 
 			try {
-				await backend2.invoke('import_pipeline', {
-					pipelineFile: herc2FlowPath,
+				await backend2.invoke('import_flow', {
+					flowFile: herc2FlowPath,
 					overwrite: true,
 				})
-				console.log('Client2: HERC2 pipeline imported from local path!')
+				console.log('Client2: HERC2 flow imported from local path!')
 			} catch (err) {
 				console.log(`Import error (may be ok if already exists): ${err}`)
 			}
 
-			// Navigate to Pipelines tab to verify
+			// Navigate to Flows tab to verify
 			await page2.locator('.nav-item[data-tab="run"]').click()
 			await expect(page2.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
 			await page2.waitForTimeout(1000)
@@ -1300,10 +1296,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// ============================================================
-			// Step 5: Client2 runs imported pipeline on peer's mock data
+			// Step 5: Client2 runs imported flow on peer's mock data
 			// ============================================================
-			log(logSocket, { event: 'step-5', action: 'run-pipeline-mock' })
-			console.log('\n=== Step 5: Client2 runs HERC2 pipeline on mock data ===')
+			log(logSocket, { event: 'step-5', action: 'run-flow-mock' })
+			console.log('\n=== Step 5: Client2 runs HERC2 flow on mock data ===')
 
 			// DEBUG: Query network datasets from backend to see what's returned
 			try {
@@ -1319,7 +1315,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				const items = document.querySelectorAll('.dataset-item')
 				return Array.from(items).map((item) => {
 					const row = item.querySelector('.dataset-row')
-					const runBtn = item.querySelector('.run-pipeline-btn')
+					const runBtn = item.querySelector('.run-flow-btn')
 					const requestBtn = item.querySelector('.request-run-btn')
 					return {
 						name: item.dataset.name,
@@ -1332,30 +1328,30 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('\n=== DEBUG: Dataset Items in DOM ===')
 			console.log(JSON.stringify(datasetInfo, null, 2))
 
-			// Find the dataset card and click "Run Pipeline" button
+			// Find the dataset card and click "Run Flow" button
 			// This button appears for trusted peer datasets that have mock data
 			const networkDatasetCardForRun = getNetworkDatasetItem(page2, datasetName, email1)
-			const runPipelineOnMockBtn = networkDatasetCardForRun.locator('.run-pipeline-btn')
-			await expect(runPipelineOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Found Run Pipeline button for mock data, clicking...')
-			await runPipelineOnMockBtn.click()
+			const runFlowOnMockBtn = networkDatasetCardForRun.locator('.run-flow-btn')
+			await expect(runFlowOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
+			console.log('Found Run Flow button for mock data, clicking...')
+			await runFlowOnMockBtn.click()
 			await page2.waitForTimeout(2000)
 
-			// Wait for the data run modal to appear (pipeline selection modal)
-			console.log('Waiting for pipeline selection modal...')
+			// Wait for the data run modal to appear (flow selection modal)
+			console.log('Waiting for flow selection modal...')
 			const dataRunModal = page2.locator('#data-run-modal')
 			await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Pipeline selection modal visible!')
+			console.log('Flow selection modal visible!')
 
-			// The herc2-classifier pipeline should be listed - select it if not already
+			// The herc2-classifier flow should be listed - select it if not already
 			const herc2RadioOption = dataRunModal.locator(
-				'input[name="data-run-pipeline"][value*="herc2"], .data-run-pipeline-option:has-text("herc2")',
+				'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2")',
 			)
 			if (await herc2RadioOption.isVisible().catch(() => false)) {
 				await herc2RadioOption.click()
 			}
 
-			const runsBeforeMock = await backend2.invoke('get_pipeline_runs', {})
+			const runsBeforeMock = await backend2.invoke('get_flow_runs', {})
 			const previousIds2 = new Set((runsBeforeMock || []).map((run: any) => run.id))
 
 			// Click the Run button
@@ -1372,7 +1368,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				await runAnywayBtn.click()
 				await page2.waitForTimeout(2000)
 			}
-			console.log('Pipeline run started on mock data!')
+			console.log('Flow run started on mock data!')
 
 			if (DEBUG_PIPELINE_PAUSE_MS > 0) {
 				log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
@@ -1381,7 +1377,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// Wait for run to complete by checking backend
-			const mockRunTimer = timer('Mock data pipeline run')
+			const mockRunTimer = timer('Mock data flow run')
 			const mockRun2 = await waitForNewRun(backend2, previousIds2)
 			console.log(`Waiting for run ${mockRun2.id} to complete...`)
 			const { status, run: mockRun2Final } = await waitForRunCompletion(
@@ -1389,11 +1385,11 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				backend2,
 				mockRun2.id,
 			)
-			console.log(`Pipeline run on mock data completed with status: ${status}`)
+			console.log(`Flow run on mock data completed with status: ${status}`)
 			expect(status).toBe('success')
 			mockRunTimer.stop()
 
-			const mockResultPath2 = resolvePipelineResultPath(mockRun2Final)
+			const mockResultPath2 = resolveFlowResultPath(mockRun2Final)
 			console.log(`[TSV] Reading client2 mock result from: ${mockResultPath2}`)
 			client2MockResult = await readTextFileWithRetry(mockResultPath2)
 			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
@@ -1441,10 +1437,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// ============================================================
-			// Step 6: Client2 clicks "Request Run" to request pipeline on peer's private data
+			// Step 6: Client2 clicks "Request Run" to request flow on peer's private data
 			// ============================================================
-			log(logSocket, { event: 'step-6', action: 'request-pipeline-run' })
-			console.log('\n=== Step 6: Client2 requests pipeline run on peer private data ===')
+			log(logSocket, { event: 'step-6', action: 'request-flow-run' })
+			console.log('\n=== Step 6: Client2 requests flow run on peer private data ===')
 
 			// Navigate back to Network > Datasets
 			await page2.locator('.nav-item[data-tab="network"]').click()
@@ -1460,7 +1456,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// Find the dataset card and click "Request Run" button
-			// The "Request Run" button is visible for peer datasets (not "Run Pipeline" which is for own datasets)
+			// The "Request Run" button is visible for peer datasets (not "Run Flow" which is for own datasets)
 			const networkDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
 			const requestRunBtn = networkDatasetCard.locator('.request-run-btn')
 			await expect(requestRunBtn).toBeVisible({ timeout: UI_TIMEOUT })
@@ -1468,20 +1464,20 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			await requestRunBtn.click()
 			await page2.waitForTimeout(2000)
 
-			// Wait for the "Request Pipeline Run" modal to appear
-			console.log('Waiting for Request Pipeline Run modal...')
-			const requestModal = page2.locator('#request-pipeline-modal')
+			// Wait for the "Request Flow Run" modal to appear
+			console.log('Waiting for Request Flow Run modal...')
+			const requestModal = page2.locator('#request-flow-modal')
 			await expect(requestModal).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Request modal visible!')
 
-			// The pipeline should already be selected (herc2-classifier)
+			// The flow should already be selected (herc2-classifier)
 			// Click "Send Request" button
-			const sendRequestBtn = page2.locator('#send-pipeline-request-btn')
+			const sendRequestBtn = page2.locator('#send-flow-request-btn')
 			await expect(sendRequestBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Clicking Send Request...')
 			await sendRequestBtn.click()
 			await page2.waitForTimeout(3000)
-			console.log('Pipeline request sent!')
+			console.log('Flow request sent!')
 
 			await captureKeySnapshot('post-request-send', 'client2', backend2, email2, email1, logSocket)
 			await captureKeySnapshot('post-request-send', 'client1', backend1, email1, email2, logSocket)
@@ -1509,27 +1505,27 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const requestCard = await waitForMessageCard(
 				page1,
 				backend1,
-				'.message-pipeline-request',
+				'.message-flow-request',
 				SYNC_TIMEOUT,
 				logSocket,
 				'client1',
 				'wait-request-card',
 			)
-			console.log('Pipeline request received!')
+			console.log('Flow request received!')
 
-			// Click Import Pipeline button if available
-			const importPipelineBtn = requestCard.locator('button:has-text("Import Pipeline")')
-			if (await importPipelineBtn.isVisible().catch(() => false)) {
-				await importPipelineBtn.click()
+			// Click Import Flow button if available
+			const importFlowBtn = requestCard.locator('button:has-text("Import Flow")')
+			if (await importFlowBtn.isVisible().catch(() => false)) {
+				await importFlowBtn.click()
 				await page1.waitForTimeout(2000)
-				console.log('Pipeline imported from request!')
+				console.log('Flow imported from request!')
 			}
 
 			// ============================================================
-			// Step 8: Client1 runs pipeline on mock data, then private data
+			// Step 8: Client1 runs flow on mock data, then private data
 			// ============================================================
-			log(logSocket, { event: 'step-8', action: 'run-pipeline' })
-			console.log('\n=== Step 8: Client1 runs pipeline on mock + private data ===')
+			log(logSocket, { event: 'step-8', action: 'run-flow' })
+			console.log('\n=== Step 8: Client1 runs flow on mock + private data ===')
 
 			// DEBUG: Check what mock files Client1 sees before running
 			try {
@@ -1547,17 +1543,17 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				console.log('DEBUG: Failed to get client1 dataset:', err)
 			}
 
-			const mockRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'mock')
-			console.log(`Pipeline mock run started: ${mockRun1.id}`)
+			const mockRun1 = await runDatasetFlow(page1, backend1, datasetName, 'mock')
+			console.log(`Flow mock run started: ${mockRun1.id}`)
 			const { status: mockStatus, run: mockRun1Final } = await waitForRunCompletion(
 				page1,
 				backend1,
 				mockRun1.id,
 			)
-			console.log(`Pipeline mock run completed with status: ${mockStatus}`)
+			console.log(`Flow mock run completed with status: ${mockStatus}`)
 			expect(mockStatus).toBe('success')
 
-			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
+			const mockResultPath1 = resolveFlowResultPath(mockRun1Final)
 			client1MockResult = await readTextFileWithRetry(mockResultPath1)
 
 			// DEBUG: Log Client1 run metadata to see inputs used
@@ -1609,24 +1605,24 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 			expect(normalized1).toBe(normalized2)
 
-			const privateRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'real')
-			console.log(`Pipeline private run started: ${privateRun1.id}`)
+			const privateRun1 = await runDatasetFlow(page1, backend1, datasetName, 'real')
+			console.log(`Flow private run started: ${privateRun1.id}`)
 			const { status: privateStatus, run: privateRun1Final } = await waitForRunCompletion(
 				page1,
 				backend1,
 				privateRun1.id,
 			)
-			console.log(`Pipeline private run completed with status: ${privateStatus}`)
+			console.log(`Flow private run completed with status: ${privateStatus}`)
 			expect(privateStatus).toBe('success')
 			client1PrivateRunId = privateRun1Final.id
 
-			const privateResultPath1 = resolvePipelineResultPath(privateRun1Final)
+			const privateResultPath1 = resolveFlowResultPath(privateRun1Final)
 			client1PrivateResult = await readTextFileWithRetry(privateResultPath1)
 
 			await captureKeySnapshot('post-client1-runs', 'client1', backend1, email1, email2, logSocket)
 
 			if (!client1PrivateRunId) {
-				throw new Error('Private pipeline run did not start correctly')
+				throw new Error('Private flow run did not start correctly')
 			}
 
 			// ============================================================
@@ -1642,7 +1638,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			})
 			await page1.waitForTimeout(2000)
 
-			const requestCardForSend = page1.locator('.message-pipeline-request')
+			const requestCardForSend = page1.locator('.message-flow-request')
 			await expect(requestCardForSend).toBeVisible({ timeout: 10_000 })
 
 			const runSelect = requestCardForSend.locator('select')
@@ -1710,13 +1706,13 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const resultsCard = await waitForMessageCard(
 				page2,
 				backend2,
-				'.message-pipeline-results',
+				'.message-flow-results',
 				SYNC_TIMEOUT,
 				logSocket,
 				'client2',
 				'wait-results-card',
 			)
-			console.log('✓ Pipeline results received!')
+			console.log('✓ Flow results received!')
 
 			// Verify files are listed
 			const fileItems = resultsCard.locator('.result-file')
@@ -1746,12 +1742,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Summary
 			// ============================================================
 			console.log('\n=== TEST COMPLETED ===')
-			console.log('Pipeline collaboration flow tested:')
+			console.log('Flow collaboration flow tested:')
 			console.log('  ✓ Client1 created dataset with mock + private data')
-			console.log('  ✓ Client2 imported HERC2 pipeline')
-			console.log('  ✓ Client2 ran pipeline on mock data successfully')
-			console.log('  ✓ Client2 sent pipeline request for private data')
-			console.log('  ✓ Client1 received request and ran pipeline (mock + private)')
+			console.log('  ✓ Client2 imported HERC2 flow')
+			console.log('  ✓ Client2 ran flow on mock data successfully')
+			console.log('  ✓ Client2 sent flow request for private data')
+			console.log('  ✓ Client1 received request and ran flow (mock + private)')
 			console.log('  ✓ Client1 shared private results back')
 			console.log('  ✓ Client2 imported private results (unencrypted)')
 

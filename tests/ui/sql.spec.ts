@@ -40,7 +40,7 @@ test.describe('SQL tab', () => {
 						return []
 					case 'get_files':
 						return []
-					case 'get_projects':
+					case 'get_modules':
 						return []
 					case 'get_command_logs':
 						return []

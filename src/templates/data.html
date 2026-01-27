@@ -96,7 +96,7 @@
 			<button
 				id="run-analysis-btn"
 				class="toolbar-btn toolbar-btn-primary"
-				title="Run analysis pipeline"
+				title="Run analysis flow"
 			>
 				<svg
 					width="14"
@@ -108,7 +108,7 @@
 				>
 					<polygon points="5 3 19 12 5 21 5 3"></polygon>
 				</svg>
-				<span id="run-analysis-text">Run Pipeline</span>
+				<span id="run-analysis-text">Run Flow</span>
 			</button>
 			<button
 				id="delete-selected-btn"
@@ -768,22 +768,20 @@
 			</div>
 		</div>
 
-		<!-- Run Pipeline Modal -->
-		<div id="run-pipeline-modal" class="modal hidden">
+		<!-- Run Flow Modal -->
+		<div id="run-flow-modal" class="modal hidden">
 			<div class="modal-content" style="max-width: 400px">
 				<div class="modal-header">
-					<h3>Run Pipeline</h3>
-					<button id="run-pipeline-modal-close" class="modal-close" aria-label="Close">
-						&times;
-					</button>
+					<h3>Run Flow</h3>
+					<button id="run-flow-modal-close" class="modal-close" aria-label="Close">&times;</button>
 				</div>
 				<div class="modal-body">
 					<p style="margin-bottom: 16px; color: var(--text-secondary)">
-						Which data do you want to run the pipeline on?
+						Which data do you want to run the flow on?
 					</p>
-					<div class="pipeline-options" style="display: flex; flex-direction: column; gap: 12px">
+					<div class="flow-options" style="display: flex; flex-direction: column; gap: 12px">
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -794,7 +792,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="mock" checked />
+							<input type="radio" name="flow-data-type" value="mock" checked />
 							<div>
 								<div style="font-weight: 500">Mock Data</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -803,7 +801,7 @@
 							</div>
 						</label>
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -814,7 +812,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="real" />
+							<input type="radio" name="flow-data-type" value="real" />
 							<div>
 								<div style="font-weight: 500">Real Data</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -823,7 +821,7 @@
 							</div>
 						</label>
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -834,7 +832,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="both" />
+							<input type="radio" name="flow-data-type" value="both" />
 							<div>
 								<div style="font-weight: 500">Both</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -845,8 +843,8 @@
 					</div>
 				</div>
 				<div class="modal-footer">
-					<button id="run-pipeline-cancel" class="btn-secondary" type="button">Cancel</button>
-					<button id="run-pipeline-confirm" class="btn-primary" type="button">
+					<button id="run-flow-cancel" class="btn-secondary" type="button">Cancel</button>
+					<button id="run-flow-confirm" class="btn-primary" type="button">
 						<svg
 							width="14"
 							height="14"
@@ -857,7 +855,7 @@
 						>
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
-						Run Pipeline
+						Run Flow
 					</button>
 				</div>
 			</div>

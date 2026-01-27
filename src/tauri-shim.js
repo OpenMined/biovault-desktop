@@ -284,8 +284,8 @@ class WsBridge {
 			'install_dependency',
 			'install_brew',
 			'install_command_line_tools',
-			'import_pipeline_with_deps',
-			'import_pipeline',
+			'import_flow_with_deps',
+			'import_flow',
 			// Dependency checks call subprocess commands (java -version, docker info, etc.)
 			// which can be slow on Windows, especially first time or with antivirus scanning
 			'check_dependencies',
@@ -296,9 +296,9 @@ class WsBridge {
 			// Docker/Podman checks can be slow on Windows, especially with Hyper-V
 			'check_docker_running',
 			'check_container_runtime',
-			// Pipeline execution can involve Docker/Podman container operations
-			'run_pipeline',
-			'get_pipeline_runs',
+			// Flow execution can involve Docker/Podman container operations
+			'run_flow',
+			'get_flow_runs',
 			// Key/vault operations can be slow on Windows
 			'key_check_vault_debug',
 			'check_is_onboarded',
@@ -383,7 +383,7 @@ async function mockInvoke(cmd, args = {}) {
 			return []
 		case 'get_files':
 			return []
-		case 'get_projects':
+		case 'get_modules':
 			return []
 		case 'get_runs':
 			return []

@@ -71,22 +71,44 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # pipelines-collab on Linux - rust
-          - scenario: pipelines-collab
+          # flows-solo on Linux - rust
+          - scenario: flows-solo
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # pipelines-collab on Windows - rust (Podman Hyper-V)
-          - scenario: pipelines-collab
+          # flows-solo on Linux - go
+          - scenario: flows-solo
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # flows-collab on Linux - rust
+          - scenario: flows-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # flows-collab on Linux - go
+          - scenario: flows-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: go
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          # flows-collab on Windows - rust (Podman Hyper-V)
+          - scenario: flows-collab
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # NOTE: pipelines-collab on macOS is skipped because GitHub macOS runners
+          # NOTE: flows-collab on macOS is skipped because GitHub macOS runners
           # don't support nested virtualization (Docker requires VMs on macOS).
+          # flows-collab is fully tested on Linux which covers the core functionality.
 
     defaults:
       run:
@@ -347,21 +369,21 @@ jobs:
           podman ps
 
       - name: Install biosynth CLI (Linux)
-        if: runner.os == 'Linux' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'Linux' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Install biosynth CLI (macOS)
-        if: runner.os == 'macOS' && matrix.scenario == 'pipelines-solo'
+        if: runner.os == 'macOS' && matrix.scenario == 'flows-solo'
         run: |
           curl -fsSL https://github.com/OpenMined/biosynth/releases/latest/download/bvs-aarch64-apple-darwin.tar.gz | tar -xz
           sudo mv bvs /usr/local/bin/
           bvs --version
 
       - name: Cache genostats database
-        if: matrix.scenario == 'pipelines-solo'
+        if: matrix.scenario == 'flows-solo'
         id: cache-genostats
         uses: actions/cache@v4
         with:
@@ -391,14 +413,14 @@ jobs:
           JUPYTER_PAUSE_TIME: "5000"
         run: .\win.ps1 ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
-      - name: Run pipelines solo scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-solo'
+      - name: Run flows solo scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-solo'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-solo
-      - name: Run pipelines solo scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-solo'
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-solo
+      - name: Run flows solo scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-solo'
         shell: pwsh
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
@@ -408,16 +430,16 @@ jobs:
           BIOVAULT_HYPERV_MOUNT: "1"
           BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
           BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --pipelines-solo
+        run: .\win.ps1 ./test-scenario.sh --flows-solo
 
-      - name: Run pipelines collab scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'pipelines-collab'
+      - name: Run flows collab scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-collab
-      - name: Run pipelines collab scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'pipelines-collab'
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
+      - name: Run flows collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-collab'
         shell: pwsh
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
@@ -427,7 +449,7 @@ jobs:
           BIOVAULT_HYPERV_MOUNT: "1"
           BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
           BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --pipelines-collab
+        run: .\win.ps1 ./test-scenario.sh --flows-collab
 
       - name: Upload test artifacts on failure
         if: failure()

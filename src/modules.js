@@ -1,13 +1,13 @@
-import { createProjectSpecForm, generateContractAscii } from './project-spec-form-modal.js'
+import { createModuleSpecForm, generateContractAscii } from './module-spec-form-modal.js'
 
 const CREATE_TAB_CONFIG = {
-	inputs: { containerId: 'create-project-inputs', sections: ['inputs'], defaultTab: 'inputs' },
+	inputs: { containerId: 'create-module-inputs', sections: ['inputs'], defaultTab: 'inputs' },
 	parameters: {
-		containerId: 'create-project-parameters',
+		containerId: 'create-module-parameters',
 		sections: ['parameters'],
 		defaultTab: 'parameters',
 	},
-	outputs: { containerId: 'create-project-outputs', sections: ['outputs'], defaultTab: 'outputs' },
+	outputs: { containerId: 'create-module-outputs', sections: ['outputs'], defaultTab: 'outputs' },
 }
 
 let wizardPreviewRequestId = 0
@@ -15,17 +15,17 @@ let editorPreviewRequestId = 0
 let wizardPreviewScheduled = false
 let editorPreviewScheduled = false
 
-export function createProjectsModule({
+export function createModulesModule({
 	invoke,
 	dialog,
 	open,
 	shellApi,
 	navigateTo,
-	addProjectAsPipelineStep = null,
+	addModuleAsFlowStep = null,
 }) {
-	const projectEditorState = {
-		projectId: null,
-		projectPath: '',
+	const moduleEditorState = {
+		moduleId: null,
+		modulePath: '',
 		metadata: null,
 		files: [],
 		inputs: [],
@@ -42,7 +42,7 @@ export function createProjectsModule({
 		editingIndex: -1,
 	}
 
-	const projectCreateState = {
+	const moduleCreateState = {
 		selectedDir: null,
 		usingDefault: true,
 		defaultDir: '',
@@ -110,37 +110,37 @@ export function createProjectsModule({
 	}
 
 	function _updateEditorSpecSummary() {
-		if (!projectEditorState.specSummaryEl) return
-		const nameInput = document.getElementById('project-edit-name')
-		const projectName = nameInput ? nameInput.value.trim() : projectEditorState.metadata?.name || ''
+		if (!moduleEditorState.specSummaryEl) return
+		const nameInput = document.getElementById('module-edit-name')
+		const moduleName = nameInput ? nameInput.value.trim() : moduleEditorState.metadata?.name || ''
 		const ascii = generateContractAscii({
-			name: projectName,
-			parameters: projectEditorState.specData.parameters,
-			inputs: projectEditorState.specData.inputs,
-			outputs: projectEditorState.specData.outputs,
+			name: moduleName,
+			parameters: moduleEditorState.specData.parameters,
+			inputs: moduleEditorState.specData.inputs,
+			outputs: moduleEditorState.specData.outputs,
 		})
-		projectEditorState.specSummaryEl.textContent = ascii
+		moduleEditorState.specSummaryEl.textContent = ascii
 		scheduleEditorPreview()
 	}
 
 	function getEditorSpecPayload() {
 		return {
-			parameters: projectEditorState.specData.parameters || [],
-			inputs: projectEditorState.specData.inputs || [],
-			outputs: projectEditorState.specData.outputs || [],
+			parameters: moduleEditorState.specData.parameters || [],
+			inputs: moduleEditorState.specData.inputs || [],
+			outputs: moduleEditorState.specData.outputs || [],
 		}
 	}
 
 	function clearWizardPreview(message) {
-		const yamlEl = document.getElementById('create-project-preview-yaml')
-		const templateEl = document.getElementById('create-project-preview-template')
+		const yamlEl = document.getElementById('create-module-preview-yaml')
+		const templateEl = document.getElementById('create-module-preview-template')
 		if (yamlEl) yamlEl.textContent = message
 		if (templateEl) templateEl.textContent = message
 	}
 
 	function clearEditorPreview(message) {
-		const yamlEl = document.getElementById('project-edit-preview-yaml')
-		const templateEl = document.getElementById('project-edit-preview-template')
+		const yamlEl = document.getElementById('module-edit-preview-yaml')
+		const templateEl = document.getElementById('module-edit-preview-template')
 		if (yamlEl) yamlEl.textContent = message
 		if (templateEl) templateEl.textContent = message
 	}
@@ -187,15 +187,15 @@ export function createProjectsModule({
 		wizardPreviewRequestId += 1
 		const requestId = wizardPreviewRequestId
 		try {
-			const preview = await invoke('preview_project_spec', { payload })
+			const preview = await invoke('preview_module_spec', { payload })
 			if (requestId !== wizardPreviewRequestId) return
-			const yamlEl = document.getElementById('create-project-preview-yaml')
-			const workflowEl = document.getElementById('create-project-preview-template')
+			const yamlEl = document.getElementById('create-module-preview-yaml')
+			const workflowEl = document.getElementById('create-module-preview-template')
 			if (yamlEl) yamlEl.innerHTML = highlightYaml(preview.yaml)
 			if (workflowEl) workflowEl.innerHTML = highlightGroovy(preview.workflow || preview.template)
 		} catch (error) {
 			if (requestId !== wizardPreviewRequestId) return
-			console.error('Failed to generate project preview:', error)
+			console.error('Failed to generate module preview:', error)
 			clearWizardPreview('Unable to generate preview. Check your inputs.')
 		}
 	}
@@ -204,16 +204,16 @@ export function createProjectsModule({
 		editorPreviewRequestId += 1
 		const requestId = editorPreviewRequestId
 		try {
-			const preview = await invoke('preview_project_spec', { payload })
+			const preview = await invoke('preview_module_spec', { payload })
 			if (requestId !== editorPreviewRequestId) return
-			const yamlEl = document.getElementById('project-edit-preview-yaml')
-			const workflowEl = document.getElementById('project-edit-preview-template')
+			const yamlEl = document.getElementById('module-edit-preview-yaml')
+			const workflowEl = document.getElementById('module-edit-preview-template')
 			if (yamlEl) yamlEl.innerHTML = highlightYaml(preview.yaml)
 			if (workflowEl) workflowEl.innerHTML = highlightGroovy(preview.workflow || preview.template)
 		} catch (error) {
 			if (requestId !== editorPreviewRequestId) return
 			console.error('Failed to generate editor preview:', error)
-			clearEditorPreview('Unable to generate preview. Check project fields.')
+			clearEditorPreview('Unable to generate preview. Check module fields.')
 		}
 	}
 
@@ -229,18 +229,18 @@ export function createProjectsModule({
 	}
 
 	function updateWizardPreview() {
-		const nameInput = document.getElementById('new-project-name')
-		const templateSelect = document.getElementById('new-project-template')
-		const versionInput = document.getElementById('new-project-version')
-		const projectName = nameInput ? nameInput.value.trim() : ''
+		const nameInput = document.getElementById('new-module-name')
+		const templateSelect = document.getElementById('new-module-template')
+		const versionInput = document.getElementById('new-module-version')
+		const moduleName = nameInput ? nameInput.value.trim() : ''
 		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
 
 		// Use placeholder name if empty for preview purposes
-		const previewName = projectName || 'my-project'
+		const previewName = moduleName || 'my-module'
 
 		// Get scripting language selection for preview
 		const selectedScriptCard = document.querySelector(
-			'#blank-project-options .option-card.active[data-type="script"]',
+			'#blank-module-options .option-card.active[data-type="script"]',
 		)
 		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
 		const assets = !templateSelect?.value && scriptLang === 'python' ? ['process.py'] : []
@@ -270,8 +270,8 @@ export function createProjectsModule({
 	}
 
 	function updateEditorPreview() {
-		const nameInput = document.getElementById('project-edit-name')
-		const workflowInput = document.getElementById('project-edit-workflow')
+		const nameInput = document.getElementById('module-edit-name')
+		const workflowInput = document.getElementById('module-edit-workflow')
 		if (!nameInput || !workflowInput) {
 			return
 		}
@@ -279,18 +279,18 @@ export function createProjectsModule({
 		const workflowValue = workflowInput.value.trim() || 'workflow.nf'
 		if (!nameValue || !workflowInput.value.trim()) {
 			editorPreviewRequestId += 1
-			clearEditorPreview('Enter a project name and workflow to generate a preview.')
+			clearEditorPreview('Enter a module name and workflow to generate a preview.')
 			return
 		}
-		const authorValue = document.getElementById('project-edit-author')?.value.trim() || ''
-		const templateValue = document.getElementById('project-edit-template')?.value.trim() || ''
-		const versionValue = document.getElementById('project-edit-version')?.value.trim() || '1.0.0'
+		const authorValue = document.getElementById('module-edit-author')?.value.trim() || ''
+		const templateValue = document.getElementById('module-edit-template')?.value.trim() || ''
+		const versionValue = document.getElementById('module-edit-version')?.value.trim() || '1.0.0'
 		const payload = buildSpecSavePayload({
 			name: nameValue,
 			author: authorValue,
 			workflow: workflowValue,
 			template: templateValue || null,
-			assets: Array.from(projectEditorState.selectedAssets).map((entry) =>
+			assets: Array.from(moduleEditorState.selectedAssets).map((entry) =>
 				typeof entry === 'string' ? entry.replace(/\\/g, '/') : entry,
 			),
 			version: versionValue,
@@ -300,15 +300,15 @@ export function createProjectsModule({
 	}
 
 	function ensureCreateSpecForm(config) {
-		const targetId = config?.containerId || 'create-project-parameters'
+		const targetId = config?.containerId || 'create-module-parameters'
 		const target = document.getElementById(targetId)
-		if (!projectCreateState.specForm) {
+		if (!moduleCreateState.specForm) {
 			if (target) {
-				projectCreateState.specForm = createProjectSpecForm({
+				moduleCreateState.specForm = createModuleSpecForm({
 					container: target,
 					invoke,
 					onChange: (parameters, inputs, outputs) => {
-						projectCreateState.specData = { parameters, inputs, outputs }
+						moduleCreateState.specData = { parameters, inputs, outputs }
 						updateTabCounts()
 						scheduleWizardPreview()
 					},
@@ -317,24 +317,24 @@ export function createProjectsModule({
 				return
 			}
 		} else if (target) {
-			projectCreateState.specForm.mount(target)
+			moduleCreateState.specForm.mount(target)
 		}
 
-		if (projectCreateState.specForm && config) {
-			projectCreateState.specForm.configureSections(config.sections, config.defaultTab)
+		if (moduleCreateState.specForm && config) {
+			moduleCreateState.specForm.configureSections(config.sections, config.defaultTab)
 		}
-		if (projectCreateState.specForm) {
-			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		if (moduleCreateState.specForm) {
+			moduleCreateState.specForm.setSpec(moduleCreateState.specData)
 		}
 
-		if (!projectCreateState.nameListenerBound) {
-			const nameInput = document.getElementById('new-project-name')
+		if (!moduleCreateState.nameListenerBound) {
+			const nameInput = document.getElementById('new-module-name')
 			if (nameInput) {
 				nameInput.addEventListener('input', () => {
 					updateCreateSpecSummary()
 					scheduleWizardPreview()
 				})
-				projectCreateState.nameListenerBound = true
+				moduleCreateState.nameListenerBound = true
 			}
 		}
 	}
@@ -346,9 +346,9 @@ export function createProjectsModule({
 
 	function updateTabCounts() {
 		const counts = {
-			inputs: projectCreateState.specData.inputs.length,
-			parameters: projectCreateState.specData.parameters.length,
-			outputs: projectCreateState.specData.outputs.length,
+			inputs: moduleCreateState.specData.inputs.length,
+			parameters: moduleCreateState.specData.parameters.length,
+			outputs: moduleCreateState.specData.outputs.length,
 		}
 
 		Object.entries(counts).forEach(([key, value]) => {
@@ -374,24 +374,24 @@ export function createProjectsModule({
 		}
 
 		// Update spec data from template
-		projectCreateState.specData = {
+		moduleCreateState.specData = {
 			parameters: (templateData.parameters || []).map(normalizeSpec),
 			inputs: (templateData.inputs || []).map(normalizeSpec),
 			outputs: (templateData.outputs || []).map(normalizeSpec),
 		}
 
-		console.log('Loaded template data:', projectCreateState.specData)
+		console.log('Loaded template data:', moduleCreateState.specData)
 
 		// Update form if it exists
-		if (projectCreateState.specForm) {
-			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		if (moduleCreateState.specForm) {
+			moduleCreateState.specForm.setSpec(moduleCreateState.specData)
 		}
 
 		// Update tab counts
 		updateTabCounts()
 
 		// Update version if template has one
-		const versionInput = document.getElementById('new-project-version')
+		const versionInput = document.getElementById('new-module-version')
 		if (versionInput && templateData.version) {
 			versionInput.value = templateData.version
 		}
@@ -399,22 +399,22 @@ export function createProjectsModule({
 
 	function resetWizardToBlank() {
 		// Reset spec data
-		projectCreateState.specData = {
+		moduleCreateState.specData = {
 			parameters: [],
 			inputs: [],
 			outputs: [],
 		}
 
 		// Update form if it exists
-		if (projectCreateState.specForm) {
-			projectCreateState.specForm.setSpec(projectCreateState.specData)
+		if (moduleCreateState.specForm) {
+			moduleCreateState.specForm.setSpec(moduleCreateState.specData)
 		}
 
 		// Update tab counts
 		updateTabCounts()
 
 		// Reset version
-		const versionInput = document.getElementById('new-project-version')
+		const versionInput = document.getElementById('new-module-version')
 		if (versionInput) {
 			versionInput.value = '1.0.0'
 		}
@@ -422,9 +422,9 @@ export function createProjectsModule({
 
 	function getCreateSpecPayload() {
 		return {
-			parameters: projectCreateState.specData.parameters || [],
-			inputs: projectCreateState.specData.inputs || [],
-			outputs: projectCreateState.specData.outputs || [],
+			parameters: moduleCreateState.specData.parameters || [],
+			inputs: moduleCreateState.specData.inputs || [],
+			outputs: moduleCreateState.specData.outputs || [],
 		}
 	}
 
@@ -492,7 +492,7 @@ export function createProjectsModule({
 	}
 
 	function switchCreateTab(tabName) {
-		projectCreateState.activeTab = tabName
+		moduleCreateState.activeTab = tabName
 
 		// Update tab buttons
 		document.querySelectorAll('.create-tab').forEach((tab) => {
@@ -516,11 +516,11 @@ export function createProjectsModule({
 
 	function updateCreateFooter() {
 		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
-		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
+		const currentIndex = tabOrder.indexOf(moduleCreateState.activeTab)
 
-		const backBtn = document.getElementById('create-project-back')
-		const nextBtn = document.getElementById('create-project-next')
-		const confirmBtn = document.getElementById('create-project-confirm')
+		const backBtn = document.getElementById('create-module-back')
+		const nextBtn = document.getElementById('create-module-next')
+		const confirmBtn = document.getElementById('create-module-confirm')
 
 		if (!backBtn || !nextBtn || !confirmBtn) return
 
@@ -540,7 +540,7 @@ export function createProjectsModule({
 			nextBtn.style.display = 'inline-flex'
 			confirmBtn.style.display = 'none'
 		} else {
-			// Last tab - show Create Project button
+			// Last tab - show Create Module button
 			nextBtn.style.display = 'none'
 			confirmBtn.style.display = 'inline-flex'
 		}
@@ -548,7 +548,7 @@ export function createProjectsModule({
 
 	function handleCreateTabNext() {
 		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
-		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
+		const currentIndex = tabOrder.indexOf(moduleCreateState.activeTab)
 
 		if (currentIndex < tabOrder.length - 1) {
 			switchCreateTab(tabOrder[currentIndex + 1])
@@ -557,7 +557,7 @@ export function createProjectsModule({
 
 	function handleCreateTabBack() {
 		const tabOrder = ['details', 'inputs', 'parameters', 'outputs']
-		const currentIndex = tabOrder.indexOf(projectCreateState.activeTab)
+		const currentIndex = tabOrder.indexOf(moduleCreateState.activeTab)
 
 		if (currentIndex > 0) {
 			switchCreateTab(tabOrder[currentIndex - 1])
@@ -565,13 +565,13 @@ export function createProjectsModule({
 	}
 
 	async function reloadSpecFromDisk(showMessage = true) {
-		if (!projectEditorState.projectPath) return
+		if (!moduleEditorState.modulePath) return
 		try {
-			const payload = await invoke('load_project_editor', {
-				projectId: projectEditorState.projectId,
-				projectPath: projectEditorState.projectPath,
+			const payload = await invoke('load_module_editor', {
+				moduleId: moduleEditorState.moduleId,
+				modulePath: moduleEditorState.modulePath,
 			})
-			renderSimpleProjectEditor(payload)
+			renderSimpleModuleEditor(payload)
 			if (showMessage) {
 				const statusEl = document.getElementById('step-status-message')
 				if (statusEl) {
@@ -580,13 +580,13 @@ export function createProjectsModule({
 				}
 			}
 		} catch (error) {
-			console.error('Failed to reload project metadata:', error)
+			console.error('Failed to reload module metadata:', error)
 		}
 	}
 
-	async function handleReloadProjectSpec() {
+	async function handleReloadModuleSpec() {
 		await reloadSpecFromDisk(false)
-		const statusEl = document.getElementById('project-edit-status')
+		const statusEl = document.getElementById('module-edit-status')
 		if (statusEl) {
 			statusEl.textContent = 'Reloaded module.yaml from disk.'
 			statusEl.style.color = '#666'
@@ -595,48 +595,48 @@ export function createProjectsModule({
 	}
 
 	async function checkSpecDigest(force = false) {
-		if (!projectEditorState.projectPath) return
+		if (!moduleEditorState.modulePath) return
 		try {
-			const digest = await invoke('get_project_spec_digest', {
-				projectPath: projectEditorState.projectPath,
+			const digest = await invoke('get_module_spec_digest', {
+				modulePath: moduleEditorState.modulePath,
 			})
 			const digestStr = digest ?? null
 			if (force) {
-				projectEditorState.lastSpecDigest = digestStr
+				moduleEditorState.lastSpecDigest = digestStr
 				return
 			}
-			if (projectEditorState.skipNextDigestReload) {
-				projectEditorState.skipNextDigestReload = false
-				projectEditorState.lastSpecDigest = digestStr
+			if (moduleEditorState.skipNextDigestReload) {
+				moduleEditorState.skipNextDigestReload = false
+				moduleEditorState.lastSpecDigest = digestStr
 				return
 			}
 			if (
-				projectEditorState.lastSpecDigest &&
+				moduleEditorState.lastSpecDigest &&
 				digestStr &&
-				digestStr !== projectEditorState.lastSpecDigest
+				digestStr !== moduleEditorState.lastSpecDigest
 			) {
 				await reloadSpecFromDisk(true)
 			}
-			projectEditorState.lastSpecDigest = digestStr
+			moduleEditorState.lastSpecDigest = digestStr
 		} catch (error) {
 			console.error('Failed to compute module.yaml digest:', error)
 		}
 	}
 
 	function stopSpecDigestPolling() {
-		if (projectEditorState.specDigestTimer) {
-			clearInterval(projectEditorState.specDigestTimer)
-			projectEditorState.specDigestTimer = null
+		if (moduleEditorState.specDigestTimer) {
+			clearInterval(moduleEditorState.specDigestTimer)
+			moduleEditorState.specDigestTimer = null
 		}
 	}
 
-	function handleLeaveProjectEditor() {
+	function handleLeaveModuleEditor() {
 		stopSpecDigestPolling()
 	}
 
 	function setOperationButtonsDisabled(disabled) {
-		const launchBtn = document.getElementById('project-edit-launch-jupyter-btn')
-		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const launchBtn = document.getElementById('module-edit-launch-jupyter-btn')
+		const resetBtn = document.getElementById('module-edit-reset-jupyter-btn')
 		if (launchBtn) launchBtn.disabled = disabled
 		if (resetBtn) resetBtn.disabled = disabled
 	}
@@ -696,112 +696,112 @@ export function createProjectsModule({
 		}
 	}
 
-	async function handleDeleteProject(project) {
-		const name = project.name || project.project_path
-		const prompt = project.orphaned
-			? `Are you sure you want to delete the folder "${project.project_path}"? This cannot be undone.`
-			: `Are you sure you want to delete project "${name}"? This will remove the project directory and cannot be undone.`
+	async function handleDeleteModule(module) {
+		const name = module.name || module.module_path
+		const prompt = module.orphaned
+			? `Are you sure you want to delete the folder "${module.module_path}"? This cannot be undone.`
+			: `Are you sure you want to delete module "${name}"? This will remove the module directory and cannot be undone.`
 
 		const confirmed = await confirmWithDialog(prompt, {
-			title: 'Delete Project',
+			title: 'Delete Module',
 			type: 'warning',
 		})
 
 		if (!confirmed) return
 
-		const modalMsg = project.orphaned
-			? 'Deleting project folder...'
-			: 'Deleting project (database + folder)...'
+		const modalMsg = module.orphaned
+			? 'Deleting module folder...'
+			: 'Deleting module (database + folder)...'
 		showOperationModal(modalMsg)
 
 		try {
-			if (project.orphaned) {
-				await invoke('delete_project_folder', { projectPath: project.project_path })
-			} else if (project.id !== null && project.id !== undefined) {
-				await invoke('delete_project', { projectId: project.id })
+			if (module.orphaned) {
+				await invoke('delete_module_folder', { modulePath: module.module_path })
+			} else if (module.id !== null && module.id !== undefined) {
+				await invoke('delete_module', { moduleId: module.id })
 			}
-			await loadProjects()
+			await loadModules()
 		} catch (error) {
-			alert(`Error deleting project: ${error}`)
+			alert(`Error deleting module: ${error}`)
 		} finally {
 			hideOperationModal()
 		}
 	}
 
-	async function loadProjects() {
+	async function loadModules() {
 		try {
-			const projects = await invoke('get_projects')
-			const projectsContainer = document.getElementById('steps-list')
+			const modules = await invoke('get_modules')
+			const modulesContainer = document.getElementById('steps-list')
 
 			// Update counts
 			const stepsCountBadges = document.querySelectorAll('#steps-count, #steps-count-label')
 			stepsCountBadges.forEach((badge) => {
-				badge.textContent = projects?.length || 0
+				badge.textContent = modules?.length || 0
 			})
 
-			// Render steps (formerly projects)
-			if (!projects || projects.length === 0) {
-				if (projectsContainer) {
-					projectsContainer.innerHTML =
+			// Render steps (formerly modules)
+			if (!modules || modules.length === 0) {
+				if (modulesContainer) {
+					modulesContainer.innerHTML =
 						'<p style="color: #666; padding: 20px; text-align: center;">No steps yet. Create or import one to get started.</p>'
 				}
 			} else {
-				if (projectsContainer) {
-					projectsContainer.innerHTML = ''
+				if (modulesContainer) {
+					modulesContainer.innerHTML = ''
 
-					projects.forEach((project) => {
+					modules.forEach((module) => {
 						const card = document.createElement('div')
-						card.className = 'project-card'
+						card.className = 'module-card'
 
 						const info = document.createElement('div')
-						info.className = 'project-info'
+						info.className = 'module-info'
 
 						const title = document.createElement('h3')
-						title.textContent = project.name || '(unnamed project)'
-						if (project.orphaned) {
+						title.textContent = module.name || '(unnamed module)'
+						if (module.orphaned) {
 							const badge = document.createElement('span')
-							badge.className = 'project-badge project-badge-orphan'
+							badge.className = 'module-badge module-badge-orphan'
 							badge.textContent = 'Unregistered folder'
 							title.appendChild(badge)
 						}
 						info.appendChild(title)
 
 						const author = document.createElement('p')
-						author.innerHTML = `<strong>Author:</strong> ${project.author ?? '—'}`
+						author.innerHTML = `<strong>Author:</strong> ${module.author ?? '—'}`
 						info.appendChild(author)
 
 						const workflow = document.createElement('p')
-						workflow.innerHTML = `<strong>Workflow:</strong> ${project.workflow ?? '—'}`
+						workflow.innerHTML = `<strong>Workflow:</strong> ${module.workflow ?? '—'}`
 						info.appendChild(workflow)
 
 						const template = document.createElement('p')
-						template.innerHTML = `<strong>Template:</strong> ${project.template ?? '—'}`
+						template.innerHTML = `<strong>Template:</strong> ${module.template ?? '—'}`
 						info.appendChild(template)
 
 						const path = document.createElement('p')
-						path.innerHTML = `<strong>Path:</strong> ${project.project_path}`
+						path.innerHTML = `<strong>Path:</strong> ${module.module_path}`
 						info.appendChild(path)
 
 						const created = document.createElement('p')
-						const meta = project.created_at
-							? `${project.source} | Created: ${project.created_at}`
-							: project.source
+						const meta = module.created_at
+							? `${module.source} | Created: ${module.created_at}`
+							: module.source
 						created.innerHTML = `<strong>Source:</strong> ${meta}`
 						info.appendChild(created)
 
 						card.appendChild(info)
 
 						const actions = document.createElement('div')
-						actions.className = 'project-card-actions'
+						actions.className = 'module-card-actions'
 
 						const editBtn = document.createElement('button')
 						editBtn.className = 'secondary-btn'
-						editBtn.textContent = project.orphaned ? 'Open in Editor' : 'Edit'
+						editBtn.textContent = module.orphaned ? 'Open in Editor' : 'Edit'
 						editBtn.addEventListener('click', async () => {
-							if (project.orphaned) {
-								await openProjectEditor({ projectPath: project.project_path })
-							} else if (project.id !== null && project.id !== undefined) {
-								await openProjectEditor({ projectId: project.id })
+							if (module.orphaned) {
+								await openModuleEditor({ modulePath: module.module_path })
+							} else if (module.id !== null && module.id !== undefined) {
+								await openModuleEditor({ moduleId: module.id })
 							}
 						})
 						actions.appendChild(editBtn)
@@ -811,7 +811,7 @@ export function createProjectsModule({
 						openBtn.textContent = 'Open Folder'
 						openBtn.addEventListener('click', async () => {
 							try {
-								await invoke('open_folder', { path: project.project_path })
+								await invoke('open_folder', { path: module.module_path })
 							} catch (error) {
 								alert(`Error opening folder: ${error}`)
 							}
@@ -822,22 +822,22 @@ export function createProjectsModule({
 						deleteBtn.className = 'delete-btn'
 						deleteBtn.textContent = 'Delete'
 						deleteBtn.addEventListener('click', async () => {
-							await handleDeleteProject(project)
+							await handleDeleteModule(module)
 						})
 						actions.appendChild(deleteBtn)
 
 						card.appendChild(actions)
-						projectsContainer.appendChild(card)
+						modulesContainer.appendChild(card)
 					})
 				}
 			}
 		} catch (error) {
-			console.error('Error loading projects:', error)
+			console.error('Error loading modules:', error)
 		}
 	}
 
-	async function importProject(overwrite = false) {
-		const input = document.getElementById('project-url-input')
+	async function importModule(overwrite = false) {
+		const input = document.getElementById('module-url-input')
 		const url = input.value.trim()
 
 		if (!url) {
@@ -847,33 +847,33 @@ export function createProjectsModule({
 
 		console.log('Import button clicked, URL:', url)
 
-		const btn = document.getElementById('import-project-btn')
+		const btn = document.getElementById('import-module-btn')
 		btn.disabled = true
 		btn.textContent = 'Importing...'
 
 		try {
 			console.log('Calling invoke with:', { url, overwrite })
-			const result = await invoke('import_project', { url, overwrite })
+			const result = await invoke('import_module', { url, overwrite })
 			console.log('Import successful:', result)
 			input.value = ''
-			await loadProjects()
-			alert('Project imported successfully!')
+			await loadModules()
+			alert('Module imported successfully!')
 		} catch (error) {
 			console.error('Import error:', error)
 			const errorStr = String(error)
 			if (errorStr.includes('already exists')) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorStr}\n\nDo you want to overwrite it?`,
-					{ title: 'Overwrite Project?', type: 'warning' },
+					{ title: 'Overwrite Module?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
 					btn.disabled = false
 					btn.textContent = 'Import'
-					await importProject(true)
+					await importModule(true)
 					return
 				}
 			} else {
-				alert(`Error importing project: ${errorStr}`)
+				alert(`Error importing module: ${errorStr}`)
 			}
 		} finally {
 			console.log('Import finally block')
@@ -882,12 +882,12 @@ export function createProjectsModule({
 		}
 	}
 
-	async function importProjectFromFolder(overwrite = false, folderPath = null) {
+	async function importModuleFromFolder(overwrite = false, folderPath = null) {
 		if (!folderPath) {
 			folderPath = await dialog.open({
 				directory: true,
 				multiple: false,
-				title: 'Select Project Folder',
+				title: 'Select Module Folder',
 			})
 		}
 
@@ -904,31 +904,31 @@ export function createProjectsModule({
 		}
 
 		try {
-			const result = await invoke('import_project_from_folder', {
+			const result = await invoke('import_module_from_folder', {
 				folder_path: folderPath,
 				overwrite,
 			})
 			console.log('Import from folder successful:', result)
-			await loadProjects()
-			alert(`Project "${result.name}" imported successfully!`)
+			await loadModules()
+			alert(`Module "${result.name}" imported successfully!`)
 		} catch (error) {
 			console.error('Error importing from folder:', error)
 			const errorStr = error.toString ? error.toString() : String(error)
 			if (errorStr.includes('already exists')) {
 				const shouldOverwrite = await confirmWithDialog(
 					`${errorStr}\n\nDo you want to overwrite it?`,
-					{ title: 'Overwrite Project?', type: 'warning' },
+					{ title: 'Overwrite Module?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
 					if (btn) {
 						btn.disabled = false
 						btn.innerHTML = '📁 Import from Folder'
 					}
-					await importProjectFromFolder(true, folderPath)
+					await importModuleFromFolder(true, folderPath)
 					return
 				}
 			} else {
-				alert(`Error importing project: ${errorStr}`)
+				alert(`Error importing module: ${errorStr}`)
 			}
 		} finally {
 			if (btn) {
@@ -938,24 +938,24 @@ export function createProjectsModule({
 		}
 	}
 
-	async function fetchDefaultProjectPath(name) {
+	async function fetchDefaultModulePath(name) {
 		const trimmed = name ? name.trim() : ''
 		try {
-			return await invoke('get_default_project_path', {
+			return await invoke('get_default_module_path', {
 				name: trimmed ? trimmed : null,
 			})
 		} catch (error) {
-			console.error('Failed to fetch default project path:', error)
+			console.error('Failed to fetch default module path:', error)
 			return ''
 		}
 	}
 
-	async function showCreateProjectModal() {
-		const modal = document.getElementById('create-project-modal')
-		const nameInput = document.getElementById('new-project-name')
-		const templateSelect = document.getElementById('new-project-template')
-		const pathInput = document.getElementById('new-project-path')
-		const versionInput = document.getElementById('new-project-version')
+	async function showCreateModuleModal() {
+		const modal = document.getElementById('create-module-modal')
+		const nameInput = document.getElementById('new-module-name')
+		const templateSelect = document.getElementById('new-module-template')
+		const pathInput = document.getElementById('new-module-path')
+		const versionInput = document.getElementById('new-module-version')
 
 		if (nameInput) {
 			nameInput.value = ''
@@ -971,16 +971,16 @@ export function createProjectsModule({
 			versionInput.value = '1.0.0'
 			versionInput.oninput = () => scheduleWizardPreview()
 		}
-		projectCreateState.selectedDir = null
-		projectCreateState.usingDefault = true
+		moduleCreateState.selectedDir = null
+		moduleCreateState.usingDefault = true
 
 		// Load available templates from CLI
 		let availableExamples = {}
 		if (templateSelect) {
 			try {
-				const examples = await invoke('get_available_project_examples')
+				const examples = await invoke('get_available_module_examples')
 				availableExamples = examples || {}
-				let optionsHtml = '<option value="">Blank Project</option>'
+				let optionsHtml = '<option value="">Blank Module</option>'
 
 				if (Object.keys(examples).length > 0) {
 					Object.entries(examples).forEach(([key, example]) => {
@@ -991,21 +991,21 @@ export function createProjectsModule({
 
 				templateSelect.innerHTML = optionsHtml
 			} catch (error) {
-				console.warn('Failed to load project examples:', error)
-				templateSelect.innerHTML = '<option value="">Blank Project</option>'
+				console.warn('Failed to load module examples:', error)
+				templateSelect.innerHTML = '<option value="">Blank Module</option>'
 			}
 
 			// Handle template selection changes
 			templateSelect.onchange = async () => {
 				const selectedTemplate = templateSelect.value
-				const blankOptions = document.getElementById('blank-project-options')
+				const blankOptions = document.getElementById('blank-module-options')
 
 				if (selectedTemplate && availableExamples[selectedTemplate]) {
-					// Hide blank project options
+					// Hide blank module options
 					if (blankOptions) blankOptions.style.display = 'none'
 					await loadTemplateIntoWizard(availableExamples[selectedTemplate])
 				} else {
-					// Show blank project options
+					// Show blank module options
 					if (blankOptions) blankOptions.style.display = 'block'
 					resetWizardToBlank()
 				}
@@ -1013,19 +1013,19 @@ export function createProjectsModule({
 			}
 		}
 
-		const defaultPath = await fetchDefaultProjectPath('')
-		projectCreateState.defaultDir = defaultPath
+		const defaultPath = await fetchDefaultModulePath('')
+		moduleCreateState.defaultDir = defaultPath
 		if (pathInput) {
 			pathInput.value = defaultPath
 		}
 
 		// Initialize form state
-		projectCreateState.specData = { parameters: [], inputs: [], outputs: [] }
-		projectCreateState.activeTab = 'details'
+		moduleCreateState.specData = { parameters: [], inputs: [], outputs: [] }
+		moduleCreateState.activeTab = 'details'
 
 		// Initialize inputs tab
 		ensureCreateSpecForm(CREATE_TAB_CONFIG.inputs)
-		projectCreateState.specForm?.setSpec(projectCreateState.specData)
+		moduleCreateState.specForm?.setSpec(moduleCreateState.specData)
 
 		// Switch to Details tab
 		switchCreateTab('details')
@@ -1060,13 +1060,13 @@ export function createProjectsModule({
 		})
 
 		// Setup navigation button handlers
-		const cancelBtn = document.getElementById('create-project-cancel')
-		const backBtn = document.getElementById('create-project-back')
-		const nextBtn = document.getElementById('create-project-next')
-		const confirmBtn = document.getElementById('create-project-confirm')
+		const cancelBtn = document.getElementById('create-module-cancel')
+		const backBtn = document.getElementById('create-module-back')
+		const nextBtn = document.getElementById('create-module-next')
+		const confirmBtn = document.getElementById('create-module-confirm')
 
 		if (cancelBtn) {
-			cancelBtn.onclick = () => hideCreateProjectModal()
+			cancelBtn.onclick = () => hideCreateModuleModal()
 		}
 		if (backBtn) {
 			backBtn.onclick = () => handleCreateTabBack()
@@ -1075,7 +1075,7 @@ export function createProjectsModule({
 			nextBtn.onclick = () => handleCreateTabNext()
 		}
 		if (confirmBtn) {
-			confirmBtn.onclick = () => createProjectFromModal()
+			confirmBtn.onclick = () => createModuleFromModal()
 		}
 	}
 
@@ -1103,38 +1103,38 @@ export function createProjectsModule({
 		})
 	}
 
-	function hideCreateProjectModal() {
-		const modal = document.getElementById('create-project-modal')
+	function hideCreateModuleModal() {
+		const modal = document.getElementById('create-module-modal')
 		modal.style.display = 'none'
 		document.body.classList.remove('modal-open')
 	}
 
-	function validateProjectName(name) {
+	function validateModuleName(name) {
 		const trimmed = name.trim()
 
 		// Cannot be empty
 		if (trimmed.length === 0) {
-			return { valid: false, error: 'Project name cannot be empty' }
+			return { valid: false, error: 'Module name cannot be empty' }
 		}
 
 		// Cannot be . or ..
 		if (trimmed === '.' || trimmed === '..') {
-			return { valid: false, error: 'Project name cannot be "." or ".."' }
+			return { valid: false, error: 'Module name cannot be "." or ".."' }
 		}
 
 		// Cannot contain / or \
 		if (trimmed.includes('/') || trimmed.includes('\\')) {
-			return { valid: false, error: 'Project name cannot contain / or \\' }
+			return { valid: false, error: 'Module name cannot contain / or \\' }
 		}
 
 		return { valid: true, error: null }
 	}
 
-	async function handleProjectNameInputChange() {
-		const nameInput = document.getElementById('new-project-name')
-		const errorEl = document.getElementById('project-name-error')
+	async function handleModuleNameInputChange() {
+		const nameInput = document.getElementById('new-module-name')
+		const errorEl = document.getElementById('module-name-error')
 		const nameValue = nameInput.value
-		const validation = validateProjectName(nameValue)
+		const validation = validateModuleName(nameValue)
 
 		// Show/hide error
 		if (!validation.valid) {
@@ -1147,16 +1147,16 @@ export function createProjectsModule({
 		}
 
 		// Update path if using default
-		if (projectCreateState.usingDefault && validation.valid) {
-			const defaultPath = await fetchDefaultProjectPath(nameValue.trim())
-			projectCreateState.defaultDir = defaultPath
-			document.getElementById('new-project-path').value = defaultPath
+		if (moduleCreateState.usingDefault && validation.valid) {
+			const defaultPath = await fetchDefaultModulePath(nameValue.trim())
+			moduleCreateState.defaultDir = defaultPath
+			document.getElementById('new-module-path').value = defaultPath
 		}
 
 		updateCreateSpecSummary()
 	}
 
-	async function chooseProjectDirectory() {
+	async function chooseModuleDirectory() {
 		try {
 			const selection = await open({ directory: true, multiple: false })
 			if (!selection) {
@@ -1168,37 +1168,37 @@ export function createProjectsModule({
 				return
 			}
 
-			projectCreateState.selectedDir = chosen
-			projectCreateState.usingDefault = false
-			document.getElementById('new-project-path').value = chosen
+			moduleCreateState.selectedDir = chosen
+			moduleCreateState.usingDefault = false
+			document.getElementById('new-module-path').value = chosen
 			scheduleWizardPreview()
 		} catch (error) {
 			console.error('Folder selection cancelled or failed:', error)
 		}
 	}
 
-	async function resetProjectDirectory() {
-		projectCreateState.selectedDir = null
-		projectCreateState.usingDefault = true
-		const nameValue = document.getElementById('new-project-name').value.trim()
-		const defaultPath = await fetchDefaultProjectPath(nameValue)
-		projectCreateState.defaultDir = defaultPath
-		document.getElementById('new-project-path').value = defaultPath
+	async function resetModuleDirectory() {
+		moduleCreateState.selectedDir = null
+		moduleCreateState.usingDefault = true
+		const nameValue = document.getElementById('new-module-name').value.trim()
+		const defaultPath = await fetchDefaultModulePath(nameValue)
+		moduleCreateState.defaultDir = defaultPath
+		document.getElementById('new-module-path').value = defaultPath
 		scheduleWizardPreview()
 	}
 
-	async function createProjectFromModal() {
-		const nameInput = document.getElementById('new-project-name')
-		const templateSelect = document.getElementById('new-project-template')
-		const confirmBtn = document.getElementById('create-project-confirm')
-		const versionInput = document.getElementById('new-project-version')
+	async function createModuleFromModal() {
+		const nameInput = document.getElementById('new-module-name')
+		const templateSelect = document.getElementById('new-module-template')
+		const confirmBtn = document.getElementById('create-module-confirm')
+		const versionInput = document.getElementById('new-module-version')
 
-		const projectName = nameInput.value
-		const validation = validateProjectName(projectName)
+		const moduleName = nameInput.value
+		const validation = validateModuleName(moduleName)
 
 		if (!validation.valid) {
 			await dialog.message(validation.error, {
-				title: 'Invalid Project Name',
+				title: 'Invalid Module Name',
 				type: 'warning',
 			})
 			// Switch to details tab to show error
@@ -1208,12 +1208,12 @@ export function createProjectsModule({
 		}
 
 		// Validate destination path
-		let destination = document.getElementById('new-project-path').value.trim()
+		let destination = document.getElementById('new-module-path').value.trim()
 		if (!destination) {
-			destination = await fetchDefaultProjectPath(projectName.trim())
-			document.getElementById('new-project-path').value = destination
-			projectCreateState.defaultDir = destination
-			projectCreateState.selectedDir = null
+			destination = await fetchDefaultModulePath(moduleName.trim())
+			document.getElementById('new-module-path').value = destination
+			moduleCreateState.defaultDir = destination
+			moduleCreateState.selectedDir = null
 		}
 
 		if (!destination) {
@@ -1229,15 +1229,15 @@ export function createProjectsModule({
 		}
 
 		const example = templateSelect.value || null
-		const directory = projectCreateState.selectedDir
+		const directory = moduleCreateState.selectedDir
 		const versionValue = versionInput ? versionInput.value.trim() || '1.0.0' : '1.0.0'
 		const spec = getCreateSpecPayload()
 		const hasContract =
 			spec.parameters.length > 0 || spec.inputs.length > 0 || spec.outputs.length > 0
 
-		// Get scripting language option (only for blank projects)
+		// Get scripting language option (only for blank modules)
 		const selectedScriptCard = document.querySelector(
-			'#blank-project-options .option-card.active[data-type="script"]',
+			'#blank-module-options .option-card.active[data-type="script"]',
 		)
 		const scriptLang = selectedScriptCard ? selectedScriptCard.dataset.value : 'none'
 		const createPythonScript = !example && scriptLang === 'python'
@@ -1247,8 +1247,8 @@ export function createProjectsModule({
 		confirmBtn.textContent = 'Creating...'
 
 		try {
-			const project = await invoke('create_project', {
-				name: projectName.trim(),
+			const module = await invoke('create_module', {
+				name: moduleName.trim(),
 				example,
 				directory: directory || null,
 				createPythonScript: createPythonScript,
@@ -1256,12 +1256,12 @@ export function createProjectsModule({
 			})
 			if (hasContract) {
 				try {
-					const editorPayload = await invoke('load_project_editor', {
-						projectId: project.id,
+					const editorPayload = await invoke('load_module_editor', {
+						moduleId: module.id,
 					})
 					const metadata = editorPayload.metadata
 					const payload = buildSpecSavePayload({
-						name: metadata.name || projectName.trim(),
+						name: metadata.name || moduleName.trim(),
 						author: metadata.author,
 						workflow: metadata.workflow,
 						template: metadata.template || null,
@@ -1269,75 +1269,75 @@ export function createProjectsModule({
 						version: versionValue,
 						spec,
 					})
-					await invoke('save_project_editor', {
-						projectId: project.id,
-						projectPath: editorPayload.project_path,
+					await invoke('save_module_editor', {
+						moduleId: module.id,
+						modulePath: editorPayload.module_path,
 						payload,
 					})
 				} catch (specError) {
-					console.error('Failed to apply project contract during creation:', specError)
+					console.error('Failed to apply module contract during creation:', specError)
 				}
 			}
-			hideCreateProjectModal()
-			await loadProjects()
+			hideCreateModuleModal()
+			await loadModules()
 
-			// Check if we're adding this project as a step to a pipeline
-			if (window._addingStepToPipeline && addProjectAsPipelineStep) {
+			// Check if we're adding this module as a step to a flow
+			if (window._addingStepToFlow && addModuleAsFlowStep) {
 				try {
-					await addProjectAsPipelineStep(project.project_path, projectName.trim())
+					await addModuleAsFlowStep(module.module_path, moduleName.trim())
 					// Clear the flag
-					delete window._addingStepToPipeline
-					// Don't open project editor, just reload pipelines
-					console.log('Project added as step to pipeline')
+					delete window._addingStepToFlow
+					// Don't open module editor, just reload flows
+					console.log('Module added as step to flow')
 				} catch (error) {
-					console.error('Failed to add project as pipeline step:', error)
+					console.error('Failed to add module as flow step:', error)
 					// Still open the editor as fallback
-					await openProjectEditor({ projectId: project.id })
+					await openModuleEditor({ moduleId: module.id })
 				}
 			} else {
-				// Normal flow: open the project editor
-				await openProjectEditor({ projectId: project.id })
+				// Normal flow: open the module editor
+				await openModuleEditor({ moduleId: module.id })
 			}
 		} catch (error) {
 			const errorStr = String(error)
-			console.error('Create project error:', errorStr)
-			const targetPath = directory || projectCreateState.defaultDir
+			console.error('Create module error:', errorStr)
+			const targetPath = directory || moduleCreateState.defaultDir
 			if (errorStr.includes('module.yaml already exists') && targetPath) {
-				const shouldOpen = confirm(`${errorStr}\n\nOpen the project editor for ${targetPath}?`)
+				const shouldOpen = confirm(`${errorStr}\n\nOpen the module editor for ${targetPath}?`)
 				if (shouldOpen) {
-					hideCreateProjectModal()
-					await openProjectEditor({ projectPath: targetPath })
+					hideCreateModuleModal()
+					await openModuleEditor({ modulePath: targetPath })
 				}
 			} else {
-				await dialog.message(`Error creating project: ${errorStr}`, {
+				await dialog.message(`Error creating module: ${errorStr}`, {
 					title: 'Error',
 					type: 'error',
 				})
 			}
 		} finally {
 			confirmBtn.disabled = false
-			confirmBtn.textContent = 'Create Project'
+			confirmBtn.textContent = 'Create Module'
 		}
 	}
 
-	async function openProjectEditor({ projectId = null, projectPath = null }) {
-		if (!projectId && !projectPath) {
-			alert('Unable to open project editor: missing project identifier')
+	async function openModuleEditor({ moduleId = null, modulePath = null }) {
+		if (!moduleId && !modulePath) {
+			alert('Unable to open module editor: missing module identifier')
 			return
 		}
 
 		try {
-			const payload = await invoke('load_project_editor', {
-				projectId,
-				projectPath,
+			const payload = await invoke('load_module_editor', {
+				moduleId,
+				modulePath,
 			})
 
 			// Use new simple editor
-			renderSimpleProjectEditor(payload)
-			navigateTo('project-edit')
+			renderSimpleModuleEditor(payload)
+			navigateTo('module-edit')
 		} catch (error) {
-			console.error('Failed to load project editor:', error)
-			alert(`Error loading project: ${error}`)
+			console.error('Failed to load module editor:', error)
+			alert(`Error loading module: ${error}`)
 		}
 	}
 
@@ -1354,24 +1354,24 @@ export function createProjectsModule({
 		})
 
 		// Set up button handlers
-		const backBtn = document.getElementById('project-edit-back-btn')
-		const saveBtn = document.getElementById('project-edit-save-btn')
-		const launchJupyterBtn = document.getElementById('project-edit-launch-jupyter-btn')
-		const launchJupyterBtn2 = document.getElementById('project-edit-launch-jupyter-btn-2')
-		const resetJupyterBtn = document.getElementById('project-edit-reset-jupyter-btn')
-		const openFolderBtn = document.getElementById('project-edit-open-folder-btn')
-		const openVSCodeBtn = document.getElementById('project-edit-open-vscode-btn')
-		const openVSCodeBtn2 = document.getElementById('project-edit-open-vscode-btn-2')
-		const reloadBtn = document.getElementById('project-spec-reload-btn')
+		const backBtn = document.getElementById('module-edit-back-btn')
+		const saveBtn = document.getElementById('module-edit-save-btn')
+		const launchJupyterBtn = document.getElementById('module-edit-launch-jupyter-btn')
+		const launchJupyterBtn2 = document.getElementById('module-edit-launch-jupyter-btn-2')
+		const resetJupyterBtn = document.getElementById('module-edit-reset-jupyter-btn')
+		const openFolderBtn = document.getElementById('module-edit-open-folder-btn')
+		const openVSCodeBtn = document.getElementById('module-edit-open-vscode-btn')
+		const openVSCodeBtn2 = document.getElementById('module-edit-open-vscode-btn-2')
+		const reloadBtn = document.getElementById('module-spec-reload-btn')
 
 		if (backBtn) {
 			backBtn.onclick = () => {
-				handleLeaveProjectEditor()
-				navigateTo('projects')
+				handleLeaveModuleEditor()
+				navigateTo('modules')
 			}
 		}
 		if (saveBtn) {
-			saveBtn.onclick = () => handleSaveProjectEditor()
+			saveBtn.onclick = () => handleSaveModuleEditor()
 		}
 		if (launchJupyterBtn) {
 			launchJupyterBtn.onclick = () => handleLaunchJupyter()
@@ -1383,9 +1383,9 @@ export function createProjectsModule({
 			resetJupyterBtn.onclick = () => handleResetJupyter()
 		}
 		if (openFolderBtn) {
-			openFolderBtn.onclick = () => handleOpenProjectFolder()
+			openFolderBtn.onclick = () => handleOpenModuleFolder()
 		} else {
-			console.warn('project-edit-open-folder-btn not found - using new editor')
+			console.warn('module-edit-open-folder-btn not found - using new editor')
 		}
 		if (openVSCodeBtn) {
 			openVSCodeBtn.onclick = () => handleOpenVSCode()
@@ -1394,21 +1394,21 @@ export function createProjectsModule({
 			openVSCodeBtn2.onclick = () => handleOpenVSCode()
 		}
 		if (reloadBtn) {
-			reloadBtn.onclick = () => handleReloadProjectSpec()
+			reloadBtn.onclick = () => handleReloadModuleSpec()
 		}
 	}
 
 	async function handleOpenVSCode() {
-		if (!projectEditorState.projectPath) {
-			alert('Select a project first')
+		if (!moduleEditorState.modulePath) {
+			alert('Select a module first')
 			return
 		}
 
 		try {
-			await invoke('open_in_vscode', { path: projectEditorState.projectPath })
+			await invoke('open_in_vscode', { path: moduleEditorState.modulePath })
 		} catch (error) {
 			console.error('Failed to open VSCode:', error)
-			const statusEl = document.getElementById('project-edit-status')
+			const statusEl = document.getElementById('module-edit-status')
 			if (statusEl) {
 				statusEl.textContent = `Unable to open VSCode. Make sure "code" command is available.`
 				statusEl.style.color = '#dc3545'
@@ -1416,7 +1416,7 @@ export function createProjectsModule({
 		}
 	}
 
-	function _renderProjectTree(nodes, container, parentPath) {
+	function _renderModuleTree(nodes, container, parentPath) {
 		nodes.forEach((node) => {
 			const path = node.path
 			if (node.is_dir) {
@@ -1436,7 +1436,7 @@ export function createProjectsModule({
 				checkbox.addEventListener('click', (e) => e.stopPropagation())
 				checkbox.addEventListener('change', (e) => {
 					setNodeAndChildren(path, e.target.checked)
-					const info = projectEditorState.treeNodes.get(path)
+					const info = moduleEditorState.treeNodes.get(path)
 					if (info) {
 						updateAncestorStates(info.parent)
 					}
@@ -1452,14 +1452,14 @@ export function createProjectsModule({
 				details.appendChild(childrenContainer)
 				container.appendChild(details)
 
-				projectEditorState.treeNodes.set(path, {
+				moduleEditorState.treeNodes.set(path, {
 					checkbox,
 					isDir: true,
 					parent: parentPath,
 					children: children.map((child) => child.path),
 				})
 
-				_renderProjectTree(children, childrenContainer, path)
+				_renderModuleTree(children, childrenContainer, path)
 			} else {
 				const leaf = document.createElement('div')
 				leaf.className = 'tree-leaf'
@@ -1468,11 +1468,11 @@ export function createProjectsModule({
 				checkbox.dataset.path = path
 				checkbox.addEventListener('change', (e) => {
 					if (e.target.checked) {
-						projectEditorState.selectedAssets.add(path)
+						moduleEditorState.selectedAssets.add(path)
 					} else {
-						projectEditorState.selectedAssets.delete(path)
+						moduleEditorState.selectedAssets.delete(path)
 					}
-					const info = projectEditorState.treeNodes.get(path)
+					const info = moduleEditorState.treeNodes.get(path)
 					if (info) {
 						info.checkbox.indeterminate = false
 						updateAncestorStates(info.parent)
@@ -1485,7 +1485,7 @@ export function createProjectsModule({
 				leaf.appendChild(label)
 				container.appendChild(leaf)
 
-				projectEditorState.treeNodes.set(path, {
+				moduleEditorState.treeNodes.set(path, {
 					checkbox,
 					isDir: false,
 					parent: parentPath,
@@ -1496,7 +1496,7 @@ export function createProjectsModule({
 	}
 
 	function setNodeAndChildren(path, isChecked) {
-		const node = projectEditorState.treeNodes.get(path)
+		const node = moduleEditorState.treeNodes.get(path)
 		if (!node) return
 
 		node.checkbox.checked = isChecked
@@ -1507,9 +1507,9 @@ export function createProjectsModule({
 				setNodeAndChildren(childPath, isChecked)
 			})
 		} else if (isChecked) {
-			projectEditorState.selectedAssets.add(path)
+			moduleEditorState.selectedAssets.add(path)
 		} else {
-			projectEditorState.selectedAssets.delete(path)
+			moduleEditorState.selectedAssets.delete(path)
 		}
 		scheduleEditorPreview()
 	}
@@ -1517,7 +1517,7 @@ export function createProjectsModule({
 	function updateAncestorStates(startPath) {
 		let currentPath = startPath
 		while (currentPath) {
-			const node = projectEditorState.treeNodes.get(currentPath)
+			const node = moduleEditorState.treeNodes.get(currentPath)
 			if (!node) break
 			if (!node.isDir) {
 				currentPath = node.parent
@@ -1527,7 +1527,7 @@ export function createProjectsModule({
 			let allChecked = true
 			let anyChecked = false
 			node.children.forEach((childPath) => {
-				const childNode = projectEditorState.treeNodes.get(childPath)
+				const childNode = moduleEditorState.treeNodes.get(childPath)
 				if (!childNode) return
 				if (childNode.checkbox.indeterminate) {
 					anyChecked = true
@@ -1546,12 +1546,12 @@ export function createProjectsModule({
 	}
 
 	function updateJupyterControls() {
-		const button = document.getElementById('project-edit-launch-jupyter-btn')
-		const button2 = document.getElementById('project-edit-launch-jupyter-btn-2')
-		const statusRow = document.getElementById('project-jupyter-status')
+		const button = document.getElementById('module-edit-launch-jupyter-btn')
+		const button2 = document.getElementById('module-edit-launch-jupyter-btn-2')
+		const statusRow = document.getElementById('module-jupyter-status')
 
 		const isLoading = button?.dataset.loading === 'true'
-		const buttonText = projectEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
+		const buttonText = moduleEditorState.jupyter.running ? 'Stop Jupyter' : 'Launch Jupyter'
 
 		if (button && !isLoading) {
 			button.innerHTML = `
@@ -1569,17 +1569,17 @@ export function createProjectsModule({
 
 		if (!statusRow) return
 
-		if (projectEditorState.jupyter.running) {
+		if (moduleEditorState.jupyter.running) {
 			let linkUrl =
-				projectEditorState.jupyter.url ||
-				(projectEditorState.jupyter.port
-					? `http://localhost:${projectEditorState.jupyter.port}`
+				moduleEditorState.jupyter.url ||
+				(moduleEditorState.jupyter.port
+					? `http://localhost:${moduleEditorState.jupyter.port}`
 					: null)
 
 			// Append token if available
-			if (linkUrl && projectEditorState.jupyter.token) {
+			if (linkUrl && moduleEditorState.jupyter.token) {
 				const separator = linkUrl.includes('?') ? '&' : '?'
-				linkUrl = `${linkUrl}${separator}token=${projectEditorState.jupyter.token}`
+				linkUrl = `${linkUrl}${separator}token=${moduleEditorState.jupyter.token}`
 			}
 
 			if (linkUrl) {
@@ -1607,24 +1607,24 @@ export function createProjectsModule({
 	}
 
 	async function refreshJupyterStatus(showMessage = false) {
-		if (!projectEditorState.projectPath) return
-		const statusEl = document.getElementById('project-edit-status')
+		if (!moduleEditorState.modulePath) return
+		const statusEl = document.getElementById('module-edit-status')
 
 		try {
 			const result = await invoke('get_jupyter_status', {
-				projectPath: projectEditorState.projectPath,
+				modulePath: moduleEditorState.modulePath,
 			})
-			projectEditorState.jupyter.running = !!result.running
-			projectEditorState.jupyter.port = result.port ?? null
-			projectEditorState.jupyter.url = result.url ?? null
-			projectEditorState.jupyter.token = result.token ?? null
+			moduleEditorState.jupyter.running = !!result.running
+			moduleEditorState.jupyter.port = result.port ?? null
+			moduleEditorState.jupyter.url = result.url ?? null
+			moduleEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 			if (showMessage) {
-				if (projectEditorState.jupyter.running) {
+				if (moduleEditorState.jupyter.running) {
 					const linkUrl =
-						projectEditorState.jupyter.url ||
-						(projectEditorState.jupyter.port
-							? `http://localhost:${projectEditorState.jupyter.port}`
+						moduleEditorState.jupyter.url ||
+						(moduleEditorState.jupyter.port
+							? `http://localhost:${moduleEditorState.jupyter.port}`
 							: null)
 					statusEl.textContent = linkUrl
 						? `Jupyter is running at ${linkUrl}.`
@@ -1644,25 +1644,25 @@ export function createProjectsModule({
 		}
 	}
 
-	async function handleSaveProjectEditor() {
-		if (!projectEditorState.projectPath) {
-			alert('Select or create a project first')
+	async function handleSaveModuleEditor() {
+		if (!moduleEditorState.modulePath) {
+			alert('Select or create a module first')
 			return
 		}
 
-		const statusEl = document.getElementById('project-edit-status')
+		const statusEl = document.getElementById('module-edit-status')
 		statusEl.textContent = ''
 		statusEl.style.color = '#666'
 
-		const nameValue = document.getElementById('project-edit-name').value.trim()
-		const authorInputEl = document.getElementById('project-edit-author')
+		const nameValue = document.getElementById('module-edit-name').value.trim()
+		const authorInputEl = document.getElementById('module-edit-author')
 		const authorValue = authorInputEl.value.trim()
-		const workflowValue = document.getElementById('project-edit-workflow').value.trim()
-		const templateValue = document.getElementById('project-edit-template').value.trim()
-		const versionValue = document.getElementById('project-edit-version').value.trim()
+		const workflowValue = document.getElementById('module-edit-workflow').value.trim()
+		const templateValue = document.getElementById('module-edit-template').value.trim()
+		const versionValue = document.getElementById('module-edit-version').value.trim()
 
 		if (!nameValue) {
-			alert('Project name cannot be empty')
+			alert('Module name cannot be empty')
 			return
 		}
 
@@ -1678,11 +1678,11 @@ export function createProjectsModule({
 			return
 		}
 
-		statusEl.textContent = 'Saving project...'
+		statusEl.textContent = 'Saving module...'
 		statusEl.style.color = '#666'
 
 		try {
-			const assets = Array.from(projectEditorState.selectedAssets)
+			const assets = Array.from(moduleEditorState.selectedAssets)
 			const spec = getEditorSpecPayload()
 			const payload = buildSpecSavePayload({
 				name: nameValue,
@@ -1693,17 +1693,17 @@ export function createProjectsModule({
 				version: versionValue,
 				spec,
 			})
-			projectEditorState.skipNextDigestReload = true
+			moduleEditorState.skipNextDigestReload = true
 
-			const saved = await invoke('save_project_editor', {
-				projectId: projectEditorState.projectId,
-				projectPath: projectEditorState.projectPath,
+			const saved = await invoke('save_module_editor', {
+				moduleId: moduleEditorState.moduleId,
+				modulePath: moduleEditorState.modulePath,
 				payload,
 			})
-			projectEditorState.projectId = saved.id
-			projectEditorState.projectPath = saved.project_path
-			projectEditorState.metadata = {
-				...(projectEditorState.metadata || {}),
+			moduleEditorState.moduleId = saved.id
+			moduleEditorState.modulePath = saved.module_path
+			moduleEditorState.metadata = {
+				...(moduleEditorState.metadata || {}),
 				name: payload.name,
 				author: payload.author,
 				workflow: payload.workflow,
@@ -1714,48 +1714,48 @@ export function createProjectsModule({
 				outputs: payload.outputs,
 				assets: payload.assets,
 			}
-			statusEl.textContent = '✅ Project saved'
+			statusEl.textContent = '✅ Module saved'
 			statusEl.style.color = '#28a745'
-			await loadProjects()
+			await loadModules()
 			await checkSpecDigest(true)
 		} catch (error) {
-			console.error('Failed to save project:', error)
-			statusEl.textContent = `Error saving project: ${error}`
+			console.error('Failed to save module:', error)
+			statusEl.textContent = `Error saving module: ${error}`
 			statusEl.style.color = '#dc3545'
 		}
 	}
 
-	async function handleOpenProjectFolder() {
-		if (!projectEditorState.projectPath) {
-			alert('Select a project first')
+	async function handleOpenModuleFolder() {
+		if (!moduleEditorState.modulePath) {
+			alert('Select a module first')
 			return
 		}
 
 		try {
-			await invoke('open_folder', { path: projectEditorState.projectPath })
+			await invoke('open_folder', { path: moduleEditorState.modulePath })
 		} catch (error) {
-			console.error('Failed to open project folder:', error)
+			console.error('Failed to open module folder:', error)
 			alert(`Failed to open folder: ${error}`)
 		}
 	}
 
 	async function handleLaunchJupyter() {
 		const launchBtn = document.getElementById('step-edit-jupyter-btn')
-		const launchBtn2 = document.getElementById('project-edit-launch-jupyter-btn')
-		const launchBtn3 = document.getElementById('project-edit-launch-jupyter-btn-2')
-		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const launchBtn2 = document.getElementById('module-edit-launch-jupyter-btn')
+		const launchBtn3 = document.getElementById('module-edit-launch-jupyter-btn-2')
+		const resetBtn = document.getElementById('module-edit-reset-jupyter-btn')
 
-		if (!projectEditorState.projectPath) {
-			alert('Select a project first')
+		if (!moduleEditorState.modulePath) {
+			alert('Select a module first')
 			return
 		}
 
 		const statusEl =
 			document.getElementById('step-status-message') ||
-			document.getElementById('project-edit-status')
+			document.getElementById('module-edit-status')
 		if (statusEl) statusEl.style.color = '#666'
 
-		if (projectEditorState.jupyter.running) {
+		if (moduleEditorState.jupyter.running) {
 			const message = 'Stopping Jupyter server...\nCommand: uv run --python .venv jupyter lab stop'
 			showOperationModal(message)
 			setButtonLoadingState(launchBtn, true, 'Stopping...')
@@ -1765,12 +1765,12 @@ export function createProjectsModule({
 			if (statusEl) statusEl.textContent = 'Stopping Jupyter (jupyter lab stop)...'
 			try {
 				const result = await invoke('stop_jupyter', {
-					projectPath: projectEditorState.projectPath,
+					modulePath: moduleEditorState.modulePath,
 				})
-				projectEditorState.jupyter.running = !!result.running
-				projectEditorState.jupyter.port = result.port ?? null
-				projectEditorState.jupyter.url = result.url ?? null
-				projectEditorState.jupyter.token = result.token ?? null
+				moduleEditorState.jupyter.running = !!result.running
+				moduleEditorState.jupyter.port = result.port ?? null
+				moduleEditorState.jupyter.url = result.url ?? null
+				moduleEditorState.jupyter.token = result.token ?? null
 				updateJupyterControls()
 				if (statusEl) {
 					statusEl.textContent = 'Jupyter server stopped.'
@@ -1807,19 +1807,19 @@ export function createProjectsModule({
 
 		try {
 			const result = await invoke('launch_jupyter', {
-				projectPath: projectEditorState.projectPath,
+				modulePath: moduleEditorState.modulePath,
 				pythonVersion: null,
 			})
-			projectEditorState.jupyter.running = !!result.running
-			projectEditorState.jupyter.port = result.port ?? null
-			projectEditorState.jupyter.url = result.url ?? null
-			projectEditorState.jupyter.token = result.token ?? null
+			moduleEditorState.jupyter.running = !!result.running
+			moduleEditorState.jupyter.port = result.port ?? null
+			moduleEditorState.jupyter.url = result.url ?? null
+			moduleEditorState.jupyter.token = result.token ?? null
 			updateJupyterControls()
 
 			const launchUrl =
-				projectEditorState.jupyter.url ||
-				(projectEditorState.jupyter.port
-					? `http://localhost:${projectEditorState.jupyter.port}`
+				moduleEditorState.jupyter.url ||
+				(moduleEditorState.jupyter.port
+					? `http://localhost:${moduleEditorState.jupyter.port}`
 					: null)
 			if (launchUrl) {
 				updateOperationModal('Opening browser...')
@@ -1852,18 +1852,18 @@ export function createProjectsModule({
 	}
 
 	async function handleResetJupyter() {
-		const resetBtn = document.getElementById('project-edit-reset-jupyter-btn')
+		const resetBtn = document.getElementById('module-edit-reset-jupyter-btn')
 		const launchBtn = document.getElementById('step-edit-jupyter-btn')
-		const launchBtn2 = document.getElementById('project-edit-launch-jupyter-btn')
-		const launchBtn3 = document.getElementById('project-edit-launch-jupyter-btn-2')
+		const launchBtn2 = document.getElementById('module-edit-launch-jupyter-btn')
+		const launchBtn3 = document.getElementById('module-edit-launch-jupyter-btn-2')
 
-		if (!projectEditorState.projectPath) {
-			alert('Select a project first')
+		if (!moduleEditorState.modulePath) {
+			alert('Select a module first')
 			return
 		}
 
 		const confirmed = await dialog.confirm(
-			'Resetting will delete and recreate the project virtual environment. This will remove any additional packages you installed. Continue?',
+			'Resetting will delete and recreate the module virtual environment. This will remove any additional packages you installed. Continue?',
 			{ title: 'Reset Jupyter Environment', type: 'warning' },
 		)
 
@@ -1873,7 +1873,7 @@ export function createProjectsModule({
 
 		const statusEl =
 			document.getElementById('step-status-message') ||
-			document.getElementById('project-edit-status')
+			document.getElementById('module-edit-status')
 		if (statusEl) {
 			statusEl.textContent = 'Resetting Jupyter environment...'
 			statusEl.style.color = '#666'
@@ -1888,13 +1888,13 @@ export function createProjectsModule({
 
 		try {
 			const result = await invoke('reset_jupyter', {
-				projectPath: projectEditorState.projectPath,
+				modulePath: moduleEditorState.modulePath,
 				pythonVersion: null,
 			})
-			projectEditorState.jupyter.running = !!result.status.running
-			projectEditorState.jupyter.port = result.status.port ?? null
-			projectEditorState.jupyter.url = result.status.url ?? null
-			projectEditorState.jupyter.token = result.status.token ?? null
+			moduleEditorState.jupyter.running = !!result.status.running
+			moduleEditorState.jupyter.port = result.status.port ?? null
+			moduleEditorState.jupyter.url = result.status.url ?? null
+			moduleEditorState.jupyter.token = result.status.token ?? null
 			updateJupyterControls()
 			if (statusEl) {
 				statusEl.textContent = result.message || 'Jupyter environment reset. The server is stopped.'
@@ -1917,15 +1917,15 @@ export function createProjectsModule({
 		}
 	}
 
-	function showCreatePipelineModal() {
-		alert('Pipeline creation wizard coming soon! For now, use the CLI:\n\nbv pipeline create')
+	function showCreateFlowModal() {
+		alert('Flow creation wizard coming soon! For now, use the CLI:\n\nbv flow create')
 	}
 
 	// =============================================================================
 	// NEW SIMPLIFIED PROJECT EDITOR
 	// =============================================================================
 
-	function renderSimpleProjectEditor(data) {
+	function renderSimpleModuleEditor(data) {
 		// Populate basic info
 		document.getElementById('step-name-input').value = data.metadata.name || ''
 		document.getElementById('step-author-input').value = data.metadata.author || ''
@@ -1933,20 +1933,20 @@ export function createProjectsModule({
 		document.getElementById('step-workflow-input').value = data.metadata.workflow || 'workflow.nf'
 		document.getElementById('step-template-select').value =
 			data.metadata.template || 'dynamic-nextflow'
-		document.getElementById('step-path-display').textContent = data.project_path || ''
+		document.getElementById('step-path-display').textContent = data.module_path || ''
 
-		// Store state - use project_id from response (may be null for unregistered projects)
-		projectEditorState.projectId = data.project_id ?? null
-		projectEditorState.projectPath = data.project_path
-		projectEditorState.metadata = data.metadata
-		projectEditorState.files = data.metadata.assets || []
-		projectEditorState.inputs = data.metadata.inputs || []
-		projectEditorState.outputs = data.metadata.outputs || []
-		projectEditorState.parameters = data.metadata.parameters || []
+		// Store state - use module_id from response (may be null for unregistered modules)
+		moduleEditorState.moduleId = data.module_id ?? null
+		moduleEditorState.modulePath = data.module_path
+		moduleEditorState.metadata = data.metadata
+		moduleEditorState.files = data.metadata.assets || []
+		moduleEditorState.inputs = data.metadata.inputs || []
+		moduleEditorState.outputs = data.metadata.outputs || []
+		moduleEditorState.parameters = data.metadata.parameters || []
 
-		console.log('[Editor] Loaded project:', {
-			id: projectEditorState.projectId,
-			path: projectEditorState.projectPath,
+		console.log('[Editor] Loaded module:', {
+			id: moduleEditorState.moduleId,
+			path: moduleEditorState.modulePath,
 			name: data.metadata.name,
 		})
 
@@ -1968,7 +1968,7 @@ export function createProjectsModule({
 		const backBtn = document.getElementById('step-edit-back-btn')
 		if (backBtn) {
 			backBtn.onclick = () => {
-				navigateTo('projects')
+				navigateTo('modules')
 			}
 		}
 
@@ -1987,7 +1987,7 @@ export function createProjectsModule({
 		// Open folder button
 		const folderBtn = document.getElementById('open-folder-btn')
 		if (folderBtn) {
-			folderBtn.onclick = () => handleOpenProjectFolder()
+			folderBtn.onclick = () => handleOpenModuleFolder()
 		}
 
 		// Auto-save on blur for text fields
@@ -2032,11 +2032,11 @@ export function createProjectsModule({
 				e.preventDefault()
 				dropZone.classList.remove('drag-over')
 				// TODO: Handle file drop
-				alert('File upload coming soon! For now, add files directly to the project folder.')
+				alert('File upload coming soon! For now, add files directly to the module folder.')
 			}
 
 			fileInput.onchange = () => {
-				alert('File upload coming soon! For now, add files directly to the project folder.')
+				alert('File upload coming soon! For now, add files directly to the module folder.')
 			}
 		}
 
@@ -2084,13 +2084,13 @@ export function createProjectsModule({
 		const container = document.getElementById('files-list')
 		if (!container) return
 
-		if (projectEditorState.files.length === 0) {
+		if (moduleEditorState.files.length === 0) {
 			container.innerHTML =
 				'<p class="empty-state">No files yet. Add Python, R, or other scripts above.</p>'
 			return
 		}
 
-		container.innerHTML = projectEditorState.files
+		container.innerHTML = moduleEditorState.files
 			.map(
 				(file, index) => `
 			<div class="file-item">
@@ -2100,7 +2100,7 @@ export function createProjectsModule({
 					</svg>
 					<span class="file-name">${escapeHtml(file)}</span>
 				</div>
-				<button class="file-remove-btn" onclick="window.projectEditor.removeFile(${index})">&times;</button>
+				<button class="file-remove-btn" onclick="window.moduleEditor.removeFile(${index})">&times;</button>
 			</div>
 		`,
 			)
@@ -2111,7 +2111,7 @@ export function createProjectsModule({
 		const container = document.getElementById(`${type}-list`)
 		if (!container) return
 
-		const items = projectEditorState[type]
+		const items = moduleEditorState[type]
 		const icon =
 			type === 'inputs'
 				? '<path d="M10 3L3 10L10 17M3 10H17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
@@ -2135,8 +2135,8 @@ export function createProjectsModule({
 					${item.description ? `<p class="io-description">${escapeHtml(item.description)}</p>` : ''}
 				</div>
 				<div class="io-item-actions">
-					<button class="io-edit-btn" onclick="window.projectEditor.editIO('${type}', ${index})">Edit</button>
-					<button class="io-remove-btn" onclick="window.projectEditor.removeIO('${type}', ${index})">Remove</button>
+					<button class="io-edit-btn" onclick="window.moduleEditor.editIO('${type}', ${index})">Edit</button>
+					<button class="io-remove-btn" onclick="window.moduleEditor.removeIO('${type}', ${index})">Remove</button>
 				</div>
 			</div>
 		`,
@@ -2150,7 +2150,7 @@ export function createProjectsModule({
 
 		if (!container) return
 
-		const items = projectEditorState.parameters
+		const items = moduleEditorState.parameters
 
 		if (countBadge) {
 			countBadge.textContent = items.length
@@ -2183,8 +2183,8 @@ export function createProjectsModule({
 					}
 				</div>
 				<div class="io-item-actions">
-					<button class="io-edit-btn" onclick="window.projectEditor.editParameter(${index})">Edit</button>
-					<button class="io-remove-btn" onclick="window.projectEditor.removeParameter(${index})">Remove</button>
+					<button class="io-edit-btn" onclick="window.moduleEditor.editParameter(${index})">Edit</button>
+					<button class="io-remove-btn" onclick="window.moduleEditor.removeParameter(${index})">Remove</button>
 				</div>
 			</div>
 		`,
@@ -2196,9 +2196,9 @@ export function createProjectsModule({
 		const modal = document.getElementById('io-modal')
 		const title = document.getElementById('io-modal-title')
 
-		projectEditorState.editingType = type
-		projectEditorState.editingIndex = index
-		projectEditorState.editingItem = item
+		moduleEditorState.editingType = type
+		moduleEditorState.editingIndex = index
+		moduleEditorState.editingItem = item
 
 		title.textContent = item
 			? `Edit ${type === 'input' ? 'Input' : 'Output'}`
@@ -2217,9 +2217,9 @@ export function createProjectsModule({
 	function hideIOModal() {
 		const modal = document.getElementById('io-modal')
 		modal.style.display = 'none'
-		projectEditorState.editingType = null
-		projectEditorState.editingIndex = -1
-		projectEditorState.editingItem = null
+		moduleEditorState.editingType = null
+		moduleEditorState.editingIndex = -1
+		moduleEditorState.editingItem = null
 	}
 
 	function saveIO() {
@@ -2248,14 +2248,14 @@ export function createProjectsModule({
 			path: path || undefined,
 		}
 
-		const listKey = projectEditorState.editingType + 's'
+		const listKey = moduleEditorState.editingType + 's'
 
-		if (projectEditorState.editingIndex >= 0) {
+		if (moduleEditorState.editingIndex >= 0) {
 			// Edit existing
-			projectEditorState[listKey][projectEditorState.editingIndex] = item
+			moduleEditorState[listKey][moduleEditorState.editingIndex] = item
 		} else {
 			// Add new
-			projectEditorState[listKey].push(item)
+			moduleEditorState[listKey].push(item)
 		}
 
 		renderIOList(listKey)
@@ -2269,8 +2269,8 @@ export function createProjectsModule({
 		const modal = document.getElementById('param-modal')
 		const title = document.getElementById('param-modal-title')
 
-		projectEditorState.editingIndex = index
-		projectEditorState.editingItem = item
+		moduleEditorState.editingIndex = index
+		moduleEditorState.editingItem = item
 
 		title.textContent = item ? 'Edit Parameter' : 'Add Parameter'
 
@@ -2286,8 +2286,8 @@ export function createProjectsModule({
 	function hideParameterModal() {
 		const modal = document.getElementById('param-modal')
 		modal.style.display = 'none'
-		projectEditorState.editingIndex = -1
-		projectEditorState.editingItem = null
+		moduleEditorState.editingIndex = -1
+		moduleEditorState.editingItem = null
 	}
 
 	function saveParameter() {
@@ -2309,12 +2309,12 @@ export function createProjectsModule({
 			default: defaultValue || undefined,
 		}
 
-		if (projectEditorState.editingIndex >= 0) {
+		if (moduleEditorState.editingIndex >= 0) {
 			// Edit existing
-			projectEditorState.parameters[projectEditorState.editingIndex] = item
+			moduleEditorState.parameters[moduleEditorState.editingIndex] = item
 		} else {
 			// Add new
-			projectEditorState.parameters.push(item)
+			moduleEditorState.parameters.push(item)
 		}
 
 		renderParametersList()
@@ -2339,11 +2339,11 @@ export function createProjectsModule({
 			clearTimeout(autoSaveTimeout)
 		}
 		autoSaveTimeout = setTimeout(() => {
-			autoSaveProject()
+			autoSaveModule()
 		}, 800) // Save 800ms after user stops typing
 	}
 
-	async function autoSaveProject() {
+	async function autoSaveModule() {
 		if (isSaving) return
 		isSaving = true
 
@@ -2373,33 +2373,33 @@ export function createProjectsModule({
 			author,
 			workflow,
 			template: template || null,
-			assets: projectEditorState.files,
+			assets: moduleEditorState.files,
 			version: version || '1.0.0',
 			spec: {
-				parameters: projectEditorState.parameters,
-				inputs: projectEditorState.inputs,
-				outputs: projectEditorState.outputs,
+				parameters: moduleEditorState.parameters,
+				inputs: moduleEditorState.inputs,
+				outputs: moduleEditorState.outputs,
 			},
 		})
 
 		try {
 			console.log('[Auto-save] Saving:', {
-				projectId: projectEditorState.projectId,
-				projectPath: projectEditorState.projectPath,
+				moduleId: moduleEditorState.moduleId,
+				modulePath: moduleEditorState.modulePath,
 				name: payload.name,
 			})
 
-			// Call backend - it will update existing project, not create new one
-			const result = await invoke('save_project_editor', {
-				projectId: projectEditorState.projectId,
-				projectPath: projectEditorState.projectPath,
+			// Call backend - it will update existing module, not create new one
+			const result = await invoke('save_module_editor', {
+				moduleId: moduleEditorState.moduleId,
+				modulePath: moduleEditorState.modulePath,
 				payload,
 			})
 
-			// Update project ID if it was null before
-			if (!projectEditorState.projectId && result.id) {
-				projectEditorState.projectId = result.id
-				console.log('[Auto-save] Updated project ID:', result.id)
+			// Update module ID if it was null before
+			if (!moduleEditorState.moduleId && result.id) {
+				moduleEditorState.moduleId = result.id
+				console.log('[Auto-save] Updated module ID:', result.id)
 			}
 
 			// Show saved indicator
@@ -2411,8 +2411,8 @@ export function createProjectsModule({
 				}, 2000)
 			}
 
-			// Silently refresh project list
-			await loadProjects()
+			// Silently refresh module list
+			await loadModules()
 		} catch (error) {
 			console.error('Auto-save failed:', error)
 
@@ -2434,30 +2434,30 @@ export function createProjectsModule({
 	}
 
 	// Expose functions to window for onclick handlers
-	window.projectEditor = {
+	window.moduleEditor = {
 		removeFile: (index) => {
-			projectEditorState.files.splice(index, 1)
+			moduleEditorState.files.splice(index, 1)
 			renderFilesList()
 			debouncedAutoSave()
 		},
 		editIO: (type, index) => {
-			const item = projectEditorState[type][index]
+			const item = moduleEditorState[type][index]
 			showIOModal(type.replace(/s$/, ''), item, index)
 		},
 		removeIO: (type, index) => {
 			if (confirm('Remove this item?')) {
-				projectEditorState[type].splice(index, 1)
+				moduleEditorState[type].splice(index, 1)
 				renderIOList(type)
 				debouncedAutoSave()
 			}
 		},
 		editParameter: (index) => {
-			const item = projectEditorState.parameters[index]
+			const item = moduleEditorState.parameters[index]
 			showParameterModal(item, index)
 		},
 		removeParameter: (index) => {
 			if (confirm('Remove this parameter?')) {
-				projectEditorState.parameters.splice(index, 1)
+				moduleEditorState.parameters.splice(index, 1)
 				renderParametersList()
 				debouncedAutoSave()
 			}
@@ -2465,24 +2465,24 @@ export function createProjectsModule({
 	}
 
 	return {
-		loadProjects,
-		importProject,
-		importProjectFromFolder,
-		showCreateProjectModal,
-		showCreatePipelineModal,
-		hideCreateProjectModal,
-		handleProjectNameInputChange,
-		chooseProjectDirectory,
-		resetProjectDirectory,
-		createProjectFromModal,
-		handleSaveProjectEditor,
+		loadModules,
+		importModule,
+		importModuleFromFolder,
+		showCreateModuleModal,
+		showCreateFlowModal,
+		hideCreateModuleModal,
+		handleModuleNameInputChange,
+		chooseModuleDirectory,
+		resetModuleDirectory,
+		createModuleFromModal,
+		handleSaveModuleEditor,
 		handleLaunchJupyter,
 		handleResetJupyter,
-		handleOpenProjectFolder,
-		handleLeaveProjectEditor,
-		handleReloadProjectSpec,
+		handleOpenModuleFolder,
+		handleLeaveModuleEditor,
+		handleReloadModuleSpec,
 		handleCreateTabNext,
 		handleCreateTabBack,
-		openProjectEditor, // Export for pipelines module
+		openModuleEditor, // Export for flows module
 	}
 }

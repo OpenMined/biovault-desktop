@@ -1,6 +1,6 @@
 export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {} }) {
 	let selectedParticipants = []
-	let selectedProject = null
+	let selectedModule = null
 	let currentRunLogListeners = []
 	let currentLogWorkDir = null
 	let navigateTo = () => {}
@@ -14,14 +14,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return window.confirm(message)
 	}
 
-	// Listen for pipeline logs and completion
-	listen('pipeline-log-line', () => {
+	// Listen for flow logs and completion
+	listen('flow-log-line', () => {
 		refreshLogs()
 	})
 
-	listen('pipeline-complete', async (event) => {
+	listen('flow-complete', async (event) => {
 		const status = event.payload
-		console.log('Pipeline completed with status:', status)
+		console.log('Flow completed with status:', status)
 
 		refreshLogs({ force: true })
 
@@ -89,13 +89,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 
-	async function loadRunProjects() {
+	async function loadRunModules() {
 		try {
-			const projects = await invoke('get_projects')
-			const container = document.getElementById('run-projects-list')
+			const modules = await invoke('get_modules')
+			const container = document.getElementById('run-modules-list')
 			container.innerHTML = ''
 
-			projects.forEach((p) => {
+			modules.forEach((p) => {
 				const item = document.createElement('div')
 				item.className = 'selection-item'
 				item.dataset.id = p.id
@@ -103,34 +103,34 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 				item.addEventListener('click', () => {
 					document
-						.querySelectorAll('#run-projects-list .selection-item')
+						.querySelectorAll('#run-modules-list .selection-item')
 						.forEach((i) => i.classList.remove('selected'))
 					item.classList.add('selected')
-					selectedProject = parseInt(item.dataset.id)
+					selectedModule = parseInt(item.dataset.id)
 					updateRunButton()
 				})
 
 				container.appendChild(item)
 			})
 		} catch (error) {
-			console.error('Error loading projects:', error)
+			console.error('Error loading modules:', error)
 		}
 	}
 
 	function updateRunButton() {
 		const btn = document.getElementById('run-btn')
-		btn.disabled = selectedParticipants.length === 0 || selectedProject === null
+		btn.disabled = selectedParticipants.length === 0 || selectedModule === null
 	}
 
 	function prepareRunView() {
 		selectedParticipants = []
-		selectedProject = null
+		selectedModule = null
 		const selectAll = document.getElementById('select-all-participants')
 		if (selectAll) {
 			selectAll.checked = false
 		}
 		loadRunParticipants()
-		loadRunProjects()
+		loadRunModules()
 		updateRunButton()
 	}
 
@@ -146,20 +146,20 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 			}
 
-			// Load only pipeline runs (steps are now called projects)
-			const pipelineRuns = await invoke('get_pipeline_runs')
-			const pipelines = await invoke('get_pipelines') // Get pipeline names
+			// Load only flow runs (steps are now called modules)
+			const flowRuns = await invoke('get_flow_runs')
+			const flows = await invoke('get_flows') // Get flow names
 
 			const container = document.getElementById('runs-list')
 
-			if (pipelineRuns.length === 0) {
+			if (flowRuns.length === 0) {
 				container.innerHTML = `
 					<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 32px; text-align: center;">
 						<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: #cbd5e1; margin-bottom: 20px;">
 							<polyline points="9 18 15 12 9 6"></polyline>
 						</svg>
-						<h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #475569;">No pipeline runs yet</h3>
-						<p style="margin: 0; font-size: 14px; color: #94a3b8; line-height: 1.5;">Run a pipeline to see results here</p>
+						<h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #475569;">No flow runs yet</h3>
+						<p style="margin: 0; font-size: 14px; color: #94a3b8; line-height: 1.5;">Run a flow to see results here</p>
 					</div>
 				`
 				return
@@ -167,12 +167,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 			container.innerHTML = ''
 
-			// Display pipeline runs (sorted by most recent first)
+			// Display flow runs (sorted by most recent first)
 			// The first run (latest) should be expanded by default unless user collapsed it
-			pipelineRuns.forEach((run, index) => {
-				// Find pipeline name
-				const pipeline = pipelines.find((p) => p.id === run.pipeline_id)
-				const pipelineName = pipeline ? pipeline.name : `Pipeline #${run.pipeline_id}`
+			flowRuns.forEach((run, index) => {
+				// Find flow name
+				const flow = flows.find((p) => p.id === run.flow_id)
+				const flowName = flow ? flow.name : `Flow #${run.flow_id}`
 				let runMetadata = {}
 				try {
 					runMetadata = run.metadata ? JSON.parse(run.metadata) : {}
@@ -180,7 +180,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					console.warn('Failed to parse run metadata:', error)
 				}
 				const dataSelection = runMetadata.data_selection || {}
-				const titleParts = [pipelineName]
+				const titleParts = [flowName]
 				if (dataSelection.dataset_name) titleParts.push(dataSelection.dataset_name)
 				if (Array.isArray(dataSelection.asset_keys) && dataSelection.asset_keys.length > 0) {
 					titleParts.push(dataSelection.asset_keys.join(', '))
@@ -191,7 +191,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 				const runTitle = titleParts.join(' - ')
 				const card = document.createElement('div')
-				card.className = 'pipeline-run-card'
+				card.className = 'flow-run-card'
 				card.dataset.runId = run.id
 				card.style.cssText =
 					'background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; overflow: hidden; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);'
@@ -271,7 +271,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					isNewlyCreated ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'
 				}; border-bottom: ${isNewlyCreated ? '2px' : '1px'} solid ${
 					isNewlyCreated ? 'rgba(37,99,235,0.2)' : '#f1f5f9'
-				};" onmouseover="if(this.closest('.pipeline-run-card').dataset.expanded !== 'true') { this.style.background='#f8fafc' }" onmouseout="if(this.closest('.pipeline-run-card').dataset.expanded !== 'true') { this.style.background='${
+				};" onmouseover="if(this.closest('.flow-run-card').dataset.expanded !== 'true') { this.style.background='#f8fafc' }" onmouseout="if(this.closest('.flow-run-card').dataset.expanded !== 'true') { this.style.background='${
 					isNewlyCreated ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' : '#ffffff'
 				}' }">
 					<svg class="run-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #64748b; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); flex-shrink: 0;">
@@ -301,7 +301,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					<div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
 						${
 							run.status === 'success'
-								? `<button class="run-share-btn" data-run-id="${run.id}" data-pipeline-name="${escapeHtml(pipelineName)}" data-results-dir="${run.results_dir || run.work_dir || ''}" title="Share results" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
+								? `<button class="run-share-btn" data-run-id="${run.id}" data-flow-name="${escapeHtml(flowName)}" data-results-dir="${run.results_dir || run.work_dir || ''}" title="Share results" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
 									<img src="assets/icons/send.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
 								</button>`
 								: ''
@@ -349,7 +349,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const detailsContainer = card.querySelector('.run-details')
 					updateExpandedState(true)
 					// Load steps immediately for auto-expanded run
-					loadPipelineRunSteps(run, pipeline, detailsContainer, statusClass).catch(console.error)
+					loadFlowRunSteps(run, flow, detailsContainer, statusClass).catch(console.error)
 					// Scroll to this card after a brief delay (only for newly created, not all running)
 					if (isNewlyCreated) {
 						setTimeout(() => {
@@ -381,7 +381,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const detailsContainer = card.querySelector('.run-details')
 					if (newExpandedState) {
 						detailsContainer.style.display = 'block'
-						await loadPipelineRunSteps(run, pipeline, detailsContainer, statusClass)
+						await loadFlowRunSteps(run, flow, detailsContainer, statusClass)
 					} else {
 						detailsContainer.style.display = 'none'
 					}
@@ -409,12 +409,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					deleteBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
 						const confirmed = await confirmWithDialog(
-							`Delete pipeline run "${pipelineName}" (Run #${run.id}) and all its results? This action cannot be undone.`,
+							`Delete flow run "${flowName}" (Run #${run.id}) and all its results? This action cannot be undone.`,
 							{ title: 'Delete Run', type: 'warning' },
 						)
 						if (confirmed) {
 							try {
-								await invoke('delete_pipeline_run', { runId: run.id })
+								await invoke('delete_flow_run', { runId: run.id })
 								await loadRuns()
 							} catch (error) {
 								alert(`Error deleting run: ${error}`)
@@ -428,7 +428,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				if (shareBtn) {
 					shareBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
-						await showShareResultsModal(run, pipeline, pipelineName)
+						await showShareResultsModal(run, flow, flowName)
 					})
 				}
 
@@ -452,10 +452,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return 'Just now'
 	}
 
-	// Load steps for an expanded pipeline run
-	async function loadPipelineRunSteps(run, pipeline, container, statusClass) {
+	// Load steps for an expanded flow run
+	async function loadFlowRunSteps(run, flow, container, statusClass) {
 		try {
-			const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
+			const steps = flow && flow.spec && flow.spec.steps ? flow.spec.steps : []
 			const resultsDir = run.results_dir || run.work_dir
 
 			// Determine status colors and backgrounds based on run status
@@ -718,7 +718,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.3s; color: #64748b; transform: rotate(0deg);">
 								<polyline points="9 18 15 12 9 6"></polyline>
 							</svg>
-							<span>Pipeline Steps</span>
+							<span>Flow Steps</span>
 							<span style="margin-left: auto; padding: 4px 10px; background: #e2e8f0; color: #64748b; border-radius: 6px; font-size: 12px; font-weight: 600;">${
 								steps.length
 							} step${steps.length === 1 ? '' : 's'}</span>
@@ -874,7 +874,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	}
 
 	async function runAnalysis() {
-		if (selectedParticipants.length === 0 || selectedProject === null) return
+		if (selectedParticipants.length === 0 || selectedModule === null) return
 
 		const btn = document.getElementById('run-btn')
 		btn.disabled = true
@@ -884,7 +884,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			// First, create the run record
 			const result = await invoke('start_analysis', {
 				participantIds: selectedParticipants,
-				projectId: selectedProject,
+				moduleId: selectedModule,
 			})
 
 			// Navigate to Results tab BEFORE starting execution
@@ -973,9 +973,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		updateRunButton()
 	}
 
-	// Show modal to share pipeline run results
-	async function showShareResultsModal(run, pipeline, pipelineName) {
-		const steps = pipeline && pipeline.spec && pipeline.spec.steps ? pipeline.spec.steps : []
+	// Show modal to share flow run results
+	async function showShareResultsModal(run, flow, flowName) {
+		const steps = flow && flow.spec && flow.spec.steps ? flow.spec.steps : []
 		const resultsDir = run.results_dir || run.work_dir
 
 		// Collect all published outputs
@@ -1026,7 +1026,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							</svg>
 						</button>
 					</div>
-					<p style="margin: 8px 0 0; font-size: 14px; color: #64748b;">Share pipeline results from <strong>${escapeHtml(pipelineName)}</strong> (Run #${run.id})</p>
+					<p style="margin: 8px 0 0; font-size: 14px; color: #64748b;">Share flow results from <strong>${escapeHtml(flowName)}</strong> (Run #${run.id})</p>
 				</div>
 
 				<div style="padding: 24px 28px;">
@@ -1112,9 +1112,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const message = modal.querySelector('#share-message').value.trim()
 
 			try {
-				await invoke('send_pipeline_results', {
+				await invoke('send_flow_results', {
 					recipient,
-					pipelineName,
+					flowName,
 					runId: run.id,
 					outputs: selectedOutputs,
 					message,

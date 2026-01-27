@@ -645,18 +645,18 @@
 	flex-shrink: 0;
 }
 
-.btn-pipeline,
-.btn-actionmodern.btn-pipeline {
+.btn-flow,
+.btn-actionmodern.btn-flow {
 	background: #3b82f6;
 }
 
-.btn-pipeline:hover:not(:disabled),
-.btn-actionmodern.btn-pipeline:hover:not(:disabled) {
+.btn-flow:hover:not(:disabled),
+.btn-actionmodern.btn-flow:hover:not(:disabled) {
 	background: #2563eb;
 }
 
-.btn-pipeline:disabled,
-.btn-actionmodern.btn-pipeline:disabled {
+.btn-flow:disabled,
+.btn-actionmodern.btn-flow:disabled {
 	background: #e2e8f0;
 	color: #94a3b8;
 	cursor: not-allowed;
@@ -1848,7 +1848,7 @@
 		brightness(95%) contrast(95%);
 }
 
-/* Action Button - Blue (Run Pipeline, Queue actions) */
+/* Action Button - Blue (Run Flow, Queue actions) */
 .btn-action {
 	display: inline-flex;
 	align-items: center;
@@ -3737,18 +3737,18 @@
 	border-color: #38bdf8;
 }
 
-/* Run Pipeline button in dataset cards */
-.btn-run-pipeline {
+/* Run Flow button in dataset cards */
+.btn-run-flow {
 	color: #8b5cf6;
 }
 
-.btn-run-pipeline:hover {
+.btn-run-flow:hover {
 	background: #f5f3ff;
 	color: #7c3aed;
 }
 
-/* Pipeline modal option hover */
-.pipeline-option:hover {
+/* Flow modal option hover */
+.flow-option:hover {
 	background: #f8fafc;
 	border-color: #cbd5e1;
 }
