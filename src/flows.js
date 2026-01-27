@@ -2072,6 +2072,15 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 	async function importTemplateFlow(templateName) {
 		closeFlowPickerModal()
 
+		// Try to get local flow templates first (for development/testing)
+		let localTemplates = {}
+		try {
+			localTemplates = await invoke('get_local_flow_templates')
+			console.log('🔍 Found local flow templates:', localTemplates)
+		} catch (e) {
+			console.log('No local flow templates available, using GitHub URLs')
+		}
+
 		const templateUrls = {
 			apol1:
 				'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/flow.yaml',
@@ -2082,7 +2091,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 		}
 
-		const url = templateUrls[templateName]
+		// Use local path if available, otherwise use GitHub URL
+		const url = localTemplates[templateName] || templateUrls[templateName]
 		if (!url) {
 			alert('Invalid template selected')
 			return

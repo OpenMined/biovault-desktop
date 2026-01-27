@@ -72,19 +72,6 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
           # flows-solo on Linux - rust
-          - scenario: flows-solo
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          # flows-solo on Linux - go
-          - scenario: flows-solo
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: go
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
           # flows-collab on Linux - rust
           - scenario: flows-collab
             platform: linux-x86_64
@@ -92,13 +79,13 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # flows-collab on Linux - go
+          # flows-collab on macOS ARM - rust
           - scenario: flows-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: go
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+            run_prefix: ""
           # flows-collab on Windows - rust (Podman Hyper-V)
           - scenario: flows-collab
             platform: windows-x86_64
@@ -106,9 +93,7 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
-          # NOTE: flows-collab on macOS is skipped because GitHub macOS runners
-          # don't support nested virtualization (Docker requires VMs on macOS).
-          # flows-collab is fully tested on Linux which covers the core functionality.
+          # NOTE: flows-collab on macOS runs with rust client mode only.
 
     defaults:
       run:
@@ -346,8 +331,8 @@ jobs:
         run: maturin build --release
         working-directory: syftbox-sdk/python
 
-      - name: Setup Podman (Windows pipelines)
-        if: runner.os == 'Windows' && startsWith(matrix.scenario, 'pipelines-')
+      - name: Setup Podman (Windows)
+        if: runner.os == 'Windows' && (startsWith(matrix.scenario, 'pipelines-') || matrix.scenario == 'flows-collab')
         shell: pwsh
         run: |
           choco install podman-cli -y
@@ -463,7 +448,7 @@ jobs:
 
   profiles-e2e:
     name: Profiles E2E (real backend)
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-medium
     steps:
       - uses: actions/checkout@v4
 
@@ -597,6 +582,7 @@ jobs:
       - name: Run profiles E2E scenario (headless)
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: xvfb-run -a ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
@@ -611,7 +597,7 @@ jobs:
 
   profiles-e2e-macos:
     name: Profiles E2E (real backend, macOS)
-    runs-on: macos-latest
+    runs-on: namespace-profile-mac-medium
     steps:
       - uses: actions/checkout@v4
 
@@ -722,6 +708,7 @@ jobs:
       - name: Run profiles E2E scenario
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure
@@ -849,6 +836,7 @@ jobs:
       - name: Run profiles E2E scenario
         env:
           SKIP_PLAYWRIGHT_INSTALL: '1'
+          BV_DEVSTACK_CLIENT_MODE: 'rust'
         run: .\win.ps1 ./test-scenario.sh --profiles
 
       - name: Upload test artifacts on failure

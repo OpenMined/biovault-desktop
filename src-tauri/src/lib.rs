@@ -1305,6 +1305,7 @@ pub fn run() {
             get_supported_output_types,
             get_supported_parameter_types,
             get_common_formats,
+            get_local_flow_templates,
             // Jupyter commands
             launch_jupyter,
             stop_jupyter,

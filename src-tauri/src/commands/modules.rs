@@ -1107,3 +1107,36 @@ pub fn get_supported_parameter_types() -> Vec<String> {
 pub fn get_common_formats() -> Vec<String> {
     module_spec::get_common_formats()
 }
+
+/// Returns paths to local flow templates if they exist (for development/testing)
+#[tauri::command]
+pub fn get_local_flow_templates() -> HashMap<String, String> {
+    let mut templates = HashMap::new();
+
+    // Try to find bioscript examples directory relative to cwd
+    if let Ok(cwd) = std::env::current_dir() {
+        let bioscript_examples = cwd.join("bioscript").join("examples");
+
+        if bioscript_examples.exists() {
+            // Check for each known template
+            let template_paths = [
+                ("apol1", "apol1/apol1-classifier/flow.yaml"),
+                ("brca", "brca/brca-classifier/flow.yaml"),
+                ("herc2", "herc2/herc2-classifier/flow.yaml"),
+                (
+                    "thalassemia",
+                    "thalassemia/thalassemia-classifier/flow.yaml",
+                ),
+            ];
+
+            for (name, relative_path) in template_paths {
+                let full_path = bioscript_examples.join(relative_path);
+                if full_path.exists() {
+                    templates.insert(name.to_string(), full_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    templates
+}
