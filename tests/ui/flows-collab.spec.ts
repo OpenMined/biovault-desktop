@@ -22,6 +22,7 @@
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
 import { createHash } from 'node:crypto'
+import { execSync } from 'node:child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
@@ -420,6 +421,42 @@ function normalizeTsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
+function parseTsvByParticipant(content: string): {
+	header: string
+	idIndex: number
+	rows: string[]
+	ids: string[]
+	duplicates: string[]
+	byId: Map<string, string[]>
+} {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	const header = lines[0] ?? ''
+	const rows = lines.slice(1)
+	const headerCols = header.split('\t')
+	let idIndex = headerCols.indexOf('participant_id')
+	if (idIndex < 0) idIndex = 0
+	const byId = new Map<string, string[]>()
+	const ids: string[] = []
+	const duplicates: string[] = []
+	for (const row of rows) {
+		const cols = row.split('\t')
+		const id = (cols[idIndex] ?? '').trim()
+		if (!id) continue
+		ids.push(id)
+		const existing = byId.get(id)
+		if (existing) {
+			existing.push(row)
+			if (!duplicates.includes(id)) duplicates.push(id)
+		} else {
+			byId.set(id, [row])
+		}
+	}
+	return { header, idIndex, rows, ids, duplicates, byId }
+}
+
 function normalizeCsvResult(content: string): string {
 	const lines = content
 		.split(/\r?\n/)
@@ -442,6 +479,236 @@ function extractMockFilenames(entries: any[]): string[] {
 		})
 		.filter((name) => typeof name === 'string' && name.length > 0)
 	return Array.from(new Set(filenames))
+}
+
+function listDirSafe(dirPath: string, limit = 50): string[] {
+	if (!dirPath || !fs.existsSync(dirPath)) return []
+	try {
+		return fs.readdirSync(dirPath).slice(0, limit)
+	} catch {
+		return []
+	}
+}
+
+function readFileSnippet(filePath: string, maxBytes = 5000): string | null {
+	if (!filePath || !fs.existsSync(filePath)) return null
+	try {
+		const buf = fs.readFileSync(filePath)
+		if (buf.length <= maxBytes) return buf.toString('utf8')
+		return `${buf.subarray(0, maxBytes).toString('utf8')}\n...[truncated ${buf.length - maxBytes} bytes]`
+	} catch {
+		return null
+	}
+}
+
+function execCommandSafe(cmd: string): string {
+	try {
+		return execSync(cmd, { encoding: 'utf8', stdio: 'pipe' })
+	} catch (error: any) {
+		const stdout = error?.stdout?.toString?.() ?? ''
+		const stderr = error?.stderr?.toString?.() ?? ''
+		const message = error?.message ?? String(error)
+		return `ERROR: ${message}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`.trim()
+	}
+}
+
+function dumpDirTree(
+	baseDir: string,
+	maxDepth = 3,
+	maxEntries = 200,
+): { lines: string[]; truncated: boolean } {
+	const lines: string[] = []
+	let count = 0
+	let truncated = false
+
+	function walk(dir: string, depth: number) {
+		if (count >= maxEntries) {
+			truncated = true
+			return
+		}
+		let entries: fs.Dirent[] = []
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true })
+		} catch (e) {
+			lines.push(`${'  '.repeat(depth)}[error] ${dir}: ${e}`)
+			count++
+			return
+		}
+
+		for (const entry of entries) {
+			if (count >= maxEntries) {
+				truncated = true
+				return
+			}
+			const fullPath = path.join(dir, entry.name)
+			let stats: fs.Stats | null = null
+			try {
+				stats = fs.statSync(fullPath)
+			} catch {}
+			const size = stats ? stats.size : 0
+			const mtime = stats ? stats.mtime.toISOString() : 'unknown'
+			lines.push(
+				`${'  '.repeat(depth)}${entry.isDirectory() ? '[dir]' : '[file]'} ${entry.name} (${size} bytes, ${mtime})`,
+			)
+			count++
+			if (entry.isDirectory() && depth < maxDepth) {
+				walk(fullPath, depth + 1)
+			}
+		}
+	}
+
+	if (fs.existsSync(baseDir)) {
+		lines.push(`[tree] ${baseDir}`)
+		walk(baseDir, 0)
+	} else {
+		lines.push(`[tree] baseDir missing: ${baseDir}`)
+	}
+	return { lines, truncated }
+}
+
+function dumpContainerDiagnostics(): void {
+	console.log('\n=== DEBUG: Container Runtime Diagnostics ===')
+	const podmanInfo = execCommandSafe('podman info --debug')
+	console.log(`[podman info]\n${podmanInfo}`)
+	const podmanPs = execCommandSafe('podman ps -a --format json')
+	console.log(`[podman ps]\n${podmanPs}`)
+	try {
+		const parsed = JSON.parse(podmanPs || '[]')
+		if (Array.isArray(parsed)) {
+			for (const container of parsed.slice(0, 5)) {
+				const id = container?.Id || container?.ID || container?.id
+				if (!id) continue
+				const logs = execCommandSafe(`podman logs --tail 200 ${id}`)
+				console.log(`\n[podman logs ${id}]\n${logs}`)
+			}
+		}
+	} catch {}
+
+	const dockerInfo = execCommandSafe('docker info')
+	console.log(`[docker info]\n${dockerInfo}`)
+	const dockerPs = execCommandSafe('docker ps -a --format "{{json .}}"')
+	console.log(`[docker ps]\n${dockerPs}`)
+	if (dockerPs && !dockerPs.startsWith('ERROR:')) {
+		const lines = dockerPs.split('\n').filter(Boolean).slice(0, 5)
+		for (const line of lines) {
+			try {
+				const obj = JSON.parse(line)
+				const id = obj?.ID
+				if (!id) continue
+				const logs = execCommandSafe(`docker logs --tail 200 ${id}`)
+				console.log(`\n[docker logs ${id}]\n${logs}`)
+			} catch {}
+		}
+	}
+}
+
+function dumpWindowsDiagnostics(): void {
+	console.log('\n=== DEBUG: Windows Diagnostics ===')
+	const ps = (script: string) =>
+		execCommandSafe(`powershell -NoProfile -NonInteractive -Command "${script}"`)
+
+	console.log('[windows] system info')
+	console.log(ps('$PSVersionTable; Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion'))
+
+	console.log('[windows] recent Application events (errors/warnings, last 60 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-60)} | Where-Object { $_.LevelDisplayName -in @('Error','Warning') } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message -First 50 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] recent System events (errors/warnings, last 60 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddMinutes(-60)} | Where-Object { $_.LevelDisplayName -in @('Error','Warning') } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message -First 50 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] Hyper-V related events (last 120 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Hyper-V-VMMS/Admin'; StartTime=(Get-Date).AddMinutes(-120)} | Select-Object TimeCreated,Id,LevelDisplayName,Message -First 30 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] process snapshot (top 40 by CPU time)')
+	console.log(
+		ps(
+			'Get-Process | Sort-Object CPU -Descending | Select-Object -First 40 Id,ProcessName,CPU,WorkingSet,StartTime | Format-Table -AutoSize | Out-String -Width 200',
+		),
+	)
+
+	console.log('[windows] listening ports (netstat)')
+	console.log(execCommandSafe('netstat -ano'))
+}
+
+async function dumpFlowRunDebug(label: string, run: any): Promise<void> {
+	console.log(`\n=== DEBUG: Flow Run Diagnostics (${label}) ===`)
+	try {
+		console.log(`[Run Object] ${JSON.stringify(run, null, 2)}`)
+	} catch (e) {
+		console.log(`[Run Object] Failed to serialize: ${e}`)
+	}
+	try {
+		const summary = {
+			id: run?.id,
+			status: run?.status,
+			started_at: run?.started_at,
+			ended_at: run?.ended_at,
+			exit_code: run?.exit_code,
+			error: run?.error,
+			work_dir: run?.work_dir,
+			results_dir: run?.results_dir,
+		}
+		console.log(`[Run Summary] ${JSON.stringify(summary, null, 2)}`)
+	} catch (e) {
+		console.log(`[Run Summary] Failed to serialize: ${e}`)
+	}
+
+	const baseDir = run?.results_dir || run?.work_dir
+	if (!baseDir || !fs.existsSync(baseDir)) {
+		console.log(`[Run Debug] Base dir not found: ${baseDir}`)
+		return
+	}
+
+	console.log(`[Run Debug] baseDir: ${baseDir}`)
+	console.log(`[Run Debug] baseDir entries: ${listDirSafe(baseDir).join(', ')}`)
+	const tree = dumpDirTree(baseDir, 4, 250)
+	console.log(`[Run Debug] dir tree:\n${tree.lines.join('\n')}`)
+	if (tree.truncated) {
+		console.log('[Run Debug] dir tree truncated')
+	}
+
+	const candidates = [
+		path.join(run?.work_dir || '', '.nextflow.log'),
+		path.join(run?.work_dir || '', 'nextflow.log'),
+		path.join(run?.results_dir || '', '.nextflow.log'),
+		path.join(run?.results_dir || '', 'nextflow.log'),
+		path.join(run?.results_dir || '', 'trace.txt'),
+		path.join(run?.results_dir || '', 'timeline.html'),
+		path.join(run?.results_dir || '', 'report.html'),
+		path.join(run?.results_dir || '', 'dag.html'),
+		path.join(run?.results_dir || '', 'workflow.log'),
+		path.join(run?.results_dir || '', 'stdout.log'),
+		path.join(run?.results_dir || '', 'stderr.log'),
+	]
+	for (const filePath of candidates) {
+		const snippet = readFileSnippet(filePath, 8000)
+		if (snippet) {
+			console.log(`\n[Run Debug] ${filePath}:\n${snippet}`)
+		}
+	}
+
+	const logsDir = path.join(baseDir, 'logs')
+	if (fs.existsSync(logsDir)) {
+		console.log(`[Run Debug] logs/ entries: ${listDirSafe(logsDir).join(', ')}`)
+		for (const name of listDirSafe(logsDir)) {
+			const snippet = readFileSnippet(path.join(logsDir, name), 4000)
+			if (snippet) {
+				console.log(`\n[Run Debug] logs/${name}:\n${snippet}`)
+			}
+		}
+	}
 }
 
 async function waitForFilesOnDisk(
@@ -1482,6 +1749,11 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				mockRun2.id,
 			)
 			console.log(`Flow run on mock data completed with status: ${status}`)
+			if (status !== 'success') {
+				await dumpFlowRunDebug('client2-mock', mockRun2Final)
+				dumpContainerDiagnostics()
+				dumpWindowsDiagnostics()
+			}
 			expect(status).toBe('success')
 			mockRunTimer.stop()
 
@@ -1668,6 +1940,11 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				mockRun1.id,
 			)
 			console.log(`Flow mock run completed with status: ${mockStatus}`)
+			if (mockStatus !== 'success') {
+				await dumpFlowRunDebug('client1-mock', mockRun1Final)
+				dumpContainerDiagnostics()
+				dumpWindowsDiagnostics()
+			}
 			expect(mockStatus).toBe('success')
 
 			const mockResultPath1 = resolveFlowResultPath(mockRun1Final)
@@ -1713,6 +1990,60 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				console.log(
 					`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`,
 				)
+				const parsed1 = parseTsvByParticipant(normalized1)
+				const parsed2 = parseTsvByParticipant(normalized2)
+				console.log(
+					`[TSV Compare] header1 idx=${parsed1.idIndex} header="${parsed1.header}"`,
+				)
+				console.log(
+					`[TSV Compare] header2 idx=${parsed2.idIndex} header="${parsed2.header}"`,
+				)
+				console.log(
+					`[TSV Compare] ids client1=${parsed1.ids.length} client2=${parsed2.ids.length}`,
+				)
+				if (parsed1.duplicates.length) {
+					console.log(`[TSV Compare] duplicate ids client1: ${parsed1.duplicates.join(', ')}`)
+				}
+				if (parsed2.duplicates.length) {
+					console.log(`[TSV Compare] duplicate ids client2: ${parsed2.duplicates.join(', ')}`)
+				}
+				const set1 = new Set(parsed1.ids)
+				const set2 = new Set(parsed2.ids)
+				const missingIn1: string[] = []
+				const missingIn2: string[] = []
+				for (const id of set2) {
+					if (!set1.has(id)) missingIn1.push(id)
+				}
+				for (const id of set1) {
+					if (!set2.has(id)) missingIn2.push(id)
+				}
+				if (missingIn1.length) {
+					console.log(`[TSV Compare] ids missing in client1: ${missingIn1.join(', ')}`)
+				}
+				if (missingIn2.length) {
+					console.log(`[TSV Compare] ids missing in client2: ${missingIn2.join(', ')}`)
+				}
+				const mismatchedRows: string[] = []
+				for (const id of set1) {
+					if (!set2.has(id)) continue
+					const rows1 = parsed1.byId.get(id) ?? []
+					const rows2 = parsed2.byId.get(id) ?? []
+					if (rows1.length !== rows2.length || rows1.some((r) => !rows2.includes(r))) {
+						mismatchedRows.push(id)
+					}
+				}
+				if (mismatchedRows.length) {
+					console.log(
+						`[TSV Compare] mismatched ids (${mismatchedRows.length}): ${mismatchedRows
+							.slice(0, 10)
+							.join(', ')}`,
+					)
+					for (const id of mismatchedRows.slice(0, 3)) {
+						console.log(`[TSV Compare] rows for id ${id}:`)
+						console.log(`  client1: ${(parsed1.byId.get(id) ?? []).join(' | ')}`)
+						console.log(`  client2: ${(parsed2.byId.get(id) ?? []).join(' | ')}`)
+					}
+				}
 				// Log first difference
 				const lines1 = normalized1.split('\n')
 				const lines2 = normalized2.split('\n')
