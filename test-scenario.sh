@@ -76,6 +76,7 @@ Scenario Options (pick one):
   --flows-solo     Run flow UI test only (single client)
   --flows-gwas     Run GWAS flow UI test only (single client)
   --flows-collab   Run two-client flow collaboration test
+  --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -105,6 +106,7 @@ Examples:
   ./test-scenario.sh --interactive --profiles-mock    # Run profiles UI flow (mock) with visible browser
   ./test-scenario.sh --flows-solo   # Run flow test with synthetic data
   ./test-scenario.sh --flows-gwas   # Run GWAS flow test
+  ./test-scenario.sh --syqure-flow --interactive  # Launch 3 clients for Syqure flow
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
@@ -149,6 +151,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--flows-collab)
 			SCENARIO="flows-collab"
+			shift
+			;;
+		--syqure-flow)
+			SCENARIO="syqure-flow"
 			shift
 			;;
 		--file-transfer)
@@ -386,9 +392,19 @@ pick_free_port() {
 pick_ws_port_base() {
 	local start="$1"
 	local max="${2:-3499}"
+	local count="${3:-2}"
 	local port="$start"
 	while [[ "$port" -lt "$max" ]]; do
-		if is_port_free "$port" && is_port_free "$((port + 1))"; then
+		local ok=1
+		local i=0
+		while [[ "$i" -lt "$count" ]]; do
+			if ! is_port_free "$((port + i))"; then
+				ok=0
+				break
+			fi
+			i=$((i + 1))
+		done
+		if [[ "$ok" == "1" ]]; then
 			echo "$port"
 			return 0
 		fi
@@ -493,19 +509,27 @@ export UI_BASE_URL="http://localhost:${UI_PORT}"
 export DISABLE_UPDATER=1
 export DEV_WS_BRIDGE=1
 
-WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" || true)"
+WS_PORT_COUNT=2
+if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	WS_PORT_COUNT=3
+fi
+WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" "$WS_PORT_COUNT" || true)"
 if [[ -z "$WS_PORT_BASE" ]]; then
-	echo "Could not find two free consecutive WS ports starting at ${DEV_WS_BRIDGE_PORT_BASE:-3333}" >&2
+	echo "Could not find ${WS_PORT_COUNT} free consecutive WS ports starting at ${DEV_WS_BRIDGE_PORT_BASE:-3333}" >&2
 	exit 1
 fi
 export DEV_WS_BRIDGE_PORT_BASE="$WS_PORT_BASE"
 
 CLIENT1_EMAIL="${CLIENT1_EMAIL:-client1@sandbox.local}"
 CLIENT2_EMAIL="${CLIENT2_EMAIL:-client2@sandbox.local}"
+AGG_EMAIL="${AGG_EMAIL:-aggregator@sandbox.local}"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
 SERVER_PID=""
 TAURI1_PID=""
 TAURI2_PID=""
+TAURI3_PID=""
+AGG_HOME=""
+AGG_CFG=""
 
 # Pick a free unified logger port unless explicitly configured
 if [[ -n "${UNIFIED_LOG_PORT+x}" ]]; then
@@ -584,15 +608,18 @@ cleanup() {
 		info "Stopping static server"
 		kill "$SERVER_PID" 2>/dev/null || true
 	fi
-	if [[ -n "${TAURI1_PID:-}" || -n "${TAURI2_PID:-}" ]]; then
+	if [[ -n "${TAURI1_PID:-}" || -n "${TAURI2_PID:-}" || -n "${TAURI3_PID:-}" ]]; then
 		info "Stopping Tauri instances"
 		[[ -n "${TAURI1_PID:-}" ]] && kill "$TAURI1_PID" 2>/dev/null || true
 		[[ -n "${TAURI2_PID:-}" ]] && kill "$TAURI2_PID" 2>/dev/null || true
+		[[ -n "${TAURI3_PID:-}" ]] && kill "$TAURI3_PID" 2>/dev/null || true
 	fi
 	# Profiles switching can restart the Tauri process (new PID). Ensure we kill any lingering
 	# WS-bridge listeners for the selected ports (ports were chosen to be free for this run).
 	if command -v lsof >/dev/null 2>&1; then
-		for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" "$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))"; do
+		for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" \
+			"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))" \
+			"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 2 ))"; do
 			if [[ -z "${port:-}" || "$port" -le 0 ]]; then
 				continue
 			fi
@@ -616,8 +643,13 @@ cleanup() {
 			info "Stopping SyftBox devstack"
 			local c1="${CLIENT1_EMAIL:-client1@sandbox.local}"
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
+			local agg="${AGG_EMAIL:-aggregator@sandbox.local}"
 			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
-			DEVSTACK_CLIENTS="${c1},${c2}"
+			if [[ "$SCENARIO" == "syqure-flow" ]]; then
+				DEVSTACK_CLIENTS="${c1},${c2},${agg}"
+			else
+				DEVSTACK_CLIENTS="${c1},${c2}"
+			fi
 			local stop_args=(--clients "$DEVSTACK_CLIENTS" --sandbox "$sandbox_root" --stop)
 			if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
 				stop_args+=(--reset)
@@ -654,9 +686,14 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$SCENARIO" != "profiles-mock" ]]; then
-	# Start devstack with two clients (reset by default to avoid stale state)
-	info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
-	DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+	# Start devstack with two or three clients (reset by default to avoid stale state)
+	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
+		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
+	else
+		info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
+		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+	fi
 	# Stop any existing stack for this sandbox to avoid state conflicts
 	# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
 	STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
@@ -724,6 +761,10 @@ if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
 	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
 	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
+	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+		AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
+		AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
+	fi
 	SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
@@ -733,6 +774,9 @@ PY
 
 	info "Client1 home: $CLIENT1_HOME"
 	info "Client2 home: $CLIENT2_HOME"
+	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+		info "Aggregator home: $AGG_HOME"
+	fi
 	info "Server URL: $SERVER_URL"
 fi
 
@@ -1124,11 +1168,24 @@ start_tauri_instances() {
 		exit 1
 	}
 
+	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+		info "Launching Tauri for aggregator on WS port $((WS_PORT_BASE + 2))"
+		TAURI3_PID=$(launch_instance "$AGG_EMAIL" "$AGG_HOME" "$AGG_CFG" "$((WS_PORT_BASE + 2))")
+		info "Waiting for aggregator WS bridge..."
+		wait_ws "$((WS_PORT_BASE + 2))" "$TAURI3_PID" "$AGG_EMAIL" || {
+			echo "WS $((WS_PORT_BASE + 2)) not ready" >&2
+			exit 1
+		}
+	fi
+
 	export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 	export USE_REAL_INVOKE=true
 
 	info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+		info "Aggregator UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+	fi
 	timer_pop
 }
 
@@ -1678,6 +1735,25 @@ PY
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then
 			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	syqure-flow)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Syqure Flow (interactive) ==="
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "In the aggregator UI, open syqure-flow and use Collaborative Run."
+		info "Datasites: ${AGG_EMAIL}, ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}"
+		info "Then in client1/client2 Messages, Import Flow and Join Run."
+
+		if [[ "$WAIT_MODE" == "1" || "$INTERACTIVE_MODE" == "1" ]]; then
+			info "Interactive mode: Servers will stay running. Press Ctrl+C to exit."
 			while true; do sleep 1; done
 		fi
 		;;

@@ -3230,6 +3230,11 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				nameEl.textContent = flow.name
 			}
 
+			const collabBtn = document.getElementById('flow-detail-collab')
+			if (collabBtn) {
+				collabBtn.style.display = isMultiPartyFlow(flow) ? '' : 'none'
+			}
+
 			// Update metadata badges
 			const stepsCount = flow.spec?.steps?.length || 0
 			const inputsCount = Object.keys(flow.spec?.inputs || {}).length
@@ -4702,6 +4707,15 @@ steps:${
 			runBtn.addEventListener('click', async () => {
 				if (flowState.currentFlow) {
 					await handleFlowRunClick(flowState.currentFlow.id)
+				}
+			})
+		}
+
+		const collabBtn = document.getElementById('flow-detail-collab')
+		if (collabBtn) {
+			collabBtn.addEventListener('click', async () => {
+				if (flowState.currentFlow) {
+					await showCollaborativeRunModal(flowState.currentFlow)
 				}
 			})
 		}
@@ -6838,6 +6852,196 @@ steps:${
 				})
 			}
 		}
+	}
+
+	function generateFlowRunId() {
+		const now = new Date()
+		const pad = (value) => String(value).padStart(2, '0')
+		return [
+			now.getFullYear(),
+			pad(now.getMonth() + 1),
+			pad(now.getDate()),
+			pad(now.getHours()),
+			pad(now.getMinutes()),
+			pad(now.getSeconds()),
+		].join('')
+	}
+
+	function isMultiPartyFlow(flow) {
+		if (flow?.spec?.inputs?.datasites) {
+			return true
+		}
+		if (Array.isArray(flow?.spec?.datasites) && flow.spec.datasites.length > 1) {
+			return true
+		}
+		return false
+	}
+
+	async function showCollaborativeRunModal(flow) {
+		if (!flow) return
+
+		const settings = await invoke('get_settings').catch(() => ({}))
+		const currentEmail = settings?.email || ''
+		const defaultRunId = generateFlowRunId()
+		const defaultDatasites = Array.isArray(flow?.spec?.inputs?.datasites?.default)
+			? flow.spec.inputs.datasites.default
+			: Array.isArray(flow?.spec?.datasites)
+				? flow.spec.datasites
+				: []
+		const datasitesPrefill = defaultDatasites.length
+			? defaultDatasites.join(', ')
+			: currentEmail
+				? currentEmail
+				: ''
+
+		document.getElementById('syqure-collab-modal')?.remove()
+
+		const modalHtml = `
+			<div id="syqure-collab-modal" class="modal-overlay">
+				<div class="modal-content request-flow-modal">
+					<div class="modal-header">
+						<h3>Collaborative Run</h3>
+						<button class="modal-close" onclick="document.getElementById('syqure-collab-modal').remove()">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+							</svg>
+						</button>
+					</div>
+					<div class="modal-body">
+						<p style="margin-bottom: 16px; color: var(--text-secondary);">
+							Start a shared flow run across multiple datasites. Everyone uses the same Run ID.
+						</p>
+						<div class="form-group">
+							<label>Datasites (comma-separated)</label>
+							<textarea id="syqure-collab-datasites" class="form-control" rows="2" placeholder="alice@example.com, bob@example.com, carol@example.com">${escapeHtml(
+								datasitesPrefill,
+							)}</textarea>
+						</div>
+						<div class="form-group">
+							<label>Run ID</label>
+							<input id="syqure-collab-runid" class="form-control" value="${defaultRunId}" />
+						</div>
+						<div class="form-group">
+							<label>Message (optional)</label>
+							<textarea id="syqure-collab-message" class="form-control" rows="3" placeholder="Invite collaborators to join this run..."></textarea>
+						</div>
+						<div class="form-group" style="display:flex; gap:12px; align-items:center;">
+							<label style="display:flex; align-items:center; gap:8px; font-size: 13px;">
+								<input type="checkbox" id="syqure-collab-send" checked />
+								Send flow request to collaborators
+							</label>
+						</div>
+						<div class="form-group" style="display:flex; gap:12px; align-items:center;">
+							<label style="display:flex; align-items:center; gap:8px; font-size: 13px;">
+								<input type="checkbox" id="syqure-collab-start" checked />
+								Start run on this device
+							</label>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-secondary" onclick="document.getElementById('syqure-collab-modal').remove()">Cancel</button>
+						<button class="btn btn-primary" id="syqure-collab-submit">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="22" y1="2" x2="11" y2="13"></line>
+								<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+							</svg>
+							Start Collaborative Run
+						</button>
+					</div>
+				</div>
+			</div>
+		`
+
+		document.body.insertAdjacentHTML('beforeend', modalHtml)
+
+		const submitBtn = document.getElementById('syqure-collab-submit')
+		submitBtn?.addEventListener('click', async () => {
+			const rawDatasites = document.getElementById('syqure-collab-datasites')?.value || ''
+			const runId = document.getElementById('syqure-collab-runid')?.value.trim() || ''
+			const message = document.getElementById('syqure-collab-message')?.value.trim() || ''
+			const sendRequests = Boolean(document.getElementById('syqure-collab-send')?.checked)
+			const startLocal = Boolean(document.getElementById('syqure-collab-start')?.checked)
+
+			const datasites = rawDatasites
+				.split(/[,\\n]/)
+				.map((value) => value.trim())
+				.filter(Boolean)
+			if (datasites.length < 2) {
+				await dialog.message('Please provide at least two datasite emails.', {
+					title: 'Missing Datasites',
+					type: 'warning',
+				})
+				return
+			}
+			const uniq = new Set(datasites)
+			if (uniq.size !== datasites.length) {
+				await dialog.message('Each datasite must be unique.', {
+					title: 'Duplicate Datasites',
+					type: 'warning',
+				})
+				return
+			}
+			if (!runId) {
+				await dialog.message('Run ID is required.', { title: 'Missing Run ID', type: 'warning' })
+				return
+			}
+
+			const flowVersion = flow.version || flow.spec?.metadata?.version || '1.0.0'
+			const datasetName = `collab-${flow.name}-${runId}`
+			const defaultMessage =
+				`Join the collaborative run "${flow.name}" (run_id: ${runId}).` +
+				`\\nDatasites: ${datasites.join(', ')}`
+
+			try {
+				submitBtn.disabled = true
+				submitBtn.textContent = 'Starting…'
+
+				if (sendRequests) {
+					const recipients = datasites.filter((email) => !currentEmail || email !== currentEmail)
+					for (const recipient of recipients) {
+						await invoke('send_flow_request', {
+							flowName: flow.name,
+							flowVersion,
+							datasetName,
+							recipient,
+							message: message || defaultMessage,
+							runId,
+							datasites,
+						})
+					}
+				}
+
+				if (startLocal) {
+					const inputOverrides = {}
+					if (flow?.spec?.inputs?.datasites) {
+						inputOverrides['inputs.datasites'] = datasites.join(',')
+					}
+					await invoke('run_flow', {
+						flowId: flow.id,
+						inputOverrides,
+						runId,
+					})
+				}
+
+				document.getElementById('syqure-collab-modal')?.remove()
+				if (dialog?.message) {
+					await dialog.message('Collaborative run started. Check messages for invites.', {
+						title: 'Syqure Run Started',
+						type: 'info',
+					})
+				}
+			} catch (error) {
+				console.error('Failed to start collaborative run:', error)
+				await dialog.message('Failed to start collaborative run: ' + (error?.message || error), {
+					title: 'Error',
+					type: 'error',
+				})
+			} finally {
+				submitBtn.disabled = false
+				submitBtn.textContent = 'Start Collaborative Run'
+			}
+		})
 	}
 
 	// State for flow request flow

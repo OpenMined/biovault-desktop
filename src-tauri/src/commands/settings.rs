@@ -625,6 +625,7 @@ pub fn save_settings(mut settings: Settings) -> Result<(), String> {
             agent_bridge_http_port: None,
             agent_bridge_token: None,
             agent_bridge_blocklist: None,
+            syqure: None,
         }
     };
 
@@ -722,6 +723,7 @@ pub fn set_syftbox_dev_server(server_url: String) -> Result<(), String> {
             agent_bridge_http_port: None,
             agent_bridge_token: None,
             agent_bridge_blocklist: None,
+            syqure: None,
         }
     };
 

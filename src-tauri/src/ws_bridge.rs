@@ -2089,9 +2089,26 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .unwrap_or_else(|| serde_json::json!("")),
             )
             .unwrap_or_default();
-            let result =
-                crate::send_flow_request(flow_name, flow_version, dataset_name, recipient, message)
-                    .map_err(|e| e.to_string())?;
+            let run_id: Option<String> = args
+                .get("runId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .or_else(|| {
+                    args.get("run_id")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                });
+            let datasites: Option<Vec<String>> = args
+                .get("datasites")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::send_flow_request(
+                flow_name,
+                flow_version,
+                dataset_name,
+                recipient,
+                message,
+                run_id,
+                datasites,
+            )
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "send_flow_request_results" => {
@@ -2757,6 +2774,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("selection")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+            let run_id: Option<String> = args
+                .get("runId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .or_else(|| {
+                    args.get("run_id")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                });
+
             let result = crate::commands::flows::run_flow_impl(
                 state.clone(),
                 window,
@@ -2764,6 +2789,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 input_overrides,
                 results_dir,
                 selection,
+                run_id,
             )
             .await
             .map_err(|e| e.to_string())?;

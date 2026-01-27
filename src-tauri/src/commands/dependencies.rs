@@ -27,6 +27,7 @@ pub(crate) fn dependency_names() -> Vec<&'static str> {
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
+    deps.push("syqure");
     deps.push("uv");
     deps
 }

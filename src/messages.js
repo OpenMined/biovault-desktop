@@ -120,6 +120,9 @@ export function createMessagesModule({
 			submission_id: request.submission_id,
 			sender_local_path: request.sender_local_path,
 			receiver_local_path_template: request.receiver_local_path_template,
+			run_id: request.run_id,
+			datasites: Array.isArray(request.datasites) ? request.datasites : null,
+			collab: Boolean(request.collab),
 		}
 	}
 
@@ -1843,12 +1846,19 @@ export function createMessagesModule({
 						<h5>🔧 ${escapeHtml(flowRequest.flow_name)} <span class="version-badge">v${escapeHtml(flowRequest.flow_version)}</span><span class="invite-label">Flow Request</span></h5>
 						<p class="invite-meta">Run on dataset: <strong>${escapeHtml(flowRequest.dataset_name || 'your data')}</strong></p>
 						<p class="invite-meta">From: ${escapeHtml(flowRequest.sender)}</p>
+						${flowRequest.run_id ? `<p class="invite-meta">Run ID: <strong>${escapeHtml(flowRequest.run_id)}</strong></p>` : ''}
+						${
+							Array.isArray(flowRequest.datasites) && flowRequest.datasites.length > 0
+								? `<p class="invite-meta">Datasites: ${escapeHtml(flowRequest.datasites.join(', '))}</p>`
+								: ''
+						}
 					`
 
 					const actions = document.createElement('div')
 					actions.className = 'invite-actions'
 					let runActions = null
 					let runButtons = null
+					let joinBtn = null
 
 					const updateRunButtons = (flow) => {
 						if (!runButtons) return
@@ -1857,6 +1867,9 @@ export function createMessagesModule({
 						runButtons.mock.disabled = !enabled
 						runButtons.real.disabled = !enabled
 						runButtons.both.disabled = !enabled
+						if (joinBtn) {
+							joinBtn.disabled = !(flow && flowRequest.run_id)
+						}
 					}
 
 					if (!group.isOutgoing) {
@@ -1983,6 +1996,46 @@ export function createMessagesModule({
 						runActions.appendChild(runMockBtn)
 						runActions.appendChild(runRealBtn)
 						runActions.appendChild(runBothBtn)
+
+						if (flowRequest.run_id) {
+							joinBtn = document.createElement('button')
+							joinBtn.textContent = 'Join Run'
+							joinBtn.className = 'secondary'
+							joinBtn.disabled = true
+							joinBtn.addEventListener('click', async () => {
+								const flow = runButtons?.flow
+								if (!flow) {
+									await dialog.message('Import the flow first before joining.', {
+										title: 'Flow Required',
+										type: 'warning',
+									})
+									return
+								}
+								const inputOverrides = {}
+								if (
+									flow?.spec?.inputs?.datasites &&
+									Array.isArray(flowRequest.datasites) &&
+									flowRequest.datasites.length > 0
+								) {
+									inputOverrides['inputs.datasites'] = flowRequest.datasites.join(',')
+								}
+								try {
+									await invoke('run_flow', {
+										flowId: flow.id,
+										inputOverrides,
+										runId: flowRequest.run_id,
+									})
+								} catch (error) {
+									console.error('Failed to start collaborative run:', error)
+									await dialog.message(
+										`Failed to start collaborative run: ${error?.message || error}`,
+										{ title: 'Run Error', type: 'error' },
+									)
+								}
+							})
+							runActions.appendChild(joinBtn)
+						}
+
 						requestCard.appendChild(runActions)
 
 						const resultsActions = document.createElement('div')

@@ -412,6 +412,65 @@ fn expose_bundled_binaries(app: &tauri::App) {
         }
     }
 
+    // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
+    let mut allow_syqure_override = true;
+    if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            let existing_path = std::path::PathBuf::from(&existing);
+            if existing_path.exists() {
+                crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
+                allow_syqure_override = false;
+            } else {
+                crate::desktop_log!(
+                    "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
+                    existing_path.display()
+                );
+            }
+        }
+    }
+
+    if !allow_syqure_override {
+        // Respect existing SEQURE_NATIVE_BIN if it's valid.
+    } else {
+        let syqure_candidates = [
+            "syqure/syqure".to_string(),
+            "resources/syqure/syqure".to_string(),
+        ];
+        let mut syqure_path = syqure_candidates
+            .iter()
+            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+            .filter(|p| p.exists());
+
+        if syqure_path.is_none() {
+            if let Ok(cwd) = std::env::current_dir() {
+                let dev_paths = [
+                    cwd.join("src-tauri")
+                        .join("resources")
+                        .join("syqure")
+                        .join("syqure"),
+                    cwd.join("resources").join("syqure").join("syqure"),
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join("syqure")
+                        .join("syqure"),
+                ];
+                for p in dev_paths {
+                    if p.exists() {
+                        syqure_path = Some(p);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(p) = syqure_path.filter(|p| p.exists()) {
+            let s = p.to_string_lossy().to_string();
+            std::env::set_var("SEQURE_NATIVE_BIN", &s);
+            crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+        }
+    }
+
     if syftbox_backend_is_embedded() {
         crate::desktop_log!("🔧 SyftBox backend is embedded; skipping bundled binary lookup");
         return;

@@ -131,6 +131,9 @@ fn main() {
     let bundled_dir = manifest_dir.join("resources").join("bundled");
     ensure_placeholder_dir(&bundled_dir, "placeholder.txt")
         .expect("failed to ensure resources/bundled");
+    let syqure_dir = manifest_dir.join("resources").join("syqure");
+    ensure_placeholder_dir(&syqure_dir, "placeholder.txt")
+        .expect("failed to ensure resources/syqure");
 
     // Ensure templates resource path exists as a directory.
     // On Windows with `core.symlinks=false`, the repo's `resources/templates` symlink may be checked out as a plain file.

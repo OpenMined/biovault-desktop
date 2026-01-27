@@ -884,6 +884,8 @@ pub fn send_flow_request(
     dataset_name: String,
     recipient: String,
     message: String,
+    run_id: Option<String>,
+    datasites: Option<Vec<String>>,
 ) -> Result<VaultMessage, String> {
     let config = load_config()?;
     let (db, sync) = init_message_system(&config)
@@ -915,9 +917,9 @@ pub fn send_flow_request(
     let flow_content = fs::read_to_string(&flow_yaml_path)
         .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
 
-    let flow: FlowFile = FlowFile::parse_yaml(&flow_content)
+    let flow_file: FlowFile = FlowFile::parse_yaml(&flow_content)
         .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-    let flow_spec_struct: FlowSpec = flow
+    let flow_spec_struct: FlowSpec = flow_file
         .to_flow_spec()
         .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
 
@@ -987,6 +989,29 @@ pub fn send_flow_request(
         config.email, submission_folder_name
     );
 
+    let run_id = run_id.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let datasites = datasites.and_then(|values| {
+        let cleaned: Vec<String> = values
+            .into_iter()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
+        }
+    });
+
+    let collab = run_id.is_some() || datasites.is_some();
+
     // Create the message with flow request metadata
     let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), message);
 
@@ -1005,6 +1030,9 @@ pub fn send_flow_request(
             "sender_local_path": sender_local_path,
             "receiver_local_path_template": receiver_local_path_template,
             "modules": included_modules,
+            "run_id": run_id,
+            "datasites": datasites,
+            "collab": collab,
         }
     }));
 
