@@ -924,7 +924,7 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
                 path.trim_start_matches('/')
             );
             match client.get(&url).bearer_auth(&cfg.client_token).send() {
-                Ok(resp) if resp.status().is_success() => {
+                Ok(resp) if resp.status().is_success() || resp.status() == reqwest::StatusCode::UNAUTHORIZED => {
                     record_control_plane_event("GET", &url, Some(resp.status().as_u16()), None);
                 }
                 Ok(resp) => {
@@ -1429,13 +1429,22 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
         );
     }
 
-    // Forcefully kill any existing syftbox processes for this home directory
-    // This ensures exactly one syftbox process per biovault home
-    kill_all_syftbox_for_home(Some(&runtime.config_path), Some(&runtime.data_dir));
+    // In devstack/embedded environments, we should not attempt to manage the daemon's lifecycle
+    // because it's usually handled by external scripts (like dev-two.sh) or managed more delicately.
+    // Forcefully killing it here often leads to lock conflicts when the script tries to restart it.
+    let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
+    
+    if !is_devstack {
+        // Forcefully kill any existing syftbox processes for this home directory
+        // This ensures exactly one syftbox process per biovault home
+        kill_all_syftbox_for_home(Some(&runtime.config_path), Some(&runtime.data_dir));
 
-    // Also try the standard stop method for good measure
-    if let Err(e) = syftctl::stop_syftbox(&runtime) {
-        crate::desktop_log!("ℹ️ Attempt to stop existing SyftBox before start: {}", e);
+        // Also try the standard stop method for good measure
+        if let Err(e) = syftctl::stop_syftbox(&runtime) {
+            crate::desktop_log!("ℹ️ Attempt to stop existing SyftBox before start: {}", e);
+        }
+    } else {
+        crate::desktop_log!("🛡️ Skipping SyftBox daemon kill/restart in devstack environment");
     }
 
     match syftctl::start_syftbox(&runtime) {
