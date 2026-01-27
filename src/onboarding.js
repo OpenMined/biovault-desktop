@@ -1750,6 +1750,19 @@ export function initOnboarding({
 		return s.slice(0, lastSlash)
 	}
 
+	function normalizeWindowsPath(p) {
+		if (!p || typeof p !== 'string') return p
+		let s = p
+		if (s.startsWith('\\\\?\\UNC\\')) {
+			s = '\\\\' + s.slice('\\\\?\\UNC\\'.length)
+		} else if (s.startsWith('\\\\?\\')) {
+			s = s.slice('\\\\?\\'.length)
+		} else if (s.startsWith('//?/')) {
+			s = s.slice('//?/'.length)
+		}
+		return s
+	}
+
 	async function initHomePickerDefaults() {
 		if (!homeInput) return
 
@@ -1757,7 +1770,7 @@ export function initOnboarding({
 		try {
 			const pendingHome = window.localStorage.getItem(LOCAL_ONBOARD_HOME_KEY)
 			if (pendingHome && pendingHome.trim()) {
-				homeInput.value = pendingHome.trim()
+				homeInput.value = normalizeWindowsPath(pendingHome.trim())
 				return
 			}
 		} catch (_err) {
@@ -1768,7 +1781,7 @@ export function initOnboarding({
 		try {
 			const defaultHome = await invoke('profiles_get_default_home')
 			if (defaultHome && String(defaultHome).trim()) {
-				homeInput.value = String(defaultHome).trim()
+				homeInput.value = normalizeWindowsPath(String(defaultHome).trim())
 			}
 		} catch (_err) {
 			// ignore
@@ -1778,7 +1791,7 @@ export function initOnboarding({
 		try {
 			const configPath = await invoke('get_config_path')
 			const home = dirnameFromPath(configPath)
-			if (home) homeInput.value = home
+			if (home) homeInput.value = normalizeWindowsPath(home)
 		} catch (_err) {
 			// ignore
 		}
@@ -1818,9 +1831,9 @@ export function initOnboarding({
 				if (!selection) return
 				const chosen = Array.isArray(selection) ? selection[0] : selection
 				if (!chosen) return
-				homeInput.value = chosen
+				homeInput.value = normalizeWindowsPath(chosen)
 				try {
-					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, chosen)
+					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, normalizeWindowsPath(chosen))
 				} catch (_err) {
 					// ignore
 				}

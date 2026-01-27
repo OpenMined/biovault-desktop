@@ -360,7 +360,7 @@ jobs:
           & $maturin build --release
         working-directory: syftbox-sdk/python
 
-      - name: Setup Podman (Windows)
+      - name: Setup Podman (Windows flows-collab)
         if: runner.os == 'Windows' && (startsWith(matrix.scenario, 'pipelines-') || matrix.scenario == 'flows-collab')
         shell: pwsh
         run: |
@@ -476,7 +476,7 @@ jobs:
             artifacts/
 
   profiles-e2e:
-    name: profiles-e2e (linux-x86_64)
+    name: Profiles E2E (real backend)
     runs-on: namespace-profile-linux-medium
     env:
       BV_SKIP_SYQURE: "1"
@@ -643,7 +643,7 @@ jobs:
             artifacts/
 
   profiles-e2e-macos:
-    name: profiles-e2e (macos-arm64)
+    name: Profiles E2E (real backend, macOS)
     runs-on: namespace-profile-mac-medium
     env:
       BV_SKIP_SYQURE: "1"
