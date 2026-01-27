@@ -50,7 +50,53 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # flows-collab on Windows - rust (Podman Hyper-V)
+          # flows-solo
+          - scenario: flows-solo
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: flows-solo
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          - scenario: flows-solo
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
+          # jupyter-collab
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
+          # flows-collab
+          - scenario: flows-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
           - scenario: flows-collab
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
@@ -58,6 +104,7 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: ""
           # NOTE: flows-collab on macOS runs with rust client mode only.
+          # Disabled on macOS per request.
 
     defaults:
       run:
@@ -451,7 +498,7 @@ jobs:
             artifacts/
 
   profiles-e2e:
-    name: Profiles E2E (real backend)
+    name: profiles-e2e (linux-x86_64)
     runs-on: namespace-profile-linux-medium
     env:
       BV_SKIP_SYQURE: "1"
@@ -618,7 +665,7 @@ jobs:
             artifacts/
 
   profiles-e2e-macos:
-    name: Profiles E2E (real backend, macOS)
+    name: profiles-e2e (macos-arm64)
     runs-on: namespace-profile-mac-medium
     env:
       BV_SKIP_SYQURE: "1"
