@@ -281,7 +281,7 @@ pub async fn check_docker_running() -> Result<bool, String> {
     bins.dedup();
 
     // Run in spawn_blocking to avoid blocking the Tokio runtime
-    let result = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
         let mut last_err: Option<String> = None;
         for bin in bins {
             let mut cmd = Command::new(&bin);

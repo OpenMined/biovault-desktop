@@ -1213,10 +1213,17 @@ export function initOnboarding({
 			)
 		}
 
+		const shouldHideDependencyForOnboarding = (dep) => {
+			if (isSettings) return false
+			const name = (dep?.name || '').toLowerCase()
+			return name === 'syqure'
+		}
+
 		const depEntries = result.dependencies
 			.map((dep, index) => ({ dep, index }))
 			.filter(({ dep }) => (isSettings ? true : !isBundledDep(dep)))
 			.filter(({ dep }) => !shouldHideDependencyForPlatform(dep))
+			.filter(({ dep }) => !shouldHideDependencyForOnboarding(dep))
 		const depsForStatus = depEntries.map(({ dep }) => dep)
 
 		let html = ''
