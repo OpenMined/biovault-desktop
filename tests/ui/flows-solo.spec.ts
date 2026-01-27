@@ -263,7 +263,9 @@ test.describe('Flows Solo @flows-solo', () => {
 
 			// Force update metadata state by using "Set all" dropdowns
 			// This works around a bug where auto-detect fills UI but doesn't update state
-			const setAllDataType = page.locator('#set-all-data-type, select[name="set-all-data-type"]').first()
+			const setAllDataType = page
+				.locator('#set-all-data-type, select[name="set-all-data-type"]')
+				.first()
 			const setAllSource = page.locator('#set-all-source, select[name="set-all-source"]').first()
 			const setAllGrch = page.locator('#set-all-grch, select[name="set-all-grch"]').first()
 
@@ -310,11 +312,17 @@ test.describe('Flows Solo @flows-solo', () => {
 			const modalStillVisible = await importModal.isVisible()
 			if (modalStillVisible) {
 				// Take a screenshot and check for error messages
-				const errorMsg = await page.locator('.error-message, .alert, [class*="error"]').textContent().catch(() => null)
+				const errorMsg = await page
+					.locator('.error-message, .alert, [class*="error"]')
+					.textContent()
+					.catch(() => null)
 				console.log(`Modal still visible. Error message: ${errorMsg || 'none found'}`)
 
 				// Check if there's a conflict dialog
-				const statusAfterImport = await page.locator('#review-status, #import-status').textContent().catch(() => '')
+				const statusAfterImport = await page
+					.locator('#review-status, #import-status')
+					.textContent()
+					.catch(() => '')
 				console.log(`Status after import: ${statusAfterImport}`)
 
 				// Try clicking Import again or closing modal
@@ -728,9 +736,11 @@ test.describe('Flows Solo @flows-solo', () => {
 			console.log('Run flow modal visible - selecting mock data...')
 
 			// Select "Mock Data" option
-			const mockDataRadio = runFlowModal.first().locator(
-				'input[name="flow-data-type"][value="mock"], input[type="radio"]:near(:text("Mock Data"))',
-			)
+			const mockDataRadio = runFlowModal
+				.first()
+				.locator(
+					'input[name="flow-data-type"][value="mock"], input[type="radio"]:near(:text("Mock Data"))',
+				)
 			await mockDataRadio.first().check()
 
 			// Click confirm to proceed
@@ -748,10 +758,17 @@ test.describe('Flows Solo @flows-solo', () => {
 			console.log('Data run modal visible - selecting HERC2 flow...')
 
 			// Select HERC2 flow option
-			const flowOption = dataRunModal.first().locator(
-				'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2"), label:has-text("herc2")',
-			)
-			if (await flowOption.first().isVisible().catch(() => false)) {
+			const flowOption = dataRunModal
+				.first()
+				.locator(
+					'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2"), label:has-text("herc2")',
+				)
+			if (
+				await flowOption
+					.first()
+					.isVisible()
+					.catch(() => false)
+			) {
 				await flowOption.first().click()
 				console.log('Selected HERC2 flow option')
 			}
