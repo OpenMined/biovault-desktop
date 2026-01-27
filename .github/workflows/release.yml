@@ -239,7 +239,8 @@ jobs:
                   'target': 'linux-arm64',
               })
 
-          syftbox_impls = ['rust', 'go']
+          # NOTE: temporarily restrict to rust builds only
+          syftbox_impls = ['rust']
           matrix_entries = []
           for entry in entries:
               for impl in syftbox_impls:

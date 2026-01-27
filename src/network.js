@@ -805,8 +805,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	async function handleOpenDatasetFolder(datasetPath) {
 		if (!datasetPath) return
 		try {
-			const folderPath = datasetPath.substring(0, datasetPath.lastIndexOf('/'))
-			await invoke('open_folder', { path: folderPath })
+			let targetPath = datasetPath
+			if (datasetPath.startsWith('syft://')) {
+				targetPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: datasetPath })
+			}
+			await invoke('open_folder', { path: targetPath })
 		} catch (error) {
 			console.error('Failed to open dataset folder:', error)
 		}
@@ -815,8 +818,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	async function handleOpenAssetFolder(assetPath) {
 		if (!assetPath) return
 		try {
-			const folderPath = assetPath.substring(0, assetPath.lastIndexOf('/'))
-			await invoke('open_folder', { path: folderPath })
+			let targetPath = assetPath
+			if (assetPath.startsWith('syft://')) {
+				targetPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: assetPath })
+			}
+			await invoke('open_folder', { path: targetPath })
 		} catch (error) {
 			console.error('Failed to open asset folder:', error)
 		}

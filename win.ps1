@@ -80,6 +80,40 @@ if ($forwardArgs.Count -eq 0) {
     exit 1
 }
 
+# Stop any running bv.exe from this workspace to avoid build locks.
+function Stop-ProcessByPathPrefix {
+    param([string]$Prefix)
+    $stopped = $false
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            if ($_.Path -and $_.Path.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                $stopped = $true
+            }
+        } catch { }
+    }
+    return $stopped
+}
+
+$killedNames = @("bv", "bv.exe", "bv-desktop", "bv-desktop.exe")
+foreach ($name in $killedNames) {
+    try { Stop-Process -Name $name -Force -ErrorAction SilentlyContinue } catch { }
+    try { & taskkill /F /IM $name /T 2>$null | Out-Null } catch { }
+}
+
+$workspaceRoot = (Get-Location).Path
+$targetRoots = @(
+    (Join-Path $workspaceRoot "biovault\\cli\\target"),
+    (Join-Path $workspaceRoot "src-tauri\\target")
+)
+foreach ($root in $targetRoots) {
+    if (Test-Path $root) {
+        if (Stop-ProcessByPathPrefix $root) {
+            Write-Host "Stopped running binaries from $root" -ForegroundColor DarkYellow
+        }
+    }
+}
+
 # Convert Windows path to Unix path for the script
 $script = $forwardArgs[0]
 $scriptArgs = if ($forwardArgs.Count -gt 1) { @($forwardArgs[1..($forwardArgs.Count-1)]) } else { @() }

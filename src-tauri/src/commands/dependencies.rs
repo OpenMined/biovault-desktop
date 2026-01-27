@@ -257,41 +257,60 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
 #[tauri::command]
 pub async fn check_docker_running() -> Result<bool, String> {
-    // Check BIOVAULT_CONTAINER_RUNTIME env var first (e.g., "podman" on Windows)
-    // Then fall back to configured docker path, then to "docker"
-    let docker_bin = if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+    // Check BIOVAULT_CONTAINER_RUNTIME env var first (e.g., "podman" on Windows).
+    // If unset, try configured docker path, then "docker", then "podman".
+    let mut bins: Vec<String> = Vec::new();
+    if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
         let trimmed = runtime.trim();
         if !trimmed.is_empty() {
-            trimmed.to_string()
-        } else {
-            biovault::config::Config::load()
-                .ok()
-                .and_then(|cfg| cfg.get_binary_path("docker"))
-                .unwrap_or_else(|| "docker".to_string())
+            bins.push(trimmed.to_string());
         }
-    } else {
-        biovault::config::Config::load()
-            .ok()
-            .and_then(|cfg| cfg.get_binary_path("docker"))
-            .unwrap_or_else(|| "docker".to_string())
-    };
+    }
+    if bins.is_empty() {
+        if let Ok(cfg) = biovault::config::Config::load() {
+            if let Some(path) = cfg.get_binary_path("docker") {
+                if !path.trim().is_empty() {
+                    bins.push(path);
+                }
+            }
+        }
+        bins.push("docker".to_string());
+        bins.push("podman".to_string());
+    }
+
+    bins.dedup();
 
     // Run in spawn_blocking to avoid blocking the Tokio runtime
-    let result = tokio::task::spawn_blocking(move || {
-        let mut cmd = Command::new(&docker_bin);
-        cmd.arg("info");
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-        configure_child_process(&mut cmd);
+    let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        let mut last_err: Option<String> = None;
+        for bin in bins {
+            let mut cmd = Command::new(&bin);
+            cmd.arg("info");
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::null());
+            configure_child_process(&mut cmd);
 
-        cmd.status()
-            .map(|s| s.success())
-            .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))
+            match cmd.status() {
+                Ok(status) => {
+                    if status.success() {
+                        return Ok(true);
+                    }
+                    last_err = Some(format!("'{} info' returned {}", bin, status));
+                }
+                Err(e) => {
+                    last_err = Some(format!("Failed to execute '{}': {}", bin, e));
+                }
+            }
+        }
+        if let Some(err) = last_err {
+            crate::desktop_log!("Container runtime check failed: {}", err);
+        }
+        Ok(false)
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))??;
+    .map_err(|e| format!("Task join error: {}", e))?;
 
-    Ok(result)
+    result
 }
 
 #[tauri::command]

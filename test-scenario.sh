@@ -432,6 +432,21 @@ detect_platform() {
         echo "$os" "$arch"
 }
 
+apply_podman_windows_defaults() {
+	local os
+	read -r os _ <<<"$(detect_platform)"
+	if [[ "$os" != "windows" ]]; then
+		return 0
+	fi
+	if [[ "${BIOVAULT_CONTAINER_RUNTIME:-}" == "podman" ]]; then
+		if [[ -z "${BIOVAULT_HYPERV_MOUNT:-}" ]]; then
+			export BIOVAULT_HYPERV_MOUNT=1
+		fi
+	fi
+}
+
+apply_podman_windows_defaults
+
 to_host_path() {
         local p="$1"
         local os

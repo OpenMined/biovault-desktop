@@ -315,6 +315,10 @@ pub struct SyftBoxConfigInfo {
     pub has_access_token: bool,
     pub has_refresh_token: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_dir_error: Option<String>,

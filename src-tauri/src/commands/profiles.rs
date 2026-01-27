@@ -606,7 +606,7 @@ pub fn acquire_selected_profile_lock(args: &[String]) -> Result<Option<ProfileLo
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     // Try direct canonicalization first
     if let Ok(canon) = fs::canonicalize(path) {
-        return canon;
+        return strip_windows_unc_prefix(canon);
     }
 
     // If path doesn't exist, canonicalize the longest existing ancestor and append the rest.
@@ -631,9 +631,26 @@ fn canonicalize_best_effort(path: &Path) -> PathBuf {
     }
 
     match fs::canonicalize(&current) {
-        Ok(canon_parent) => canon_parent.join(suffix),
+        Ok(canon_parent) => strip_windows_unc_prefix(canon_parent).join(suffix),
         Err(_) => path.to_path_buf(),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn strip_windows_unc_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    if let Some(stripped) = s.strip_prefix(r"//?/") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn strip_windows_unc_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn resolve_or_create_profile_for_home(

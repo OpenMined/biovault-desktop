@@ -675,6 +675,11 @@ pub fn run() {
 
     // Require a single explicit Syft Crypto vault path.
     if !profile_picker_mode {
+        if std::env::var_os("SYFTBOX_DATA_DIR").is_none() {
+            if let Ok(home) = std::env::var("BIOVAULT_HOME") {
+                std::env::set_var("SYFTBOX_DATA_DIR", home);
+            }
+        }
         let _ = biovault::config::require_syc_vault_env();
     }
 
