@@ -13,9 +13,9 @@ use biovault::cli::commands::flow::run_flow as cli_run_flow;
 use biovault::cli::commands::module_management::{resolve_flow_dependencies, DependencyContext};
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Flow, Run, RunConfig};
-use biovault::flow_spec::FlowFile;
 pub use biovault::flow_spec::FlowSpec;
 use biovault::flow_spec::FLOW_YAML_FILE;
+use biovault::flow_spec::{FlowFile, FlowModuleDef, FlowModuleSource, FlowStepUses};
 use biovault::module_spec::ModuleFile;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -439,13 +439,179 @@ fn syftbox_storage_from_config(
 }
 
 fn load_flow_spec_from_storage(storage: &SyftBoxStorage, path: &Path) -> Result<FlowSpec, String> {
+    let flow = load_flow_file_from_storage(storage, path)?;
+    flow.to_flow_spec()
+        .map_err(|e| format!("Failed to convert flow spec: {}", e))
+}
+
+fn load_flow_file_from_storage(storage: &SyftBoxStorage, path: &Path) -> Result<FlowFile, String> {
     let bytes = storage
         .read_with_shadow(path)
         .map_err(|e| format!("Failed to read flow.yaml: {}", e))?;
     let flow: FlowFile =
         serde_yaml::from_slice(&bytes).map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-    flow.to_flow_spec()
-        .map_err(|e| format!("Failed to convert flow spec: {}", e))
+    Ok(flow)
+}
+
+fn is_local_source(source: &FlowModuleSource) -> bool {
+    if let Some(kind) = source.kind.as_deref() {
+        if kind.eq_ignore_ascii_case("local") {
+            return true;
+        }
+    }
+    if source.url.is_some() {
+        return false;
+    }
+    source.path.is_some() || source.subpath.is_some()
+}
+
+fn local_path_from_source(source: &FlowModuleSource) -> Option<String> {
+    if !is_local_source(source) {
+        return None;
+    }
+    if let Some(path) = source.path.as_ref().filter(|p| !p.trim().is_empty()) {
+        return Some(path.clone());
+    }
+    if let Some(path) = source.subpath.as_ref().filter(|p| !p.trim().is_empty()) {
+        return Some(path.clone());
+    }
+    Some(".".to_string())
+}
+
+fn module_yaml_exists(module_root: &Path) -> bool {
+    if module_root.is_file() {
+        return module_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| matches!(name, "module.yaml" | "module.yml"));
+    }
+    module_root.join("module.yaml").exists() || module_root.join("module.yml").exists()
+}
+
+fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+
+    for path in &flow.spec.module_paths {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            paths.push(trimmed.to_string());
+        }
+    }
+
+    for module in flow.spec.modules.values() {
+        if let FlowModuleDef::Ref(reference) = module {
+            if let Some(source) = reference.source.as_ref() {
+                if let Some(path) = local_path_from_source(source) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    for step in &flow.spec.steps {
+        if let Some(FlowStepUses::Ref(reference)) = step.uses.as_ref() {
+            if let Some(source) = reference.source.as_ref() {
+                if let Some(path) = local_path_from_source(source) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+
+    for raw in paths {
+        if !seen.insert(raw.clone()) {
+            continue;
+        }
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let candidate = Path::new(trimmed);
+        let full_path = if candidate.is_absolute() {
+            PathBuf::from(candidate)
+        } else {
+            source_root.join(candidate)
+        };
+
+        if !full_path.exists() || !module_yaml_exists(&full_path) {
+            missing.push(raw);
+        }
+    }
+
+    missing
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRequestSyncStatus {
+    pub ready: bool,
+    pub source_present: bool,
+    pub flow_yaml_present: bool,
+    pub missing_paths: Vec<String>,
+    pub reason: Option<String>,
+}
+
+#[tauri::command]
+pub async fn flow_request_sync_status(
+    flow_location: String,
+) -> Result<FlowRequestSyncStatus, String> {
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
+    let storage = syftbox_storage_from_config(&config)?;
+
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &flow_location)
+        .map_err(|e| format!("Failed to resolve flow location: {}", e))?;
+    if !source_root.exists() {
+        return Ok(FlowRequestSyncStatus {
+            ready: false,
+            source_present: false,
+            flow_yaml_present: false,
+            missing_paths: Vec::new(),
+            reason: Some(
+                "Flow files are not synced yet. Click \"Sync Request\" first.".to_string(),
+            ),
+        });
+    }
+
+    let flow_yaml = source_root.join(FLOW_YAML_FILE);
+    if !flow_yaml.exists() {
+        return Ok(FlowRequestSyncStatus {
+            ready: false,
+            source_present: true,
+            flow_yaml_present: false,
+            missing_paths: Vec::new(),
+            reason: Some(
+                "flow.yaml has not synced yet. Click \"Sync Request\" and try again.".to_string(),
+            ),
+        });
+    }
+
+    let flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
+    let missing_paths = missing_local_module_paths(&source_root, &flow_file);
+    let ready = missing_paths.is_empty();
+    let reason = if ready {
+        None
+    } else {
+        Some(format!(
+            "Flow dependencies are still syncing. Missing: {}",
+            missing_paths.join(", ")
+        ))
+    };
+
+    Ok(FlowRequestSyncStatus {
+        ready,
+        source_present: true,
+        flow_yaml_present: true,
+        missing_paths,
+        reason,
+    })
 }
 
 fn append_flow_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, message: &str) {

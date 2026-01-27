@@ -829,10 +829,23 @@ pub fn open_in_vscode(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
+    let target_path = {
+        let path_buf = std::path::Path::new(&path);
+        if path_buf.is_file() {
+            path_buf
+                .parent()
+                .ok_or_else(|| format!("Cannot determine parent directory for: {}", path))?
+                .to_string_lossy()
+                .to_string()
+        } else {
+            path.clone()
+        }
+    };
+
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&path)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -840,7 +853,7 @@ pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let mut cmd = std::process::Command::new("explorer");
-        cmd.arg(&path);
+        cmd.arg(&target_path);
         super::hide_console_window(&mut cmd);
         cmd.spawn().map_err(|e| e.to_string())?;
     }
@@ -848,7 +861,7 @@ pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg(&path)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

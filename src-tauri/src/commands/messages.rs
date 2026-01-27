@@ -1205,7 +1205,7 @@ pub fn send_flow_request_results(
         .next()
         .ok_or_else(|| "Failed to compute results path: empty".to_string())?;
     let owner = owner_component.as_os_str().to_string_lossy();
-    let remainder = rel_components.as_path().to_string_lossy();
+    let remainder = normalize_path_for_syft_url(&rel_components.as_path().to_string_lossy());
     let results_location = if remainder.is_empty() {
         format!("syft://{}", owner)
     } else {
@@ -1259,7 +1259,8 @@ pub fn import_flow_results(
     let data_dir = config
         .get_syftbox_data_dir()
         .map_err(|e| format!("Failed to get SyftBox data dir: {}", e))?;
-    let source_root = biovault::data::resolve_syft_url(&data_dir, &results_location)
+    let normalized_results_location = normalize_syft_url(&results_location);
+    let source_root = biovault::data::resolve_syft_url(&data_dir, &normalized_results_location)
         .map_err(|e| format!("Failed to resolve results location: {}", e))?;
     if !source_root.exists() {
         return Err(format!(
@@ -1283,6 +1284,18 @@ pub fn import_flow_results(
     copy_results_to_unencrypted(&storage, &source_root, &dest)?;
 
     Ok(dest.to_string_lossy().to_string())
+}
+
+fn normalize_syft_url(value: &str) -> String {
+    if value.contains('\\') {
+        value.replace('\\', "/")
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalize_path_for_syft_url(value: &str) -> String {
+    value.replace('\\', "/").trim_start_matches('/').to_string()
 }
 
 #[derive(serde::Deserialize)]

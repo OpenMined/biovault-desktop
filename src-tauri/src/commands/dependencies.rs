@@ -293,7 +293,7 @@ pub async fn check_docker_running() -> Result<bool, String> {
             match cmd.status() {
                 Ok(status) => {
                     if status.success() {
-                        return Ok(true);
+                        return true;
                     }
                     last_err = Some(format!("'{} info' returned {}", bin, status));
                 }
@@ -305,10 +305,10 @@ pub async fn check_docker_running() -> Result<bool, String> {
         if let Some(err) = last_err {
             crate::desktop_log!("Container runtime check failed: {}", err);
         }
-        Ok(false)
+        false
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))??;
+    .map_err(|e| format!("Task join error: {}", e))?;
 
     Ok(result)
 }
