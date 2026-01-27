@@ -10,26 +10,25 @@ BioVault treats a **module** (formerly "project") as a self-contained unit of ex
 
 ### Core Entities
 
-| Entity         | Description                                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **Datasite**   | A SyftBox identity + local data root (e.g., `SYFTBOX_EMAIL` and `SYFTBOX_DATA_DIR`)                                |
-| **Module**     | A versioned workflow with inputs/outputs, typically `dynamic-nextflow`, `shell`, or `python`                       |
-| **Flow**       | A list of module steps with explicit bindings between step outputs and step inputs                                 |
+| Entity | Description |
+|--------|-------------|
+| **Datasite** | A SyftBox identity + local data root (e.g., `SYFTBOX_EMAIL` and `SYFTBOX_DATA_DIR`) |
+| **Module** | A versioned workflow with inputs/outputs, typically `dynamic-nextflow`, `shell`, or `python` |
+| **Flow** | A list of module steps with explicit bindings between step outputs and step inputs |
 | **Submission** | A shared copy of a module (and its assets) in `shared/biovault/submissions/...` plus `syft.pub.yaml` and a message |
-| **Message**    | The inbox payload that tells a recipient where a submission lives and how to run it                                |
+| **Message** | The inbox payload that tells a recipient where a submission lives and how to run it |
 
 ### Naming Conventions
 
-| Old Name | New Name | Description                          |
-| -------- | -------- | ------------------------------------ |
-| Pipeline | Flow     | The outer orchestration unit         |
-| Project  | Module   | The reusable composable unit         |
-| Step     | Step     | An instantiated module inside a flow |
+| Old Name | New Name | Description |
+|----------|----------|-------------|
+| Pipeline | Flow | The outer orchestration unit |
+| Project | Module | The reusable composable unit |
+| Step | Step | An instantiated module inside a flow |
 
 ### Why `syft://` URLs
 
 `syft://` URLs are important because they:
-
 - Circumvent the need for DNS/IP of services that are not online while retaining identity
 - Prevent path traversal attacks by normalizing everything to a `datasites/` root
 - Make it easy to reason about where you are reading/writing in a networked context rather than local filesystem details
@@ -39,16 +38,15 @@ BioVault treats a **module** (formerly "project") as a self-contained unit of ex
 ## Overview
 
 The Flow spec (`flow-spec-guide/`) is a new unified specification to replace:
-
 - `PipelineSpec` (defined in `cli/src/pipeline_spec.rs`)
 - `ProjectSpec` (defined in `cli/src/project_spec.rs`)
 
 ### Core Components
 
-| Component   | Purpose                      | File                                       |
-| ----------- | ---------------------------- | ------------------------------------------ |
-| Flow        | Orchestration definition     | `flow-spec-guide/spec/flow.schema.yaml`    |
-| Module      | Reusable execution unit      | `flow-spec-guide/spec/module.schema.yaml`  |
+| Component | Purpose | File |
+|-----------|---------|------|
+| Flow | Orchestration definition | `flow-spec-guide/spec/flow.schema.yaml` |
+| Module | Reusable execution unit | `flow-spec-guide/spec/module.schema.yaml` |
 | FlowOverlay | Environment-specific patches | `flow-spec-guide/spec/overlay.schema.yaml` |
 
 ---
@@ -58,7 +56,6 @@ The Flow spec (`flow-spec-guide/`) is a new unified specification to replace:
 ### Module Files (formerly Project)
 
 A module is a folder containing:
-
 - `module.yaml` (spec) — formerly `project.yaml`
 - `workflow.nf` or `workflow.sh` (entrypoint)
 - `assets/` (scripts/data bundled with the module)
@@ -68,19 +65,16 @@ A module is a folder containing:
 Defined in `cli/src/project_spec.rs`, shared between module inputs and flow inputs:
 
 **Primitives:**
-
 - `String`, `Bool`, `File`, `Directory`
 - `ParticipantSheet`, `GenotypeRecord`, `BiovaultContext`
 
 **Collections:**
-
 - `List[T]`, `Map[String, T]`, `Record{field: Type}`
 - `?` suffix for optional (e.g., `File?`)
 
 ### Runner Templates
 
 **Dynamic Nextflow (`template: dynamic-nextflow`):**
-
 1. `module.yaml` is loaded and validated
 2. Template loaded from `~/.biovault/env/dynamic-nextflow/template.nf`
 3. Inputs/parameters converted to JSON (`inputs.json`, `params.json`)
@@ -90,7 +84,6 @@ Defined in `cli/src/project_spec.rs`, shared between module inputs and flow inpu
 **Shell (`template: shell`):**
 
 Environment variables injected:
-
 ```
 BV_PROJECT_DIR, BV_RESULTS_DIR, BV_ASSETS_DIR
 BV_INPUT_<NAME>, BV_OUTPUT_<NAME>
@@ -99,13 +92,11 @@ BV_SYFTBOX_DATA_DIR, BV_DATASITES_ROOT, BV_BIN
 ```
 
 Template variables in paths:
-
 - `{current_datasite}`, `{datasites.index}`, `{datasite.index}`, `{datasites}`
 
 ### Multi-Datasite Execution
 
 The pipeline runner (`cli/src/cli/commands/pipeline.rs`) executes one datasite at a time:
-
 - Resolves current datasite from `BIOVAULT_DATASITE_OVERRIDE`, config email, `SYFTBOX_EMAIL`, or `BIOVAULT_DATASITE`
 - If a step has `runs_on`/`foreach`, only the matching datasite executes it
 - To force a single process to run all targets: `BIOVAULT_PIPELINE_RUN_ALL=1`
@@ -125,7 +116,6 @@ share:
 ```
 
 Behavior:
-
 - `path` can be a `syft://` URL or path under current datasite root
 - Runner writes `syft.pub.yaml` in parent directory
 - Shared output recorded as `syft://...` URL in step outputs
@@ -134,14 +124,12 @@ Behavior:
 ### Submission & Inbox Flow
 
 **Submitting (`bv submit`):**
-
 1. Copies `project.yaml`, workflow, and assets into shared folder
 2. Encrypts assets using SyftBox storage and recipient list
 3. Writes `syft.pub.yaml` with read/write permissions
 4. Sends project message with `project_location` (`syft://...` URL)
 
 **Processing (`bv message process`):**
-
 1. Resolves `syft://` URL to local path
 2. Copies submitted project into local run directory
 3. Executes the project
@@ -154,19 +142,16 @@ Behavior:
 ### Strengths
 
 1. **Well-Structured Layering**
-
    - Clear separation: Flow → Module → Overlay
    - Kubernetes-style `apiVersion/kind/metadata/spec` structure
    - Manifest digests for integrity tracking
 
 2. **Multiparty Primitives**
-
    - `{datasite.current}`, `{datasite.prev}`, `{datasite.next}` template variables
    - Ring topology + sequential strategy for secure aggregation
    - Granular share permissions (read/write/admin per datasite)
 
 3. **Runner Abstraction**
-
    - Module defines runner kind (shell, python, nextflow, container)
    - Flow doesn't care about execution details
 
@@ -193,12 +178,12 @@ retry:
     max_delay_ms: 60000
     multiplier: 2.0
     jitter: true
-  retryable_errors: ['timeout', 'connection_refused']
+  retryable_errors: ["timeout", "connection_refused"]
 
 timeout:
   execution_seconds: 300
   on_timeout: fail|skip|default
-  default_value: '[]' # used when on_timeout is 'default'
+  default_value: "[]"  # used when on_timeout is 'default'
 ```
 
 `await` blocks now also support `on_timeout` and `default_value`:
@@ -211,7 +196,7 @@ with:
       timeout_seconds: 120
       poll_ms: 1000
       on_timeout: default
-      default_value: '{}'
+      default_value: "{}"
 ```
 
 #### 2. Security Model
@@ -248,11 +233,11 @@ Digest format documented: `algorithm:hex` where algorithm is `sha256`, `sha384`,
 
 **Solution:** Bracket notation for clarity:
 
-| Old Syntax      | New Syntax         | Meaning                 |
-| --------------- | ------------------ | ----------------------- |
-| `{datasites}`   | `{datasites[*]}`   | All datasites           |
-| `{datasites.0}` | `{datasites[0]}`   | First datasite          |
-| N/A             | `{datasites[0:3]}` | Slice (indices 0, 1, 2) |
+| Old Syntax | New Syntax | Meaning |
+|------------|------------|---------|
+| `{datasites}` | `{datasites[*]}` | All datasites |
+| `{datasites.0}` | `{datasites[0]}` | First datasite |
+| N/A | `{datasites[0:3]}` | Slice (indices 0, 1, 2) |
 
 #### 4. BindingSpec Complexity
 
@@ -356,37 +341,37 @@ enum SpecFormat {
 
 ### Field Mapping: PipelineSpec → Flow
 
-| PipelineSpec         | Flow                                    | Notes                         |
-| -------------------- | --------------------------------------- | ----------------------------- |
-| `name`               | `metadata.name`                         |                               |
-| `description`        | `metadata.description`                  |                               |
-| `context`            | `spec.inputs`                           | Converted to typed inputs     |
-| `inputs`             | `spec.inputs`                           |                               |
-| `steps[].id`         | `spec.steps[].id`                       | Same                          |
-| `steps[].uses`       | `spec.steps[].uses`                     | Now references `spec.modules` |
-| `steps[].where_exec` | `spec.steps[].run.targets`              |                               |
-| `steps[].runs_on`    | `spec.steps[].run.targets`              |                               |
-| `steps[].foreach`    | `spec.steps[].run.strategy: parallel`   |                               |
-| `steps[].order`      | `spec.steps[].run.strategy: sequential` |                               |
-| `steps[].with`       | `spec.steps[].with`                     | Now uses BindingSpec          |
-| `steps[].publish`    | `spec.steps[].publish`                  | Same                          |
-| `steps[].share`      | `spec.steps[].share`                    | Enhanced with permissions     |
-| `steps[].store`      | `spec.steps[].store`                    | Same                          |
+| PipelineSpec | Flow | Notes |
+|--------------|------|-------|
+| `name` | `metadata.name` | |
+| `description` | `metadata.description` | |
+| `context` | `spec.inputs` | Converted to typed inputs |
+| `inputs` | `spec.inputs` | |
+| `steps[].id` | `spec.steps[].id` | Same |
+| `steps[].uses` | `spec.steps[].uses` | Now references `spec.modules` |
+| `steps[].where_exec` | `spec.steps[].run.targets` | |
+| `steps[].runs_on` | `spec.steps[].run.targets` | |
+| `steps[].foreach` | `spec.steps[].run.strategy: parallel` | |
+| `steps[].order` | `spec.steps[].run.strategy: sequential` | |
+| `steps[].with` | `spec.steps[].with` | Now uses BindingSpec |
+| `steps[].publish` | `spec.steps[].publish` | Same |
+| `steps[].share` | `spec.steps[].share` | Enhanced with permissions |
+| `steps[].store` | `spec.steps[].store` | Same |
 
 ### Field Mapping: ProjectSpec → Module
 
-| ProjectSpec  | Module                 | Notes      |
-| ------------ | ---------------------- | ---------- |
-| `name`       | `metadata.name`        |            |
-| `author`     | `metadata.authors[]`   | Now a list |
-| `version`    | `metadata.version`     |            |
-| `workflow`   | `spec.runner.kind`     |            |
-| `template`   | `spec.runner.template` |            |
-| `inputs`     | `spec.inputs`          |            |
-| `outputs`    | `spec.outputs`         |            |
-| `parameters` | `spec.parameters`      |            |
-| `env`        | `spec.runner.env`      |            |
-| `assets`     | `spec.assets`          |            |
+| ProjectSpec | Module | Notes |
+|-------------|--------|-------|
+| `name` | `metadata.name` | |
+| `author` | `metadata.authors[]` | Now a list |
+| `version` | `metadata.version` | |
+| `workflow` | `spec.runner.kind` | |
+| `template` | `spec.runner.template` | |
+| `inputs` | `spec.inputs` | |
+| `outputs` | `spec.outputs` | |
+| `parameters` | `spec.parameters` | |
+| `env` | `spec.runner.env` | |
+| `assets` | `spec.assets` | |
 
 ## Example Conversion
 
@@ -439,11 +424,11 @@ spec:
     groups:
       clients:
         include:
-          - '{datasites[0]}'
-          - '{datasites[1]}'
+          - "{datasites[0]}"
+          - "{datasites[1]}"
       aggregator:
         include:
-          - '{datasites[2]}'
+          - "{datasites[2]}"
 
   modules:
     compute:
@@ -471,9 +456,9 @@ spec:
           path: shared/flows/{run_id}/{datasite.current}/result.txt
           permissions:
             read:
-              - '{datasites[*]}'
+              - "{datasites[*]}"
             write:
-              - '{datasite.current}'
+              - "{datasite.current}"
 
     - id: aggregate
       uses: aggregate
@@ -558,7 +543,7 @@ steps:
     run:
       targets: participants
       strategy: sequential
-      topology: ring # Enables {datasite.prev}, {datasite.next}
+      topology: ring  # Enables {datasite.prev}, {datasite.next}
     with:
       prev_result: File(shared/{datasite.prev}/partial.txt)
 ```
@@ -585,12 +570,10 @@ biovault module sign ./my-module --key ~/.keys/signing.key
 ## Files Changed
 
 ### Schema Updates
-
 - `flow-spec-guide/spec/flow.schema.yaml` - Error handling, security, selector syntax, module discovery
 - `flow-spec-guide/spec/module.schema.yaml` - Sandbox, timeout, digest format
 
 ### Example Updates (bracket notation)
-
 - `flow-spec-guide/tutorials/examples/01-hello-world/flow.yaml`
 - `flow-spec-guide/tutorials/examples/02-modules-and-reuse/flow.yaml`
 - `flow-spec-guide/tutorials/examples/03-runners/flow.yaml`
@@ -601,17 +584,16 @@ biovault module sign ./my-module --key ~/.keys/signing.key
 - `flow-spec-guide/spec/examples/module-folder.flow.yaml`
 
 ### New Documentation
-
 - `flow-spec-guide/tutorials/00-binding-patterns.md` - BindingSpec reference
 - `flow-spec-guide/MIGRATION.md` - Full migration guide
 
 ## Deprecation Timeline
 
-| Version | Status                                     |
-| ------- | ------------------------------------------ |
-| 0.x     | Both formats supported, no warnings        |
-| 1.0     | Legacy format deprecated, warnings emitted |
-| 2.0     | Legacy format removed                      |
+| Version | Status |
+|---------|--------|
+| 0.x | Both formats supported, no warnings |
+| 1.0 | Legacy format deprecated, warnings emitted |
+| 2.0 | Legacy format removed |
 
 ## Implementation Tasks
 
@@ -631,13 +613,11 @@ biovault module sign ./my-module --key ~/.keys/signing.key
 ### From Original Requirements
 
 1. **Versioned Registry + Lockfile**
-
    - Allow `uses: registry://module@1.2.3` and `uses: git+https://...@sha`
    - Store resolved lockfile to freeze input/output schemas, runner type, and asset digests
    - Resolve and cache modules before execution
 
 2. **First-Class Multiparty Routing**
-
    - Model `share`, `collect`, and `broadcast` as built-in step types
    - Push multiparty logic into the flow engine, not shell scripts
    - Keep modules single-party and reusable
@@ -649,7 +629,6 @@ biovault module sign ./my-module --key ~/.keys/signing.key
 ### Module Discovery & Safety
 
 Resolution rules:
-
 - `source.path` may be file or directory; directories resolve `module.yaml`/`module.yml`
 - `spec.module_paths` is explicit allowlist of local search roots
 - Short names (e.g., `hello`) resolve to `./modules/hello` when listed in `module_paths`
@@ -663,10 +642,10 @@ Resolution rules:
 This early prototype shows the round-robin/ring pattern that influenced the Flow spec:
 
 ```yaml
-author: 'madhava@openmined.org'
-project: 'add'
-language: 'python'
-description: 'Add two numbers'
+author: "madhava@openmined.org"
+project: "add"
+language: "python"
+description: "Add two numbers"
 code:
   - functions.py
 
@@ -683,7 +662,7 @@ workflow:
 steps:
   - first:
       inputs:
-        - a: StaticPipe(0) # Override input for first step
+        - a: StaticPipe(0)  # Override input for first step
   - last:
       output:
         path: *result
@@ -691,8 +670,8 @@ steps:
           read:
             - *datasites
   - foreach: *datasites
-    run: '{datasite}'
-    function: 'add'
+    run: "{datasite}"
+    function: "add"
     inputs:
       - a: FilePipe("{prev_datasite}/fedreduce/{project}/data/{prev_step}/result.txt")
       - b: *data
@@ -700,14 +679,13 @@ steps:
       path: *output
       permissions:
         read:
-          - '{next_datasite}'
+          - "{next_datasite}"
 
 complete:
   exists: *result
 ```
 
 This prototype influenced the Flow spec's:
-
 - `{datasite.prev}`, `{datasite.next}` template variables
 - `run.topology: ring` for sequential ring execution
 - `complete` conditions (now `spec.completion`)
