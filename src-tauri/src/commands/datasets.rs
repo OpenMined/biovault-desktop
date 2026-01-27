@@ -153,6 +153,13 @@ pub fn upsert_dataset_manifest(
 
 #[tauri::command]
 pub fn delete_dataset(state: tauri::State<AppState>, name: String) -> Result<usize, String> {
+    if let Err(err) = unpublish_dataset(name.clone()) {
+        crate::desktop_log!(
+            "⚠️ Failed to unpublish dataset '{}' before delete: {}",
+            name,
+            err
+        );
+    }
     let db = state.biovault_db.lock().unwrap();
     biovault::data::delete_dataset(&db, &name)
         .map_err(|e| format!("Failed to delete dataset: {}", e))
