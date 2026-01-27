@@ -45,7 +45,7 @@ clone_if_missing() {
     local clone_args=()
 
     if [[ -n "${CI:-}" || -n "${GITHUB_ACTIONS:-}" ]]; then
-        clone_args=(--depth 1 --filter=blob:none)
+        clone_args=(--depth 1 --filter=blob:none --single-branch)
     fi
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
@@ -67,28 +67,62 @@ clone_if_missing() {
     fi
 }
 
+clone_if_missing_async() {
+    local name="$1"
+    local url="$2"
+    local branch="${3:-}"
+    if [[ -d "$PARENT_DIR/$name" ]]; then
+        echo "$name already exists at $PARENT_DIR/$name"
+        return 0
+    fi
+    (
+        clone_if_missing "$name" "$url" "$branch"
+    ) &
+    CLONE_PIDS+=($!)
+}
+
+wait_for_clones() {
+    local failed=0
+    for pid in "${CLONE_PIDS[@]:-}"; do
+        if ! wait "$pid"; then
+            failed=1
+        fi
+    done
+    if [[ "$failed" -ne 0 ]]; then
+        echo "One or more dependency clones failed." >&2
+        exit 1
+    fi
+}
+
+# Track background clone jobs.
+CLONE_PIDS=()
+
 # Clone all dependencies
-clone_if_missing "biovault" "https://github.com/OpenMined/biovault.git"
-clone_if_missing "syftbox-sdk" "https://github.com/OpenMined/syftbox-sdk.git"
-clone_if_missing "syft-crypto-core" "https://github.com/OpenMined/syft-crypto-core.git"
-clone_if_missing "syftbox" "https://github.com/OpenMined/syftbox.git" "madhava/biovault"
-clone_if_missing "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
-clone_if_missing "sbenv" "https://github.com/OpenMined/sbenv.git"
-clone_if_missing "bioscript" "https://github.com/OpenMined/bioscript.git"
+clone_if_missing_async "biovault" "https://github.com/OpenMined/biovault.git"
+clone_if_missing_async "syftbox-sdk" "https://github.com/OpenMined/syftbox-sdk.git"
+clone_if_missing_async "syft-crypto-core" "https://github.com/OpenMined/syft-crypto-core.git"
+clone_if_missing_async "syftbox" "https://github.com/OpenMined/syftbox.git" "madhava/biovault"
+clone_if_missing_async "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
+clone_if_missing_async "sbenv" "https://github.com/OpenMined/sbenv.git"
+clone_if_missing_async "bioscript" "https://github.com/OpenMined/bioscript.git"
+wait_for_clones
 
 # Setup nested dependencies for syftbox-sdk
 if [[ -f "$PARENT_DIR/syftbox-sdk/scripts/setup-workspace.sh" ]]; then
     echo "Setting up syftbox-sdk dependencies..."
     chmod +x "$PARENT_DIR/syftbox-sdk/scripts/setup-workspace.sh"
-    (cd "$PARENT_DIR/syftbox-sdk" && ./scripts/setup-workspace.sh)
+    (cd "$PARENT_DIR/syftbox-sdk" && ./scripts/setup-workspace.sh) &
+    CLONE_PIDS+=($!)
 fi
 
 # Setup nested dependencies for biovault
 if [[ -f "$PARENT_DIR/biovault/scripts/setup-workspace.sh" ]]; then
     echo "Setting up biovault dependencies..."
     chmod +x "$PARENT_DIR/biovault/scripts/setup-workspace.sh"
-    (cd "$PARENT_DIR/biovault" && ./scripts/setup-workspace.sh)
+    (cd "$PARENT_DIR/biovault" && ./scripts/setup-workspace.sh) &
+    CLONE_PIDS+=($!)
 fi
+wait_for_clones
 
 # Create symlinks from repo root to parent deps (for compatibility with old paths)
 create_symlink() {

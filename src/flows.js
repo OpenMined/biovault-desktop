@@ -305,7 +305,9 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			try {
 				const parsedParticipants = JSON.parse(participantsRaw)
 				if (Array.isArray(parsedParticipants)) {
-					participantIds = parsedParticipants.filter((p) => typeof p === 'string')
+					participantIds = parsedParticipants
+						.map((p) => (p == null ? '' : String(p)))
+						.filter((p) => p.length > 0)
 				}
 			} catch (error) {
 				console.warn('Failed to parse preselectedParticipants:', error)
@@ -354,7 +356,9 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			try {
 				const parsedParticipants = JSON.parse(mockParticipantsRaw)
 				if (Array.isArray(parsedParticipants)) {
-					mockParticipantIds = parsedParticipants.filter((p) => typeof p === 'string')
+					mockParticipantIds = parsedParticipants
+						.map((p) => (p == null ? '' : String(p)))
+						.filter((p) => p.length > 0)
 				}
 			} catch (error) {
 				console.warn('Failed to parse preselectedParticipantsMock:', error)
@@ -367,7 +371,9 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			try {
 				const parsedParticipants = JSON.parse(realParticipantsRaw)
 				if (Array.isArray(parsedParticipants)) {
-					realParticipantIds = parsedParticipants.filter((p) => typeof p === 'string')
+					realParticipantIds = parsedParticipants
+						.map((p) => (p == null ? '' : String(p)))
+						.filter((p) => p.length > 0)
 				}
 			} catch (error) {
 				console.warn('Failed to parse preselectedParticipantsReal:', error)

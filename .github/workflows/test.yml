@@ -103,6 +103,7 @@ jobs:
       SKIP_PLAYWRIGHT_INSTALL: "1"
       AUTO_REBUILD_TAURI: "1"
       BV_DEVSTACK_CLIENT_MODE: ${{ matrix.client_mode }}
+      BV_SKIP_SYQURE: "1"
 
     steps:
       - name: Free disk space (Linux)
@@ -122,6 +123,22 @@ jobs:
         shell: pwsh
 
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -198,6 +215,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -312,23 +332,27 @@ jobs:
         run: cargo build --release
         working-directory: src-tauri
 
-      - name: Install maturin
+      - name: Install maturin (uv)
         if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
-        run: pip install maturin
-      - name: Install maturin (Windows)
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python maturin
+      - name: Install maturin (uv, Windows)
         if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         shell: pwsh
-        run: pip install maturin
+        run: |
+          uv venv .venv
+          uv pip install --python .venv\Scripts\python.exe maturin
 
       - name: Pre-build syftbox-sdk wheel
         if: runner.os != 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         run: |
           cd syftbox-sdk/python
-          maturin build --release
+          ../../.venv/bin/maturin build --release
       - name: Pre-build syftbox-sdk wheel (Windows)
         if: runner.os == 'Windows' && !startsWith(matrix.scenario, 'pipelines-')
         shell: pwsh
-        run: maturin build --release
+        run: ..\..\..\.venv\Scripts\maturin.exe build --release
         working-directory: syftbox-sdk/python
 
       - name: Setup Podman (Windows)
@@ -449,8 +473,26 @@ jobs:
   profiles-e2e:
     name: Profiles E2E (real backend)
     runs-on: namespace-profile-linux-medium
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -598,8 +640,26 @@ jobs:
   profiles-e2e-macos:
     name: Profiles E2E (real backend, macOS)
     runs-on: namespace-profile-mac-medium
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: |
@@ -727,8 +787,26 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    env:
+      BV_SKIP_SYQURE: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache workspace dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../biovault
+            ${{ github.workspace }}/../syftbox-sdk
+            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox
+            ${{ github.workspace }}/../biovault-beaver
+            ${{ github.workspace }}/../sbenv
+            ${{ github.workspace }}/../bioscript
+            ${{ github.workspace }}/../syqure
+          key: workspace-deps-${{ runner.os }}-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
         run: .\win.ps1 ./scripts/setup-workspace.sh
