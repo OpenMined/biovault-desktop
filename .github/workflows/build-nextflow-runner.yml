@@ -6,12 +6,14 @@ on:
     paths:
       - 'docker/windows/Dockerfile.nextflow-runner'
       - 'docker/nextflow-runner-arm64/**'
+      - 'docker/test-nextflow-runner.sh'
       - '.github/workflows/build-nextflow-runner.yml'
   pull_request:
     branches: [main]
     paths:
       - 'docker/windows/Dockerfile.nextflow-runner'
       - 'docker/nextflow-runner-arm64/**'
+      - 'docker/test-nextflow-runner.sh'
       - '.github/workflows/build-nextflow-runner.yml'
   workflow_dispatch:
     inputs:
@@ -159,6 +161,9 @@ jobs:
     needs: build-amd64
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
       - name: Set variables
         id: vars
         run: |
@@ -172,40 +177,12 @@ jobs:
 
       - name: Load and test amd64 image
         run: |
-          set -e
           docker load -i /tmp/nextflow-runner-amd64.tar
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64"
-
-          echo "========================================"
-          echo "Testing AMD64 Nextflow Runner"
-          echo "========================================"
-          echo "Image: ${IMAGE}"
-          echo ""
-
-          echo "[TEST] Checking image exists..."
-          docker image inspect "${IMAGE}" >/dev/null
-          echo "[PASS] Image exists"
-
-          echo "[TEST] Checking Nextflow version..."
-          docker run --rm "${IMAGE}" -version
-          echo "[PASS] Nextflow runs"
-
-          echo "[TEST] Checking Docker CLI..."
-          docker run --rm --entrypoint docker "${IMAGE}" --version
-          echo "[PASS] Docker CLI works"
-
-          echo "[TEST] Checking Podman CLI..."
-          docker run --rm --entrypoint podman "${IMAGE}" --version
-          echo "[PASS] Podman CLI works"
-
-          echo "[TEST] Checking Java version..."
-          docker run --rm --entrypoint java "${IMAGE}" -version
-          echo "[PASS] Java works"
-
-          echo ""
-          echo "========================================"
-          echo "All amd64 tests passed!"
-          echo "========================================"
+          export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64"
+          export PLATFORM="linux/amd64"
+          export EXPECTED_ARCH="amd64"
+          chmod +x docker/test-nextflow-runner.sh
+          docker/test-nextflow-runner.sh
 
   # Push amd64 image after tests pass
   push-amd64:
@@ -271,8 +248,9 @@ jobs:
           docker load -i /tmp/nextflow-runner-arm64.tar
           export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64"
           export PLATFORM="linux/arm64"
-          chmod +x docker/nextflow-runner-arm64/test-nextflow-runner.sh
-          docker/nextflow-runner-arm64/test-nextflow-runner.sh
+          export EXPECTED_ARCH="arm64"
+          chmod +x docker/test-nextflow-runner.sh
+          docker/test-nextflow-runner.sh
 
   # Push arm64 image after tests pass
   push-arm64:
