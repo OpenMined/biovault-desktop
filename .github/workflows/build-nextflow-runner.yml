@@ -79,7 +79,7 @@ jobs:
           context: docker/windows
           file: docker/windows/Dockerfile.nextflow-runner
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' && (inputs.push == 'true' || inputs.push == '') }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,mode=max,scope=amd64
@@ -122,22 +122,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push arm64 image
+      - name: Build arm64 image
         uses: docker/build-push-action@v5
         with:
           context: docker/nextflow-runner-arm64
           file: docker/nextflow-runner-arm64/Dockerfile.nextflow-runner
           platforms: linux/arm64
-          push: ${{ github.event_name != 'pull_request' && (inputs.push == 'true' || inputs.push == '') }}
+          push: false
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,mode=max,scope=arm64
+          outputs: type=docker,dest=/tmp/nextflow-runner-arm64.tar
           build-args: |
             DOCKER_CLI_VERSION=${{ steps.vars.outputs.docker_cli_version }}
             PODMAN_VERSION=${{ steps.vars.outputs.podman_version }}
             NEXTFLOW_VERSION=${{ steps.vars.outputs.tag }}
 
-  # Test arm64 image
+      - name: Upload arm64 image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp/nextflow-runner-arm64.tar
+          retention-days: 1
+
+  # Test arm64 image using local artifact
   test-arm64:
     name: Test arm64 image
     needs: build-arm64
@@ -156,26 +164,58 @@ jobs:
         run: |
           echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
+      - name: Download arm64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp
+
+      - name: Load and test arm64 image
+        run: |
+          docker load -i /tmp/nextflow-runner-arm64.tar
+          export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64"
+          export PLATFORM="linux/arm64"
+          chmod +x docker/nextflow-runner-arm64/test-nextflow-runner.sh
+          docker/nextflow-runner-arm64/test-nextflow-runner.sh
+
+  # Push arm64 image after tests pass
+  push-arm64:
+    name: Push arm64 image
+    needs: test-arm64
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
+      - name: Download arm64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp
+
+      - name: Load arm64 image
+        run: docker load -i /tmp/nextflow-runner-arm64.tar
+
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull and test arm64 image
-        if: github.event_name != 'pull_request'
-        run: |
-          export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64"
-          export PLATFORM="linux/arm64"
-          chmod +x docker/nextflow-runner-arm64/test-nextflow-runner.sh
-          docker/nextflow-runner-arm64/test-nextflow-runner.sh
+      - name: Push arm64 image
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64
 
   # Create multi-arch manifest after both builds complete
   create-manifest:
     name: Create multi-arch manifest
-    needs: [build-amd64, build-arm64, test-arm64]
+    needs: [build-amd64, push-arm64]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
