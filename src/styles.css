@@ -1,43 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
 /* BioVault Desktop - Main Stylesheet */
 /* Modular CSS imports - order matters! */
 
 /* 1. Base styles - resets and fundamental elements */
-@import url('css/base.css');
+@import "./css/base.css";
 
 /* 2. Layout - grid, flex, containers, tabs */
-@import url('css/layout.css');
-@import url('css/sidebar.css');
+@import "./css/layout.css";
+@import "./css/sidebar.css";
 /* Workbench removed - logs and SQL are now direct tabs */
-/* @import url('css/workbench.css'); */
+/* @import "./css/workbench.css"; */
 
 /* 3. Forms - inputs, selects, labels */
-@import url('css/forms.css');
+@import "./css/forms.css";
 
 /* 4. Buttons - all button styles */
-@import url('css/buttons.css');
+@import "./css/buttons.css";
 
 /* 5. Tables - table elements and styling */
-@import url('css/tables.css');
+@import "./css/tables.css";
 
 /* 6. Modals - modal dialogs and overlays */
-@import url('css/modals.css');
+@import "./css/modals.css";
 
 /* 7. Page-specific styles */
-@import url('css/onboarding.css');
-@import url('css/profiles.css');
-@import url('css/modules.css');
-@import url('css/module-editor.css');
-@import url('css/configure-step.css');
-@import url('css/data.css');
-@import url('css/import.css');
-@import url('css/runs.css');
-@import url('css/flows.css');
-@import url('css/step-picker.css');
-@import url('css/messages.css');
-@import url('css/logs.css');
-@import url('css/operations.css');
-@import url('css/sql.css');
-@import url('css/sessions.css');
-@import url('css/network.css');
-@import url('css/settings.css');
-@import url('css/syftbox.css');
+@import "./css/onboarding.css";
+@import "./css/profiles.css";
+@import "./css/projects.css";
+@import "./css/project-editor.css";
+@import "./css/configure-step.css";
+@import "./css/data.css";
+@import "./css/import.css";
+@import "./css/runs.css";
+@import "./css/step-picker.css";
+@import "./css/messages.css";
+@import "./css/logs.css";
+@import "./css/operations.css";
+@import "./css/sql.css";
+@import "./css/sessions.css";
+@import "./css/network.css";
+@import "./css/settings.css";
+@import "./css/syftbox.css";
+@import "./css/files.css";
+@import "./css/participants.css";

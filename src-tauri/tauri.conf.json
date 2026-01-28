@@ -4,7 +4,10 @@
 	"version": "0.1.39",
 	"identifier": "org.openmined.biovault-desktop",
 	"build": {
-		"frontendDist": "../src"
+		"beforeDevCommand": "npm run dev:frontend",
+		"beforeBuildCommand": "npm run build:frontend",
+		"frontendDist": "../dist",
+		"devUrl": "http://localhost:5173"
 	},
 	"app": {
 		"withGlobalTauri": true,
@@ -18,13 +21,14 @@
 				"devtools": true
 			}
 		],
-
 		"security": {
 			"csp": null,
 			"capabilities": [
 				{
 					"identifier": "main-capability",
-					"windows": ["main"],
+					"windows": [
+						"main"
+					],
 					"permissions": [
 						"core:default",
 						"dialog:allow-open",
@@ -59,7 +63,12 @@
 			"entitlements": "./Entitlements.plist",
 			"minimumSystemVersion": "10.13"
 		},
-		"targets": ["app", "appimage", "dmg", "nsis"],
+		"targets": [
+			"app",
+			"appimage",
+			"dmg",
+			"nsis"
+		],
 		"resources": [
 			"resources/syqure",
 			"resources/templates",
@@ -79,7 +88,9 @@
 		},
 		"deep-link": {
 			"desktop": {
-				"schemes": ["biovault"]
+				"schemes": [
+					"biovault"
+				]
 			}
 		}
 	}

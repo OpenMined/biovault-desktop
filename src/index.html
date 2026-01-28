@@ -1,149 +1,132 @@
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>BioVault Desktop</title>
-		<link rel="stylesheet" href="styles.css" />
-	</head>
 
-	<body>
-		<!-- Profiles View - shown when multiple profiles exist -->
-		<div id="profiles-view" class="tab-content profiles-view" style="display: none"></div>
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>BioVault Desktop</title>
+	<link rel="stylesheet" href="/styles.css" />
+</head>
 
-		<!-- Onboarding View - shown on first launch (overlays everything) -->
-		<div id="onboarding-view" class="tab-content onboarding-view" style="display: none"></div>
+<body>
+	<!-- Profiles View - shown when multiple profiles exist -->
+	<div id="profiles-view" class="tab-content profiles-view" style="display: none"></div>
 
-		<!-- App Layout: Sidebar + Main Area -->
-		<div class="app-layout">
-			<!-- Left Vertical Sidebar -->
-			<aside class="app-sidebar">
-				<nav class="sidebar-nav">
-					<button class="nav-item active" data-tab="run" title="Flows">
-						<img src="assets/icons/workflow.svg" width="24" height="24" alt="Flows" />
-						<span class="nav-label">Flows</span>
-					</button>
-					<button class="nav-item" data-tab="data" title="Data">
-						<img src="assets/icons/drive.svg" width="24" height="24" alt="Data" />
-						<span class="nav-label">Data</span>
-					</button>
-					<button class="nav-item" data-tab="runs" title="Results">
-						<img src="assets/icons/chart.svg" width="24" height="24" alt="Results" />
-						<span class="nav-label">Runs</span>
-					</button>
-					<button class="nav-item" data-tab="logs" title="Logs">
-						<img src="assets/icons/terminal.svg" width="24" height="24" alt="Logs" />
-						<span class="nav-label">Logs</span>
-					</button>
-					<button class="nav-item" data-tab="sql" title="SQL">
-						<img src="assets/icons/database.svg" width="24" height="24" alt="Data" />
-						<span class="nav-label">Query</span>
-					</button>
-					<button class="nav-item" data-tab="sessions" title="Sessions">
-						<img src="assets/icons/user-round.svg" width="24" height="24" alt="Sessions" />
-						<span class="nav-label">Sessions</span>
-					</button>
-				</nav>
+	<!-- Onboarding View - shown on first launch (overlays everything) -->
+	<div id="onboarding-view" class="tab-content onboarding-view" style="display: none"></div>
 
-				<!-- Bottom Navigation Items -->
-				<div class="sidebar-footer">
-					<div class="sidebar-divider"></div>
-					<button
-						class="nav-item invite-nav-btn"
-						id="sidebar-invite-btn"
-						title="Invite to BioVault"
-					>
-						<svg
-							width="24"
-							height="24"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-							<circle cx="9" cy="7" r="4" />
-							<line x1="19" y1="8" x2="19" y2="14" />
-							<line x1="22" y1="11" x2="16" y2="11" />
-						</svg>
-						<span class="nav-label">Invite</span>
-					</button>
-					<button class="nav-item" data-tab="network" title="Network">
-						<img src="assets/icons/user-round.svg" width="24" height="24" alt="Network" />
-						<span class="nav-label">Network</span>
-					</button>
-					<button class="nav-item" data-tab="syftbox" title="SyftBox">
-						<svg
-							width="24"
-							height="24"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path
-								d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
-							></path>
-							<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-							<line x1="12" y1="22.08" x2="12" y2="12"></line>
-						</svg>
-						<span class="nav-label">SyftBox</span>
-					</button>
-					<button class="nav-item" data-tab="messages" title="Messages">
-						<img src="assets/icons/mail.svg" width="24" height="24" alt="Messages" />
-						<span class="nav-label">Messages</span>
-					</button>
-					<button class="nav-item" data-tab="settings" title="Settings">
-						<img src="assets/icons/settings.svg" width="24" height="24" alt="Settings" />
-						<span class="nav-label">Settings</span>
-					</button>
-				</div>
-			</aside>
+	<!-- App Layout: Sidebar + Main Area -->
+	<div class="app-layout">
+		<!-- Left Vertical Sidebar -->
+		<aside class="app-sidebar">
+			<nav class="sidebar-nav">
+				<button class="nav-item active" data-tab="run" title="Flows">
+					<img src="assets/icons/workflow.svg" width="24" height="24" alt="Flows" />
+					<span class="nav-label">Flows</span>
+				</button>
+				<button class="nav-item" data-tab="data" title="Data">
+					<img src="assets/icons/drive.svg" width="24" height="24" alt="Data" />
+					<span class="nav-label">Data</span>
+				</button>
+				<button class="nav-item" data-tab="runs" title="Results">
+					<img src="assets/icons/chart.svg" width="24" height="24" alt="Results" />
+					<span class="nav-label">Runs</span>
+				</button>
+				<button class="nav-item" data-tab="logs" title="Logs">
+					<img src="assets/icons/terminal.svg" width="24" height="24" alt="Logs" />
+					<span class="nav-label">Logs</span>
+				</button>
+				<button class="nav-item" data-tab="sql" title="SQL">
+					<img src="assets/icons/database.svg" width="24" height="24" alt="Data" />
+					<span class="nav-label">Query</span>
+				</button>
+				<button class="nav-item" data-tab="sessions" title="Sessions">
+					<img src="assets/icons/user-round.svg" width="24" height="24" alt="Sessions" />
+					<span class="nav-label">Sessions</span>
+				</button>
+			</nav>
 
-			<!-- Main Content Area -->
-			<div class="app-main">
-				<!-- Content Views -->
-				<div class="app-content">
-					<div id="modules-view" class="tab-content"></div>
-					<div id="module-edit-view" class="tab-content"></div>
-					<div id="run-view" class="tab-content active"></div>
-					<div id="import-results-view" class="tab-content"></div>
-					<div id="data-view" class="tab-content"></div>
-					<div id="runs-view" class="tab-content"></div>
-					<div id="logs-view" class="tab-content"></div>
-					<div id="sql-view" class="tab-content"></div>
-					<div id="sessions-view" class="tab-content"></div>
-					<div id="network-view" class="tab-content"></div>
-					<div id="syftbox-view" class="tab-content"></div>
-					<div id="messages-view" class="tab-content"></div>
-					<div id="settings-view" class="tab-content"></div>
-				</div>
+			<!-- Bottom Navigation Items -->
+			<div class="sidebar-footer">
+				<div class="sidebar-divider"></div>
+				<button class="nav-item invite-nav-btn" id="sidebar-invite-btn" title="Invite to BioVault">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+						stroke-linecap="round" stroke-linejoin="round">
+						<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+						<circle cx="9" cy="7" r="4" />
+						<line x1="19" y1="8" x2="19" y2="14" />
+						<line x1="22" y1="11" x2="16" y2="11" />
+					</svg>
+					<span class="nav-label">Invite</span>
+				</button>
+				<button class="nav-item" data-tab="network" title="Network">
+					<img src="assets/icons/user-round.svg" width="24" height="24" alt="Network" />
+					<span class="nav-label">Network</span>
+				</button>
+				<button class="nav-item" data-tab="syftbox" title="SyftBox">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+						stroke-linecap="round" stroke-linejoin="round">
+						<path
+							d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+						</path>
+						<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+						<line x1="12" y1="22.08" x2="12" y2="12"></line>
+					</svg>
+					<span class="nav-label">SyftBox</span>
+				</button>
+				<button class="nav-item" data-tab="messages" title="Messages">
+					<img src="assets/icons/mail.svg" width="24" height="24" alt="Messages" />
+					<span class="nav-label">Messages</span>
+				</button>
+				<button class="nav-item" data-tab="settings" title="Settings">
+					<img src="assets/icons/settings.svg" width="24" height="24" alt="Settings" />
+					<span class="nav-label">Settings</span>
+				</button>
+			</div>
+		</aside>
+
+		<!-- Main Content Area -->
+		<div class="app-main">
+			<h1 class="text-3xl font-bold underline text-red-500 p-4">Tailwind Test</h1>
+			<!-- Content Views -->
+			<div class="app-content">
+				<div id="modules-view" class="tab-content"></div>
+				<div id="module-edit-view" class="tab-content"></div>
+				<div id="run-view" class="tab-content active"></div>
+				<div id="import-results-view" class="tab-content"></div>
+				<div id="data-view" class="tab-content"></div>
+				<div id="runs-view" class="tab-content"></div>
+				<div id="logs-view" class="tab-content"></div>
+				<div id="sql-view" class="tab-content"></div>
+				<div id="sessions-view" class="tab-content"></div>
+				<div id="network-view" class="tab-content"></div>
+				<div id="syftbox-view" class="tab-content"></div>
+				<div id="messages-view" class="tab-content"></div>
+				<div id="settings-view" class="tab-content"></div>
 			</div>
 		</div>
+	</div>
 
-		<!-- Global SyftBox Status Bar - spans full width under everything -->
-		<footer id="global-status-bar" class="global-status-bar">
-			<div class="status-bar-left">
-				<span id="global-ws-status" class="ws-status" title="WebSocket connection">
-					<span class="ws-dot disconnected"></span>
-					<span class="ws-label">Disconnected</span>
-				</span>
-				<span id="global-last-sync" class="last-sync" title="Last successful sync">-</span>
-			</div>
-			<div class="status-bar-right">
-				<span id="global-pid" class="status-item">PID: -</span>
-				<span id="global-mode" class="status-item">Mode: -</span>
-				<span id="global-tx" class="status-item">TX: -</span>
-				<span id="global-rx" class="status-item">RX: -</span>
-			</div>
-		</footer>
+	<!-- Global SyftBox Status Bar - spans full width under everything -->
+	<footer id="global-status-bar" class="global-status-bar">
+		<div class="status-bar-left">
+			<span id="global-ws-status" class="ws-status" title="WebSocket connection">
+				<span class="ws-dot disconnected"></span>
+				<span class="ws-label">Disconnected</span>
+			</span>
+			<span id="global-last-sync" class="last-sync" title="Last successful sync">-</span>
+		</div>
+		<div class="status-bar-right">
+			<span id="global-pid" class="status-item">PID: -</span>
+			<span id="global-mode" class="status-item">Mode: -</span>
+			<span id="global-tx" class="status-item">TX: -</span>
+			<span id="global-rx" class="status-item">RX: -</span>
+		</div>
+	</footer>
 
-		<!-- Import Modal will be injected here by JavaScript -->
+	<!-- Import Modal will be injected here by JavaScript -->
 
-		<script type="module" src="/main.js"></script>
-	</body>
+	<script type="module" src="/main.js"></script>
+</body>
+
 </html>
