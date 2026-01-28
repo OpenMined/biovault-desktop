@@ -18,7 +18,10 @@ Usage: .\repo.ps1 [OPTIONS]
 Options:
   (none)              Show repo tree with branch/dirty status
   --init [--https]    Initialize workspace and sync deps (clones repos)
-  sync                Re-sync workspace to manifest
+  sync [branch] [--force]
+                      Re-sync workspace to manifest
+                      branch: checkout manifest branches and fast-forward
+                      --force: discard local changes before syncing branches
   fetch               Fetch remotes for all repos and show ahead/behind
   pull [--rebase]     Pull updates for all repos on branches
   lint [--force] [--verbose]
@@ -50,6 +53,8 @@ Examples:
   .\repo.ps1 tools --firewall   # Add Windows Firewall rules for Node/MinIO
   .\repo.ps1 fetch              # Fetch all repos
   .\repo.ps1 pull               # Pull all repos
+  .\repo.ps1 sync branch        # Sync and fast-forward manifest branches
+  .\repo.ps1 sync branch --force # Discard local changes and force-sync branches
   .\repo.ps1 switch -b feature all  # Create/switch to branch in all repos
 "@
 }
@@ -716,6 +721,24 @@ function Initialize-Workspace {
 }
 
 function Sync-Workspace {
+    param(
+        [bool]$BranchMode = $false,
+        [bool]$Force = $false
+    )
+
+    if ($BranchMode -and $Force) {
+        Invoke-ForceSyncBranches
+        return
+    }
+
+    Sync-WorkspaceCore
+
+    if ($BranchMode) {
+        Sync-ManifestBranches
+    }
+}
+
+function Sync-WorkspaceCore {
     Write-Host "Syncing workspace..." -ForegroundColor Cyan
 
     $projects = Get-ManifestProjects
@@ -732,7 +755,9 @@ function Sync-Workspace {
 
         Push-Location $targetPath
         try {
-            git fetch --all 2>&1 | Out-Null
+            $ErrorActionPreference = "SilentlyContinue"
+            git fetch --all 2>$null | Out-Null
+            $ErrorActionPreference = "Stop"
             $ErrorActionPreference = "SilentlyContinue"
             $output = git checkout $proj.Revision 2>&1
             $ErrorActionPreference = "Stop"
@@ -741,6 +766,199 @@ function Sync-Workspace {
             } else {
                 Write-Host "failed" -ForegroundColor Red
             }
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+function Get-RepoRemoteName {
+    param([string]$RepoPath, [string]$Preferred = "origin")
+    Push-Location $RepoPath
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $remotes = git remote 2>$null
+        $ErrorActionPreference = "Stop"
+        if ($remotes -and ($remotes -contains $Preferred)) {
+            return $Preferred
+        }
+        if ($remotes) {
+            return ($remotes | Select-Object -First 1)
+        }
+        return $null
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-RevisionPinned {
+    param([string]$RepoPath, [string]$Revision)
+    if ($Revision -match '^[0-9a-fA-F]{7,40}$') {
+        return $true
+    }
+    Push-Location $RepoPath
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $null = git show-ref --verify --quiet "refs/tags/$Revision" 2>$null
+        $ErrorActionPreference = "Stop"
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        Pop-Location
+    }
+}
+
+function Sync-ManifestBranches {
+    $projects = Get-ManifestProjects
+
+    foreach ($proj in $projects) {
+        $targetPath = Join-Path $RootDir $proj.Path
+        Write-Host "  -> $($proj.Path): " -NoNewline
+
+        if (-not (Test-Path $targetPath)) {
+            Write-Host "missing (run --init first)" -ForegroundColor Red
+            continue
+        }
+
+        if (Test-RepoDirty $targetPath) {
+            Write-Host "dirty (skipped)" -ForegroundColor Yellow
+            continue
+        }
+
+        if (Test-RevisionPinned -RepoPath $targetPath -Revision $proj.Revision) {
+            Write-Host "pinned (skipped)" -ForegroundColor Yellow
+            continue
+        }
+
+        $remote = Get-RepoRemoteName -RepoPath $targetPath -Preferred $proj.Remote
+        if (-not $remote) {
+            Write-Host "no remote" -ForegroundColor Yellow
+            continue
+        }
+
+        Push-Location $targetPath
+        try {
+            $ErrorActionPreference = "SilentlyContinue"
+            git fetch $remote --prune 2>$null | Out-Null
+            $ErrorActionPreference = "Stop"
+
+            $ErrorActionPreference = "SilentlyContinue"
+            $null = git show-ref --verify --quiet "refs/remotes/$remote/$($proj.Revision)" 2>$null
+            $hasRemote = ($LASTEXITCODE -eq 0)
+            $null = git show-ref --verify --quiet "refs/heads/$($proj.Revision)" 2>$null
+            $hasLocal = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = "Stop"
+
+            if ($hasRemote) {
+                if ($hasLocal) {
+                    $null = git checkout $proj.Revision 2>&1
+                } else {
+                    $null = git checkout -b $proj.Revision --track "$remote/$($proj.Revision)" 2>&1
+                }
+
+                $null = git branch --set-upstream-to "$remote/$($proj.Revision)" $proj.Revision 2>&1
+                $headBefore = (git rev-parse HEAD 2>$null).Trim()
+                $null = git merge --ff-only "$remote/$($proj.Revision)" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $headAfter = (git rev-parse HEAD 2>$null).Trim()
+                    if ($headBefore -and $headAfter -and $headBefore -ne $headAfter) {
+                        Write-Host "updated" -ForegroundColor Green
+                    } else {
+                        Write-Host "up-to-date" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Host "diverged" -ForegroundColor Yellow
+                }
+                continue
+            }
+
+            if ($hasLocal) {
+                $null = git checkout $proj.Revision 2>&1
+                Write-Host "no remote branch" -ForegroundColor Yellow
+                continue
+            }
+
+            Write-Host "missing branch" -ForegroundColor Yellow
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+function Invoke-ForceSyncBranches {
+    Write-Host "Force syncing workspace (discarding local changes)..." -ForegroundColor Yellow
+
+    $projects = Get-ManifestProjects
+    foreach ($proj in $projects) {
+        $targetPath = Join-Path $RootDir $proj.Path
+        if (-not (Test-Path $targetPath)) {
+            continue
+        }
+
+        Push-Location $targetPath
+        try {
+            $ErrorActionPreference = "SilentlyContinue"
+            git rebase --abort 2>$null | Out-Null
+            $ErrorActionPreference = "Stop"
+            git reset --hard 2>&1 | Out-Null
+            git clean -fd 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+    }
+
+    Sync-WorkspaceCore
+    Checkout-ManifestBranches
+}
+
+function Checkout-ManifestBranches {
+    $projects = Get-ManifestProjects
+
+    foreach ($proj in $projects) {
+        $targetPath = Join-Path $RootDir $proj.Path
+        if (-not (Test-Path $targetPath)) {
+            continue
+        }
+
+        if (Test-RevisionPinned -RepoPath $targetPath -Revision $proj.Revision) {
+            continue
+        }
+
+        $remote = Get-RepoRemoteName -RepoPath $targetPath -Preferred $proj.Remote
+        if (-not $remote) {
+            Write-Host "  -> $($proj.Path): no remote found" -ForegroundColor Yellow
+            continue
+        }
+
+        Push-Location $targetPath
+        try {
+            $ErrorActionPreference = "SilentlyContinue"
+            $null = git fetch $remote --prune 2>$null
+            $ErrorActionPreference = "Stop"
+            $ErrorActionPreference = "SilentlyContinue"
+            $null = git show-ref --verify --quiet "refs/remotes/$remote/$($proj.Revision)" 2>$null
+            $hasRemote = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = "Stop"
+
+            if ($hasRemote) {
+                $ErrorActionPreference = "SilentlyContinue"
+                $null = git checkout -B $proj.Revision "$remote/$($proj.Revision)" 2>$null
+                $checkoutExit = $LASTEXITCODE
+                $ErrorActionPreference = "Stop"
+                if ($checkoutExit -ne 0) {
+                    Write-Host "  -> $($proj.Path): failed to checkout $($proj.Revision)" -ForegroundColor Red
+                    continue
+                }
+                $ErrorActionPreference = "SilentlyContinue"
+                $null = git reset --hard "$remote/$($proj.Revision)" 2>$null
+                $resetExit = $LASTEXITCODE
+                $ErrorActionPreference = "Stop"
+                if ($resetExit -ne 0) {
+                    Write-Host "  -> $($proj.Path): failed to fast-forward $($proj.Revision)" -ForegroundColor Red
+                }
+                continue
+            }
+
+            Write-Host "  -> $($proj.Path): branch $($proj.Revision) not found on $remote" -ForegroundColor Yellow
         } finally {
             Pop-Location
         }
@@ -1475,7 +1693,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             break
         }
         "^--force$" {
-            if ($Command -eq "lint" -or $Command -eq "test") {
+            if ($Command -eq "lint" -or $Command -eq "test" -or $Command -eq "sync") {
                 $PositionalArgs += $arg
                 break
             }
@@ -1530,7 +1748,40 @@ switch ($Command) {
         Initialize-Workspace -UseHttps $UseHttps
     }
     "sync" {
-        Sync-Workspace
+        $branchMode = $false
+        $forceSync = $false
+
+        if ($PositionalArgs.Count -gt 2) {
+            Write-Host "Usage: .\repo.ps1 sync [branch] [--force]" -ForegroundColor Red
+            exit 1
+        }
+
+        if ($PositionalArgs.Count -ge 1) {
+            $mode = $PositionalArgs[0]
+            if ($mode -eq "branch" -or $mode -eq "--branch") {
+                $branchMode = $true
+            } else {
+                Write-Host "Unknown sync option: $mode" -ForegroundColor Red
+                exit 1
+            }
+        }
+
+        if ($PositionalArgs.Count -ge 2) {
+            $opt = $PositionalArgs[1]
+            if ($opt -eq "--force") {
+                $forceSync = $true
+            } else {
+                Write-Host "Unknown sync option: $opt" -ForegroundColor Red
+                exit 1
+            }
+        }
+
+        if ($forceSync -and -not $branchMode) {
+            Write-Host "Usage: .\repo.ps1 sync [branch] [--force]" -ForegroundColor Red
+            exit 1
+        }
+
+        Sync-Workspace -BranchMode:$branchMode -Force:$forceSync
     }
     "tools" {
         Show-Tools -AutoInstall $AutoInstall -ConfigureFirewall $ConfigureFirewall

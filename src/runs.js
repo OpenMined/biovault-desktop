@@ -810,6 +810,48 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
 							await loadRuns()
 						} catch (error) {
+							const message = `${error?.message || error}`
+							// Handle lock files remaining
+							if (message.includes('NEXTFLOW_LOCKS_REMAIN')) {
+								const details = message.split('NEXTFLOW_LOCKS_REMAIN:').pop()?.trim()
+								const confirmed = await confirmWithDialog(
+									`Nextflow lock files are still present.${details ? `\n\n${details}` : ''}\n\nForce remove locks and resume?`,
+									{ title: 'Nextflow Lock Detected', type: 'warning' },
+								)
+								if (confirmed) {
+									const input = card.querySelector('.run-concurrency-input')
+									const nextflowMaxForks = parseConcurrencyInput(input?.value)
+									await invoke('resume_flow_run', {
+										runId: run.id,
+										nextflowMaxForks,
+										forceRemoveLock: true,
+									})
+									await loadRuns()
+									return
+								}
+							}
+							// Handle corrupted cache DB (happens after ungraceful pause)
+							else if (
+								message.includes("Can't open cache DB") ||
+								message.includes('Unable to acquire lock') ||
+								message.includes('NEXTFLOW_CACHE_CORRUPTED')
+							) {
+								const confirmed = await confirmWithDialog(
+									`Nextflow cache appears corrupted from a previous interrupted run.\n\nClear cache and start fresh? (Previous progress will be lost)`,
+									{ title: 'Nextflow Cache Corrupted', type: 'warning' },
+								)
+								if (confirmed) {
+									const input = card.querySelector('.run-concurrency-input')
+									const nextflowMaxForks = parseConcurrencyInput(input?.value)
+									await invoke('resume_flow_run', {
+										runId: run.id,
+										nextflowMaxForks,
+										forceRemoveLock: true,
+									})
+									await loadRuns()
+									return
+								}
+							}
 							alert(`Error resuming run: ${error}`)
 						}
 					})
@@ -825,6 +867,48 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
 							await loadRuns()
 						} catch (error) {
+							const message = `${error?.message || error}`
+							// Handle lock files remaining
+							if (message.includes('NEXTFLOW_LOCKS_REMAIN')) {
+								const details = message.split('NEXTFLOW_LOCKS_REMAIN:').pop()?.trim()
+								const confirmed = await confirmWithDialog(
+									`Nextflow lock files are still present.${details ? `\n\n${details}` : ''}\n\nForce remove locks and retry?`,
+									{ title: 'Nextflow Lock Detected', type: 'warning' },
+								)
+								if (confirmed) {
+									const input = card.querySelector('.run-concurrency-input')
+									const nextflowMaxForks = parseConcurrencyInput(input?.value)
+									await invoke('resume_flow_run', {
+										runId: run.id,
+										nextflowMaxForks,
+										forceRemoveLock: true,
+									})
+									await loadRuns()
+									return
+								}
+							}
+							// Handle corrupted cache DB (happens after ungraceful pause)
+							else if (
+								message.includes("Can't open cache DB") ||
+								message.includes('Unable to acquire lock') ||
+								message.includes('NEXTFLOW_CACHE_CORRUPTED')
+							) {
+								const confirmed = await confirmWithDialog(
+									`Nextflow cache appears corrupted from a previous interrupted run.\n\nClear cache and start fresh? (Previous progress will be lost)`,
+									{ title: 'Nextflow Cache Corrupted', type: 'warning' },
+								)
+								if (confirmed) {
+									const input = card.querySelector('.run-concurrency-input')
+									const nextflowMaxForks = parseConcurrencyInput(input?.value)
+									await invoke('resume_flow_run', {
+										runId: run.id,
+										nextflowMaxForks,
+										forceRemoveLock: true,
+									})
+									await loadRuns()
+									return
+								}
+							}
 							alert(`Error retrying run: ${error}`)
 						}
 					})
