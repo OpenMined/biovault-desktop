@@ -179,31 +179,38 @@ export async function completeOnboarding(
 
 		if (onboardingStillVisible) {
 			const ciFlag = !!process.env.CI || process.env.GITHUB_ACTIONS === 'true'
-			const retryCheck = await page
-				.evaluate(async (useLongTimeout) => {
-					const invoke = (window as any).__TAURI__?.invoke
-					if (!invoke) {
-						return { available: false }
-					}
-					const start = Date.now()
-					try {
-						const result = await invoke('check_is_onboarded', {
-							__wsTimeoutMs: useLongTimeout ? 15000 : 5000,
-						})
-						return { available: true, result, durationMs: Date.now() - start }
-					} catch (err) {
-						return { available: true, error: String(err), durationMs: Date.now() - start }
-					}
-				}, ciFlag)
-				.catch(() => null)
-			console.log(`${email}: [onboarding] check_is_onboarded retry:`, JSON.stringify(retryCheck))
-			if (retryCheck?.available && retryCheck?.result === true) {
-				await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
-				await waitForAppReady(page, { timeout: 30_000 })
-				await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
-				log(logSocket, { event: 'onboarding-complete', email, recovery: 'retry-check' })
-				console.log(`${email}: Onboarding complete after retry!`)
-				return true
+			const maxRetries = 12
+			for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+				const retryCheck = await page
+					.evaluate(async (useLongTimeout) => {
+						const invoke = (window as any).__TAURI__?.invoke
+						if (!invoke) {
+							return { available: false }
+						}
+						const start = Date.now()
+						try {
+							const result = await invoke('check_is_onboarded', {
+								__wsTimeoutMs: useLongTimeout ? 15000 : 5000,
+							})
+							return { available: true, result, durationMs: Date.now() - start }
+						} catch (err) {
+							return { available: true, error: String(err), durationMs: Date.now() - start }
+						}
+					}, ciFlag)
+					.catch(() => null)
+				console.log(
+					`${email}: [onboarding] check_is_onboarded retry ${attempt}/${maxRetries}:`,
+					JSON.stringify(retryCheck),
+				)
+				if (retryCheck?.available && retryCheck?.result === true) {
+					await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
+					await waitForAppReady(page, { timeout: 30_000 })
+					await expect(page.locator('#run-view')).toBeVisible({ timeout: 30_000 })
+					log(logSocket, { event: 'onboarding-complete', email, recovery: 'retry-check' })
+					console.log(`${email}: Onboarding complete after retry!`)
+					return true
+				}
+				await page.waitForTimeout(5000)
 			}
 
 			// Get diagnostic info from the page's console output

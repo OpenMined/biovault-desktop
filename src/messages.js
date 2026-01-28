@@ -428,14 +428,14 @@ export function createMessagesModule({
 		}
 	}
 
-	async function handleImportSenderKey(senderEmail) {
-		if (!senderEmail) {
-			alert('No sender email available')
+	async function handleImportSenderKey(senderIdentity) {
+		if (!senderIdentity) {
+			alert('No sender identity available')
 			return
 		}
 		try {
-			await invoke('network_import_contact', { email: senderEmail })
-			alert(`Key for ${senderEmail} imported successfully. Try syncing messages again.`)
+			await invoke('network_import_contact', { identity: senderIdentity })
+			alert(`Key for ${senderIdentity} imported successfully. Try syncing messages again.`)
 			// Refresh to potentially decrypt the message now
 			await invoke('sync_messages_with_failures')
 			await updateFailedMessagesBadge()
@@ -444,7 +444,7 @@ export function createMessagesModule({
 			}
 		} catch (error) {
 			console.error('Failed to import sender key:', error)
-			alert(`Failed to import key for ${senderEmail}: ${error}`)
+			alert(`Failed to import key for ${senderIdentity}: ${error}`)
 		}
 	}
 

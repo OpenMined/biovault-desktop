@@ -6,6 +6,299 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	let navigateTo = () => {}
 	// Track runs that user has manually collapsed
 	let manuallyCollapsedRunIds = new Set()
+	const flowLogIntervals = new Map()
+	const flowLogCache = new Map()
+	const flowStepStatusAt = new Map()
+	const flowProgressCache = new Map()
+	const flowProgressTiming = new Map()
+
+	function parseConcurrencyInput(value) {
+		if (value === null || value === undefined) return null
+		const trimmed = String(value).trim()
+		if (!trimmed) return null
+		const parsed = parseInt(trimmed, 10)
+		if (!Number.isFinite(parsed) || parsed <= 0) return null
+		return parsed
+	}
+
+	function stripAnsi(text) {
+		if (!text) return ''
+		const ansiEsc = String.fromCharCode(27)
+		const ansiPattern = new RegExp(`${ansiEsc}\\[[0-9;]*[a-zA-Z]`, 'g')
+		return text.replace(ansiPattern, '')
+	}
+
+	function parseNextflowProgress(logText) {
+		if (!logText) return null
+		const lines = stripAnsi(logText).split('\n')
+		let progressMatch = null
+		for (let i = lines.length - 1; i >= 0; i -= 1) {
+			const line = lines[i]
+			const match = line.match(/\|\s*(\d+)\s+of\s+(\d+)/)
+			if (match) {
+				progressMatch = { completed: parseInt(match[1], 10), total: parseInt(match[2], 10) }
+				break
+			}
+		}
+		if (progressMatch && Number.isFinite(progressMatch.total) && progressMatch.total > 0) {
+			return progressMatch
+		}
+
+		let submitted = 0
+		let completed = 0
+		lines.forEach((line) => {
+			if (line.includes('Submitted process >')) submitted += 1
+			if (line.includes('Cached process >') || line.includes('Completed process >')) completed += 1
+		})
+		if (submitted > 0) {
+			return { completed: Math.min(completed, submitted), total: submitted }
+		}
+		return null
+	}
+
+	function filterNextflowTaskLogs(logText) {
+		if (!logText) return ''
+		const lines = stripAnsi(logText).split('\n')
+		const filtered = lines.filter((line) => {
+			if (!line) return false
+			if (line.includes('[Task')) return true
+			if (line.includes('executor >')) return true
+			if (line.match(/\|\s*\d+\s+of\s+\d+/)) return true
+			return false
+		})
+		return filtered.join('\n')
+	}
+
+	function updateFlowProgressUI(progress, progressEl, runId) {
+		if (!progressEl) return
+		const elements = Array.isArray(progressEl)
+			? progressEl
+			: progressEl instanceof NodeList
+				? Array.from(progressEl)
+				: [progressEl]
+		elements.forEach((el) => {
+			if (!el) return
+			const label = el.querySelector('.flow-progress-label')
+			const fill = el.querySelector('.flow-progress-fill')
+			const count = el.querySelector('.flow-progress-count')
+			const eta = el.querySelector('.flow-progress-eta')
+			if (!label || !fill || !count) return
+			if (!progress || !progress.total) {
+				label.textContent = 'Progress unavailable'
+				fill.style.width = '0%'
+				count.textContent = '--'
+				if (eta) eta.textContent = ''
+				return
+			}
+			const pct = Math.max(
+				0,
+				Math.min(100, Math.round((progress.completed / progress.total) * 100)),
+			)
+			label.textContent = 'Nextflow progress'
+			fill.style.width = `${pct}%`
+			count.textContent = `${progress.completed}/${progress.total}`
+			if (eta) {
+				const key = runId || el.dataset.runId || 'unknown'
+				const now = Date.now()
+				const timing = flowProgressTiming.get(key) || {
+					firstMs: now,
+					lastMs: now,
+					lastCompleted: 0,
+				}
+				if (progress.completed > timing.lastCompleted) {
+					if (timing.lastCompleted === 0) {
+						timing.firstMs = now
+					}
+					timing.lastMs = now
+					timing.lastCompleted = progress.completed
+					flowProgressTiming.set(key, timing)
+				}
+				if (progress.total === progress.completed) {
+					eta.textContent = 'ETA ~ done'
+				} else if (timing.lastCompleted > 0) {
+					const elapsedMs = Math.max(0, timing.lastMs - timing.firstMs)
+					if (elapsedMs > 0 && progress.total > progress.completed) {
+						const avgPerUnit = elapsedMs / timing.lastCompleted
+						const remainingMs = Math.max(
+							0,
+							Math.round(avgPerUnit * (progress.total - progress.completed)),
+						)
+						const cappedMs = Math.min(remainingMs, 24 * 60 * 60 * 1000)
+						eta.textContent = `ETA ~ ${formatDuration(cappedMs)}`
+					} else {
+						eta.textContent = ''
+					}
+				} else {
+					eta.textContent = ''
+				}
+			}
+			el.style.display = 'flex'
+		})
+	}
+
+	function formatDuration(ms) {
+		if (!Number.isFinite(ms) || ms <= 0) return '—'
+		const totalSeconds = Math.round(ms / 1000)
+		const minutes = Math.floor(totalSeconds / 60)
+		const seconds = totalSeconds % 60
+		if (minutes > 0) {
+			return `${minutes}m ${seconds}s`
+		}
+		return `${seconds}s`
+	}
+
+	function updateStepRowStatus(stepRow, status) {
+		if (!stepRow) return
+		const icon = stepRow.querySelector('.step-status-indicator')
+		const badge = stepRow.querySelector('.step-status-badge')
+		if (!icon || !badge) return
+		stepRow.dataset.stepStatus = status
+		if (status === 'done') {
+			icon.textContent = '✓'
+			icon.style.background = 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)'
+			icon.style.color = '#047857'
+			icon.style.borderColor = 'rgba(5, 150, 105, 0.25)'
+			badge.textContent = 'Done'
+			badge.style.background = '#d1fae5'
+			badge.style.color = '#047857'
+			return
+		}
+		if (status === 'failed') {
+			icon.textContent = '✗'
+			icon.style.background = 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)'
+			icon.style.color = '#b91c1c'
+			icon.style.borderColor = 'rgba(220, 38, 38, 0.25)'
+			badge.textContent = 'Failed'
+			badge.style.background = '#fee2e2'
+			badge.style.color = '#b91c1c'
+			return
+		}
+		icon.textContent = '⋯'
+		icon.style.background = '#f8fafc'
+		icon.style.color = '#64748b'
+		icon.style.borderColor = 'rgba(148, 163, 184, 0.4)'
+		badge.textContent = 'Pending'
+		badge.style.background = '#f1f5f9'
+		badge.style.color = '#64748b'
+	}
+
+	function updateStepsProgressBadge(runId, doneCount, totalCount) {
+		const badge = document.querySelector(`.steps-progress-badge[data-run-id="${runId}"]`)
+		if (!badge) return
+		if (!totalCount) {
+			badge.textContent = 'No steps'
+			return
+		}
+		badge.textContent = `${doneCount}/${totalCount} done`
+	}
+
+	async function refreshFlowStepStatus(run, stepRows) {
+		if (!run || !stepRows || stepRows.length === 0) return
+		const runId = run.id
+		const lastCheck = flowStepStatusAt.get(runId) || 0
+		const now = Date.now()
+		if (run.status === 'running' && now - lastCheck < 6000) return
+		flowStepStatusAt.set(runId, now)
+
+		if (run.status === 'success') {
+			stepRows.forEach((row) => updateStepRowStatus(row, 'done'))
+			updateStepsProgressBadge(runId, stepRows.length, stepRows.length)
+			return
+		}
+
+		const rows = Array.isArray(stepRows)
+			? stepRows
+			: stepRows instanceof NodeList
+				? Array.from(stepRows)
+				: []
+		const statuses = await Promise.all(
+			rows.map((row) => invoke('path_exists', { path: row.dataset.stepPath })),
+		)
+		let doneCount = 0
+		rows.forEach((row, idx) => {
+			const exists = Boolean(statuses[idx])
+			const status = exists ? 'done' : run.status === 'failed' ? 'failed' : 'pending'
+			if (exists) doneCount += 1
+			updateStepRowStatus(row, status)
+		})
+		updateStepsProgressBadge(runId, doneCount, rows.length)
+	}
+
+	async function refreshFlowRunLogs(run, logEl, progressEl, stepRows) {
+		if (!logEl || !run) return
+		try {
+			const logs = await invoke('get_flow_run_logs_tail', { runId: run.id, lines: 800 })
+			const filteredLogs = filterNextflowTaskLogs(logs)
+			const cacheKey = flowLogCache.get(run.id)
+			if (cacheKey !== filteredLogs) {
+				flowLogCache.set(run.id, filteredLogs)
+				const wasAtBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24
+				if (filteredLogs) {
+					logEl.textContent = filteredLogs
+					if (wasAtBottom) {
+						logEl.scrollTop = logEl.scrollHeight
+					}
+				} else if (!logEl.textContent || logEl.textContent === 'Loading logs...') {
+					logEl.textContent = 'Waiting for task logs...'
+				}
+				let progress = parseNextflowProgress(logs)
+				const cached = flowProgressCache.get(run.id)
+				if (progress && progress.total) {
+					if (cached && cached.total) {
+						if (progress.total < cached.total) {
+							progress = {
+								total: cached.total,
+								completed: Math.max(cached.completed || 0, progress.completed || 0),
+							}
+						} else if (progress.total === cached.total) {
+							progress = {
+								total: progress.total,
+								completed: Math.max(cached.completed || 0, progress.completed || 0),
+							}
+						}
+					}
+					flowProgressCache.set(run.id, progress)
+				} else if (cached) {
+					progress = cached
+				}
+				if (run.status === 'success' && progress && progress.total) {
+					progress = { ...progress, completed: progress.total }
+					flowProgressCache.set(run.id, progress)
+				}
+				updateFlowProgressUI(progress, progressEl, run.id)
+			}
+			if (stepRows && stepRows.length > 0) {
+				try {
+					await refreshFlowStepStatus(run, stepRows)
+				} catch (stepError) {
+					console.warn('Failed to refresh step status:', stepError)
+				}
+			}
+		} catch (error) {
+			logEl.textContent = `Failed to load logs: ${error?.message || error}`
+		}
+	}
+
+	function startFlowLogPolling(run, logEl, progressEl, stepRows) {
+		if (!run || !logEl) return
+		const runId = run.id
+		stopFlowLogPolling(runId)
+		refreshFlowRunLogs(run, logEl, progressEl, stepRows)
+		if (run.status === 'running') {
+			const interval = setInterval(() => {
+				refreshFlowRunLogs(run, logEl, progressEl, stepRows)
+			}, 2000)
+			flowLogIntervals.set(runId, interval)
+		}
+	}
+
+	function stopFlowLogPolling(runId) {
+		const interval = flowLogIntervals.get(runId)
+		if (interval) {
+			clearInterval(interval)
+			flowLogIntervals.delete(runId)
+		}
+	}
 
 	async function confirmWithDialog(message, options = {}) {
 		if (dialog?.confirm) {
@@ -136,6 +429,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 	async function loadRuns() {
 		try {
+			await invoke('reconcile_flow_runs').catch((error) => {
+				console.warn('Failed to reconcile flow runs:', error)
+			})
+			flowLogIntervals.forEach((_, runId) => stopFlowLogPolling(runId))
 			// Check for auto-expand run ID
 			let autoExpandRunId = null
 			if (typeof sessionStorage !== 'undefined') {
@@ -179,6 +476,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				} catch (error) {
 					console.warn('Failed to parse run metadata:', error)
 				}
+				const nextflowMaxForks =
+					Number.isFinite(runMetadata?.nextflow_max_forks) && runMetadata.nextflow_max_forks > 0
+						? runMetadata.nextflow_max_forks
+						: null
 				const dataSelection = runMetadata.data_selection || {}
 				const titleParts = [flowName]
 				if (dataSelection.dataset_name) titleParts.push(dataSelection.dataset_name)
@@ -251,6 +552,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					statusBadgeStyle =
 						'background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); color: #b91c1c; border: 1px solid rgba(220, 38, 38, 0.2);'
 					statusBadge = `<span class="status-badge status-failed" style="padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; ${statusBadgeStyle}">✗ Failed</span>`
+				} else if (run.status === 'paused') {
+					statusClass = 'paused'
+					statusIcon = 'Ⅱ'
+					statusColor = '#f59e0b'
+					statusBg = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)'
+					statusBadgeStyle =
+						'background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.25);'
+					statusBadge = `<span class="status-badge status-paused" style="padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; ${statusBadgeStyle}">Ⅱ Paused</span>`
 				} else {
 					statusClass = 'running'
 					statusIcon = '⋯'
@@ -295,10 +604,58 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 										} participant${run.participant_count === 1 ? '' : 's'}</span>`
 									: ''
 							}
+							${
+								nextflowMaxForks
+									? `<span style="color: #cbd5e1;">•</span><span>Concurrency: ${nextflowMaxForks}</span>`
+									: ''
+							}
+						</div>
+						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${Date.parse(
+							run.created_at,
+						)}" style="margin-top: 8px; display: ${
+							run.status === 'running' || run.status === 'paused' ? 'flex' : 'none'
+						}; align-items: center; gap: 10px;">
+							<div class="flow-progress-label" style="font-size: 11px; font-weight: 600; color: #64748b;">Progress unavailable</div>
+							<div style="flex: 1; background: #e2e8f0; border-radius: 999px; height: 6px; overflow: hidden;">
+								<div class="flow-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #38bdf8, #22c55e); transition: width 0.3s ease;"></div>
+							</div>
+							<div class="flow-progress-count" style="font-size: 11px; color: #94a3b8;">--</div>
+							<div class="flow-progress-eta" style="font-size: 11px; color: #94a3b8;"></div>
 						</div>
 					</div>
 					${statusBadge}
 					<div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+						${
+							run.status === 'paused' || run.status === 'failed'
+								? `<div style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: #f8fafc; border: 1px solid #e2e8f0;">
+									<span style="font-size: 11px; color: #64748b; font-weight: 600;">Concurrency</span>
+									<input class="run-concurrency-input" data-run-id="${run.id}" type="number" min="1" step="1" value="${
+										nextflowMaxForks ? nextflowMaxForks : ''
+									}" placeholder="auto" style="width: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px; color: #0f172a;" />
+								</div>`
+								: ''
+						}
+						${
+							run.status === 'running'
+								? `<button class="run-pause-btn" data-run-id="${run.id}" title="Pause run" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#fff7ed'; this.style.color='#f59e0b'; this.querySelector('img').style.filter='invert(60%) sepia(89%) saturate(473%) hue-rotate(1deg) brightness(95%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
+									<img src="assets/icons/pause.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
+								</button>`
+								: ''
+						}
+						${
+							run.status === 'paused'
+								? `<button class="run-resume-btn" data-run-id="${run.id}" title="Resume run" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#ecfdf3'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
+									<img src="assets/icons/play.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
+								</button>`
+								: ''
+						}
+						${
+							run.status === 'failed'
+								? `<button class="run-retry-btn" data-run-id="${run.id}" title="Retry with resume" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f8fafc'; this.style.color='#2563eb'; this.querySelector('img').style.filter='invert(32%) sepia(94%) saturate(1352%) hue-rotate(212deg) brightness(99%) contrast(96%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
+									<img src="assets/icons/rerun.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
+								</button>`
+								: ''
+						}
 						${
 							run.status === 'success'
 								? `<button class="run-share-btn" data-run-id="${run.id}" data-flow-name="${escapeHtml(flowName)}" data-results-dir="${run.results_dir || run.work_dir || ''}" title="Share results" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
@@ -306,6 +663,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								</button>`
 								: ''
 						}
+						<button class="run-work-folder-btn" data-run-id="${run.id}" title="View work cache" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#fefce8'; this.style.color='#ca8a04'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'">
+							<img src="assets/icons/drive.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" onmouseover="this.style.filter='invert(56%) sepia(70%) saturate(387%) hue-rotate(7deg) brightness(96%) contrast(92%)'" onmouseout="this.style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'" />
+						</button>
 						<button class="run-view-folder-btn" data-results-path="${
 							run.results_dir || run.work_dir || ''
 						}" title="View results folder" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f1f5f9'; this.style.color='#2563eb'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'">
@@ -349,7 +709,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const detailsContainer = card.querySelector('.run-details')
 					updateExpandedState(true)
 					// Load steps immediately for auto-expanded run
-					loadFlowRunSteps(run, flow, detailsContainer, statusClass).catch(console.error)
+					loadFlowRunSteps(run, flow, detailsContainer).catch(console.error)
 					// Scroll to this card after a brief delay (only for newly created, not all running)
 					if (isNewlyCreated) {
 						setTimeout(() => {
@@ -362,7 +722,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 				header.addEventListener('click', async (e) => {
 					// Don't expand if clicking action buttons
-					if (e.target.closest('.run-delete-btn') || e.target.closest('.run-view-folder-btn')) {
+					if (
+						e.target.closest('.run-delete-btn') ||
+						e.target.closest('.run-view-folder-btn') ||
+						e.target.closest('.run-work-folder-btn') ||
+						e.target.closest('.run-pause-btn') ||
+						e.target.closest('.run-resume-btn') ||
+						e.target.closest('.run-retry-btn')
+					) {
 						return
 					}
 
@@ -381,9 +748,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const detailsContainer = card.querySelector('.run-details')
 					if (newExpandedState) {
 						detailsContainer.style.display = 'block'
-						await loadFlowRunSteps(run, flow, detailsContainer, statusClass)
+						await loadFlowRunSteps(run, flow, detailsContainer)
 					} else {
 						detailsContainer.style.display = 'none'
+						stopFlowLogPolling(run.id)
 					}
 				})
 
@@ -401,6 +769,72 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							}
 						}
 					})
+				}
+
+				// Handle work folder button
+				const workFolderBtn = card.querySelector('.run-work-folder-btn')
+				if (workFolderBtn) {
+					workFolderBtn.addEventListener('click', async (e) => {
+						e.stopPropagation()
+						try {
+							const workPath = await invoke('get_flow_run_work_dir', { runId: run.id })
+							if (workPath) {
+								await invoke('open_folder', { path: workPath })
+							}
+						} catch (error) {
+							alert(`Error opening work folder: ${error}`)
+						}
+					})
+				}
+
+				const pauseBtn = card.querySelector('.run-pause-btn')
+				if (pauseBtn) {
+					pauseBtn.addEventListener('click', async (e) => {
+						e.stopPropagation()
+						try {
+							await invoke('pause_flow_run', { runId: run.id })
+							await loadRuns()
+						} catch (error) {
+							alert(`Error pausing run: ${error}`)
+						}
+					})
+				}
+
+				const resumeBtn = card.querySelector('.run-resume-btn')
+				if (resumeBtn) {
+					resumeBtn.addEventListener('click', async (e) => {
+						e.stopPropagation()
+						try {
+							const input = card.querySelector('.run-concurrency-input')
+							const nextflowMaxForks = parseConcurrencyInput(input?.value)
+							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
+							await loadRuns()
+						} catch (error) {
+							alert(`Error resuming run: ${error}`)
+						}
+					})
+				}
+
+				const retryBtn = card.querySelector('.run-retry-btn')
+				if (retryBtn) {
+					retryBtn.addEventListener('click', async (e) => {
+						e.stopPropagation()
+						try {
+							const input = card.querySelector('.run-concurrency-input')
+							const nextflowMaxForks = parseConcurrencyInput(input?.value)
+							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
+							await loadRuns()
+						} catch (error) {
+							alert(`Error retrying run: ${error}`)
+						}
+					})
+				}
+
+				const concurrencyInput = card.querySelector('.run-concurrency-input')
+				if (concurrencyInput) {
+					concurrencyInput.addEventListener('click', (e) => e.stopPropagation())
+					concurrencyInput.addEventListener('dblclick', (e) => e.stopPropagation())
+					concurrencyInput.addEventListener('mousedown', (e) => e.stopPropagation())
 				}
 
 				// Handle delete
@@ -453,23 +887,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	}
 
 	// Load steps for an expanded flow run
-	async function loadFlowRunSteps(run, flow, container, statusClass) {
+	async function loadFlowRunSteps(run, flow, container) {
 		try {
 			const steps = flow && flow.spec && flow.spec.steps ? flow.spec.steps : []
 			const resultsDir = run.results_dir || run.work_dir
-
-			// Determine status colors and backgrounds based on run status
-			let statusBg, statusColor
-			if (run.status === 'success') {
-				statusBg = 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)'
-				statusColor = '#059669'
-			} else if (run.status === 'failed') {
-				statusBg = 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)'
-				statusColor = '#dc2626'
-			} else {
-				statusBg = 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)'
-				statusColor = '#2563eb'
-			}
 
 			// Parse run metadata if available (stored when run was created)
 			let runMetadata = {}
@@ -481,6 +902,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const inputOverrides = runMetadata.input_overrides || {}
 			const paramOverrides = runMetadata.parameter_overrides || {}
 			const dataSelection = runMetadata.data_selection || {}
+			const nextflowMaxForks =
+				Number.isFinite(runMetadata?.nextflow_max_forks) && runMetadata.nextflow_max_forks > 0
+					? runMetadata.nextflow_max_forks
+					: null
 
 			const dataSummaryParts = []
 			if (dataSelection.dataset_name) {
@@ -562,6 +987,27 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						}
 					</div>`
 					: ''
+
+			const logsExpanded = run.status === 'running'
+			const logsHtml = `
+				<div class="run-log-section" style="margin-bottom: 24px;">
+					<button class="run-log-toggle" data-run-id="${run.id}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; text-align: left; font-size: 14px; font-weight: 600; color: #475569;" onmouseover="this.style.background='#f1f5f9'; this.style.borderColor='#cbd5e1'" onmouseout="this.style.background='#f8fafc'; this.style.borderColor='#e2e8f0'">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.3s; color: #94a3b8; transform: ${logsExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">
+							<polyline points="9 18 15 12 9 6"></polyline>
+						</svg>
+						<span>Logs</span>
+						${
+							nextflowMaxForks
+								? `<span style="padding: 4px 8px; background: #e2e8f0; color: #475569; border-radius: 999px; font-size: 11px; font-weight: 600;">Concurrency: ${nextflowMaxForks}</span>`
+								: ''
+						}
+						<span style="margin-left: auto; font-size: 12px; color: #94a3b8;">Nextflow output</span>
+					</button>
+					<div class="run-log-content" style="display: ${logsExpanded ? 'block' : 'none'}; padding: 16px; background: #ffffff; border: 1.5px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px;">
+						<pre class="run-log-stream" data-run-id="${run.id}" style="max-height: 260px; overflow: auto; background: #f8fafc; color: #1f2937; border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.5; font-family: 'SF Mono', Monaco, monospace; border: 1px solid #e2e8f0;">Loading logs...</pre>
+					</div>
+				</div>
+			`
 
 			// Collect all published outputs from all steps - make them prominent
 			// Only show published outputs if the run has completed successfully
@@ -663,6 +1109,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 			container.innerHTML = `
 				<div class="steps-container" style="padding: 24px 28px;">
+					${logsHtml}
 					${
 						allPublishedOutputs.length > 0
 							? `<div style="margin-bottom: 28px;">
@@ -722,15 +1169,42 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							<span style="margin-left: auto; padding: 4px 10px; background: #e2e8f0; color: #64748b; border-radius: 6px; font-size: 12px; font-weight: 600;">${
 								steps.length
 							} step${steps.length === 1 ? '' : 's'}</span>
+							<span class="steps-progress-badge" data-run-id="${run.id}" style="padding: 4px 10px; background: #eef2ff; color: #4338ca; border-radius: 6px; font-size: 12px; font-weight: 700;">${
+								run.status === 'success'
+									? `${steps.length}/${steps.length} done`
+									: `0/${steps.length} done`
+							}</span>
 						</button>
 						<div class="run-steps-content" style="display: none; padding: 16px; background: white; border: 1.5px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px;">
 					<div style="display: flex; flex-direction: column; gap: 12px;">
 						${steps
 							.map(
 								(step) => `
-							<div class="step-row-enhanced" style="background: white; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 18px 20px; transition: all 0.2s;" onmouseover="this.style.borderColor='#cbd5e1'; this.style.boxShadow='0 2px 8px rgba(0, 0, 0, 0.06)'" onmouseout="this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'">
+							<div class="step-row-enhanced" data-run-id="${run.id}" data-step-id="${escapeHtml(
+								step.id,
+							)}" data-step-path="${escapeHtml(`${resultsDir}/${step.id}`)}" data-step-status="${
+								run.status === 'success' ? 'done' : run.status === 'failed' ? 'failed' : 'pending'
+							}" style="background: white; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 18px 20px; transition: all 0.2s;" onmouseover="this.style.borderColor='#cbd5e1'; this.style.boxShadow='0 2px 8px rgba(0, 0, 0, 0.06)'" onmouseout="this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'">
 								<div class="step-main" style="display: flex; align-items: center; gap: 14px; margin-bottom: 16px;">
-									<div class="step-icon ${statusClass}" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0; background: ${statusBg}; color: ${statusColor}; border: 1.5px solid ${statusColor}20;">
+									<div class="step-icon step-status-indicator" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0; background: ${
+										run.status === 'success'
+											? 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)'
+											: run.status === 'failed'
+												? 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)'
+												: '#f8fafc'
+									}; color: ${
+										run.status === 'success'
+											? '#047857'
+											: run.status === 'failed'
+												? '#b91c1c'
+												: '#64748b'
+									}; border: 1.5px solid ${
+										run.status === 'success'
+											? 'rgba(5, 150, 105, 0.25)'
+											: run.status === 'failed'
+												? 'rgba(220, 38, 38, 0.25)'
+												: 'rgba(148, 163, 184, 0.4)'
+									};">
 										${run.status === 'success' ? '✓' : run.status === 'failed' ? '✗' : '⋯'}
 									</div>
 									<div class="step-content" style="flex: 1; min-width: 0;">
@@ -741,6 +1215,25 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 											step.uses,
 										)}</div>
 									</div>
+									<span class="step-status-badge" style="padding: 4px 10px; background: ${
+										run.status === 'success'
+											? '#d1fae5'
+											: run.status === 'failed'
+												? '#fee2e2'
+												: '#f1f5f9'
+									}; color: ${
+										run.status === 'success'
+											? '#047857'
+											: run.status === 'failed'
+												? '#b91c1c'
+												: '#64748b'
+									}; border-radius: 999px; font-size: 11px; font-weight: 700; margin-right: 6px;">${
+										run.status === 'success'
+											? 'Done'
+											: run.status === 'failed'
+												? 'Failed'
+												: 'Pending'
+									}</span>
 									<div class="step-actions" style="flex-shrink: 0;">
 										<button class="step-result-btn" data-step-path="${resultsDir}/${
 											step.id
@@ -801,6 +1294,39 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					</div>
 				</div>
 			`
+
+			const logToggle = container.querySelector(`.run-log-toggle[data-run-id="${run.id}"]`)
+			const logContent = container.querySelector('.run-log-content')
+			const logStream = container.querySelector(`.run-log-stream[data-run-id="${run.id}"]`)
+			const card = container.closest('.flow-run-card')
+			const progressEls = card
+				? card.querySelectorAll(`.flow-progress[data-run-id="${run.id}"]`)
+				: container.querySelectorAll(`.flow-progress[data-run-id="${run.id}"]`)
+			const stepRows = container.querySelectorAll(`.step-row-enhanced[data-run-id="${run.id}"]`)
+
+			if (logToggle && logContent) {
+				const setExpanded = (expanded) => {
+					logContent.style.display = expanded ? 'block' : 'none'
+					const icon = logToggle.querySelector('svg')
+					if (icon) {
+						icon.style.transform = expanded ? 'rotate(90deg)' : 'rotate(0deg)'
+					}
+					if (expanded || run.status === 'running') {
+						startFlowLogPolling(run, logStream, progressEls, stepRows)
+					} else {
+						stopFlowLogPolling(run.id)
+					}
+				}
+				logToggle.addEventListener('click', () => {
+					const isOpen = logContent.style.display !== 'none'
+					setExpanded(!isOpen)
+				})
+				if (logsExpanded) {
+					setExpanded(true)
+				} else if (run.status === 'running') {
+					startFlowLogPolling(run, logStream, progressEls, stepRows)
+				}
+			}
 
 			// Attach event listeners for published outputs
 			const publishedOutputCards = container.querySelectorAll('.published-output-card')

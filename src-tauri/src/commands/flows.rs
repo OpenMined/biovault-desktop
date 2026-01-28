@@ -3,8 +3,10 @@ use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
@@ -17,6 +19,9 @@ pub use biovault::flow_spec::FlowSpec;
 use biovault::flow_spec::FLOW_YAML_FILE;
 use biovault::flow_spec::{FlowFile, FlowModuleDef, FlowModuleSource, FlowStepUses};
 use biovault::module_spec::ModuleFile;
+
+#[cfg(not(target_os = "windows"))]
+use libc;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +58,86 @@ pub struct FlowRunSelection {
     pub data_type: Option<String>,
     #[serde(default, alias = "data_source")]
     pub data_source: Option<String>,
+}
+
+fn flow_pause_marker(results_dir: &Path) -> PathBuf {
+    results_dir.join(".flow.pause")
+}
+
+fn flow_pid_path(results_dir: &Path) -> PathBuf {
+    results_dir.join("flow.pid")
+}
+
+fn is_pid_running(pid: i32) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid)])
+            .output()
+        {
+            if let Ok(stdout) = String::from_utf8(output.stdout) {
+                return stdout.contains(&pid.to_string()) && !stdout.contains("No tasks");
+            }
+        }
+        return false;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    unsafe {
+        libc::kill(pid, 0) == 0
+    }
+}
+
+fn parse_flow_run_metadata(
+    run: &Run,
+) -> Result<
+    (
+        HashMap<String, String>,
+        Option<FlowRunSelection>,
+        Option<u32>,
+    ),
+    String,
+> {
+    let mut input_overrides = HashMap::new();
+    let mut selection: Option<FlowRunSelection> = None;
+    let mut nextflow_max_forks: Option<u32> = None;
+
+    let metadata_str = match run.metadata.as_ref() {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => return Ok((input_overrides, selection, nextflow_max_forks)),
+    };
+
+    let metadata_value: serde_json::Value =
+        serde_json::from_str(metadata_str).map_err(|e| format!("Invalid run metadata: {}", e))?;
+
+    if let Some(obj) = metadata_value
+        .get("input_overrides")
+        .and_then(|v| v.as_object())
+    {
+        for (key, value) in obj {
+            if let Some(str_value) = value.as_str() {
+                input_overrides.insert(key.clone(), str_value.to_string());
+            }
+        }
+    }
+    if let Some(obj) = metadata_value
+        .get("parameter_overrides")
+        .and_then(|v| v.as_object())
+    {
+        for (key, value) in obj {
+            if let Some(str_value) = value.as_str() {
+                input_overrides.insert(key.clone(), str_value.to_string());
+            }
+        }
+    }
+    if let Some(value) = metadata_value.get("nextflow_max_forks") {
+        nextflow_max_forks = value.as_u64().map(|v| v as u32);
+    }
+    if let Some(selection_value) = metadata_value.get("data_selection") {
+        selection = serde_json::from_value(selection_value.clone()).ok();
+    }
+
+    Ok((input_overrides, selection, nextflow_max_forks))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1067,6 +1152,8 @@ pub async fn run_flow(
     input_overrides: HashMap<String, String>,
     results_dir: Option<String>,
     selection: Option<FlowRunSelection>,
+    nextflow_max_forks: Option<u32>,
+    resume: Option<bool>,
 ) -> Result<Run, String> {
     run_flow_impl(
         state,
@@ -1075,6 +1162,9 @@ pub async fn run_flow(
         input_overrides,
         results_dir,
         selection,
+        None,
+        nextflow_max_forks,
+        resume.unwrap_or(false),
         None,
     )
     .await
@@ -1089,6 +1179,9 @@ pub async fn run_flow_impl(
     results_dir: Option<String>,
     selection: Option<FlowRunSelection>,
     run_id: Option<String>,
+    nextflow_max_forks: Option<u32>,
+    resume: bool,
+    existing_run_id: Option<i64>,
 ) -> Result<Run, String> {
     use chrono::Local;
 
@@ -1110,11 +1203,23 @@ pub async fn run_flow_impl(
     let flow_name = flow.name.clone();
     let flow_path = flow.flow_path.clone();
 
+    let mut existing_run: Option<Run> = None;
+    if let Some(existing_id) = existing_run_id {
+        existing_run = biovault_db
+            .get_flow_run(existing_id)
+            .map_err(|e| e.to_string())?;
+    }
+
     let yaml_path = PathBuf::from(&flow_path).join(FLOW_YAML_FILE);
 
     // Generate results directory
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let results_path = if let Some(dir) = &results_dir {
+    let results_path = if let Some(run) = existing_run.as_ref() {
+        run.results_dir
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&run.work_dir))
+    } else if let Some(dir) = &results_dir {
         PathBuf::from(dir)
     } else {
         home.join("runs").join(format!("flow_{}", timestamp))
@@ -1135,6 +1240,7 @@ pub async fn run_flow_impl(
         &log_path,
         &format!("📂 Results directory: {}", results_path.display()),
     );
+    let _ = fs::remove_file(flow_pause_marker(&results_path));
 
     if let Some(sel) = &selection {
         append_flow_log(
@@ -1578,6 +1684,9 @@ pub async fn run_flow_impl(
         "parameter_overrides".to_string(),
         serde_json::json!(params_map),
     );
+    if let Some(value) = nextflow_max_forks {
+        metadata_root.insert("nextflow_max_forks".to_string(), serde_json::json!(value));
+    }
     if let Some(selection_json) = selection_metadata {
         metadata_root.insert("data_selection".to_string(), selection_json);
     }
@@ -1589,6 +1698,10 @@ pub async fn run_flow_impl(
     for (key, value) in &input_overrides {
         extra_args.push("--set".to_string());
         extra_args.push(format!("{}={}", key, value));
+    }
+    if let Some(value) = nextflow_max_forks {
+        extra_args.push("--nxf-max-forks".to_string());
+        extra_args.push(value.to_string());
     }
 
     let yaml_path_str = yaml_path.to_string_lossy().to_string();
@@ -1624,20 +1737,26 @@ pub async fn run_flow_impl(
         &format!("▶️  Command: {}", command_preview),
     );
 
-    // Create flow run record using CLI library with metadata
-    let run_db_id = biovault_db
-        .create_flow_run_with_metadata(
-            flow_id,
-            &results_path.to_string_lossy(),
-            Some(&results_path.to_string_lossy()),
-            Some(&metadata_str),
-        )
-        .map_err(|e| e.to_string())?;
+    // Create flow run record using CLI library with metadata (or reuse existing run)
+    let (run_db_id, run_record) = if let Some(run) = existing_run {
+        let _ = biovault_db.update_flow_run_status(run.id, "running", true);
+        (run.id, run)
+    } else {
+        let run_db_id = biovault_db
+            .create_flow_run_with_metadata(
+                flow_id,
+                &results_path.to_string_lossy(),
+                Some(&results_path.to_string_lossy()),
+                Some(&metadata_str),
+            )
+            .map_err(|e| e.to_string())?;
 
-    let run_record = biovault_db
-        .get_flow_run(run_db_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Flow run record not found after creation".to_string())?;
+        let run_record = biovault_db
+            .get_flow_run(run_db_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Flow run record not found after creation".to_string())?;
+        (run_db_id, run_record)
+    };
 
     drop(biovault_db); // Release lock
 
@@ -1650,6 +1769,7 @@ pub async fn run_flow_impl(
     let yaml_path_spawn = yaml_path_str.clone();
     let results_dir_spawn = results_dir_str.clone();
     let extra_args_spawn = extra_args.clone();
+    let resume_flag = resume;
 
     let run_id_override = run_id
         .as_ref()
@@ -1677,6 +1797,20 @@ pub async fn run_flow_impl(
             &log_path_clone,
             &format!("🔧 Extra args: {:?}", extra_args_spawn),
         );
+        if let Some(value) = nextflow_max_forks {
+            append_flow_log(
+                window_clone.as_ref(),
+                &log_path_clone,
+                &format!("🧵 Nextflow maxForks: {}", value),
+            );
+        }
+        if resume_flag {
+            append_flow_log(
+                window_clone.as_ref(),
+                &log_path_clone,
+                "↩️  Resuming flow run with Nextflow cache",
+            );
+        }
 
         // Call CLI library function directly
         let previous_run_id = std::env::var("BIOVAULT_FLOW_RUN_ID").ok();
@@ -1689,14 +1823,44 @@ pub async fn run_flow_impl(
             );
         }
 
+        let previous_desktop_log = std::env::var("BIOVAULT_DESKTOP_LOG_FILE").ok();
+        std::env::set_var(
+            "BIOVAULT_DESKTOP_LOG_FILE",
+            log_path_clone.to_string_lossy().to_string(),
+        );
+        let previous_pid_file = std::env::var("BIOVAULT_FLOW_PID_FILE").ok();
+        let pid_path = PathBuf::from(&results_dir_spawn).join("flow.pid");
+        std::env::set_var(
+            "BIOVAULT_FLOW_PID_FILE",
+            pid_path.to_string_lossy().to_string(),
+        );
+        append_flow_log(
+            window_clone.as_ref(),
+            &log_path_clone,
+            &format!(
+                "📝 Streaming Nextflow logs to {}",
+                log_path_clone.to_string_lossy()
+            ),
+        );
+
+        let pause_marker_path = PathBuf::from(&results_dir_spawn).join(".flow.pause");
         let result = cli_run_flow(
             &yaml_path_spawn,
             extra_args_spawn.clone(),
             false, // dry_run
-            false, // resume
+            resume_flag,
             Some(results_dir_spawn.clone()),
         )
         .await;
+
+        match previous_desktop_log {
+            Some(prev) => std::env::set_var("BIOVAULT_DESKTOP_LOG_FILE", prev),
+            None => std::env::remove_var("BIOVAULT_DESKTOP_LOG_FILE"),
+        }
+        match previous_pid_file {
+            Some(prev) => std::env::set_var("BIOVAULT_FLOW_PID_FILE", prev),
+            None => std::env::remove_var("BIOVAULT_FLOW_PID_FILE"),
+        }
 
         match (run_id_override.as_ref(), previous_run_id) {
             (Some(_), Some(prev)) => std::env::set_var("BIOVAULT_FLOW_RUN_ID", prev),
@@ -1704,8 +1868,21 @@ pub async fn run_flow_impl(
             _ => {}
         }
 
-        let status = match &result {
-            Err(err) => {
+        let pause_requested = pause_marker_path.exists();
+        if pause_requested {
+            let _ = fs::remove_file(&pause_marker_path);
+        }
+
+        let status = match (&result, pause_requested) {
+            (_, true) => {
+                append_flow_log(
+                    window_clone.as_ref(),
+                    &log_path_clone,
+                    "⏸️  Flow run paused",
+                );
+                "paused"
+            }
+            (Err(err), false) => {
                 append_flow_log(
                     window_clone.as_ref(),
                     &log_path_clone,
@@ -1713,7 +1890,7 @@ pub async fn run_flow_impl(
                 );
                 "failed"
             }
-            Ok(()) => {
+            (Ok(()), false) => {
                 append_flow_log(
                     window_clone.as_ref(),
                     &log_path_clone,
@@ -1765,6 +1942,322 @@ pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> 
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut updates: Vec<(i64, String, bool)> = Vec::new();
+    let now = std::time::SystemTime::now();
+    let grace_period = std::time::Duration::from_secs(120);
+    let runs = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db.list_flow_runs().map_err(|e| e.to_string())?
+    };
+
+    for run in runs {
+        if run.status != "running" && run.status != "paused" {
+            continue;
+        }
+        let results_dir = run
+            .results_dir
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&run.work_dir));
+        let pause_marker = flow_pause_marker(&results_dir);
+        let pid_path = flow_pid_path(&results_dir);
+        let log_path = results_dir.join("flow.log");
+
+        let mut is_running = false;
+        if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                is_running = is_pid_running(pid);
+            }
+        }
+
+        if is_running {
+            if run.status != "running" {
+                updates.push((run.id, "running".to_string(), false));
+            }
+            continue;
+        }
+
+        if pause_marker.exists() {
+            if run.status != "paused" {
+                updates.push((run.id, "paused".to_string(), false));
+            }
+            continue;
+        }
+
+        let is_recent_run = chrono::DateTime::parse_from_rfc3339(&run.created_at)
+            .map(|created| {
+                let created = created.with_timezone(&chrono::Utc).into();
+                now.duration_since(created).unwrap_or_default() < grace_period
+            })
+            .unwrap_or(false);
+
+        if !log_path.exists() && !pid_path.exists() && is_recent_run {
+            // Avoid marking brand-new runs as failed before the pid/log are created.
+            continue;
+        }
+
+        if let Ok(log_contents) = fs::read_to_string(&log_path) {
+            if log_contents.contains("✅ Flow run completed successfully") {
+                updates.push((run.id, "success".to_string(), true));
+                continue;
+            }
+            if log_contents.contains("❌ Flow run failed") {
+                updates.push((run.id, "failed".to_string(), true));
+                continue;
+            }
+            if let Ok(metadata) = fs::metadata(&log_path) {
+                if let Ok(modified) = metadata.modified() {
+                    if now.duration_since(modified).unwrap_or_default() < grace_period {
+                        // Log is still being written; keep status as-is.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // If the process is gone and we have no explicit status, mark failed to avoid stuck runs.
+        updates.push((run.id, "failed".to_string(), true));
+    }
+
+    if !updates.is_empty() {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        for (run_id, status, completed) in updates {
+            let _ = biovault_db.update_flow_run_status(run_id, &status, completed);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&run.work_dir));
+    let log_path = results_dir.join("flow.log");
+    let pause_marker = flow_pause_marker(&results_dir);
+    let _ = fs::write(&pause_marker, "paused");
+
+    let pid_path = flow_pid_path(&results_dir);
+    let pid_str =
+        fs::read_to_string(&pid_path).map_err(|e| format!("Failed to read PID file: {}", e))?;
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|_| "Invalid PID value".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .map_err(|e| format!("Failed to stop process: {}", e))?;
+        if !status.success() {
+            return Err(format!(
+                "Failed to stop process (exit: {:?})",
+                status.code()
+            ));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    unsafe {
+        if libc::kill(pid, libc::SIGTERM) != 0 {
+            return Err("Failed to stop process".to_string());
+        }
+    }
+
+    let _ = biovault_db.update_flow_run_status(run_id, "paused", true);
+    append_flow_log(None, &log_path, "⏸️  Pause requested by user");
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_flow_run(
+    state: tauri::State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    run_id: i64,
+    nextflow_max_forks: Option<u32>,
+) -> Result<Run, String> {
+    let (flow_id, results_dir, input_overrides, selection, resolved_max_forks) = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let run = biovault_db
+            .get_flow_run(run_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+        let flow_id = run
+            .flow_id
+            .ok_or_else(|| "Flow run is missing flow_id".to_string())?;
+        let results_dir = run
+            .results_dir
+            .clone()
+            .or_else(|| Some(run.work_dir.clone()));
+        let (input_overrides, selection, mut parsed_max_forks) = parse_flow_run_metadata(&run)?;
+        if let Some(override_value) = nextflow_max_forks {
+            parsed_max_forks = Some(override_value);
+            let mut metadata_value = if let Some(raw) = run.metadata.as_ref() {
+                serde_json::from_str(raw).unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+            if let Some(obj) = metadata_value.as_object_mut() {
+                obj.insert(
+                    "nextflow_max_forks".to_string(),
+                    serde_json::json!(override_value),
+                );
+            }
+            let metadata_str = serde_json::to_string(&metadata_value)
+                .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+            let _ = biovault_db.update_flow_run_metadata(run_id, &metadata_str);
+        }
+        (
+            flow_id,
+            results_dir,
+            input_overrides,
+            selection,
+            parsed_max_forks,
+        )
+    };
+
+    run_flow_impl(
+        state,
+        Some(window),
+        flow_id,
+        input_overrides,
+        results_dir,
+        selection,
+        Some(run_id.to_string()),
+        resolved_max_forks,
+        true,
+        Some(run_id),
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn get_flow_run_logs(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
+    get_flow_run_logs_tail(state, run_id, 500)
+}
+
+#[tauri::command]
+pub fn get_flow_run_logs_tail(
+    state: tauri::State<AppState>,
+    run_id: i64,
+    lines: usize,
+) -> Result<String, String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .ok_or_else(|| "Flow run has no results_dir or work_dir".to_string())?;
+    let log_path = PathBuf::from(results_dir).join("flow.log");
+
+    if !log_path.exists() {
+        return Ok(
+            "No logs available for this flow run yet. Logs will appear once execution starts."
+                .to_string(),
+        );
+    }
+
+    let file = fs::File::open(&log_path).map_err(|e| format!("Failed to open log file: {}", e))?;
+    let reader = BufReader::new(file);
+    let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+
+    let total_lines = all_lines.len();
+    let start_index = total_lines.saturating_sub(lines);
+    let tail_lines: Vec<String> = all_lines.into_iter().skip(start_index).collect();
+
+    Ok(tail_lines.join("\n"))
+}
+
+#[tauri::command]
+pub fn get_flow_run_logs_full(
+    state: tauri::State<AppState>,
+    run_id: i64,
+) -> Result<String, String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .ok_or_else(|| "Flow run has no results_dir or work_dir".to_string())?;
+    let log_path = PathBuf::from(results_dir).join("flow.log");
+
+    if !log_path.exists() {
+        return Ok(
+            "No logs available for this flow run yet. Logs will appear once execution starts."
+                .to_string(),
+        );
+    }
+
+    fs::read_to_string(&log_path).map_err(|e| format!("Failed to read log file: {}", e))
+}
+
+#[tauri::command]
+pub fn path_exists(path: String) -> Result<bool, String> {
+    Ok(Path::new(&path).exists())
+}
+
+#[tauri::command]
+pub fn get_flow_run_work_dir(state: tauri::State<AppState>, run_id: i64) -> Result<String, String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&run.work_dir));
+    let log_path = results_dir.join("flow.log");
+
+    if let Ok(contents) = fs::read_to_string(&log_path) {
+        for line in contents.lines().rev() {
+            if let Some(idx) = line.find("Current working directory:") {
+                let path = line[idx + "Current working directory:".len()..].trim();
+                let mut candidate = PathBuf::from(path);
+                if candidate.is_file() {
+                    candidate.pop();
+                }
+                while candidate.file_name().is_some()
+                    && candidate.file_name().and_then(|v| v.to_str()) != Some("work")
+                {
+                    candidate.pop();
+                }
+                if candidate.file_name().and_then(|v| v.to_str()) == Some("work") {
+                    return Ok(candidate.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Ok(run.work_dir.clone())
 }
 
 #[tauri::command]

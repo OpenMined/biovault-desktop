@@ -17,6 +17,9 @@ use tauri_plugin_opener::OpenerExt;
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
 static SUBSCRIPTION_DISCOVERY_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 static LAST_SUBSCRIPTION_404_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_QUEUE_POLL_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_CONTROL_PLANE_OK_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_KNOWN_WS_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -602,6 +605,37 @@ fn normalize_uploads(list: &mut [SyftBoxUploadInfo]) {
     }
 }
 
+fn should_log_queue_poll(is_connected: bool) -> bool {
+    let interval_secs = if is_connected { 60 } else { 10 };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_QUEUE_POLL_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= interval_secs {
+        LAST_QUEUE_POLL_LOG.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+fn should_log_control_plane_ok() -> bool {
+    let is_connected = LAST_KNOWN_WS_CONNECTED.load(Ordering::Relaxed);
+    let interval_secs = if is_connected { 60 } else { 10 };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_CONTROL_PLANE_OK_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= interval_secs {
+        LAST_CONTROL_PLANE_OK_LOG.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
 fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, error: Option<String>) {
     let entry = ControlPlaneLogEntry {
         timestamp: Utc::now().to_rfc3339(),
@@ -620,6 +654,9 @@ fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, erro
     match error {
         Some(err) => crate::desktop_log!("🛰️ {} {} -> error: {}", method, url, err),
         None => {
+            if !should_log_control_plane_ok() {
+                return;
+            }
             let s = status
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "unknown".into());
@@ -1763,14 +1800,23 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
                 .collect()
         })
         .unwrap_or_default();
-    crate::desktop_log!(
-        "📡 SyftBox queue poll → sync: {} upload: {} errors: {} | sample sync: [{}] uploads: [{}]",
-        sync_count,
-        upload_count,
-        err_msg,
-        sample_sync.join(" | "),
-        sample_uploads.join(" | ")
-    );
+    let is_connected = status
+        .as_ref()
+        .and_then(|s| s.runtime.as_ref())
+        .and_then(|r| r.websocket.as_ref())
+        .and_then(|w| w.connected)
+        .unwrap_or(false);
+    LAST_KNOWN_WS_CONNECTED.store(is_connected, Ordering::Relaxed);
+    if should_log_queue_poll(is_connected) {
+        crate::desktop_log!(
+            "📡 SyftBox queue poll → sync: {} upload: {} errors: {} | sample sync: [{}] uploads: [{}]",
+            sync_count,
+            upload_count,
+            err_msg,
+            sample_sync.join(" | "),
+            sample_uploads.join(" | ")
+        );
+    }
 
     Ok(SyftBoxQueueStatus {
         control_plane_url: Some(cfg.client_url),
