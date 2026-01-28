@@ -7,6 +7,16 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		return div.innerHTML
 	}
 
+	function parseNextflowMaxForks(rawValue) {
+		const trimmed = (rawValue || '').toString().trim()
+		if (!trimmed) return null
+		const parsed = Number.parseInt(trimmed, 10)
+		if (!Number.isFinite(parsed) || parsed < 1) {
+			throw new Error('Please enter a positive integer for Nextflow parallel processes.')
+		}
+		return parsed
+	}
+
 	async function confirmWithDialog(message, options = {}) {
 		if (dialog?.confirm) {
 			return await dialog.confirm(message, options)
@@ -1468,6 +1478,20 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							<button id="data-run-results-browse" class="secondary-btn" type="button" style="padding: 12px 20px; white-space: nowrap; font-weight: 600; border-radius: 8px;">Browse…</button>
 						</div>
 					</div>
+					<div class="data-run-section" style="margin-top: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px;">
+						<h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 700; color: #475569; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #64748b;">
+								<path d="M4 7h16"></path>
+								<path d="M4 12h16"></path>
+								<path d="M4 17h16"></path>
+							</svg>
+							Nextflow Parallelism <span style="font-weight: 400; color: #94a3b8; font-size: 13px;">(optional)</span>
+						</h3>
+						<p style="font-size: 13px; color: #64748b; margin: 0 0 14px 0; line-height: 1.6;">
+							Limit concurrent Nextflow processes to reduce memory pressure. Leave blank to use the default.
+						</p>
+						<input type="number" id="data-run-max-forks" min="1" step="1" placeholder="e.g., 1–10 or higher" style="width: 100%; padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: #ffffff; color: #0f172a; transition: all 0.2s;">
+					</div>
 				</div>
 				<div class="data-run-modal-footer" style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 24px 32px; background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%); border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);">
 					<div class="data-run-footer-status" style="font-size: 14px; color: #64748b;">Ready to run</div>
@@ -1574,6 +1598,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				resultsInput.style.boxShadow = 'none'
 			})
 		}
+		const maxForksInput = modal.querySelector('#data-run-max-forks')
+		if (maxForksInput) {
+			maxForksInput.addEventListener('focus', () => {
+				maxForksInput.style.borderColor = '#2563eb'
+				maxForksInput.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'
+			})
+			maxForksInput.addEventListener('blur', () => {
+				maxForksInput.style.borderColor = '#cbd5e1'
+				maxForksInput.style.boxShadow = 'none'
+			})
+		}
 
 		const browseBtn = modal.querySelector('#data-run-results-browse')
 		if (browseBtn) {
@@ -1619,6 +1654,13 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			}
 
 			const resultsDir = resultsInput.value.trim() || null
+			let nextflowMaxForks = null
+			try {
+				nextflowMaxForks = parseNextflowMaxForks(maxForksInput?.value)
+			} catch (error) {
+				alert(error.message || error)
+				return
+			}
 			const performRuns = async () => {
 				runBtn.disabled = true
 				runBtn.textContent = 'Starting…'
@@ -1704,6 +1746,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							flowId,
 							inputOverrides,
 							resultsDir: resolvedResultsDir,
+							nextflowMaxForks,
 							selection: {
 								urls: runSet.urls || [],
 								fileIds: runSet.fileIds || [],
@@ -4284,11 +4327,21 @@ steps:${
 
 			console.log('🚀 Running flow with overrides:', allOverrides)
 
+			let nextflowMaxForks = null
+			try {
+				const maxForksInput = document.getElementById('flow-max-forks')
+				nextflowMaxForks = parseNextflowMaxForks(maxForksInput?.value)
+			} catch (error) {
+				alert(error.message || error)
+				return
+			}
+
 			// Run the flow
 			const run = await invoke('run_flow', {
 				flowId: flowId,
 				inputOverrides: allOverrides,
 				resultsDir: null,
+				nextflowMaxForks,
 			})
 
 			// Store run ID in sessionStorage for auto-expansion on runs page

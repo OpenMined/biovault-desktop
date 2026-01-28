@@ -184,6 +184,30 @@
 							</div>
 						</div>
 					</details>
+
+					<!-- Nextflow Parallelism -->
+					<div class="config-section" style="margin-top: 18px">
+						<h3 class="config-section-title" style="margin: 0 0 8px 0">Nextflow Parallelism</h3>
+						<p class="config-hint" style="margin: 0 0 10px 0">
+							Limit concurrent Nextflow processes to reduce memory pressure. Leave blank to use the
+							default.
+						</p>
+						<input
+							type="number"
+							id="flow-max-forks"
+							min="1"
+							step="1"
+							placeholder="e.g., 1–10 or higher"
+							style="
+								width: 100%;
+								padding: 8px 10px;
+								border: 1px solid #e5e7eb;
+								border-radius: 6px;
+								font-size: 13px;
+							"
+							autocomplete="off"
+						/>
+					</div>
 				</aside>
 
 				<!-- Right Main Area: Flow Structure -->
