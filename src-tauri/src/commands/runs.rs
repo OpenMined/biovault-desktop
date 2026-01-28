@@ -381,7 +381,9 @@ pub async fn execute_analysis(
         test: false,
         download: false,
         dry_run: false,
-        with_docker: false,
+        with_docker: env::var("BIOVAULT_USE_DOCKER")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false),
         work_dir: Some(work_subdir.to_string_lossy().to_string()),
         resume: false,
         template: None,

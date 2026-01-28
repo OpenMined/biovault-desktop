@@ -51,15 +51,16 @@ RUN set -eux; \
     # Pre-download Nextflow dependencies
     nextflow -version
 
-# Create non-root user for running Nextflow
-RUN adduser -D -u 1000 nextflow
-USER nextflow
+# NOTE: Running as root is required for Docker socket access when spawning workflow containers
+# The official nextflow/nextflow image also runs as root by default
 
 # Set up environment
-ENV NXF_HOME=/home/nextflow/.nextflow
+ENV NXF_HOME=/root/.nextflow
 ENV PATH="/usr/local/bin:${PATH}"
 WORKDIR /work
 
 # Use tini as init to handle signals properly
-ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/nextflow"]
-CMD ["-version"]
+# NOTE: Entrypoint must NOT include nextflow - the BioVault CLI adds "nextflow" as the first argument
+# This matches the behavior of the official nextflow/nextflow image used for x86
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["nextflow", "-version"]
