@@ -5,6 +5,7 @@ This directory contains the Docker build files for the ARM64-native Nextflow run
 ## Overview
 
 The ARM64 Nextflow runner is designed for:
+
 - **Linux ARM64** systems (e.g., AWS Graviton, Apple Silicon with Docker Desktop)
 - **Windows ARM64** systems (e.g., Surface Pro X, Snapdragon laptops)
 
@@ -12,11 +13,11 @@ Unlike x86_64, where we can extend the official `nextflow/nextflow` image, ARM64
 
 ## Contents
 
-| File | Description |
-|------|-------------|
-| `Dockerfile.nextflow-runner` | Multi-stage Dockerfile for ARM64 |
-| `build-nextflow-runner.sh` | Build script with configurable versions |
-| `test-nextflow-runner.sh` | Test script for CI validation |
+| File                         | Description                             |
+| ---------------------------- | --------------------------------------- |
+| `Dockerfile.nextflow-runner` | Multi-stage Dockerfile for ARM64        |
+| `build-nextflow-runner.sh`   | Build script with configurable versions |
+| `test-nextflow-runner.sh`    | Test script for CI validation           |
 
 ## What's Included
 
@@ -43,12 +44,12 @@ Unlike x86_64, where we can extend the official `nextflow/nextflow` image, ARM64
 
 ### Build Arguments
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--tag` | `ghcr.io/openmined/nextflow-runner:25.10.2-arm64` | Image name/tag |
-| `--docker-cli-version` | `28.0.1` | Docker CLI version |
-| `--podman-version` | `5.3.1` | Podman version |
-| `--nextflow-version` | `25.10.2` | Nextflow version |
+| Argument               | Default                                           | Description        |
+| ---------------------- | ------------------------------------------------- | ------------------ |
+| `--tag`                | `ghcr.io/openmined/nextflow-runner:25.10.2-arm64` | Image name/tag     |
+| `--docker-cli-version` | `28.0.1`                                          | Docker CLI version |
+| `--podman-version`     | `5.3.1`                                           | Podman version     |
+| `--nextflow-version`   | `25.10.2`                                         | Nextflow version   |
 
 ## Testing
 
@@ -94,16 +95,17 @@ BioVault automatically selects the appropriate architecture:
 ## Why ARM64 Native?
 
 Running x86_64 containers under QEMU emulation on ARM64 causes issues:
+
 - **Go runtime crashes**: Docker/Podman CLI (written in Go) crashes when thread creation fails under QEMU
 - **Performance**: Native ARM64 is significantly faster than emulated x86_64
 - **Reliability**: Native execution avoids emulation edge cases
 
 ## Version Matrix
 
-| Component | Version | Architecture |
-|-----------|---------|--------------|
-| Alpine Linux | 3.21 | arm64 |
-| OpenJDK | 21 | arm64 |
-| Nextflow | 25.10.2 | JVM (arch-independent) |
-| Docker CLI | 28.0.1 | arm64 |
-| Podman | 5.3.1 | arm64 |
+| Component    | Version | Architecture           |
+| ------------ | ------- | ---------------------- |
+| Alpine Linux | 3.21    | arm64                  |
+| OpenJDK      | 21      | arm64                  |
+| Nextflow     | 25.10.2 | JVM (arch-independent) |
+| Docker CLI   | 28.0.1  | arm64                  |
+| Podman       | 5.3.1   | arm64                  |
