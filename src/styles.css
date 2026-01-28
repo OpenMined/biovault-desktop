@@ -1,31 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
-@import "tailwindcss";
 
 /* BioVault Desktop - Main Stylesheet */
-/* Modular CSS imports - order matters! */
 
-/* 1. Base styles - resets and fundamental elements */
+/* 1. Legacy Styles (Loaded first so they can be overridden) */
 @import "./css/base.css";
-
-/* 2. Layout - grid, flex, containers, tabs */
 @import "./css/layout.css";
 @import "./css/sidebar.css";
-/* Workbench removed - logs and SQL are now direct tabs */
-/* @import "./css/workbench.css"; */
-
-/* 3. Forms - inputs, selects, labels */
 @import "./css/forms.css";
-
-/* 4. Buttons - all button styles */
 @import "./css/buttons.css";
-
-/* 5. Tables - table elements and styling */
 @import "./css/tables.css";
-
-/* 6. Modals - modal dialogs and overlays */
 @import "./css/modals.css";
-
-/* 7. Page-specific styles */
 @import "./css/onboarding.css";
 @import "./css/profiles.css";
 @import "./css/projects.css";
@@ -45,3 +29,7 @@
 @import "./css/syftbox.css";
 @import "./css/files.css";
 @import "./css/participants.css";
+
+/* 2. New Component Systems (Higher precedence) */
+@import "tailwindcss";
+@import "basecoat-css";

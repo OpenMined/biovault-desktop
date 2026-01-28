@@ -1,3 +1,4 @@
+import 'basecoat-css/all'
 import { templateLoader } from './template-loader.js'
 import { initOnboarding } from './onboarding.js'
 import { createDashboardShell } from './dashboard.js'
