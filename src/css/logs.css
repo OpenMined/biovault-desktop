@@ -58,7 +58,7 @@
 	color: #ffffff;
 	border: 1px solid #dc2626;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -111,7 +111,7 @@
 }
 
 .log-viewer-title {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 14px;
 	font-weight: 600;
 	color: #1e293b;

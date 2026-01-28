@@ -13,6 +13,8 @@
 	align-items: center;
 	justify-content: center;
 	padding: 24px;
+	padding-top: 64px;
+	/* 40px header + 24px padding */
 }
 
 .profiles-overlay {

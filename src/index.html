@@ -9,6 +9,116 @@
 </head>
 
 <body>
+	<!-- Tauri Top Bar -->
+	<header data-tauri-drag-region
+		class="fixed top-0 left-0 right-0 z-[100000] flex h-10 shrink-0 items-center justify-between bg-primary text-white border-b border-white/10"
+		style="padding-left: 96px; padding-right: 48px;">
+		<div class="flex items-center gap-2">
+			<span class="font-bold text-sm">BioVault Desktop</span>
+			<span id="app-version" class="text-[10px] opacity-100 mt-0.5"></span>
+			<button id="header-dev-info-btn" class="hidden opacity-100 hover:opacity-100 transition-opacity ml-1"
+				title="Dev Mode Information">
+				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-info">
+					<circle cx="12" cy="12" r="10" />
+					<path d="M12 16v-4" />
+					<path d="M12 8h.01" />
+				</svg>
+			</button>
+		</div>
+		<div class="flex items-center gap-2 no-drag">
+			<!-- Dependencies Status Placeholder -->
+			<button id="header-deps-btn" class="top-bar-icon-btn relative" title="Dependencies">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-package">
+					<path d="m7.5 4.27 9 5.15" />
+					<path
+						d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+					<path d="m3.3 7 8.7 5 8.7-5" />
+					<path d="M12 22V12" />
+				</svg>
+				<span id="header-deps-badge" class="top-bar-badge hidden"></span>
+			</button>
+
+			<button class="top-bar-icon-btn" title="Logs" data-nav="logs">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-square-terminal">
+					<path d="m7 11 2-2-2-2" />
+					<path d="M11 13h4" />
+					<rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+				</svg>
+			</button>
+
+			<button class="top-bar-icon-btn" title="SQL Console" data-nav="sql">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-database">
+					<ellipse cx="12" cy="5" rx="9" ry="3" />
+					<path d="M3 5V19A9 3 0 0 0 21 19V5" />
+					<path d="M3 12A9 3 0 0 0 21 12" />
+				</svg>
+			</button>
+
+			<button class="top-bar-icon-btn" title="SyftBox Sync" data-nav="syftbox">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-folder-sync">
+					<path
+						d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5" />
+					<path d="M12 10v4h4" />
+					<path d="m12 14 1.5-1.5c.9-.9 2.2-1.5 3.5-1.5a4 4 0 0 1 4 4" />
+					<path d="M22 22v-4h-4" />
+					<path d="m22 18-1.5 1.5c-.9.9-2.1 1.5-3.5 1.5a4 4 0 0 1-4-4" />
+				</svg>
+			</button>
+
+			<button class="top-bar-icon-btn" title="Learn" data-nav="learn">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-library-big">
+					<rect width="8" height="18" x="3" y="3" rx="1" />
+					<path d="M7 3v18" />
+					<path
+						d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z" />
+				</svg>
+			</button>
+
+			<button class="top-bar-icon-btn relative" title="Notifications" data-nav="messages">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-bell">
+					<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+					<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+				</svg>
+				<span id="unread-notifications-count" class="top-bar-badge hidden"></span>
+			</button>
+
+			<button id="header-invite-btn" class="top-bar-icon-btn" title="Invite to BioVault">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-user-plus">
+					<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+					<circle cx="9" cy="7" r="4" />
+					<line x1="19" y1="8" x2="19" y2="14" />
+					<line x1="22" y1="11" x2="16" y2="11" />
+				</svg>
+			</button>
+
+			<button id="header-support-btn" class="top-bar-icon-btn" title="Help & Support">
+				<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-circle-help">
+					<circle cx="12" cy="12" r="10" />
+					<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+					<path d="M12 17h.01" />
+				</svg>
+			</button>
+		</div>
+	</header>
+
 	<!-- Profiles View - shown when multiple profiles exist -->
 	<div id="profiles-view" class="tab-content profiles-view" style="display: none"></div>
 
@@ -18,71 +128,233 @@
 	<!-- App Layout: Sidebar + Main Area -->
 	<div class="app-layout">
 		<!-- Left Vertical Sidebar -->
-		<aside class="app-sidebar">
-			<nav class="sidebar-nav">
-				<button class="nav-item active" data-tab="run" title="Flows">
-					<img src="assets/icons/workflow.svg" width="24" height="24" alt="Flows" />
-					<span class="nav-label">Flows</span>
-				</button>
-				<button class="nav-item" data-tab="data" title="Data">
-					<img src="assets/icons/drive.svg" width="24" height="24" alt="Data" />
-					<span class="nav-label">Data</span>
-				</button>
-				<button class="nav-item" data-tab="runs" title="Results">
-					<img src="assets/icons/chart.svg" width="24" height="24" alt="Results" />
-					<span class="nav-label">Runs</span>
-				</button>
-				<button class="nav-item" data-tab="logs" title="Logs">
-					<img src="assets/icons/terminal.svg" width="24" height="24" alt="Logs" />
-					<span class="nav-label">Logs</span>
-				</button>
-				<button class="nav-item" data-tab="sql" title="SQL">
-					<img src="assets/icons/database.svg" width="24" height="24" alt="Data" />
-					<span class="nav-label">Query</span>
-				</button>
-				<button class="nav-item" data-tab="sessions" title="Sessions">
-					<img src="assets/icons/user-round.svg" width="24" height="24" alt="Sessions" />
-					<span class="nav-label">Sessions</span>
-				</button>
-			</nav>
+		<!-- Basecoat Sidebar -->
+		<aside class="sidebar" data-side="left">
+			<!-- Toggle Button -->
+			<button id="sidebar-toggle" class="sidebar-toggle" title="Collapse Sidebar">
+				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+					stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+					class="lucide lucide-chevron-left">
+					<path d="m15 18-6-6 6-6" />
+				</svg>
+			</button>
+			<nav aria-label="Main Navigation" class="flex flex-col h-full pt-4">
+				<section class="scrollbar flex-1 px-2 pb-4 overflow-y-auto">
+					<div role="group">
+						<ul class="space-y-1">
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors active bg-sidebar-accent text-sidebar-primary"
+									aria-current="page" data-tab="run" title="Flows">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-workflow">
+										<rect width="8" height="8" x="3" y="3" rx="2" />
+										<path d="M7 11v4a2 2 0 0 0 2 2h4" />
+										<rect width="8" height="8" x="13" y="13" rx="2" />
+									</svg>
+									<span>Flows</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="data" title="Data">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-hard-drive">
+										<rect width="20" height="8" x="2" y="4" rx="2" />
+										<rect width="20" height="8" x="2" y="12" rx="2" />
+										<line x1="6" y1="8" x2="6" y2="8" />
+										<line x1="6" y1="16" x2="6" y2="16" />
+									</svg>
+									<span>Data</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="runs" title="Results">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-line-chart">
+										<path d="M3 3v18h18" />
+										<path d="m19 9-5 5-4-4-3 3" />
+									</svg>
+									<span>Runs</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="logs" title="Logs">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-terminal">
+										<polyline points="4 17 10 11 4 5" />
+										<line x1="12" y1="19" x2="20" y2="19" />
+									</svg>
+									<span>Logs</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="sql" title="SQL">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-database">
+										<ellipse cx="12" cy="5" rx="9" ry="3" />
+										<path d="M3 5V19A9 3 0 0 0 21 19V5" />
+										<path d="M3 12A9 3 0 0 0 21 12" />
+									</svg>
+									<span>Query</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="sessions" title="Sessions">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-users">
+										<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+										<circle cx="9" cy="7" r="4" />
+										<path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+										<path d="M16 3.13a4 4 0 0 1 0 7.75" />
+									</svg>
+									<span>Sessions</span>
+								</a>
+							</li>
 
-			<!-- Bottom Navigation Items -->
-			<div class="sidebar-footer">
-				<div class="sidebar-divider"></div>
-				<button class="nav-item invite-nav-btn" id="sidebar-invite-btn" title="Invite to BioVault">
-					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-						stroke-linecap="round" stroke-linejoin="round">
-						<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-						<circle cx="9" cy="7" r="4" />
-						<line x1="19" y1="8" x2="19" y2="14" />
-						<line x1="22" y1="11" x2="16" y2="11" />
-					</svg>
-					<span class="nav-label">Invite</span>
-				</button>
-				<button class="nav-item" data-tab="network" title="Network">
-					<img src="assets/icons/user-round.svg" width="24" height="24" alt="Network" />
-					<span class="nav-label">Network</span>
-				</button>
-				<button class="nav-item" data-tab="syftbox" title="SyftBox">
-					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-						stroke-linecap="round" stroke-linejoin="round">
-						<path
-							d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
-						</path>
-						<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-						<line x1="12" y1="22.08" x2="12" y2="12"></line>
-					</svg>
-					<span class="nav-label">SyftBox</span>
-				</button>
-				<button class="nav-item" data-tab="messages" title="Messages">
-					<img src="assets/icons/mail.svg" width="24" height="24" alt="Messages" />
-					<span class="nav-label">Messages</span>
-				</button>
-				<button class="nav-item" data-tab="settings" title="Settings">
-					<img src="assets/icons/settings.svg" width="24" height="24" alt="Settings" />
-					<span class="nav-label">Settings</span>
-				</button>
-			</div>
+
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									id="sidebar-invite-btn" title="Invite to BioVault">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-user-plus">
+										<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+										<circle cx="9" cy="7" r="4" />
+										<line x1="19" y1="8" x2="19" y2="14" />
+										<line x1="22" y1="11" x2="16" y2="11" />
+									</svg>
+									<span>Invite</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="network" title="Network">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-network">
+										<rect x="9" y="2" width="6" height="6" rx="1" />
+										<rect x="16" y="16" width="6" height="6" rx="1" />
+										<rect x="16" y="16" width="6" height="6" rx="1" />
+										<rect x="2" y="16" width="6" height="6" rx="1" />
+										<path d="M12 8v4" />
+										<path d="M12 12H5v4" />
+										<path d="M12 12h7v4" />
+									</svg>
+									<span>Network</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="syftbox" title="SyftBox">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-package">
+										<path d="M16.5 9.4 7.55 4.24" />
+										<path
+											d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+										<polyline points="3.29 7 12 12 20.71 7" />
+										<line x1="12" y1="22" x2="12" y2="12" />
+									</svg>
+									<span>SyftBox</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="messages" title="Messages">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-mail">
+										<rect width="20" height="16" x="2" y="4" rx="2" />
+										<path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+									</svg>
+									<span>Messages</span>
+								</a>
+							</li>
+							<li>
+								<a href="javascript:void(0)"
+									class="nav-item btn-ghost p-2 h-9 w-full justify-start text-sm font-normal flex items-center gap-3 rounded-md transition-colors"
+									data-tab="settings" title="Settings">
+									<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+										fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+										stroke-linejoin="round" class="lucide lucide-settings">
+										<path
+											d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+										<circle cx="12" cy="12" r="3" />
+									</svg>
+									<span>Settings</span>
+								</a>
+							</li>
+						</ul>
+					</div>
+				</section>
+
+				<footer class="p-2 mt-auto">
+					<div class="popover">
+						<button id="user-menu-trigger"
+							class="btn-ghost px-2 h-10 w-full flex items-center justify-start rounded-md transition-colors"
+							aria-haspopup="true" aria-expanded="false" aria-controls="user-menu-popover">
+
+							<div
+								class="size-7 rounded-md bg-sidebar-primary text-sidebar-primary-foreground flex items-center justify-center font-bold text-[10px] shrink-0">
+								BV
+							</div>
+
+							<div class="flex flex-col items-start overflow-hidden ml-2 flex-1">
+								<span class="text-[11px] font-medium truncate w-full" id="sidebar-user-name">User
+									Profile</span>
+								<span class="text-[9px] text-muted-foreground truncate w-full"
+									id="sidebar-user-email">@biovault</span>
+							</div>
+
+							<div class="flex items-center gap-0.5 text-muted-foreground lucide-chevrons-up-down">
+								<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+									fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+									stroke-linejoin="round" class="lucide lucide-chevrons-up-down">
+									<path d="m7 15 5 5 5-5"></path>
+									<path d="m7 9 5-5 5 5"></path>
+								</svg>
+							</div>
+						</button>
+
+						<div id="user-menu-popover" class="popover w-64 p-3 mb-2" role="dialog" data-popover
+							data-side="top-right" aria-hidden="true">
+							<div class="flex flex-col gap-2">
+								<p
+									class="text-[10px] font-semibold text-muted-foreground px-1 uppercase tracking-wider">
+									Account</p>
+								<button class="btn-sm w-full justify-start nav-item" data-tab="settings">Profile
+									Settings</button>
+								<button
+									class="btn-sm-outline w-full justify-start border-transparent">Documentation</button>
+								<div class="border-t border-border my-1"></div>
+								<button
+									class="btn-sm w-full justify-start text-destructive bg-destructive/10 hover:bg-destructive/20 border-transparent">Sign
+									Out</button>
+							</div>
+						</div>
+					</div>
+				</footer>
+			</nav>
 		</aside>
 
 		<!-- Main Content Area -->

@@ -49,7 +49,7 @@ export function initOnboarding({
 	}
 
 	// Kick off default server fetch early
-	getDefaultServer().catch(() => {})
+	getDefaultServer().catch(() => { })
 	const LOCKED_BUTTON_ATTR = 'data-locked-original-disabled'
 	let dependencyPanelsLocked = false
 	let activeDependencyName = null
@@ -525,35 +525,31 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${
-							dep.name
-						}</h3>
-						${
-							dep.website
-								? `
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #28a745; font-size: 20px; white-space: nowrap;">✓ ${dep.name
+				}</h3>
+						${dep.website
+					? `
 						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
 						`
-								: ''
-						}
+					: ''
+				}
 					</div>
 					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
 				</div>
 
 				<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-					${
-						dep.version
-							? `
+					${dep.version
+					? `
 					<div style="margin-bottom: 12px;">
 						<strong style="font-size: 13px; color: #333;">Version:</strong>
 						<div class="dep-version-value" style="font-family: monospace; font-size: 12px; color: #666; margin-top: 5px;">${dep.version}</div>
 					</div>
 					`
-							: ''
-					}
+					: ''
+				}
 
-					${
-						dep.name.toLowerCase() === 'docker' || hasRunningInfo
-							? `
+					${dep.name.toLowerCase() === 'docker' || hasRunningInfo
+					? `
 					<div style="margin-bottom: 12px;">
 						<strong style="font-size: 13px; color: #333;">Status:</strong>
 						<div id="dep-status-${depIndex}" style="font-size: 12px; color: ${statusColor}; margin-top: 5px;">
@@ -561,8 +557,8 @@ export function initOnboarding({
 						</div>
 					</div>
 					`
-							: ''
-					}
+					: ''
+				}
 
 					<div style="margin-bottom: 12px;">
 						<strong style="font-size: 13px; color: #333;">Path:</strong>
@@ -646,8 +642,7 @@ export function initOnboarding({
 						// Update the UI with the result
 						if (result.found) {
 							await dialog.message(
-								`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${
-									result.version || 'Unknown'
+								`✓ ${dep.name} auto-detected!\n\nPath: ${result.path}\nVersion: ${result.version || 'Unknown'
 								}`,
 								{ title: 'Success', type: 'info' },
 							)
@@ -713,8 +708,7 @@ export function initOnboarding({
 							showDependencyDetails(dep, depIndex)
 
 							await dialog.message(
-								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
-									result.version || 'Unknown'
+								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${result.version || 'Unknown'
 								}`,
 								{ title: 'Success', type: 'info' },
 							)
@@ -799,16 +793,14 @@ export function initOnboarding({
 			detailsPanel.innerHTML = `
 				<div style="margin-bottom: 20px;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px;">
-						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${
-							dep.name
-						}</h3>
-						${
-							dep.website
-								? `
+						<h3 data-dep-name="${safeDepNameAttr}" style="margin: 0; color: #dc3545; font-size: 20px; white-space: nowrap;">✗ ${dep.name
+				}</h3>
+						${dep.website
+					? `
 						<button id="open-website-btn-${depIndex}" style="padding: 4px; width: auto; min-width: 0; background: transparent; border: none; cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; transition: opacity 0.2s; flex-shrink: 0; margin-left: auto;" title="Open ${dep.name} website" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
 						`
-								: ''
-						}
+					: ''
+				}
 					</div>
 					<p style="color: #666; font-size: 13px; margin: 0 0 15px 0;">${description}</p>
 				</div>
@@ -838,33 +830,31 @@ export function initOnboarding({
 				<div style="background: #fff8e1; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px; position: relative;">
 					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
 						<h4 style="margin: 0; color: #856404; font-size: 14px;">📖 Manual Installation</h4>
-						${
-							commands.length > 0
-								? `
+						${commands.length > 0
+					? `
 							<button class="copy-cmd-btn" data-command="${encodeURIComponent(
-								commands[0],
-							)}" style="padding: 2px; min-width: 0; width: auto; background: transparent; border: none; cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" title="Copy command" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📋</button>
+						commands[0],
+					)}" style="padding: 2px; min-width: 0; width: auto; background: transparent; border: none; cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" title="Copy command" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📋</button>
 						`
-								: ''
-						}
+					: ''
+				}
 					</div>
 					<p style="font-size: 12px; color: #856404; margin-bottom: 10px;">You can also install this dependency manually:</p>
 
-					${
-						commands.length > 0
-							? commands
-									.map(
-										(cmd) => `
+					${commands.length > 0
+					? commands
+						.map(
+							(cmd) => `
 						<div style="background: #1e1e1e; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
 							<pre style="color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${cmd}</pre>
 						</div>
 					`,
-									)
-									.join('')
-							: `
+						)
+						.join('')
+					: `
 						<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 11px; color: #333; white-space: pre-wrap; font-family: monospace;">${installInstructions}</div>
 					`
-					}
+				}
 				</div>
 			`
 
@@ -1043,8 +1033,7 @@ export function initOnboarding({
 							showDependencyDetails(dep, depIndex)
 
 							await dialog.message(
-								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${
-									result.version || 'Unknown'
+								`✓ ${dep.name} found!\n\nPath: ${result.path || customPath}\nVersion: ${result.version || 'Unknown'
 								}`,
 								{ title: 'Success', type: 'info' },
 							)
@@ -1636,8 +1625,8 @@ export function initOnboarding({
 			try {
 				const confirmed = await dialog.confirm(
 					'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
-						'Some features may not work without the required dependencies installed.\n\n' +
-						'Are you sure you want to skip?',
+					'Some features may not work without the required dependencies installed.\n\n' +
+					'Are you sure you want to skip?',
 					{ title: 'Skip Dependency Checks?', type: 'warning' },
 				)
 
@@ -2570,32 +2559,23 @@ export function initOnboarding({
 				if (devModeInfo.dev_mode) {
 					console.log('🧪 DEV MODE ACTIVE:', devModeInfo)
 
-					// Add a dev mode banner to the document body
-					let devBanner = document.getElementById('dev-mode-banner')
-					if (!devBanner) {
-						devBanner = document.createElement('div')
-						devBanner.id = 'dev-mode-banner'
-						devBanner.style.cssText = `
-							position: fixed;
-							top: 0;
-							left: 0;
-							right: 0;
-							background: linear-gradient(90deg, #ff6b6b, #feca57);
-							color: #333;
-							padding: 4px 10px;
-							font-size: 11px;
-							font-weight: bold;
-							text-align: center;
-							z-index: 99999;
-							font-family: monospace;
-						`
-						devBanner.innerHTML = `🧪 DEV MODE | BIOVAULT_HOME: ${
-							devModeInfo.biovault_home || 'default'
-						} | Server: ${devModeInfo.server_url || 'none'}`
-						document.body.insertBefore(devBanner, document.body.firstChild)
+					// Show the dev info icon in the header
+					const infoBtn = document.getElementById('header-dev-info-btn')
+					if (infoBtn) {
+						infoBtn.classList.remove('hidden')
+						infoBtn.addEventListener('click', () => {
+							const info = [
+								`🧪 DEV MODE ACTIVE`,
+								`-------------------`,
+								`BIOVAULT_HOME: ${devModeInfo.biovault_home || 'default'}`,
+								`Server: ${devModeInfo.server_url || 'none'}`,
+							].join('\n')
 
-						// Adjust body padding to account for banner
-						document.body.style.paddingTop = '24px'
+							dialog.message(info, {
+								title: 'Development environment info',
+								kind: 'info',
+							})
+						})
 					}
 
 					// Auto-populate email from BIOVAULT_HOME path if it contains an email

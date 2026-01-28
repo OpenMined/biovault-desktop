@@ -27,7 +27,8 @@
 	min-height: 64px;
 	gap: 20px;
 	/* Make header draggable on macOS */
-	-webkit-app-region: drag;
+	/* Removed to avoid interference with global top bar */
+	/* -webkit-app-region: drag; */
 }
 
 /* Ensure buttons are clickable in draggable header */
@@ -57,7 +58,7 @@
 }
 
 .page-title {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 22px;
 	font-weight: 600;
 	color: #0f172a;
@@ -88,7 +89,7 @@
 	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 	color: #ffffff;
 	border-radius: 12px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	font-weight: 600;
 	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
@@ -101,7 +102,7 @@
 }
 
 .page-subtitle {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	color: #64748b;
 	margin: 0;
@@ -126,7 +127,7 @@
 	background: #f1f5f9;
 	border: 1px solid #e2e8f0;
 	border-radius: 6px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	color: #475569;
 	font-weight: 500;
@@ -188,7 +189,7 @@
 	background: #f8fafc;
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	color: #334155;
 	transition: all 0.15s ease;
@@ -221,7 +222,7 @@
 	color: #ffffff;
 	border: none;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -266,7 +267,7 @@
 	color: #475569;
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -309,7 +310,7 @@
 	color: #64748b;
 	border: none;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -344,7 +345,7 @@
 	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 	color: #ffffff;
 	border: none;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 500;
 	cursor: pointer;
 	transition: all 0.15s ease;
@@ -365,7 +366,7 @@
 	background: #ffffff;
 	color: #475569;
 	border: 1px solid #e2e8f0;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 500;
 	cursor: pointer;
 	transition: all 0.15s ease;
@@ -427,7 +428,7 @@
 }
 
 /* Standard content padding */
-.view-content > div:first-child {
+.view-content>div:first-child {
 	padding: 16px 20px;
 }
 
@@ -439,6 +440,7 @@
 	0% {
 		transform: translateX(-100%);
 	}
+
 	100% {
 		transform: translateX(100%);
 	}
@@ -448,6 +450,7 @@
 	0% {
 		background-position: -200% 0;
 	}
+
 	100% {
 		background-position: 200% 0;
 	}
@@ -457,6 +460,7 @@
 	0% {
 		transform: rotate(0deg);
 	}
+
 	100% {
 		transform: rotate(360deg);
 	}
@@ -518,15 +522,18 @@ table {
 	width: 180px;
 	min-width: 100px;
 }
+
 .col-extension {
 	width: 60px;
 	min-width: 50px;
 	flex-shrink: 0;
 }
+
 .col-participant {
 	width: 150px;
 	min-width: 100px;
 }
+
 .col-actions {
 	width: 40px;
 	flex-shrink: 0;
@@ -560,7 +567,7 @@ table {
 	border: none;
 	border-radius: 8px;
 	cursor: pointer;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	transition: all 0.15s ease;
@@ -577,7 +584,7 @@ table {
 	border: none;
 	border-radius: 8px;
 	cursor: pointer;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	margin-left: 8px;
@@ -612,7 +619,7 @@ table {
 	color: #059669;
 	padding: 4px 12px;
 	border-radius: 999px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	font-weight: 600;
 }
@@ -622,7 +629,7 @@ table {
 	color: #dc2626;
 	padding: 4px 12px;
 	border-radius: 999px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	font-weight: 600;
 }
@@ -665,7 +672,7 @@ table {
 }
 
 .danger-zone h3 {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	color: #dc2626;
 	margin: 0 0 8px 0;
 	font-weight: 600;
@@ -673,7 +680,7 @@ table {
 }
 
 .danger-zone p {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	color: #991b1b;
 	font-size: 13px;
 	margin-bottom: 16px;
@@ -693,7 +700,7 @@ table {
    ============================================================================ */
 
 h3 {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	margin-bottom: 12px;
 	font-weight: 600;
 	color: #1e293b;

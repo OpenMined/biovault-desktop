@@ -159,7 +159,7 @@
 	color: #334155;
 	border: 1px solid #cbd5e1;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -248,7 +248,7 @@
 	padding: 0 12px;
 	border: none;
 	border-radius: 6px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 13px;
 	font-weight: 600;
 	cursor: pointer;
@@ -333,7 +333,7 @@
 	color: #92400e;
 	border: 1px solid #fde047;
 	border-radius: 6px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	font-weight: 500;
 	cursor: pointer;
@@ -358,7 +358,7 @@
 	border-radius: 6px;
 	font-size: 13px;
 	font-weight: 500;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	color: #334155;
 	background: white;
 	cursor: pointer;

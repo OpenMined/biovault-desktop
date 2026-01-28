@@ -605,7 +605,142 @@ window.addEventListener('DOMContentLoaded', async () => {
 		console.log('🔗 Deep link received:', event.payload)
 		handleDeepLink(event.payload)
 	})
+
+	// --- Top Bar Initialization ---
+	try {
+		initTopBar({ navigateTo, showSessionsInviteOptions })
+	} catch (err) {
+		console.warn('⚠️ Top Bar initialization failed:', err)
+	}
+
+	// --- Sidebar Toggle Initialization ---
+	try {
+		const sidebarToggle = document.getElementById('sidebar-toggle')
+		const sidebar = document.querySelector('.sidebar')
+		if (sidebarToggle && sidebar) {
+			sidebarToggle.addEventListener('click', (e) => {
+				e.stopPropagation()
+				console.log('🔄 Sidebar toggle clicked')
+				sidebar.classList.toggle('collapsed')
+			})
+		} else {
+			console.warn('⚠️ Sidebar toggle elements not found:', { sidebarToggle, sidebar })
+		}
+	} catch (err) {
+		console.error('⚠️ Sidebar toggle initialization error:', err)
+	}
 })
+
+// Initialize Tauri Top Bar logic
+async function initTopBar({ navigateTo, showSessionsInviteOptions }) {
+	console.log('🔝 Initializing Top Bar...')
+
+	// Dragging fallback for macOS/Windows
+	const header = document.querySelector('header[data-tauri-drag-region]')
+	if (header) {
+		header.addEventListener('mousedown', async (e) => {
+			if (
+				e.buttons === 1 &&
+				!e.target.closest('button') &&
+				!e.target.closest('a') &&
+				!e.target.closest('.no-drag')
+			) {
+				try {
+					const { getCurrentWindow } = await import('@tauri-apps/api/window')
+					const win = getCurrentWindow()
+					if (win && typeof win.startDragging === 'function') {
+						win.startDragging()
+					}
+				} catch (err) {
+					// Ignore
+				}
+			}
+		})
+	}
+
+
+	// Set app version
+	const versionEl = document.getElementById('app-version')
+	if (versionEl) {
+		try {
+			// In Tauri v2, we might need the app-plugin, or we can use a mock/fallback
+			const { getVersion } = await import('@tauri-apps/api/app')
+			const version = await getVersion()
+			versionEl.textContent = `v${version}`
+		} catch (err) {
+			console.warn('⚠️ Could not fetch app version:', err)
+			// Fallback to version from package.json/invoked backend if needed
+			invoke('get_app_version')
+				.then((v) => {
+					versionEl.textContent = `v${v}`
+				})
+				.catch(() => {
+					versionEl.textContent = 'v0.1.39' // Hardcoded fallback matching package.json
+				})
+		}
+	}
+
+	// Wire up top bar navigation buttons
+	document.querySelectorAll('.top-bar-icon-btn[data-nav]').forEach((btn) => {
+		btn.addEventListener('click', () => {
+			const view = btn.dataset.nav
+			console.log(`🔝 Top bar navigating to: ${view}`)
+			navigateTo(view)
+		})
+	})
+
+	// Invite button
+	const headerInviteBtn = document.getElementById('header-invite-btn')
+	if (headerInviteBtn) {
+		headerInviteBtn.addEventListener('click', () => {
+			showSessionsInviteOptions('session')
+		})
+	}
+
+	// Support button
+	const headerSupportBtn = document.getElementById('header-support-btn')
+	if (headerSupportBtn) {
+		headerSupportBtn.addEventListener('click', () => {
+			// Find and click the Help/Support button in the sidebar to reuse its logic
+			// or just trigger the support dialog directly if possible.
+			// For now, let's just log and maybe navigate to settings or show a dialog.
+			console.log('🔝 Help & Support clicked')
+			dialog.message('Documentation and Support: https://docs.biovault.org', {
+				title: 'Help & Support',
+				kind: 'info',
+			})
+		})
+	}
+
+	// Initial dependency check for badge
+	try {
+		const results = await invoke('get_saved_dependency_states').catch(() => null)
+		if (results) {
+			updateHeaderDepsBadge(results)
+		}
+	} catch (e) {
+		/* silent */
+	}
+}
+
+function updateHeaderDepsBadge(results) {
+	const badge = document.getElementById('header-deps-badge')
+	if (!badge || !results || !results.dependencies) return
+
+	const missing = results.dependencies.filter((d) => !d.found).length
+	const issues = results.dependencies.filter(
+		(d) => d.found && d.name?.toLowerCase() === 'docker' && d.running === false,
+	).length
+
+	const total = missing + issues
+	if (total > 0) {
+		badge.textContent = total
+		badge.classList.remove('hidden')
+		badge.style.backgroundColor = missing > 0 ? '#ef4444' : '#f59e0b' // red for missing, amber for not running
+	} else {
+		badge.classList.add('hidden')
+	}
+}
 
 // Handle deep link URLs
 function handleDeepLink(url) {

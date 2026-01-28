@@ -10,7 +10,7 @@
 input:not([type='checkbox']):not([type='radio']),
 select,
 textarea {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 }
 
 /* ============================================================================
@@ -28,7 +28,7 @@ textarea {
 	padding: 10px 12px;
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 14px;
 	color: #1e293b;
 	background: #ffffff;
@@ -64,7 +64,7 @@ select {
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
 	background: #ffffff;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 14px;
 	color: #1e293b;
 	cursor: pointer;
@@ -192,7 +192,7 @@ input[type='checkbox']:focus {
 
 .form-group label {
 	display: block;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 600;
 	font-size: 13px;
 	color: #475569;
@@ -210,7 +210,7 @@ input[type='checkbox']:focus {
    ============================================================================ */
 
 .field-label {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 600;
 	font-size: 12px;
 	color: #64748b;
@@ -248,7 +248,7 @@ input[type='checkbox']:focus {
    ============================================================================ */
 
 .pattern-input-label {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 11px;
 	font-weight: 600;
 	color: #64748b;
@@ -352,7 +352,7 @@ input[type='checkbox']:focus {
 
 .settings-ai-field label {
 	display: block;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 600;
 	margin-bottom: 6px;
 	color: #64748b;
@@ -385,7 +385,7 @@ input[type='checkbox']:focus {
 }
 
 .settings-save-status {
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-size: 12px;
 	color: #94a3b8;
 }
@@ -455,7 +455,7 @@ input[type='checkbox']:focus {
 #message-syftbox-indicator {
 	padding: 5px 12px;
 	border-radius: 999px;
-	font-family: var(--font-family, 'Rubik', sans-serif);
+	font-family: var(--font-family, sans-serif);
 	font-weight: 600;
 	font-size: 12px;
 }

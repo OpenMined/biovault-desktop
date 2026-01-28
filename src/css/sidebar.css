@@ -17,46 +17,22 @@ body {
 	min-height: 0;
 	overflow: hidden;
 	background: #ffffff;
+	position: relative;
 }
 
 /* ============================================================================
    SIDEBAR CONTAINER
    ============================================================================ */
 
+/* Legacy Sidebar Container - Disabled to favor Basecoat UI */
+/*
 .app-sidebar {
 	width: 72px;
 	min-width: 72px;
-	background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-	border-right: 1px solid #e2e8f0;
-	display: flex;
-	flex-direction: column;
-	height: 100%;
-	position: relative;
-	overflow: hidden;
-	padding-top: 10px;
-	padding-bottom: 10px;
+    ...
 }
+*/
 
-/* Subtle organic texture overlay */
-.app-sidebar::before {
-	content: '';
-	position: absolute;
-	inset: 0;
-	background: radial-gradient(circle at 20% 30%, rgba(16, 185, 129, 0.03) 0%, transparent 50%),
-		radial-gradient(circle at 80% 70%, rgba(14, 165, 233, 0.02) 0%, transparent 50%);
-	pointer-events: none;
-}
-
-/* Draggable area for macOS window controls */
-.app-sidebar::after {
-	content: '';
-	position: absolute;
-	top: 0;
-	left: 0;
-	right: 0;
-	height: 32px;
-	-webkit-app-region: drag;
-}
 
 .sidebar-nav {
 	flex: 1;
@@ -80,7 +56,6 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 1px;
-	border-top: 1px solid rgba(226, 232, 240, 0.8);
 	position: relative;
 	z-index: 1;
 	background: linear-gradient(180deg, transparent 0%, rgba(248, 250, 252, 0.5) 100%);
@@ -94,106 +69,23 @@ body {
    NAV ITEMS - Beautiful organic buttons
    ============================================================================ */
 
+/* Legacy Nav Item - Disabled to favor Basecoat/Tailwind */
+/*
 .nav-item {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 4px;
-	padding: 10px 6px;
-	margin: 0 8px;
-	background: transparent;
-	border: none;
-	border-radius: 12px;
-	font-family:
-		'Rubik',
-		-apple-system,
-		BlinkMacSystemFont,
-		sans-serif;
-	font-size: 10px;
-	font-weight: 500;
-	letter-spacing: 0.01em;
-	color: #64748b;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-	text-align: center;
-	position: relative;
+    ...
 }
-
-.nav-item img {
-	width: 22px;
-	height: 22px;
-	opacity: 0.5;
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.nav-label {
-	font-size: 10px;
-	line-height: 1.1;
-	color: inherit;
-	font-weight: 500;
-	transition: all 0.2s ease;
-}
+*/
 
 /* ============================================================================
    HOVER STATE - Soft lift effect
    ============================================================================ */
 
-.nav-item:hover {
-	background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(20, 184, 166, 0.05) 100%);
-	color: #475569;
-	box-shadow:
-		0 2px 8px rgba(16, 185, 129, 0.08),
-		inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-
-.nav-item:hover img {
-	opacity: 0.75;
-}
-
-/* ============================================================================
-   ACTIVE STATE - Vibrant organic highlight
-   ============================================================================ */
-
-.nav-item.active {
-	background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(20, 184, 166, 0.1) 100%);
-	color: #059669;
-	box-shadow:
-		0 2px 12px rgba(16, 185, 129, 0.15),
-		inset 0 1px 0 rgba(255, 255, 255, 0.6);
-}
-
-.nav-item.active img {
-	opacity: 1;
-	filter: brightness(0) saturate(100%) invert(52%) sepia(52%) saturate(557%) hue-rotate(118deg) brightness(92%) contrast(92%);
-}
-
-.nav-item.active .nav-label {
-	color: #059669;
-	font-weight: 600;
-}
-
-/* Active indicator - flush with window edge */
-.nav-item.active::before {
-	content: '';
-	position: absolute;
-	left: -8px;
-	top: 50%;
-	transform: translateY(-50%);
-	width: 3px;
-	height: 24px;
-	background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-	border-radius: 0 2px 2px 0;
-	box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
-}
-
-/* ============================================================================
-   PRESSED STATE
-   ============================================================================ */
-
-.nav-item:active {
-	background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(20, 184, 166, 0.08) 100%);
-}
+/* Legacy Nav Item Styles - Disabled to favor Basecoat UI */
+/*
+.nav-item:hover { ... }
+.nav-item.active { ... }
+...
+*/
 
 /* ============================================================================
    MAIN CONTENT AREA
@@ -325,31 +217,10 @@ body {
    INVITE BUTTON - Special highlight
    ============================================================================ */
 
-.nav-item.invite-nav-btn {
-	background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(20, 184, 166, 0.08) 100%);
-	border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.nav-item.invite-nav-btn svg {
-	width: 22px;
-	height: 22px;
-	stroke: #10b981;
-	opacity: 0.8;
-}
-
-.nav-item.invite-nav-btn .nav-label {
-	color: #059669;
-}
-
-.nav-item.invite-nav-btn:hover {
-	background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(20, 184, 166, 0.15) 100%);
-	border-color: rgba(16, 185, 129, 0.35);
-	box-shadow: 0 2px 12px rgba(16, 185, 129, 0.2);
-}
-
-.nav-item.invite-nav-btn:hover svg {
-	opacity: 1;
-}
+/* Legacy Invite Button Styles - Disabled */
+/*
+.nav-item.invite-nav-btn { ... }
+*/
 
 /* ============================================================================
    RESPONSIVE

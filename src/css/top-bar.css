@@ -1,0 +1,81 @@
+/* Tauri Top Bar Styles */
+
+[data-tauri-drag-region] {
+    -webkit-app-region: drag !important;
+    app-region: drag !important;
+    user-select: none;
+}
+
+header {
+    z-index: 100000 !important;
+}
+
+header button,
+header a,
+header input,
+header .no-drag {
+    -webkit-app-region: no-drag !important;
+    app-region: no-drag !important;
+}
+
+/* Offset the app layout to start below the header */
+.app-layout {
+    margin-top: 40px;
+    /* h-10 = 40px */
+    height: calc(100vh - 40px - 28px) !important;
+    /* Subtract header and global status bar height */
+}
+
+/* Adjust sidebar to match the new layout */
+.sidebar {
+    height: 100% !important;
+}
+
+/* Header specific styles to match reference */
+.top-bar-version {
+    font-size: 10px;
+    opacity: 0.9;
+}
+
+.top-bar-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+    background: transparent;
+    border: none;
+    color: white;
+    padding: 0;
+    cursor: pointer;
+}
+
+.top-bar-icon-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.top-bar-icon-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Badge for notifications in top bar */
+.top-bar-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 10px;
+    background-color: #ef4444;
+    /* destructive red */
+    color: white;
+    font-size: 9px;
+    font-weight: 700;
+}
