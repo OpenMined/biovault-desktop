@@ -1279,11 +1279,16 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("nextflowMaxForks")
                 .or_else(|| args.get("nextflow_max_forks"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let force_remove_lock: Option<bool> = args
+                .get("forceRemoveLock")
+                .or_else(|| args.get("force_remove_lock"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
             let result = crate::commands::flows::resume_flow_run(
                 state,
                 window.ok_or_else(|| "Missing window handle for resume_flow_run".to_string())?,
                 run_id,
                 nextflow_max_forks,
+                force_remove_lock,
             )
             .await
             .map_err(|e| e.to_string())?;
