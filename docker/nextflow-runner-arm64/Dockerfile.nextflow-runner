@@ -1,0 +1,65 @@
+# ARM64-native Nextflow runner with Docker CLI and Podman
+# This image is used on ARM64 Linux and Windows ARM64 to run Nextflow workflows
+# that spawn Docker/Podman containers for individual tasks.
+#
+# Unlike x86_64 where we can use the stock nextflow/nextflow image and add clients,
+# ARM64 requires building from scratch since the official Nextflow image is x86_64 only.
+
+FROM docker:cli AS docker-cli
+
+FROM alpine:3.21
+
+ARG DOCKER_CLI_VERSION=28.0.1
+ARG PODMAN_VERSION=5.3.1
+ARG NEXTFLOW_VERSION=25.10.2
+
+LABEL maintainer="OpenMined" \
+      description="ARM64-native Nextflow runner with Docker and Podman CLI" \
+      org.opencontainers.image.source="https://github.com/openmined/biovault"
+
+# Install Java runtime (Eclipse Temurin), bash, and utilities
+RUN apk add --no-cache \
+    openjdk21-jre-headless \
+    bash \
+    curl \
+    tar \
+    gzip \
+    ca-certificates \
+    tini
+
+# Copy Docker CLI from docker:cli image (ARM64 native)
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+# Install Podman remote client (ARM64 static binary)
+RUN set -eux; \
+    curl -fsSL "https://github.com/containers/podman/releases/download/v${PODMAN_VERSION}/podman-remote-static-linux_arm64.tar.gz" -o /tmp/podman.tgz; \
+    tar -xzf /tmp/podman.tgz -C /tmp; \
+    mv /tmp/bin/podman-remote-static-linux_arm64 /usr/local/bin/podman; \
+    chmod +x /usr/local/bin/podman; \
+    rm -rf /tmp/podman.tgz /tmp/bin; \
+    podman --version
+
+# Verify Docker CLI
+RUN docker --version
+
+# Install Nextflow
+ENV NXF_VER=${NEXTFLOW_VERSION}
+RUN set -eux; \
+    curl -fsSL https://get.nextflow.io | bash; \
+    mv nextflow /usr/local/bin/; \
+    chmod +x /usr/local/bin/nextflow; \
+    # Pre-download Nextflow dependencies
+    nextflow -version
+
+# Create non-root user for running Nextflow
+RUN adduser -D -u 1000 nextflow
+USER nextflow
+
+# Set up environment
+ENV NXF_HOME=/home/nextflow/.nextflow
+ENV PATH="/usr/local/bin:${PATH}"
+WORKDIR /work
+
+# Use tini as init to handle signals properly
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/nextflow"]
+CMD ["-version"]
