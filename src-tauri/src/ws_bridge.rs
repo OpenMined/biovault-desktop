@@ -430,6 +430,9 @@ fn get_commands_list() -> serde_json::Value {
         cmd("get_flow_run_logs", "flows", true),
         cmd("get_flow_run_logs_tail", "flows", true),
         cmd("get_flow_run_logs_full", "flows", true),
+        cmd("get_container_count", "flows", true),
+        cmd("get_flow_state", "flows", true),
+        cmd("save_flow_state_cmd", "flows", true),
         cmd("reconcile_flow_runs", "flows", true),
         cmd("pause_flow_run", "flows", true),
         cmd("resume_flow_run", "flows", true),
@@ -1355,6 +1358,56 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::commands::flows::get_flow_run_logs_full(state, run_id)
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_container_count" => {
+            let result = crate::commands::flows::get_container_count();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_flow_state" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let result = crate::commands::flows::get_flow_state(state, run_id)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_flow_state_cmd" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let completed: u32 = serde_json::from_value(
+                args.get("completed")
+                    .cloned()
+                    .ok_or_else(|| "Missing completed".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse completed: {}", e))?;
+            let total: u32 = serde_json::from_value(
+                args.get("total")
+                    .cloned()
+                    .ok_or_else(|| "Missing total".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse total: {}", e))?;
+            let concurrency: Option<u32> = args
+                .get("concurrency")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let container_count: u32 = serde_json::from_value(
+                args.get("containerCount")
+                    .or_else(|| args.get("container_count"))
+                    .cloned()
+                    .unwrap_or(serde_json::json!(0)),
+            )
+            .unwrap_or(0);
+            crate::commands::flows::save_flow_state_cmd(state, run_id, completed, total, concurrency, container_count)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "get_command_logs" => {
             let result = crate::get_command_logs().map_err(|e| e.to_string())?;

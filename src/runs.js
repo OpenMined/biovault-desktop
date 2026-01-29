@@ -147,6 +147,80 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return `${seconds}s`
 	}
 
+	async function updateContainerCount(progressEl) {
+		if (!progressEl) return
+		try {
+			const count = await invoke('get_container_count')
+			const elements = Array.isArray(progressEl)
+				? progressEl
+				: progressEl instanceof NodeList
+					? Array.from(progressEl)
+					: [progressEl]
+			elements.forEach((el) => {
+				if (!el) return
+				const containerCountEl = el.querySelector('.container-count-value')
+				if (containerCountEl) {
+					containerCountEl.textContent = count > 0 ? count : '-'
+					// Change color based on count
+					const containerDiv = el.querySelector('.flow-container-count')
+					if (containerDiv) {
+						containerDiv.style.color = count > 0 ? '#3b82f6' : '#94a3b8'
+					}
+				}
+			})
+		} catch (error) {
+			console.warn('Failed to get container count:', error)
+		}
+	}
+
+	// Save flow state to backend for persistence across restarts
+	async function saveFlowState(runId, progress, concurrency, containerCount) {
+		if (!runId || !progress || !progress.total) return
+		try {
+			await invoke('save_flow_state_cmd', {
+				runId,
+				completed: progress.completed || 0,
+				total: progress.total,
+				concurrency: concurrency || null,
+				containerCount: containerCount || 0,
+			})
+		} catch (error) {
+			console.warn('Failed to save flow state:', error)
+		}
+	}
+
+	// Load saved flow state from backend
+	async function loadFlowState(runId) {
+		if (!runId) return null
+		try {
+			const state = await invoke('get_flow_state', { runId })
+			return state
+		} catch (error) {
+			console.warn('Failed to load flow state:', error)
+			return null
+		}
+	}
+
+	// Load and display saved flow state for paused/failed runs
+	async function loadAndDisplaySavedState(runId, progressEl, concurrencyInput) {
+		const state = await loadFlowState(runId)
+		if (!state) return null
+
+		// Update progress display if we have saved progress
+		if (state.total && state.total > 0) {
+			const progress = { completed: state.completed || 0, total: state.total }
+			flowProgressCache.set(runId, progress)
+			updateFlowProgressUI(progress, progressEl, runId)
+		}
+
+		// Pre-fill concurrency input if we have a saved value
+		if (state.concurrency && concurrencyInput) {
+			concurrencyInput.value = state.concurrency
+		}
+
+		return state
+	}
+
 	function updateStepRowStatus(stepRow, status) {
 		if (!stepRow) return
 		const icon = stepRow.querySelector('.step-status-indicator')
@@ -266,6 +340,20 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					flowProgressCache.set(run.id, progress)
 				}
 				updateFlowProgressUI(progress, progressEl, run.id)
+				// Update container count for running jobs
+				let containerCount = 0
+				if (run.status === 'running') {
+					try {
+						containerCount = await invoke('get_container_count')
+					} catch (e) {
+						// Ignore
+					}
+					updateContainerCount(progressEl)
+				}
+				// Save state for persistence/recovery
+				if (progress && progress.total && run.status === 'running') {
+					saveFlowState(run.id, progress, null, containerCount)
+				}
 			}
 			if (stepRows && stepRows.length > 0) {
 				try {
@@ -613,7 +701,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${Date.parse(
 							run.created_at,
 						)}" style="margin-top: 8px; display: ${
-							run.status === 'running' || run.status === 'paused' ? 'flex' : 'none'
+							run.status === 'running' || run.status === 'paused' || run.status === 'failed' ? 'flex' : 'none'
 						}; align-items: center; gap: 10px;">
 							<div class="flow-progress-label" style="font-size: 11px; font-weight: 600; color: #64748b;">Progress unavailable</div>
 							<div style="flex: 1; background: #e2e8f0; border-radius: 999px; height: 6px; overflow: hidden;">
@@ -621,6 +709,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							</div>
 							<div class="flow-progress-count" style="font-size: 11px; color: #94a3b8;">--</div>
 							<div class="flow-progress-eta" style="font-size: 11px; color: #94a3b8;"></div>
+							<div class="flow-container-count" style="font-size: 11px; color: #94a3b8; display: flex; align-items: center; gap: 3px;" title="Running containers">
+								<span style="font-size: 13px;">🐳</span>
+								<span class="container-count-value">-</span>
+							</div>
 						</div>
 					</div>
 					${statusBadge}
@@ -791,10 +883,35 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				if (pauseBtn) {
 					pauseBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
+						// Disable button and show stopping state
+						pauseBtn.disabled = true
+						pauseBtn.style.opacity = '0.6'
+						pauseBtn.style.cursor = 'wait'
+						const originalHtml = pauseBtn.innerHTML
+						pauseBtn.innerHTML = `<span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #f59e0b;">
+							<svg width="16" height="16" viewBox="0 0 24 24" style="animation: bv-spin 1s linear infinite;">
+								<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/>
+							</svg>
+							Stopping
+						</span>`
+						// Add keyframes if not present
+						if (!document.getElementById('bv-spin-keyframes')) {
+							const style = document.createElement('style')
+							style.id = 'bv-spin-keyframes'
+							style.textContent = '@keyframes bv-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+							document.head.appendChild(style)
+						}
+						pauseBtn.title = 'Stopping...'
 						try {
 							await invoke('pause_flow_run', { runId: run.id })
 							await loadRuns()
 						} catch (error) {
+							// Restore button on error
+							pauseBtn.innerHTML = originalHtml
+							pauseBtn.disabled = false
+							pauseBtn.style.opacity = '1'
+							pauseBtn.style.cursor = 'pointer'
+							pauseBtn.title = 'Pause run'
 							alert(`Error pausing run: ${error}`)
 						}
 					})
@@ -864,6 +981,33 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						try {
 							const input = card.querySelector('.run-concurrency-input')
 							const nextflowMaxForks = parseConcurrencyInput(input?.value)
+
+							// For failed runs, check the log for cache corruption errors BEFORE attempting resume
+							if (run.status === 'failed') {
+								try {
+									const logs = await invoke('get_flow_run_logs_tail', { runId: run.id, lines: 100 })
+									if (logs && (logs.includes("Can't open cache DB") || logs.includes('Unable to acquire lock'))) {
+										const confirmed = await confirmWithDialog(
+											`The previous run failed due to Nextflow cache corruption (common after pausing).\n\nClear cache and start fresh? (Previous progress will be lost)`,
+											{ title: 'Nextflow Cache Corrupted', type: 'warning' },
+										)
+										if (confirmed) {
+											await invoke('resume_flow_run', {
+												runId: run.id,
+												nextflowMaxForks,
+												forceRemoveLock: true,
+											})
+											await loadRuns()
+											return
+										} else {
+											return // User cancelled
+										}
+									}
+								} catch (logError) {
+									console.warn('Failed to check logs for cache errors:', logError)
+								}
+							}
+
 							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
 							await loadRuns()
 						} catch (error) {
@@ -1410,6 +1554,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				} else if (run.status === 'running') {
 					startFlowLogPolling(run, logStream, progressEls, stepRows)
 				}
+			}
+
+			// Load saved state for failed/paused runs (to show progress and pre-fill concurrency)
+			if (run.status === 'failed' || run.status === 'paused') {
+				const concurrencyInput = card
+					? card.querySelector(`.run-concurrency-input[data-run-id="${run.id}"]`)
+					: null
+				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput).then((savedState) => {
+					// Also refresh logs once to show what happened
+					if (logStream) {
+						refreshFlowRunLogs(run, logStream, progressEls, stepRows)
+					}
+				})
 			}
 
 			// Attach event listeners for published outputs

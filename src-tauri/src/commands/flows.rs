@@ -60,6 +60,52 @@ pub struct FlowRunSelection {
     pub data_source: Option<String>,
 }
 
+/// Persistent flow state - saved to flow.state.json for resume/recovery
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowState {
+    /// Progress: completed tasks
+    #[serde(default)]
+    pub completed: u32,
+    /// Progress: total tasks
+    #[serde(default)]
+    pub total: u32,
+    /// Concurrency setting (maxForks)
+    #[serde(default)]
+    pub concurrency: Option<u32>,
+    /// Number of running containers at last update
+    #[serde(default)]
+    pub container_count: u32,
+    /// Last update timestamp (ISO 8601)
+    #[serde(default)]
+    pub last_updated: Option<String>,
+    /// Run status at last update
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+fn flow_state_path(results_dir: &Path) -> PathBuf {
+    results_dir.join("flow.state.json")
+}
+
+fn save_flow_state(results_dir: &Path, state: &FlowState) -> Result<(), String> {
+    let path = flow_state_path(results_dir);
+    let json = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("Failed to serialize flow state: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write flow state: {}", e))?;
+    Ok(())
+}
+
+fn load_flow_state(results_dir: &Path) -> Option<FlowState> {
+    let path = flow_state_path(results_dir);
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
 fn flow_pause_marker(results_dir: &Path) -> PathBuf {
     results_dir.join(".flow.pause")
 }
@@ -333,10 +379,10 @@ fn probe_container_runtime(window: Option<&tauri::WebviewWindow>, log_path: &Pat
 fn is_pid_running(pid: i32) -> bool {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid)])
-            .output()
-        {
+        let mut cmd = Command::new("tasklist");
+        cmd.args(["/FI", &format!("PID eq {}", pid)]);
+        configure_child_process(&mut cmd);
+        if let Ok(output) = cmd.output() {
             if let Ok(stdout) = String::from_utf8(output.stdout) {
                 return stdout.contains(&pid.to_string()) && !stdout.contains("No tasks");
             }
@@ -347,6 +393,123 @@ fn is_pid_running(pid: i32) -> bool {
     #[cfg(not(target_os = "windows"))]
     unsafe {
         libc::kill(pid, 0) == 0
+    }
+}
+
+/// Get the container runtime binary (docker or podman)
+fn get_container_runtime() -> Option<String> {
+    // Check BIOVAULT_CONTAINER_RUNTIME env var first
+    if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+        let runtime = runtime.to_lowercase();
+        if runtime == "podman" || runtime == "docker" {
+            return Some(runtime);
+        }
+    }
+
+    // Default to docker, but check if podman is preferred
+    let mut docker_cmd = Command::new("docker");
+    docker_cmd.arg("--version");
+    configure_child_process(&mut docker_cmd);
+
+    let mut podman_cmd = Command::new("podman");
+    podman_cmd.arg("--version");
+    configure_child_process(&mut podman_cmd);
+
+    // Prefer docker if available
+    if docker_cmd.output().map(|o| o.status.success()).unwrap_or(false) {
+        return Some("docker".to_string());
+    }
+    if podman_cmd.output().map(|o| o.status.success()).unwrap_or(false) {
+        return Some("podman".to_string());
+    }
+
+    None
+}
+
+/// Get list of running container IDs that might be related to nextflow
+fn get_nextflow_container_ids() -> Vec<String> {
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    // Get all running container IDs along with their image names
+    let mut cmd = Command::new(&runtime);
+    cmd.args(["ps", "-q", "--filter", "ancestor=nfcore", "--filter", "status=running"]);
+    configure_child_process(&mut cmd);
+
+    let mut containers = Vec::new();
+
+    // Also try to find containers by looking at labels or working directories
+    // Nextflow containers often have specific patterns
+    let mut cmd2 = Command::new(&runtime);
+    cmd2.args(["ps", "--format", "{{.ID}} {{.Image}}"]);
+    configure_child_process(&mut cmd2);
+
+    if let Ok(output) = cmd2.output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let container_id = parts[0];
+                    let image = parts[1].to_lowercase();
+                    // Match common nextflow/bioinformatics container patterns
+                    if image.contains("nfcore")
+                        || image.contains("biocontainer")
+                        || image.contains("quay.io/biocontainers")
+                        || image.contains("nextflow")
+                    {
+                        containers.push(container_id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    containers
+}
+
+/// Stop specific containers by ID
+fn stop_containers(container_ids: &[String]) -> usize {
+    if container_ids.is_empty() {
+        return 0;
+    }
+
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return 0,
+    };
+
+    let mut stopped = 0;
+    for id in container_ids {
+        let mut cmd = Command::new(&runtime);
+        cmd.args(["stop", "-t", "5", id]); // 5 second timeout
+        configure_child_process(&mut cmd);
+        if cmd.status().map(|s| s.success()).unwrap_or(false) {
+            stopped += 1;
+        }
+    }
+    stopped
+}
+
+/// Get count of ALL running containers (for display purposes)
+fn get_running_container_count() -> usize {
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return 0,
+    };
+
+    let mut cmd = Command::new(&runtime);
+    cmd.args(["ps", "-q"]);
+    configure_child_process(&mut cmd);
+
+    match cmd.output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.lines().filter(|line| !line.is_empty()).count()
+        }
+        _ => 0,
     }
 }
 
@@ -2311,6 +2474,30 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
     Ok(())
 }
 
+/// Find the flow.container file - could be in results_dir or a subdirectory (module dir)
+fn find_flow_container_file(results_dir: &Path) -> Option<PathBuf> {
+    // First check directly in results_dir
+    let direct = results_dir.join("flow.container");
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    // Search one level deep (module directories)
+    if let Ok(entries) = fs::read_dir(results_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                let container_file = path.join("flow.container");
+                if container_file.exists() {
+                    return Some(container_file);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[tauri::command]
 pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
@@ -2336,98 +2523,176 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
         .parse()
         .map_err(|_| "Invalid PID value".to_string())?;
 
-    #[cfg(target_os = "windows")]
-    {
+    // Check if Nextflow is running in a Docker container (Windows mode)
+    // The container file may be in results_dir or a module subdirectory
+    let container_file = find_flow_container_file(&results_dir);
+    let container_name = container_file
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let container_count = get_running_container_count();
+    append_flow_log(
+        None,
+        &log_path,
+        &format!(
+            "⏸️  Pause requested (PID: {}, {} container(s) running{})",
+            pid,
+            container_count,
+            container_name
+                .as_ref()
+                .map(|n| format!(", Nextflow container: {}", n))
+                .unwrap_or_default()
+        ),
+    );
+
+    // Graceful shutdown strategy:
+    // - If Nextflow runs in a container: use `docker stop` (sends SIGTERM to Java inside)
+    // - If Nextflow runs natively: send SIGTERM (Unix) or taskkill (Windows)
+    let _using_container = container_name.is_some();
+
+    if let Some(ref name) = container_name {
+        // Docker container mode - use `docker stop` for graceful shutdown
+        // This sends SIGTERM to PID 1 (Java/Nextflow) inside the container
         append_flow_log(
             None,
             &log_path,
-            "⏸️  Requesting graceful shutdown via taskkill",
+            &format!("🐳 Stopping Nextflow container '{}' gracefully...", name),
         );
 
-        // On Windows, use taskkill without /F first to request graceful termination
-        // This sends WM_CLOSE which Java can catch for cleanup
-        let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/PID", &pid.to_string(), "/T"]);
+        let runtime = get_container_runtime().unwrap_or_else(|| "docker".to_string());
+        let mut cmd = Command::new(&runtime);
+        cmd.args(["stop", "-t", "30", name]); // 30 second timeout for graceful stop
         configure_child_process(&mut cmd);
-        let _ = cmd.status();
 
-        // Wait for graceful shutdown (give Nextflow time to close LevelDB properly)
+        match cmd.status() {
+            Ok(status) if status.success() => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    "✅ Nextflow container stopped gracefully - cache should be intact!",
+                );
+            }
+            Ok(_) => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    "⚠️  Container stop returned non-zero (may have been force-killed)",
+                );
+            }
+            Err(e) => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    &format!("⚠️  Failed to stop container: {}", e),
+                );
+            }
+        }
+
+        // Clean up the container file
+        if let Some(ref path) = container_file {
+            let _ = fs::remove_file(path);
+        }
+    } else {
+        // Native mode - send signal directly to process
+        #[cfg(target_os = "windows")]
+        {
+            append_flow_log(None, &log_path, "📤 Sending graceful shutdown signal (taskkill)...");
+            let mut cmd = Command::new("taskkill");
+            cmd.args(["/PID", &pid.to_string(), "/T"]);
+            configure_child_process(&mut cmd);
+            let _ = cmd.status();
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            append_flow_log(None, &log_path, "📤 Sending SIGTERM...");
+            unsafe {
+                let _ = libc::kill(pid, libc::SIGTERM);
+            }
+        }
+
+        // Wait for graceful shutdown
+        let graceful_timeout_ms = 30_000u64;
         let mut waited_ms = 0u64;
-        let graceful_timeout = 15_000u64; // 15 seconds for graceful shutdown
-        while is_pid_running(pid) && waited_ms < graceful_timeout {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            waited_ms += 500;
-            if waited_ms.is_multiple_of(5000) {
+
+        while is_pid_running(pid) && waited_ms < graceful_timeout_ms {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            waited_ms += 1000;
+
+            if waited_ms % 10_000 == 0 {
+                let containers = get_running_container_count();
                 append_flow_log(
                     None,
                     &log_path,
                     &format!(
-                        "⏳ Waiting for graceful shutdown... ({}s)",
-                        waited_ms / 1000
+                        "⏳ Waiting for graceful shutdown... ({}s, {} container(s))",
+                        waited_ms / 1000,
+                        containers
                     ),
                 );
             }
         }
 
-        // Force kill if still running after graceful timeout
-        if is_pid_running(pid) {
+        if !is_pid_running(pid) {
             append_flow_log(
                 None,
                 &log_path,
-                "⚠️  Graceful shutdown timed out, force killing process",
+                "✅ Nextflow exited gracefully - cache should be intact!",
             );
-
-            let mut forced_cmd = std::process::Command::new("taskkill");
-            forced_cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
-            configure_child_process(&mut forced_cmd);
-            let _ = forced_cmd.status();
-
-            // Wait for force kill to take effect
-            std::thread::sleep(std::time::Duration::from_millis(2000));
         } else {
-            append_flow_log(None, &log_path, "✅ Process exited gracefully");
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // Unix: Send SIGTERM for graceful shutdown
-        unsafe {
-            if libc::kill(pid, libc::SIGTERM) != 0 {
-                return Err("Failed to send SIGTERM".to_string());
-            }
-        }
-
-        // Wait for graceful shutdown
-        let mut waited_ms = 0u64;
-        let graceful_timeout = 15_000u64;
-        while is_pid_running(pid) && waited_ms < graceful_timeout {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            waited_ms += 500;
-        }
-
-        // Force kill if still running
-        if is_pid_running(pid) {
+            // Force kill if still running
             append_flow_log(
                 None,
                 &log_path,
-                "⚠️  Graceful shutdown timed out, sending SIGKILL",
+                "⚠️  Graceful shutdown timed out - force terminating (cache may be corrupted)",
             );
+
+            #[cfg(target_os = "windows")]
+            {
+                let mut forced_cmd = Command::new("taskkill");
+                forced_cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+                configure_child_process(&mut forced_cmd);
+                let _ = forced_cmd.status();
+            }
+
+            #[cfg(not(target_os = "windows"))]
             unsafe {
                 libc::kill(pid, libc::SIGKILL);
             }
+
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+        }
+    }
+
+    // Clean up orphaned containers (task containers spawned by Nextflow)
+    let remaining_containers = get_nextflow_container_ids();
+    if !remaining_containers.is_empty() {
+        append_flow_log(
+            None,
+            &log_path,
+            &format!(
+                "🧹 Stopping {} orphaned container(s)...",
+                remaining_containers.len()
+            ),
+        );
+        let stopped = stop_containers(&remaining_containers);
+        if stopped > 0 {
+            append_flow_log(
+                None,
+                &log_path,
+                &format!("✅ Stopped {} orphaned container(s)", stopped),
+            );
         }
     }
 
     // Extra delay for OS to release file handles
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
-    // NOTE: Lock cleanup is intentionally NOT done here to avoid race conditions.
-    // Nextflow may write locks as it shuts down. Cleanup happens on resume instead.
-
     let _ = fs::remove_file(&pid_path);
     let _ = biovault_db.update_flow_run_status(run_id, "paused", false);
-    append_flow_log(None, &log_path, "⏸️  Pause requested by user");
+    append_flow_log(None, &log_path, "⏸️  Run paused successfully");
 
     Ok(())
 }
@@ -2607,6 +2872,66 @@ pub async fn resume_flow_run(
         Some(run_id),
     )
     .await
+}
+
+/// Get the number of running containers (docker/podman)
+#[tauri::command]
+pub fn get_container_count() -> usize {
+    get_running_container_count()
+}
+
+/// Get flow state for a run (progress, concurrency, etc.)
+#[tauri::command]
+pub fn get_flow_state(state: tauri::State<AppState>, run_id: i64) -> Result<Option<FlowState>, String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .map(PathBuf::from)
+        .ok_or_else(|| "No results directory".to_string())?;
+
+    Ok(load_flow_state(&results_dir))
+}
+
+/// Save flow state for a run
+#[tauri::command]
+pub fn save_flow_state_cmd(
+    state: tauri::State<AppState>,
+    run_id: i64,
+    completed: u32,
+    total: u32,
+    concurrency: Option<u32>,
+    container_count: u32,
+) -> Result<(), String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .map(PathBuf::from)
+        .ok_or_else(|| "No results directory".to_string())?;
+
+    let flow_state = FlowState {
+        completed,
+        total,
+        concurrency,
+        container_count,
+        last_updated: Some(chrono::Utc::now().to_rfc3339()),
+        status: Some(run.status.clone()),
+    };
+
+    save_flow_state(&results_dir, &flow_state)
 }
 
 #[tauri::command]
