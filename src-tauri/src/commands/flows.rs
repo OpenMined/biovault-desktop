@@ -2640,7 +2640,7 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
             std::thread::sleep(std::time::Duration::from_millis(1000));
             waited_ms += 1000;
 
-            if waited_ms % 10_000 == 0 {
+            if waited_ms.is_multiple_of(10_000) {
                 let containers = get_running_container_count();
                 append_flow_log(
                     None,
