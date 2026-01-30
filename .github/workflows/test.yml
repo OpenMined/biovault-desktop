@@ -102,6 +102,20 @@ jobs:
           # NOTE: flows-collab on macOS runs with rust client mode only.
           # Disabled on macOS per request.
 
+          # flows-pause-resume
+          - scenario: flows-pause-resume
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: flows-pause-resume
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
     defaults:
       run:
         shell: bash
@@ -482,6 +496,25 @@ jobs:
           BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
           BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
         run: .\win.ps1 ./test-scenario.sh --flows-collab
+
+      - name: Run flows pause/resume scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-pause-resume'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-pause-resume
+      - name: Run flows pause/resume scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-pause-resume'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          CONTAINERS_MACHINE_PROVIDER: "hyperv"
+          BIOVAULT_CONTAINER_RUNTIME: "podman"
+          BIOVAULT_HYPERV_MOUNT: "1"
+          BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
+          BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
+        run: .\win.ps1 ./test-scenario.sh --flows-pause-resume
 
       - name: Upload test artifacts on failure
         if: failure()

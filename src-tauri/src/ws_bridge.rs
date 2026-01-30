@@ -400,6 +400,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("unsubscribe_dataset", "datasets", false),
         // Files
         cmd("get_files", "files", true),
+        cmd("list_files", "files", true),
         cmd("get_participants", "participants", true),
         cmd("get_extensions", "files", true),
         cmd("search_txt_files", "files", true),
@@ -1187,7 +1188,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_participants(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
-        "get_files" => {
+        "get_files" | "list_files" => {
             let result = crate::get_files(state).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
