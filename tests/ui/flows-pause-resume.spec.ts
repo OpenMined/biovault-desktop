@@ -369,10 +369,7 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 
 			const selectedFiles = syntheticFiles.slice(0, 4)
 			const participantIds = selectedFiles.map((filePath) => path.parse(filePath).name)
-			const samplesheetPath = path.join(
-				os.tmpdir(),
-				`pause_resume_samplesheet_${Date.now()}.csv`,
-			)
+			const samplesheetPath = path.join(os.tmpdir(), `pause_resume_samplesheet_${Date.now()}.csv`)
 			const header = 'participant_id,genotype_file\n'
 			const rows = selectedFiles
 				.map((filePath) => {
@@ -603,7 +600,9 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 				.flatMap((root) => findMatchingFiles(root, /^result_HERC2\.tsv$/))
 				.filter((v, i, a) => a.indexOf(v) === i)
 			if (aggregateMatches.length === 0) {
-				throw new Error(`Missing aggregate result: result_HERC2.tsv (searched ${searchRoots.join(', ')})`)
+				throw new Error(
+					`Missing aggregate result: result_HERC2.tsv (searched ${searchRoots.join(', ')})`,
+				)
 			}
 
 			const perPattern = /^result_HERC2_.+\.tsv$/
@@ -611,7 +610,12 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 				.flatMap((root) => findMatchingFiles(root, perPattern))
 				.filter((v, i, a) => a.indexOf(v) === i)
 			const foundParticipants = new Set(
-				perMatches.map((p) => path.basename(p).replace(/^result_HERC2_/, '').replace(/\.tsv$/, '')),
+				perMatches.map((p) =>
+					path
+						.basename(p)
+						.replace(/^result_HERC2_/, '')
+						.replace(/\.tsv$/, ''),
+				),
 			)
 			const missing = participantIds.filter((id) => !foundParticipants.has(id))
 			if (missing.length > 0) {
@@ -632,13 +636,9 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			}
 
 			console.log('\n✅ Pause/Resume test completed successfully!')
-			console.log(
-				`   - Initial progress: ${progress1?.completed ?? 0}/${progress1?.total ?? 0}`,
-			)
+			console.log(`   - Initial progress: ${progress1?.completed ?? 0}/${progress1?.total ?? 0}`)
 			console.log(`   - After pause: ${savedState.completed}/${savedState.total}`)
-			console.log(
-				`   - After resume: ${progress2?.completed ?? 0}/${progress2?.total ?? 0}`,
-			)
+			console.log(`   - After resume: ${progress2?.completed ?? 0}/${progress2?.total ?? 0}`)
 			console.log(`   - Final: ${finalState.completed}/${finalState.total}`)
 			console.log(`   - Cached tasks: ${cachedCount}`)
 

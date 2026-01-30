@@ -1372,8 +1372,8 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing runId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse runId: {}", e))?;
-            let result = crate::commands::flows::get_flow_state(state, run_id)
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::commands::flows::get_flow_state(state, run_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "save_flow_state_cmd" => {
@@ -1406,8 +1406,15 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .unwrap_or(serde_json::json!(0)),
             )
             .unwrap_or(0);
-            crate::commands::flows::save_flow_state_cmd(state, run_id, completed, total, concurrency, container_count)
-                .map_err(|e| e.to_string())?;
+            crate::commands::flows::save_flow_state_cmd(
+                state,
+                run_id,
+                completed,
+                total,
+                concurrency,
+                container_count,
+            )
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "get_command_logs" => {

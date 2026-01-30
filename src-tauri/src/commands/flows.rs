@@ -416,10 +416,18 @@ fn get_container_runtime() -> Option<String> {
     configure_child_process(&mut podman_cmd);
 
     // Prefer docker if available
-    if docker_cmd.output().map(|o| o.status.success()).unwrap_or(false) {
+    if docker_cmd
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
         return Some("docker".to_string());
     }
-    if podman_cmd.output().map(|o| o.status.success()).unwrap_or(false) {
+    if podman_cmd
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
         return Some("podman".to_string());
     }
 
@@ -435,7 +443,14 @@ fn get_nextflow_container_ids() -> Vec<String> {
 
     // Get all running container IDs along with their image names
     let mut cmd = Command::new(&runtime);
-    cmd.args(["ps", "-q", "--filter", "ancestor=nfcore", "--filter", "status=running"]);
+    cmd.args([
+        "ps",
+        "-q",
+        "--filter",
+        "ancestor=nfcore",
+        "--filter",
+        "status=running",
+    ]);
     configure_child_process(&mut cmd);
 
     let mut containers = Vec::new();
@@ -2598,7 +2613,11 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
         // Native mode - send signal directly to process
         #[cfg(target_os = "windows")]
         {
-            append_flow_log(None, &log_path, "📤 Sending graceful shutdown signal (taskkill)...");
+            append_flow_log(
+                None,
+                &log_path,
+                "📤 Sending graceful shutdown signal (taskkill)...",
+            );
             let mut cmd = Command::new("taskkill");
             cmd.args(["/PID", &pid.to_string(), "/T"]);
             configure_child_process(&mut cmd);
@@ -2882,7 +2901,10 @@ pub fn get_container_count() -> usize {
 
 /// Get flow state for a run (progress, concurrency, etc.)
 #[tauri::command]
-pub fn get_flow_state(state: tauri::State<AppState>, run_id: i64) -> Result<Option<FlowState>, String> {
+pub fn get_flow_state(
+    state: tauri::State<AppState>,
+    run_id: i64,
+) -> Result<Option<FlowState>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let run = biovault_db
         .get_flow_run(run_id)

@@ -701,7 +701,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${Date.parse(
 							run.created_at,
 						)}" style="margin-top: 8px; display: ${
-							run.status === 'running' || run.status === 'paused' || run.status === 'failed' ? 'flex' : 'none'
+							run.status === 'running' || run.status === 'paused' || run.status === 'failed'
+								? 'flex'
+								: 'none'
 						}; align-items: center; gap: 10px;">
 							<div class="flow-progress-label" style="font-size: 11px; font-weight: 600; color: #64748b;">Progress unavailable</div>
 							<div style="flex: 1; background: #e2e8f0; border-radius: 999px; height: 6px; overflow: hidden;">
@@ -898,7 +900,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						if (!document.getElementById('bv-spin-keyframes')) {
 							const style = document.createElement('style')
 							style.id = 'bv-spin-keyframes'
-							style.textContent = '@keyframes bv-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+							style.textContent =
+								'@keyframes bv-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
 							document.head.appendChild(style)
 						}
 						pauseBtn.title = 'Stopping...'
@@ -986,7 +989,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							if (run.status === 'failed') {
 								try {
 									const logs = await invoke('get_flow_run_logs_tail', { runId: run.id, lines: 100 })
-									if (logs && (logs.includes("Can't open cache DB") || logs.includes('Unable to acquire lock'))) {
+									if (
+										logs &&
+										(logs.includes("Can't open cache DB") ||
+											logs.includes('Unable to acquire lock'))
+									) {
 										const confirmed = await confirmWithDialog(
 											`The previous run failed due to Nextflow cache corruption (common after pausing).\n\nClear cache and start fresh? (Previous progress will be lost)`,
 											{ title: 'Nextflow Cache Corrupted', type: 'warning' },
