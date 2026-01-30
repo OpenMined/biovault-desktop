@@ -260,6 +260,7 @@ pub async fn check_docker_running() -> Result<bool, String> {
     // Check BIOVAULT_CONTAINER_RUNTIME env var first (e.g., "podman" on Windows).
     // If unset, try configured docker path, then "docker", then "podman".
     let mut bins: Vec<String> = Vec::new();
+    let runtime_env = env::var("BIOVAULT_CONTAINER_RUNTIME").ok();
     if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
         let trimmed = runtime.trim();
         if !trimmed.is_empty() {
@@ -279,6 +280,15 @@ pub async fn check_docker_running() -> Result<bool, String> {
     }
 
     bins.dedup();
+    if let Some(runtime) = runtime_env.as_deref() {
+        if !runtime.trim().is_empty() {
+            crate::desktop_log!(
+                "Container runtime override: BIOVAULT_CONTAINER_RUNTIME={}",
+                runtime
+            );
+        }
+    }
+    crate::desktop_log!("Container runtime candidates: {:?}", bins);
 
     // Run in spawn_blocking to avoid blocking the Tokio runtime
     let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
@@ -293,12 +303,15 @@ pub async fn check_docker_running() -> Result<bool, String> {
             match cmd.status() {
                 Ok(status) => {
                     if status.success() {
+                        crate::desktop_log!("Container runtime OK: {}", bin);
                         return Ok(true);
                     }
                     last_err = Some(format!("'{} info' returned {}", bin, status));
+                    crate::desktop_log!("Container runtime not ready: {} (status {})", bin, status);
                 }
                 Err(e) => {
                     last_err = Some(format!("Failed to execute '{}': {}", bin, e));
+                    crate::desktop_log!("Container runtime exec failed: {} ({})", bin, e);
                 }
             }
         }
