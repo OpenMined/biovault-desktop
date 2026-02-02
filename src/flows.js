@@ -1954,6 +1954,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('allele_freq')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Allele Frequency</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Genotype to allele frequency</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -2138,6 +2149,15 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/flow.yaml',
 			thalassemia:
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
+			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
+		}
+
+		const templateNames = {
+			apol1: 'APOL1 Classifier',
+			brca: 'BRCA Classifier',
+			herc2: 'HERC2 Classifier',
+			thalassemia: 'Thalassemia Classifier',
+			allele_freq: 'Allele Frequency',
 		}
 
 		// Use local path if available, otherwise use GitHub URL
@@ -2159,7 +2179,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							</svg>
 						</div>
 						<h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #111827;">
-							Importing ${templateName.toUpperCase()} Flow...
+							Importing ${templateNames[templateName] || templateName.toUpperCase()} Flow...
 						</h3>
 						<p style="margin: 0; font-size: 14px; color: #6b7280;">
 							Downloading flow and all dependencies

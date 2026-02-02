@@ -1533,6 +1533,7 @@ pub fn run() {
             get_run_config,
             delete_run_config,
             run_flow,
+            flow_request_sync_status,
             get_flow_runs,
             get_flow_run_logs,
             get_flow_run_logs_tail,
