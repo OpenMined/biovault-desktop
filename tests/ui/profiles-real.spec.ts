@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { promises as fs } from 'fs'
 import path from 'path'
 import WebSocket from 'ws'
-import { navigateToTab, waitForAppReady } from './test-helpers.js'
+import { ensureProfileSelected, navigateToTab, waitForAppReady } from './test-helpers.js'
 
 test.describe.configure({ timeout: 180_000 })
 
@@ -201,8 +201,15 @@ function rowByHome(page, homePath) {
 }
 
 async function openPickerFromSettings(page) {
+	await waitForAppReady(page, { timeout: 30_000 })
+	await ensureProfileSelected(page, { timeout: 10_000 })
 	await navigateToTab(page, 'settings')
-	await expect(page.locator('#settings-view')).toBeVisible({ timeout: 10_000 })
+	await page.evaluate(() => {
+		if (typeof window.navigateTo === 'function') {
+			window.navigateTo('settings')
+		}
+	})
+	await expect(page.locator('#settings-view')).toBeVisible({ timeout: 30_000 })
 	await page.locator('#profiles-open-picker-btn').click()
 	await expect(page.locator('#profiles-view')).toBeVisible({ timeout: 30_000 })
 }
@@ -395,6 +402,20 @@ test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => 
 		await expect(rows).toHaveCount(2)
 		await expect(rowByHome(page, homeB).locator('.profile-new-instance-btn')).toHaveCount(0)
 
+		// Current profile (homeB) should be usable via "Open"/continue.
+		const currentOpenBtn = rowByHome(page, homeB).locator('.profile-open-btn')
+		await expect(currentOpenBtn).toBeEnabled()
+		await currentOpenBtn.click()
+		await page.waitForLoadState('load')
+		await waitForWsBridge(wsPort, 60_000)
+		await waitForConfigHome(wsPort, homeB, 60_000)
+		const sycVaultCurrent = await wsInvoke(wsPort, 'get_env_var', { key: 'SYC_VAULT' }, 5_000)
+		expect(String(sycVaultCurrent || '')).toContain('.syc')
+
+		// Re-open picker to switch to profile A.
+		await openPickerFromSettings(page)
+		await expect(page.locator('.profile-row')).toHaveCount(2)
+
 		const spawnProbePath = process.env.BIOVAULT_SPAWN_PROBE_PATH
 		if (!spawnProbePath) {
 			throw new Error('BIOVAULT_SPAWN_PROBE_PATH not set for profiles-new-instance test')
@@ -415,6 +436,8 @@ test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => 
 		await page.waitForLoadState('load')
 		await waitForWsBridge(wsPort, 60_000)
 		await waitForConfigHome(wsPort, homeA, 60_000)
+		const sycVaultAfterSwitch = await wsInvoke(wsPort, 'get_env_var', { key: 'SYC_VAULT' }, 5_000)
+		expect(String(sycVaultAfterSwitch || '')).toContain('.syc')
 
 		// Profile A should be un-onboarded; complete onboarding.
 		const needsHomeACompletion = await onboardingGoToHomeStep(page)
