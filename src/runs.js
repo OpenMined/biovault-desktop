@@ -659,7 +659,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						${
 							run.status === 'success'
 								? `<button class="run-share-btn" data-run-id="${run.id}" data-flow-name="${escapeHtml(flowName)}" data-results-dir="${run.results_dir || run.work_dir || ''}" title="Share results" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #64748b; cursor: pointer; border-radius: 6px; transition: all 0.2s;" onmouseover="this.style.background='#f0fdf4'; this.style.color='#10b981'; this.querySelector('img').style.filter='invert(63%) sepia(76%) saturate(436%) hue-rotate(108deg) brightness(93%) contrast(94%)'" onmouseout="this.style.background='transparent'; this.style.color='#64748b'; this.querySelector('img').style.filter='invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%)'">
-									<img src="assets/icons/send.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
+									<img src="assets/icons/mail.svg" width="18" height="18" style="filter: invert(50%) sepia(6%) saturate(340%) hue-rotate(183deg) brightness(90%) contrast(91%);" />
 								</button>`
 								: ''
 						}
