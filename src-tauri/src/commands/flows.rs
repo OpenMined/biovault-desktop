@@ -2,10 +2,10 @@ use crate::types::AppState;
 use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
 use std::process::Command;
 use tauri::Emitter;
 use walkdir::WalkDir;
@@ -60,6 +60,52 @@ pub struct FlowRunSelection {
     pub data_source: Option<String>,
 }
 
+/// Persistent flow state - saved to flow.state.json for resume/recovery
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowState {
+    /// Progress: completed tasks
+    #[serde(default)]
+    pub completed: u32,
+    /// Progress: total tasks
+    #[serde(default)]
+    pub total: u32,
+    /// Concurrency setting (maxForks)
+    #[serde(default)]
+    pub concurrency: Option<u32>,
+    /// Number of running containers at last update
+    #[serde(default)]
+    pub container_count: u32,
+    /// Last update timestamp (ISO 8601)
+    #[serde(default)]
+    pub last_updated: Option<String>,
+    /// Run status at last update
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+fn flow_state_path(results_dir: &Path) -> PathBuf {
+    results_dir.join("flow.state.json")
+}
+
+fn save_flow_state(results_dir: &Path, state: &FlowState) -> Result<(), String> {
+    let path = flow_state_path(results_dir);
+    let json = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("Failed to serialize flow state: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write flow state: {}", e))?;
+    Ok(())
+}
+
+fn load_flow_state(results_dir: &Path) -> Option<FlowState> {
+    let path = flow_state_path(results_dir);
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
 fn flow_pause_marker(results_dir: &Path) -> PathBuf {
     results_dir.join(".flow.pause")
 }
@@ -68,23 +114,417 @@ fn flow_pid_path(results_dir: &Path) -> PathBuf {
     results_dir.join("flow.pid")
 }
 
+#[cfg(target_os = "windows")]
+fn configure_child_process(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_child_process(_cmd: &mut Command) {}
+
+fn try_remove_lock_file(lock_path: &Path) -> bool {
+    // Try direct removal
+    if fs::remove_file(lock_path).is_ok() {
+        return true;
+    }
+
+    // Try clearing readonly flag
+    if let Ok(metadata) = fs::metadata(lock_path) {
+        let mut perms = metadata.permissions();
+        perms.set_readonly(false);
+        if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
+            return true;
+        }
+    }
+
+    // On Windows: try renaming first (sometimes works when delete doesn't)
+    #[cfg(target_os = "windows")]
+    {
+        let temp_name = lock_path.with_extension("lock.deleting");
+        if fs::rename(lock_path, &temp_name).is_ok() {
+            let _ = fs::remove_file(&temp_name);
+            return !lock_path.exists();
+        }
+    }
+
+    false
+}
+
+fn clear_nextflow_locks(
+    flow_path: &Path,
+    window: Option<&tauri::WebviewWindow>,
+    log_path: &Path,
+    max_retries: u32,
+) -> Result<usize, String> {
+    let nextflow_dir = flow_path.join(".nextflow");
+    if !nextflow_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut total_removed = 0usize;
+
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            append_flow_log(
+                window,
+                log_path,
+                &format!(
+                    "🔄 Retry lock cleanup attempt {}/{}",
+                    attempt + 1,
+                    max_retries
+                ),
+            );
+        }
+
+        for entry in WalkDir::new(&nextflow_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if entry.file_type().is_file() && entry.file_name().to_string_lossy() == "LOCK" {
+                let lock_path = entry.path();
+                if try_remove_lock_file(lock_path) {
+                    total_removed += 1;
+                    append_flow_log(
+                        window,
+                        log_path,
+                        &format!("🧹 Removed Nextflow lock {}", lock_path.display()),
+                    );
+                }
+            }
+        }
+
+        // Check if any locks remain
+        if list_nextflow_locks(flow_path).is_empty() {
+            break;
+        }
+    }
+
+    // Log any remaining locks
+    let remaining = list_nextflow_locks(flow_path);
+    for lock_path in &remaining {
+        append_flow_log(
+            window,
+            log_path,
+            &format!("⚠️  Failed to remove lock {}", lock_path.display()),
+        );
+    }
+
+    Ok(total_removed)
+}
+
+fn list_nextflow_locks(flow_path: &Path) -> Vec<PathBuf> {
+    let nextflow_dir = flow_path.join(".nextflow");
+    if !nextflow_dir.exists() {
+        return Vec::new();
+    }
+    WalkDir::new(&nextflow_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file() && entry.file_name().to_string_lossy() == "LOCK"
+        })
+        .map(|entry| entry.into_path())
+        .collect()
+}
+
+/// Check if the Nextflow cache appears potentially corrupted
+/// Returns true if LOCK files exist in cache/*/db directories (sign of interrupted run)
+fn is_nextflow_cache_potentially_corrupted(flow_path: &Path) -> bool {
+    let cache_dir = flow_path.join(".nextflow").join("cache");
+    if !cache_dir.exists() {
+        return false;
+    }
+
+    // Check each session directory for LOCK files in the db subdirectory
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let db_dir = entry.path().join("db");
+            let lock_file = db_dir.join("LOCK");
+            if lock_file.exists() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Clear the entire .nextflow/cache directory to avoid corrupted DB issues after pause
+fn clear_nextflow_cache(
+    flow_path: &Path,
+    window: Option<&tauri::WebviewWindow>,
+    log_path: &Path,
+) -> Result<usize, String> {
+    let cache_dir = flow_path.join(".nextflow").join("cache");
+    if !cache_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0usize;
+
+    // Remove all session directories in the cache
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let session_path = entry.path();
+            if session_path.is_dir() {
+                match fs::remove_dir_all(&session_path) {
+                    Ok(_) => {
+                        cleared += 1;
+                        append_flow_log(
+                            window,
+                            log_path,
+                            &format!(
+                                "🧹 Cleared Nextflow cache session: {}",
+                                session_path.display()
+                            ),
+                        );
+                    }
+                    Err(e) => {
+                        append_flow_log(
+                            window,
+                            log_path,
+                            &format!(
+                                "⚠️  Failed to clear cache {}: {}",
+                                session_path.display(),
+                                e
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(cleared)
+}
+
+fn append_flow_env_var(window: Option<&tauri::WebviewWindow>, log_path: &Path, key: &str) {
+    let value = env::var(key).unwrap_or_else(|_| "(unset)".to_string());
+    let display = if value.trim().is_empty() {
+        "(unset)".to_string()
+    } else {
+        value
+    };
+    append_flow_log(window, log_path, &format!("env {}={}", key, display));
+}
+
+fn truncate_output(bytes: &[u8], limit: usize) -> String {
+    if bytes.is_empty() {
+        return "(empty)".to_string();
+    }
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() <= limit {
+        text.to_string()
+    } else {
+        format!("{}... (truncated)", &text[..limit])
+    }
+}
+
+fn probe_container_runtime(window: Option<&tauri::WebviewWindow>, log_path: &Path) {
+    let mut bins: Vec<String> = Vec::new();
+    if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+        let trimmed = runtime.trim();
+        if !trimmed.is_empty() {
+            bins.push(trimmed.to_string());
+        }
+    }
+    if bins.is_empty() {
+        bins.push("docker".to_string());
+        bins.push("podman".to_string());
+    }
+    bins.dedup();
+
+    append_flow_log(
+        window,
+        log_path,
+        &format!("Container runtime candidates: {:?}", bins),
+    );
+
+    for bin in bins {
+        let mut cmd = Command::new(&bin);
+        cmd.arg("info");
+        configure_child_process(&mut cmd);
+        let output = cmd.output();
+        match output {
+            Ok(out) => {
+                let status = out.status;
+                let stdout = truncate_output(&out.stdout, 800);
+                let stderr = truncate_output(&out.stderr, 800);
+                append_flow_log(
+                    window,
+                    log_path,
+                    &format!(
+                        "{} info status={} stdout={} stderr={}",
+                        bin, status, stdout, stderr
+                    ),
+                );
+                if status.success() {
+                    append_flow_log(window, log_path, &format!("Container runtime OK: {}", bin));
+                    break;
+                }
+            }
+            Err(err) => {
+                append_flow_log(
+                    window,
+                    log_path,
+                    &format!("{} info exec failed: {}", bin, err),
+                );
+            }
+        }
+    }
+}
+
 fn is_pid_running(pid: i32) -> bool {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid)])
-            .output()
-        {
+        let mut cmd = Command::new("tasklist");
+        cmd.args(["/FI", &format!("PID eq {}", pid)]);
+        configure_child_process(&mut cmd);
+        if let Ok(output) = cmd.output() {
             if let Ok(stdout) = String::from_utf8(output.stdout) {
                 return stdout.contains(&pid.to_string()) && !stdout.contains("No tasks");
             }
         }
-        return false;
+        false
     }
 
     #[cfg(not(target_os = "windows"))]
     unsafe {
         libc::kill(pid, 0) == 0
+    }
+}
+
+/// Get the container runtime binary (docker or podman)
+fn get_container_runtime() -> Option<String> {
+    // Check BIOVAULT_CONTAINER_RUNTIME env var first
+    if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+        let runtime = runtime.to_lowercase();
+        if runtime == "podman" || runtime == "docker" {
+            return Some(runtime);
+        }
+    }
+
+    // Default to docker, but check if podman is preferred
+    let mut docker_cmd = Command::new("docker");
+    docker_cmd.arg("--version");
+    configure_child_process(&mut docker_cmd);
+
+    let mut podman_cmd = Command::new("podman");
+    podman_cmd.arg("--version");
+    configure_child_process(&mut podman_cmd);
+
+    // Prefer docker if available
+    if docker_cmd
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("docker".to_string());
+    }
+    if podman_cmd
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("podman".to_string());
+    }
+
+    None
+}
+
+/// Get list of running container IDs that might be related to nextflow
+fn get_nextflow_container_ids() -> Vec<String> {
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    // Get all running container IDs along with their image names
+    let mut cmd = Command::new(&runtime);
+    cmd.args([
+        "ps",
+        "-q",
+        "--filter",
+        "ancestor=nfcore",
+        "--filter",
+        "status=running",
+    ]);
+    configure_child_process(&mut cmd);
+
+    let mut containers = Vec::new();
+
+    // Also try to find containers by looking at labels or working directories
+    // Nextflow containers often have specific patterns
+    let mut cmd2 = Command::new(&runtime);
+    cmd2.args(["ps", "--format", "{{.ID}} {{.Image}}"]);
+    configure_child_process(&mut cmd2);
+
+    if let Ok(output) = cmd2.output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let container_id = parts[0];
+                    let image = parts[1].to_lowercase();
+                    // Match common nextflow/bioinformatics container patterns
+                    if image.contains("nfcore")
+                        || image.contains("biocontainer")
+                        || image.contains("quay.io/biocontainers")
+                        || image.contains("nextflow")
+                    {
+                        containers.push(container_id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    containers
+}
+
+/// Stop specific containers by ID
+fn stop_containers(container_ids: &[String]) -> usize {
+    if container_ids.is_empty() {
+        return 0;
+    }
+
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return 0,
+    };
+
+    let mut stopped = 0;
+    for id in container_ids {
+        let mut cmd = Command::new(&runtime);
+        cmd.args(["stop", "-t", "5", id]); // 5 second timeout
+        configure_child_process(&mut cmd);
+        if cmd.status().map(|s| s.success()).unwrap_or(false) {
+            stopped += 1;
+        }
+    }
+    stopped
+}
+
+/// Get count of ALL running containers (for display purposes)
+fn get_running_container_count() -> usize {
+    let runtime = match get_container_runtime() {
+        Some(r) => r,
+        None => return 0,
+    };
+
+    let mut cmd = Command::new(&runtime);
+    cmd.args(["ps", "-q"]);
+    configure_child_process(&mut cmd);
+
+    match cmd.output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.lines().filter(|line| !line.is_empty()).count()
+        }
+        _ => 0,
     }
 }
 
@@ -1797,6 +2237,22 @@ pub async fn run_flow_impl(
             &log_path_clone,
             &format!("🔧 Extra args: {:?}", extra_args_spawn),
         );
+        append_flow_env_var(
+            window_clone.as_ref(),
+            &log_path_clone,
+            "BIOVAULT_CONTAINER_RUNTIME",
+        );
+        append_flow_env_var(
+            window_clone.as_ref(),
+            &log_path_clone,
+            "BIOVAULT_BUNDLED_NEXTFLOW",
+        );
+        append_flow_env_var(
+            window_clone.as_ref(),
+            &log_path_clone,
+            "BIOVAULT_DOCKER_CONFIG",
+        );
+        probe_container_runtime(window_clone.as_ref(), &log_path_clone);
         if let Some(value) = nextflow_max_forks {
             append_flow_log(
                 window_clone.as_ref(),
@@ -2033,6 +2489,30 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
     Ok(())
 }
 
+/// Find the flow.container file - could be in results_dir or a subdirectory (module dir)
+fn find_flow_container_file(results_dir: &Path) -> Option<PathBuf> {
+    // First check directly in results_dir
+    let direct = results_dir.join("flow.container");
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    // Search one level deep (module directories)
+    if let Ok(entries) = fs::read_dir(results_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                let container_file = path.join("flow.container");
+                if container_file.exists() {
+                    return Some(container_file);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[tauri::command]
 pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
@@ -2058,29 +2538,180 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
         .parse()
         .map_err(|_| "Invalid PID value".to_string())?;
 
-    #[cfg(target_os = "windows")]
-    {
-        let status = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status()
-            .map_err(|e| format!("Failed to stop process: {}", e))?;
-        if !status.success() {
-            return Err(format!(
-                "Failed to stop process (exit: {:?})",
-                status.code()
-            ));
+    // Check if Nextflow is running in a Docker container (Windows mode)
+    // The container file may be in results_dir or a module subdirectory
+    let container_file = find_flow_container_file(&results_dir);
+    let container_name = container_file
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let container_count = get_running_container_count();
+    append_flow_log(
+        None,
+        &log_path,
+        &format!(
+            "⏸️  Pause requested (PID: {}, {} container(s) running{})",
+            pid,
+            container_count,
+            container_name
+                .as_ref()
+                .map(|n| format!(", Nextflow container: {}", n))
+                .unwrap_or_default()
+        ),
+    );
+
+    // Graceful shutdown strategy:
+    // - If Nextflow runs in a container: use `docker stop` (sends SIGTERM to Java inside)
+    // - If Nextflow runs natively: send SIGTERM (Unix) or taskkill (Windows)
+    let _using_container = container_name.is_some();
+
+    if let Some(ref name) = container_name {
+        // Docker container mode - use `docker stop` for graceful shutdown
+        // This sends SIGTERM to PID 1 (Java/Nextflow) inside the container
+        append_flow_log(
+            None,
+            &log_path,
+            &format!("🐳 Stopping Nextflow container '{}' gracefully...", name),
+        );
+
+        let runtime = get_container_runtime().unwrap_or_else(|| "docker".to_string());
+        let mut cmd = Command::new(&runtime);
+        cmd.args(["stop", "-t", "30", name]); // 30 second timeout for graceful stop
+        configure_child_process(&mut cmd);
+
+        match cmd.status() {
+            Ok(status) if status.success() => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    "✅ Nextflow container stopped gracefully - cache should be intact!",
+                );
+            }
+            Ok(_) => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    "⚠️  Container stop returned non-zero (may have been force-killed)",
+                );
+            }
+            Err(e) => {
+                append_flow_log(
+                    None,
+                    &log_path,
+                    &format!("⚠️  Failed to stop container: {}", e),
+                );
+            }
+        }
+
+        // Clean up the container file
+        if let Some(ref path) = container_file {
+            let _ = fs::remove_file(path);
+        }
+    } else {
+        // Native mode - send signal directly to process
+        #[cfg(target_os = "windows")]
+        {
+            append_flow_log(
+                None,
+                &log_path,
+                "📤 Sending graceful shutdown signal (taskkill)...",
+            );
+            let mut cmd = Command::new("taskkill");
+            cmd.args(["/PID", &pid.to_string(), "/T"]);
+            configure_child_process(&mut cmd);
+            let _ = cmd.status();
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            append_flow_log(None, &log_path, "📤 Sending SIGTERM...");
+            unsafe {
+                let _ = libc::kill(pid, libc::SIGTERM);
+            }
+        }
+
+        // Wait for graceful shutdown
+        let graceful_timeout_ms = 30_000u64;
+        let mut waited_ms = 0u64;
+
+        while is_pid_running(pid) && waited_ms < graceful_timeout_ms {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            waited_ms += 1000;
+
+            if waited_ms.is_multiple_of(10_000) {
+                let containers = get_running_container_count();
+                append_flow_log(
+                    None,
+                    &log_path,
+                    &format!(
+                        "⏳ Waiting for graceful shutdown... ({}s, {} container(s))",
+                        waited_ms / 1000,
+                        containers
+                    ),
+                );
+            }
+        }
+
+        if !is_pid_running(pid) {
+            append_flow_log(
+                None,
+                &log_path,
+                "✅ Nextflow exited gracefully - cache should be intact!",
+            );
+        } else {
+            // Force kill if still running
+            append_flow_log(
+                None,
+                &log_path,
+                "⚠️  Graceful shutdown timed out - force terminating (cache may be corrupted)",
+            );
+
+            #[cfg(target_os = "windows")]
+            {
+                let mut forced_cmd = Command::new("taskkill");
+                forced_cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+                configure_child_process(&mut forced_cmd);
+                let _ = forced_cmd.status();
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(2000));
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
-    unsafe {
-        if libc::kill(pid, libc::SIGTERM) != 0 {
-            return Err("Failed to stop process".to_string());
+    // Clean up orphaned containers (task containers spawned by Nextflow)
+    let remaining_containers = get_nextflow_container_ids();
+    if !remaining_containers.is_empty() {
+        append_flow_log(
+            None,
+            &log_path,
+            &format!(
+                "🧹 Stopping {} orphaned container(s)...",
+                remaining_containers.len()
+            ),
+        );
+        let stopped = stop_containers(&remaining_containers);
+        if stopped > 0 {
+            append_flow_log(
+                None,
+                &log_path,
+                &format!("✅ Stopped {} orphaned container(s)", stopped),
+            );
         }
     }
 
-    let _ = biovault_db.update_flow_run_status(run_id, "paused", true);
-    append_flow_log(None, &log_path, "⏸️  Pause requested by user");
+    // Extra delay for OS to release file handles
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    let _ = fs::remove_file(&pid_path);
+    let _ = biovault_db.update_flow_run_status(run_id, "paused", false);
+    append_flow_log(None, &log_path, "⏸️  Run paused successfully");
 
     Ok(())
 }
@@ -2091,8 +2722,9 @@ pub async fn resume_flow_run(
     window: tauri::WebviewWindow,
     run_id: i64,
     nextflow_max_forks: Option<u32>,
+    force_remove_lock: Option<bool>,
 ) -> Result<Run, String> {
-    let (flow_id, results_dir, input_overrides, selection, resolved_max_forks) = {
+    let (flow_id, results_dir, input_overrides, selection, resolved_max_forks, _flow_path) = {
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         let run = biovault_db
             .get_flow_run(run_id)
@@ -2101,6 +2733,11 @@ pub async fn resume_flow_run(
         let flow_id = run
             .flow_id
             .ok_or_else(|| "Flow run is missing flow_id".to_string())?;
+        let flow_path = biovault_db
+            .get_flow(flow_id)
+            .map_err(|e| e.to_string())?
+            .map(|flow| flow.flow_path)
+            .unwrap_or_default();
         let results_dir = run
             .results_dir
             .clone()
@@ -2129,8 +2766,117 @@ pub async fn resume_flow_run(
             input_overrides,
             selection,
             parsed_max_forks,
+            flow_path,
         )
     };
+
+    // Clear Nextflow locks from ALL module directories (not just flow directory)
+    // because Nextflow runs from module directories, not flow directories
+    if let Some(results_dir) = results_dir.as_ref() {
+        let log_path = PathBuf::from(results_dir).join("flow.log");
+
+        // Get all lock files from modules directory
+        if let Ok(modules_dir) = get_modules_dir() {
+            let mut all_locks: Vec<PathBuf> = Vec::new();
+
+            // Walk each module directory and collect locks
+            if let Ok(entries) = fs::read_dir(&modules_dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let module_path = entry.path();
+                    if module_path.is_dir() {
+                        all_locks.extend(list_nextflow_locks(&module_path));
+                    }
+                }
+            }
+
+            if !all_locks.is_empty() {
+                append_flow_log(
+                    Some(&window),
+                    &log_path,
+                    &format!(
+                        "⚠️  Nextflow locks detected in modules: {}",
+                        all_locks.len()
+                    ),
+                );
+            }
+
+            // Use more retries when force flag is set
+            let max_retries = if force_remove_lock.unwrap_or(false) {
+                6
+            } else {
+                3
+            };
+
+            // Clear locks from each module directory
+            // Note: We only clear LOCK files, not the entire cache, to preserve resume capability
+            // The cache DB is only cleared if force_remove_lock is set (user explicitly requested)
+            if let Ok(entries) = fs::read_dir(&modules_dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let module_path = entry.path();
+                    if module_path.is_dir() {
+                        let _ = clear_nextflow_locks(
+                            &module_path,
+                            Some(&window),
+                            &log_path,
+                            max_retries,
+                        );
+                        // Only clear cache if force flag is set - this loses resume state but fixes corruption
+                        if force_remove_lock.unwrap_or(false) {
+                            let _ = clear_nextflow_cache(&module_path, Some(&window), &log_path);
+                        }
+                    }
+                }
+            }
+
+            // Check if any locks remain
+            let mut locks_after: Vec<PathBuf> = Vec::new();
+            if let Ok(entries) = fs::read_dir(&modules_dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let module_path = entry.path();
+                    if module_path.is_dir() {
+                        locks_after.extend(list_nextflow_locks(&module_path));
+                    }
+                }
+            }
+
+            if !locks_after.is_empty() {
+                let sample: Vec<String> = locks_after
+                    .iter()
+                    .take(5)
+                    .map(|path| path.display().to_string())
+                    .collect();
+                let sample_joined = sample.join("; ");
+                return Err(format!(
+                    "NEXTFLOW_LOCKS_REMAIN: {}",
+                    if sample_joined.is_empty() {
+                        "Lock files remain after cleanup.".to_string()
+                    } else {
+                        sample_joined
+                    }
+                ));
+            }
+
+            // Check for potential cache corruption (LOCK files in cache/*/db directories)
+            // This happens when Nextflow was killed mid-execution
+            if !force_remove_lock.unwrap_or(false) {
+                let mut has_corrupted_cache = false;
+                if let Ok(entries) = fs::read_dir(&modules_dir) {
+                    for entry in entries.filter_map(Result::ok) {
+                        let module_path = entry.path();
+                        if module_path.is_dir()
+                            && is_nextflow_cache_potentially_corrupted(&module_path)
+                        {
+                            has_corrupted_cache = true;
+                            break;
+                        }
+                    }
+                }
+                if has_corrupted_cache {
+                    return Err("NEXTFLOW_CACHE_CORRUPTED: Cache database may be corrupted from interrupted run.".to_string());
+                }
+            }
+        }
+    }
 
     run_flow_impl(
         state,
@@ -2145,6 +2891,69 @@ pub async fn resume_flow_run(
         Some(run_id),
     )
     .await
+}
+
+/// Get the number of running containers (docker/podman)
+#[tauri::command]
+pub fn get_container_count() -> usize {
+    get_running_container_count()
+}
+
+/// Get flow state for a run (progress, concurrency, etc.)
+#[tauri::command]
+pub fn get_flow_state(
+    state: tauri::State<AppState>,
+    run_id: i64,
+) -> Result<Option<FlowState>, String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .map(PathBuf::from)
+        .ok_or_else(|| "No results directory".to_string())?;
+
+    Ok(load_flow_state(&results_dir))
+}
+
+/// Save flow state for a run
+#[tauri::command]
+pub fn save_flow_state_cmd(
+    state: tauri::State<AppState>,
+    run_id: i64,
+    completed: u32,
+    total: u32,
+    concurrency: Option<u32>,
+    container_count: u32,
+) -> Result<(), String> {
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .map(PathBuf::from)
+        .ok_or_else(|| "No results directory".to_string())?;
+
+    let flow_state = FlowState {
+        completed,
+        total,
+        concurrency,
+        container_count,
+        last_updated: Some(chrono::Utc::now().to_rfc3339()),
+        status: Some(run.status.clone()),
+    };
+
+    save_flow_state(&results_dir, &flow_state)
 }
 
 #[tauri::command]
@@ -2237,6 +3046,7 @@ pub fn get_flow_run_work_dir(state: tauri::State<AppState>, run_id: i64) -> Resu
         .unwrap_or_else(|| PathBuf::from(&run.work_dir));
     let log_path = results_dir.join("flow.log");
 
+    // Try to find work directory from flow.log
     if let Ok(contents) = fs::read_to_string(&log_path) {
         for line in contents.lines().rev() {
             if let Some(idx) = line.find("Current working directory:") {
@@ -2253,6 +3063,31 @@ pub fn get_flow_run_work_dir(state: tauri::State<AppState>, run_id: i64) -> Resu
                 if candidate.file_name().and_then(|v| v.to_str()) == Some("work") {
                     return Ok(candidate.to_string_lossy().to_string());
                 }
+            }
+        }
+    }
+
+    // Fallback: Try to find work directory in modules folder
+    // The work directory is created inside the module directory
+    if let Ok(modules_dir) = get_modules_dir() {
+        if let Ok(entries) = fs::read_dir(&modules_dir) {
+            // Find most recently modified work directory
+            let mut newest_work: Option<(PathBuf, std::time::SystemTime)> = None;
+            for entry in entries.filter_map(Result::ok) {
+                let module_path = entry.path();
+                let work_path = module_path.join("work");
+                if work_path.is_dir() {
+                    if let Ok(metadata) = fs::metadata(&work_path) {
+                        if let Ok(modified) = metadata.modified() {
+                            if newest_work.as_ref().is_none_or(|(_, t)| modified > *t) {
+                                newest_work = Some((work_path, modified));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((work_path, _)) = newest_work {
+                return Ok(work_path.to_string_lossy().to_string());
             }
         }
     }
