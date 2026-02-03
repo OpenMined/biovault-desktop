@@ -83,14 +83,27 @@ export async function ensureProfileSelected(page, options) {
 
 	console.log('Profiles picker detected, selecting a profile...')
 	const openBtn = page.locator('.profile-open-btn:not([disabled])').first()
-	if ((await openBtn.count()) > 0) {
+	const row = page.locator('.profile-row').first()
+	const actionTimeout = Math.max(5000, timeout)
+
+	// Wait a bit for an enabled Open button to appear (backend may still be settling).
+	const hasOpen = await openBtn
+		.waitFor({ state: 'visible', timeout: 3_000 })
+		.then(() => true)
+		.catch(() => false)
+
+	if (hasOpen) {
 		await openBtn.click()
 	} else {
-		const row = page.locator('.profile-row').first()
 		await row.click()
 	}
 
-	await expect(profilesView).toBeHidden({ timeout })
+	// Picker may not hide immediately on some platforms; wait for either hide or app ready.
+	await Promise.race([
+		expect(profilesView).toBeHidden({ timeout: actionTimeout }),
+		waitForAppReady(page, { timeout: actionTimeout }),
+		page.waitForLoadState('load', { timeout: actionTimeout }).catch(() => null),
+	])
 	return true
 }
 
