@@ -104,6 +104,20 @@ export async function ensureProfileSelected(page, options) {
 		waitForAppReady(page, { timeout: actionTimeout }),
 		page.waitForLoadState('load', { timeout: actionTimeout }).catch(() => null),
 	])
+
+	// If still visible, try the in-app "Back" button (opened_from_app) and re-check.
+	if (await profilesView.isVisible({ timeout: 1000 }).catch(() => false)) {
+		const backBtn = page.locator('#profiles-quit-btn')
+		if (await backBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+			await backBtn.click().catch(() => {})
+			await expect(profilesView).toBeHidden({ timeout: actionTimeout })
+		}
+	}
+
+	// Guard: do not proceed while the picker is still visible.
+	if (await profilesView.isVisible({ timeout: 1000 }).catch(() => false)) {
+		throw new Error('Profiles picker still visible after selection; aborting to avoid hidden nav.')
+	}
 	return true
 }
 
