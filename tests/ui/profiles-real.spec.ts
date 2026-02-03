@@ -210,8 +210,53 @@ async function openPickerFromSettings(page) {
 		}
 	})
 	await expect(page.locator('#settings-view')).toBeVisible({ timeout: 30_000 })
-	await page.locator('#profiles-open-picker-btn').click()
-	await expect(page.locator('#profiles-view')).toBeVisible({ timeout: 30_000 })
+	const profilesView = page.locator('#profiles-view')
+
+	// If picker is already visible (e.g. previous action kept it open), use it directly.
+	if (await profilesView.isVisible({ timeout: 1_000 }).catch(() => false)) {
+		return
+	}
+
+	const openBtn = page.locator('#profiles-open-picker-btn')
+	// Wait for either the button to become visible or the picker to appear.
+	await expect
+		.poll(
+			async () =>
+				(await profilesView.isVisible({ timeout: 500 }).catch(() => false)) ||
+				(await openBtn.isVisible({ timeout: 500 }).catch(() => false)),
+			{ timeout: 30_000 },
+		)
+		.toBe(true)
+	if (await profilesView.isVisible({ timeout: 500 }).catch(() => false)) {
+		return
+	}
+	await expect(openBtn).toBeVisible({ timeout: 10_000 })
+	// Ensure the click handler is bound (settings.js sets data-bound="1").
+	await expect
+		.poll(
+			async () => openBtn.evaluate((el) => el instanceof HTMLElement && el.dataset.bound === '1'),
+			{ timeout: 10_000 },
+		)
+		.toBe(true)
+
+	let opened = false
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		if (await profilesView.isVisible({ timeout: 500 }).catch(() => false)) {
+			opened = true
+			break
+		}
+		if (!(await openBtn.isVisible({ timeout: 500 }).catch(() => false))) {
+			await page.waitForTimeout(500)
+			continue
+		}
+		await openBtn.click()
+		opened = await profilesView.isVisible({ timeout: 5_000 }).catch(() => false)
+		if (opened) break
+		await page.waitForTimeout(500)
+	}
+	if (!opened) {
+		await expect(profilesView).toBeVisible({ timeout: 30_000 })
+	}
 }
 
 async function onboardingGoToHomeStep(page) {
