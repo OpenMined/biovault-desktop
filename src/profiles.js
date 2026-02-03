@@ -49,6 +49,7 @@ function getProfilesRootEl() {
 let profilesRefreshTimer = null
 let profilesRefreshInFlight = false
 let lastProfilesSignature = ''
+let profilesOpenedFromApp = false
 
 function isElementVisible(el) {
 	if (!el) return false
@@ -74,6 +75,9 @@ function getProfilesSignature(state) {
 
 function applyProfilesState(state) {
 	if (!state) return
+	if (profilesOpenedFromApp) {
+		state = { ...state, opened_from_app: true }
+	}
 	lastProfilesSignature = getProfilesSignature(state)
 	renderProfilesList(state)
 }
@@ -104,6 +108,7 @@ function renderProfilesList(state) {
 	const listEl = document.getElementById('profiles-list')
 	if (!listEl) return
 	const profiles = Array.isArray(state?.profiles) ? state.profiles : []
+	const allowCurrentOpen = !!state?.opened_from_app
 
 	if (profiles.length === 0) {
 		listEl.innerHTML =
@@ -117,7 +122,7 @@ function renderProfilesList(state) {
 			const seed = p.fingerprint || p.email || p.id
 			const statusText = p.running ? 'Already running' : p.onboarded ? 'Ready' : 'Needs setup'
 			const statusClass = p.running ? 'running' : ''
-			const openDisabled = p.running ? 'disabled' : ''
+			const openDisabled = p.running && !(allowCurrentOpen && p.is_current) ? 'disabled' : ''
 			const newInstanceDisabled = p.running ? 'disabled' : ''
 			const showNewInstance = !p.is_current
 			const deleteDisabled = p.running || p.is_current ? 'disabled' : ''
@@ -151,6 +156,9 @@ async function refreshProfilesList({ invoke, force = false } = {}) {
 	try {
 		const state = await invoke('profiles_get_boot_state')
 		if (!state?.enabled) return
+		if (profilesOpenedFromApp) {
+			state.opened_from_app = true
+		}
 		const signature = getProfilesSignature(state)
 		if (!force && signature === lastProfilesSignature) return
 		applyProfilesState(state)
@@ -338,6 +346,7 @@ function wireProfilesActions({ invoke, state }) {
 async function showProfilesPicker({ invoke, templateLoader, state }) {
 	await templateLoader.loadAndInject('profiles', 'profiles-view')
 	showProfilesView()
+	profilesOpenedFromApp = !!state?.opened_from_app
 
 	const msgEl = document.getElementById('profiles-startup-message')
 	if (msgEl && state?.startup_message) {
