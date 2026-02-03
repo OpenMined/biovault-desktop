@@ -203,6 +203,47 @@ function rowByHome(page, homePath) {
 async function openPickerFromSettings(page) {
 	await waitForAppReady(page, { timeout: 30_000 })
 	await ensureProfileSelected(page, { timeout: 10_000 })
+
+	const profilesView = page.locator('#profiles-view')
+
+	// After ensureProfileSelected, the app may still be initializing and could show
+	// the profiles picker (when multiple profiles exist). We need to wait for either:
+	// - The profiles picker to appear, OR
+	// - The app ready flags to be set (meaning picker was not shown)
+	// We can't just call waitForAppReady because if the picker is shown, the
+	// ready flags are never set (app init returns early).
+	// Note: We always do this check, not just when hadToSelect is true, because
+	// even on the initial page load the picker might appear after ensureProfileSelected
+	// returns but before we navigate.
+	await expect
+		.poll(
+			async () => {
+				// Check if picker is visible
+				if (await profilesView.isVisible({ timeout: 500 }).catch(() => false)) {
+					return 'picker'
+				}
+				// Check if app is ready (picker was not shown)
+				const ready = await page
+					.evaluate(
+						() =>
+							window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
+					)
+					.catch(() => false)
+				if (ready) {
+					return 'ready'
+				}
+				return null
+			},
+			{ timeout: 30_000 },
+		)
+		.not.toBeNull()
+
+	// If picker is visible (either from startup or from ensureProfileSelected triggering
+	// a reload that caused the picker to show again), we're done - it's already open.
+	if (await profilesView.isVisible({ timeout: 1_000 }).catch(() => false)) {
+		return
+	}
+
 	await navigateToTab(page, 'settings')
 	await page.evaluate(() => {
 		if (typeof window.navigateTo === 'function') {
@@ -210,7 +251,6 @@ async function openPickerFromSettings(page) {
 		}
 	})
 	await expect(page.locator('#settings-view')).toBeVisible({ timeout: 30_000 })
-	const profilesView = page.locator('#profiles-view')
 
 	// If picker is already visible (e.g. previous action kept it open), use it directly.
 	if (await profilesView.isVisible({ timeout: 1_000 }).catch(() => false)) {
