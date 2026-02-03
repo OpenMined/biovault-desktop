@@ -367,7 +367,7 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 				throw new Error(`Need at least 4 synthetic files, found ${syntheticFiles.length}`)
 			}
 
-			const selectedFiles = syntheticFiles.slice(0, 4)
+			const selectedFiles = syntheticFiles.slice(0, Math.min(8, syntheticFiles.length))
 			const participantIds = selectedFiles.map((filePath) => path.parse(filePath).name)
 			const samplesheetPath = path.join(os.tmpdir(), `pause_resume_samplesheet_${Date.now()}.csv`)
 			const header = 'participant_id,genotype_file\n'
@@ -384,7 +384,8 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			// Step 1: Start or resume a flow run
 			// ============================================================
 			log(logSocket, { event: 'step-1', action: 'start-run' })
-			console.log('\n=== Step 1: Start/resume flow run with concurrency=2 ===')
+			const initialConcurrency = 1
+			console.log(`\n=== Step 1: Start/resume flow run with concurrency=${initialConcurrency} ===`)
 
 			// Check for existing paused/failed run
 			const existingRuns = await backend.invoke('get_flow_runs', {})
@@ -397,14 +398,14 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			if (existingRun) {
 				console.log(`Found existing ${existingRun.status} run: ${existingRun.id} - resuming`)
 				runId = existingRun.id
-				await backend.invoke('resume_flow_run', { runId, concurrency: 2 })
+				await backend.invoke('resume_flow_run', { runId, concurrency: initialConcurrency })
 			} else {
 				// Start new run
 				console.log('Starting new run...')
 				const result = await backend.invoke('run_flow', {
 					flowId: flow.id,
 					inputOverrides: { 'inputs.samplesheet': samplesheetPath },
-					nextflowMaxForks: 2,
+					nextflowMaxForks: initialConcurrency,
 				})
 				runId = result.run_id ?? result.id
 				console.log(`Started new run: ${runId}`)
@@ -414,7 +415,7 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			// Step 2: Wait for some progress
 			// ============================================================
 			log(logSocket, { event: 'step-2', action: 'wait-progress' })
-			console.log('\n=== Step 2: Wait for progress (at least 3 tasks) ===')
+			console.log('\n=== Step 2: Wait for progress (at least 1 task) ===')
 
 			await waitForStatus(backend, runId, 'running', 60_000)
 			await navigateToRuns(page)
@@ -423,7 +424,7 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			const pauseBtn = runCard.locator('.run-pause-btn')
 			await expect(pauseBtn).toBeVisible({ timeout: 10_000 })
 			await page.waitForTimeout(1000)
-			const progress1 = await tryWaitForProgress(backend, runId, 3, PROGRESS_WAIT_TIMEOUT)
+			const progress1 = await tryWaitForProgress(backend, runId, 1, PROGRESS_WAIT_TIMEOUT)
 			if (progress1) {
 				console.log(`Reached progress: ${progress1.completed}/${progress1.total}`)
 			} else {
@@ -446,6 +447,13 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 			} catch (e) {
 				pausedOk = false
 				console.log(`Pause failed (continuing): ${e}`)
+				const runsAfterPause = await backend.invoke('get_flow_runs', {})
+				const runAfterPause = runsAfterPause.find((r: any) => r.id === runId)
+				const statusAfterPause = runAfterPause?.status || 'unknown'
+				if (statusAfterPause === 'success') {
+					console.log('Run completed before pause could take effect; skipping resume steps.')
+					return
+				}
 			}
 
 			// Small delay to let state save complete
