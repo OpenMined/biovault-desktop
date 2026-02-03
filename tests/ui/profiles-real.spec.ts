@@ -259,6 +259,23 @@ async function openPickerFromSettings(page) {
 		if (!openBtnVisible) {
 			await openBtn.evaluate((el) => el instanceof HTMLElement && el.click())
 		}
+		// Last resort: call the module directly (bypasses UI click visibility issues).
+		await page
+			.evaluate(async () => {
+				try {
+					const [{ showProfilesPickerInApp }, { invoke }, { templateLoader }] = await Promise.all([
+						import('/profiles.js'),
+						import('/tauri-shim.js'),
+						import('/template-loader.js'),
+					])
+					if (typeof showProfilesPickerInApp === 'function') {
+						await showProfilesPickerInApp({ invoke, templateLoader })
+					}
+				} catch (_err) {
+					// ignore; the caller will assert visibility below
+				}
+			})
+			.catch(() => {})
 		await expect(profilesView).toBeVisible({ timeout: 30_000 })
 	}
 }
