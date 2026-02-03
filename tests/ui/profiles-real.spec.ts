@@ -215,28 +215,28 @@ async function openPickerFromSettings(page) {
 	// Note: We always do this check, not just when hadToSelect is true, because
 	// even on the initial page load the picker might appear after ensureProfileSelected
 	// returns but before we navigate.
+	// IMPORTANT: Check both conditions atomically in a single evaluate to avoid timing gaps.
 	await expect
 		.poll(
 			async () => {
-				// Check if picker is visible
-				if (await profilesView.isVisible({ timeout: 500 }).catch(() => false)) {
-					return 'picker'
-				}
-				// Check if app is ready (picker was not shown)
-				const ready = await page
-					.evaluate(
-						() =>
-							window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true,
-					)
-					.catch(() => false)
-				if (ready) {
-					return 'ready'
-				}
-				return null
+				const state = await page
+					.evaluate(() => {
+						const picker = document.getElementById('profiles-view')
+						const pickerVisible =
+							picker &&
+							picker.style.display !== 'none' &&
+							window.getComputedStyle(picker).display !== 'none'
+						const ready =
+							window.__NAV_HANDLERS_READY__ === true &&
+							window.__EVENT_HANDLERS_READY__ === true
+						return { pickerVisible, ready }
+					})
+					.catch(() => ({ pickerVisible: false, ready: false }))
+				return state.pickerVisible || state.ready
 			},
-			{ timeout: 30_000 },
+			{ timeout: 30_000, intervals: [100, 250, 500, 1000] },
 		)
-		.not.toBeNull()
+		.toBe(true)
 
 	// If picker is visible (either from startup or from ensureProfileSelected triggering
 	// a reload that caused the picker to show again), we're done - it's already open.
