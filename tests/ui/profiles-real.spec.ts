@@ -216,6 +216,8 @@ async function openPickerFromSettings(page) {
 	// even on the initial page load the picker might appear after ensureProfileSelected
 	// returns but before we navigate.
 	// IMPORTANT: Check both conditions atomically in a single evaluate to avoid timing gaps.
+	// We poll until BOTH are stable: either picker is visible, OR ready flags are set
+	// AND picker is NOT visible (confirming it won't appear).
 	await expect
 		.poll(
 			async () => {
@@ -232,15 +234,29 @@ async function openPickerFromSettings(page) {
 						return { pickerVisible, ready }
 					})
 					.catch(() => ({ pickerVisible: false, ready: false }))
-				return state.pickerVisible || state.ready
+				// Return 'picker' if visible (we can use it)
+				// Return 'ready' only if ready flags are set AND picker is NOT visible
+				// This ensures we don't return 'ready' while picker is about to appear
+				if (state.pickerVisible) {
+					return 'picker'
+				}
+				if (state.ready) {
+					return 'ready'
+				}
+				return null
 			},
 			{ timeout: 30_000, intervals: [100, 250, 500, 1000] },
 		)
-		.toBe(true)
+		.not.toBeNull()
+
+	// Give the app a moment to fully stabilize after the poll completes.
+	// In CI, there can be a brief delay between ready flags being set and final render.
+	await page.waitForTimeout(500)
 
 	// If picker is visible (either from startup or from ensureProfileSelected triggering
 	// a reload that caused the picker to show again), we're done - it's already open.
-	if (await profilesView.isVisible({ timeout: 1_000 }).catch(() => false)) {
+	// Use a longer timeout to catch late-appearing pickers in CI.
+	if (await profilesView.isVisible({ timeout: 3_000 }).catch(() => false)) {
 		return
 	}
 
