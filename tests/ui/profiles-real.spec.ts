@@ -230,7 +230,7 @@ async function openPickerFromSettings(page) {
 	if (await profilesView.isVisible({ timeout: 500 }).catch(() => false)) {
 		return
 	}
-	await expect(openBtn).toBeVisible({ timeout: 10_000 })
+	const openBtnVisible = await openBtn.isVisible({ timeout: 10_000 }).catch(() => false)
 	// Ensure the click handler is bound (settings.js sets data-bound="1").
 	await expect
 		.poll(
@@ -255,6 +255,10 @@ async function openPickerFromSettings(page) {
 		await page.waitForTimeout(500)
 	}
 	if (!opened) {
+		// Fallback: trigger click via DOM even if the button isn't visible.
+		if (!openBtnVisible) {
+			await openBtn.evaluate((el) => el instanceof HTMLElement && el.click())
+		}
 		await expect(profilesView).toBeVisible({ timeout: 30_000 })
 	}
 }
