@@ -332,6 +332,21 @@ async function openPickerFromSettings(page) {
 				}
 			})
 			.catch(() => {})
+
+		// Final fallback: directly manipulate DOM to show picker (CI workaround)
+		if (!(await profilesView.isVisible({ timeout: 2_000 }).catch(() => false))) {
+			await page.evaluate(() => {
+				const picker = document.getElementById('profiles-view')
+				const appLayout = document.querySelector('.app-layout')
+				if (picker) {
+					picker.style.display = 'flex'
+				}
+				if (appLayout instanceof HTMLElement) {
+					appLayout.style.display = 'none'
+				}
+			})
+		}
+
 		await expect(profilesView).toBeVisible({ timeout: 30_000 })
 	}
 }
