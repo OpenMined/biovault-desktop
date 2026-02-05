@@ -88,6 +88,42 @@ async function connectBackend(port: number): Promise<Backend> {
 	return { invoke, close }
 }
 
+function normalizeMetadata(metadata: any): any {
+	if (!metadata) return null
+	if (typeof metadata === 'string') {
+		try {
+			return JSON.parse(metadata)
+		} catch {
+			return null
+		}
+	}
+	return metadata
+}
+
+async function waitForThreadMessageMatching(
+	backend: Backend,
+	threadId: string,
+	predicate: (msg: any) => boolean,
+	label: string,
+	timeoutMs = MESSAGE_TIMEOUT,
+): Promise<any> {
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		try {
+			await backend.invoke('sync_messages_with_failures')
+		} catch {
+			// Ignore transient sync failures during polling
+		}
+		const msgs = await backend.invoke('get_thread_messages', { threadId })
+		if (Array.isArray(msgs)) {
+			const found = msgs.find((msg: any) => predicate(msg))
+			if (found) return found
+		}
+		await new Promise((r) => setTimeout(r, SYNC_INTERVAL))
+	}
+	throw new Error(`Timed out waiting for thread message: ${label}`)
+}
+
 test.describe('Multiparty flow between three clients @pipelines-multiparty-flow', () => {
 	test('three clients execute a multiparty flow with UI interactions', async ({ browser }) => {
 		const wsPortBase = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
@@ -485,18 +521,71 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const initialProgress1 = await verifyProgressInUI(page1, email1)
 		expect(initialProgress1).toContain('0/5 steps complete')
 
-		const initialProgress3 = await verifyProgressInUI(page3, email3)
-		expect(initialProgress3).toContain('0/5 steps complete')
+			const initialProgress3 = await verifyProgressInUI(page3, email3)
+			expect(initialProgress3).toContain('0/5 steps complete')
 
-		// === Execute Steps via UI ===
-		console.log('\n--- Executing Flow Steps via Runs UI ---')
+			// Run Next should be visible for contributors, hidden for aggregator until ready
+			await verifyRunNextButton(page1, true, 'Generate Numbers', email1)
+			await verifyRunNextButton(page2, true, 'Generate Numbers', email2)
+			await verifyRunNextButton(page3, true, null, email3)
 
-		async function runStepInUI(page: Page, stepId: string, label: string) {
-			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-			if (!(await step.isVisible().catch(() => false))) {
-				console.log(`    ${label}: Step ${stepId} not visible (not assigned to this role)`)
-				return false
+			// Auto-run checkbox should persist to flow state
+			const autoToggle1 = page1.locator(
+				'.mp-step[data-step-id="generate"] .mp-auto-toggle input[type="checkbox"]',
+			)
+			await autoToggle1.waitFor({ timeout: UI_TIMEOUT })
+			await autoToggle1.check()
+			await page1.waitForTimeout(300)
+			const stateAfterAutoOn = await backend1.invoke('get_multiparty_flow_state', { sessionId })
+			expect(stateAfterAutoOn?.steps?.find((s: any) => s.id === 'generate')?.auto_run).toBe(true)
+			await autoToggle1.uncheck()
+			await page1.waitForTimeout(300)
+			const stateAfterAutoOff = await backend1.invoke('get_multiparty_flow_state', { sessionId })
+			expect(stateAfterAutoOff?.steps?.find((s: any) => s.id === 'generate')?.auto_run).toBe(false)
+
+			// Aggregator aggregate step should not be ready before contributor shares
+			const initialAggState = await backend3.invoke('get_multiparty_flow_state', { sessionId })
+			const initialAggStatus = initialAggState?.steps?.find((s: any) => s.id === 'aggregate')?.status
+			expect(['Pending', 'WaitingForInputs']).toContain(initialAggStatus)
+
+			// Step should show participant chips for all 3 parties
+			const aggGenerateChips = page3.locator('.mp-step[data-step-id="generate"] .mp-participant-chip')
+			expect(await aggGenerateChips.count()).toBe(3)
+			const chipsText = (await aggGenerateChips.allTextContents()).join(' ')
+			expect(chipsText).toContain(email1)
+			expect(chipsText).toContain(email2)
+			expect(chipsText).toContain(email3)
+
+			// Activity log should include join events
+			await verifyActivityLogContains(page3, email3, 'joined the flow')
+
+			// === Execute Steps via UI ===
+			console.log('\n--- Executing Flow Steps via Runs UI ---')
+
+			async function ensureStepsTabActive(page: Page) {
+				const runCard = page.locator('.flow-run-card').first()
+				const stepsTab = runCard.locator('.mp-tab[data-tab="steps"]')
+				if (await stepsTab.isVisible().catch(() => false)) {
+					await stepsTab.click().catch(() => {})
+					await runCard
+						.locator('.mp-tab-content[data-tab-content="steps"]')
+						.waitFor({ state: 'visible', timeout: UI_TIMEOUT })
+						.catch(() => {})
+				}
 			}
+
+			async function runStepInUI(page: Page, stepId: string, label: string) {
+				await ensureStepsTabActive(page)
+				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+				if (!(await step.isVisible().catch(() => false))) {
+					// One retry helps in headed/interactive mode when tab switch/render lags.
+					await page.waitForTimeout(400)
+					await ensureStepsTabActive(page)
+					if (!(await step.isVisible().catch(() => false))) {
+						console.log(`    ${label}: Step ${stepId} not visible (not assigned to this role)`)
+						return false
+					}
+				}
 
 			const runBtn = step.locator('.mp-run-btn, button:has-text("Run")')
 			if (await runBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -508,11 +597,12 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			return false
 		}
 
-		async function shareStepInUI(page: Page, stepId: string, label: string) {
-			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-			if (!(await step.isVisible().catch(() => false))) {
-				return false
-			}
+			async function shareStepInUI(page: Page, stepId: string, label: string) {
+				await ensureStepsTabActive(page)
+				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+				if (!(await step.isVisible().catch(() => false))) {
+					return false
+				}
 
 			const shareBtn = step.locator('.mp-share-btn, button:has-text("Share")')
 			if (await shareBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -561,17 +651,18 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		}
 
 		// Helper to verify step status in UI
-		async function verifyStepStatusInUI(
-			page: Page,
-			stepId: string,
-			expectedStatus: string,
-			label: string,
-		) {
-			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-			const statusEl = step.locator('.mp-step-status')
-			const statusText = await statusEl.textContent().catch(() => '')
-			console.log(`    ${label}: Step ${stepId} UI status: "${statusText}"`)
-			return statusText
+			async function verifyStepStatusInUI(
+				page: Page,
+				stepId: string,
+				expectedStatus: string,
+				label: string,
+			) {
+				await ensureStepsTabActive(page)
+				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+				const statusEl = step.locator('.mp-step-status')
+				const statusText = await statusEl.textContent().catch(() => '')
+				console.log(`    ${label}: Step ${stepId} UI status: "${statusText}"`)
+				return statusText
 		}
 
 		// Helper to verify progress bar percentage in UI
@@ -583,15 +674,16 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		}
 
 		// Helper to verify Run button visibility for a step
-		async function verifyRunButtonVisibility(
-			page: Page,
-			stepId: string,
-			shouldBeVisible: boolean,
-			label: string,
-		) {
-			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-			if (!(await step.isVisible().catch(() => false))) {
-				console.log(`    ${label}: Step ${stepId} not visible on this page`)
+			async function verifyRunButtonVisibility(
+				page: Page,
+				stepId: string,
+				shouldBeVisible: boolean,
+				label: string,
+			) {
+				await ensureStepsTabActive(page)
+				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+				if (!(await step.isVisible().catch(() => false))) {
+					console.log(`    ${label}: Step ${stepId} not visible on this page`)
 				return null
 			}
 			const runBtn = step.locator('.mp-run-btn')
@@ -604,35 +696,93 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		}
 
 		// Helper to verify Preview button visibility
-		async function verifyPreviewButtonVisibility(
-			page: Page,
-			stepId: string,
-			shouldBeVisible: boolean,
-			label: string,
-		) {
-			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-			if (!(await step.isVisible().catch(() => false))) {
-				return null
+				async function verifyPreviewButtonVisibility(
+					page: Page,
+					stepId: string,
+					shouldBeVisible: boolean,
+					label: string,
+				) {
+				await ensureStepsTabActive(page)
+				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+				if (!(await step.isVisible().catch(() => false))) {
+					return null
 			}
 			const previewBtn = step.locator('.mp-preview-btn')
 			const isVisible = await previewBtn.isVisible().catch(() => false)
 			console.log(
 				`    ${label}: Preview button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
 			)
-			expect(isVisible).toBe(shouldBeVisible)
-			return isVisible
-		}
+				expect(isVisible).toBe(shouldBeVisible)
+				return isVisible
+			}
 
-		// Step 1: Contributors run "generate"
-		console.log('\nStep 1: Generate Numbers')
+			async function verifyRunNextButton(
+				page: Page,
+				shouldBeVisible: boolean,
+				expectedText: string | null,
+				label: string,
+			) {
+				const runNextBtn = page.locator('.mp-run-next-btn')
+				const isVisible = await runNextBtn.isVisible().catch(() => false)
+				console.log(`    ${label}: Run Next visible=${isVisible}, expected=${shouldBeVisible}`)
+				expect(isVisible).toBe(shouldBeVisible)
+				if (shouldBeVisible && expectedText) {
+					const text = (await runNextBtn.textContent().catch(() => '')) || ''
+					console.log(`    ${label}: Run Next text="${text}"`)
+					expect(text).toContain(expectedText)
+				}
+			}
+
+			async function verifyActivityLogContains(
+				page: Page,
+				label: string,
+				expectedText: string,
+				timeoutMs = 20_000,
+			) {
+				const runCard = page.locator('.flow-run-card').first()
+				await runCard.locator('.mp-tab[data-tab="logs"]').click()
+				const start = Date.now()
+				while (Date.now() - start < timeoutMs) {
+					const logsText = (await runCard.locator('.mp-logs-content').innerText().catch(() => '')) || ''
+						if (logsText.includes(expectedText)) {
+							console.log(`    ${label}: Activity log contains "${expectedText}"`)
+							await runCard.locator('.mp-tab[data-tab="steps"]').click()
+							await runCard
+								.locator('.mp-tab-content[data-tab-content="steps"]')
+								.waitFor({ state: 'visible', timeout: UI_TIMEOUT })
+								.catch(() => {})
+							return
+						}
+					await page.waitForTimeout(500)
+				}
+					await runCard.locator('.mp-tab[data-tab="steps"]').click()
+					await runCard
+						.locator('.mp-tab-content[data-tab-content="steps"]')
+						.waitFor({ state: 'visible', timeout: UI_TIMEOUT })
+						.catch(() => {})
+					throw new Error(`${label}: Activity log missing expected text: ${expectedText}`)
+				}
+
+			async function sendMessageInSelectedThread(page: Page, label: string, body: string) {
+				const messageInput = page.locator('#message-compose-body')
+				await messageInput.waitFor({ timeout: UI_TIMEOUT })
+				await messageInput.fill(body)
+				await page.locator('#message-send-btn').click()
+				console.log(`  ${label}: Sent message: "${body.substring(0, 40)}..."`)
+				await page.waitForTimeout(1500)
+			}
+
+			// Step 1: Contributors run "generate"
+			console.log('\nStep 1: Generate Numbers')
 		await runStepInUI(page1, 'generate', email1)
 		await page1.waitForTimeout(1500) // Wait for file to be written
 		await verifyStepOutputFiles(backend1, sessionId, 'generate', ['numbers.json'], email1)
 
 		// Verify UI shows step as completed
-		await verifyStepStatusInUI(page1, 'generate', 'Completed', email1)
-		const progress1AfterGen = await verifyProgressInUI(page1, email1)
-		expect(progress1AfterGen).toContain('1/')
+			await verifyStepStatusInUI(page1, 'generate', 'Completed', email1)
+			const progress1AfterGen = await verifyProgressInUI(page1, email1)
+			expect(progress1AfterGen).toContain('1/')
+			await verifyRunNextButton(page1, true, 'Share Contribution', email1)
 
 		// After generate completes, share_contribution Run button should now be visible
 		await verifyRunButtonVisibility(page1, 'share_contribution', true, email1)
@@ -673,11 +823,14 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// After both contributors share, barrier step completes (generate + share_contribution + contributions_ready)
 		expect(progress2AfterShare).toContain('3/5 steps complete')
 
-		// Preview button should remain visible after sharing for client2 too
-		await verifyPreviewButtonVisibility(page2, 'share_contribution', true, email2)
+			// Preview button should remain visible after sharing for client2 too
+			await verifyPreviewButtonVisibility(page2, 'share_contribution', true, email2)
 
-		// Simulate receiving shared inputs at aggregator
-		// In real flow, this would happen via messaging - for now we verify generate outputs exist
+			// Aggregator should see contributor share events in live activity log
+			await verifyActivityLogContains(page3, email3, 'shared outputs from "share_contribution"')
+
+			// Simulate receiving shared inputs at aggregator
+			// In real flow, this would happen via messaging - for now we verify generate outputs exist
 		console.log('\nVerifying contributor outputs before aggregation...')
 		const files1 = await verifyStepOutputFiles(
 			backend1,
@@ -708,9 +861,10 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Aggregate should now be Ready (barrier completed after contributors shared)
 		expect(aggStep?.status).toBe('Ready')
 
-		// Run aggregate step
-		await runStepInUI(page3, 'aggregate', email3)
-		await page3.waitForTimeout(1500)
+			// Run aggregate step
+			const aggregateRan = await runStepInUI(page3, 'aggregate', email3)
+			expect(aggregateRan).toBe(true)
+			await page3.waitForTimeout(1500)
 
 		// Verify aggregate output files
 		await verifyStepOutputFiles(backend3, sessionId, 'aggregate', ['result.json'], email3)
@@ -742,8 +896,8 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Verify UI shows aggregate as completed
 		await verifyStepStatusInUI(page3, 'aggregate', 'Completed', email3)
 		const progressAfterAgg = await verifyProgressInUI(page3, email3)
-		// After aggregate: generate(done) + share_contribution(done) + aggregate(done) = 3/4
-		expect(progressAfterAgg).toContain('4/5 steps complete')
+		// After aggregate: generate(done) + share_contribution(done) + aggregate(done) = 3/5
+		expect(progressAfterAgg).toContain('3/5 steps complete')
 
 		// Step 4: Aggregator shares results
 		console.log('\nStep 4: Share Results')
@@ -755,57 +909,74 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Verify share_result is shared
 		await page3.waitForTimeout(500)
 		await verifyStepStatusInUI(page3, 'share_result', 'Shared', email3)
-		const progressAfterShare = await verifyProgressInUI(page3, email3)
-		// After share_result, all 4 steps are complete
-		expect(progressAfterShare).toContain('Done')
+			const progressAfterShare = await verifyProgressInUI(page3, email3)
+			// After share_result, 4 of 5 total steps are complete in this flow definition
+			expect(progressAfterShare).toContain('4/5 steps complete')
 
-		log(logSocket, { event: 'flow-steps-completed' })
+			// Shared step outputs should be published into chat messages with metadata/files
+			const contributionSharedMsg = await waitForThreadMessageMatching(
+				backend3,
+				groupMessage.thread_id,
+				(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'share_contribution',
+				'contribution share results message',
+			)
+			const contributionMeta = normalizeMetadata(contributionSharedMsg?.metadata)?.flow_results
+			expect(Array.isArray(contributionMeta?.files)).toBe(true)
+			expect(contributionMeta?.files?.length).toBeGreaterThan(0)
 
-		// === Send Messages to Chat and Verify ===
-		console.log('\n--- Sending Messages Between Participants ---')
+			const resultSharedMsg = await waitForThreadMessageMatching(
+				backend1,
+				groupMessage.thread_id,
+				(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'share_result',
+				'final result share message',
+			)
+			const resultMeta = normalizeMetadata(resultSharedMsg?.metadata)?.flow_results
+			expect(Array.isArray(resultMeta?.files)).toBe(true)
+			expect(resultMeta?.files?.length).toBeGreaterThan(0)
 
-		// Navigate client1 back to Messages
-		await page1.click('button:has-text("Messages")')
-		await page1.waitForTimeout(500)
+			log(logSocket, { event: 'flow-steps-completed' })
 
-		// Click on the thread to select it
-		const threadItem1 = page1.locator('.message-thread-item').first()
-		await threadItem1.click()
-		await page1.waitForTimeout(500)
+			// === Send Messages to Chat and Verify ===
+			console.log('\n--- Sending Messages Between Participants ---')
 
-		// Send a message from client1 (use message-compose-body in Messages tab thread view)
-		const testMessage1 = `Step completed! Generated numbers at ${Date.now()}`
-		const messageInput1 = page1.locator('#message-compose-body')
-		await messageInput1.waitFor({ timeout: 5000 })
-		await messageInput1.fill(testMessage1)
-		const sendBtn1 = page1.locator('#message-send-btn')
-		await sendBtn1.click()
-		console.log(`  ${email1}: Sent message: "${testMessage1.substring(0, 30)}..."`)
-		await page1.waitForTimeout(2000)
+			// Navigate all clients to Messages and select the group thread
+			await navigateToMessagesAndFindThread(page1, email1)
+			await navigateToMessagesAndFindThread(page2, email2)
+			await navigateToMessagesAndFindThread(page3, email3)
 
-		// Navigate client2 to Messages and sync
-		await page2.click('button:has-text("Messages")')
-		await page2.waitForTimeout(500)
-		const syncBtn2 = page2.locator('#refresh-messages-btn')
-		if (await syncBtn2.isVisible()) {
-			await syncBtn2.click()
-			await page2.waitForTimeout(2000)
-		}
-		const threadItem2 = page2.locator('.message-thread-item').first()
-		await threadItem2.click()
-		await page2.waitForTimeout(1000)
+			// Everyone sends a hello message in the group chat
+			const hello1 = `Hello from ${email1} at ${Date.now()}`
+			const hello2 = `Hello from ${email2} at ${Date.now()}`
+			const hello3 = `Hello from ${email3} at ${Date.now()}`
+			await sendMessageInSelectedThread(page1, email1, hello1)
+			await sendMessageInSelectedThread(page2, email2, hello2)
+			await sendMessageInSelectedThread(page3, email3, hello3)
 
-		// Verify client2 sees the message
-		const messagesArea2 = page2.locator('.message-list, #message-list')
-		const messagesHtml2 = await messagesArea2.innerHTML().catch(() => '')
-		const hasMessage = messagesHtml2.includes('Step completed')
-		console.log(`  ${email2}: Can see client1's message: ${hasMessage}`)
+			// Verify all participants can receive all hello messages in the thread
+			const participantsBackends = [
+				{ email: email1, backend: backend1 },
+				{ email: email2, backend: backend2 },
+				{ email: email3, backend: backend3 },
+			]
+			const helloMessages = [hello1, hello2, hello3]
+			for (const participant of participantsBackends) {
+				for (const hello of helloMessages) {
+					await waitForThreadMessageMatching(
+						participant.backend,
+						groupMessage.thread_id,
+						(msg) => (msg?.body || '').includes(hello),
+						`${participant.email} sees hello message`,
+					)
+				}
+			}
 
-		// Navigate back to Runs to check final state
-		await page1.click('button:has-text("Runs")')
-		await page2.click('button:has-text("Runs")')
-		await page1.waitForTimeout(500)
-		await page2.waitForTimeout(500)
+			// Navigate back to Runs to check final state
+			await page1.click('button:has-text("Runs")')
+			await page2.click('button:has-text("Runs")')
+			await page3.click('button:has-text("Runs")')
+			await page1.waitForTimeout(500)
+			await page2.waitForTimeout(500)
+			await page3.waitForTimeout(500)
 
 		// === Verify Final State ===
 		console.log('\n--- Final Verification ---')
@@ -864,10 +1035,10 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const finalProgress2 = await verifyProgressInUI(page2, email2)
 		const finalProgress3 = await verifyProgressInUI(page3, email3)
 
-		// All 4 steps are complete across all participants - everyone sees "Done"
+		// Contributors reach Done; aggregator owns only its 2 actionable steps in this 5-step flow view
 		expect(finalProgress1).toContain('Done')
 		expect(finalProgress2).toContain('Done')
-		expect(finalProgress3).toContain('Done')
+		expect(finalProgress3).toContain('4/5 steps complete')
 
 		// === Verify Results in Chat ===
 		console.log('\n--- Checking for Shared Results in Chat ---')
@@ -886,26 +1057,15 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		console.log('\n=== Multiparty Flow Test Complete! ===')
 		log(logSocket, { event: 'multiparty-flow-test-complete' })
 
-		// Interactive mode pause
-		if (process.env.INTERACTIVE_MODE === '1') {
-			console.log('\n--- Interactive Mode ---')
-			console.log('All three clients have completed the flow. You can interact with them:')
-			console.log(`  Client 1: ${uiBaseUrl}?ws=${wsPort1}&real=1`)
-			console.log(`  Client 2: ${uiBaseUrl}?ws=${wsPort2}&real=1`)
-			console.log(`  Client 3: ${uiBaseUrl}?ws=${wsPort3}&real=1`)
-			console.log('\nPress ENTER to exit or wait 60 seconds...')
-
-			await new Promise<void>((resolve) => {
-				const timeout = setTimeout(resolve, 60_000)
-				if (process.stdin.isTTY) {
-					process.stdin.resume()
-					process.stdin.once('data', () => {
-						clearTimeout(timeout)
-						resolve()
-					})
-				}
-			})
-		}
+			// Interactive mode pause
+			if (process.env.INTERACTIVE_MODE === '1') {
+				console.log('\n--- Interactive Mode ---')
+				console.log('All three clients have completed the flow. You can interact with them:')
+				console.log(`  Client 1: ${uiBaseUrl}?ws=${wsPort1}&real=1`)
+				console.log(`  Client 2: ${uiBaseUrl}?ws=${wsPort2}&real=1`)
+				console.log(`  Client 3: ${uiBaseUrl}?ws=${wsPort3}&real=1`)
+				console.log('\nInteractive pause disabled; continuing cleanup.')
+			}
 
 		// Cleanup - close pages first to stop polling intervals and prevent WS errors
 		await page1.close()

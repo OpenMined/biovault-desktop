@@ -608,6 +608,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const stepsContainer = document.querySelector(`.mp-steps-list[data-run-id="${runId}"]`)
 		if (!stepsContainer) return
 
+		// Preserve active tab state before refresh
+		const activeTab = stepsContainer.querySelector('.mp-tab.active')?.dataset?.tab || 'steps'
+
 		try {
 			// Fetch both flow state and all participant progress
 			const [state, allProgress] = await Promise.all([
@@ -797,6 +800,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 			stepsContainer.innerHTML = progressHtml + tabsHtml
 
+			// Restore active tab state
+			if (activeTab && activeTab !== 'steps') {
+				const tabBtn = stepsContainer.querySelector(`.mp-tab[data-tab="${activeTab}"]`)
+				if (tabBtn) {
+					window.runsModule?.switchTab(tabBtn, activeTab)
+				}
+			}
+
 			// Load logs asynchronously
 			loadParticipantLogs(sessionId)
 		} catch (error) {
@@ -820,12 +831,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const logsHtml = logs
 				.map((log) => {
 					const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''
-					const roleShort = log.role.substring(0, 3).toUpperCase()
+					const participant = log.participant || log.role
+					const eventText = log.event === 'joined'
+						? `${participant} joined the flow`
+						: log.event === 'step_completed'
+						? `${participant} completed step "${log.step_id}"`
+						: log.event === 'step_shared'
+						? `${participant} shared outputs from "${log.step_id}"`
+						: `${participant}: ${log.event}`
 					return `<div class="mp-log-entry">
 						<span class="mp-log-time">${time}</span>
-						<span class="mp-log-role">${roleShort}</span>
-						<span class="mp-log-event">${escapeHtml(log.event)}</span>
-						${log.step_id ? `<span class="mp-log-step">${escapeHtml(log.step_id)}</span>` : ''}
+						<span class="mp-log-event">${escapeHtml(eventText)}</span>
 					</div>`
 				})
 				.join('')

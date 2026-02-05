@@ -331,3 +331,96 @@ read:
 2. **Participant stage indicator** - UX enhancement
 3. **Clickable participant cards** - UX enhancement
 4. **Synced paths for aggregator** - When SyftBox is running
+
+---
+
+## Implementation Progress (Feb 2026)
+
+### Problem: Empty Steps After Main Merge
+
+After merging code from main, multiparty flows broke with empty steps. Root cause: data structure mismatch between YAML and Rust.
+
+### Data Structure Issue
+
+| Format | Structure | Problem |
+|--------|-----------|---------|
+| **FlowFileSpec** (YAML) | `spec.datasites.groups` with role definitions | Full group info |
+| **FlowSpec** (Rust) | `datasites: Vec<String>` flat list | Groups lost in conversion |
+
+### Fixes Applied to `src-tauri/src/commands/multiparty.rs`
+
+#### 1. Build Groups from Participants (not flow spec)
+
+```rust
+fn build_group_map_from_participants(
+    participants: &[FlowParticipant],
+    flow_spec: &serde_json::Value,
+) -> (HashMap<String, Vec<String>>, HashMap<String, String>)
+```
+
+Creates:
+- `"all"` → all participant emails
+- `"contributor1"`, `"contributor2"`, `"aggregator"` → role-based groups
+- `"contributors"` → plural group from `contributorN` roles
+- `"clients"` → alias for contributors
+- `default_to_actual` map → position-based email mapping
+
+#### 2. Check `runs_on` First (FlowSpec format)
+
+```rust
+fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
+    // Try FlowSpec format first
+    if let Some(runs_on) = step.get("runs_on") { ... }
+    // Fallback to YAML format
+    if let Some(run) = step.get("run") { ... }
+}
+```
+
+#### 3. Default-to-Actual Email Mapping
+
+The flow spec has default emails like `client1@sandbox.local`, but actual participants may have different emails. Fixed by mapping by position:
+
+```rust
+// Map default datasite email to actual participant email
+if i < default_datasites.len() {
+    default_to_actual.insert(default_datasites[i].clone(), p.email.clone());
+}
+```
+
+#### 4. Updated `my_action` Logic
+
+```rust
+let my_action = targets.iter().any(|target| {
+    if target == my_email { return true; }
+    if let Some(group_members) = groups.get(target) {
+        if group_members.contains(&my_email.to_string()) { return true; }
+    }
+    // Check default-to-actual mapping
+    if let Some(actual_email) = default_to_actual.get(target) {
+        if actual_email == my_email { return true; }
+    }
+    false
+})
+```
+
+### Test Command
+
+```bash
+./test-scenario.sh --pipelines-multiparty --interactive
+```
+
+### Current Status
+
+- ✅ Code compiles without warnings
+- ✅ Groups built from participants correctly
+- ✅ `runs_on` field handled properly
+- ✅ Default email → actual email mapping works
+- 🔄 Testing multiparty execution flow
+- ⏳ SyftBox sync (syft.pub.yaml/syft.sub.yaml) data transfer
+
+### Goal: Unified Flow Syntax
+
+All flows should use same syntax as `syqure-distributed`:
+- Data moves via SyftBox sync, not shell scripts
+- No separate code paths for single vs multiparty
+- Steps target groups like `clients`, `aggregator`

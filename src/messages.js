@@ -2941,13 +2941,14 @@ export function createMessagesModule({
 							joinBtn.textContent = 'Joining...'
 
 							// Accept the invitation (backend only, no modal)
-							const result = await invoke('accept_flow_invitation', {
-								sessionId: flowInvitation.session_id,
-								flowName: flowInvitation.flow_name,
-								flowSpec: flowInvitation.flow_spec,
-								participants: flowInvitation.participants,
-								autoRunAll: false,
-							})
+								const result = await invoke('accept_flow_invitation', {
+									sessionId: flowInvitation.session_id,
+									flowName: flowInvitation.flow_name,
+									flowSpec: flowInvitation.flow_spec,
+									participants: flowInvitation.participants,
+									autoRunAll: false,
+									threadId: activeThreadId ?? null,
+								})
 
 							console.log('[Join Flow] Accepted:', result)
 
@@ -2981,12 +2982,28 @@ export function createMessagesModule({
 					const declineBtn = document.createElement('button')
 					declineBtn.className = 'flow-invitation-btn decline-btn'
 					declineBtn.textContent = 'Decline'
+
+					// Hide decline button if user is the sender (proposer)
+					const isSender = emailsMatch(msg.from, currentUser)
+					if (isSender) {
+						declineBtn.style.display = 'none'
+					}
+
 					declineBtn.addEventListener('click', async () => {
-						if (dialog?.message) {
-							await dialog.message('You declined the flow invitation.', {
-								title: 'Declined',
-								kind: 'info',
+						if (dialog?.confirm) {
+							const confirmed = await dialog.confirm('Decline this flow invitation?', {
+								title: 'Decline Invitation',
+								kind: 'warning',
 							})
+							if (confirmed) {
+								// Hide the invitation card
+								invitationCard.innerHTML = `
+									<div class="flow-invitation-declined">
+										<span>❌ You declined this flow invitation</span>
+									</div>
+								`
+								invitationCard.classList.add('declined')
+							}
 						}
 					})
 					actions.appendChild(declineBtn)

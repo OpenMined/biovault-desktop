@@ -563,7 +563,6 @@ export function createProposeFlowModal({
 		}
 
 		const flowName = selectedFlow.metadata?.name || selectedFlow.name || 'multiparty'
-		const sessionId = `session-${Date.now()}`
 
 		// Build participants list from role assignments
 		const participants = flowRoles.map((role) => {
@@ -594,7 +593,18 @@ export function createProposeFlowModal({
 		}
 
 		try {
-			// Send message with flow invitation metadata
+			// Get thread ID from messages module
+			const threadId = window.messagesModule?.activeThreadId || `thread-${Date.now()}`
+
+			// First, set up the proposer's session on the backend - this returns the session ID
+			const sessionId = await invoke('send_flow_invitation', {
+				threadId,
+				flowName,
+				flowSpec: selectedFlow,
+				participantRoles: participants,
+			})
+
+			// Send message with flow invitation metadata using the backend's session ID
 			await sendMessage({
 				recipients,
 				body,
@@ -612,13 +622,17 @@ export function createProposeFlowModal({
 			// Close modal
 			close()
 
-			// Optionally show success
+			// Show success and navigate to Runs
 			if (dialog?.message) {
-				await dialog.message(`Flow invitation sent to ${recipients.join(', ')}`, {
+				await dialog.message(`Flow invitation sent to ${recipients.join(', ')}. Navigate to Runs to manage the flow.`, {
 					title: 'Invitation Sent',
 					kind: 'info',
 				})
 			}
+
+			// Navigate to Runs tab
+			const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
+			window.dispatchEvent(event)
 		} catch (error) {
 			console.error('Failed to send invitation:', error)
 			if (dialog?.message) {

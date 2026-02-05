@@ -8,9 +8,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-// File name for shared step status across participants
-const SHARED_STATE_FILE: &str = "shared_step_status.json";
-
 /// Get the owner's email from config
 fn get_owner_email() -> Result<String, String> {
     let config =
@@ -349,12 +346,6 @@ fn check_participant_step_complete(
     false
 }
 
-/// Get a simplified role name from email for progress file naming
-fn get_role_from_email(email: &str) -> String {
-    // Extract username part before @
-    email.split('@').next().unwrap_or(email).to_string()
-}
-
 #[tauri::command]
 pub async fn send_flow_invitation(
     _state: tauri::State<'_, AppState>,
@@ -375,7 +366,7 @@ pub async fn send_flow_invitation(
         .map(|p| p.role.clone())
         .unwrap_or_else(|| "organizer".to_string());
 
-    let steps = parse_flow_steps(&flow_spec, &my_email)?;
+    let steps = parse_flow_steps(&flow_spec, &my_email, &participant_roles)?;
 
     // Set up work_dir for the proposer too (same as accept_flow_invitation)
     let work_dir = get_shared_flow_path(&flow_name, &session_id)?;
@@ -384,6 +375,9 @@ pub async fn send_flow_invitation(
     // Create progress directory
     let progress_dir = get_progress_path(&work_dir);
     let _ = fs::create_dir_all(&progress_dir);
+
+    // Log "joined" event for the proposer
+    append_progress_log(&progress_dir, "joined", None, &my_role);
 
     // Create syft.pub.yaml for cross-participant progress syncing
     let all_participant_emails: Vec<String> =
@@ -426,6 +420,7 @@ pub async fn accept_flow_invitation(
     flow_spec: serde_json::Value,
     participants: Vec<FlowParticipant>,
     auto_run_all: bool,
+    thread_id: Option<String>,
 ) -> Result<MultipartyFlowState, String> {
     // Check if already accepted
     {
@@ -445,7 +440,7 @@ pub async fn accept_flow_invitation(
         .map(|p| p.role.clone())
         .ok_or_else(|| "You are not a participant in this flow".to_string())?;
 
-    let mut steps = parse_flow_steps(&flow_spec, &my_email)?;
+    let mut steps = parse_flow_steps(&flow_spec, &my_email, &participants)?;
 
     if auto_run_all {
         for step in &mut steps {
@@ -508,7 +503,7 @@ pub async fn accept_flow_invitation(
         participants,
         steps,
         status: FlowSessionStatus::Accepted,
-        thread_id: String::new(),
+        thread_id: thread_id.unwrap_or_default(),
         work_dir: Some(work_dir.clone()),
         run_id,
     };
@@ -518,6 +513,10 @@ pub async fn accept_flow_invitation(
     let state_json = serde_json::to_string_pretty(&flow_state)
         .map_err(|e| format!("Failed to serialize state: {}", e))?;
     fs::write(&state_path, state_json).map_err(|e| format!("Failed to write state file: {}", e))?;
+
+    // Log "joined" event to progress.json
+    let progress_dir = get_progress_path(&work_dir);
+    append_progress_log(&progress_dir, "joined", None, &flow_state.my_role);
 
     {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
@@ -1244,16 +1243,25 @@ pub async fn receive_flow_step_outputs(
     Ok(())
 }
 
-/// Build a map of group name -> list of emails from spec.datasites.groups
-fn build_group_map(flow_spec: &serde_json::Value) -> HashMap<String, Vec<String>> {
+/// Build a map of group name -> list of emails from participants
+/// Also builds groups based on common role prefixes (e.g., contributor1, contributor2 -> contributors)
+/// Returns (groups, default_to_actual_map) where default_to_actual_map maps default datasite emails to actual participant emails
+fn build_group_map_from_participants(
+    participants: &[FlowParticipant],
+    flow_spec: &serde_json::Value,
+) -> (HashMap<String, Vec<String>>, HashMap<String, String>) {
     let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut default_to_actual: HashMap<String, String> = HashMap::new();
 
-    // Get spec.datasites.all as the full list
-    let all_datasites: Vec<String> = flow_spec
+    // "all" group contains all participants
+    let all_emails: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
+    groups.insert("all".to_string(), all_emails.clone());
+
+    // Get default datasites from flow spec (for position mapping)
+    let default_datasites: Vec<String> = flow_spec
         .get("spec")
         .and_then(|s| s.get("datasites"))
-        .and_then(|d| d.get("all"))
-        .and_then(|a| a.as_array())
+        .and_then(|d| d.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -1261,67 +1269,50 @@ fn build_group_map(flow_spec: &serde_json::Value) -> HashMap<String, Vec<String>
         })
         .unwrap_or_default();
 
-    groups.insert("all".to_string(), all_datasites.clone());
+    // Build groups based on roles
+    // - Each unique role gets its own group
+    // - Also create aggregate groups (e.g., "contributors" for contributor1, contributor2)
+    let mut role_groups: HashMap<String, Vec<String>> = HashMap::new();
+    for (i, p) in participants.iter().enumerate() {
+        // Add to exact role group
+        role_groups
+            .entry(p.role.clone())
+            .or_default()
+            .push(p.email.clone());
 
-    // Parse spec.datasites.groups
-    if let Some(spec_groups) = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("datasites"))
-        .and_then(|d| d.get("groups"))
-        .and_then(|g| g.as_object())
-    {
-        for (group_name, group_def) in spec_groups {
-            let mut members = Vec::new();
+        // Also add to aggregate group (strip trailing digits)
+        let base_role = p.role.trim_end_matches(|c: char| c.is_ascii_digit());
+        if base_role != p.role {
+            // Has trailing digits, add to plural group
+            let plural_role = format!("{}s", base_role);
+            role_groups
+                .entry(plural_role)
+                .or_default()
+                .push(p.email.clone());
+        }
 
-            // Handle "include" array
-            if let Some(includes) = group_def.get("include").and_then(|i| i.as_array()) {
-                for item in includes {
-                    if let Some(email) = item.as_str() {
-                        members.push(email.to_string());
-                    }
-                }
-            }
-
-            groups.insert(group_name.clone(), members);
+        // Map default datasite email to actual participant email (by position)
+        if i < default_datasites.len() {
+            default_to_actual.insert(default_datasites[i].clone(), p.email.clone());
         }
     }
 
-    groups
-}
-
-/// Check if an email belongs to a target group
-fn is_email_in_targets(
-    email: &str,
-    targets: &serde_json::Value,
-    groups: &HashMap<String, Vec<String>>,
-) -> bool {
-    match targets {
-        serde_json::Value::String(target_str) => {
-            // Target is a group name
-            if let Some(group_members) = groups.get(target_str) {
-                return group_members.contains(&email.to_string());
-            }
-            // Or direct email match
-            target_str == email
-        }
-        serde_json::Value::Array(target_arr) => {
-            // Target is an array of group names or emails
-            for item in target_arr {
-                if let Some(target_str) = item.as_str() {
-                    if let Some(group_members) = groups.get(target_str) {
-                        if group_members.contains(&email.to_string()) {
-                            return true;
-                        }
-                    }
-                    if target_str == email {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        _ => false,
+    // Merge role groups into main groups
+    for (role, members) in role_groups {
+        groups.insert(role, members);
     }
+
+    // Also add "clients" as alias for "contributors" if it exists
+    if let Some(contributors) = groups.get("contributors").cloned() {
+        groups.insert("clients".to_string(), contributors);
+    }
+
+    println!(
+        "[Multiparty] build_group_map_from_participants: groups={:?}, default_to_actual={:?}",
+        groups, default_to_actual
+    );
+
+    (groups, default_to_actual)
 }
 
 /// Extract share_to emails from step.share[*].permissions.read
@@ -1348,7 +1339,23 @@ fn extract_share_to(step: &serde_json::Value) -> Vec<String> {
 }
 
 /// Get targets as a list of group names/emails
+/// Handles both original YAML structure (run.targets) and converted FlowSpec (runs_on)
 fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
+    // Try converted FlowSpec structure first (runs_on)
+    if let Some(runs_on) = step.get("runs_on") {
+        match runs_on {
+            serde_json::Value::String(s) => return vec![s.clone()],
+            serde_json::Value::Array(arr) => {
+                return arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+            }
+            _ => {}
+        }
+    }
+
+    // Fallback to original YAML structure (run.targets)
     if let Some(run) = step.get("run") {
         if let Some(targets) = run.get("targets") {
             match targets {
@@ -1363,29 +1370,30 @@ fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
             }
         }
     }
-    // Barrier steps don't have run.targets
-    if step.get("barrier").is_some() {
-        if let Some(barrier) = step.get("barrier") {
-            if let Some(targets) = barrier.get("targets") {
-                match targets {
-                    serde_json::Value::String(s) => return vec![s.clone()],
-                    serde_json::Value::Array(arr) => {
-                        return arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect();
-                    }
-                    _ => {}
+
+    // Barrier steps
+    if let Some(barrier) = step.get("barrier") {
+        if let Some(targets) = barrier.get("targets") {
+            match targets {
+                serde_json::Value::String(s) => return vec![s.clone()],
+                serde_json::Value::Array(arr) => {
+                    return arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
                 }
+                _ => {}
             }
         }
     }
+
     Vec::new()
 }
 
 fn parse_flow_steps(
     flow_spec: &serde_json::Value,
     my_email: &str,
+    participants: &[FlowParticipant],
 ) -> Result<Vec<StepState>, String> {
     let steps = flow_spec
         .get("spec")
@@ -1393,7 +1401,13 @@ fn parse_flow_steps(
         .and_then(|s| s.as_array())
         .ok_or_else(|| "Invalid flow spec: missing steps".to_string())?;
 
-    let groups = build_group_map(flow_spec);
+    // Build groups from participants (not from flow spec, which loses group info)
+    // Also get default-to-actual email mapping for resolved targets
+    let (groups, default_to_actual) = build_group_map_from_participants(participants, flow_spec);
+    println!(
+        "[Multiparty] parse_flow_steps: my_email={}, groups={:?}",
+        my_email, groups
+    );
     let mut result = Vec::new();
 
     for step in steps {
@@ -1435,12 +1449,28 @@ fn parse_flow_steps(
 
         // Determine if my email is in the targets for this step
         let targets = get_step_targets(step);
-        let my_action = if let Some(run) = step.get("run") {
-            if let Some(run_targets) = run.get("targets") {
-                is_email_in_targets(my_email, run_targets, &groups)
-            } else {
+        let my_action = if !targets.is_empty() {
+            // Check if my email is in the targets (handles both direct emails and group names)
+            targets.iter().any(|target| {
+                // Check if it's a direct email match
+                if target == my_email {
+                    return true;
+                }
+                // Check if it's a group name and I'm in that group
+                if let Some(group_members) = groups.get(target) {
+                    if group_members.contains(&my_email.to_string()) {
+                        return true;
+                    }
+                }
+                // Check if target is a default datasite email that maps to my email
+                // (handles case where runs_on was resolved to default emails)
+                if let Some(actual_email) = default_to_actual.get(target) {
+                    if actual_email == my_email {
+                        return true;
+                    }
+                }
                 false
-            }
+            })
         } else if is_barrier {
             // Barrier applies to everyone - they all wait
             true
@@ -1452,15 +1482,18 @@ fn parse_flow_steps(
         let share_to = extract_share_to(step);
         let shares_output = !share_to.is_empty() || step.get("share").is_some();
 
-        // Resolve targets to actual emails
+        // Resolve targets to actual participant emails
         let target_emails: Vec<String> = targets
             .iter()
             .flat_map(|target| {
                 // Check if it's a group name
                 if let Some(group_members) = groups.get(target) {
                     group_members.clone()
+                } else if let Some(actual_email) = default_to_actual.get(target) {
+                    // Target is a default datasite email, map to actual participant
+                    vec![actual_email.clone()]
                 } else {
-                    // It's a direct email
+                    // It's a direct email or unknown - keep as is
                     vec![target.clone()]
                 }
             })

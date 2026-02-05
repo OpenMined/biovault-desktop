@@ -721,3 +721,162 @@ This prototype influenced the Flow spec's:
 - `../flow-spec-guide/tutorials/` - Progressive examples
 - `../flow-spec-guide/MIGRATION.md` - Detailed migration guide
 - `../biovault/pipelines.md` - Original design document (historical)
+
+---
+
+## Multiparty Flow Implementation Progress (Feb 2026)
+
+### Problem Summary
+
+Multiparty flows broke after merging code from main. The issues stem from data structure mismatches between:
+- **FlowFileSpec** (YAML format): Contains `spec.datasites.groups` with role definitions
+- **FlowSpec** (Rust struct): Flat `datasites: Vec<String>` loses group information
+
+### Key Issues Fixed
+
+#### 1. Empty Steps Issue
+- **Cause**: `parse_flow_steps` looked for `flow_spec.spec.inputs.datasites.default` and `flow_spec.spec.datasites.groups` which don't exist in converted FlowSpec
+- **Fix**: Build groups from participants instead of flow spec
+
+#### 2. Wrong Field Name
+- **Cause**: Code looked for `step.run.targets` but FlowSpec uses `step.runs_on`
+- **Fix**: Check `runs_on` first, then fall back to `run.targets`
+
+#### 3. Resolved Emails Mismatch
+- **Cause**: `runs_on` contains default emails (e.g., "client1@sandbox.local") but actual participants have different emails
+- **Fix**: Created default-to-actual email mapping by position
+
+### Code Changes in `src-tauri/src/commands/multiparty.rs`
+
+#### New Function: `build_group_map_from_participants`
+```rust
+fn build_group_map_from_participants(
+    participants: &[FlowParticipant],
+    flow_spec: &serde_json::Value,
+) -> (HashMap<String, Vec<String>>, HashMap<String, String>) {
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut default_to_actual: HashMap<String, String> = HashMap::new();
+
+    // "all" group contains all participants
+    let all_emails: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
+    groups.insert("all".to_string(), all_emails.clone());
+
+    // Get default datasites from flow spec (for position mapping)
+    let default_datasites: Vec<String> = flow_spec
+        .get("spec")
+        .and_then(|s| s.get("datasites"))
+        .and_then(|d| d.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // Build groups based on roles + aggregate groups
+    let mut role_groups: HashMap<String, Vec<String>> = HashMap::new();
+    for (i, p) in participants.iter().enumerate() {
+        // Role-based group (e.g., "contributor1", "aggregator")
+        role_groups.entry(p.role.clone()).or_default().push(p.email.clone());
+
+        // Strip trailing digits for plural group (contributor1 -> contributors)
+        let base_role = p.role.trim_end_matches(|c: char| c.is_ascii_digit());
+        if base_role != p.role {
+            let plural_role = format!("{}s", base_role);
+            role_groups.entry(plural_role).or_default().push(p.email.clone());
+        }
+
+        // Map default datasite email to actual participant email (by position)
+        if i < default_datasites.len() {
+            default_to_actual.insert(default_datasites[i].clone(), p.email.clone());
+        }
+    }
+
+    groups.extend(role_groups);
+
+    // Also add "clients" as alias for "contributors"
+    if let Some(contributors) = groups.get("contributors").cloned() {
+        groups.insert("clients".to_string(), contributors);
+    }
+
+    (groups, default_to_actual)
+}
+```
+
+#### Updated `get_step_targets`
+```rust
+fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
+    // Try converted FlowSpec structure first (runs_on)
+    if let Some(runs_on) = step.get("runs_on") {
+        match runs_on {
+            serde_json::Value::String(s) => return vec![s.clone()],
+            serde_json::Value::Array(arr) => {
+                return arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            }
+            _ => {}
+        }
+    }
+    // Fallback to original YAML structure (run.targets)
+    if let Some(run) = step.get("run") {
+        if let Some(targets) = run.get("targets") {
+            // ... handle targets
+        }
+    }
+    // Barrier steps
+    if let Some(barrier) = step.get("barrier") {
+        // ... handle barrier
+    }
+    Vec::new()
+}
+```
+
+#### Updated `my_action` Determination
+```rust
+let my_action = if !targets.is_empty() {
+    targets.iter().any(|target| {
+        if target == my_email { return true; }
+        if let Some(group_members) = groups.get(target) {
+            if group_members.contains(&my_email.to_string()) { return true; }
+        }
+        // Check if target is a default datasite email that maps to my email
+        if let Some(actual_email) = default_to_actual.get(target) {
+            if actual_email == my_email { return true; }
+        }
+        false
+    })
+} else if is_barrier { true } else { false };
+```
+
+### Reference Files
+
+#### `biovault/tests/scenarios/syqure-flow/flow.yaml`
+- Proper structure with `spec.datasites.groups`
+- Groups like "aggregator" and "clients" with `include` arrays
+- Steps use `run.targets: clients` or `run.targets: aggregator`
+
+#### `biovault/tests/scenarios/syqure-distributed.yaml`
+- Reference distributed test with parallel execution
+- Uses `bv run` command for each participant
+- Shows expected progress file structure
+
+### Goals
+
+1. **Unified Flow Syntax**: All flows should use same syntax as syqure-distributed
+2. **SyftBox Sync**: Data should move via SyftBox (syft.pub.yaml/syft.sub.yaml) not shell scripts
+3. **Single Code Path**: No separate code paths for single vs multiparty flows
+4. **Robust Testing**: UI testing via websocket bridge
+
+### Test Command
+```bash
+./test-scenario.sh --pipelines-multiparty --interactive
+```
+
+### Current Status
+
+- Code compiles without warnings
+- Test infrastructure being set up (devstack with 3 clients)
+- Need to verify flows execute correctly with group-based targeting
+- Need to add syft.sub.yaml subscription when participants join
+
+### Next Steps
+
+1. Run tests until they pass
+2. Verify data flows via SyftBox sync
+3. Ensure flows use proper flow spec syntax
+4. Add UI assertions via websocket bridge

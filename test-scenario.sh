@@ -1873,7 +1873,8 @@ PY
 
 		# Run the multiparty messaging test
 		timer_push "Playwright: @pipelines-multiparty"
-		run_ui_grep "@pipelines-multiparty" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		# Match only the exact tag and exclude @pipelines-multiparty-flow.
+		run_ui_grep "@pipelines-multiparty(?!-)" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		timer_pop
 
 		# In wait mode, keep everything running
