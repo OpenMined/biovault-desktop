@@ -3140,10 +3140,6 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		void refreshCurrentUserEmail()
 		setViewMode(viewMode)
 		void ensureDownloadProgressListener()
-		const queueCard = document.getElementById('queue-card-container')
-		if (queueCard) {
-			queueCard.style.display = 'none'
-		}
 		if (queueIntervalId) {
 			clearInterval(queueIntervalId)
 			queueIntervalId = null

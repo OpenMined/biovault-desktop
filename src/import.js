@@ -31,6 +31,7 @@ export function createImportModule({
 	let fileDetectedDataTypes = {}
 	let fileDetectedGrch = {}
 	let fileTypeOverrides = {}
+	let fileSharedOverride = {}
 	let referenceOptions = []
 	let referenceIndexOptions = []
 	let patternInputDebounce = null
