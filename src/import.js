@@ -1953,6 +1953,8 @@ export function createImportModule({
 			}
 			if (progressText) progressText.textContent = `Complete! Detected ${totalFiles} file types`
 			if (progressBarFill) progressBarFill.style.width = '100%'
+			// Update the status message to reflect the updated metadata
+			updateReviewStatus()
 		} catch (error) {
 			alert(`Error detecting file types: ${error}`)
 			console.error('Detection error:', error)
