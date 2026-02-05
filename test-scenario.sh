@@ -44,7 +44,7 @@ WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-scenario.log}"
 LOG_PORT="${UNIFIED_LOG_PORT:-9756}"
 UI_PORT="${UI_PORT:-8082}"
-MAX_PORT=8092
+MAX_PORT="${MAX_PORT:-8092}"
 TRACE=${TRACE:-0}
 DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 TIMING="${TIMING:-1}"
@@ -77,6 +77,7 @@ Scenario Options (pick one):
   --flows-solo     Run flow UI test only (single client)
   --flows-gwas     Run GWAS flow UI test only (single client)
   --flows-collab   Run two-client flow collaboration test
+  --flows-pause-resume  Test flow pause/resume with state persistence
   --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
@@ -156,6 +157,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--flows-collab)
 			SCENARIO="flows-collab"
+			shift
+			;;
+		--flows-pause-resume)
+			SCENARIO="flows-pause-resume"
 			shift
 			;;
 		--syqure-flow)
@@ -1977,6 +1982,102 @@ PY
 		else
 			info "Keeping synthetic data for reuse (set CLEANUP_SYNTHETIC=1 to remove)"
 		fi
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	flows-pause-resume)
+		start_static_server
+		# Pause/resume test - standalone with data setup
+		assert_tauri_binary_present
+		assert_tauri_binary_fresh
+
+		# Synthetic data configuration (same as flows-solo)
+		SYNTHETIC_DATA_DIR="$ROOT_DIR/test-data/synthetic-genotypes"
+		EXPECTED_FILE_COUNT=10
+		FORCE_REGEN="${FORCE_REGEN_SYNTHETIC:-0}"
+
+		# Check if synthetic data already exists and is valid
+		EXISTING_COUNT=0
+		if [[ -d "$SYNTHETIC_DATA_DIR" ]]; then
+			EXISTING_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+		fi
+
+		if [[ "$FORCE_REGEN" == "1" ]] || [[ "$EXISTING_COUNT" -lt "$EXPECTED_FILE_COUNT" ]]; then
+			# Generate synthetic data using biosynth (bvs)
+			info "=== Generating synthetic genotype data ==="
+			timer_push "Synthetic data generation"
+
+			# Clean up any partial/old data
+			rm -rf "$SYNTHETIC_DATA_DIR"
+			mkdir -p "$SYNTHETIC_DATA_DIR"
+
+			# Check if bvs (biosynth) is available
+			if ! command -v bvs &>/dev/null; then
+				info "Installing biosynth (bvs) CLI..."
+				cargo install biosynth --locked 2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to install biosynth. Please run: cargo install biosynth" >&2
+					exit 1
+				}
+			fi
+
+			# Generate synthetic genotype files with HERC2 variant overlay
+			OVERLAY_FILE="$ROOT_DIR/data/overlay_variants.json"
+			if [[ -f "$OVERLAY_FILE" ]]; then
+				info "Generating $EXPECTED_FILE_COUNT synthetic files with HERC2 variants..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--alt-frequency 0.50 \
+					--seed 100 \
+					--variants-file "$OVERLAY_FILE" \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			else
+				info "Generating $EXPECTED_FILE_COUNT synthetic files (no overlay file found)..."
+				bvs synthetic \
+					--output "$SYNTHETIC_DATA_DIR/{id}/{id}_X_X_GSAv3-DTC_GRCh38-{month}-{day}-{year}.txt" \
+					--count "$EXPECTED_FILE_COUNT" \
+					--threads 4 \
+					--seed 100 \
+					2>&1 | tee -a "$LOG_FILE" || {
+					echo "Failed to generate synthetic data" >&2
+					exit 1
+				}
+			fi
+			timer_pop
+
+			# Verify generated count
+			SYNTH_FILE_COUNT=$(find "$SYNTHETIC_DATA_DIR" -name "*.txt" | wc -l | tr -d ' ')
+			info "Generated $SYNTH_FILE_COUNT synthetic genotype files"
+		else
+			info "=== Reusing existing synthetic data ($EXISTING_COUNT files) ==="
+		fi
+
+		# Start Tauri instance
+		timer_push "Tauri instance start (single)"
+		info "Launching Tauri for client1 on WS port $WS_PORT_BASE"
+		TAURI1_PID=$(launch_instance "$CLIENT1_EMAIL" "$CLIENT1_HOME" "$CLIENT1_CFG" "$WS_PORT_BASE")
+		info "Waiting for WS bridge..."
+		wait_ws "$WS_PORT_BASE" || { echo "WS $WS_PORT_BASE not ready" >&2; exit 1; }
+		timer_pop
+
+		export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
+		export USE_REAL_INVOKE=true
+		export SYNTHETIC_DATA_DIR
+		info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+
+		# Run pause/resume test
+		info "=== Flows Pause/Resume Test ==="
+		timer_push "Playwright: @flows-pause-resume"
+		run_ui_grep "@flows-pause-resume" "SYNTHETIC_DATA_DIR=$SYNTHETIC_DATA_DIR" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
 
 		# In wait mode, keep everything running
 		if [[ "$WAIT_MODE" == "1" ]]; then

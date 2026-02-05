@@ -1,3 +1,5 @@
+const QUEUE_DISABLED = true
+
 export function createFilesModule({ invoke, dialog }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
 
@@ -10,6 +12,9 @@ export function createFilesModule({ invoke, dialog }) {
 	let filesSearchTerm = ''
 	let queueProcessorRunning = false
 	let queueIntervalId = null
+	let lastClickedFileId = null
+	let lastRenderedFileIds = []
+	let isRangeSelecting = false
 
 	async function refreshExistingFilePaths() {
 		try {
@@ -157,6 +162,7 @@ export function createFilesModule({ invoke, dialog }) {
 			.filter(fileMatchesSearch)
 
 		sortFilesForTable(filteredFiles)
+		lastRenderedFileIds = filteredFiles.map((f) => f.id)
 
 		filteredFiles.forEach((f) => {
 			const row = document.createElement('tr')
@@ -164,7 +170,7 @@ export function createFilesModule({ invoke, dialog }) {
 			let statusBadge = ''
 			if (f.status === 'pending') {
 				statusBadge =
-					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/clock.svg" width="10" height="10" alt="" style="vertical-align: middle;" />PENDING</span>'
+					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #28a745; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/check-circle.svg" width="10" height="10" alt="" style="vertical-align: middle;" />IMPORTED</span>'
 			} else if (f.status === 'processing') {
 				statusBadge =
 					'<span style="display: inline-flex; align-items: center; gap: 4px; background: #17a2b8; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500;"><img src="assets/icons/loader.svg" width="10" height="10" alt="" style="vertical-align: middle; animation: spin 1s linear infinite;" />PROCESSING</span>'
@@ -216,16 +222,48 @@ export function createFilesModule({ invoke, dialog }) {
 			})
 		})
 
-		document.querySelectorAll('#files-table .file-checkbox').forEach((checkbox) => {
-			checkbox.addEventListener('change', (e) => {
-				const id = parseInt(e.target.dataset.id)
-				if (e.target.checked) {
-					if (!selectedFilesForDelete.includes(id)) {
-						selectedFilesForDelete.push(id)
-					}
-				} else {
-					selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
+		const setFileMarkedForDelete = (id, selected) => {
+			if (selected) {
+				if (!selectedFilesForDelete.includes(id)) {
+					selectedFilesForDelete.push(id)
 				}
+			} else {
+				selectedFilesForDelete = selectedFilesForDelete.filter((x) => x !== id)
+			}
+
+			const cb = document.querySelector(`#files-table .file-checkbox[data-id="${id}"]`)
+			if (cb) cb.checked = selected
+		}
+
+		document.querySelectorAll('#files-table .file-checkbox').forEach((checkbox) => {
+			checkbox.addEventListener('click', (e) => {
+				const id = parseInt(e.target.dataset.id)
+				if (e.shiftKey && lastClickedFileId !== null) {
+					isRangeSelecting = true
+					const start = lastRenderedFileIds.indexOf(lastClickedFileId)
+					const end = lastRenderedFileIds.indexOf(id)
+					const targetChecked = e.target.checked
+
+					if (start !== -1 && end !== -1) {
+						const from = Math.min(start, end)
+						const to = Math.max(start, end)
+						for (let i = from; i <= to; i++) {
+							setFileMarkedForDelete(lastRenderedFileIds[i], targetChecked)
+						}
+					} else {
+						setFileMarkedForDelete(id, targetChecked)
+					}
+
+					updateDeleteFilesButton()
+					isRangeSelecting = false
+				}
+				lastClickedFileId = id
+			})
+
+			checkbox.addEventListener('change', (e) => {
+				if (isRangeSelecting) return
+				const id = parseInt(e.target.dataset.id)
+				setFileMarkedForDelete(id, e.target.checked)
 				updateDeleteFilesButton()
 			})
 		})
@@ -234,18 +272,24 @@ export function createFilesModule({ invoke, dialog }) {
 		updateFilesSortIndicators()
 
 		const pendingCount = allFilesData.filter((f) => f.status === 'pending').length
-		document.getElementById('pending-count').textContent = pendingCount
+		const pendingCountEl = document.getElementById('pending-count')
+		if (pendingCountEl) pendingCountEl.textContent = pendingCount
 
 		const processQueueBtn = document.getElementById('process-queue-btn')
-		if (pendingCount > 0) {
-			processQueueBtn.style.display = 'flex'
-		} else {
-			processQueueBtn.style.display = 'none'
+		if (processQueueBtn) {
+			if (QUEUE_DISABLED) {
+				processQueueBtn.style.display = 'none'
+			} else if (pendingCount > 0) {
+				processQueueBtn.style.display = 'flex'
+			} else {
+				processQueueBtn.style.display = 'none'
+			}
 		}
 
 		const spinner = document.getElementById('queue-spinner')
 		if (spinner) {
-			spinner.style.display = queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
+			spinner.style.display =
+				!QUEUE_DISABLED && queueProcessorRunning && pendingCount > 0 ? 'inline-block' : 'none'
 		}
 
 		const selectAllHeader = document.getElementById('select-all-files-table')
@@ -285,6 +329,7 @@ export function createFilesModule({ invoke, dialog }) {
 	}
 
 	async function updateQueueButton() {
+		if (QUEUE_DISABLED) return
 		try {
 			const isRunning = await invoke('get_queue_processor_status')
 			const btn = document.getElementById('process-queue-btn')
@@ -336,25 +381,29 @@ export function createFilesModule({ invoke, dialog }) {
 
 		const processQueueBtn = document.getElementById('process-queue-btn')
 		if (processQueueBtn) {
-			processQueueBtn.addEventListener('click', async () => {
-				try {
-					const isRunning = await invoke('get_queue_processor_status')
+			if (QUEUE_DISABLED) {
+				processQueueBtn.style.display = 'none'
+			} else {
+				processQueueBtn.addEventListener('click', async () => {
+					try {
+						const isRunning = await invoke('get_queue_processor_status')
 
-					if (isRunning) {
-						await invoke('pause_queue_processor')
-					} else {
-						await invoke('resume_queue_processor')
+						if (isRunning) {
+							await invoke('pause_queue_processor')
+						} else {
+							await invoke('resume_queue_processor')
+						}
+
+						await updateQueueButton()
+						await loadFiles()
+					} catch (error) {
+						alert(`Error toggling queue processor: ${error}`)
 					}
-
-					await updateQueueButton()
-					await loadFiles()
-				} catch (error) {
-					alert(`Error toggling queue processor: ${error}`)
-				}
-			})
+				})
+			}
 		}
 
-		if (!queueIntervalId) {
+		if (!QUEUE_DISABLED && !queueIntervalId) {
 			queueIntervalId = setInterval(async () => {
 				await updateQueueButton()
 

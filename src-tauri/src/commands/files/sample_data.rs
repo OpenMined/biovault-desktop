@@ -252,8 +252,7 @@ fn link_or_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
         }
     };
     if let Err(err) = link_result {
-        fs::copy(source, dest)
-            .map_err(|e| format!("Failed to symlink ({err}) and copy: {e}"))?;
+        fs::copy(source, dest).map_err(|e| format!("Failed to symlink ({err}) and copy: {e}"))?;
     }
     Ok(())
 }
@@ -341,22 +340,24 @@ pub async fn check_sample_downloaded(sample_id: String) -> Result<Option<String>
 
     let key = sample_id.trim().to_lowercase();
     let (participant_id, expected_files, import_folder) = match key.as_str() {
-        "na06985-chry" | "na06985-chr-y" | "na06985-chr_y" | "na06985-chry-raw" => {
-            ("NA06985-chrY", vec![
-                "NA06985.final.chrY.cram",
-                "NA06985.final.chrY.cram.crai",
-            ], "NA06985-chrY-import")
-        }
-        "na06985-full" | "na06985" => {
-            ("NA06985", vec![
-                "NA06985.final.cram",
-                "NA06985.final.cram.crai",
-            ], "NA06985-import")
-        }
+        "na06985-chry" | "na06985-chr-y" | "na06985-chr_y" | "na06985-chry-raw" => (
+            "NA06985-chrY",
+            vec!["NA06985.final.chrY.cram", "NA06985.final.chrY.cram.crai"],
+            "NA06985-chrY-import",
+        ),
+        "na06985-full" | "na06985" => (
+            "NA06985",
+            vec!["NA06985.final.cram", "NA06985.final.cram.crai"],
+            "NA06985-import",
+        ),
         "dynamic-dna" | "dynamicdna" | "dynamic_dna" => {
-            let file_path = sample_dir.join("dynamic-dna").join("100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt");
+            let file_path = sample_dir
+                .join("dynamic-dna")
+                .join("100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt");
             if file_path.exists() {
-                return Ok(Some(sample_dir.join("dynamic-dna").to_string_lossy().to_string()));
+                return Ok(Some(
+                    sample_dir.join("dynamic-dna").to_string_lossy().to_string(),
+                ));
             }
             return Ok(None);
         }

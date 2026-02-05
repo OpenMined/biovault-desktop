@@ -384,7 +384,12 @@ launch_desktop_instance() {
 
   export BIOVAULT_HOME="$home"
   export BIOVAULT_DEV_MODE=1
-  export BIOVAULT_DEV_SYFTBOX=1
+  # Only set when explicitly enabled; presence alone triggers debug in syftbox-sdk.
+  if [[ "${BIOVAULT_DEV_SYFTBOX:-0}" == "1" ]]; then
+    export BIOVAULT_DEV_SYFTBOX=1
+  else
+    unset BIOVAULT_DEV_SYFTBOX
+  fi
   export BIOVAULT_DISABLE_PROFILES=1
   export BV_SYFTBOX_BACKEND="${BV_SYFTBOX_BACKEND:-embedded}"
   if [[ "$BV_SYFTBOX_BACKEND" != "process" ]]; then

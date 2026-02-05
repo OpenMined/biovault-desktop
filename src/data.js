@@ -1,3 +1,5 @@
+const QUEUE_DISABLED = true
+
 function getPathBasename(filePath) {
 	if (!filePath) return ''
 	const normalized = filePath.replace(/\\/g, '/')
@@ -34,6 +36,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const downloadProgressCache = new Map()
 	let downloadModalHandle = null
 	let downloadProgressListener = null
+	let lastClickedFileId = null
+	let isRangeSelecting = false
 	let currentEditingAssets = new Map()
 	let currentEditingOriginalName = null
 	let currentEditingWasPublished = false
@@ -549,6 +553,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	function renderStatusBadge(status, error = null, fileId = null) {
+		// Queue disabled - always show as imported for pending status
 		return `<span class="status-badge status-complete" title="Imported">
 			<img src="assets/icons/check-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
 			IMPORTED
@@ -648,17 +653,55 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		// Checkbox handler
 		const checkbox = row.querySelector('.file-checkbox')
-		checkbox.addEventListener('change', (e) => {
-			const fileId = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFileIds.includes(fileId)) {
-					selectedFileIds.push(fileId)
+		const setFileSelected = (targetId, selected) => {
+			if (selected) {
+				if (!selectedFileIds.includes(targetId)) {
+					selectedFileIds.push(targetId)
 				}
-				row.classList.add('selected')
 			} else {
-				selectedFileIds = selectedFileIds.filter((id) => id !== fileId)
-				row.classList.remove('selected')
+				selectedFileIds = selectedFileIds.filter((id) => id !== targetId)
 			}
+
+			const targetRow = document.querySelector(`tr[data-file-id="${targetId}"]`)
+			if (targetRow) {
+				targetRow.classList.toggle('selected', selected)
+				const cb = targetRow.querySelector('.file-checkbox')
+				if (cb) cb.checked = selected
+			}
+		}
+
+		checkbox.addEventListener('click', (e) => {
+			const fileId = parseInt(e.target.dataset.id)
+			if (e.shiftKey && lastClickedFileId !== null) {
+				isRangeSelecting = true
+				const ids = filesToDisplay.map((f) => f.id)
+				const start = ids.indexOf(lastClickedFileId)
+				const end = ids.indexOf(fileId)
+				const targetChecked = checkbox.checked
+
+				if (start !== -1 && end !== -1) {
+					const from = Math.min(start, end)
+					const to = Math.max(start, end)
+					for (let i = from; i <= to; i++) {
+						setFileSelected(ids[i], targetChecked)
+					}
+				} else {
+					setFileSelected(fileId, targetChecked)
+				}
+
+				updateDeleteButton()
+				updateSelectAllCheckbox()
+				updateActionButtons()
+				syncSelectionToSessionStorage()
+				isRangeSelecting = false
+			}
+			lastClickedFileId = fileId
+		})
+
+		checkbox.addEventListener('change', (e) => {
+			if (isRangeSelecting) return
+			const fileId = parseInt(e.target.dataset.id)
+			setFileSelected(fileId, e.target.checked)
 			updateDeleteButton()
 			updateSelectAllCheckbox()
 			updateActionButtons()
@@ -884,6 +927,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 	// Update queue status indicator with count and time estimate
 	function updateQueueStatusIndicator(globalInfo) {
+		if (QUEUE_DISABLED) return
 		const _statusIndicator = document.getElementById('queue-status-indicator')
 		const pendingCountEl = document.getElementById('pending-count')
 		const timeEstimateEl = document.getElementById('queue-time-estimate-display')
@@ -919,6 +963,13 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	async function updateQueueButton() {
+		// Queue disabled - hide UI elements and return early
+		const queueCard = document.getElementById('queue-card-container')
+		const clearQueueBtn = document.getElementById('clear-queue-btn')
+		const processQueueBtn = document.getElementById('process-queue-btn')
+		if (queueCard) queueCard.style.display = 'none'
+		if (clearQueueBtn) clearQueueBtn.style.display = 'none'
+		if (processQueueBtn) processQueueBtn.style.display = 'none'
 		return
 		/* try {
 			// Always fetch fresh queue info to ensure UI is in sync with backend
@@ -3514,74 +3565,13 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Queue processor button
-		const processQueueBtn = document.getElementById('process-queue-btn')
-		if (processQueueBtn) {
-			processQueueBtn.style.display = 'none'
-			processQueueBtn.addEventListener('click', async () => {
-				try {
-					const isRunning = await invoke('get_queue_processor_status')
-
-					if (isRunning) {
-						await invoke('pause_queue_processor')
-					} else {
-						await invoke('resume_queue_processor')
-					}
-
-					// Immediately refresh queue info to get accurate state
-					await fetchQueueInfo()
-					await updateQueueButton()
-					await loadData()
-				} catch (error) {
-					alert(`Error toggling queue processor: ${error}`)
-				}
-			})
-		}
-
-		// Clear queue button
+		// Queue processor disabled - hide UI elements
+		const queueCard = document.getElementById('queue-card-container')
 		const clearQueueBtn = document.getElementById('clear-queue-btn')
-		if (clearQueueBtn) {
-			clearQueueBtn.style.display = 'none'
-			clearQueueBtn.addEventListener('click', async () => {
-				// Get queue info to include both pending and processing files
-				const queueInfo = await invoke('get_queue_info', { fileId: null })
-				const totalQueueCount = queueInfo.total_pending + queueInfo.processing_count
-
-				if (totalQueueCount === 0) {
-					return
-				}
-
-				const processingText =
-					queueInfo.processing_count > 0
-						? ` (including ${queueInfo.processing_count} currently being processed)`
-						: ''
-
-				const confirmed = await dialog.confirm(
-					`Are you sure you want to clear the queue? This will remove ${totalQueueCount} file${
-						totalQueueCount === 1 ? '' : 's'
-					}${processingText} from the queue. This will stop any ongoing imports. This action cannot be undone.`,
-					{ title: 'Clear Queue', type: 'warning' },
-				)
-
-				if (confirmed) {
-					try {
-						const deleted = await invoke('clear_pending_queue')
-						await dialog.message(
-							`Cleared ${deleted} file${deleted === 1 ? '' : 's'} from the queue.`,
-							{ title: 'Queue Cleared', type: 'info' },
-						)
-						await loadData()
-					} catch (error) {
-						await dialog.message(`Error clearing queue: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				}
-			})
-		}
-
-		// Queue processor disabled: no polling or UI updates.
+		const processQueueBtn = document.getElementById('process-queue-btn')
+		if (queueCard) queueCard.style.display = 'none'
+		if (clearQueueBtn) clearQueueBtn.style.display = 'none'
+		if (processQueueBtn) processQueueBtn.style.display = 'none'
 	}
 
 	async function ensureDownloadProgressListener() {

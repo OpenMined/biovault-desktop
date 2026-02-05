@@ -2241,6 +2241,8 @@ export function createImportModule({
 			}
 			if (progressText) progressText.textContent = `Complete! Detected ${totalFiles} file types`
 			if (progressBarFill) progressBarFill.style.width = '100%'
+			// Update the status message to reflect the updated metadata
+			updateReviewStatus()
 		} catch (error) {
 			alert(`Error detecting file types: ${error}`)
 			console.error('Detection error:', error)
@@ -2355,7 +2357,7 @@ export function createImportModule({
 			})
 			if (progressText) progressText.textContent = `Importing files...`
 			if (progressBarFill) progressBarFill.style.width = '50%'
-			// Fast import - add all files instantly
+			// Fast import - add all files instantly (queue disabled)
 			const result = await invoke('import_files_pending', {
 				fileMetadata: fileMetadata,
 			})

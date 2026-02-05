@@ -2,10 +2,6 @@ name: Test
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'main'
-      - 'dev'
   pull_request:
     branches:
       - '**'
@@ -50,47 +46,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # flows-solo
-          - scenario: flows-solo
+          # flows-pause-resume (linux only for next push)
+          - scenario: flows-pause-resume
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - scenario: flows-solo
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          - scenario: flows-solo
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-
-          # jupyter-collab
-          - scenario: jupyter-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-
-          # flows-collab
+          # flows-collab (linux + windows)
           - scenario: flows-collab
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
@@ -101,10 +64,24 @@ jobs:
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
             client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop.exe
+          # jupyter-collab (linux + mac + windows)
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
-          # NOTE: flows-collab on macOS runs with rust client mode only.
-          # Disabled on macOS per request.
+            run_prefix: "xvfb-run -a"
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop.exe
 
     defaults:
       run:
@@ -433,59 +410,36 @@ jobs:
           path: ~/.sbdev/bin
           key: minio-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: Run Jupyter collab scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
+      - name: Run flows pause/resume scenario
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-pause-resume'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-          JUPYTER_PAUSE_TIME: "5000"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
-      - name: Run Jupyter collab scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
-        shell: pwsh
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
-          JUPYTER_PAUSE_TIME: "5000"
-        run: .\win.ps1 ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
-
-      - name: Run flows solo scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'flows-solo'
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-solo
-      - name: Run flows solo scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'flows-solo'
-        shell: pwsh
-        env:
-          SKIP_PLAYWRIGHT_INSTALL: "1"
-          AUTO_REBUILD_TAURI: "0"
-          CONTAINERS_MACHINE_PROVIDER: "hyperv"
-          BIOVAULT_CONTAINER_RUNTIME: "podman"
-          BIOVAULT_HYPERV_MOUNT: "1"
-          BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
-          BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --flows-solo
+        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-pause-resume
 
       - name: Run flows collab scenario
-        if: runner.os != 'Windows' && matrix.scenario == 'flows-collab'
+        if: matrix.scenario == 'flows-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-        run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
-      - name: Run flows collab scenario (Windows)
-        if: runner.os == 'Windows' && matrix.scenario == 'flows-collab'
-        shell: pwsh
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
+          else
+            ./test-scenario.sh --flows-collab
+          fi
+
+      - name: Run jupyter collab scenario
+        if: matrix.scenario == 'jupyter-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
-          CONTAINERS_MACHINE_PROVIDER: "hyperv"
-          BIOVAULT_CONTAINER_RUNTIME: "podman"
-          BIOVAULT_HYPERV_MOUNT: "1"
-          BIOVAULT_HYPERV_HOST_DIR: "C:\\bvtemp"
-          BIOVAULT_KEEP_HYPERV_HOST_DIR: "1"
-        run: .\win.ps1 ./test-scenario.sh --flows-collab
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+          else
+            ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+          fi
 
       - name: Upload test artifacts on failure
         if: failure()
