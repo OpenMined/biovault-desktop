@@ -75,8 +75,16 @@ pub async fn import_files_with_metadata(
         })
         .collect();
 
+    // Success if no errors OR if at least some files were imported (partial success)
+    // This ensures:
+    // - All files skipped (already exist) = success (no errors, skipped > 0)
+    // - Some imported, some skipped = success
+    // - Some imported, some errors = success (partial success, user can retry failed)
+    // - All files errored = failure
+    let success = lib_result.errors.is_empty() || lib_result.imported > 0;
+
     Ok(ImportResult {
-        success: lib_result.imported > 0,
+        success,
         message: format!(
             "Successfully imported {} files, skipped {}",
             lib_result.imported, lib_result.skipped
@@ -134,8 +142,11 @@ pub async fn import_files_pending(
         crate::desktop_log!("⚠️  Import error: {}", error);
     }
 
+    // Success if no errors OR if at least some files were added (partial success)
+    let success = lib_result.errors.is_empty() || lib_result.imported > 0;
+
     Ok(ImportResult {
-        success: lib_result.imported > 0,
+        success,
         message: format!(
             "Added {} files to queue for processing, skipped {}",
             lib_result.imported, lib_result.skipped

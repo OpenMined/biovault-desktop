@@ -7,6 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Output;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
@@ -112,6 +113,82 @@ fn flow_pause_marker(results_dir: &Path) -> PathBuf {
 
 fn flow_pid_path(results_dir: &Path) -> PathBuf {
     results_dir.join("flow.pid")
+}
+
+fn extract_publish_rel_path(spec: &str, fallback: &str) -> PathBuf {
+    let trimmed = spec.trim();
+    if let (Some(start), Some(end)) = (trimmed.find('('), trimmed.rfind(')')) {
+        if end > start + 1 {
+            let inner = trimmed[start + 1..end].trim();
+            if !inner.is_empty() {
+                return PathBuf::from(inner);
+            }
+        }
+    }
+    PathBuf::from(fallback)
+}
+
+fn published_output_exists(step_dir: &Path, rel_path: &Path) -> bool {
+    if step_dir.as_os_str().is_empty() {
+        return false;
+    }
+    let direct = step_dir.join(rel_path);
+    if direct.exists() {
+        return true;
+    }
+    if !step_dir.exists() {
+        return false;
+    }
+
+    // Search for the output within step subdirectories (e.g., per-datasite outputs).
+    let mut found = false;
+    for entry in WalkDir::new(step_dir)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.ends_with(rel_path) {
+            found = true;
+            break;
+        }
+        if rel_path.components().count() == 1 {
+            if let Some(name) = rel_path.file_name() {
+                if path.file_name() == Some(name) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    found
+}
+
+fn published_outputs_complete(flow_spec: &FlowSpec, results_dir: &Path) -> Option<bool> {
+    let mut expected: Vec<(String, PathBuf)> = Vec::new();
+    for step in &flow_spec.steps {
+        if step.publish.is_empty() {
+            continue;
+        }
+        for (name, spec) in &step.publish {
+            let rel_path = extract_publish_rel_path(spec, name);
+            expected.push((step.id.clone(), rel_path));
+        }
+    }
+
+    if expected.is_empty() {
+        return None;
+    }
+
+    for (step_id, rel_path) in expected {
+        let step_dir = results_dir.join(step_id);
+        if !published_output_exists(&step_dir, &rel_path) {
+            return Some(false);
+        }
+    }
+
+    Some(true)
 }
 
 #[cfg(target_os = "windows")]
@@ -322,6 +399,28 @@ fn truncate_output(bytes: &[u8], limit: usize) -> String {
     }
 }
 
+fn run_command_with_timeout(
+    mut cmd: Command,
+    timeout: std::time::Duration,
+) -> Result<Output, String> {
+    use std::time::Instant;
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let start = Instant::now();
+    loop {
+        if let Some(_status) = child.try_wait().map_err(|e| e.to_string())? {
+            return child.wait_with_output().map_err(|e| e.to_string());
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("timeout".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 fn probe_container_runtime(window: Option<&tauri::WebviewWindow>, log_path: &Path) {
     let mut bins: Vec<String> = Vec::new();
     if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
@@ -346,7 +445,7 @@ fn probe_container_runtime(window: Option<&tauri::WebviewWindow>, log_path: &Pat
         let mut cmd = Command::new(&bin);
         cmd.arg("info");
         configure_child_process(&mut cmd);
-        let output = cmd.output();
+        let output = run_command_with_timeout(cmd, std::time::Duration::from_secs(5));
         match output {
             Ok(out) => {
                 let status = out.status;
@@ -2409,6 +2508,14 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         biovault_db.list_flow_runs().map_err(|e| e.to_string())?
     };
+    let flow_specs: HashMap<i64, FlowSpec> = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
+        flows
+            .into_iter()
+            .filter_map(|flow| flow.spec.map(|spec| (flow.id, spec)))
+            .collect()
+    };
 
     for run in runs {
         if run.status != "running" && run.status != "paused" {
@@ -2469,6 +2576,17 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
                 if let Ok(modified) = metadata.modified() {
                     if now.duration_since(modified).unwrap_or_default() < grace_period {
                         // Log is still being written; keep status as-is.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if let Some(flow_id) = run.flow_id {
+            if let Some(flow_spec) = flow_specs.get(&flow_id) {
+                if let Some(done) = published_outputs_complete(flow_spec, &results_dir) {
+                    if done {
+                        updates.push((run.id, "success".to_string(), true));
                         continue;
                     }
                 }
@@ -2724,7 +2842,63 @@ pub async fn resume_flow_run(
     nextflow_max_forks: Option<u32>,
     force_remove_lock: Option<bool>,
 ) -> Result<Run, String> {
-    let (flow_id, results_dir, input_overrides, selection, resolved_max_forks, _flow_path) = {
+    crate::desktop_log!("↩️ resume_flow_run called for run_id={}", run_id);
+
+    // Get results_dir first for stale state cleanup
+    let initial_results_dir = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db
+            .get_flow_run(run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.results_dir.or(Some(r.work_dir)))
+    };
+
+    // Clean up stale state BEFORE marking as running
+    // This handles the case where a previous run crashed while "running"
+    if let Some(results_dir) = initial_results_dir.as_ref() {
+        if let Some(mut flow_state) = load_flow_state(Path::new(results_dir)) {
+            if flow_state.status.as_deref() == Some("running") {
+                // Only update if there's no active process (stale state)
+                let pid_path = flow_pid_path(Path::new(results_dir));
+                let is_stale = if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+                    if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                        !is_pid_running(pid)
+                    } else {
+                        true
+                    }
+                } else {
+                    true // No PID file means it's stale
+                };
+
+                if is_stale {
+                    flow_state.status = Some("failed".to_string());
+                    flow_state.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                    let _ = save_flow_state(Path::new(results_dir), &flow_state);
+                    crate::desktop_log!(
+                        "🧹 Cleaned up stale running state before resume for run_id={}",
+                        run_id
+                    );
+                }
+            }
+        }
+    }
+
+    // NOW mark run as running so UI updates right away
+    {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let _ = biovault_db.update_flow_run_status(run_id, "running", true);
+    }
+    // Also update flow.state.json to running
+    if let Some(results_dir) = initial_results_dir.as_ref() {
+        if let Some(mut flow_state) = load_flow_state(Path::new(results_dir)) {
+            flow_state.status = Some("running".to_string());
+            flow_state.last_updated = Some(chrono::Utc::now().to_rfc3339());
+            let _ = save_flow_state(Path::new(results_dir), &flow_state);
+        }
+    }
+
+    let (flow_id, results_dir, input_overrides, selection, resolved_max_forks, flow_path) = {
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         let run = biovault_db
             .get_flow_run(run_id)
@@ -2770,110 +2944,125 @@ pub async fn resume_flow_run(
         )
     };
 
-    // Clear Nextflow locks from ALL module directories (not just flow directory)
-    // because Nextflow runs from module directories, not flow directories
+    if let Some(results_dir) = results_dir.as_ref() {
+        let log_path = PathBuf::from(results_dir).join("flow.log");
+        append_flow_log(Some(&window), &log_path, "↩️  Resume requested from UI");
+
+        // Clear stale PID if present and not running.
+        let pid_path = flow_pid_path(Path::new(results_dir));
+        if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                if !is_pid_running(pid) {
+                    let _ = fs::remove_file(&pid_path);
+                    append_flow_log(
+                        Some(&window),
+                        &log_path,
+                        "🧹 Removed stale flow.pid before resume",
+                    );
+                }
+            }
+        }
+
+        // Note: Stale state cleanup is now handled earlier in the function,
+        // before we set status to "running". This ensures we don't accidentally
+        // reset the freshly-set running status.
+    }
+
+    // Clear Nextflow locks from both module directories AND flow directory
+    // Nextflow may run from either location depending on the flow setup
     if let Some(results_dir) = results_dir.as_ref() {
         let log_path = PathBuf::from(results_dir).join("flow.log");
 
-        // Get all lock files from modules directory
+        // Use more retries when force flag is set
+        let max_retries = if force_remove_lock.unwrap_or(false) {
+            6
+        } else {
+            3
+        };
+
+        // Collect all directories to check for locks (modules + flow directory)
+        let mut dirs_to_check: Vec<PathBuf> = Vec::new();
+
+        // Add module directories
         if let Ok(modules_dir) = get_modules_dir() {
-            let mut all_locks: Vec<PathBuf> = Vec::new();
-
-            // Walk each module directory and collect locks
             if let Ok(entries) = fs::read_dir(&modules_dir) {
                 for entry in entries.filter_map(Result::ok) {
                     let module_path = entry.path();
                     if module_path.is_dir() {
-                        all_locks.extend(list_nextflow_locks(&module_path));
+                        dirs_to_check.push(module_path);
                     }
                 }
             }
+        }
 
-            if !all_locks.is_empty() {
-                append_flow_log(
-                    Some(&window),
-                    &log_path,
-                    &format!(
-                        "⚠️  Nextflow locks detected in modules: {}",
-                        all_locks.len()
-                    ),
-                );
+        // Add the flow directory itself (flows may have their own .nextflow cache)
+        if !flow_path.is_empty() {
+            let fp = PathBuf::from(&flow_path);
+            if fp.is_dir() && !dirs_to_check.contains(&fp) {
+                dirs_to_check.push(fp);
             }
+        }
 
-            // Use more retries when force flag is set
-            let max_retries = if force_remove_lock.unwrap_or(false) {
-                6
-            } else {
-                3
-            };
+        // Get all lock files from all directories
+        let mut all_locks: Vec<PathBuf> = Vec::new();
+        for dir in &dirs_to_check {
+            all_locks.extend(list_nextflow_locks(dir));
+        }
 
-            // Clear locks from each module directory
-            // Note: We only clear LOCK files, not the entire cache, to preserve resume capability
-            // The cache DB is only cleared if force_remove_lock is set (user explicitly requested)
-            if let Ok(entries) = fs::read_dir(&modules_dir) {
-                for entry in entries.filter_map(Result::ok) {
-                    let module_path = entry.path();
-                    if module_path.is_dir() {
-                        let _ = clear_nextflow_locks(
-                            &module_path,
-                            Some(&window),
-                            &log_path,
-                            max_retries,
-                        );
-                        // Only clear cache if force flag is set - this loses resume state but fixes corruption
-                        if force_remove_lock.unwrap_or(false) {
-                            let _ = clear_nextflow_cache(&module_path, Some(&window), &log_path);
-                        }
-                    }
+        if !all_locks.is_empty() {
+            append_flow_log(
+                Some(&window),
+                &log_path,
+                &format!("⚠️  Nextflow locks detected: {}", all_locks.len()),
+            );
+        }
+
+        // Clear locks from all directories
+        // Note: We only clear LOCK files, not the entire cache, to preserve resume capability
+        // The cache DB is only cleared if force_remove_lock is set (user explicitly requested)
+        for dir in &dirs_to_check {
+            let _ = clear_nextflow_locks(dir, Some(&window), &log_path, max_retries);
+            // Only clear cache if force flag is set - this loses resume state but fixes corruption
+            if force_remove_lock.unwrap_or(false) {
+                let _ = clear_nextflow_cache(dir, Some(&window), &log_path);
+            }
+        }
+
+        // Check if any locks remain in any directory
+        let mut locks_after: Vec<PathBuf> = Vec::new();
+        for dir in &dirs_to_check {
+            locks_after.extend(list_nextflow_locks(dir));
+        }
+
+        if !locks_after.is_empty() {
+            let sample: Vec<String> = locks_after
+                .iter()
+                .take(5)
+                .map(|path| path.display().to_string())
+                .collect();
+            let sample_joined = sample.join("; ");
+            return Err(format!(
+                "NEXTFLOW_LOCKS_REMAIN: {}",
+                if sample_joined.is_empty() {
+                    "Lock files remain after cleanup.".to_string()
+                } else {
+                    sample_joined
+                }
+            ));
+        }
+
+        // Check for potential cache corruption (LOCK files in cache/*/db directories)
+        // This happens when Nextflow was killed mid-execution
+        if !force_remove_lock.unwrap_or(false) {
+            let mut has_corrupted_cache = false;
+            for dir in &dirs_to_check {
+                if is_nextflow_cache_potentially_corrupted(dir) {
+                    has_corrupted_cache = true;
+                    break;
                 }
             }
-
-            // Check if any locks remain
-            let mut locks_after: Vec<PathBuf> = Vec::new();
-            if let Ok(entries) = fs::read_dir(&modules_dir) {
-                for entry in entries.filter_map(Result::ok) {
-                    let module_path = entry.path();
-                    if module_path.is_dir() {
-                        locks_after.extend(list_nextflow_locks(&module_path));
-                    }
-                }
-            }
-
-            if !locks_after.is_empty() {
-                let sample: Vec<String> = locks_after
-                    .iter()
-                    .take(5)
-                    .map(|path| path.display().to_string())
-                    .collect();
-                let sample_joined = sample.join("; ");
-                return Err(format!(
-                    "NEXTFLOW_LOCKS_REMAIN: {}",
-                    if sample_joined.is_empty() {
-                        "Lock files remain after cleanup.".to_string()
-                    } else {
-                        sample_joined
-                    }
-                ));
-            }
-
-            // Check for potential cache corruption (LOCK files in cache/*/db directories)
-            // This happens when Nextflow was killed mid-execution
-            if !force_remove_lock.unwrap_or(false) {
-                let mut has_corrupted_cache = false;
-                if let Ok(entries) = fs::read_dir(&modules_dir) {
-                    for entry in entries.filter_map(Result::ok) {
-                        let module_path = entry.path();
-                        if module_path.is_dir()
-                            && is_nextflow_cache_potentially_corrupted(&module_path)
-                        {
-                            has_corrupted_cache = true;
-                            break;
-                        }
-                    }
-                }
-                if has_corrupted_cache {
-                    return Err("NEXTFLOW_CACHE_CORRUPTED: Cache database may be corrupted from interrupted run.".to_string());
-                }
+            if has_corrupted_cache {
+                return Err("NEXTFLOW_CACHE_CORRUPTED: Cache database may be corrupted from interrupted run.".to_string());
             }
         }
     }
@@ -3093,6 +3282,46 @@ pub fn get_flow_run_work_dir(state: tauri::State<AppState>, run_id: i64) -> Resu
     }
 
     Ok(run.work_dir.clone())
+}
+
+#[tauri::command]
+pub fn cleanup_flow_run_state(state: tauri::State<AppState>, run_id: i64) -> Result<bool, String> {
+    crate::desktop_log!("🧹 cleanup_flow_run_state called for run_id={}", run_id);
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let run = biovault_db
+        .get_flow_run(run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Flow run {} not found", run_id))?;
+
+    let results_dir = run
+        .results_dir
+        .as_ref()
+        .or(Some(&run.work_dir))
+        .ok_or_else(|| "Flow run has no results_dir or work_dir".to_string())?;
+    let results_path = PathBuf::from(results_dir);
+    let log_path = results_path.join("flow.log");
+
+    append_flow_log(
+        None,
+        &log_path,
+        "🧹 Cleaning stale run state before retry...",
+    );
+
+    let pid_path = flow_pid_path(&results_path);
+    let _ = fs::remove_file(&pid_path);
+
+    let pause_marker = flow_pause_marker(&results_path);
+    let _ = fs::remove_file(&pause_marker);
+
+    let mut flow_state = load_flow_state(&results_path).unwrap_or_default();
+    flow_state.status = Some("failed".to_string());
+    flow_state.last_updated = Some(chrono::Utc::now().to_rfc3339());
+    let _ = save_flow_state(&results_path, &flow_state);
+
+    let _ = biovault_db.update_flow_run_status(run_id, "failed", true);
+    append_flow_log(None, &log_path, "✅ Stale run state cleared");
+
+    Ok(true)
 }
 
 #[tauri::command]

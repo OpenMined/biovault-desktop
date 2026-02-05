@@ -53,6 +53,35 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
+          # flows-collab (linux + windows)
+          - scenario: flows-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: flows-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop.exe
+          # jupyter-collab (linux + mac + windows)
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop.exe
 
     defaults:
       run:
@@ -387,6 +416,30 @@ jobs:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-pause-resume
+
+      - name: Run flows collab scenario
+        if: matrix.scenario == 'flows-collab'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --flows-collab
+          else
+            ./test-scenario.sh --flows-collab
+          fi
+
+      - name: Run jupyter collab scenario
+        if: matrix.scenario == 'jupyter-collab'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+          else
+            ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+          fi
 
       - name: Upload test artifacts on failure
         if: failure()
