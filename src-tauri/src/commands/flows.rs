@@ -1360,6 +1360,8 @@ pub async fn create_flow(
             let default_spec = FlowSpec {
                 name: name.clone(),
                 description: None,
+                multiparty: None,
+                roles: Vec::new(),
                 context: None,
                 vars: Default::default(),
                 coordination: None,
@@ -1395,6 +1397,107 @@ pub async fn create_flow(
     }
 
     // Register in database using CLI library
+    let id = biovault_db
+        .register_flow(&name, &flow_dir_str)
+        .map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Local::now().to_rfc3339();
+
+    Ok(Flow {
+        id,
+        name,
+        flow_path: flow_dir_str,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        spec: imported_spec,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportFlowFromJsonRequest {
+    pub name: String,
+    pub flow_json: serde_json::Value,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[tauri::command]
+pub async fn import_flow_from_json(
+    state: tauri::State<'_, AppState>,
+    request: ImportFlowFromJsonRequest,
+) -> Result<Flow, String> {
+    let ImportFlowFromJsonRequest {
+        name,
+        flow_json,
+        overwrite,
+    } = request;
+
+    let flows_dir = get_flows_dir()?;
+    fs::create_dir_all(&flows_dir)
+        .map_err(|e| format!("Failed to create flows directory: {}", e))?;
+
+    let flow_dir = flows_dir.join(&name);
+
+    // Always allow overwrite for invitation imports - check DB first
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let flow_dir_str = flow_dir.to_string_lossy().to_string();
+
+    // Check if flow already exists in DB
+    let existing = biovault_db
+        .list_flows()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.name == name || p.flow_path == flow_dir_str);
+
+    if let Some(existing_flow) = existing {
+        // Flow already exists - return it (no need to re-import)
+        if !overwrite {
+            return Ok(existing_flow);
+        }
+        // Delete existing for overwrite
+        biovault_db
+            .delete_flow(existing_flow.id)
+            .map_err(|e| e.to_string())?;
+    }
+
+    if flow_dir.exists() && overwrite {
+        fs::remove_dir_all(&flow_dir)
+            .map_err(|e| format!("Failed to remove existing flow directory: {}", e))?;
+    }
+
+    fs::create_dir_all(&flow_dir)
+        .map_err(|e| format!("Failed to create flow directory: {}", e))?;
+
+    // The flow_json might be a Flow object (from get_flows) or a FlowFile
+    // Try to extract the spec and build a proper FlowFile
+    let flow_file: FlowFile = if flow_json.get("apiVersion").is_some() {
+        // It's already a FlowFile format
+        serde_json::from_value(flow_json.clone())
+            .map_err(|e| format!("Failed to parse FlowFile JSON: {}", e))?
+    } else if let Some(spec_value) = flow_json.get("spec") {
+        // It's a Flow object with a spec field - reconstruct FlowFile
+        let spec: FlowSpec = serde_json::from_value(spec_value.clone())
+            .map_err(|e| format!("Failed to parse FlowSpec: {}", e))?;
+        FlowFile::from_flow_spec(&spec)
+            .map_err(|e| format!("Failed to build FlowFile from spec: {}", e))?
+    } else {
+        // Try to parse as FlowSpec directly
+        let spec: FlowSpec = serde_json::from_value(flow_json.clone())
+            .map_err(|e| format!("Failed to parse as FlowSpec: {}", e))?;
+        FlowFile::from_flow_spec(&spec)
+            .map_err(|e| format!("Failed to build FlowFile from spec: {}", e))?
+    };
+
+    let yaml_content = serde_yaml::to_string(&flow_file)
+        .map_err(|e| format!("Failed to convert flow to YAML: {}", e))?;
+
+    let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
+    fs::write(&flow_yaml_path, &yaml_content)
+        .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
+
+    // Parse spec for return value
+    let imported_spec = flow_file.to_flow_spec().ok();
+
     let id = biovault_db
         .register_flow(&name, &flow_dir_str)
         .map_err(|e| e.to_string())?;
@@ -2414,6 +2517,16 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
         if run.status != "running" && run.status != "paused" {
             continue;
         }
+
+        // Skip multiparty runs - they don't have a process to track
+        if let Some(ref metadata_str) = run.metadata {
+            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
+                if metadata.get("type").and_then(|v| v.as_str()) == Some("multiparty") {
+                    continue;
+                }
+            }
+        }
+
         let results_dir = run
             .results_dir
             .as_ref()

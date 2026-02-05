@@ -1965,6 +1965,22 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+											<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+											<circle cx="9" cy="7" r="4"></circle>
+											<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+											<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+										</svg>
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Demo</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">3-party collaborative flow</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -2150,6 +2166,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			thalassemia:
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
+			multiparty: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
 		}
 
 		const templateNames = {
@@ -2158,6 +2175,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			herc2: 'HERC2 Classifier',
 			thalassemia: 'Thalassemia Classifier',
 			allele_freq: 'Allele Frequency',
+			multiparty: 'Multiparty Demo',
 		}
 
 		// Use local path if available, otherwise use GitHub URL

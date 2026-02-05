@@ -204,9 +204,9 @@
 						<div class="msg-compose-recipient" style="display: none">
 							<label>To</label>
 							<input
-								type="email"
+								type="text"
 								id="message-recipient-input"
-								placeholder="recipient@example.com"
+								placeholder="recipient@example.com (comma-separate for group)"
 								autocapitalize="off"
 								autocomplete="off"
 								autocorrect="off"
@@ -236,6 +236,23 @@
 							autocorrect="off"
 							spellcheck="false"
 						></textarea>
+						<button id="propose-flow-btn" class="msg-propose-flow-btn" title="Propose Multiparty Flow" style="display: none">
+							<svg
+								width="18"
+								height="18"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+								<circle cx="9" cy="7" r="4"></circle>
+								<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+								<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+							</svg>
+						</button>
 						<button id="message-send-btn" class="msg-send-btn" title="Send">
 							<svg
 								width="18"
@@ -334,6 +351,70 @@
 					</div>
 				</div>
 			</div>
+		</div>
+	</div>
+</div>
+
+<!-- Multiparty Flow Modal (Session View) -->
+<div id="multiparty-flow-modal" class="multiparty-modal" style="display: none">
+	<div class="multiparty-modal-content">
+		<div class="multiparty-modal-header">
+			<h2 class="multiparty-modal-title">🔄 Multiparty Flow</h2>
+			<button class="multiparty-modal-close" onclick="window.multipartyFlowModal?.closeModal()">×</button>
+		</div>
+
+		<div class="multiparty-modal-body">
+			<section class="multiparty-section">
+				<h3>Participants</h3>
+				<div class="multiparty-participants-list"></div>
+			</section>
+
+			<section class="multiparty-section">
+				<h3>Steps</h3>
+				<div class="multiparty-steps-list"></div>
+			</section>
+		</div>
+
+		<div class="multiparty-modal-footer">
+			<button class="btn-secondary" onclick="window.multipartyFlowModal?.closeModal()">Close</button>
+		</div>
+	</div>
+</div>
+
+<!-- Propose Flow Modal (for creating invitations) -->
+<div id="propose-flow-modal" class="multiparty-modal" style="display: none">
+	<div class="multiparty-modal-content" style="max-width: 500px;">
+		<div class="multiparty-modal-header">
+			<h2 class="multiparty-modal-title">🔄 Propose Multiparty Flow</h2>
+			<button class="multiparty-modal-close" onclick="window.proposeFlowModal?.close()">×</button>
+		</div>
+
+		<div class="multiparty-modal-body">
+			<section class="multiparty-section">
+				<h3>Select Flow</h3>
+				<select id="propose-flow-select" class="propose-flow-select">
+					<option value="">-- Select a multiparty flow --</option>
+				</select>
+			</section>
+
+			<section class="multiparty-section" id="propose-flow-roles-section" style="display: none">
+				<h3>Assign Participants to Roles</h3>
+				<div id="propose-flow-roles-list" class="propose-flow-roles-list">
+					<!-- Role assignment rows will be rendered here -->
+				</div>
+			</section>
+
+			<section class="multiparty-section" id="propose-flow-message-section" style="display: none">
+				<h3>Message (optional)</h3>
+				<textarea id="propose-flow-message" class="propose-flow-message" placeholder="Let's run this flow together!"></textarea>
+			</section>
+		</div>
+
+		<div class="multiparty-modal-footer">
+			<button class="btn-secondary" onclick="window.proposeFlowModal?.close()">Cancel</button>
+			<button id="propose-flow-send-btn" class="btn-primary" disabled onclick="window.proposeFlowModal?.sendInvitation()">
+				Send Invitation
+			</button>
 		</div>
 	</div>
 </div>

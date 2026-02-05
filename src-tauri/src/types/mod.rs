@@ -226,6 +226,9 @@ pub struct MessageSyncResult {
 #[derive(Deserialize)]
 pub struct MessageSendRequest {
     pub to: Option<String>,
+    /// Multiple recipients for group messages (if set, takes precedence over `to`)
+    #[serde(default)]
+    pub recipients: Option<Vec<String>>,
     pub body: String,
     pub subject: Option<String>,
     pub reply_to: Option<String>,

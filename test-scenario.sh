@@ -78,6 +78,8 @@ Scenario Options (pick one):
   --flows-collab   Run two-client flow collaboration test
   --flows-pause-resume  Test flow pause/resume with state persistence
   --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
+  --pipelines-multiparty  Run three-client multiparty messaging test
+  --pipelines-multiparty-flow  Run three-client multiparty flow execution test
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -108,6 +110,7 @@ Examples:
   ./test-scenario.sh --flows-solo   # Run flow test with synthetic data
   ./test-scenario.sh --flows-gwas   # Run GWAS flow test
   ./test-scenario.sh --syqure-flow --interactive  # Launch 3 clients for Syqure flow
+  ./test-scenario.sh --pipelines-multiparty --interactive  # Launch 3 clients for multiparty messaging
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
@@ -160,6 +163,14 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--syqure-flow)
 			SCENARIO="syqure-flow"
+			shift
+			;;
+		--pipelines-multiparty)
+			SCENARIO="pipelines-multiparty"
+			shift
+			;;
+		--pipelines-multiparty-flow)
+			SCENARIO="pipelines-multiparty-flow"
 			shift
 			;;
 		--file-transfer)
@@ -530,7 +541,7 @@ export DISABLE_UPDATER=1
 export DEV_WS_BRIDGE=1
 
 WS_PORT_COUNT=2
-if [[ "$SCENARIO" == "syqure-flow" ]]; then
+if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 	WS_PORT_COUNT=3
 fi
 WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" "$WS_PORT_COUNT" || true)"
@@ -665,7 +676,7 @@ cleanup() {
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 			local agg="${AGG_EMAIL:-aggregator@sandbox.local}"
 			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
-			if [[ "$SCENARIO" == "syqure-flow" ]]; then
+			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 				DEVSTACK_CLIENTS="${c1},${c2},${agg}"
 			else
 				DEVSTACK_CLIENTS="${c1},${c2}"
@@ -707,7 +718,7 @@ trap cleanup EXIT INT TERM
 
 if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	# Start devstack with two or three clients (reset by default to avoid stale state)
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
 		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
 	else
@@ -781,7 +792,7 @@ if [[ "$SCENARIO" != "profiles-mock" ]]; then
 	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
 	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
 	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 		AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
 		AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
 	fi
@@ -794,7 +805,7 @@ PY
 
 	info "Client1 home: $CLIENT1_HOME"
 	info "Client2 home: $CLIENT2_HOME"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 		info "Aggregator home: $AGG_HOME"
 	fi
 	info "Server URL: $SERVER_URL"
@@ -1188,7 +1199,7 @@ start_tauri_instances() {
 		exit 1
 	}
 
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 		info "Launching Tauri for aggregator on WS port $((WS_PORT_BASE + 2))"
 		TAURI3_PID=$(launch_instance "$AGG_EMAIL" "$AGG_HOME" "$AGG_CFG" "$((WS_PORT_BASE + 2))")
 		info "Waiting for aggregator WS bridge..."
@@ -1203,7 +1214,7 @@ start_tauri_instances() {
 
 	info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
 		info "Aggregator UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
 	fi
 	timer_pop
@@ -1774,6 +1785,56 @@ PY
 
 		if [[ "$WAIT_MODE" == "1" || "$INTERACTIVE_MODE" == "1" ]]; then
 			info "Interactive mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-multiparty)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Multiparty Messaging Test ==="
+		info "Three clients will exchange keys and hello messages."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Client3:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		# Run the multiparty messaging test
+		timer_push "Playwright: @pipelines-multiparty"
+		run_ui_grep "@pipelines-multiparty" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-multiparty-flow)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Multiparty Flow Test ==="
+		info "Three clients will execute a multiparty flow with manual steps."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		# Run the multiparty flow test
+		timer_push "Playwright: @pipelines-multiparty-flow"
+		run_ui_grep "@pipelines-multiparty-flow" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
 			while true; do sleep 1; done
 		fi
 		;;

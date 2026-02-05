@@ -136,6 +136,7 @@ fn send_session_invite_message(
 
     if let Err(e) = messages::send_message(MessageSendRequest {
         to: Some(peer_email.to_string()),
+        recipients: None,
         body,
         subject: Some(subject),
         reply_to: None,
@@ -179,6 +180,7 @@ fn send_session_invite_response_message(
 
     if let Err(e) = messages::send_message(MessageSendRequest {
         to: Some(requester.to_string()),
+        recipients: None,
         body,
         subject: Some(subject),
         reply_to,
@@ -1611,6 +1613,7 @@ pub fn send_session_chat_message(session_id: String, body: String) -> Result<Vau
 
     messages::send_message(MessageSendRequest {
         to: Some(recipient),
+        recipients: None,
         body,
         subject: Some(subject),
         reply_to,

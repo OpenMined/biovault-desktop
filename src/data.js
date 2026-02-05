@@ -48,6 +48,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let filePickerSearchTerm = ''
 	let filePickerTypeFilter = ''
 	let filePickerLastClickedId = null // For shift-click range selection
+	let lastClickedFileId = null // For shift-click range selection in main files list
 
 	function setDatasetProgress(name, progress, text) {
 		const row = document.querySelector(`.dataset-progress[data-dataset="${CSS.escape(name)}"]`)
@@ -461,23 +462,52 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Checkbox handler
+		// Checkbox handler with shift-click support
 		const checkbox = row.querySelector('.file-checkbox')
-		checkbox.addEventListener('change', (e) => {
-			const fileId = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFileIds.includes(fileId)) {
-					selectedFileIds.push(fileId)
+		const handleFileSelection = (fileId, checked, shiftKey) => {
+			if (checked) {
+				if (shiftKey && lastClickedFileId !== null) {
+					// Shift-click range selection
+					const tbody = document.getElementById('files-table-body')
+					const allRows = Array.from(tbody.querySelectorAll('tr[data-file-id]'))
+					const lastIndex = allRows.findIndex((r) => parseInt(r.dataset.fileId) === lastClickedFileId)
+					const currentIndex = allRows.findIndex((r) => parseInt(r.dataset.fileId) === fileId)
+					if (lastIndex !== -1 && currentIndex !== -1) {
+						const start = Math.min(lastIndex, currentIndex)
+						const end = Math.max(lastIndex, currentIndex)
+						for (let i = start; i <= end; i++) {
+							const rowToSelect = allRows[i]
+							const idToSelect = parseInt(rowToSelect.dataset.fileId)
+							if (!selectedFileIds.includes(idToSelect)) {
+								selectedFileIds.push(idToSelect)
+							}
+							rowToSelect.classList.add('selected')
+							const cb = rowToSelect.querySelector('.file-checkbox')
+							if (cb) cb.checked = true
+						}
+					}
+				} else {
+					if (!selectedFileIds.includes(fileId)) {
+						selectedFileIds.push(fileId)
+					}
+					row.classList.add('selected')
 				}
-				row.classList.add('selected')
+				lastClickedFileId = fileId
 			} else {
 				selectedFileIds = selectedFileIds.filter((id) => id !== fileId)
 				row.classList.remove('selected')
+				lastClickedFileId = fileId
 			}
 			updateDeleteButton()
 			updateSelectAllCheckbox()
 			updateActionButtons()
 			syncSelectionToSessionStorage()
+		}
+
+		checkbox.addEventListener('click', (e) => {
+			e.stopPropagation()
+			const fileId = parseInt(e.target.dataset.id)
+			handleFileSelection(fileId, e.target.checked, e.shiftKey)
 		})
 
 		// Make row clickable (except buttons, checkbox, and participant links)
@@ -491,8 +521,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			) {
 				return
 			}
-			checkbox.checked = !checkbox.checked
-			checkbox.dispatchEvent(new Event('change'))
+			const fileId = parseInt(row.dataset.fileId)
+			const newChecked = !selectedFileIds.includes(fileId)
+			checkbox.checked = newChecked
+			handleFileSelection(fileId, newChecked, e.shiftKey)
 		})
 
 		row.style.cursor = 'pointer'
@@ -626,6 +658,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// Clear all file selections
 	function clearAllSelections() {
 		selectedFileIds = []
+		lastClickedFileId = null
 
 		// Remove selected class from all rows
 		document.querySelectorAll('.file-row.selected').forEach((row) => {

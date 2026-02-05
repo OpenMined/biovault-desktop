@@ -1524,6 +1524,7 @@ pub fn run() {
             get_flows,
             get_runs_base_dir,
             create_flow,
+            import_flow_from_json,
             load_flow_editor,
             save_flow_editor,
             delete_flow,
@@ -1682,6 +1683,17 @@ pub fn run() {
             add_dataset_to_session,
             remove_dataset_from_session,
             list_session_datasets,
+            // Multiparty flow commands
+            commands::multiparty::send_flow_invitation,
+            commands::multiparty::accept_flow_invitation,
+            commands::multiparty::get_multiparty_flow_state,
+            commands::multiparty::get_all_participant_progress,
+            commands::multiparty::get_participant_logs,
+            commands::multiparty::set_step_auto_run,
+            commands::multiparty::run_flow_step,
+            commands::multiparty::share_step_outputs,
+            commands::multiparty::get_step_output_files,
+            commands::multiparty::receive_flow_step_outputs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

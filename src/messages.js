@@ -46,6 +46,189 @@ export function createMessagesModule({
 	let notificationApiPromise = null
 	let searchTerm = ''
 	let messageFilter = 'inbox'
+
+	// Color palette for sender bubbles (soft, readable colors)
+	const SENDER_COLORS = [
+		{ bg: '#dbeafe', border: '#93c5fd' }, // blue
+		{ bg: '#dcfce7', border: '#86efac' }, // green
+		{ bg: '#fef3c7', border: '#fcd34d' }, // amber
+		{ bg: '#fce7f3', border: '#f9a8d4' }, // pink
+		{ bg: '#e0e7ff', border: '#a5b4fc' }, // indigo
+		{ bg: '#ccfbf1', border: '#5eead4' }, // teal
+		{ bg: '#fee2e2', border: '#fca5a5' }, // red
+		{ bg: '#f3e8ff', border: '#d8b4fe' }, // purple
+	]
+
+	// Generate a consistent color index from an email
+	function getSenderColorIndex(email) {
+		if (!email) return 0
+		let hash = 0
+		for (let i = 0; i < email.length; i++) {
+			hash = ((hash << 5) - hash + email.charCodeAt(i)) | 0
+		}
+		return Math.abs(hash) % SENDER_COLORS.length
+	}
+
+	function getSenderColor(email) {
+		return SENDER_COLORS[getSenderColorIndex(email)]
+	}
+
+	// Render participant chips with colors for thread header
+	function renderParticipantChips(participants, currentUserEmail) {
+		if (!participants || participants.length === 0) return ''
+		const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
+		if (others.length === 0) return ''
+
+		return others
+			.map((email) => {
+				const color = getSenderColor(email)
+				const displayName = email.split('@')[0]
+				return `<span class="participant-chip" style="background-color: ${color.bg}; border-color: ${color.border};">${escapeHtml(displayName)}</span>`
+			})
+			.join('')
+	}
+
+	// ============================================================================
+	// EMAIL CHIP INPUT
+	// ============================================================================
+
+	let recipientChips = []
+
+	function initializeChipInput() {
+		const recipientInput = document.getElementById('message-recipient-input')
+		if (!recipientInput) return
+
+		// Create wrapper if not exists
+		let wrapper = recipientInput.parentElement
+		if (!wrapper.classList.contains('chip-input-wrapper')) {
+			wrapper = document.createElement('div')
+			wrapper.className = 'chip-input-wrapper'
+			recipientInput.parentElement.insertBefore(wrapper, recipientInput)
+			wrapper.appendChild(recipientInput)
+		}
+
+		// Create chips container if not exists
+		let chipsContainer = wrapper.querySelector('.chips-container')
+		if (!chipsContainer) {
+			chipsContainer = document.createElement('div')
+			chipsContainer.className = 'chips-container'
+			wrapper.insertBefore(chipsContainer, recipientInput)
+		}
+
+		// Handle input events
+		recipientInput.addEventListener('keydown', handleChipInputKeydown)
+		recipientInput.addEventListener('blur', handleChipInputBlur)
+
+		return { wrapper, chipsContainer }
+	}
+
+	function handleChipInputKeydown(e) {
+		const input = e.target
+		const value = input.value.trim()
+
+		// Comma or Enter adds chip
+		if ((e.key === ',' || e.key === 'Enter') && value) {
+			e.preventDefault()
+			const email = value.replace(/,/g, '').trim()
+			if (email && isValidEmail(email)) {
+				addRecipientChip(email)
+				input.value = ''
+			}
+		}
+
+		// Backspace on empty input removes last chip
+		if (e.key === 'Backspace' && !input.value && recipientChips.length > 0) {
+			removeRecipientChip(recipientChips.length - 1)
+		}
+	}
+
+	function handleChipInputBlur(e) {
+		const input = e.target
+		const value = input.value.trim()
+		if (value && isValidEmail(value)) {
+			addRecipientChip(value)
+			input.value = ''
+		}
+	}
+
+	function isValidEmail(email) {
+		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+	}
+
+	function addRecipientChip(email) {
+		// Normalize and check for duplicates (case-insensitive)
+		const normalizedEmail = email.toLowerCase().trim()
+		if (recipientChips.some((e) => e.toLowerCase().trim() === normalizedEmail)) return
+		recipientChips.push(email)
+		renderRecipientChips()
+	}
+
+	function removeRecipientChip(index) {
+		recipientChips.splice(index, 1)
+		renderRecipientChips()
+	}
+
+	function renderRecipientChips() {
+		const recipientInput = document.getElementById('message-recipient-input')
+		if (!recipientInput) return
+
+		const wrapper = recipientInput.closest('.chip-input-wrapper')
+		if (!wrapper) return
+
+		let chipsContainer = wrapper.querySelector('.chips-container')
+		if (!chipsContainer) return
+
+		chipsContainer.innerHTML = recipientChips
+			.map(
+				(email, idx) => `
+			<span class="email-chip">
+				${escapeHtml(email)}
+				<button type="button" class="chip-remove" data-index="${idx}" title="Remove">×</button>
+			</span>
+		`,
+			)
+			.join('')
+
+		// Add click handlers for remove buttons
+		chipsContainer.querySelectorAll('.chip-remove').forEach((btn) => {
+			btn.addEventListener('click', (e) => {
+				e.preventDefault()
+				e.stopPropagation()
+				const idx = parseInt(btn.dataset.index, 10)
+				removeRecipientChip(idx)
+			})
+		})
+
+		// Update placeholder
+		recipientInput.placeholder = recipientChips.length > 0 ? 'Add more...' : 'recipient@example.com'
+	}
+
+	function getRecipientEmails() {
+		const recipientInput = document.getElementById('message-recipient-input')
+		const inputValue = recipientInput?.value.trim() || ''
+
+		// Combine chips and any text in input
+		const emails = [...recipientChips]
+		if (inputValue && isValidEmail(inputValue)) {
+			emails.push(inputValue)
+		}
+
+		return emails
+	}
+
+	function clearRecipientChips() {
+		recipientChips = []
+		const recipientInput = document.getElementById('message-recipient-input')
+		if (recipientInput) {
+			recipientInput.value = ''
+		}
+		renderRecipientChips()
+	}
+
+	function setRecipientChips(emails) {
+		recipientChips = [...emails]
+		renderRecipientChips()
+	}
 	let syftboxAutoStartDisabled = null
 
 	// Refresh rate: 2s in dev/test mode, 10s in production
@@ -123,6 +306,21 @@ export function createMessagesModule({
 			run_id: request.run_id,
 			datasites: Array.isArray(request.datasites) ? request.datasites : null,
 			collab: Boolean(request.collab),
+		}
+	}
+
+	function getFlowInvitationFromMessage(msg) {
+		if (!msg) return null
+		const meta = normalizeMetadata(msg.metadata)
+		if (!meta || !meta.flow_invitation) return null
+		const invitation = meta.flow_invitation
+		if (!invitation.flow_name || !invitation.session_id) return null
+		return {
+			flow_name: invitation.flow_name,
+			session_id: invitation.session_id,
+			participants: Array.isArray(invitation.participants) ? invitation.participants : [],
+			flow_spec: invitation.flow_spec,
+			sender: msg.from,
 		}
 	}
 
@@ -1127,6 +1325,11 @@ export function createMessagesModule({
 				!thread.session_id && thread.has_module
 					? '<span class="message-thread-module">Module</span>'
 					: ''
+			const isGroupChat = participants.length >= 3
+			const groupBadge =
+				!thread.session_id && !thread.has_module && isGroupChat
+					? '<span class="message-thread-group">Group</span>'
+					: ''
 
 			// For session threads, show participants in subject line
 			const sessionParticipantsLine = isSessionThread
@@ -1147,6 +1350,7 @@ export function createMessagesModule({
 					}
 					${sessionBadge}
 					${moduleBadge}
+					${groupBadge}
 				</div>
 				${sessionParticipantsLine}
 				<div class="message-thread-preview">${escapeHtml(thread.last_message_preview || '')}</div>
@@ -1257,16 +1461,22 @@ export function createMessagesModule({
 			const participantsEl = document.getElementById('message-thread-participants')
 			if (participantsEl) {
 				if (isSessionThread) {
-					const formatted = formatParticipants(participants)
-					participantsEl.textContent = formatted
-						? `Session with ${formatted}`
-						: 'Secure collaborative session'
+					const chipsHtml = renderParticipantChips(participants, currentUserEmail)
+					if (chipsHtml) {
+						participantsEl.innerHTML = `<span class="participant-label">Session with</span> ${chipsHtml}`
+					} else {
+						participantsEl.textContent = 'Secure collaborative session'
+					}
 				} else if (isSelfThread) {
 					participantsEl.textContent =
 						subjectText && subjectText !== NO_SUBJECT_PLACEHOLDER ? subjectText : 'Personal notes'
 				} else {
-					const formatted = formatParticipants(participants)
-					participantsEl.textContent = formatted || ''
+					const chipsHtml = renderParticipantChips(participants, currentUserEmail)
+					if (chipsHtml) {
+						participantsEl.innerHTML = chipsHtml
+					} else {
+						participantsEl.textContent = ''
+					}
 				}
 			}
 
@@ -1297,6 +1507,7 @@ export function createMessagesModule({
 		}
 
 		updateMessagesEmptyState()
+		updateProposeFlowButton()
 	}
 
 	function startNewMessage(prefillRecipient = null) {
@@ -1316,9 +1527,13 @@ export function createMessagesModule({
 
 		const recipientInput = document.getElementById('message-recipient-input')
 		if (recipientInput) {
+			// Clear any existing chips and set up for new message
+			clearRecipientChips()
+			if (prefillRecipient) {
+				addRecipientChip(prefillRecipient)
+			}
 			contactAutocomplete.attachToInputs(['message-recipient-input'])
 			recipientInput.readOnly = false
-			recipientInput.value = prefillRecipient || ''
 			recipientInput.focus()
 		}
 
@@ -1336,6 +1551,7 @@ export function createMessagesModule({
 
 		renderMessageThreads()
 		updateMessagesEmptyState()
+		updateProposeFlowButton()
 	}
 
 	// ============================================================================
@@ -1345,6 +1561,8 @@ export function createMessagesModule({
 	async function initializeMessagesTab(forceSync = false) {
 		if (messagesInitialized && !forceSync) return
 
+		// Initialize chip input for recipients
+		initializeChipInput()
 		contactAutocomplete.attachToInputs(['message-recipient-input'])
 
 		await ensureMessagesAuthorization()
@@ -1362,16 +1580,27 @@ export function createMessagesModule({
 	}
 
 	async function sendCurrentMessage() {
-		const recipientInput = document.getElementById('message-recipient-input')
 		const subjectInput = document.getElementById('message-compose-subject')
 		const bodyInput = document.getElementById('message-compose-body')
 
-		const recipient = recipientInput?.value.trim()
 		const subject = subjectInput?.value.trim()
 		const body = bodyInput?.value.trim()
 
-		if (!recipient) {
-			alert('Please enter a recipient')
+		// Get recipients - from chips if composing new, from thread if replying
+		let recipients = []
+		if (isComposingNewMessage) {
+			recipients = getRecipientEmails()
+		} else if (activeThreadId) {
+			// Replying to existing thread - use thread participants (excluding self)
+			const currentUser = getCurrentUserEmail()
+			const thread = messageThreads.find((t) => t.thread_id === activeThreadId)
+			if (thread?.participants) {
+				recipients = thread.participants.filter((p) => !emailsMatch(p, currentUser))
+			}
+		}
+
+		if (recipients.length === 0) {
+			alert('Please enter at least one recipient')
 			return
 		}
 		if (!body) {
@@ -1386,54 +1615,49 @@ export function createMessagesModule({
 				return
 			}
 
-			// Check if recipient has a key in our contacts
-			const contactCheck = await invoke('key_check_contact', { email: recipient })
+			for (const recipient of recipients) {
+				const contactCheck = await invoke('key_check_contact', { email: recipient })
 
-			if (!contactCheck.has_key) {
-				// No key locally - check if they're on the network
-				if (contactCheck.is_on_network) {
-					// They're on network but not trusted - prompt to add them first
-					const goToNetwork = await dialog.ask(
-						`${recipient} is on the BioVault network but you haven't added them to your contacts yet.\n\nGo to Network tab to add and verify their key before messaging.`,
-						{
-							title: 'Contact Not Added',
-							kind: 'warning',
-							okLabel: 'Go to Network',
-							cancelLabel: 'Cancel',
-						},
-					)
-					if (goToNetwork) {
-						// Navigate to network tab
-						const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'network' } })
-						window.dispatchEvent(event)
+				if (!contactCheck.has_key) {
+					if (contactCheck.is_on_network) {
+						const goToNetwork = await dialog.ask(
+							`${recipient} is on the BioVault network but you haven't added them to your contacts yet.\n\nGo to Network tab to add and verify their key before messaging.`,
+							{
+								title: 'Contact Not Added',
+								kind: 'warning',
+								okLabel: 'Go to Network',
+								cancelLabel: 'Cancel',
+							},
+						)
+						if (goToNetwork) {
+							const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'network' } })
+							window.dispatchEvent(event)
+						}
+						return
+					} else {
+						const sendInvite = await dialog.ask(
+							`${recipient} doesn't appear to be on the BioVault network yet.\n\nWould you like to invite them?`,
+							{
+								title: 'Recipient Not Found',
+								kind: 'info',
+								okLabel: 'Send Invite',
+								cancelLabel: 'Cancel',
+							},
+						)
+						if (sendInvite) {
+							await showInviteOptions('message')
+						}
+						return
 					}
-					return
-				} else {
-					// Not on network at all - show invite modal
-					const sendInvite = await dialog.ask(
-						`${recipient} doesn't appear to be on the BioVault network yet.\n\nWould you like to invite them?`,
-						{
-							title: 'Recipient Not Found',
-							kind: 'info',
-							okLabel: 'Send Invite',
-							cancelLabel: 'Cancel',
-						},
-					)
-					if (sendInvite) {
-						await showInviteOptions('message')
-					}
-					return
 				}
 			}
 
-			const sent = await invoke('send_message', {
-				request: {
-					to: recipient,
-					subject: subject || NO_SUBJECT_PLACEHOLDER,
-					body,
-					reply_to: messageReplyTargetId,
-				},
-			})
+			const request =
+				recipients.length === 1
+					? { to: recipients[0], subject: subject || NO_SUBJECT_PLACEHOLDER, body, reply_to: messageReplyTargetId }
+					: { recipients, subject: subject || NO_SUBJECT_PLACEHOLDER, body, reply_to: messageReplyTargetId }
+
+			const sent = await invoke('send_message', { request })
 
 			const threadKey = sent.thread_id || sent.id
 
@@ -1445,6 +1669,8 @@ export function createMessagesModule({
 			}
 
 			if (bodyInput) bodyInput.value = ''
+			// Clear recipient chips after successful send
+			clearRecipientChips()
 		} catch (error) {
 			console.error('Failed to send message:', error)
 			alert(`Failed to send: ${error}`)
@@ -1750,12 +1976,38 @@ export function createMessagesModule({
 			return
 		}
 
+		// Deduplicate messages by ID and by content+sender (with relaxed timestamp matching)
+		const seenIds = new Set()
+		const seenContent = new Set()
+		const dedupedMessages = messages.filter((msg) => {
+			// Check by ID first
+			if (msg.id) {
+				if (seenIds.has(msg.id)) return false
+				seenIds.add(msg.id)
+			}
+			// Normalize timestamp to minute precision to catch duplicates with slight time differences
+			let normalizedTime = ''
+			if (msg.created_at) {
+				try {
+					const d = new Date(msg.created_at)
+					normalizedTime = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`
+				} catch {
+					normalizedTime = msg.created_at
+				}
+			}
+			// Also check by content hash to catch duplicates with different IDs
+			const contentKey = `${msg.from || ''}|${msg.body || ''}|${normalizedTime}`
+			if (seenContent.has(contentKey)) return false
+			seenContent.add(contentKey)
+			return true
+		})
+
 		// Group consecutive messages from the same sender, with date awareness
 		const groups = []
 		let currentGroup = null
 		let lastDateKey = null
 
-		messages.forEach((msg, index) => {
+		dedupedMessages.forEach((msg, index) => {
 			const isOutgoing = emailsMatch(msg.from, currentUser)
 			const isSelfMessage =
 				emailsMatch(msg.from, msg.to) ||
@@ -1825,6 +2077,13 @@ export function createMessagesModule({
 				if (isLast) bubbleClass += ' last'
 				if (!isFirst && !isLast) bubbleClass += ' middle'
 				msgDiv.className = bubbleClass
+
+				// Apply consistent color to incoming messages (not outgoing, not self)
+				if (!group.isOutgoing && !group.isSelfMessage) {
+					const senderColor = getSenderColor(msg.from)
+					msgDiv.style.backgroundColor = senderColor.bg
+					msgDiv.style.borderColor = senderColor.border
+				}
 
 				// Message body
 				const body = document.createElement('div')
@@ -2563,6 +2822,188 @@ export function createMessagesModule({
 					msgDiv.appendChild(resultsCard)
 				}
 
+				// Flow invitation card
+				const flowInvitation = getFlowInvitationFromMessage(msg)
+				if (flowInvitation) {
+					const invitationCard = document.createElement('div')
+					invitationCard.className = 'flow-invitation-card'
+
+					// Find the current user's role
+					const currentUser = getCurrentUserEmail()
+					const myParticipant = flowInvitation.participants.find((p) => emailsMatch(p.email, currentUser))
+					const myRole = myParticipant?.role || null
+
+					const participantsHtml = flowInvitation.participants
+						.map((p) => {
+							const isMe = emailsMatch(p.email, currentUser)
+							return `<span class="participant-chip${isMe ? ' is-me' : ''}">👤 ${escapeHtml(p.email)} (${escapeHtml(p.role)})${isMe ? ' ← you' : ''}</span>`
+						})
+						.join(' ')
+
+					invitationCard.innerHTML = `
+						<div class="flow-invitation-header">
+							<span class="flow-invitation-icon">🔄</span>
+							<span class="flow-invitation-title">${escapeHtml(flowInvitation.flow_name)}</span>
+						</div>
+						${myRole ? `<div class="flow-invitation-role">Your role: <strong>${escapeHtml(myRole)}</strong></div>` : ''}
+						<div class="flow-invitation-participants">${participantsHtml}</div>
+						<div class="flow-invitation-status"></div>
+					`
+
+					const actions = document.createElement('div')
+					actions.className = 'flow-invitation-actions'
+
+					const statusEl = invitationCard.querySelector('.flow-invitation-status')
+
+					// Check if flow exists locally
+					const checkFlowExists = async () => {
+						try {
+							const flows = await invoke('get_flows')
+							return (flows || []).some(
+								(f) => f.name === flowInvitation.flow_name || f.metadata?.name === flowInvitation.flow_name,
+							)
+						} catch {
+							return false
+						}
+					}
+
+					const importBtn = document.createElement('button')
+					importBtn.className = 'flow-invitation-btn import-btn'
+					importBtn.textContent = '📥 Import Flow'
+
+					const joinBtn = document.createElement('button')
+					joinBtn.className = 'flow-invitation-btn view-runs-btn'
+					joinBtn.textContent = '🤝 Join Flow'
+					joinBtn.style.display = 'none'
+
+					importBtn.addEventListener('click', async () => {
+						console.log('[Flow Import] Button clicked')
+						importBtn.disabled = true
+						importBtn.textContent = 'Importing...'
+						try {
+							// Import the flow from the invitation spec
+							const flowSpec = flowInvitation.flow_spec
+							console.log('[Flow Import] Flow spec:', JSON.stringify(flowSpec, null, 2).substring(0, 500))
+							if (!flowSpec) {
+								throw new Error('No flow specification in invitation')
+							}
+
+							// Import the flow using the JSON spec
+							console.log('[Flow Import] Calling import_flow_from_json...')
+							const result = await invoke('import_flow_from_json', {
+								request: {
+									name: flowInvitation.flow_name,
+									flow_json: flowSpec,
+									overwrite: false,
+								},
+							})
+							console.log('[Flow Import] Success:', result)
+
+							// Update UI
+							importBtn.style.display = 'none'
+							joinBtn.style.display = 'inline-block'
+							if (statusEl) statusEl.textContent = '✓ Flow imported'
+						} catch (error) {
+							console.error('[Flow Import] Failed:', error)
+							importBtn.disabled = false
+							importBtn.textContent = '📥 Import Flow'
+							if (statusEl) statusEl.textContent = `⚠ Import failed: ${error}`
+						}
+					})
+
+					joinBtn.addEventListener('click', async () => {
+						// If already joined, just navigate to Runs
+						if (joinBtn.classList.contains('joined')) {
+							const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
+							window.dispatchEvent(event)
+							return
+						}
+
+						try {
+							joinBtn.disabled = true
+							joinBtn.textContent = 'Joining...'
+
+							// Accept the invitation (backend only, no modal)
+							const result = await invoke('accept_flow_invitation', {
+								sessionId: flowInvitation.session_id,
+								flowName: flowInvitation.flow_name,
+								flowSpec: flowInvitation.flow_spec,
+								participants: flowInvitation.participants,
+								autoRunAll: false,
+							})
+
+							console.log('[Join Flow] Accepted:', result)
+
+							// Update button to "View Flow" and keep it clickable
+							joinBtn.textContent = '📋 View Flow'
+							joinBtn.classList.add('joined')
+							joinBtn.disabled = false
+
+							// Hide Decline button after joining
+							declineBtn.style.display = 'none'
+
+							// Navigate to Runs tab
+							const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
+							window.dispatchEvent(event)
+						} catch (error) {
+							console.error('Failed to accept flow invitation:', error)
+							joinBtn.disabled = false
+							joinBtn.textContent = '🤝 Join Flow'
+							if (dialog?.message) {
+								await dialog.message(`Failed to join flow: ${error}`, {
+									title: 'Error',
+									kind: 'error',
+								})
+							}
+						}
+					})
+
+					actions.appendChild(importBtn)
+					actions.appendChild(joinBtn)
+
+					const declineBtn = document.createElement('button')
+					declineBtn.className = 'flow-invitation-btn decline-btn'
+					declineBtn.textContent = 'Decline'
+					declineBtn.addEventListener('click', async () => {
+						if (dialog?.message) {
+							await dialog.message('You declined the flow invitation.', {
+								title: 'Declined',
+								kind: 'info',
+							})
+						}
+					})
+					actions.appendChild(declineBtn)
+
+					invitationCard.appendChild(actions)
+					msgDiv.appendChild(invitationCard)
+
+					// Check if flow already exists and if user already joined
+					checkFlowExists().then(async (exists) => {
+						if (exists) {
+							importBtn.style.display = 'none'
+							joinBtn.style.display = 'inline-block'
+							if (statusEl) statusEl.textContent = '✓ Flow available'
+
+							// Also check if user already joined this session
+							try {
+								const state = await invoke('get_multiparty_flow_state', {
+									sessionId: flowInvitation.session_id,
+								})
+								if (state && state.session_id) {
+									// User has already joined
+									joinBtn.textContent = '📋 View Flow'
+									joinBtn.classList.add('joined')
+									declineBtn.style.display = 'none'
+									if (statusEl) statusEl.textContent = '✓ Already joined'
+								}
+							} catch (e) {
+								// Session doesn't exist yet, user hasn't joined
+								console.log('[Flow Invitation] Session not found, user can join')
+							}
+						}
+					})
+				}
+
 				// Timestamp - show on last message of group
 				if (isLast && msg.created_at) {
 					const footer = document.createElement('div')
@@ -2586,6 +3027,62 @@ export function createMessagesModule({
 		setTimeout(() => {
 			container.scrollTop = container.scrollHeight
 		}, 50)
+	}
+
+	// ============================================================================
+	// MULTIPARTY FLOW HELPERS
+	// ============================================================================
+
+	function getActiveThreadParticipants() {
+		if (!activeThreadId) return []
+		const thread = messageThreads.find((t) => t.thread_id === activeThreadId)
+		if (!thread) return []
+		return thread.participants || []
+	}
+
+	function isGroupThread() {
+		const participants = getActiveThreadParticipants()
+		const currentUser = getCurrentUserEmail()
+		const otherParticipants = participants.filter((p) => !emailsMatch(p, currentUser))
+		return otherParticipants.length > 1
+	}
+
+	async function sendMessageToRecipients({ recipients, body, subject, metadata }) {
+		if (!recipients || recipients.length === 0) {
+			throw new Error('No recipients specified')
+		}
+		if (!body) {
+			throw new Error('Message body is required')
+		}
+
+		const syftboxStatus = getSyftboxStatus()
+		if (!syftboxStatus.running) {
+			throw new Error('You must be online to send messages')
+		}
+
+		const request =
+			recipients.length === 1
+				? { to: recipients[0], subject: subject || NO_SUBJECT_PLACEHOLDER, body, metadata }
+				: { recipients, subject: subject || NO_SUBJECT_PLACEHOLDER, body, metadata }
+
+		const sent = await invoke('send_message', { request })
+
+		// Refresh thread list
+		await loadMessageThreads(false, { emitToasts: false })
+
+		return sent
+	}
+
+	function updateProposeFlowButton() {
+		const btn = document.getElementById('propose-flow-btn')
+		if (!btn) return
+
+		// Show button only in group chats
+		if (isGroupThread() && activeThreadId && !isComposingNewMessage) {
+			btn.style.display = 'flex'
+		} else {
+			btn.style.display = 'none'
+		}
 	}
 
 	// ============================================================================
@@ -2621,6 +3118,11 @@ export function createMessagesModule({
 		deleteFailedMessage,
 		// Shared renderer for embedding in other views
 		renderMessagesToContainer,
+		// Multiparty flow helpers
+		getActiveThreadParticipants,
+		isGroupThread,
+		sendMessageToRecipients,
+		updateProposeFlowButton,
 	}
 }
 

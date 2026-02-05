@@ -8,6 +8,7 @@ pub mod key;
 pub mod logs;
 pub mod messages;
 pub mod modules;
+pub mod multiparty;
 pub mod notifications;
 pub mod participants;
 pub mod profiles;
