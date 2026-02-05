@@ -232,8 +232,7 @@ async function openPickerFromSettings(page, wsPort) {
 							picker.style.display !== 'none' &&
 							window.getComputedStyle(picker).display !== 'none'
 						const ready =
-							window.__NAV_HANDLERS_READY__ === true &&
-							window.__EVENT_HANDLERS_READY__ === true
+							window.__NAV_HANDLERS_READY__ === true && window.__EVENT_HANDLERS_READY__ === true
 						const profileRows = document.querySelectorAll('.profile-row').length
 						return { pickerVisible, ready, profileRows }
 					})
@@ -264,7 +263,9 @@ async function openPickerFromSettings(page, wsPort) {
 	// Use a longer timeout to catch late-appearing pickers in CI.
 	const pickerVisibleEarly = await profilesView.isVisible({ timeout: 3_000 }).catch(() => false)
 	const rowCountEarly = await page.locator('.profile-row').count()
-	console.log(`[openPickerFromSettings] Early check: visible=${pickerVisibleEarly}, rows=${rowCountEarly}`)
+	console.log(
+		`[openPickerFromSettings] Early check: visible=${pickerVisibleEarly}, rows=${rowCountEarly}`,
+	)
 	if (pickerVisibleEarly) {
 		console.log('[openPickerFromSettings] Picker already visible, returning early')
 		return
@@ -323,7 +324,9 @@ async function openPickerFromSettings(page, wsPort) {
 		await page.waitForTimeout(500)
 	}
 	if (!opened) {
-		console.log('[openPickerFromSettings] Button click loop did not open picker, using fallbacks...')
+		console.log(
+			'[openPickerFromSettings] Button click loop did not open picker, using fallbacks...',
+		)
 		// Fallback: trigger click via DOM even if the button isn't visible.
 		if (!openBtnVisible) {
 			console.log('[openPickerFromSettings] Trying DOM click on hidden button')
@@ -351,7 +354,9 @@ async function openPickerFromSettings(page, wsPort) {
 
 		// Final fallback: directly manipulate DOM to show picker and load profiles (CI workaround)
 		const stillNotVisible = !(await profilesView.isVisible({ timeout: 2_000 }).catch(() => false))
-		console.log(`[openPickerFromSettings] After showProfilesPickerInApp: visible=${!stillNotVisible}`)
+		console.log(
+			`[openPickerFromSettings] After showProfilesPickerInApp: visible=${!stillNotVisible}`,
+		)
 		if (stillNotVisible) {
 			console.log('[openPickerFromSettings] Using DOM manipulation fallback')
 			await page.evaluate(async () => {
@@ -598,8 +603,15 @@ test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => 
 
 		// Re-open picker to switch to profile A.
 		// Debug: check backend state before opening picker
-		const bootStateBeforeSecondOpen = await wsInvoke(wsPort, 'profiles_get_boot_state', {}, 5_000).catch(() => null)
-		console.log(`[profiles-real] Before second openPickerFromSettings: ${bootStateBeforeSecondOpen?.profiles?.length ?? 0} profiles in backend`)
+		const bootStateBeforeSecondOpen = await wsInvoke(
+			wsPort,
+			'profiles_get_boot_state',
+			{},
+			5_000,
+		).catch(() => null)
+		console.log(
+			`[profiles-real] Before second openPickerFromSettings: ${bootStateBeforeSecondOpen?.profiles?.length ?? 0} profiles in backend`,
+		)
 		for (const p of bootStateBeforeSecondOpen?.profiles || []) {
 			console.log(`  - ${p?.id?.slice(0, 8)}... home=${p?.biovault_home} running=${p?.running}`)
 		}
