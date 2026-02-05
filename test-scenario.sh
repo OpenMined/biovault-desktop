@@ -70,6 +70,7 @@ Scenario Options (pick one):
   --onboarding         Run onboarding test only
   --profiles           Run profiles UI flow (real backend, isolated sandbox)
   --profiles-mock      Run profiles UI flow (mock backend)
+  --files-cli          Run CLI file-import smoke test (no UI/devstack)
   --messaging          Run onboarding + basic messaging
   --messaging-sessions Run onboarding + comprehensive messaging & sessions
   --messaging-core     Run CLI-based messaging scenario
@@ -127,6 +128,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--profiles-mock)
 			SCENARIO="profiles-mock"
+			shift
+			;;
+		--files-cli)
+			SCENARIO="files-cli"
 			shift
 			;;
 		--messaging)
@@ -654,7 +659,7 @@ cleanup() {
 	kill_workspace_jupyter
 
 	if [[ "${KEEP_ALIVE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "true" && "${WAIT_MODE:-0}" != "1" && "${WAIT_MODE:-0}" != "true" ]]; then
-		if [[ "$DEVSTACK_STARTED" == "1" && "$SCENARIO" != "profiles-mock" ]]; then
+		if [[ "$DEVSTACK_STARTED" == "1" && "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 			info "Stopping SyftBox devstack"
 			local c1="${CLIENT1_EMAIL:-client1@sandbox.local}"
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
@@ -700,7 +705,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [[ "$SCENARIO" != "profiles-mock" ]]; then
+if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	# Start devstack with two or three clients (reset by default to avoid stale state)
 	if [[ "$SCENARIO" == "syqure-flow" ]]; then
 		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
@@ -750,7 +755,7 @@ find_state_file() {
 }
 
 STATE_FILE="$(find_state_file || true)"
-if [[ "$SCENARIO" != "profiles-mock" ]]; then
+if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	if [[ -z "$STATE_FILE" ]]; then
 		echo "Devstack state not found in $SANDBOX_ROOT" >&2
 		exit 1
@@ -771,7 +776,7 @@ sys.exit(1)
 PY
 }
 
-if [[ "$SCENARIO" != "profiles-mock" ]]; then
+if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
 	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
 	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
@@ -1363,7 +1368,9 @@ if [[ "$WARM_CACHE" == "1" ]]; then
 fi
 
 # Ensure Playwright browsers are present (CI may skip install or have empty cache)
-ensure_playwright_browsers
+if [[ "$SCENARIO" != "files-cli" ]]; then
+	ensure_playwright_browsers
+fi
 
 	case "$SCENARIO" in
 			onboarding)
@@ -1399,12 +1406,74 @@ ensure_playwright_browsers
 				run_ui_grep "@profiles-real-linux" "PROFILES_HOME_A=$PROFILES_HOME_A" "PROFILES_HOME_B=$PROFILES_HOME_B" "BIOVAULT_PROFILES_DIR=$BIOVAULT_PROFILES_DIR"
 				timer_pop
 				;;
-			profiles-mock)
-				start_static_server
-				timer_push "Playwright: @profiles-mock"
-				run_ui_grep "@profiles-mock"
+		profiles-mock)
+			start_static_server
+			timer_push "Playwright: @profiles-mock"
+			run_ui_grep "@profiles-mock"
+			timer_pop
+			;;
+		files-cli)
+			info "=== Files CLI Smoke Test ==="
+			# Keep this scenario self-contained (no devstack/UI). Use a temp BV home.
+			BV_TEST_HOME="${BV_TEST_HOME:-$ROOT_DIR/logs/files-cli-home}"
+			BV_BIN="${BV_BIN:-$BIOVAULT_DIR/cli/target/release/bv}"
+			rm -rf "$BV_TEST_HOME"
+			mkdir -p "$BV_TEST_HOME"
+			if [[ ! -x "$BV_BIN" ]]; then
+				info "Building BioVault CLI (release)"
+				timer_push "Cargo build (biovault cli release)"
+				(cd "$BIOVAULT_DIR/cli" && cargo build --release) >>"$LOG_FILE" 2>&1
 				timer_pop
-				;;
+			fi
+			# Seed small dummy files.
+			DATA_DIR="$BV_TEST_HOME/data"
+			mkdir -p "$DATA_DIR"
+			printf "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n1\t1\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n" >"$DATA_DIR/P1.vcf"
+			printf "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n1\t2\trs2\tC\tT\t.\tPASS\t.\tGT\t0/1\n" | gzip -c >"$DATA_DIR/P2.vcf.gz"
+			printf "cram" >"$DATA_DIR/P3.cram"
+			printf "crai" >"$DATA_DIR/P3.cram.crai"
+			printf "bam" >"$DATA_DIR/P4.bam"
+			printf "bai" >"$DATA_DIR/P4.bam.bai"
+			printf "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n1\t3\trs3\tG\tA\t.\tPASS\t.\tGT\t0/1\n" >"$DATA_DIR/P5.vcf"
+			printf "cram" >"$DATA_DIR/P5.cram"
+			printf "crai" >"$DATA_DIR/P5.cram.crai"
+			printf "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n1\t4\trs4\tT\tC\t.\tPASS\t.\tGT\t0/1\n" >"$DATA_DIR/P6.vcf"
+			printf "fasta" >"$DATA_DIR/ref.fa"
+			printf "fai" >"$DATA_DIR/ref.fa.fai"
+			# Create CSV for import pending.
+			CSV="$BV_TEST_HOME/files.csv"
+			cat >"$CSV" <<EOF
+file_path,participant_id,data_type,source,grch_version,row_count,chromosome_count,inferred_sex
+$DATA_DIR/P1.vcf,P1,Variants,,,,
+$DATA_DIR/P2.vcf.gz,P2,Variants,,,,
+$DATA_DIR/P3.cram,P3,Aligned,GRCh38,,,
+$DATA_DIR/P4.bam,P4,Aligned,GRCh37,,,
+$DATA_DIR/P5.cram,P5,AlignedWithRef,GRCh38,,,
+$DATA_DIR/P5.cram.crai,P5,AlignedIndex,GRCh38,,,
+$DATA_DIR/P6.vcf,P6,Variants,,,,
+$DATA_DIR/ref.fa,P6,Reference,GRCh38,,,
+$DATA_DIR/ref.fa.fai,P6,ReferenceIndex,GRCh38,,,
+EOF
+			# Import as pending and then process queue to finalize hashes.
+			BIOVAULT_HOME="$BV_TEST_HOME/.biovault" "$BV_BIN" files import-pending "$CSV" --format json | tee -a "$LOG_FILE" >/dev/null
+			BIOVAULT_HOME="$BV_TEST_HOME/.biovault" "$BV_BIN" files process-queue --limit 20 --format json | tee -a "$LOG_FILE" >/dev/null
+			# Verify expected data types in catalog (smoke assertions).
+			BIOVAULT_HOME="$BV_TEST_HOME/.biovault" "$BV_BIN" files list --format json >"$BV_TEST_HOME/files.json"
+			python3 - "$BV_TEST_HOME/files.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+files = data.get("data", {}).get("files", [])
+types = {}
+for f in files:
+    types.setdefault(f.get("data_type"), 0)
+    types[f.get("data_type")] += 1
+for required in ["Variants", "Aligned", "AlignedWithRef", "AlignedIndex", "Reference", "ReferenceIndex"]:
+    if types.get(required, 0) <= 0:
+        raise SystemExit(f"Missing expected data_type: {required}")
+print("OK")
+PY
+			info "Files CLI smoke test complete"
+			;;
 			messaging)
 				start_static_server
 				start_tauri_instances

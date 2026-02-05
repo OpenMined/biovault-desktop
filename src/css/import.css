@@ -1018,6 +1018,32 @@ label[for='select-all-review'] {
 	border: 1px solid #e5e7eb;
 }
 
+.import-meta-badge {
+	display: inline-block;
+	margin-left: 8px;
+	padding: 3px 8px;
+	background: #e0f2fe;
+	color: #0369a1;
+	border-radius: 999px;
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+	border: 1px solid #bae6fd;
+}
+
+.import-index-badge {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 3px 8px;
+	background: #fef3c7;
+	color: #b45309;
+	border-radius: 999px;
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+	border: 1px solid #fde68a;
+}
+
 .highlight {
 	background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
 	color: #92400e;
