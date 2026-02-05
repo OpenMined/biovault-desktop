@@ -2844,18 +2844,52 @@ pub async fn resume_flow_run(
 ) -> Result<Run, String> {
     crate::desktop_log!("↩️ resume_flow_run called for run_id={}", run_id);
 
-    // Mark run as running immediately so UI updates right away
+    // Get results_dir first for stale state cleanup
     let initial_results_dir = {
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-        let _ = biovault_db.update_flow_run_status(run_id, "running", true);
-        // Get results_dir for flow state update
         biovault_db
             .get_flow_run(run_id)
             .ok()
             .flatten()
             .and_then(|r| r.results_dir.or(Some(r.work_dir)))
     };
-    // Also update flow.state.json
+
+    // Clean up stale state BEFORE marking as running
+    // This handles the case where a previous run crashed while "running"
+    if let Some(results_dir) = initial_results_dir.as_ref() {
+        if let Some(mut flow_state) = load_flow_state(Path::new(results_dir)) {
+            if flow_state.status.as_deref() == Some("running") {
+                // Only update if there's no active process (stale state)
+                let pid_path = flow_pid_path(Path::new(results_dir));
+                let is_stale = if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+                    if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                        !is_pid_running(pid)
+                    } else {
+                        true
+                    }
+                } else {
+                    true // No PID file means it's stale
+                };
+
+                if is_stale {
+                    flow_state.status = Some("failed".to_string());
+                    flow_state.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                    let _ = save_flow_state(Path::new(results_dir), &flow_state);
+                    crate::desktop_log!(
+                        "🧹 Cleaned up stale running state before resume for run_id={}",
+                        run_id
+                    );
+                }
+            }
+        }
+    }
+
+    // NOW mark run as running so UI updates right away
+    {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let _ = biovault_db.update_flow_run_status(run_id, "running", true);
+    }
+    // Also update flow.state.json to running
     if let Some(results_dir) = initial_results_dir.as_ref() {
         if let Some(mut flow_state) = load_flow_state(Path::new(results_dir)) {
             flow_state.status = Some("running".to_string());
@@ -2929,19 +2963,9 @@ pub async fn resume_flow_run(
             }
         }
 
-        // If flow.state.json says running but DB says failed, update the file.
-        if let Some(mut flow_state) = load_flow_state(Path::new(results_dir)) {
-            if flow_state.status.as_deref() == Some("running") {
-                flow_state.status = Some("failed".to_string());
-                flow_state.last_updated = Some(chrono::Utc::now().to_rfc3339());
-                let _ = save_flow_state(Path::new(results_dir), &flow_state);
-                append_flow_log(
-                    Some(&window),
-                    &log_path,
-                    "🧹 Updated stale flow.state.json status before resume",
-                );
-            }
-        }
+        // Note: Stale state cleanup is now handled earlier in the function,
+        // before we set status to "running". This ensures we don't accidentally
+        // reset the freshly-set running status.
     }
 
     // Clear Nextflow locks from both module directories AND flow directory
