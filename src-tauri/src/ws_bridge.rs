@@ -437,6 +437,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("reconcile_flow_runs", "flows", true),
         cmd("pause_flow_run", "flows", true),
         cmd("resume_flow_run", "flows", true),
+        cmd("cleanup_flow_run_state", "flows", true),
         cmd("get_flow_run_work_dir", "flows", true),
         cmd("path_exists", "flows", true),
         cmd("start_analysis", "runs", false),
@@ -1296,6 +1297,18 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             )
             .await
             .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "cleanup_flow_run_state" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let result = crate::commands::flows::cleanup_flow_run_state(state, run_id)
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_flow_run_work_dir" => {

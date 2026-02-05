@@ -211,7 +211,7 @@ const {
 } = sessionsModule
 
 // Create network module
-const networkModule = createNetworkModule({ invoke, shellApi })
+const networkModule = createNetworkModule({ invoke, shellApi, dialog })
 
 // Create SyftBox module
 const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shellApi })
