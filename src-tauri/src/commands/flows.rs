@@ -114,6 +114,82 @@ fn flow_pid_path(results_dir: &Path) -> PathBuf {
     results_dir.join("flow.pid")
 }
 
+fn extract_publish_rel_path(spec: &str, fallback: &str) -> PathBuf {
+    let trimmed = spec.trim();
+    if let (Some(start), Some(end)) = (trimmed.find('('), trimmed.rfind(')')) {
+        if end > start + 1 {
+            let inner = trimmed[start + 1..end].trim();
+            if !inner.is_empty() {
+                return PathBuf::from(inner);
+            }
+        }
+    }
+    PathBuf::from(fallback)
+}
+
+fn published_output_exists(step_dir: &Path, rel_path: &Path) -> bool {
+    if step_dir.as_os_str().is_empty() {
+        return false;
+    }
+    let direct = step_dir.join(rel_path);
+    if direct.exists() {
+        return true;
+    }
+    if !step_dir.exists() {
+        return false;
+    }
+
+    // Search for the output within step subdirectories (e.g., per-datasite outputs).
+    let mut found = false;
+    for entry in WalkDir::new(step_dir)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.ends_with(rel_path) {
+            found = true;
+            break;
+        }
+        if rel_path.components().count() == 1 {
+            if let Some(name) = rel_path.file_name() {
+                if path.file_name() == Some(name) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    found
+}
+
+fn published_outputs_complete(flow_spec: &FlowSpec, results_dir: &Path) -> Option<bool> {
+    let mut expected: Vec<(String, PathBuf)> = Vec::new();
+    for step in &flow_spec.steps {
+        if step.publish.is_empty() {
+            continue;
+        }
+        for (name, spec) in &step.publish {
+            let rel_path = extract_publish_rel_path(spec, name);
+            expected.push((step.id.clone(), rel_path));
+        }
+    }
+
+    if expected.is_empty() {
+        return None;
+    }
+
+    for (step_id, rel_path) in expected {
+        let step_dir = results_dir.join(step_id);
+        if !published_output_exists(&step_dir, &rel_path) {
+            return Some(false);
+        }
+    }
+
+    Some(true)
+}
+
 #[cfg(target_os = "windows")]
 fn configure_child_process(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -2409,6 +2485,14 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         biovault_db.list_flow_runs().map_err(|e| e.to_string())?
     };
+    let flow_specs: HashMap<i64, FlowSpec> = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
+        flows
+            .into_iter()
+            .filter_map(|flow| flow.spec.map(|spec| (flow.id, spec)))
+            .collect()
+    };
 
     for run in runs {
         if run.status != "running" && run.status != "paused" {
@@ -2469,6 +2553,17 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
                 if let Ok(modified) = metadata.modified() {
                     if now.duration_since(modified).unwrap_or_default() < grace_period {
                         // Log is still being written; keep status as-is.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if let Some(flow_id) = run.flow_id {
+            if let Some(flow_spec) = flow_specs.get(&flow_id) {
+                if let Some(done) = published_outputs_complete(flow_spec, &results_dir) {
+                    if done {
+                        updates.push((run.id, "success".to_string(), true));
                         continue;
                     }
                 }

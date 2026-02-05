@@ -2038,13 +2038,13 @@ export function createImportModule({
 					grch_version: meta.grch_version,
 				}
 			})
-			if (progressText) progressText.textContent = `Adding files to queue...`
+			if (progressText) progressText.textContent = `Importing files...`
 			if (progressBarFill) progressBarFill.style.width = '50%'
-			// Fast import - add all files to queue instantly (no hashing)
-			const result = await invoke('import_files_pending', {
+			// Direct import (no queue)
+			const result = await invoke('import_files_with_metadata', {
 				fileMetadata: fileMetadata,
 			})
-			if (progressText) progressText.textContent = `Complete! Added ${totalFiles} files to queue`
+			if (progressText) progressText.textContent = `Complete! Imported ${totalFiles} files`
 			if (progressBarFill) progressBarFill.style.width = '100%'
 			// Update results
 			if (result.success) {

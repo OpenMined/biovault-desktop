@@ -11,6 +11,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const flowStepStatusAt = new Map()
 	const flowProgressCache = new Map()
 	const flowProgressTiming = new Map()
+	const flowReconcileAt = new Map()
+	let flowReconcileInFlight = false
 
 	function parseConcurrencyInput(value) {
 		if (value === null || value === undefined) return null
@@ -353,6 +355,34 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				// Save state for persistence/recovery
 				if (progress && progress.total && run.status === 'running') {
 					saveFlowState(run.id, progress, null, containerCount)
+				}
+			}
+			if (run.status === 'running') {
+				const now = Date.now()
+				const lastReconcile = flowReconcileAt.get(run.id) || 0
+				if (!flowReconcileInFlight && now - lastReconcile > 15000) {
+					flowReconcileInFlight = true
+					flowReconcileAt.set(run.id, now)
+					invoke('reconcile_flow_runs')
+						.then(async () => {
+							try {
+								const runs = await invoke('get_flow_runs')
+								const updated = Array.isArray(runs)
+									? runs.find((entry) => entry && entry.id === run.id)
+									: null
+								if (updated && updated.status && updated.status !== run.status) {
+									await loadRuns()
+								}
+							} catch (lookupError) {
+								console.warn('Failed to check reconciled run status:', lookupError)
+							}
+						})
+						.catch((reconcileError) => {
+							console.warn('Failed to reconcile flow runs:', reconcileError)
+						})
+						.finally(() => {
+							flowReconcileInFlight = false
+						})
 				}
 			}
 			if (stepRows && stepRows.length > 0) {

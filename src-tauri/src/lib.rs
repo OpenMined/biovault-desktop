@@ -1051,7 +1051,8 @@ pub fn run() {
         crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
         let conn = Connection::open(&db_path).expect("Could not open database");
         init_db(&conn).expect("Could not initialize database");
-        (conn, Arc::new(AtomicBool::new(false))) // Start running
+        // Start paused to avoid background queue processing.
+        (conn, Arc::new(AtomicBool::new(true)))
     };
 
     let app_state = AppState {
