@@ -404,10 +404,14 @@ fn get_commands_list() -> serde_json::Value {
         cmd("get_participants", "participants", true),
         cmd("get_extensions", "files", true),
         cmd("search_txt_files", "files", true),
+        cmd_async("fetch_reference_data", "files", false),
+        cmd_async("fetch_reference_data_with_progress", "files", false),
         cmd("suggest_patterns", "files", true),
         cmd("extract_ids_for_files", "files", true),
         cmd_async("detect_file_types", "files", true),
         cmd_async("analyze_file_types", "files", true),
+        cmd_async("fetch_sample_data", "files", false),
+        cmd_async("fetch_sample_data_with_progress", "files", false),
         cmd_async("import_files_pending", "files", false),
         cmd_async("import_files", "files", false),
         cmd_async("import_files_with_metadata", "files", false),
@@ -2842,6 +2846,58 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::commands::files::analyze::detect_file_types(state.clone(), files)
                 .await
                 .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_sample_data" => {
+            let samples: Vec<String> = serde_json::from_value(
+                args.get("samples")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse samples: {}", e))?;
+            let result = crate::commands::files::sample_data::fetch_sample_data(samples)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_sample_data_with_progress" => {
+            let samples: Vec<String> = serde_json::from_value(
+                args.get("samples")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse samples: {}", e))?;
+            let window = app.get_webview_window("main");
+            let result = if let Some(window) = window {
+                crate::commands::files::sample_data::fetch_sample_data_with_progress(
+                    window, samples,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+            } else {
+                crate::commands::files::sample_data::fetch_sample_data(samples)
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_reference_data" => {
+            let result = crate::commands::files::reference_data::fetch_reference_data()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_reference_data_with_progress" => {
+            let window = app.get_webview_window("main");
+            let result = if let Some(window) = window {
+                crate::commands::files::reference_data::fetch_reference_data_with_progress(window)
+                    .await
+                    .map_err(|e| e.to_string())?
+            } else {
+                crate::commands::files::reference_data::fetch_reference_data()
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
             Ok(serde_json::to_value(result).unwrap())
         }
         "import_files_pending" => {

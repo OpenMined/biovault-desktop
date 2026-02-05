@@ -28,6 +28,8 @@ pub async fn import_files_with_metadata(
             data_type: metadata.data_type,
             source: metadata.source,
             grch_version: metadata.grch_version,
+            reference_path: metadata.reference_path,
+            reference_index_path: metadata.reference_index_path,
             row_count: metadata.row_count,
             chromosome_count: metadata.chromosome_count,
             inferred_sex: metadata.inferred_sex,
@@ -117,22 +119,21 @@ pub async fn import_files_pending(
             data_type: metadata.data_type,
             source: metadata.source,
             grch_version: metadata.grch_version,
+            reference_path: metadata.reference_path,
+            reference_index_path: metadata.reference_index_path,
             row_count: metadata.row_count,
             chromosome_count: metadata.chromosome_count,
             inferred_sex: metadata.inferred_sex,
         })
         .collect();
 
-    // Import as pending (no hashing/analysis, just add to queue)
+    // Import files as pending
     let db = state.biovault_db.lock().unwrap();
     let lib_result = biovault::data::import_files_as_pending(&db, csv_imports)
-        .map_err(|e| format!("Failed to import files as pending: {}", e))?;
-
-    // Queue processor is paused by default - user can enable via UI when ready
-    // (auto-resume disabled to prevent unexpected background processing)
+        .map_err(|e| format!("Failed to import files: {}", e))?;
 
     crate::desktop_log!(
-        "✅ Added {} files to queue, skipped {} (using library)",
+        "✅ Imported {} files, skipped {} (using library)",
         lib_result.imported,
         lib_result.skipped
     );
@@ -148,11 +149,11 @@ pub async fn import_files_pending(
     Ok(ImportResult {
         success,
         message: format!(
-            "Added {} files to queue for processing, skipped {}",
+            "Imported {} files, skipped {}",
             lib_result.imported, lib_result.skipped
         ),
         conflicts: Vec::new(),
-        imported_files: Vec::new(), // Will be populated when queue is processed
+        imported_files: Vec::new(),
     })
 }
 
@@ -254,6 +255,8 @@ pub async fn import_files(
                 data_type: None,
                 source: None,
                 grch_version: None,
+                reference_path: None,
+                reference_index_path: None,
                 row_count: None,
                 chromosome_count: None,
                 inferred_sex: None,

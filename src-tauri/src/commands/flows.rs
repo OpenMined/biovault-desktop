@@ -2098,7 +2098,7 @@ pub async fn run_flow_impl(
                 return Err("No valid file IDs were provided for the flow run.".to_string());
             }
 
-            let mut rows = Vec::new();
+            let mut records = Vec::new();
             let mut participant_labels_set: HashSet<String> = HashSet::new();
 
             for file_id in &unique_file_ids {
@@ -2115,6 +2115,7 @@ pub async fn run_flow_impl(
 
                 let participant = record
                     .participant_id
+                    .clone()
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or_else(|| {
                         Path::new(&record.file_path)
@@ -2125,7 +2126,7 @@ pub async fn run_flow_impl(
                     });
 
                 participant_labels_set.insert(participant.clone());
-                rows.push((participant, record.file_path));
+                records.push((participant, record));
             }
 
             let dedup_participant_ids: Vec<String> = {
@@ -2142,17 +2143,97 @@ pub async fn run_flow_impl(
             })?;
             let sheet_path = inputs_dir.join("selected_participants.csv");
 
+            // Detect if we have aligned files (CRAM/BAM) vs genotype files
+            let has_aligned = records.iter().any(|(_, r)| {
+                let dt = r.data_type.as_deref().unwrap_or("");
+                dt == "Aligned" || r.file_path.ends_with(".cram") || r.file_path.ends_with(".bam")
+            });
+
             let mut writer = csv::Writer::from_path(&sheet_path)
                 .map_err(|e| format!("Failed to create samplesheet: {}", e))?;
-            writer
-                .write_record(["participant_id", "genotype_file"])
-                .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
-            for (participant, file_path) in &rows {
+            if has_aligned {
+                // Aligned file format - need index and reference files
                 writer
-                    .write_record([participant, file_path])
-                    .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
+                    .write_record([
+                        "participant_id",
+                        "aligned_file",
+                        "aligned_index",
+                        "reference_file",
+                        "reference_index",
+                        "ref_version",
+                    ])
+                    .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
+
+                // Try to find reference files from the database
+                let all_files = biovault::data::list_files(&biovault_db, None, None, false, None)
+                    .unwrap_or_default();
+                let reference_file = all_files
+                    .iter()
+                    .find(|f| f.data_type.as_deref() == Some("Reference"))
+                    .map(|f| f.file_path.clone());
+                let reference_index = all_files
+                    .iter()
+                    .find(|f| f.data_type.as_deref() == Some("ReferenceIndex"))
+                    .map(|f| f.file_path.clone());
+
+                for (participant, record) in &records {
+                    let file_path = &record.file_path;
+
+                    // Find index file next to the aligned file
+                    let index_path = if file_path.ends_with(".cram") {
+                        let crai = format!("{}.crai", file_path);
+                        if Path::new(&crai).exists() {
+                            crai
+                        } else {
+                            String::new()
+                        }
+                    } else if file_path.ends_with(".bam") {
+                        let bai = format!("{}.bai", file_path);
+                        if Path::new(&bai).exists() {
+                            bai
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    let ref_version = record
+                        .grch_version
+                        .clone()
+                        .unwrap_or_else(|| "GRCh38".to_string());
+                    let ref_file = reference_file.clone().unwrap_or_default();
+                    let ref_index = reference_index.clone().unwrap_or_default();
+
+                    writer
+                        .write_record([
+                            participant,
+                            file_path,
+                            &index_path,
+                            &ref_file,
+                            &ref_index,
+                            &ref_version,
+                        ])
+                        .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
+                }
+            } else {
+                // Genotype file format
+                writer
+                    .write_record(["participant_id", "genotype_file"])
+                    .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
+
+                for (participant, record) in &records {
+                    writer
+                        .write_record([participant, &record.file_path])
+                        .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
+                }
             }
+
+            let rows: Vec<(String, String)> = records
+                .iter()
+                .map(|(p, r)| (p.clone(), r.file_path.clone()))
+                .collect();
             writer
                 .flush()
                 .map_err(|e| format!("Failed to finalize samplesheet: {}", e))?;

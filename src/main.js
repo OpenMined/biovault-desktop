@@ -232,6 +232,7 @@ const fileImportModule = createImportModule({
 })
 const {
 	openImportModal,
+	openImportModalWithFolder,
 	closeImportModal,
 	backToSelection,
 	pickFolder,
@@ -337,6 +338,8 @@ modulesNavigateTo = navigateTo
 messagesGetActiveView = getActiveView
 importNavigateTo = navigateTo
 importSetLastImportView = setLastImportView
+
+window.openImportModalWithFolder = openImportModalWithFolder
 
 window.addEventListener('DOMContentLoaded', async () => {
 	console.log('🔥 DOMContentLoaded fired')
