@@ -955,6 +955,20 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					resumeBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
 						try {
+							const confirmed = await confirmWithDialog(
+								'Try to resume this run from the last checkpoint?',
+								{ title: 'Resume Run', type: 'warning' },
+							)
+							if (!confirmed) return
+							if (run.status === 'failed') {
+								try {
+									await invoke('cleanup_flow_run_state', { runId: run.id })
+									console.log('🧹 Cleaned stale run state for retry', run.id)
+								} catch (cleanupError) {
+									alert(`Failed to clean up stale run state: ${cleanupError}`)
+									return
+								}
+							}
 							const input = card.querySelector('.run-concurrency-input')
 							const nextflowMaxForks = parseConcurrencyInput(input?.value)
 							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
@@ -1012,6 +1026,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					retryBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
 						try {
+							const confirmed = await confirmWithDialog(
+								'Retry this run and attempt to resume from cache? This will clear stale PID/state files if needed.',
+								{ title: 'Retry Run', type: 'warning' },
+							)
+							if (!confirmed) return
 							const input = card.querySelector('.run-concurrency-input')
 							const nextflowMaxForks = parseConcurrencyInput(input?.value)
 

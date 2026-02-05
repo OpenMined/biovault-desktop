@@ -76,7 +76,7 @@ pub async fn import_files_with_metadata(
         .collect();
 
     Ok(ImportResult {
-        success: lib_result.imported > 0,
+        success: lib_result.errors.is_empty(),
         message: format!(
             "Successfully imported {} files, skipped {}",
             lib_result.imported, lib_result.skipped
@@ -135,7 +135,7 @@ pub async fn import_files_pending(
     }
 
     Ok(ImportResult {
-        success: lib_result.imported > 0,
+        success: lib_result.errors.is_empty(),
         message: format!(
             "Added {} files to queue for processing, skipped {}",
             lib_result.imported, lib_result.skipped

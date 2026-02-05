@@ -1546,6 +1546,7 @@ pub fn run() {
             reconcile_flow_runs,
             pause_flow_run,
             resume_flow_run,
+            cleanup_flow_run_state,
             path_exists,
             delete_flow_run,
             preview_flow_spec,
