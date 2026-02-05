@@ -284,6 +284,14 @@ test.describe('Flows Pause/Resume @flows-pause-resume', () => {
 		await setWsPort(page, wsPort)
 		const backend = await connectBackend(wsPort)
 
+		// Handle dialogs (needed for resume/pause confirmations)
+		page.on('dialog', async (dialog) => {
+			console.log(`[Dialog] ${dialog.type()}: ${dialog.message().substring(0, 80)}...`)
+			try {
+				await dialog.accept()
+			} catch {}
+		})
+
 		try {
 			// Navigate and setup
 			await page.goto(`http://localhost:${process.env.UI_PORT || '8082'}?ws=${wsPort}&real=1`)
