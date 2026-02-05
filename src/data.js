@@ -94,6 +94,75 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
+	const SAMPLE_DATA_CONFIG = {
+		'na06985-full': {
+			title: 'Downloading NA06985 (Full CRAM)',
+			body: 'This download is large (~20GB). Closing this window will not stop the download.',
+			links: [
+				{
+					label: 'Reference (GRCh38 full)',
+					href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
+				},
+				{
+					label: 'Reference index (.fai)',
+					href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
+				},
+				{
+					label: 'Aligned CRAM (NA06985)',
+					href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram',
+				},
+				{
+					label: 'Aligned index (.crai)',
+					href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram.crai',
+				},
+			],
+		},
+		'na06985-chry': {
+			title: 'Downloading NA06985 chrY (CRAM)',
+			body: 'Downloading chromosome Y aligned CRAM + GRCh38 chrY reference.',
+			links: [
+				{
+					label: 'Reference (GRCh38 chrY)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/reference/GRCh38_chrY.fa',
+				},
+				{
+					label: 'Reference index (.fai)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/reference/GRCh38_chrY.fa.fai',
+				},
+				{
+					label: 'Aligned CRAM (chrY)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/NA06985/NA06985.final.chrY.cram.tar.gz.aa',
+				},
+				{
+					label: 'Aligned index (.crai)',
+					href: 'https://raw.githubusercontent.com/OpenMined/biovault-data/refs/heads/main/cram/NA06985/NA06985.final.chrY.cram.crai',
+				},
+			],
+		},
+		'23andme': {
+			title: 'Downloading 23andMe Genotype',
+			body: 'Downloading 23andMe v4 Full genotype file.',
+			links: [
+				{
+					label: '23andMe Genotype (v4 Full)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/snp/23andme_genome_v4_Full.zip',
+				},
+			],
+		},
+		'dynamic-dna': {
+			title: 'Downloading Dynamic DNA Genotype',
+			body: 'Downloading Dynamic DNA genotype file.',
+			links: [
+				{
+					label: 'Dynamic DNA Genotype',
+					href: 'https://raw.githubusercontent.com/OpenMined/biovault-data/main/snp/genotype_files/build_38/100001/100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt',
+				},
+			],
+		},
+	}
+
+	let currentDownloadAbortController = null
+
 	async function handleSampleDataImport(sampleId, buttonEl) {
 		if (!sampleId) return
 		const originalText = buttonEl?.textContent
@@ -114,57 +183,29 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				return
 			}
 
-			if (sampleId === 'na06985-full') {
+			const config = SAMPLE_DATA_CONFIG[sampleId]
+			if (config) {
 				if (activeDownloads.has('sample_data')) {
 					openDownloadModal({
 						downloadId: 'sample_data',
-						title: 'Downloading NA06985 (Full CRAM)',
+						title: config.title,
 						body: 'Download in progress. Closing this window will not stop the download.',
-						links: [
-							{
-								label: 'Reference (GRCh38 full)',
-								href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
-							},
-							{
-								label: 'Reference index (.fai)',
-								href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
-							},
-							{
-								label: 'Aligned CRAM (NA06985)',
-								href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram',
-							},
-							{
-								label: 'Aligned index (.crai)',
-								href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram.crai',
-							},
-						],
+						links: config.links,
 					})
 					return
 				}
 				modalHandle = openDownloadModal({
 					downloadId: 'sample_data',
-					title: 'Downloading NA06985 (Full CRAM)',
-					body: 'This download is large (~20GB). Closing this window will not stop the download.',
-					links: [
-						{
-							label: 'Reference (GRCh38 full)',
-							href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
-						},
-						{
-							label: 'Reference index (.fai)',
-							href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
-						},
-						{
-							label: 'Aligned CRAM (NA06985)',
-							href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram',
-						},
-						{
-							label: 'Aligned index (.crai)',
-							href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram.crai',
-						},
-					],
-					onCancel: () => {
+					title: config.title,
+					body: config.body,
+					links: config.links,
+					onCancel: async () => {
 						cancelRequested = true
+						try {
+							await invoke('cancel_sample_download')
+						} catch (e) {
+							console.warn('Cancel request failed:', e)
+						}
 					},
 				})
 			}
@@ -182,11 +223,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				toggleSampleDataPanel(false)
 			}
 		} catch (error) {
-			console.error('Sample data download failed:', error)
-			await dialog.message(`Failed to download sample data: ${error}`, {
-				title: 'Sample Data Error',
-				type: 'error',
-			})
+			if (cancelRequested) {
+				console.log('Download cancelled')
+			} else {
+				console.error('Sample data download failed:', error)
+				await dialog.message(`Failed to download sample data: ${error}`, {
+					title: 'Sample Data Error',
+					type: 'error',
+				})
+			}
 		} finally {
 			activeDownloads.delete('sample_data')
 			if (buttonEl) {

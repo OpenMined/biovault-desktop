@@ -1453,6 +1453,7 @@ pub fn run() {
             fetch_sample_data,
             fetch_sample_data_with_progress,
             check_sample_downloaded,
+            cancel_sample_download,
             fetch_reference_data,
             fetch_reference_data_with_progress,
             // Dataset commands

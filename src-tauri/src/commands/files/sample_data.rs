@@ -2,11 +2,20 @@ use serde::Serialize;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
+
+static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize)]
 pub struct SampleDataFetchResult {
     pub sample_dir: String,
+}
+
+#[tauri::command]
+pub async fn cancel_sample_download() -> Result<(), String> {
+    DOWNLOAD_CANCELLED.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 fn dynamic_dna_url() -> &'static str {
@@ -269,10 +278,18 @@ fn prepare_participant_bundle(sample_dir: &Path, participant_id: &str) -> Result
     if sources.is_empty() {
         let ref_dir = sample_dir.join("reference");
         let participant_dir = sample_dir.join(participant_id);
-        sources.push(ref_dir.join("GRCh38_chrY.fa"));
-        sources.push(ref_dir.join("GRCh38_chrY.fa.fai"));
-        sources.push(participant_dir.join("NA06985.final.chrY.cram"));
-        sources.push(participant_dir.join("NA06985.final.chrY.cram.crai"));
+        // Handle both chrY and full samples
+        if participant_id == "NA06985-chrY" {
+            sources.push(ref_dir.join("GRCh38_chrY.fa"));
+            sources.push(ref_dir.join("GRCh38_chrY.fa.fai"));
+            sources.push(participant_dir.join("NA06985.final.chrY.cram"));
+            sources.push(participant_dir.join("NA06985.final.chrY.cram.crai"));
+        } else if participant_id == "NA06985" {
+            sources.push(ref_dir.join("GRCh38_full_analysis_set_plus_decoy_hla.fa"));
+            sources.push(ref_dir.join("GRCh38_full_analysis_set_plus_decoy_hla.fa.fai"));
+            sources.push(participant_dir.join("NA06985.final.cram"));
+            sources.push(participant_dir.join("NA06985.final.cram.crai"));
+        }
     }
 
     let mut linked = 0usize;
@@ -357,6 +374,17 @@ pub async fn check_sample_downloaded(sample_id: String) -> Result<Option<String>
             if file_path.exists() {
                 return Ok(Some(
                     sample_dir.join("dynamic-dna").to_string_lossy().to_string(),
+                ));
+            }
+            return Ok(None);
+        }
+        "23andme" => {
+            let file_path = sample_dir
+                .join("23andme")
+                .join("genome_Zeeshan_Usamani_v4_Full.txt");
+            if file_path.exists() {
+                return Ok(Some(
+                    sample_dir.join("23andme").to_string_lossy().to_string(),
                 ));
             }
             return Ok(None);
