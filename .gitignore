@@ -70,3 +70,6 @@ sbenv/
 .repo-manifest/
 AGENTS.md
 TASK.md
+
+# Windows special device names (can be accidentally created as files)
+nul

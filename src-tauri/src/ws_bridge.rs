@@ -405,10 +405,14 @@ fn get_commands_list() -> serde_json::Value {
         cmd("get_participants", "participants", true),
         cmd("get_extensions", "files", true),
         cmd("search_txt_files", "files", true),
+        cmd_async("fetch_reference_data", "files", false),
+        cmd_async("fetch_reference_data_with_progress", "files", false),
         cmd("suggest_patterns", "files", true),
         cmd("extract_ids_for_files", "files", true),
         cmd_async("detect_file_types", "files", true),
         cmd_async("analyze_file_types", "files", true),
+        cmd_async("fetch_sample_data", "files", false),
+        cmd_async("fetch_sample_data_with_progress", "files", false),
         cmd_async("import_files_pending", "files", false),
         cmd_async("import_files", "files", false),
         cmd_async("import_files_with_metadata", "files", false),
@@ -438,6 +442,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("reconcile_flow_runs", "flows", true),
         cmd("pause_flow_run", "flows", true),
         cmd("resume_flow_run", "flows", true),
+        cmd("cleanup_flow_run_state", "flows", true),
         cmd("get_flow_run_work_dir", "flows", true),
         cmd("path_exists", "flows", true),
         cmd("start_analysis", "runs", false),
@@ -1297,6 +1302,18 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             )
             .await
             .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "cleanup_flow_run_state" => {
+            let run_id: i64 = serde_json::from_value(
+                args.get("runId")
+                    .or_else(|| args.get("run_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing runId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse runId: {}", e))?;
+            let result = crate::commands::flows::cleanup_flow_run_state(state, run_id)
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_flow_run_work_dir" => {
@@ -2832,6 +2849,58 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "fetch_sample_data" => {
+            let samples: Vec<String> = serde_json::from_value(
+                args.get("samples")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse samples: {}", e))?;
+            let result = crate::commands::files::sample_data::fetch_sample_data(samples)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_sample_data_with_progress" => {
+            let samples: Vec<String> = serde_json::from_value(
+                args.get("samples")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            )
+            .map_err(|e| format!("Failed to parse samples: {}", e))?;
+            let window = app.get_webview_window("main");
+            let result = if let Some(window) = window {
+                crate::commands::files::sample_data::fetch_sample_data_with_progress(
+                    window, samples,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+            } else {
+                crate::commands::files::sample_data::fetch_sample_data(samples)
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_reference_data" => {
+            let result = crate::commands::files::reference_data::fetch_reference_data()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "fetch_reference_data_with_progress" => {
+            let window = app.get_webview_window("main");
+            let result = if let Some(window) = window {
+                crate::commands::files::reference_data::fetch_reference_data_with_progress(window)
+                    .await
+                    .map_err(|e| e.to_string())?
+            } else {
+                crate::commands::files::reference_data::fetch_reference_data()
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "import_files_pending" => {
             let file_metadata: std::collections::HashMap<
                 String,
@@ -3944,10 +4013,9 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing stepId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse stepId: {}", e))?;
-            let result =
-                crate::commands::multiparty::get_step_output_files(session_id, step_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let result = crate::commands::multiparty::get_step_output_files(session_id, step_id)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
 

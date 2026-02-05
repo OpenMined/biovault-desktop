@@ -35,6 +35,12 @@ export function createSettingsModule({
 	let agentBridgeSaveTimer = null
 	let didMismatchPromptedFor = null
 
+	// Expose a test-friendly hook to open the profiles picker without relying on UI clicks.
+	if (typeof window !== 'undefined') {
+		window.__OPEN_PROFILES_PICKER__ = async () =>
+			showProfilesPickerInApp({ invoke, templateLoader })
+	}
+
 	function hasShownSyftboxUnavailable() {
 		if (syftboxUnavailableShown) return true
 		try {

@@ -1654,8 +1654,18 @@ export function createMessagesModule({
 
 			const request =
 				recipients.length === 1
-					? { to: recipients[0], subject: subject || NO_SUBJECT_PLACEHOLDER, body, reply_to: messageReplyTargetId }
-					: { recipients, subject: subject || NO_SUBJECT_PLACEHOLDER, body, reply_to: messageReplyTargetId }
+					? {
+							to: recipients[0],
+							subject: subject || NO_SUBJECT_PLACEHOLDER,
+							body,
+							reply_to: messageReplyTargetId,
+						}
+					: {
+							recipients,
+							subject: subject || NO_SUBJECT_PLACEHOLDER,
+							body,
+							reply_to: messageReplyTargetId,
+						}
 
 			const sent = await invoke('send_message', { request })
 
@@ -2830,7 +2840,9 @@ export function createMessagesModule({
 
 					// Find the current user's role
 					const currentUser = getCurrentUserEmail()
-					const myParticipant = flowInvitation.participants.find((p) => emailsMatch(p.email, currentUser))
+					const myParticipant = flowInvitation.participants.find((p) =>
+						emailsMatch(p.email, currentUser),
+					)
 					const myRole = myParticipant?.role || null
 
 					const participantsHtml = flowInvitation.participants
@@ -2860,7 +2872,9 @@ export function createMessagesModule({
 						try {
 							const flows = await invoke('get_flows')
 							return (flows || []).some(
-								(f) => f.name === flowInvitation.flow_name || f.metadata?.name === flowInvitation.flow_name,
+								(f) =>
+									f.name === flowInvitation.flow_name ||
+									f.metadata?.name === flowInvitation.flow_name,
 							)
 						} catch {
 							return false
@@ -2883,7 +2897,10 @@ export function createMessagesModule({
 						try {
 							// Import the flow from the invitation spec
 							const flowSpec = flowInvitation.flow_spec
-							console.log('[Flow Import] Flow spec:', JSON.stringify(flowSpec, null, 2).substring(0, 500))
+							console.log(
+								'[Flow Import] Flow spec:',
+								JSON.stringify(flowSpec, null, 2).substring(0, 500),
+							)
 							if (!flowSpec) {
 								throw new Error('No flow specification in invitation')
 							}

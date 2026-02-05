@@ -66,6 +66,202 @@
 	flex-shrink: 0;
 }
 
+.sample-data-panel {
+	margin: 12px 0 18px;
+	padding: 16px;
+	border: 1px solid #e2e8f0;
+	border-radius: 12px;
+	background: #f8fafc;
+}
+
+.sample-data-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.sample-data-header h3 {
+	margin: 0;
+	font-size: 16px;
+}
+
+.sample-data-header p {
+	margin: 4px 0 0 0;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.sample-data-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+	gap: 12px;
+}
+
+.sample-data-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	background: #ffffff;
+}
+
+.sample-data-card h4 {
+	margin: 0;
+	font-size: 14px;
+}
+
+.sample-data-card p {
+	margin: 6px 0 0 0;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.sample-data-progress {
+	width: 100%;
+	background: #e2e8f0;
+	border-radius: 999px;
+	height: 8px;
+	overflow: hidden;
+	position: relative;
+}
+
+.sample-data-progress-bar {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 100%;
+	background: linear-gradient(90deg, #38bdf8, #6366f1, #38bdf8);
+	background-size: 200% 100%;
+	animation: sampleProgress 1.2s linear infinite;
+}
+
+.sample-data-progress-bar.is-determinate {
+	animation: none;
+	background: linear-gradient(90deg, #38bdf8, #6366f1);
+	width: 0%;
+}
+
+.sample-data-progress-text {
+	display: block;
+	margin-top: 8px;
+	font-size: 12px;
+	color: #475569;
+}
+
+.download-modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(15, 23, 42, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 2000;
+}
+
+.download-modal-card {
+	width: min(520px, 92vw);
+	background: #ffffff;
+	border-radius: 14px;
+	padding: 20px;
+	box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+}
+
+.download-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.download-modal-header h3 {
+	margin: 0;
+	font-size: 18px;
+	color: #0f172a;
+}
+
+.download-modal-body {
+	margin: 0 0 12px 0;
+	font-size: 13px;
+	color: #475569;
+}
+
+.download-modal-links {
+	margin: 12px 0 16px 0;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+}
+
+.download-modal-links-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: #475569;
+	margin-bottom: 6px;
+}
+
+.download-modal-link {
+	display: block;
+	font-size: 12px;
+	color: #2563eb;
+	text-decoration: none;
+	line-height: 1.6;
+}
+
+.download-modal-link:hover {
+	text-decoration: underline;
+}
+
+.download-modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 16px;
+}
+
+.references-links {
+	display: flex;
+	gap: 12px;
+	flex-wrap: wrap;
+	margin-top: 10px;
+	font-size: 12px;
+}
+
+.references-links a {
+	color: #2563eb;
+	text-decoration: none;
+}
+
+.references-links a:hover {
+	text-decoration: underline;
+}
+
+@keyframes sampleProgress {
+	0% {
+		background-position: 0% 50%;
+	}
+	100% {
+		background-position: 100% 50%;
+	}
+}
+
+.sample-data-tag {
+	display: inline-flex;
+	margin-top: 8px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: #e2e8f0;
+	color: #475569;
+	font-size: 11px;
+	font-weight: 600;
+}
+
 /* ============================================================================
    SELECTION TOOLBAR - Contextual toolbar for file operations
    ============================================================================ */

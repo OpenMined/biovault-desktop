@@ -11,6 +11,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const flowStepStatusAt = new Map()
 	const flowProgressCache = new Map()
 	const flowProgressTiming = new Map()
+	const flowReconcileAt = new Map()
+	let flowReconcileInFlight = false
 	const multipartyPollingIntervals = new Map()
 
 	// Start polling for multiparty state updates
@@ -382,6 +384,34 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					saveFlowState(run.id, progress, null, containerCount)
 				}
 			}
+			if (run.status === 'running') {
+				const now = Date.now()
+				const lastReconcile = flowReconcileAt.get(run.id) || 0
+				if (!flowReconcileInFlight && now - lastReconcile > 15000) {
+					flowReconcileInFlight = true
+					flowReconcileAt.set(run.id, now)
+					invoke('reconcile_flow_runs')
+						.then(async () => {
+							try {
+								const runs = await invoke('get_flow_runs')
+								const updated = Array.isArray(runs)
+									? runs.find((entry) => entry && entry.id === run.id)
+									: null
+								if (updated && updated.status && updated.status !== run.status) {
+									await loadRuns()
+								}
+							} catch (lookupError) {
+								console.warn('Failed to check reconciled run status:', lookupError)
+							}
+						})
+						.catch((reconcileError) => {
+							console.warn('Failed to reconcile flow runs:', reconcileError)
+						})
+						.finally(() => {
+							flowReconcileInFlight = false
+						})
+				}
+			}
 			if (stepRows && stepRows.length > 0) {
 				try {
 					await refreshFlowStepStatus(run, stepRows)
@@ -612,8 +642,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			let totalCompletedActions = 0
 			let totalActions = 0
 			for (const p of state.participants || []) {
-				const pSteps = (allProgress.find((ap) => ap.email === p.email)?.steps) || []
-				const completed = pSteps.filter((s) => s.status === 'Completed' || s.status === 'Shared').length
+				const pSteps = allProgress.find((ap) => ap.email === p.email)?.steps || []
+				const completed = pSteps.filter(
+					(s) => s.status === 'Completed' || s.status === 'Shared',
+				).length
 				// Count steps this participant is responsible for
 				const mySteps = state.steps.filter((s) => {
 					// Check if this participant's role matches the step
@@ -636,7 +668,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				// For non-my-action steps, check if any participant has completed it
 				if (!step.my_action) {
 					const anyCompleted = allProgress.some((p) =>
-						p.steps?.some((s) => s.step_id === step.id && (s.status === 'Completed' || s.status === 'Shared')),
+						p.steps?.some(
+							(s) => s.step_id === step.id && (s.status === 'Completed' || s.status === 'Shared'),
+						),
 					)
 					if (anyCompleted) completedSteps++
 				} else if (isStepDone) {
@@ -684,7 +718,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 							// Check if this participant has completed/shared this step
 							const completed = completedParticipants.find((cp) => cp.email === p.email)
-							const isComplete = completed && (completed.status === 'Completed' || completed.status === 'Shared')
+							const isComplete =
+								completed && (completed.status === 'Completed' || completed.status === 'Shared')
 							const isShared = completed?.status === 'Shared'
 
 							const checkbox = isComplete ? '☑' : '☐'
@@ -822,7 +857,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 		const actions = []
 		if (step.status === 'Ready') {
-			actions.push(`<button class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`)
+			actions.push(
+				`<button class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
+			)
 		}
 		if (step.status === 'Pending') {
 			actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
@@ -831,15 +868,21 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			actions.push('<span class="mp-running">Running...</span>')
 		}
 		if (step.status === 'Completed' && step.shares_output && !step.outputs_shared) {
-			actions.push(`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`)
-			actions.push(`<button class="mp-btn mp-share-btn" onclick="window.runsModule?.shareStepOutputs('${sessionId}', '${step.id}')">📤 Share</button>`)
+			actions.push(
+				`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`,
+			)
+			actions.push(
+				`<button class="mp-btn mp-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">📤 Share to Chat</button>`,
+			)
 		}
 		if (step.status === 'Completed' && !step.shares_output) {
 			actions.push('<span class="mp-done">✓ Done</span>')
 		}
 		if (step.status === 'Shared') {
 			// Preview should remain available after sharing
-			actions.push(`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`)
+			actions.push(
+				`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`,
+			)
 			actions.push('<span class="mp-shared">📨 Shared</span>')
 		}
 		if (step.status === 'WaitingForInputs') {
@@ -872,7 +915,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		try {
 			await invoke('run_flow_step', { sessionId, stepId })
 			// Refresh the steps display
-			const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
 			if (runCard) {
 				const runId = runCard.dataset.runId
 				await loadMultipartySteps(sessionId, runId)
@@ -903,7 +948,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		if (!confirm('Share these outputs with other participants?')) return
 		try {
 			await invoke('share_step_outputs', { sessionId, stepId })
-			const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
 			if (runCard) {
 				const runId = runCard.dataset.runId
 				await loadMultipartySteps(sessionId, runId)
@@ -911,6 +958,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			console.error('Failed to share outputs:', error)
 			alert(`Failed to share: ${error}`)
+		}
+	}
+	window.runsModule.shareStepOutputsToChat = async function (sessionId, stepId) {
+		if (!confirm('Share these results to the chat? All participants will be able to see and download them.')) return
+		try {
+			const result = await invoke('share_step_outputs_to_chat', { sessionId, stepId })
+			alert(`Results shared to chat! ${result.files_shared} file(s) sent to ${result.recipients.length} participant(s).`)
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
+			if (runCard) {
+				const runId = runCard.dataset.runId
+				await loadMultipartySteps(sessionId, runId)
+			}
+		} catch (error) {
+			console.error('Failed to share outputs to chat:', error)
+			alert(`Failed to share to chat: ${error}`)
 		}
 	}
 	window.runsModule.switchTab = function (tabButton, tabName) {
@@ -922,7 +986,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		tabButton.classList.add('active')
 
 		// Update tab content
-		container.querySelectorAll('.mp-tab-content').forEach((content) => content.classList.remove('active'))
+		container
+			.querySelectorAll('.mp-tab-content')
+			.forEach((content) => content.classList.remove('active'))
 		const targetContent = container.querySelector(`[data-tab-content="${tabName}"]`)
 		if (targetContent) {
 			targetContent.classList.add('active')
@@ -1364,6 +1430,20 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					resumeBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
 						try {
+							const confirmed = await confirmWithDialog(
+								'Try to resume this run from the last checkpoint?',
+								{ title: 'Resume Run', type: 'warning' },
+							)
+							if (!confirmed) return
+							if (run.status === 'failed') {
+								try {
+									await invoke('cleanup_flow_run_state', { runId: run.id })
+									console.log('🧹 Cleaned stale run state for retry', run.id)
+								} catch (cleanupError) {
+									alert(`Failed to clean up stale run state: ${cleanupError}`)
+									return
+								}
+							}
 							const input = card.querySelector('.run-concurrency-input')
 							const nextflowMaxForks = parseConcurrencyInput(input?.value)
 							await invoke('resume_flow_run', { runId: run.id, nextflowMaxForks })
@@ -1421,6 +1501,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					retryBtn.addEventListener('click', async (e) => {
 						e.stopPropagation()
 						try {
+							const confirmed = await confirmWithDialog(
+								'Retry this run and attempt to resume from cache? This will clear stale PID/state files if needed.',
+								{ title: 'Retry Run', type: 'warning' },
+							)
+							if (!confirmed) return
 							const input = card.querySelector('.run-concurrency-input')
 							const nextflowMaxForks = parseConcurrencyInput(input?.value)
 
@@ -2095,13 +2180,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			container.innerHTML = `<p class="error-message">Error loading steps: ${error}</p>`
 		}
-	}
-
-	// Helper function for escaping HTML
-	function escapeHtml(text) {
-		const div = document.createElement('div')
-		div.textContent = text
-		return div.innerHTML
 	}
 
 	async function runAnalysis() {

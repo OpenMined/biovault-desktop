@@ -763,12 +763,21 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
     let picker_mode = env::var_os("BIOVAULT_PROFILE_PICKER").is_some()
         || env_flag_true("BIOVAULT_FORCE_PROFILE_PICKER");
     let should_show = picker_mode || store.force_picker_once;
+    let in_picker_ui = should_show;
 
     let mut profiles: Vec<ProfileSummary> = store
         .profiles
         .iter()
         .map(|p| summarize_profile(p, current.as_deref()))
         .collect();
+    if in_picker_ui {
+        for p in &mut profiles {
+            if p.is_current {
+                // In picker mode, allow "Open/Continue" on the current profile.
+                p.running = false;
+            }
+        }
+    }
     profiles.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
 
     let startup_message = if env::var_os("BIOVAULT_PROFILE_LOCK_CONFLICT").is_some() {
@@ -982,6 +991,9 @@ pub fn profiles_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", &entry.biovault_home);
     env::set_var("BIOVAULT_PROFILE_ID", &entry.id);
+    // Ensure SYFTBOX env matches the new profile before resolving SYC_VAULT.
+    env::set_var("SYFTBOX_DATA_DIR", &entry.biovault_home);
+    env::remove_var("SYC_VAULT");
 
     // Ensure SYC_VAULT matches the single explicit vault location.
     biovault::config::require_syc_vault_env()
@@ -1088,6 +1100,9 @@ pub fn profiles_create_and_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", home.to_string_lossy().to_string());
     env::set_var("BIOVAULT_PROFILE_ID", &profile_id);
+    // Ensure SYFTBOX env matches the new profile before resolving SYC_VAULT.
+    env::set_var("SYFTBOX_DATA_DIR", home.to_string_lossy().to_string());
+    env::remove_var("SYC_VAULT");
 
     // Ensure SYC_VAULT matches the single explicit vault location.
     biovault::config::require_syc_vault_env()

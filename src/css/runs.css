@@ -1082,14 +1082,30 @@
 }
 
 /* Step status styling */
-.mp-step.mp-step-pending { border-left: 3px solid #94a3b8; }
-.mp-step.mp-step-waitingforinputs { border-left: 3px solid #f59e0b; }
-.mp-step.mp-step-ready { border-left: 3px solid #22c55e; }
-.mp-step.mp-step-running { border-left: 3px solid #3b82f6; }
-.mp-step.mp-step-completed { border-left: 3px solid #059669; }
-.mp-step.mp-step-sharing { border-left: 3px solid #8b5cf6; }
-.mp-step.mp-step-shared { border-left: 3px solid #a855f7; }
-.mp-step.mp-step-failed { border-left: 3px solid #ef4444; }
+.mp-step.mp-step-pending {
+	border-left: 3px solid #94a3b8;
+}
+.mp-step.mp-step-waitingforinputs {
+	border-left: 3px solid #f59e0b;
+}
+.mp-step.mp-step-ready {
+	border-left: 3px solid #22c55e;
+}
+.mp-step.mp-step-running {
+	border-left: 3px solid #3b82f6;
+}
+.mp-step.mp-step-completed {
+	border-left: 3px solid #059669;
+}
+.mp-step.mp-step-sharing {
+	border-left: 3px solid #8b5cf6;
+}
+.mp-step.mp-step-shared {
+	border-left: 3px solid #a855f7;
+}
+.mp-step.mp-step-failed {
+	border-left: 3px solid #ef4444;
+}
 
 /* Progress section */
 .mp-progress-section {
@@ -1153,8 +1169,13 @@
 }
 
 @keyframes pulse-badge {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.7; }
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.7;
+	}
 }
 
 /* Participant progress chips */

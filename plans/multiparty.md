@@ -1,6 +1,7 @@
 # Multiparty Flow UX Plan (v2)
 
 ## Overview
+
 Enable 3+ party collaborative flows with step-by-step manual/auto execution control.
 Focus: UX for coordination, not computation complexity.
 
@@ -57,6 +58,7 @@ spec:
 ### 2. Propose Flow UI (Messages)
 
 When user wants to propose a multiparty flow:
+
 1. Open "Propose Flow" modal from Messages or Flows
 2. Select a multiparty flow
 3. Assign contacts to roles
@@ -84,6 +86,7 @@ When user wants to propose a multiparty flow:
 ### 3. Invitation Card (Messages)
 
 Recipients see in chat:
+
 ```
 ┌─────────────────────────────────────────────────┐
 │ 🔄 Flow Invitation: multiparty                  │
@@ -103,6 +106,7 @@ Recipients see in chat:
 ### 4. Multiparty Sessions (Runs Tab)
 
 New section at top of Runs tab:
+
 ```
 ┌─────────────────────────────────────────────────┐
 │ Active Multiparty Sessions                      │
@@ -119,6 +123,7 @@ New section at top of Runs tab:
 ### 5. Session Execution Panel (Runs Tab)
 
 When session is opened:
+
 ```
 ┌─────────────────────────────────────────────────┐
 │ 🔄 Multiparty: multiparty                       │
@@ -193,22 +198,26 @@ list_multiparty_sessions {}
 ### 8. Implementation Steps
 
 Phase 1: Propose Flow UI
+
 - [ ] Add "Propose Flow" button in Messages (group chat only)
 - [ ] Create ProposeFlowModal component
 - [ ] Load multiparty flows, show role assignment UI
 - [ ] Send invitation via send_message with flow_invitation metadata
 
 Phase 2: Invitation Card Updates
+
 - [ ] Update invitation card to show "Join in Runs" button
 - [ ] Navigate to Runs tab on click, open session panel
 
 Phase 3: Runs Tab Integration
+
 - [ ] Add "Active Multiparty Sessions" section
 - [ ] List sessions user is participating in
 - [ ] Create session execution panel
 - [ ] Wire up Run/Share buttons
 
 Phase 4: Polish
+
 - [ ] Real-time status updates between participants
 - [ ] Error handling and retry
 - [ ] Session completion state
@@ -231,12 +240,12 @@ Phase 4: Polish
 # 6. Each participant steps through their assigned steps
 ```
 
-
 # Multiparty Flow Improvements
 
 ## Completed
 
 ### UI Basics
+
 - [x] Button visibility - Run buttons only show for Ready steps
 - [x] Aggregator doesn't see buttons until their turn
 - [x] "Join Flow" → "View Flow" after joining
@@ -244,12 +253,14 @@ Phase 4: Polish
 - [x] Preview remains visible after share
 
 ### Cross-Client Sync (Partial)
+
 - [x] Poll state files from MPC sharing folder (sandbox fallback)
 - [x] Update aggregate step when contributors share (WaitingForInputs → Ready)
 - [x] Aggregate reads contributor data (currently from sandbox direct paths)
 - [x] Write progress.json when steps complete/share
 
 ### Progress & UI (Session 2)
+
 - [x] Progress shows total flow progress: "X/4 steps complete"
 - [x] Everyone sees same progress count (4 total steps)
 - [x] Shows "Done" when all steps complete
@@ -265,22 +276,26 @@ Phase 4: Polish
 ## TODO - Remaining Items
 
 ### 3. Participant Header - Show Current Stage
+
 - [ ] At top where participant cards are shown
 - [ ] Show which step each participant is currently on
 - [ ] e.g., "contributor1 - Step 2: Share Contribution"
 
 ### 6. Aggregator Reads from Synced Paths (Not Direct)
+
 - [ ] Currently reading from sandbox direct paths (fallback hack)
 - [ ] Should read from properly synced SyftBox paths
 - [ ] e.g., `{my_home}/datasites/{contributor}/shared/flows/...`
 - [ ] This requires SyftBox to be running and syncing
 
 ### 7. Run Completion Status
+
 - [ ] When ALL steps complete for ALL participants → mark run as "Done"
 - [ ] Currently shows "RUNNING" even when everything is done
 - [ ] Update run status badge
 
 ### 9. Clickable Participant Bubbles
+
 - [ ] Click participant card → see their current state/view
 - [ ] Show their progress through steps
 - [ ] "View" buttons should show files they shared with you (if available)
@@ -290,16 +305,19 @@ Phase 4: Polish
 ## File Paths Reference
 
 **Where contributors write:**
+
 ```
 {contributor_home}/datasites/{contributor}/shared/flows/{flow}/{session}/{step}/
 ```
 
 **Where aggregator should read (after SyftBox sync):**
+
 ```
 {aggregator_home}/datasites/{contributor}/shared/flows/{flow}/{session}/{step}/
 ```
 
 **syft.pub.yaml structure:**
+
 ```yaml
 read:
   - aggregator@sandbox.local

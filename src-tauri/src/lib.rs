@@ -1051,7 +1051,8 @@ pub fn run() {
         crate::desktop_log!("🗃️ BioVault DB path: {}", db_path.display());
         let conn = Connection::open(&db_path).expect("Could not open database");
         init_db(&conn).expect("Could not initialize database");
-        (conn, Arc::new(AtomicBool::new(false))) // Start running
+        // Queue processor starts paused by default; UI can resume explicitly.
+        (conn, Arc::new(AtomicBool::new(true)))
     };
 
     let app_state = AppState {
@@ -1449,6 +1450,12 @@ pub fn run() {
             delete_files_bulk,
             detect_file_types,
             analyze_file_types,
+            fetch_sample_data,
+            fetch_sample_data_with_progress,
+            check_sample_downloaded,
+            cancel_sample_download,
+            fetch_reference_data,
+            fetch_reference_data_with_progress,
             // Dataset commands
             list_datasets_with_assets,
             upsert_dataset_manifest,
@@ -1546,6 +1553,7 @@ pub fn run() {
             reconcile_flow_runs,
             pause_flow_run,
             resume_flow_run,
+            cleanup_flow_run_state,
             path_exists,
             delete_flow_run,
             preview_flow_spec,
@@ -1692,6 +1700,7 @@ pub fn run() {
             commands::multiparty::set_step_auto_run,
             commands::multiparty::run_flow_step,
             commands::multiparty::share_step_outputs,
+            commands::multiparty::share_step_outputs_to_chat,
             commands::multiparty::get_step_output_files,
             commands::multiparty::receive_flow_step_outputs,
         ])

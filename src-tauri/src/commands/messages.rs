@@ -634,8 +634,11 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
 
         // Send to each recipient
         for recipient in &recipients {
-            let mut message =
-                VaultMessage::new(config.email.clone(), recipient.clone(), request.body.clone());
+            let mut message = VaultMessage::new(
+                config.email.clone(),
+                recipient.clone(),
+                request.body.clone(),
+            );
 
             if let Some(subject) = request.subject.as_ref().filter(|s| !s.trim().is_empty()) {
                 message.subject = Some(subject.clone());
@@ -690,7 +693,8 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
         // For group chat replies, send to all participants except self
         if let Some(meta) = original.metadata.as_ref() {
             if let Some(group_chat) = meta.get("group_chat") {
-                if let Some(participants) = group_chat.get("participants").and_then(|p| p.as_array())
+                if let Some(participants) =
+                    group_chat.get("participants").and_then(|p| p.as_array())
                 {
                     let other_participants: Vec<String> = participants
                         .iter()

@@ -344,7 +344,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			console.log(`  ${label}: Found invitation card`)
 
 			// Click Import Flow button
-			const importBtn = page.locator('.flow-invitation-btn.import-btn, button:has-text("Import Flow")')
+			const importBtn = page.locator(
+				'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
+			)
 			if (await importBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
 				await importBtn.click()
 				console.log(`  ${label}: Clicked "Import Flow"`)
@@ -367,7 +369,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			}
 
 			// Click Join Flow button
-			const joinBtn = page.locator('.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow")')
+			const joinBtn = page.locator(
+				'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow")',
+			)
 			const joinBtnVisible = await joinBtn.isVisible({ timeout: 5000 }).catch(() => false)
 			console.log(`  ${label}: Join button visible: ${joinBtnVisible}`)
 			if (!joinBtnVisible) {
@@ -592,7 +596,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			}
 			const runBtn = step.locator('.mp-run-btn')
 			const isVisible = await runBtn.isVisible().catch(() => false)
-			console.log(`    ${label}: Run button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`)
+			console.log(
+				`    ${label}: Run button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
+			)
 			expect(isVisible).toBe(shouldBeVisible)
 			return isVisible
 		}
@@ -610,7 +616,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			}
 			const previewBtn = step.locator('.mp-preview-btn')
 			const isVisible = await previewBtn.isVisible().catch(() => false)
-			console.log(`    ${label}: Preview button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`)
+			console.log(
+				`    ${label}: Preview button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
+			)
 			expect(isVisible).toBe(shouldBeVisible)
 			return isVisible
 		}
@@ -671,8 +679,20 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Simulate receiving shared inputs at aggregator
 		// In real flow, this would happen via messaging - for now we verify generate outputs exist
 		console.log('\nVerifying contributor outputs before aggregation...')
-		const files1 = await verifyStepOutputFiles(backend1, sessionId, 'generate', ['numbers.json'], email1)
-		const files2 = await verifyStepOutputFiles(backend2, sessionId, 'generate', ['numbers.json'], email2)
+		const files1 = await verifyStepOutputFiles(
+			backend1,
+			sessionId,
+			'generate',
+			['numbers.json'],
+			email1,
+		)
+		const files2 = await verifyStepOutputFiles(
+			backend2,
+			sessionId,
+			'generate',
+			['numbers.json'],
+			email2,
+		)
 
 		// Step 3: Barrier + Aggregate
 		console.log('\nStep 3: Aggregate Sum')
@@ -709,7 +729,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			const fs = await import('fs')
 			const resultContent = fs.readFileSync(resultPath, 'utf-8')
 			const resultData = JSON.parse(resultContent)
-			console.log(`  Aggregate result: contributions=${resultData.contributions?.length}, all_numbers=${resultData.all_numbers?.length}, total_sum=${resultData.total_sum}`)
+			console.log(
+				`  Aggregate result: contributions=${resultData.contributions?.length}, all_numbers=${resultData.all_numbers?.length}, total_sum=${resultData.total_sum}`,
+			)
 
 			// Verify we got data from both contributors
 			expect(resultData.contributions?.length).toBe(2)
@@ -806,22 +828,34 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		// Client1 should show generate and share_contribution as completed/shared
 		const client1GenerateStatus = finalState1?.steps?.find((s: any) => s.id === 'generate')?.status
-		const client1ShareStatus = finalState1?.steps?.find((s: any) => s.id === 'share_contribution')?.status
-		console.log(`  ${email1}: generate=${client1GenerateStatus}, share_contribution=${client1ShareStatus}`)
+		const client1ShareStatus = finalState1?.steps?.find(
+			(s: any) => s.id === 'share_contribution',
+		)?.status
+		console.log(
+			`  ${email1}: generate=${client1GenerateStatus}, share_contribution=${client1ShareStatus}`,
+		)
 		expect(client1GenerateStatus).toBe('Completed')
 		expect(client1ShareStatus).toBe('Shared')
 
 		// Client2 should show generate and share_contribution as completed/shared
 		const client2GenerateStatus = finalState2?.steps?.find((s: any) => s.id === 'generate')?.status
-		const client2ShareStatus = finalState2?.steps?.find((s: any) => s.id === 'share_contribution')?.status
-		console.log(`  ${email2}: generate=${client2GenerateStatus}, share_contribution=${client2ShareStatus}`)
+		const client2ShareStatus = finalState2?.steps?.find(
+			(s: any) => s.id === 'share_contribution',
+		)?.status
+		console.log(
+			`  ${email2}: generate=${client2GenerateStatus}, share_contribution=${client2ShareStatus}`,
+		)
 		expect(client2GenerateStatus).toBe('Completed')
 		expect(client2ShareStatus).toBe('Shared')
 
 		// Aggregator should have completed both steps (aggregate + share_result)
-		const aggShareResultStatus = finalState3?.steps?.find((s: any) => s.id === 'share_result')?.status
+		const aggShareResultStatus = finalState3?.steps?.find(
+			(s: any) => s.id === 'share_result',
+		)?.status
 		const aggAggregateStatus = finalState3?.steps?.find((s: any) => s.id === 'aggregate')?.status
-		console.log(`  ${email3}: aggregate=${aggAggregateStatus}, share_result=${aggShareResultStatus}`)
+		console.log(
+			`  ${email3}: aggregate=${aggAggregateStatus}, share_result=${aggShareResultStatus}`,
+		)
 		expect(aggAggregateStatus).toBe('Completed')
 		expect(aggShareResultStatus).toBe('Shared')
 

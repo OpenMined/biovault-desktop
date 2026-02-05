@@ -236,7 +236,12 @@
 							autocorrect="off"
 							spellcheck="false"
 						></textarea>
-						<button id="propose-flow-btn" class="msg-propose-flow-btn" title="Propose Multiparty Flow" style="display: none">
+						<button
+							id="propose-flow-btn"
+							class="msg-propose-flow-btn"
+							title="Propose Multiparty Flow"
+							style="display: none"
+						>
 							<svg
 								width="18"
 								height="18"
@@ -360,7 +365,9 @@
 	<div class="multiparty-modal-content">
 		<div class="multiparty-modal-header">
 			<h2 class="multiparty-modal-title">🔄 Multiparty Flow</h2>
-			<button class="multiparty-modal-close" onclick="window.multipartyFlowModal?.closeModal()">×</button>
+			<button class="multiparty-modal-close" onclick="window.multipartyFlowModal?.closeModal()">
+				×
+			</button>
 		</div>
 
 		<div class="multiparty-modal-body">
@@ -376,14 +383,16 @@
 		</div>
 
 		<div class="multiparty-modal-footer">
-			<button class="btn-secondary" onclick="window.multipartyFlowModal?.closeModal()">Close</button>
+			<button class="btn-secondary" onclick="window.multipartyFlowModal?.closeModal()">
+				Close
+			</button>
 		</div>
 	</div>
 </div>
 
 <!-- Propose Flow Modal (for creating invitations) -->
 <div id="propose-flow-modal" class="multiparty-modal" style="display: none">
-	<div class="multiparty-modal-content" style="max-width: 500px;">
+	<div class="multiparty-modal-content" style="max-width: 500px">
 		<div class="multiparty-modal-header">
 			<h2 class="multiparty-modal-title">🔄 Propose Multiparty Flow</h2>
 			<button class="multiparty-modal-close" onclick="window.proposeFlowModal?.close()">×</button>
@@ -406,13 +415,22 @@
 
 			<section class="multiparty-section" id="propose-flow-message-section" style="display: none">
 				<h3>Message (optional)</h3>
-				<textarea id="propose-flow-message" class="propose-flow-message" placeholder="Let's run this flow together!"></textarea>
+				<textarea
+					id="propose-flow-message"
+					class="propose-flow-message"
+					placeholder="Let's run this flow together!"
+				></textarea>
 			</section>
 		</div>
 
 		<div class="multiparty-modal-footer">
 			<button class="btn-secondary" onclick="window.proposeFlowModal?.close()">Cancel</button>
-			<button id="propose-flow-send-btn" class="btn-primary" disabled onclick="window.proposeFlowModal?.sendInvitation()">
+			<button
+				id="propose-flow-send-btn"
+				class="btn-primary"
+				disabled
+				onclick="window.proposeFlowModal?.sendInvitation()"
+			>
 				Send Invitation
 			</button>
 		</div>

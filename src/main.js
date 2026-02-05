@@ -227,7 +227,7 @@ const {
 } = sessionsModule
 
 // Create network module
-const networkModule = createNetworkModule({ invoke, shellApi })
+const networkModule = createNetworkModule({ invoke, shellApi, dialog })
 
 // Create SyftBox module
 const syftBoxModule = createSyftBoxModule({ invoke, dialog, templateLoader, shellApi })
@@ -248,6 +248,7 @@ const fileImportModule = createImportModule({
 })
 const {
 	openImportModal,
+	openImportModalWithFolder,
 	closeImportModal,
 	backToSelection,
 	pickFolder,
@@ -353,6 +354,8 @@ modulesNavigateTo = navigateTo
 messagesGetActiveView = getActiveView
 importNavigateTo = navigateTo
 importSetLastImportView = setLastImportView
+
+window.openImportModalWithFolder = openImportModalWithFolder
 
 window.addEventListener('DOMContentLoaded', async () => {
 	console.log('🔥 DOMContentLoaded fired')

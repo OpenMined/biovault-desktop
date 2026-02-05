@@ -170,7 +170,9 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		}
 
 		if (step.status === 'WaitingForInputs') {
-			actions.push('<span class="waiting-text">Waiting for inputs from other participants...</span>')
+			actions.push(
+				'<span class="waiting-text">Waiting for inputs from other participants...</span>',
+			)
 		}
 
 		return `<div class="step-actions">${actions.join('')}</div>`
@@ -255,12 +257,15 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 	async function shareOutputs(stepId) {
 		if (!currentSessionId) return
 
-		const confirmed = await dialog?.ask('Are you sure you want to share these outputs with other participants?', {
-			title: 'Share Outputs',
-			kind: 'warning',
-			okLabel: 'Share',
-			cancelLabel: 'Cancel',
-		})
+		const confirmed = await dialog?.ask(
+			'Are you sure you want to share these outputs with other participants?',
+			{
+				title: 'Share Outputs',
+				kind: 'warning',
+				okLabel: 'Share',
+				cancelLabel: 'Cancel',
+			},
+		)
 
 		if (!confirmed) return
 
@@ -326,7 +331,13 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 	}
 }
 
-export function createProposeFlowModal({ invoke, dialog, getCurrentUserEmail, getThreadParticipants, sendMessage }) {
+export function createProposeFlowModal({
+	invoke,
+	dialog,
+	getCurrentUserEmail,
+	getThreadParticipants,
+	sendMessage,
+}) {
 	let selectedFlow = null
 	let flowRoles = []
 	let roleAssignments = {}

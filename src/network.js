@@ -2,7 +2,7 @@
  * Network module - Manages contacts, network discovery, and published datasets
  */
 
-export function createNetworkModule({ invoke, shellApi }) {
+export function createNetworkModule({ invoke, shellApi, dialog }) {
 	let _currentScanResult = null
 	let _currentDatasets = []
 	let _currentView = 'peers'
@@ -67,10 +67,14 @@ export function createNetworkModule({ invoke, shellApi }) {
 
 		const peersView = document.getElementById('peers-view')
 		const datasetsView = document.getElementById('datasets-view')
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
 
 		if (peersView && datasetsView) {
 			peersView.style.display = mode === 'peers' ? 'block' : 'none'
 			datasetsView.style.display = mode === 'datasets' ? 'block' : 'none'
+		}
+		if (trustAllBtn) {
+			trustAllBtn.style.display = mode === 'peers' ? 'inline-flex' : 'none'
 		}
 
 		const toggleButtons = document.querySelectorAll('#network-view-toggle .pill-button')
@@ -89,6 +93,20 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		applySearchFilter()
+	}
+
+	function updateTrustAllButtonState() {
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		if (!trustAllBtn) return
+
+		const discoveredContacts = Array.isArray(_currentScanResult?.discovered)
+			? _currentScanResult.discovered.filter((c) => c?.identity)
+			: []
+		trustAllBtn.disabled = discoveredContacts.length === 0
+		trustAllBtn.title =
+			discoveredContacts.length === 0
+				? 'No new keys to add'
+				: `Add ${discoveredContacts.length} new key${discoveredContacts.length === 1 ? '' : 's'}`
 	}
 
 	function applySearchFilter() {
@@ -114,6 +132,13 @@ export function createNetworkModule({ invoke, shellApi }) {
 				item.style.display = matches ? 'block' : 'none'
 			})
 		}
+	}
+
+	async function confirmWithDialog(message, options = {}) {
+		if (dialog?.confirm) {
+			return await dialog.confirm(message, options)
+		}
+		return window.confirm(message)
 	}
 
 	function createContactCard(contact, isContact) {
@@ -599,6 +624,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		if (deduped.length === 0) {
 			if (emptyEl) emptyEl.style.display = 'block'
 			if (countEl) countEl.textContent = '0'
+			updateTrustAllButtonState()
 			return
 		}
 
@@ -611,6 +637,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 				listEl.appendChild(card)
 			}
 		})
+		updateTrustAllButtonState()
 	}
 
 	function renderDiscovered(discovered) {
@@ -700,6 +727,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 
 			renderContacts(peerResult.contacts)
 			renderDiscovered(peerResult.discovered)
+			updateTrustAllButtonState()
 
 			console.log('Peer scan complete:', {
 				contacts: peerResult.contacts?.length || 0,
@@ -757,7 +785,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	}
 
 	async function handleTrustChangedKey(identity) {
-		const confirmed = confirm(
+		const confirmed = await confirmWithDialog(
 			`The key for ${identity} has changed.\n\nThis could mean they regenerated their key, or it could indicate a security issue.\n\nDo you want to trust the new key?`,
 		)
 		if (!confirmed) return
@@ -769,6 +797,54 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		} catch (error) {
 			console.error('Failed to trust key:', error)
 			alert(`Failed to trust key: ${error}`)
+		}
+	}
+
+	async function handleTrustAllChangedKeys() {
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		const discoveredContacts = Array.isArray(_currentScanResult?.discovered)
+			? _currentScanResult.discovered.filter((c) => c?.identity)
+			: []
+
+		if (discoveredContacts.length === 0) {
+			alert('No new keys to add.')
+			return
+		}
+
+		const confirmed = await confirmWithDialog(
+			`Add ${discoveredContacts.length} new key${
+				discoveredContacts.length === 1 ? '' : 's'
+			}?\n\nThis imports keys for newly discovered peers.`,
+		)
+		if (!confirmed) return
+
+		if (trustAllBtn) {
+			trustAllBtn.disabled = true
+			trustAllBtn.dataset.originalLabel = trustAllBtn.innerHTML
+			trustAllBtn.textContent = 'Trusting...'
+		}
+
+		const errors = []
+		for (const contact of discoveredContacts) {
+			try {
+				await invoke('network_import_contact', { identity: contact.identity })
+			} catch (error) {
+				errors.push(contact.identity)
+				console.error('Failed to add key:', contact.identity, error)
+			}
+		}
+
+		await scanNetwork()
+
+		if (errors.length > 0) {
+			alert(`Failed to add keys for: ${errors.join(', ')}`)
+		}
+
+		if (trustAllBtn) {
+			if (trustAllBtn.dataset.originalLabel) {
+				trustAllBtn.innerHTML = trustAllBtn.dataset.originalLabel
+				delete trustAllBtn.dataset.originalLabel
+			}
 		}
 	}
 
@@ -956,6 +1032,10 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		if (refreshBtn) {
 			refreshBtn.addEventListener('click', scanNetwork)
 		}
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		if (trustAllBtn) {
+			trustAllBtn.addEventListener('click', handleTrustAllChangedKeys)
+		}
 
 		// Set up view toggle
 		const toggleButtons = document.querySelectorAll('#network-view-toggle .pill-button')
@@ -994,6 +1074,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 			})
 			observer.observe(networkView, { attributes: true })
 		}
+		updateTrustAllButtonState()
 	}
 
 	function setupInfoBoxDismiss(buttonId, storageKey) {
