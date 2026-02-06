@@ -1448,6 +1448,8 @@ pub fn run() {
             get_files,
             delete_file,
             delete_files_bulk,
+            update_file_reference,
+            get_file_reference,
             detect_file_types,
             analyze_file_types,
             fetch_sample_data,

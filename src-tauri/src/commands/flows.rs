@@ -2165,14 +2165,22 @@ pub async fn run_flow_impl(
                     ])
                     .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
-                // Try to find reference files from the database
+                // Get all files for reference lookup
                 let all_files = biovault::data::list_files(&biovault_db, None, None, false, None)
                     .unwrap_or_default();
-                let reference_file = all_files
+
+                // Build a map of file_id -> file_path for quick lookup
+                let file_path_map: std::collections::HashMap<i64, String> = all_files
+                    .iter()
+                    .map(|f| (f.id, f.file_path.clone()))
+                    .collect();
+
+                // Fallback references (first found in database)
+                let fallback_reference = all_files
                     .iter()
                     .find(|f| f.data_type.as_deref() == Some("Reference"))
                     .map(|f| f.file_path.clone());
-                let reference_index = all_files
+                let fallback_reference_index = all_files
                     .iter()
                     .find(|f| f.data_type.as_deref() == Some("ReferenceIndex"))
                     .map(|f| f.file_path.clone());
@@ -2199,12 +2207,36 @@ pub async fn run_flow_impl(
                         String::new()
                     };
 
+                    // Look up file-specific reference association
+                    let (ref_file, ref_index) =
+                        match biovault::data::get_file_reference(&biovault_db, record.id) {
+                            Ok((Some(ref_id), Some(idx_id))) => {
+                                let ref_path =
+                                    file_path_map.get(&ref_id).cloned().unwrap_or_default();
+                                let idx_path =
+                                    file_path_map.get(&idx_id).cloned().unwrap_or_default();
+                                (ref_path, idx_path)
+                            }
+                            Ok((Some(ref_id), None)) => {
+                                let ref_path =
+                                    file_path_map.get(&ref_id).cloned().unwrap_or_default();
+                                // Try to find matching index by convention (same name + .fai)
+                                let idx_path = fallback_reference_index.clone().unwrap_or_default();
+                                (ref_path, idx_path)
+                            }
+                            _ => {
+                                // Use fallback references
+                                (
+                                    fallback_reference.clone().unwrap_or_default(),
+                                    fallback_reference_index.clone().unwrap_or_default(),
+                                )
+                            }
+                        };
+
                     let ref_version = record
                         .grch_version
                         .clone()
                         .unwrap_or_else(|| "GRCh38".to_string());
-                    let ref_file = reference_file.clone().unwrap_or_default();
-                    let ref_index = reference_index.clone().unwrap_or_default();
 
                     writer
                         .write_record([

@@ -434,8 +434,8 @@ export function createImportModule({
 		return dataType === 'ReferenceIndex' || dataType === 'AlignedIndex'
 	}
 	function requiresParticipantId(dataType) {
-		if (!dataType || dataType === 'Unknown') return false
-		return !isReferenceType(dataType)
+		if (isReferenceType(dataType) || isIndexType(dataType)) return false
+		return true
 	}
 	function resolveDataTypeForPath(filePath) {
 		const override = fileTypeOverrides[filePath]
@@ -934,46 +934,13 @@ export function createImportModule({
 		participantCell.style.display = 'flex'
 		participantCell.style.flexDirection = 'column'
 		participantCell.style.gap = '6px'
-		const dataTypeSelect = document.createElement('select')
-		dataTypeSelect.className = 'data-type-select'
-		dataTypeSelect.innerHTML = `
-			<option value="Unknown" ${detectedType === 'Unknown' || !detectedType ? 'selected' : ''}>Unknown</option>
-			<option value="Genotype" ${detectedType === 'Genotype' ? 'selected' : ''}>Genotype</option>
-			<option value="Variants" ${detectedType === 'Variants' ? 'selected' : ''}>Variants</option>
-			<option value="Aligned" ${detectedType === 'Aligned' ? 'selected' : ''}>Aligned</option>
-			<option value="AlignedIndex" ${detectedType === 'AlignedIndex' ? 'selected' : ''}>AlignedIndex</option>
-			<option value="Reference" ${detectedType === 'Reference' ? 'selected' : ''}>Reference</option>
-			<option value="ReferenceIndex" ${detectedType === 'ReferenceIndex' ? 'selected' : ''}>ReferenceIndex</option>
-			<option value="Phenotype" ${detectedType === 'Phenotype' ? 'selected' : ''}>Phenotype</option>
-		`
-		dataTypeSelect.addEventListener('change', (e) => {
-			const value = e.target.value
-			fileTypeOverrides[file] = value && value !== 'Unknown' ? value : null
-			const effectiveType = resolveDataTypeForPath(file)
-			updateTypeBadges(pathWrapper, effectiveType)
-			if (requiresParticipantId(effectiveType)) {
-				input.style.display = ''
-				input.disabled = false
-				input.placeholder = 'Enter ID'
-				row.classList.remove('missing-id')
-			} else {
-				input.value = ''
-				input.style.display = 'none'
-				input.disabled = true
-				input.placeholder = 'Shared'
-				delete fileParticipantIds[file]
-				delete autoParticipantIds[file]
-				row.classList.remove('missing-id')
-			}
-			updateImportButton()
-			updateVisibleSections()
-		})
+		const needsId = requiresParticipantId(detectedType)
 		const input = document.createElement('input')
 		input.type = 'text'
 		input.className = 'participant-id-input'
 		input.placeholder = 'Enter ID'
 		input.style.width = '100%'
-		if (!requiresParticipantId(detectedType)) {
+		if (!needsId) {
 			input.value = ''
 			input.style.display = 'none'
 			input.disabled = true
@@ -1050,7 +1017,6 @@ export function createImportModule({
 			updateImportButton()
 			updateVisibleSections()
 		})
-		participantCell.appendChild(dataTypeSelect)
 		participantCell.appendChild(input)
 		row.appendChild(participantCell)
 		// Folder button cell

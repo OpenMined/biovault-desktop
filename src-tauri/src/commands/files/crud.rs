@@ -68,3 +68,35 @@ pub fn delete_files_bulk(
     crate::desktop_log!("✅ Deleted {} files", deleted);
     Ok(deleted)
 }
+
+#[tauri::command]
+pub fn update_file_reference(
+    state: tauri::State<AppState>,
+    file_id: i64,
+    reference_file_id: Option<i64>,
+    reference_index_file_id: Option<i64>,
+) -> Result<(), String> {
+    crate::desktop_log!(
+        "🔗 Updating reference for file {} -> ref: {:?}, idx: {:?}",
+        file_id,
+        reference_file_id,
+        reference_index_file_id
+    );
+
+    let db = state.biovault_db.lock().unwrap();
+    biovault::data::update_file_reference(&db, file_id, reference_file_id, reference_index_file_id)
+        .map_err(|e| format!("Failed to update file reference: {}", e))?;
+
+    crate::desktop_log!("✅ Updated reference for file {}", file_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_file_reference(
+    state: tauri::State<AppState>,
+    file_id: i64,
+) -> Result<(Option<i64>, Option<i64>), String> {
+    let db = state.biovault_db.lock().unwrap();
+    biovault::data::get_file_reference(&db, file_id)
+        .map_err(|e| format!("Failed to get file reference: {}", e))
+}
