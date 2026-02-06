@@ -1490,6 +1490,21 @@ pub async fn create_flow(
             .find(|p| p.name == name || p.flow_path == flow_dir_str);
 
         if let Some(existing_flow) = existing {
+            if is_import_dir {
+                // For local directory imports, just update the path reference
+                biovault_db
+                    .update_flow_path(existing_flow.id, &flow_dir_str)
+                    .map_err(|e| e.to_string())?;
+                let timestamp = chrono::Local::now().to_rfc3339();
+                return Ok(Flow {
+                    id: existing_flow.id,
+                    name,
+                    flow_path: flow_dir_str,
+                    created_at: existing_flow.created_at,
+                    updated_at: timestamp,
+                    spec: imported_spec,
+                });
+            }
             biovault_db
                 .delete_flow(existing_flow.id)
                 .map_err(|e| e.to_string())?;
@@ -2944,7 +2959,7 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
     let _ = fs::remove_file(&pid_path);
-    let _ = biovault_db.update_flow_run_status(run_id, "paused", false);
+    let _ = biovault_db.update_flow_run_status(run_id, "paused", true);
     append_flow_log(None, &log_path, "⏸️  Run paused successfully");
 
     Ok(())

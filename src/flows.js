@@ -2506,11 +2506,11 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		if (modal) modal.remove()
 	}
 
-	async function cleanupExistingFlowByName(errorMsg) {
+	async function cleanupExistingFlowByName(nameOrMsg) {
 		try {
-			const lowerMsg = errorMsg.toLowerCase()
+			const lower = nameOrMsg.toLowerCase()
 			const existingFlow = flowState.flows.find(
-				(f) => f.name && lowerMsg.includes(f.name.toLowerCase()),
+				(f) => f.name && (f.name.toLowerCase() === lower || lower.includes(f.name.toLowerCase())),
 			)
 			if (existingFlow) {
 				const steps = existingFlow.spec?.steps || []
@@ -2566,16 +2566,13 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			console.error('Error importing flow from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
-			// Only prompt for overwrite if we haven't already tried with overwrite=true
-			// and the error is specifically about the flow (not steps)
 			const isFlowExists =
-				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('flow') ||
-					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+				errorMsg.includes('already exists') ||
+				errorMsg.includes('UNIQUE constraint failed: flows.name')
 
 			if (isFlowExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
-					`${errorMsg}\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
+					`A flow with this name already exists.\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
 					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
@@ -2705,17 +2702,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			// Only prompt for overwrite if we haven't already tried with overwrite=true
 			// and the error is specifically about the flow (not steps)
 			const isFlowExists =
-				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('flow') ||
-					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+				errorMsg.includes('already exists') ||
+				errorMsg.includes('UNIQUE constraint failed: flows.name')
 
 			if (isFlowExists && !overwrite) {
+				const flowName = inferredName || 'this flow'
 				const shouldOverwrite = await confirmWithDialog(
-					`${errorMsg}\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
+					`A flow named "${flowName}" already exists.\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
 					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
-					await cleanupExistingFlowByName(errorMsg)
+					await cleanupExistingFlowByName(flowName)
 					await importExistingFlow(true, selected)
 					return
 				}

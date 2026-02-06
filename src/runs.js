@@ -13,6 +13,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const flowProgressTiming = new Map()
 	const flowReconcileAt = new Map()
 	const flowNfCommandCache = new Map()
+	const flowTimerIntervals = new Map()
 	let flowReconcileInFlight = false
 
 	function parseConcurrencyInput(value) {
@@ -206,13 +207,16 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	}
 
 	// Load and display saved flow state for paused/failed/success runs
-	async function loadAndDisplaySavedState(runId, progressEl, concurrencyInput) {
+	async function loadAndDisplaySavedState(runId, progressEl, concurrencyInput, runStatus) {
 		const state = await loadFlowState(runId)
 		if (!state) return null
 
 		// Update progress display if we have saved progress
 		if (state.total && state.total > 0) {
-			const progress = { completed: state.completed || 0, total: state.total }
+			let progress = { completed: state.completed || 0, total: state.total }
+			if (runStatus === 'success') {
+				progress = { completed: state.total, total: state.total }
+			}
 			flowProgressCache.set(runId, progress)
 			updateFlowProgressUI(progress, progressEl, runId)
 		}
@@ -583,6 +587,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				console.warn('Failed to reconcile flow runs:', error)
 			})
 			flowLogIntervals.forEach((_, runId) => stopFlowLogPolling(runId))
+			flowTimerIntervals.forEach((_, runId) => stopRunTimer(runId))
 			// Check for auto-expand run ID
 			let autoExpandRunId = null
 			if (typeof sessionStorage !== 'undefined') {
@@ -720,7 +725,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					statusBadge = `<span class="status-badge status-running" style="padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; ${statusBadgeStyle}">⋯ Running</span>`
 				}
 
-				const timeAgo = getTimeAgo(new Date(run.created_at))
+				const timeAgo = getTimeAgo(new Date(parseUTCTimestamp(run.created_at)))
 				const isNewlyCreated = autoExpandRunId === run.id
 
 				card.innerHTML = `
@@ -743,10 +748,26 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						<div class="run-title" style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px; line-height: 1.3; letter-spacing: -0.01em;">${escapeHtml(
 							runTitle,
 						)}</div>
-						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px;">
+						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
 							<span>Run #${run.id}</span>
 							<span style="color: #cbd5e1;">•</span>
 							<span>${timeAgo}</span>
+							<span style="color: #cbd5e1;">•</span>
+							${(() => {
+								const startMs = parseUTCTimestamp(run.created_at)
+								if (run.status === 'running') {
+									return `<span class="run-timer" data-run-id="${run.id}" style="font-variant-numeric: tabular-nums; color: #2563eb; font-weight: 600;">${formatElapsed(Date.now() - startMs)}</span>`
+								}
+								const endMs = run.completed_at ? parseUTCTimestamp(run.completed_at) : Date.now()
+								const dur = formatElapsed(endMs - startMs)
+								const durColor =
+									run.status === 'success'
+										? '#059669'
+										: run.status === 'failed'
+											? '#dc2626'
+											: '#64748b'
+								return `<span class="run-timer" data-run-id="${run.id}" style="font-variant-numeric: tabular-nums; color: ${durColor}; font-weight: 600;">${dur}</span>`
+							})()}
 							${
 								run.participant_count
 									? `<span style="color: #cbd5e1;">•</span><span>${
@@ -760,7 +781,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 									: ''
 							}
 						</div>
-						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${Date.parse(
+						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${parseUTCTimestamp(
 							run.created_at,
 						)}" style="margin-top: 8px; display: ${
 							run.status === 'running' || run.status === 'paused' || run.status === 'failed'
@@ -858,6 +879,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						card.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.06)'
 						card.style.borderColor = '#e2e8f0'
 					}
+				}
+
+				// Start live timer for running runs
+				if (run.status === 'running') {
+					startRunTimer(run.id, parseUTCTimestamp(run.created_at))
 				}
 
 				// Auto-expand if this is newly created OR currently running
@@ -1186,6 +1212,52 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			})
 		} catch (error) {
 			console.error('Error loading runs:', error)
+		}
+	}
+
+	function parseUTCTimestamp(ts) {
+		if (!ts) return NaN
+		const s = String(ts).trim()
+		if (
+			/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) &&
+			!s.includes('T') &&
+			!s.includes('+') &&
+			!s.includes('Z')
+		) {
+			return Date.parse(s.replace(' ', 'T') + 'Z')
+		}
+		return Date.parse(s)
+	}
+
+	function formatElapsed(ms) {
+		const totalSec = Math.max(0, Math.floor(ms / 1000))
+		const h = Math.floor(totalSec / 3600)
+		const m = Math.floor((totalSec % 3600) / 60)
+		const s = totalSec % 60
+		if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
+		if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
+		return `${s}s`
+	}
+
+	function startRunTimer(runId, startMs) {
+		stopRunTimer(runId)
+		const update = () => {
+			const el = document.querySelector(`.run-timer[data-run-id="${runId}"]`)
+			if (!el) {
+				stopRunTimer(runId)
+				return
+			}
+			el.textContent = formatElapsed(Date.now() - startMs)
+		}
+		update()
+		flowTimerIntervals.set(runId, setInterval(update, 1000))
+	}
+
+	function stopRunTimer(runId) {
+		const iv = flowTimerIntervals.get(runId)
+		if (iv) {
+			clearInterval(iv)
+			flowTimerIntervals.delete(runId)
 		}
 	}
 
@@ -1709,16 +1781,18 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				const concurrencyInput = card
 					? card.querySelector(`.run-concurrency-input[data-run-id="${run.id}"]`)
 					: null
-				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput).then((savedState) => {
-					// Also refresh logs once for failed/paused to show what happened
-					if (logStream && (run.status === 'failed' || run.status === 'paused')) {
-						refreshFlowRunLogs(run, logStream, progressEls, stepRows)
-					}
-					// For success runs, also try to extract nf command from logs if not in state
-					if (logStream && run.status === 'success' && !savedState?.nextflow_command) {
-						refreshFlowRunLogs(run, logStream, progressEls, stepRows)
-					}
-				})
+				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput, run.status).then(
+					(savedState) => {
+						// Also refresh logs once for failed/paused to show what happened
+						if (logStream && (run.status === 'failed' || run.status === 'paused')) {
+							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
+						}
+						// For success runs, also try to extract nf command from logs if not in state
+						if (logStream && run.status === 'success' && !savedState?.nextflow_command) {
+							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
+						}
+					},
+				)
 			}
 
 			// Attach event listeners for published outputs
