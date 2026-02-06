@@ -62,6 +62,7 @@ export function setupEventHandlers({
 	copyLogs,
 	clearLogs,
 	openLogsFolder,
+	toggleVerbose,
 	// Settings
 	handleSyftBoxAuthentication,
 	saveSettings,
@@ -553,6 +554,10 @@ export function setupEventHandlers({
 	const openLogsFolderBtn = document.getElementById('open-logs-folder-btn')
 	if (openLogsFolderBtn) {
 		openLogsFolderBtn.addEventListener('click', openLogsFolder)
+	}
+	const toggleVerboseBtn = document.getElementById('toggle-verbose-btn')
+	if (toggleVerboseBtn && typeof toggleVerbose === 'function') {
+		toggleVerboseBtn.addEventListener('click', toggleVerbose)
 	}
 
 	// Data view event handlers are now initialized in data.js via initializeDataTab()

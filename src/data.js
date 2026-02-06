@@ -322,6 +322,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				<div class="sample-data-progress-bar" data-role="progress-bar"></div>
 			</div>
 			<div class="sample-data-progress-text" data-role="progress-text">Preparing download…</div>
+			<div data-role="cache-path" style="margin-top: 12px; padding: 8px 12px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px; font-family: 'SF Mono', Monaco, monospace; color: #64748b; word-break: break-all; display: none;">
+				<span style="font-weight: 600; color: #475569;">Cache:</span> <span data-role="cache-path-text"></span>
+			</div>
 			<div class="download-modal-actions">
 				<button class="btn-secondary" data-role="cancel">Cancel Download</button>
 			</div>
@@ -371,6 +374,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		if (cached) {
 			setProgress(cached.downloaded, cached.total, cached.file)
 		}
+
+		const cachePathEl = modal.querySelector('[data-role="cache-path"]')
+		const cachePathText = modal.querySelector('[data-role="cache-path-text"]')
+		if (cachePathEl && cachePathText) {
+			invoke('get_env_var', { key: 'BIOVAULT_HOME' })
+				.catch(() => null)
+				.then((bvHome) => {
+					const home = bvHome || '~/Desktop/BioVault'
+					cachePathText.textContent = `${home}/data/sample/`
+					cachePathEl.style.display = 'block'
+				})
+				.catch(() => {})
+		}
+
 		return handle
 	}
 
@@ -3796,7 +3813,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				if (!filterKey) return
 
 				if (filterKey === 'all') {
-					activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
+					if (isAllFileTypeFiltersEnabled()) {
+						activeFileTypeFilters = new Set()
+					} else {
+						activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
+					}
 					renderFilesPanel()
 					return
 				}

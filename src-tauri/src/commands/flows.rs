@@ -83,6 +83,9 @@ pub struct FlowState {
     /// Run status at last update
     #[serde(default)]
     pub status: Option<String>,
+    /// Actual nextflow command extracted from logs
+    #[serde(default)]
+    pub nextflow_command: Option<String>,
 }
 
 fn flow_state_path(results_dir: &Path) -> PathBuf {
@@ -3232,6 +3235,7 @@ pub fn save_flow_state_cmd(
     total: u32,
     concurrency: Option<u32>,
     container_count: u32,
+    nextflow_command: Option<String>,
 ) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let run = biovault_db
@@ -3246,6 +3250,10 @@ pub fn save_flow_state_cmd(
         .map(PathBuf::from)
         .ok_or_else(|| "No results directory".to_string())?;
 
+    // Preserve existing nextflow_command if not provided in this call
+    let effective_nf_cmd =
+        nextflow_command.or_else(|| load_flow_state(&results_dir).and_then(|s| s.nextflow_command));
+
     let flow_state = FlowState {
         completed,
         total,
@@ -3253,6 +3261,7 @@ pub fn save_flow_state_cmd(
         container_count,
         last_updated: Some(chrono::Utc::now().to_rfc3339()),
         status: Some(run.status.clone()),
+        nextflow_command: effective_nf_cmd,
     };
 
     save_flow_state(&results_dir, &flow_state)
