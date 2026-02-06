@@ -92,6 +92,7 @@
 	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	font-weight: 600;
+	white-space: nowrap;
 }
 
 .page-count-badge.muted {

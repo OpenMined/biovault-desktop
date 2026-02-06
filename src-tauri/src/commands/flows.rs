@@ -83,6 +83,9 @@ pub struct FlowState {
     /// Run status at last update
     #[serde(default)]
     pub status: Option<String>,
+    /// Actual nextflow command extracted from logs
+    #[serde(default)]
+    pub nextflow_command: Option<String>,
 }
 
 fn flow_state_path(results_dir: &Path) -> PathBuf {
@@ -1487,6 +1490,21 @@ pub async fn create_flow(
             .find(|p| p.name == name || p.flow_path == flow_dir_str);
 
         if let Some(existing_flow) = existing {
+            if is_import_dir {
+                // For local directory imports, just update the path reference
+                biovault_db
+                    .update_flow_path(existing_flow.id, &flow_dir_str)
+                    .map_err(|e| e.to_string())?;
+                let timestamp = chrono::Local::now().to_rfc3339();
+                return Ok(Flow {
+                    id: existing_flow.id,
+                    name,
+                    flow_path: flow_dir_str,
+                    created_at: existing_flow.created_at,
+                    updated_at: timestamp,
+                    spec: imported_spec,
+                });
+            }
             biovault_db
                 .delete_flow(existing_flow.id)
                 .map_err(|e| e.to_string())?;
@@ -2941,7 +2959,7 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
     let _ = fs::remove_file(&pid_path);
-    let _ = biovault_db.update_flow_run_status(run_id, "paused", false);
+    let _ = biovault_db.update_flow_run_status(run_id, "paused", true);
     append_flow_log(None, &log_path, "⏸️  Run paused successfully");
 
     Ok(())
@@ -3232,6 +3250,7 @@ pub fn save_flow_state_cmd(
     total: u32,
     concurrency: Option<u32>,
     container_count: u32,
+    nextflow_command: Option<String>,
 ) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let run = biovault_db
@@ -3246,6 +3265,10 @@ pub fn save_flow_state_cmd(
         .map(PathBuf::from)
         .ok_or_else(|| "No results directory".to_string())?;
 
+    // Preserve existing nextflow_command if not provided in this call
+    let effective_nf_cmd =
+        nextflow_command.or_else(|| load_flow_state(&results_dir).and_then(|s| s.nextflow_command));
+
     let flow_state = FlowState {
         completed,
         total,
@@ -3253,6 +3276,7 @@ pub fn save_flow_state_cmd(
         container_count,
         last_updated: Some(chrono::Utc::now().to_rfc3339()),
         status: Some(run.status.clone()),
+        nextflow_command: effective_nf_cmd,
     };
 
     save_flow_state(&results_dir, &flow_state)

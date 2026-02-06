@@ -12,6 +12,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const flowProgressCache = new Map()
 	const flowProgressTiming = new Map()
 	const flowReconcileAt = new Map()
+	const flowNfCommandCache = new Map()
+	const flowTimerIntervals = new Map()
 	let flowReconcileInFlight = false
 
 	function parseConcurrencyInput(value) {
@@ -176,7 +178,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	}
 
 	// Save flow state to backend for persistence across restarts
-	async function saveFlowState(runId, progress, concurrency, containerCount) {
+	async function saveFlowState(runId, progress, concurrency, containerCount, nextflowCommand) {
 		if (!runId || !progress || !progress.total) return
 		try {
 			await invoke('save_flow_state_cmd', {
@@ -185,6 +187,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				total: progress.total,
 				concurrency: concurrency || null,
 				containerCount: containerCount || 0,
+				nextflowCommand: nextflowCommand || null,
 			})
 		} catch (error) {
 			console.warn('Failed to save flow state:', error)
@@ -203,14 +206,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 
-	// Load and display saved flow state for paused/failed runs
-	async function loadAndDisplaySavedState(runId, progressEl, concurrencyInput) {
+	// Load and display saved flow state for paused/failed/success runs
+	async function loadAndDisplaySavedState(runId, progressEl, concurrencyInput, runStatus) {
 		const state = await loadFlowState(runId)
 		if (!state) return null
 
 		// Update progress display if we have saved progress
 		if (state.total && state.total > 0) {
-			const progress = { completed: state.completed || 0, total: state.total }
+			let progress = { completed: state.completed || 0, total: state.total }
+			if (runStatus === 'success') {
+				progress = { completed: state.total, total: state.total }
+			}
 			flowProgressCache.set(runId, progress)
 			updateFlowProgressUI(progress, progressEl, runId)
 		}
@@ -218,6 +224,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		// Pre-fill concurrency input if we have a saved value
 		if (state.concurrency && concurrencyInput) {
 			concurrencyInput.value = state.concurrency
+		}
+
+		// Restore saved nextflow command
+		if (state.nextflow_command) {
+			flowNfCommandCache.set(runId, state.nextflow_command)
+			populateNfCommand(runId, state.nextflow_command)
 		}
 
 		return state
@@ -300,6 +312,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		updateStepsProgressBadge(runId, doneCount, rows.length)
 	}
 
+	function populateNfCommand(runId, nfCmd) {
+		const nfEl = document.querySelector(`.actual-nf-command[data-run-id="${runId}"]`)
+		if (nfEl && nfCmd) {
+			nfEl.style.display = 'block'
+			const pre = nfEl.querySelector('.actual-nf-command-text')
+			if (pre) pre.textContent = nfCmd
+			const copyBtn = nfEl.querySelector('.copy-nf-cmd-btn')
+			if (copyBtn) copyBtn.dataset.command = nfCmd
+		}
+	}
+
 	async function refreshFlowRunLogs(run, logEl, progressEl, stepRows) {
 		if (!logEl || !run) return
 		try {
@@ -355,6 +378,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				// Save state for persistence/recovery
 				if (progress && progress.total && run.status === 'running') {
 					saveFlowState(run.id, progress, null, containerCount)
+				}
+			}
+			// Extract actual nextflow command from logs and persist it
+			if (logs) {
+				const nfCmdMatch = logs.match(/\[Pipeline\] Nextflow command:\s*(.+)/)
+				if (nfCmdMatch) {
+					const nfCmd = nfCmdMatch[1].trim()
+					flowNfCommandCache.set(run.id, nfCmd)
+					populateNfCommand(run.id, nfCmd)
+					// Persist to state file so it survives re-renders
+					if (progress && progress.total) {
+						saveFlowState(run.id, progress, null, 0, nfCmd)
+					}
 				}
 			}
 			if (run.status === 'running') {
@@ -551,6 +587,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				console.warn('Failed to reconcile flow runs:', error)
 			})
 			flowLogIntervals.forEach((_, runId) => stopFlowLogPolling(runId))
+			flowTimerIntervals.forEach((_, runId) => stopRunTimer(runId))
 			// Check for auto-expand run ID
 			let autoExpandRunId = null
 			if (typeof sessionStorage !== 'undefined') {
@@ -688,7 +725,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					statusBadge = `<span class="status-badge status-running" style="padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; ${statusBadgeStyle}">⋯ Running</span>`
 				}
 
-				const timeAgo = getTimeAgo(new Date(run.created_at))
+				const timeAgo = getTimeAgo(new Date(parseUTCTimestamp(run.created_at)))
 				const isNewlyCreated = autoExpandRunId === run.id
 
 				card.innerHTML = `
@@ -711,10 +748,26 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						<div class="run-title" style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px; line-height: 1.3; letter-spacing: -0.01em;">${escapeHtml(
 							runTitle,
 						)}</div>
-						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px;">
+						<div class="run-subtitle" style="font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
 							<span>Run #${run.id}</span>
 							<span style="color: #cbd5e1;">•</span>
 							<span>${timeAgo}</span>
+							<span style="color: #cbd5e1;">•</span>
+							${(() => {
+								const startMs = parseUTCTimestamp(run.created_at)
+								if (run.status === 'running') {
+									return `<span class="run-timer" data-run-id="${run.id}" style="font-variant-numeric: tabular-nums; color: #2563eb; font-weight: 600;">${formatElapsed(Date.now() - startMs)}</span>`
+								}
+								const endMs = run.completed_at ? parseUTCTimestamp(run.completed_at) : Date.now()
+								const dur = formatElapsed(endMs - startMs)
+								const durColor =
+									run.status === 'success'
+										? '#059669'
+										: run.status === 'failed'
+											? '#dc2626'
+											: '#64748b'
+								return `<span class="run-timer" data-run-id="${run.id}" style="font-variant-numeric: tabular-nums; color: ${durColor}; font-weight: 600;">${dur}</span>`
+							})()}
 							${
 								run.participant_count
 									? `<span style="color: #cbd5e1;">•</span><span>${
@@ -728,7 +781,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 									: ''
 							}
 						</div>
-						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${Date.parse(
+						<div class="flow-progress flow-progress-inline" data-run-id="${run.id}" data-start-ms="${parseUTCTimestamp(
 							run.created_at,
 						)}" style="margin-top: 8px; display: ${
 							run.status === 'running' || run.status === 'paused' || run.status === 'failed'
@@ -826,6 +879,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						card.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.06)'
 						card.style.borderColor = '#e2e8f0'
 					}
+				}
+
+				// Start live timer for running runs
+				if (run.status === 'running') {
+					startRunTimer(run.id, parseUTCTimestamp(run.created_at))
 				}
 
 				// Auto-expand if this is newly created OR currently running
@@ -1157,6 +1215,52 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 
+	function parseUTCTimestamp(ts) {
+		if (!ts) return NaN
+		const s = String(ts).trim()
+		if (
+			/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) &&
+			!s.includes('T') &&
+			!s.includes('+') &&
+			!s.includes('Z')
+		) {
+			return Date.parse(s.replace(' ', 'T') + 'Z')
+		}
+		return Date.parse(s)
+	}
+
+	function formatElapsed(ms) {
+		const totalSec = Math.max(0, Math.floor(ms / 1000))
+		const h = Math.floor(totalSec / 3600)
+		const m = Math.floor((totalSec % 3600) / 60)
+		const s = totalSec % 60
+		if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
+		if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
+		return `${s}s`
+	}
+
+	function startRunTimer(runId, startMs) {
+		stopRunTimer(runId)
+		const update = () => {
+			const el = document.querySelector(`.run-timer[data-run-id="${runId}"]`)
+			if (!el) {
+				stopRunTimer(runId)
+				return
+			}
+			el.textContent = formatElapsed(Date.now() - startMs)
+		}
+		update()
+		flowTimerIntervals.set(runId, setInterval(update, 1000))
+	}
+
+	function stopRunTimer(runId) {
+		const iv = flowTimerIntervals.get(runId)
+		if (iv) {
+			clearInterval(iv)
+			flowTimerIntervals.delete(runId)
+		}
+	}
+
 	// Helper function for relative time
 	function getTimeAgo(date) {
 		const seconds = Math.floor((new Date() - date) / 1000)
@@ -1319,24 +1423,55 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			// Collapsible inputs section (collapsed by default)
+			const configRowHtml = (label, value) => `
+				<div style="display: flex; gap: 12px; padding: 10px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
+					<span style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; font-weight: 600; flex-shrink: 0; min-width: 160px;">${escapeHtml(label)}</span>
+					<span style="color: #cbd5e1;">:</span>
+					<span style="font-size: 12px; color: #475569; font-family: 'SF Mono', Monaco, monospace; word-break: break-all;">${escapeHtml(value)}</span>
+				</div>`
+
+			const envItems = []
+			if (flow?.flow_path) envItems.push(configRowHtml('Flow Path', flow.flow_path))
+			if (resultsDir) envItems.push(configRowHtml('Results Dir', resultsDir))
+			if (nextflowMaxForks)
+				envItems.push(configRowHtml('Max Concurrency', String(nextflowMaxForks)))
+			const containerRuntime = runMetadata.container_runtime || null
+			if (containerRuntime) envItems.push(configRowHtml('Container Runtime', containerRuntime))
+			const isWindows = navigator.platform?.toLowerCase().includes('win')
+			if (!isWindows)
+				envItems.push(
+					configRowHtml(
+						'Container Mode',
+						containerRuntime ? `Using ${containerRuntime}` : 'Native (no container)',
+					),
+				)
+
 			const hasInputsOrParams =
 				Object.keys(inputOverrides).length > 0 || Object.keys(paramOverrides).length > 0
-			const inputsHtml = hasInputsOrParams
+			const hasConfig = hasInputsOrParams || envItems.length > 0
+			const settingCount =
+				Object.keys(inputOverrides).length + Object.keys(paramOverrides).length + envItems.length
+
+			const inputsHtml = hasConfig
 				? `<div class="run-config-section" style="margin-bottom: 24px;">
 					<button class="run-config-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('svg').style.transform = this.nextElementSibling.style.display === 'none' ? 'rotate(0deg)' : 'rotate(90deg)';" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; text-align: left; font-size: 14px; font-weight: 600; color: #475569;" onmouseover="this.style.background='#f1f5f9'; this.style.borderColor='#cbd5e1'" onmouseout="this.style.background='#f8fafc'; this.style.borderColor='#e2e8f0'">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.3s; color: #64748b; transform: rotate(0deg);">
 							<polyline points="9 18 15 12 9 6"></polyline>
 						</svg>
 						<span>Configuration</span>
-						<span style="margin-left: auto; font-size: 12px; color: #94a3b8;">${
-							Object.keys(inputOverrides).length + Object.keys(paramOverrides).length
-						} setting${
-							Object.keys(inputOverrides).length + Object.keys(paramOverrides).length === 1
-								? ''
-								: 's'
-						}</span>
+						<span style="margin-left: auto; font-size: 12px; color: #94a3b8;">${settingCount} item${settingCount === 1 ? '' : 's'}</span>
 					</button>
 					<div class="run-config-content" style="display: none; padding: 16px; background: white; border: 1.5px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px;">
+						${
+							envItems.length > 0
+								? `<div style="margin-bottom: ${hasInputsOrParams ? '16px' : '0'};">
+								<div style="font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Environment</div>
+								<div style="display: flex; flex-direction: column; gap: 8px;">
+									${envItems.join('')}
+								</div>
+							</div>`
+								: ''
+						}
 						${
 							Object.keys(inputOverrides).length > 0
 								? `<div style="margin-bottom: ${
@@ -1345,19 +1480,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								<div style="font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Input Values</div>
 								<div style="display: flex; flex-direction: column; gap: 8px;">
 									${Object.entries(inputOverrides)
-										.map(
-											([key, value]) => `
-											<div style="display: flex; gap: 12px; padding: 10px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
-												<span style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; font-weight: 600; flex-shrink: 0; min-width: 160px;">${escapeHtml(
-													key,
-												)}</span>
-												<span style="color: #cbd5e1;">:</span>
-												<span style="font-size: 12px; color: #475569; font-family: 'SF Mono', Monaco, monospace; word-break: break-all;">${escapeHtml(
-													value,
-												)}</span>
-											</div>
-										`,
-										)
+										.map(([key, value]) => configRowHtml(key, value))
 										.join('')}
 								</div>
 							</div>`
@@ -1369,19 +1492,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								<div style="font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Parameter Overrides</div>
 								<div style="display: flex; flex-direction: column; gap: 8px;">
 									${Object.entries(paramOverrides)
-										.map(
-											([key, value]) => `
-											<div style="display: flex; gap: 12px; padding: 10px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
-												<span style="font-size: 12px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; font-weight: 600; flex-shrink: 0; min-width: 160px;">${escapeHtml(
-													key,
-												)}</span>
-												<span style="color: #cbd5e1;">:</span>
-												<span style="font-size: 12px; color: #475569; font-family: 'SF Mono', Monaco, monospace; word-break: break-all;">${escapeHtml(
-													value,
-												)}</span>
-											</div>
-										`,
-										)
+										.map(([key, value]) => configRowHtml(key, value))
 										.join('')}
 								</div>
 							</div>`
@@ -1441,6 +1552,59 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					}
 
 					${dataSelectionHtml}
+
+					${(() => {
+						const flowPath = flow?.flow_path ? `${flow.flow_path}/flow.yaml` : null
+						if (!flowPath) return ''
+						let cmd = `bv flow run ${flowPath}`
+						Object.entries(inputOverrides).forEach(([key, value]) => {
+							const needsQuote = value.includes(' ') || value.includes('"')
+							cmd += ` --set ${key}=${needsQuote ? `"${value}"` : value}`
+						})
+						if (nextflowMaxForks) {
+							cmd += ` --nxf-max-forks ${nextflowMaxForks}`
+						}
+						if (resultsDir) {
+							cmd += ` --results-dir ${resultsDir}`
+						}
+						return `<div class="run-command-section" style="margin-bottom: 24px;">
+							<button class="run-command-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('.chevron-icon').style.transform = this.nextElementSibling.style.display === 'none' ? 'rotate(0deg)' : 'rotate(90deg)';" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; text-align: left; font-size: 14px; font-weight: 600; color: #475569;" onmouseover="this.style.background='#f1f5f9'; this.style.borderColor='#cbd5e1'" onmouseout="this.style.background='#f8fafc'; this.style.borderColor='#e2e8f0'">
+								<svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.3s; color: #64748b; transform: rotate(0deg);">
+									<polyline points="9 18 15 12 9 6"></polyline>
+								</svg>
+								<img src="assets/icons/terminal.svg" width="16" height="16" style="opacity: 0.6;" />
+								<span>Nextflow Command</span>
+								<span style="margin-left: auto; font-size: 12px; color: #94a3b8;">CLI debug</span>
+							</button>
+							<div style="display: none; padding: 16px; background: #1e293b; border: 1.5px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; position: relative;">
+								<button class="copy-command-btn" data-command="${escapeHtml(cmd)}" style="position: absolute; top: 12px; right: 12px; background: #334155; color: #94a3b8; border: 1px solid #475569; border-radius: 6px; padding: 4px 10px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;" onmouseover="this.style.background='#475569'; this.style.color='#e2e8f0'" onmouseout="this.style.background='#334155'; this.style.color='#94a3b8'">
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+									</svg>
+									Copy
+								</button>
+								<div style="margin-bottom: 8px; font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">BioVault CLI</div>
+								<pre style="margin: 0; padding: 0; padding-right: 80px; color: #e2e8f0; font-size: 12px; line-height: 1.6; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; white-space: pre-wrap; word-break: break-all;">${escapeHtml(cmd)}</pre>
+								${(() => {
+									const cachedNfCmd = flowNfCommandCache.get(run.id) || ''
+									return `<div class="actual-nf-command" data-run-id="${run.id}" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #334155; display: ${cachedNfCmd ? 'block' : 'none'};">
+									<div style="margin-bottom: 8px; font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Actual Nextflow Command</div>
+									<div style="position: relative;">
+										<button class="copy-command-btn copy-nf-cmd-btn" data-command="${escapeHtml(cachedNfCmd)}" style="position: absolute; top: 0; right: 0; background: #334155; color: #94a3b8; border: 1px solid #475569; border-radius: 6px; padding: 4px 10px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;" onmouseover="this.style.background='#475569'; this.style.color='#e2e8f0'" onmouseout="this.style.background='#334155'; this.style.color='#94a3b8'">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+												<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+											</svg>
+											Copy
+										</button>
+										<pre class="actual-nf-command-text" style="margin: 0; padding: 0; padding-right: 80px; color: #e2e8f0; font-size: 12px; line-height: 1.6; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; white-space: pre-wrap; word-break: break-all;">${escapeHtml(cachedNfCmd)}</pre>
+									</div>
+								</div>`
+								})()}
+							</div>
+						</div>`
+					})()}
 
 					${inputsHtml}
 
@@ -1612,17 +1776,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 			}
 
-			// Load saved state for failed/paused runs (to show progress and pre-fill concurrency)
-			if (run.status === 'failed' || run.status === 'paused') {
+			// Load saved state for completed/failed/paused runs (progress, concurrency, nf command)
+			if (run.status === 'failed' || run.status === 'paused' || run.status === 'success') {
 				const concurrencyInput = card
 					? card.querySelector(`.run-concurrency-input[data-run-id="${run.id}"]`)
 					: null
-				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput).then((savedState) => {
-					// Also refresh logs once to show what happened
-					if (logStream) {
-						refreshFlowRunLogs(run, logStream, progressEls, stepRows)
-					}
-				})
+				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput, run.status).then(
+					(savedState) => {
+						// Also refresh logs once for failed/paused to show what happened
+						if (logStream && (run.status === 'failed' || run.status === 'paused')) {
+							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
+						}
+						// For success runs, also try to extract nf command from logs if not in state
+						if (logStream && run.status === 'success' && !savedState?.nextflow_command) {
+							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
+						}
+					},
+				)
 			}
 
 			// Attach event listeners for published outputs
@@ -1635,6 +1805,26 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					} catch (e) {
 						console.error('Error opening output:', e)
 						alert(`Error opening output: ${e}`)
+					}
+				})
+			})
+
+			// Copy command button
+			container.querySelectorAll('.copy-command-btn').forEach((btn) => {
+				btn.addEventListener('click', async (e) => {
+					e.stopPropagation()
+					const cmd = btn.dataset.command
+					if (cmd) {
+						try {
+							await navigator.clipboard.writeText(cmd)
+							const orig = btn.innerHTML
+							btn.innerHTML = '<span style="color: #4ade80;">Copied!</span>'
+							setTimeout(() => {
+								btn.innerHTML = orig
+							}, 1500)
+						} catch (err) {
+							console.error('Copy failed:', err)
+						}
 					}
 				})
 			})

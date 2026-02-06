@@ -1423,6 +1423,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .unwrap_or(serde_json::json!(0)),
             )
             .unwrap_or(0);
+            let nextflow_command: Option<String> = args
+                .get("nextflowCommand")
+                .or_else(|| args.get("nextflow_command"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
             crate::commands::flows::save_flow_state_cmd(
                 state,
                 run_id,
@@ -1430,6 +1434,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 total,
                 concurrency,
                 container_count,
+                nextflow_command,
             )
             .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)

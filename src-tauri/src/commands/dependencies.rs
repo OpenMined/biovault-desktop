@@ -70,7 +70,10 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
         );
 
         if dep.found && dep.path.is_some() {
-            let path = dep.path.clone().unwrap();
+            let raw_path = dep.path.clone().unwrap();
+            let path = std::fs::canonicalize(&raw_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(raw_path);
             eprintln!("DEBUG:   Calling save_binary_path({}, {})", dep.name, path);
 
             match biovault::config::Config::save_binary_path(&dep.name, Some(path.clone())) {
@@ -333,7 +336,12 @@ pub async fn save_custom_path(name: String, path: String) -> Result<(), String> 
     let sanitized = if path.trim().is_empty() {
         None
     } else {
-        Some(path.trim().to_string())
+        let trimmed = path.trim().to_string();
+        Some(
+            std::fs::canonicalize(&trimmed)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(trimmed),
+        )
     };
 
     biovault::config::Config::save_binary_path(&name, sanitized.clone())
@@ -458,7 +466,10 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
     let install_result = biovault::cli::commands::setup::install_single_dependency(&name)
         .await
         .map(|maybe_path| {
-            if let Some(path) = maybe_path {
+            if let Some(raw_path) = maybe_path {
+                let path = std::fs::canonicalize(&raw_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or(raw_path);
                 crate::desktop_log!("✅ Installed {} at: {}", name, path);
 
                 // Save the binary path to config

@@ -93,6 +93,22 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		}
 	}
 
+	function getFlowIcon(flowName) {
+		const name = (flowName || '').toLowerCase()
+		if (name.includes('apol1')) return { icon: 'dna.svg', color: '#3b82f6' }
+		if (name.includes('brca')) return { icon: 'user-round.svg', color: '#8b5cf6' }
+		if (name.includes('herc2') || name.includes('eye'))
+			return { icon: 'scan-eye.svg', color: '#10b981' }
+		if (name.includes('thalassemia') || name.includes('red-hair'))
+			return { icon: 'dna.svg', color: '#ef4444' }
+		if (name.includes('allele') || name.includes('freq'))
+			return { icon: 'dna.svg', color: '#f59e0b' }
+		if (name.includes('haplo')) return { icon: 'dna.svg', color: '#6366f1' }
+		if (name.includes('mpileup') || name.includes('gra'))
+			return { icon: 'chart.svg', color: '#0ea5e9' }
+		return { icon: 'workflow.svg', color: '#64748b' }
+	}
+
 	function renderFlowCard(flow, container, modulesMap = new Map()) {
 		const stepCount = flow.spec?.steps?.length || 0
 		const description = flow.spec?.description || ''
@@ -100,40 +116,27 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		const hasDataSelected = hasPendingData(context)
 		const canRunWithData = hasDataSelected && flowAcceptsShape(flow, context?.datasetShape || null)
 
-		// Resolve step modules to get names and versions
+		const flowVersion = flow.version || flow.spec?.metadata?.version || null
+		const flowInputs = flow.spec?.inputs || {}
+		const inputEntries = Object.entries(flowInputs)
+
 		const stepDetails = (flow.spec?.steps || [])
 			.map((step) => {
 				if (!step.uses) return null
 				const uses = step.uses
-
-				// Try to find module in map
-				let module = null
-				if (uses.includes('@')) {
-					// Has version: name@version
-					module = modulesMap.get(uses)
-				} else {
-					// No version: try by name
-					module = modulesMap.get(uses)
-				}
-
+				let module = modulesMap.get(uses)
 				if (module) {
-					return {
-						id: step.id,
-						name: module.name,
-						version: module.version,
-					}
+					return { id: step.id, name: module.name, version: module.version }
 				}
-
-				// Parse name@version if present
 				if (uses.includes('@')) {
 					const [name, version] = uses.split('@')
 					return { id: step.id, name, version }
 				}
-
-				// Fallback: use the uses value as name
 				return { id: step.id, name: uses, version: null }
 			})
 			.filter((s) => s !== null)
+
+		const { icon, color } = getFlowIcon(flow.name)
 
 		const card = document.createElement('div')
 		card.className = 'flow-card'
@@ -144,7 +147,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		}
 
 		const dataBadge = canRunWithData
-			? `<div style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: rgba(29,78,216,0.1); border-radius: 6px; margin-bottom: 12px; font-size: 12px; color: #1e40af;">
+			? `<div style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: rgba(29,78,216,0.1); border-radius: 6px; margin-bottom: 8px; font-size: 12px; color: #1e40af;">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<path d="M9 11l3 3L22 4"></path>
 						<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
@@ -155,58 +158,75 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 		card.innerHTML = `
 			<div class="flow-card-header">
-				<h3 class="flow-card-title">${flow.name}</h3>
-				<button class="flow-card-menu" onclick="event.stopPropagation(); flowModule.showFlowMenu(${
-					flow.id
-				}, event)">⋯</button>
+				<div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+					<div style="width: 36px; height: 36px; border-radius: 8px; background: ${color}; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+						<img src="assets/icons/${icon}" width="18" height="18" style="filter: brightness(0) invert(1);" />
+					</div>
+					<h3 class="flow-card-title">${flow.name}</h3>
+				</div>
+				<button class="flow-card-menu" onclick="event.stopPropagation(); flowModule.showFlowMenu(${flow.id}, event)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<circle cx="12" cy="5" r="1"></circle>
+						<circle cx="12" cy="12" r="1"></circle>
+						<circle cx="12" cy="19" r="1"></circle>
+					</svg>
+				</button>
 			</div>
 			${dataBadge}
 			${description ? `<p class="flow-card-description">${description}</p>` : ''}
-			<div class="flow-card-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-				${
-					stepDetails.length > 0
-						? `<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">${stepDetails
-								.map((s) => {
-									const versionText = s.version ? ` v${s.version}` : ''
-									return `<span style="display: inline-block; padding: 4px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #475569;">${s.name}${versionText}</span>`
-								})
-								.join('')}</div>`
-						: `<span class="flow-step-badge">${stepCount} ${
-								stepCount === 1 ? 'step' : 'steps'
-							}</span>`
-				}
+			<div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+				${flowVersion ? `<span style="padding: 2px 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; font-size: 11px; color: #1d4ed8; font-weight: 600;">v${flowVersion}</span>` : ''}
+				${inputEntries
+					.map(([name, spec]) => {
+						const inputType =
+							typeof spec === 'object' && spec.type
+								? spec.type
+								: typeof spec === 'string'
+									? spec
+									: ''
+						return `<span style="padding: 2px 8px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 4px; font-size: 11px; color: #7c3aed;" title="${name}: ${inputType}">${name}${inputType ? ': ' + inputType : ''}</span>`
+					})
+					.join('')}
+			</div>
+			<div class="flow-card-footer">
+				<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex: 1; min-width: 0;">
+					${
+						stepDetails.length > 0
+							? stepDetails
+									.map((s) => {
+										const versionText = s.version ? ` v${s.version}` : ''
+										return `<span style="display: inline-block; padding: 3px 8px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #475569; white-space: nowrap;">${s.name}${versionText}</span>`
+									})
+									.join('')
+							: `<span style="display: inline-block; padding: 3px 8px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #64748b;">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>`
+					}
+				</div>
 				${
 					canRunWithData
-						? `<button class="flow-run-data-btn" data-flow-id="${flow.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3);">
+						? `<button class="flow-run-data-btn" data-flow-id="${flow.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); white-space: nowrap; flex-shrink: 0;">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
-						Run with Selected Data
+						Run
 					</button>`
-						: `<button class="flow-run-btn" data-flow-id="${flow.id}">▶ Run</button>`
+						: `<button class="flow-run-btn" data-flow-id="${flow.id}" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0; transition: background 0.2s;">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+							<polygon points="5 3 19 12 5 21 5 3"></polygon>
+						</svg>
+						Run
+					</button>`
 				}
 			</div>
 		`
 
-		// Card click handler removed - cards are not clickable
 		container.appendChild(card)
 
-		if (canRunWithData) {
-			const runDataBtn = card.querySelector('.flow-run-data-btn')
-			if (runDataBtn) {
-				runDataBtn.addEventListener('click', async (event) => {
-					event.stopPropagation()
-					await handleFlowRunClick(flow.id)
-				})
-			}
-		} else {
-			const runBtn = card.querySelector('.flow-run-btn')
-			if (runBtn) {
-				runBtn.addEventListener('click', async (event) => {
-					event.stopPropagation()
-					await handleFlowRunClick(flow.id)
-				})
-			}
+		const runBtn = card.querySelector('.flow-run-data-btn') || card.querySelector('.flow-run-btn')
+		if (runBtn) {
+			runBtn.addEventListener('click', async (event) => {
+				event.stopPropagation()
+				await handleFlowRunClick(flow.id)
+			})
 		}
 	}
 
@@ -2486,6 +2506,28 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		if (modal) modal.remove()
 	}
 
+	async function cleanupExistingFlowByName(nameOrMsg) {
+		try {
+			const lower = nameOrMsg.toLowerCase()
+			const existingFlow = flowState.flows.find(
+				(f) => f.name && (f.name.toLowerCase() === lower || lower.includes(f.name.toLowerCase())),
+			)
+			if (existingFlow) {
+				const steps = existingFlow.spec?.steps || []
+				for (const step of steps) {
+					if (step.uses) {
+						try {
+							await invoke('delete_module', { moduleId: step.uses })
+						} catch (_) {}
+					}
+				}
+				try {
+					await invoke('delete_flow', { flowId: existingFlow.id })
+				} catch (_) {}
+			}
+		} catch (_) {}
+	}
+
 	async function submitFlowURL(overwrite = false, urlOverride = null) {
 		const input = document.getElementById('flow-url-input')
 
@@ -2524,19 +2566,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			console.error('Error importing flow from URL:', error)
 			const errorMsg = error?.message || error?.toString() || String(error) || 'Unknown error'
 
-			// Only prompt for overwrite if we haven't already tried with overwrite=true
-			// and the error is specifically about the flow (not steps)
 			const isFlowExists =
-				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('flow') ||
-					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+				errorMsg.includes('already exists') ||
+				errorMsg.includes('UNIQUE constraint failed: flows.name')
 
 			if (isFlowExists && !overwrite) {
 				const shouldOverwrite = await confirmWithDialog(
-					`${errorMsg}\n\nDo you want to overwrite it?`,
+					`A flow with this name already exists.\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
 					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
+					await cleanupExistingFlowByName(errorMsg)
 					await submitFlowURL(true, url)
 					return
 				}
@@ -2662,16 +2702,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			// Only prompt for overwrite if we haven't already tried with overwrite=true
 			// and the error is specifically about the flow (not steps)
 			const isFlowExists =
-				errorMsg.includes('already exists') &&
-				(errorMsg.toLowerCase().includes('flow') ||
-					(!errorMsg.toLowerCase().includes('step') && !overwrite))
+				errorMsg.includes('already exists') ||
+				errorMsg.includes('UNIQUE constraint failed: flows.name')
 
 			if (isFlowExists && !overwrite) {
+				const flowName = inferredName || 'this flow'
 				const shouldOverwrite = await confirmWithDialog(
-					`${errorMsg}\n\nDo you want to overwrite it?`,
+					`A flow named "${flowName}" already exists.\n\nDo you want to overwrite it? This will delete the existing flow and its modules first.`,
 					{ title: 'Overwrite Flow?', type: 'warning' },
 				)
 				if (shouldOverwrite) {
+					await cleanupExistingFlowByName(flowName)
 					await importExistingFlow(true, selected)
 					return
 				}
@@ -4707,12 +4748,19 @@ steps:${
 		}
 	}
 
-	// Open flow folder
 	async function openFlowFolder(path) {
+		if (!path) {
+			alert('Flow path is not available')
+			return
+		}
 		try {
 			await invoke('open_folder', { path })
 		} catch (error) {
-			alert('Error opening folder: ' + error)
+			try {
+				await invoke('show_in_folder', { filePath: path })
+			} catch (err2) {
+				alert('Error opening folder: ' + error)
+			}
 		}
 	}
 

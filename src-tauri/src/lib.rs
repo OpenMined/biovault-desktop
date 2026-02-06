@@ -535,12 +535,13 @@ fn expose_bundled_binaries(app: &tauri::App) {
 
         match use_path {
             Some(path) if path.exists() => {
-                let candidate_str = path.to_string_lossy().to_string();
+                let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                let candidate_str = canonical.to_string_lossy().to_string();
                 std::env::set_var(env_key, &candidate_str);
                 crate::desktop_log!("🔧 Using bundled {}: {}", env_key, candidate_str);
 
                 if env_key == "BIOVAULT_BUNDLED_JAVA" {
-                    if let Some(parent) = path.parent() {
+                    if let Some(parent) = canonical.parent() {
                         if let Some(home) = parent.parent() {
                             std::env::set_var(
                                 "BIOVAULT_BUNDLED_JAVA_HOME",
@@ -670,12 +671,13 @@ fn expose_bundled_binaries(app: &tauri::App) {
 
         match use_path {
             Some(path) if path.exists() => {
-                let candidate_str = path.to_string_lossy().to_string();
+                let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                let candidate_str = canonical.to_string_lossy().to_string();
                 std::env::set_var(env_key, &candidate_str);
                 crate::desktop_log!("🔧 Using bundled {}: {}", env_key, candidate_str);
 
                 if env_key == "BIOVAULT_BUNDLED_JAVA" {
-                    if let Some(parent) = path.parent() {
+                    if let Some(parent) = canonical.parent() {
                         if let Some(home) = parent.parent() {
                             std::env::set_var(
                                 "BIOVAULT_BUNDLED_JAVA_HOME",
