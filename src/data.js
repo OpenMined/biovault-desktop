@@ -14,6 +14,7 @@ function buildDatasetAssetSyftUrl(ownerEmail, datasetName, filePath) {
 
 export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
+	const FILE_TYPE_FILTER_KEYS = ['genotype', 'vcf', 'raw', 'other']
 	let viewMode = 'participants'
 	let currentUserEmail = ''
 
@@ -22,7 +23,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let allFiles = []
 	let datasets = []
 	let selectedFileIds = [] // File IDs selected for workflows/operations
-	let currentDataTypeFilter = 'All'
+	let activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
 	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
@@ -34,10 +35,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
 	const activeDownloads = new Set()
 	const downloadProgressCache = new Map()
+	const downloadCancelCallbacks = new Map()
 	let downloadModalHandle = null
 	let downloadProgressListener = null
 	let lastClickedFileId = null
 	let isRangeSelecting = false
+	let selectedReferenceIds = [] // Reference file IDs selected for deletion
 	let currentEditingAssets = new Map()
 	let currentEditingOriginalName = null
 	let currentEditingWasPublished = false
@@ -159,23 +162,65 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				},
 			],
 		},
+		'clinvar-grch38': {
+			title: 'Downloading ClinVar (GRCh38)',
+			body: 'Downloading ClinVar variant annotation database. This may take a few minutes.',
+			links: [
+				{
+					label: 'ClinVar VCF (GRCh38)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz',
+				},
+				{
+					label: 'ClinVar Index (.tbi)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.tbi',
+				},
+			],
+		},
+		'clinvar-grch37': {
+			title: 'Downloading ClinVar (GRCh37)',
+			body: 'Downloading ClinVar variant annotation database. This may take a few minutes.',
+			links: [
+				{
+					label: 'ClinVar VCF (GRCh37)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz',
+				},
+				{
+					label: 'ClinVar Index (.tbi)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz.tbi',
+				},
+			],
+		},
 	}
 
 	let currentDownloadAbortController = null
 
 	async function handleSampleDataImport(sampleId, buttonEl) {
 		if (!sampleId) return
+		const downloadKey = `sample_${sampleId}`
 		const originalText = buttonEl?.textContent
 		const progressEl = document.querySelector(
 			`.sample-data-progress[data-progress-id="${sampleId}"]`,
 		)
 		let cancelRequested = false
 		let modalHandle = null
+
+		if (activeDownloads.has(downloadKey)) {
+			const config = SAMPLE_DATA_CONFIG[sampleId]
+			if (config) {
+				openDownloadModal({
+					downloadId: downloadKey,
+					title: config.title,
+					body: 'Download in progress. Closing this window will not stop the download.',
+					links: config.links,
+					onCancel: downloadCancelCallbacks.get(downloadKey) || null,
+				})
+			}
+			return
+		}
+
 		try {
-			// Check if the sample is already downloaded
 			const existingSampleDir = await invoke('check_sample_downloaded', { sampleId })
 			if (existingSampleDir) {
-				// Sample is already downloaded, skip to import
 				if (typeof window.openImportModalWithFolder === 'function') {
 					await window.openImportModalWithFolder(existingSampleDir)
 				}
@@ -183,37 +228,32 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				return
 			}
 
+			const cancelFn = async () => {
+				cancelRequested = true
+				try {
+					await invoke('cancel_sample_download')
+				} catch (e) {
+					console.warn('Cancel request failed:', e)
+				}
+			}
+			downloadCancelCallbacks.set(downloadKey, cancelFn)
+
 			const config = SAMPLE_DATA_CONFIG[sampleId]
 			if (config) {
-				if (activeDownloads.has('sample_data')) {
-					openDownloadModal({
-						downloadId: 'sample_data',
-						title: config.title,
-						body: 'Download in progress. Closing this window will not stop the download.',
-						links: config.links,
-					})
-					return
-				}
 				modalHandle = openDownloadModal({
-					downloadId: 'sample_data',
+					downloadId: downloadKey,
 					title: config.title,
 					body: config.body,
 					links: config.links,
-					onCancel: async () => {
-						cancelRequested = true
-						try {
-							await invoke('cancel_sample_download')
-						} catch (e) {
-							console.warn('Cancel request failed:', e)
-						}
-					},
+					onCancel: cancelFn,
 				})
 			}
 			if (buttonEl) {
 				buttonEl.textContent = 'Downloading...'
+				buttonEl.disabled = true
 			}
 			if (progressEl) progressEl.removeAttribute('hidden')
-			activeDownloads.add('sample_data')
+			activeDownloads.add(downloadKey)
 			const result = await invoke('fetch_sample_data_with_progress', { samples: [sampleId] })
 			const sampleDir = result?.sample_dir || result?.sampleDir || result
 			if (!cancelRequested && sampleDir && typeof window.openImportModalWithFolder === 'function') {
@@ -233,9 +273,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				})
 			}
 		} finally {
-			activeDownloads.delete('sample_data')
+			activeDownloads.delete(downloadKey)
+			downloadCancelCallbacks.delete(downloadKey)
 			if (buttonEl) {
 				if (originalText != null) buttonEl.textContent = originalText
+				buttonEl.disabled = false
 			}
 			if (progressEl) progressEl.setAttribute('hidden', '')
 			if (modalHandle) modalHandle.close()
@@ -272,7 +314,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		modal.innerHTML = `
 			<div class="download-modal-header">
 				<h3>${title || 'Downloading...'}</h3>
-				<button class="btn-text" data-role="close">Close</button>
+				<button class="download-modal-close" data-role="close" title="Close">&times;</button>
 			</div>
 			<p class="download-modal-body">${body || ''}</p>
 			${linksHtml}
@@ -295,6 +337,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		modal.querySelector('[data-role="cancel"]')?.addEventListener('click', () => {
 			if (typeof onCancel === 'function') onCancel()
 			close()
+		})
+		overlay.addEventListener('click', (e) => {
+			if (e.target === overlay) close()
 		})
 
 		overlay.appendChild(modal)
@@ -320,7 +365,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const handle = { close, setProgress, downloadId }
 		downloadModalHandle = handle
 
-		const cached = downloadProgressCache.get(downloadId)
+		const cached =
+			downloadProgressCache.get(downloadId) ||
+			(downloadId.startsWith('sample_') ? downloadProgressCache.get('sample_data') : null)
 		if (cached) {
 			setProgress(cached.downloaded, cached.total, cached.file)
 		}
@@ -555,9 +602,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		return false
 	}
 
-	function matchesDataTypeFilter(file) {
-		if (currentDataTypeFilter === 'All') return true
-		return file.data_type === currentDataTypeFilter
+	function matchesFileTypeFilter(file) {
+		return activeFileTypeFilters.has(getFileTypeCategory(file))
 	}
 
 	function normalizeDataType(value) {
@@ -572,6 +618,73 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	function isIndexDataType(value) {
 		const dt = normalizeDataType(value)
 		return dt === 'alignedindex' || dt === 'referenceindex'
+	}
+
+	function getFilteredNonReferenceFiles() {
+		return allFiles.filter((file) => {
+			const dt = file?.data_type || ''
+			if (isReferenceDataType(dt)) return false
+			if (isIndexDataType(dt)) return false
+			return true
+		})
+	}
+
+	function getFileTypeCategory(file) {
+		const dataType = normalizeDataType(file?.data_type)
+		const fileName = getPathBasename(file?.file_path || '').toLowerCase()
+
+		if (dataType === 'genotype' || dataType === 'snp') return 'genotype'
+		if (
+			dataType === 'variants' ||
+			dataType.includes('variant') ||
+			dataType.includes('vcf') ||
+			/\.(g?vcf|bcf)(\.(gz|bgz))?$/.test(fileName)
+		) {
+			return 'vcf'
+		}
+		if (
+			dataType === 'aligned' ||
+			dataType.includes('raw') ||
+			dataType.includes('sequencing') ||
+			/\.(bam|cram|sam)(\.(gz|bgz))?$/.test(fileName) ||
+			/\.(fastq|fq)(\.(gz|bgz))?$/.test(fileName)
+		) {
+			return 'raw'
+		}
+
+		return 'other'
+	}
+
+	function isAllFileTypeFiltersEnabled() {
+		return FILE_TYPE_FILTER_KEYS.every((key) => activeFileTypeFilters.has(key))
+	}
+
+	function updateFileTypeFilterUI(baseFiles) {
+		const counts = { genotype: 0, vcf: 0, raw: 0, other: 0 }
+
+		baseFiles.forEach((file) => {
+			const category = getFileTypeCategory(file)
+			if (Object.prototype.hasOwnProperty.call(counts, category)) {
+				counts[category] += 1
+			}
+		})
+
+		document.querySelectorAll('[data-file-type-count]').forEach((countNode) => {
+			const key = countNode.dataset.fileTypeCount
+			if (key === 'all') {
+				countNode.textContent = String(baseFiles.length)
+				return
+			}
+			countNode.textContent = String(counts[key] || 0)
+		})
+
+		document.querySelectorAll('.file-type-filter-chip').forEach((chip) => {
+			const key = chip.dataset.fileTypeFilter
+			const isActive =
+				key === 'all' ? isAllFileTypeFiltersEnabled() : activeFileTypeFilters.has(key)
+			chip.classList.toggle('active', isActive)
+			chip.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+		})
 	}
 
 	// ============================================================================
@@ -609,6 +722,51 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// RENDERING - FILES TABLE
 	// ============================================================================
 
+	function isAlignedDataType(value) {
+		const dt = normalizeDataType(value)
+		return dt === 'aligned'
+	}
+
+	function getAvailableReferences() {
+		return allFiles.filter((f) => normalizeDataType(f?.data_type) === 'reference')
+	}
+
+	async function loadFileReference(fileId, selectElement) {
+		try {
+			const [refFileId, refIndexFileId] = await invoke('get_file_reference', { fileId })
+			if (refFileId && selectElement) {
+				selectElement.value = refFileId.toString()
+			}
+		} catch (error) {
+			console.error('Failed to load file reference:', error)
+		}
+	}
+
+	function renderReferenceCell(file) {
+		if (!isAlignedDataType(file?.data_type)) {
+			return '<td class="col-reference">-</td>'
+		}
+
+		const references = getAvailableReferences()
+		if (references.length === 0) {
+			return '<td class="col-reference"><span style="color: #9ca3af; font-size: 12px;">No refs</span></td>'
+		}
+
+		const options = references
+			.map((ref) => {
+				const name = ref.file_path.split('/').pop()
+				return `<option value="${ref.id}">${name}</option>`
+			})
+			.join('')
+
+		return `<td class="col-reference">
+			<select class="reference-select" data-file-id="${file.id}" style="font-size: 12px; padding: 2px 4px; max-width: 120px;">
+				<option value="">Select...</option>
+				${options}
+			</select>
+		</td>`
+	}
+
 	function renderFileRow(file) {
 		const row = document.createElement('tr')
 		row.className = 'file-row'
@@ -622,6 +780,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const participantDisplay = participantId
 			? `<span class="participant-link" data-participant-id="${participantId}" title="Click to filter by ${participantId}">${participantId}</span>`
 			: '<span style="color: #9ca3af; font-style: italic;">Unassigned</span>'
+
+		const referenceCell = renderReferenceCell(file)
 
 		row.innerHTML = `
 			<td class="checkbox-cell">
@@ -645,6 +805,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					${file.data_type && file.data_type !== 'Unknown' ? file.data_type : '-'}
 				</span>
 			</td>
+			${referenceCell}
 			<td>${file.source || '-'}</td>
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
@@ -667,6 +828,48 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				</button>
 			</td>
 		`
+
+		// Reference select handler
+		const refSelect = row.querySelector('.reference-select')
+		if (refSelect) {
+			// Load current reference value
+			loadFileReference(file.id, refSelect)
+
+			refSelect.addEventListener('change', async (e) => {
+				e.stopPropagation()
+				const fileId = parseInt(e.target.dataset.fileId)
+				const refFileId = e.target.value ? parseInt(e.target.value) : null
+
+				// Find matching index file
+				let refIndexFileId = null
+				if (refFileId) {
+					const refFile = allFiles.find((f) => f.id === refFileId)
+					if (refFile) {
+						const refPath = refFile.file_path
+						const expectedIndexPath = refPath + '.fai'
+						const indexFile = allFiles.find(
+							(f) =>
+								f.file_path === expectedIndexPath ||
+								f.file_path === refPath.replace(/\.(fa|fasta)$/, '.fa.fai'),
+						)
+						if (indexFile) {
+							refIndexFileId = indexFile.id
+						}
+					}
+				}
+
+				try {
+					await invoke('update_file_reference', {
+						fileId,
+						referenceFileId: refFileId,
+						referenceIndexFileId: refIndexFileId,
+					})
+				} catch (error) {
+					console.error('Failed to update file reference:', error)
+					alert(`Failed to update reference: ${error}`)
+				}
+			})
+		}
 
 		// Open finder button
 		row.querySelector('.open-finder-btn').addEventListener('click', async (e) => {
@@ -782,16 +985,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		tbody.innerHTML = ''
 
+		const searchableFiles = getFilteredNonReferenceFiles().filter(matchesFileSearch)
+		updateFileTypeFilterUI(searchableFiles)
+
 		// Get files to display - apply all filters and store at module level
-		filesToDisplay = allFiles
-			.filter(matchesDataTypeFilter)
-			.filter(matchesFileSearch)
-			.filter((file) => {
-				const dt = file?.data_type || ''
-				if (isReferenceDataType(dt)) return false
-				if (isIndexDataType(dt)) return false
-				return true
-			})
+		filesToDisplay = searchableFiles.filter(matchesFileTypeFilter)
 
 		// Update page title (keep it simple, file count is in badge)
 		const dataView = document.getElementById('data-view')
@@ -834,6 +1032,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	function renderReferencesPanel() {
 		const tbody = document.getElementById('references-table-body')
 		const emptyState = document.getElementById('references-empty-state')
+		const tableWrapper = document.querySelector('#reference-data-section .files-table-wrapper')
 		if (!tbody) return
 		tbody.innerHTML = ''
 
@@ -841,16 +1040,32 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			.filter((file) => isReferenceDataType(file?.data_type))
 			.filter(matchesFileSearch)
 
+		// Clean up reference selections (remove files that don't exist anymore)
+		selectedReferenceIds = selectedReferenceIds.filter((id) =>
+			referenceFiles.some((f) => f.id === id),
+		)
+
 		if (referenceFiles.length === 0) {
 			if (emptyState) emptyState.style.display = 'flex'
+			if (tableWrapper) tableWrapper.style.display = 'none'
+			updateReferenceSelectionUI()
 			return
 		}
 		if (emptyState) emptyState.style.display = 'none'
+		if (tableWrapper) tableWrapper.style.display = 'block'
 
 		referenceFiles.forEach((file) => {
 			const row = document.createElement('tr')
+			row.className = 'file-row'
+			row.dataset.fileId = file.id
+			const isSelected = selectedReferenceIds.includes(file.id)
+			if (isSelected) row.classList.add('selected')
+
 			const fileName = file.file_path.split('/').pop()
 			row.innerHTML = `
+				<td class="checkbox-cell">
+					<input type="checkbox" class="ref-checkbox" data-id="${file.id}" ${isSelected ? 'checked' : ''} />
+				</td>
 				<td class="col-file" title="${file.file_path}">
 					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
 						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
@@ -865,7 +1080,40 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					</button>
 				</td>
 			`
-			row.querySelector('button')?.addEventListener('click', async () => {
+
+			// Checkbox handler
+			const checkbox = row.querySelector('.ref-checkbox')
+			checkbox.addEventListener('change', (e) => {
+				const fileId = parseInt(e.target.dataset.id)
+				if (e.target.checked) {
+					if (!selectedReferenceIds.includes(fileId)) {
+						selectedReferenceIds.push(fileId)
+					}
+					row.classList.add('selected')
+				} else {
+					selectedReferenceIds = selectedReferenceIds.filter((id) => id !== fileId)
+					row.classList.remove('selected')
+				}
+				updateReferenceSelectionUI()
+			})
+
+			// Make row clickable
+			row.addEventListener('click', (e) => {
+				if (
+					e.target.tagName === 'INPUT' ||
+					e.target.tagName === 'BUTTON' ||
+					e.target.closest('.actions-cell') ||
+					e.target.closest('.checkbox-cell')
+				) {
+					return
+				}
+				checkbox.checked = !checkbox.checked
+				checkbox.dispatchEvent(new Event('change'))
+			})
+			row.style.cursor = 'pointer'
+
+			row.querySelector('.show-in-folder-btn')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
 				try {
 					await invoke('show_in_folder', { filePath: file.file_path })
 				} catch (error) {
@@ -874,6 +1122,32 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 			tbody.appendChild(row)
 		})
+
+		updateReferenceSelectionUI()
+	}
+
+	function updateReferenceSelectionUI() {
+		const toolbar = document.getElementById('reference-selection-toolbar')
+		const countSpan = document.getElementById('reference-selection-count')
+		const selectAllCheckbox = document.getElementById('select-all-references')
+
+		if (toolbar) {
+			toolbar.style.display = selectedReferenceIds.length > 0 ? 'flex' : 'none'
+		}
+		if (countSpan) {
+			countSpan.textContent = selectedReferenceIds.length.toString()
+		}
+
+		// Update select-all checkbox state
+		if (selectAllCheckbox) {
+			const referenceFiles = allFiles.filter((file) => isReferenceDataType(file?.data_type))
+			const allSelected =
+				referenceFiles.length > 0 &&
+				referenceFiles.every((f) => selectedReferenceIds.includes(f.id))
+			const someSelected = referenceFiles.some((f) => selectedReferenceIds.includes(f.id))
+			selectAllCheckbox.checked = allSelected
+			selectAllCheckbox.indeterminate = someSelected && !allSelected
+		}
 	}
 
 	// Virtual scrolling removed; table now renders all rows so scroll height matches dataset size.
@@ -3143,6 +3417,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 
 			renderFilesPanel()
+			renderReferencesPanel()
 			updateActionButtons()
 
 			// Fetch queue information for pending files
@@ -3288,6 +3563,45 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 		}
+		// Reference selection handlers
+		const selectAllRefsCheckbox = document.getElementById('select-all-references')
+		if (selectAllRefsCheckbox) {
+			selectAllRefsCheckbox.addEventListener('change', (e) => {
+				const referenceFiles = allFiles.filter((file) => isReferenceDataType(file?.data_type))
+				if (e.target.checked) {
+					selectedReferenceIds = referenceFiles.map((f) => f.id)
+				} else {
+					selectedReferenceIds = []
+				}
+				renderReferencesPanel()
+			})
+		}
+
+		const deleteRefsBtn = document.getElementById('delete-selected-refs-btn')
+		if (deleteRefsBtn) {
+			deleteRefsBtn.addEventListener('click', async () => {
+				if (selectedReferenceIds.length === 0) return
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to delete ${selectedReferenceIds.length} reference file${selectedReferenceIds.length === 1 ? '' : 's'}? This cannot be undone.`,
+					{ title: 'Delete References', type: 'warning' },
+				)
+				if (confirmed) {
+					try {
+						await invoke('delete_files_bulk', { fileIds: selectedReferenceIds })
+						selectedReferenceIds = []
+						await loadData()
+						renderReferencesPanel()
+					} catch (error) {
+						console.error('Failed to delete references:', error)
+						await dialog.message(`Failed to delete references: ${error}`, {
+							title: 'Delete Error',
+							type: 'error',
+						})
+					}
+				}
+			})
+		}
+
 		// View toggle (Participants vs Datasets)
 		const toggleButtons = document.querySelectorAll('#data-view-toggle .pill-button')
 		toggleButtons.forEach((btn) => {
@@ -3476,8 +3790,25 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Data type filter removed - showing all types
-		currentDataTypeFilter = 'All'
+		document.querySelectorAll('.file-type-filter-chip').forEach((chip) => {
+			chip.addEventListener('click', () => {
+				const filterKey = chip.dataset.fileTypeFilter
+				if (!filterKey) return
+
+				if (filterKey === 'all') {
+					activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
+					renderFilesPanel()
+					return
+				}
+
+				if (activeFileTypeFilters.has(filterKey)) {
+					activeFileTypeFilters.delete(filterKey)
+				} else {
+					activeFileTypeFilters.add(filterKey)
+				}
+				renderFilesPanel()
+			})
+		})
 
 		// Sortable headers
 		document.querySelectorAll('.sortable-header').forEach((header) => {
@@ -3626,8 +3957,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				total: payload.total,
 				file: payload.file,
 			})
-			if (downloadModalHandle && downloadModalHandle.downloadId === id) {
-				downloadModalHandle.setProgress(payload.downloaded, payload.total, payload.file)
+			if (downloadModalHandle) {
+				const modalId = downloadModalHandle.downloadId
+				if (modalId === id || (id === 'sample_data' && modalId.startsWith('sample_'))) {
+					downloadModalHandle.setProgress(payload.downloaded, payload.total, payload.file)
+				}
 			}
 		})
 	}
