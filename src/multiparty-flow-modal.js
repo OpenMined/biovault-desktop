@@ -624,10 +624,13 @@ export function createProposeFlowModal({
 
 			// Show success and navigate to Runs
 			if (dialog?.message) {
-				await dialog.message(`Flow invitation sent to ${recipients.join(', ')}. Navigate to Runs to manage the flow.`, {
-					title: 'Invitation Sent',
-					kind: 'info',
-				})
+				await dialog.message(
+					`Flow invitation sent to ${recipients.join(', ')}. Navigate to Runs to manage the flow.`,
+					{
+						title: 'Invitation Sent',
+						kind: 'info',
+					},
+				)
 			}
 
 			// Navigate to Runs tab

@@ -69,6 +69,7 @@ Multiparty Flow Development Environment (3 clients)
 
 Options:
   --reset             Reset sandbox and devstack before starting
+  --bootstrap         Auto-onboard + trust keys + create multiparty invitation
   --skip-sync-check   Skip the sbdev sync probe
   --stop              Stop devstack and desktop processes
   --single [EMAIL]    Launch only one desktop (default: first client)
@@ -88,6 +89,7 @@ STOP_FLAG=0
 SINGLE_MODE=0
 SINGLE_TARGET=""
 SKIP_SYNC_CHECK=0
+BOOTSTRAP_FLAG=0
 
 CLIENTS=()
 
@@ -112,6 +114,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-sync-check)
       SKIP_SYNC_CHECK=1
+      ;;
+    --bootstrap)
+      BOOTSTRAP_FLAG=1
       ;;
     -h|--help)
       usage
@@ -461,6 +466,104 @@ run_initial_sync() {
   log_header "Skipping initial BioVault syncs (onboarding will handle setup)"
 }
 
+preseed_onboarding_for_bootstrap() {
+  log_header "Pre-seeding onboarding state for bootstrap (skip onboarding UI)"
+
+  for email in "${CLIENTS[@]}"; do
+    local home config server data_dir
+    home="$(client_field "$email" home)" || { log_error "No client home for $email"; exit 1; }
+    config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+    server="$(client_field "$email" server)"
+    [[ -z "$server" ]] && server="$SERVER_URL"
+    data_dir="$(parse_data_dir "$config")"
+    [[ -z "$data_dir" ]] && data_dir="$home"
+
+    mkdir -p "$home"
+    log_info "Pre-onboarding $email via bv init --quiet"
+    env \
+      BIOVAULT_HOME="$home" \
+      BIOVAULT_DISABLE_PROFILES=1 \
+      SYFTBOX_SERVER_URL="$server" \
+      SYFTBOX_CONFIG_PATH="$config" \
+      SYFTBOX_DATA_DIR="$data_dir" \
+      SYC_VAULT="$data_dir/.syc" \
+      "$BV_CLI_BIN" init --quiet "$email" >/dev/null
+  done
+
+  log_success "Pre-seeded onboarding for ${#CLIENTS[@]} clients"
+}
+
+wait_for_peer_did() {
+  local data_dir="$1"
+  local peer="$2"
+  local timeout_s="${3:-20}"
+  local did_path="$data_dir/datasites/$peer/public/crypto/did.json"
+  local deadline=$((SECONDS + timeout_s))
+  while (( SECONDS < deadline )); do
+    if [[ -f "$did_path" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+import_peer_contacts() {
+  log_header "Importing peer key bundles for all clients"
+  local imported=0
+  local missing=0
+
+  for email in "${CLIENTS[@]}"; do
+    local config data_dir bundles_dir
+    config="$(client_field "$email" config)" || { log_error "No config path for $email"; exit 1; }
+    data_dir="$(parse_data_dir "$config")"
+    [[ -z "$data_dir" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
+    bundles_dir="$data_dir/.biovault/vault/bundles"
+    mkdir -p "$bundles_dir"
+
+    for peer in "${CLIENTS[@]}"; do
+      [[ "$peer" == "$email" ]] && continue
+      local did_path="$data_dir/datasites/$peer/public/crypto/did.json"
+      local bundle_path="$bundles_dir/$peer.json"
+      if ! wait_for_peer_did "$data_dir" "$peer" 30; then
+        log_warn "$email missing peer DID (not synced yet): $did_path"
+        ((missing += 1))
+        continue
+      fi
+      cp "$did_path" "$bundle_path"
+      ((imported += 1))
+    done
+  done
+
+  if (( missing > 0 )); then
+    log_warn "Imported $imported bundles, $missing peer bundles missing (can refresh in app later)"
+  else
+    log_success "Imported $imported peer bundles"
+  fi
+}
+
+run_bootstrap() {
+  local ws1 ws2 ws3
+  ws1=$WS_PORT_BASE
+  ws2=$((WS_PORT_BASE + 1))
+  ws3=$((WS_PORT_BASE + 2))
+  local flow_name="${MULTIPARTY_FLOW_NAME:-multiparty}"
+
+  log_header "Bootstrapping multiparty setup"
+  if [[ ! -f "$SCRIPT_DIR/scripts/bootstrap-three.mjs" ]]; then
+    log_error "Missing bootstrap helper: $SCRIPT_DIR/scripts/bootstrap-three.mjs"
+    exit 1
+  fi
+
+  node "$SCRIPT_DIR/scripts/bootstrap-three.mjs" \
+    --ws1 "$ws1" --email1 "${CLIENTS[0]}" \
+    --ws2 "$ws2" --email2 "${CLIENTS[1]}" \
+    --ws3 "$ws3" --email3 "${CLIENTS[2]}" \
+    --flow "$flow_name"
+
+  log_success "Bootstrap complete (onboarding, trust, flow import, group invitation)"
+}
+
 launch_three_instances() {
   if [[ ${#CLIENTS[@]} -lt 3 ]]; then
     log_error "Three clients are required for multiparty mode"
@@ -473,7 +576,28 @@ launch_three_instances() {
   echo -e "    aggregator@sandbox.local → aggregator"
   echo ""
 
-  # Remove any previous config.yaml to trigger onboarding
+  if (( BOOTSTRAP_FLAG )); then
+    preseed_onboarding_for_bootstrap
+    launch_desktop_instance "${CLIENTS[2]}" 3 "bg"  # aggregator
+    sleep 2
+    launch_desktop_instance "${CLIENTS[1]}" 2 "bg"  # client2
+    sleep 2
+    launch_desktop_instance "${CLIENTS[0]}" 1 "bg"  # client1
+    sleep 2
+    run_bootstrap
+    cat <<EOF
+
+Bootstrap is ready. Keep using these three windows:
+  Client1:    ${CLIENTS[0]} (ws:${WS_PORT_BASE})
+  Client2:    ${CLIENTS[1]} (ws:$((WS_PORT_BASE + 1)))
+  Aggregator: ${CLIENTS[2]} (ws:$((WS_PORT_BASE + 2)))
+
+Use "./dev-three.sh --stop" when done.
+EOF
+    return
+  fi
+
+  # Remove any previous config.yaml to trigger onboarding for manual flows.
   for email in "${CLIENTS[@]}"; do
     rm -f "$(client_field "$email" home)"/config.yaml
   done
@@ -512,7 +636,13 @@ main() {
   seed_rpc_keepfiles
   provision_identities
   run_initial_sync
+  import_peer_contacts
   print_stack_summary
+
+  if (( BOOTSTRAP_FLAG )) && (( SINGLE_MODE )); then
+    log_error "--bootstrap is only supported with three-client mode (no --single)"
+    exit 1
+  fi
 
   if (( SINGLE_MODE )); then
     launch_single_instance "$SINGLE_TARGET"

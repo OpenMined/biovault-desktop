@@ -81,6 +81,7 @@ Scenario Options (pick one):
   --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
   --pipelines-multiparty  Run three-client multiparty messaging test
   --pipelines-multiparty-flow  Run three-client multiparty flow execution test
+  --syqure-multiparty-flow  Run three-client Syqure collaborative flow (real flow.yaml)
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -112,6 +113,7 @@ Examples:
   ./test-scenario.sh --flows-gwas   # Run GWAS flow test
   ./test-scenario.sh --syqure-flow --interactive  # Launch 3 clients for Syqure flow
   ./test-scenario.sh --pipelines-multiparty --interactive  # Launch 3 clients for multiparty messaging
+  ./test-scenario.sh --syqure-multiparty-flow --interactive  # Run Syqure collaborative flow UI test
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
@@ -176,6 +178,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--pipelines-multiparty-flow)
 			SCENARIO="pipelines-multiparty-flow"
+			shift
+			;;
+		--syqure-multiparty-flow)
+			SCENARIO="syqure-multiparty-flow"
 			shift
 			;;
 		--file-transfer)
@@ -546,7 +552,7 @@ export DISABLE_UPDATER=1
 export DEV_WS_BRIDGE=1
 
 WS_PORT_COUNT=2
-if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 	WS_PORT_COUNT=3
 fi
 WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" "$WS_PORT_COUNT" || true)"
@@ -681,7 +687,7 @@ cleanup() {
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 			local agg="${AGG_EMAIL:-aggregator@sandbox.local}"
 			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
-			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 				DEVSTACK_CLIENTS="${c1},${c2},${agg}"
 			else
 				DEVSTACK_CLIENTS="${c1},${c2}"
@@ -723,7 +729,7 @@ trap cleanup EXIT INT TERM
 
 if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	# Start devstack with two or three clients (reset by default to avoid stale state)
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
 		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
 	else
@@ -797,7 +803,7 @@ if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
 	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
 	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 		AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
 		AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
 	fi
@@ -810,7 +816,7 @@ PY
 
 	info "Client1 home: $CLIENT1_HOME"
 	info "Client2 home: $CLIENT2_HOME"
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 		info "Aggregator home: $AGG_HOME"
 	fi
 	info "Server URL: $SERVER_URL"
@@ -1179,6 +1185,30 @@ wait_ws() {
 }
 
 start_tauri_instances() {
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
+		if [[ -z "${SEQURE_NATIVE_BIN:-}" ]]; then
+			local syqure_candidates=(
+				"$WORKSPACE_ROOT/syqure/target/release/syqure"
+				"$WORKSPACE_ROOT/syqure/target/debug/syqure"
+				"$BIOVAULT_DIR/../syqure/target/release/syqure"
+				"$BIOVAULT_DIR/../syqure/target/debug/syqure"
+			)
+			local candidate
+			for candidate in "${syqure_candidates[@]}"; do
+				if [[ -x "$candidate" ]]; then
+					export SEQURE_NATIVE_BIN="$candidate"
+					info "Using SEQURE_NATIVE_BIN=$SEQURE_NATIVE_BIN"
+					break
+				fi
+			done
+		fi
+
+		if [[ -z "${SEQURE_NATIVE_BIN:-}" && -z "${BV_SYQURE_USE_DOCKER:-}" ]]; then
+			export BV_SYQURE_USE_DOCKER=1
+			info "Syqure binary not found; defaulting BV_SYQURE_USE_DOCKER=1"
+		fi
+	fi
+
 	assert_tauri_binary_present
 	assert_tauri_binary_fresh
 
@@ -1204,7 +1234,7 @@ start_tauri_instances() {
 		exit 1
 	}
 
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 		info "Launching Tauri for aggregator on WS port $((WS_PORT_BASE + 2))"
 		TAURI3_PID=$(launch_instance "$AGG_EMAIL" "$AGG_HOME" "$AGG_CFG" "$((WS_PORT_BASE + 2))")
 		info "Waiting for aggregator WS bridge..."
@@ -1219,7 +1249,7 @@ start_tauri_instances() {
 
 	info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" ]]; then
 		info "Aggregator UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
 	fi
 	timer_pop
@@ -1903,6 +1933,29 @@ PY
 		timer_pop
 
 		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	syqure-multiparty-flow)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Syqure Multiparty Flow Test ==="
+		info "Three clients will execute biovault/tests/scenarios/syqure-flow/flow.yaml via collaborative run."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		timer_push "Playwright: @syqure-multiparty-flow"
+		run_ui_grep "@syqure-multiparty-flow" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
 		if [[ "$WAIT_MODE" == "1" ]]; then
 			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
 			while true; do sleep 1; done

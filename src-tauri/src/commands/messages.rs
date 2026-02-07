@@ -4,6 +4,7 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::flow_spec::FlowFile;
+use biovault::flow_spec::FlowModuleDef;
 use biovault::flow_spec::FlowSpec;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
@@ -33,6 +34,26 @@ fn parse_thread_filter(scope: Option<&str>) -> Result<MessageFilterScope, String
         "sent" | "outbox" => Ok(MessageFilterScope::Sent),
         "all" | "threads" => Ok(MessageFilterScope::All),
         other => Err(format!("Unknown message filter: {}", other)),
+    }
+}
+
+fn add_group_chat_participants(
+    metadata: &Option<serde_json::Value>,
+    participants: &mut HashSet<String>,
+) {
+    let Some(meta) = metadata else { return };
+    let Some(group_chat) = meta.get("group_chat") else {
+        return;
+    };
+    let Some(group_participants) = group_chat.get("participants").and_then(|p| p.as_array()) else {
+        return;
+    };
+    for email in group_participants {
+        if let Some(email) = email.as_str() {
+            if !email.trim().is_empty() {
+                participants.insert(email.trim().to_string());
+            }
+        }
     }
 }
 
@@ -126,16 +147,42 @@ fn copy_flow_folder(
 }
 
 fn collect_flow_modules(
+    flow_file: &FlowFile,
     spec: &FlowSpec,
     flow_root: &Path,
     db: &biovault::data::BioVaultDb,
 ) -> Result<Vec<PathBuf>, String> {
     let mut modules = HashSet::new();
+    let mut explicit_local_module_names = HashSet::new();
+
+    for (module_name, module_def) in &flow_file.spec.modules {
+        if let FlowModuleDef::Ref(module_ref) = module_def {
+            if let Some(source) = &module_ref.source {
+                if let Some(source_path) = source.path.as_ref().map(|p| p.trim()) {
+                    if !source_path.is_empty() {
+                        let candidate = if source_path.starts_with('/') {
+                            PathBuf::from(source_path)
+                        } else {
+                            flow_root.join(source_path)
+                        };
+                        if candidate.exists() {
+                            explicit_local_module_names.insert(module_name.clone());
+                            modules.insert(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     for step in &spec.steps {
         let Some(uses) = step.uses.as_ref() else {
             continue;
         };
+
+        if explicit_local_module_names.contains(uses) {
+            continue;
+        }
 
         if uses.starts_with("http://")
             || uses.starts_with("https://")
@@ -476,6 +523,7 @@ pub fn list_message_threads(
                 if !msg.to.is_empty() {
                     participants.insert(msg.to.clone());
                 }
+                add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
             let subject = last_msg
@@ -1104,11 +1152,19 @@ pub fn send_flow_request(
         .map_err(|e| format!("Failed to resolve submissions folder: {}", e))?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let unique_ms = Utc::now().timestamp_millis();
+    let recipient_slug: String = recipient
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
     let mut hasher = Sha256::new();
     hasher.update(flow_content.as_bytes());
     let flow_hash = hex::encode(hasher.finalize());
     let short_hash = flow_hash.get(0..8).unwrap_or(&flow_hash).to_string();
-    let submission_folder_name = format!("{}-{}-{}", flow_name, timestamp, short_hash);
+    let submission_folder_name = format!(
+        "{}-{}-{}-{}-{}",
+        flow_name, timestamp, short_hash, recipient_slug, unique_ms
+    );
 
     let submission_path = submission_root.join(&submission_folder_name);
     copy_flow_folder(
@@ -1118,8 +1174,12 @@ pub fn send_flow_request(
         &recipient,
     )?;
 
-    let module_paths =
-        collect_flow_modules(&flow_spec_struct, Path::new(&flow.flow_path), &biovault_db)?;
+    let module_paths = collect_flow_modules(
+        &flow_file,
+        &flow_spec_struct,
+        Path::new(&flow.flow_path),
+        &biovault_db,
+    )?;
     let modules_dest_root = submission_path.join("modules");
     let mut included_modules: Vec<String> = Vec::new();
     let mut seen_module_dirs = HashSet::new();
@@ -1747,6 +1807,7 @@ pub fn refresh_messages_batched(
                 if !msg.to.is_empty() {
                     participants.insert(msg.to.clone());
                 }
+                add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
             let subject = last_msg

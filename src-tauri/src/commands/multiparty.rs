@@ -1,9 +1,9 @@
 use crate::types::AppState;
 use biovault::messages::models::{FlowParticipant, MessageType};
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -43,9 +43,48 @@ fn get_progress_path(flow_path: &PathBuf) -> PathBuf {
     flow_path.join("_progress")
 }
 
+/// Return candidate flow directories for a participant from this node's perspective.
+/// 1) synced datasite path (real remote shape)
+/// 2) local sandbox sibling path (single-machine dev fallback)
+fn participant_flow_dirs(
+    biovault_home: &PathBuf,
+    participant_email: &str,
+    flow_name: &str,
+    session_id: &str,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = HashSet::new();
+
+    let synced = biovault_home
+        .join("datasites")
+        .join(participant_email)
+        .join("shared")
+        .join("flows")
+        .join(flow_name)
+        .join(session_id);
+    if seen.insert(synced.clone()) {
+        dirs.push(synced);
+    }
+
+    if let Some(parent) = biovault_home.parent() {
+        let sandbox = parent
+            .join(participant_email)
+            .join("datasites")
+            .join(participant_email)
+            .join("shared")
+            .join("flows")
+            .join(flow_name)
+            .join(session_id);
+        if seen.insert(sandbox.clone()) {
+            dirs.push(sandbox);
+        }
+    }
+
+    dirs
+}
+
 /// Append a log entry to progress.json (JSONL format for event streaming)
 fn append_progress_log(progress_dir: &PathBuf, event: &str, step_id: Option<&str>, role: &str) {
-    let log_file = progress_dir.join("progress.json");
     let timestamp = Utc::now().to_rfc3339();
     let log_entry = serde_json::json!({
         "timestamp": timestamp,
@@ -54,11 +93,46 @@ fn append_progress_log(progress_dir: &PathBuf, event: &str, step_id: Option<&str
         "role": role,
     });
 
-    // Append to JSONL file
     use std::fs::OpenOptions;
     use std::io::Write;
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_file) {
-        let _ = writeln!(file, "{}", log_entry.to_string());
+    // Legacy location used by existing tests/diagnostics.
+    let legacy_log_file = progress_dir.join("progress.json");
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&legacy_log_file)
+    {
+        let _ = writeln!(file, "{}", log_entry);
+    }
+
+    // Canonical JSONL log stream.
+    let log_jsonl_file = progress_dir.join("log.jsonl");
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_jsonl_file)
+    {
+        let _ = writeln!(file, "{}", log_entry);
+    }
+}
+
+fn write_progress_state(
+    progress_dir: &PathBuf,
+    role: &str,
+    event: &str,
+    step_id: Option<&str>,
+    status: &str,
+) {
+    let state_file = progress_dir.join("state.json");
+    let state = serde_json::json!({
+        "updated_at": Utc::now().to_rfc3339(),
+        "role": role,
+        "event": event,
+        "step_id": step_id,
+        "status": status,
+    });
+    if let Ok(json) = serde_json::to_string_pretty(&state) {
+        let _ = fs::write(state_file, json);
     }
 }
 
@@ -156,10 +230,18 @@ pub struct StepState {
     pub is_barrier: bool,
     /// What step this barrier waits for
     pub barrier_wait_for: Option<String>,
+    /// Pretty JSON preview of the flow step config for UI inspection
+    pub code_preview: Option<String>,
+    /// Module identifier referenced by `uses`
+    pub module_ref: Option<String>,
+    /// Optional module source path (if available in flow spec)
+    pub module_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum StepStatus {
+    #[default]
     Pending,
     WaitingForInputs,
     Ready,
@@ -170,11 +252,6 @@ pub enum StepStatus {
     Failed,
 }
 
-impl Default for StepStatus {
-    fn default() -> Self {
-        StepStatus::Pending
-    }
-}
 
 static FLOW_SESSIONS: Lazy<Mutex<HashMap<String, MultipartyFlowState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -231,6 +308,12 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
 
         // Check if the barrier's wait_for step is complete by all targets
         if let Some(ref wait_for_step_id) = step.barrier_wait_for {
+            let require_shared = flow_state
+                .steps
+                .iter()
+                .find(|s| s.id == *wait_for_step_id)
+                .map(|s| s.shares_output)
+                .unwrap_or(false);
             // Get the target emails for this barrier from target_emails
             let barrier_targets: Vec<String> = step.target_emails.clone();
 
@@ -245,6 +328,7 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
                         &participant.email,
                         &participant.role,
                         wait_for_step_id,
+                        require_shared,
                     )
                 } else {
                     false
@@ -293,53 +377,41 @@ fn check_participant_step_complete(
     participant_email: &str,
     participant_role: &str,
     step_id: &str,
+    require_shared: bool,
 ) -> bool {
     let biovault_home = match biovault::config::get_biovault_home() {
         Ok(h) => h,
         Err(_) => return false,
     };
 
-    // Check synced path first
-    let synced_progress_file = biovault_home
-        .join("datasites")
-        .join(participant_email)
-        .join("shared")
-        .join("flows")
-        .join(flow_name)
-        .join(session_id)
-        .join("_progress")
-        .join(format!("{}_{}.json", participant_role, step_id));
-
-    // Fallback to sandbox path
-    let sandbox_progress_file = biovault_home.parent().map(|parent| {
-        parent
-            .join(participant_email)
-            .join("datasites")
-            .join(participant_email)
-            .join("shared")
-            .join("flows")
-            .join(flow_name)
-            .join(session_id)
-            .join("_progress")
+    for progress_file in participant_flow_dirs(
+        &biovault_home,
+        participant_email,
+        flow_name,
+        session_id,
+    )
+    .into_iter()
+    .map(|base| {
+        base.join("_progress")
             .join(format!("{}_{}.json", participant_role, step_id))
-    });
-
-    let progress_file = if synced_progress_file.exists() {
-        synced_progress_file
-    } else if let Some(ref sandbox_file) = sandbox_progress_file {
-        if sandbox_file.exists() {
-            sandbox_file.clone()
-        } else {
-            return false;
+    }) {
+        if !progress_file.exists() {
+            continue;
         }
-    } else {
-        return false;
-    };
 
-    // Read and check the status
-    if let Ok(content) = fs::read_to_string(&progress_file) {
-        if let Ok(status) = serde_json::from_str::<SharedStepStatus>(&content) {
-            return status.status == "Shared" || status.status == "Completed";
+        // Read and check the status
+        if let Ok(content) = fs::read_to_string(&progress_file) {
+            if let Ok(status) = serde_json::from_str::<SharedStepStatus>(&content) {
+                if require_shared {
+                    if status.status == "Shared" {
+                        return true;
+                    }
+                    continue;
+                }
+                if status.status == "Shared" || status.status == "Completed" {
+                    return true;
+                }
+            }
         }
     }
 
@@ -379,10 +451,11 @@ pub async fn send_flow_invitation(
     // Log "joined" event for the proposer
     append_progress_log(&progress_dir, "joined", None, &my_role);
 
-    // Create syft.pub.yaml for cross-participant progress syncing
+    // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participant_roles.iter().map(|p| p.email.clone()).collect();
-    let _ = create_syft_pub_yaml(&work_dir, &my_email, &all_participant_emails);
+    let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
+    write_progress_state(&progress_dir, &my_role, "joined", None, "Accepted");
 
     let flow_state = MultipartyFlowState {
         session_id: session_id.clone(),
@@ -422,11 +495,15 @@ pub async fn accept_flow_invitation(
     auto_run_all: bool,
     thread_id: Option<String>,
 ) -> Result<MultipartyFlowState, String> {
-    // Check if already accepted
+    // Check if already accepted with a persisted run.
+    // Sessions created by invitation sender may exist in memory without run_id;
+    // those must still execute the full accept path so the run card exists.
     {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         if let Some(existing) = sessions.get(&session_id) {
-            return Ok(existing.clone());
+            if existing.run_id.is_some() {
+                return Ok(existing.clone());
+            }
         }
     }
 
@@ -459,19 +536,32 @@ pub async fn accept_flow_invitation(
     fs::create_dir_all(&progress_dir)
         .map_err(|e| format!("Failed to create progress dir: {}", e))?;
 
-    // Create syft.pub.yaml for the flow work directory and progress directory
-    // All participants need read access to sync shared data
+    // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participants.iter().map(|p| p.email.clone()).collect();
-    let _ = create_syft_pub_yaml(&work_dir, &my_email, &all_participant_emails);
     let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
 
-    // Look up flow_id from database
-    let flow_id = {
+    // Look up flow_id from database.
+    // If missing, import from invitation spec so Join works even when UI state is stale.
+    let mut flow_id = {
         let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
         flows.iter().find(|f| f.name == flow_name).map(|f| f.id)
     };
+
+    if flow_id.is_none() {
+        let imported = super::flows::import_flow_from_json(
+            state.clone(),
+            super::flows::ImportFlowFromJsonRequest {
+                name: flow_name.clone(),
+                flow_json: flow_spec.clone(),
+                overwrite: false,
+            },
+        )
+        .await
+        .map_err(|e| format!("Failed to import flow for invitation acceptance: {}", e))?;
+        flow_id = Some(imported.id);
+    }
 
     // Create run entry in database
     let run_id = if let Some(fid) = flow_id {
@@ -492,7 +582,7 @@ pub async fn accept_flow_invitation(
             .map_err(|e| format!("Failed to create run entry: {}", e))?;
         Some(run_id)
     } else {
-        None
+        return Err(format!("Flow '{}' is not available locally", flow_name));
     };
 
     let flow_state = MultipartyFlowState {
@@ -517,6 +607,13 @@ pub async fn accept_flow_invitation(
     // Log "joined" event to progress.json
     let progress_dir = get_progress_path(&work_dir);
     append_progress_log(&progress_dir, "joined", None, &flow_state.my_role);
+    write_progress_state(
+        &progress_dir,
+        &flow_state.my_role,
+        "joined",
+        None,
+        "Accepted",
+    );
 
     {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
@@ -554,13 +651,93 @@ pub struct ParticipantStepStatus {
     pub step_id: String,
     pub status: String,
     pub timestamp: i64,
+    pub output_dir: Option<String>,
+}
+
+fn normalize_progress_status(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "shared" => "Shared".to_string(),
+        "sharing" => "Sharing".to_string(),
+        "completed" | "complete" | "success" | "succeeded" | "done" => {
+            "Completed".to_string()
+        }
+        "running" | "in_progress" | "in-progress" => "Running".to_string(),
+        "ready" => "Ready".to_string(),
+        "waitingforinputs" | "waiting_for_inputs" | "waiting-for-inputs" => {
+            "WaitingForInputs".to_string()
+        }
+        "failed" | "error" => "Failed".to_string(),
+        _ => "Pending".to_string(),
+    }
+}
+
+fn parse_progress_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
+    let value = value?;
+    if let Some(ts) = value.as_i64() {
+        return Some(ts);
+    }
+    if let Some(ts) = value.as_u64() {
+        return i64::try_from(ts).ok();
+    }
+    let text = value.as_str()?;
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+fn resolve_step_output_dir_for_base(base: &PathBuf, step_number: usize, step_id: &str) -> Option<PathBuf> {
+    let plain = base.join(format!("{}-{}", step_number, step_id));
+    if plain.exists() {
+        return Some(plain);
+    }
+    let padded = base.join(format!("{:02}-{}", step_number, step_id));
+    if padded.exists() {
+        return Some(padded);
+    }
+    None
+}
+
+fn progress_status_rank(status: &str) -> i32 {
+    match status {
+        "Failed" => 100,
+        "Shared" => 90,
+        "Completed" => 80,
+        "Sharing" => 70,
+        "Running" => 60,
+        "Ready" => 50,
+        "WaitingForInputs" => 40,
+        _ => 10, // Pending / unknown
+    }
+}
+
+fn should_replace_step_status(
+    existing: Option<&ParticipantStepStatus>,
+    candidate: &ParticipantStepStatus,
+) -> bool {
+    let Some(existing) = existing else {
+        return true;
+    };
+
+    let existing_rank = progress_status_rank(&existing.status);
+    let candidate_rank = progress_status_rank(&candidate.status);
+
+    if candidate_rank != existing_rank {
+        return candidate_rank > existing_rank;
+    }
+
+    if candidate.timestamp != existing.timestamp {
+        return candidate.timestamp > existing.timestamp;
+    }
+
+    // Prefer records that include a usable output path.
+    candidate.output_dir.is_some() && existing.output_dir.is_none()
 }
 
 #[tauri::command]
 pub async fn get_all_participant_progress(
     session_id: String,
 ) -> Result<Vec<ParticipantProgress>, String> {
-    let (flow_name, participants, step_ids) = {
+    let (flow_name, participants, step_meta) = {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get(&session_id)
@@ -571,7 +748,7 @@ pub async fn get_all_participant_progress(
             flow_state
                 .steps
                 .iter()
-                .map(|s| s.id.clone())
+                .map(|s| (s.id.clone(), s.shares_output))
                 .collect::<Vec<_>>(),
         )
     };
@@ -582,56 +759,110 @@ pub async fn get_all_participant_progress(
     let mut all_progress = Vec::new();
 
     for participant in &participants {
-        let mut steps = Vec::new();
+        let flow_dirs = participant_flow_dirs(&biovault_home, &participant.email, &flow_name, &session_id);
+        let mut steps_by_id: HashMap<String, ParticipantStepStatus> = HashMap::new();
 
-        for step_id in &step_ids {
-            // Try synced location first
-            let synced_path = biovault_home
-                .join("datasites")
-                .join(&participant.email)
-                .join("shared")
-                .join("flows")
-                .join(&flow_name)
-                .join(&session_id)
-                .join("_progress")
-                .join(format!("{}_{}.json", participant.role, step_id));
-
-            // Fallback to sandbox location
-            let sandbox_path = biovault_home.parent().map(|parent| {
-                parent
-                    .join(&participant.email)
-                    .join("datasites")
-                    .join(&participant.email)
-                    .join("shared")
-                    .join("flows")
-                    .join(&flow_name)
-                    .join(&session_id)
+        for (step_idx, (step_id, step_shares_output)) in step_meta.iter().enumerate() {
+            let step_number = step_idx + 1;
+            for base in &flow_dirs {
+                let progress_file = base
                     .join("_progress")
-                    .join(format!("{}_{}.json", participant.role, step_id))
-            });
-
-            let progress_file = if synced_path.exists() {
-                Some(synced_path)
-            } else if let Some(ref sp) = sandbox_path {
-                if sp.exists() {
-                    Some(sp.clone())
-                } else {
-                    None
+                    .join(format!("{}_{}.json", participant.role, step_id));
+                if !progress_file.exists() {
+                    continue;
                 }
-            } else {
-                None
-            };
-
-            if let Some(path) = progress_file {
-                if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(content) = fs::read_to_string(&progress_file) {
                     if let Ok(status) = serde_json::from_str::<SharedStepStatus>(&content) {
-                        steps.push(ParticipantStepStatus {
+                        let status_normalized = normalize_progress_status(&status.status);
+                        let output_dir_candidate =
+                            resolve_step_output_dir_for_base(base, step_number, step_id);
+
+                        let expose_outputs = if *step_shares_output {
+                            status_normalized == "Shared"
+                        } else {
+                            status_normalized == "Completed" || status_normalized == "Shared"
+                        };
+                        let output_dir = if expose_outputs {
+                            output_dir_candidate.map(|p| p.to_string_lossy().to_string())
+                        } else {
+                            None
+                        };
+
+                        let candidate = ParticipantStepStatus {
                             step_id: step_id.clone(),
-                            status: status.status,
+                            status: status_normalized,
                             timestamp: status.timestamp,
-                        });
+                            output_dir,
+                        };
+
+                        if should_replace_step_status(steps_by_id.get(step_id), &candidate) {
+                            steps_by_id.insert(step_id.clone(), candidate);
+                        }
                     }
                 }
+            }
+        }
+
+        // Fallback for flows that publish progress in _progress/state.json (e.g. Syqure flow runs).
+        for base in &flow_dirs {
+            let state_file = base.join("_progress").join("state.json");
+            if !state_file.exists() {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&state_file) {
+                if let Ok(state_json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(step_obj) = state_json.get("steps").and_then(|v| v.as_object()) {
+                        for (step_idx, (step_id, step_shares_output)) in step_meta.iter().enumerate() {
+                            let Some(step_state) = step_obj.get(step_id) else {
+                                continue;
+                            };
+                            let raw_status = step_state
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("pending");
+                            let mut status_normalized = normalize_progress_status(raw_status);
+                            // Flows with inline `share:` semantics often only report "completed".
+                            if *step_shares_output && status_normalized == "Completed" {
+                                status_normalized = "Shared".to_string();
+                            }
+
+                            let step_number = step_idx + 1;
+                            let output_dir_candidate =
+                                resolve_step_output_dir_for_base(base, step_number, step_id);
+                            let expose_outputs = if *step_shares_output {
+                                status_normalized == "Shared" || status_normalized == "Completed"
+                            } else {
+                                status_normalized == "Completed" || status_normalized == "Shared"
+                            };
+                            let output_dir = if expose_outputs {
+                                output_dir_candidate.map(|p| p.to_string_lossy().to_string())
+                            } else {
+                                None
+                            };
+                            let timestamp = parse_progress_timestamp(step_state.get("completed_at"))
+                                .or_else(|| parse_progress_timestamp(step_state.get("updated_at")))
+                                .or_else(|| parse_progress_timestamp(step_state.get("started_at")))
+                                .unwrap_or_else(|| Utc::now().timestamp());
+
+                            let candidate = ParticipantStepStatus {
+                                step_id: step_id.clone(),
+                                status: status_normalized,
+                                timestamp,
+                                output_dir,
+                            };
+                            if should_replace_step_status(steps_by_id.get(step_id), &candidate) {
+                                steps_by_id.insert(step_id.clone(), candidate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut steps = Vec::new();
+        for (step_id, _) in &step_meta {
+            if let Some(step_status) = steps_by_id.remove(step_id) {
+                steps.push(step_status);
             }
         }
 
@@ -673,80 +904,130 @@ pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, S
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
 
     let mut all_logs = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut push_log = |log: LogEntry| {
+        let key = format!(
+            "{}|{}|{}|{}",
+            log.participant,
+            log.event,
+            log.step_id.clone().unwrap_or_default(),
+            log.timestamp
+        );
+        if seen.insert(key) {
+            all_logs.push(log);
+        }
+    };
 
     for participant in &participants {
-        // Try synced location first
-        let synced_path = biovault_home
-            .join("datasites")
-            .join(&participant.email)
-            .join("shared")
-            .join("flows")
-            .join(&flow_name)
-            .join(&session_id)
-            .join("_progress")
-            .join("progress.json");
+        for progress_dir in participant_flow_dirs(
+            &biovault_home,
+            &participant.email,
+            &flow_name,
+            &session_id,
+        )
+        .into_iter()
+        .map(|base| base.join("_progress"))
+        {
+            // Try canonical log.jsonl, then legacy progress.json.
+            let log_file = {
+                let synced_jsonl = progress_dir.join("log.jsonl");
+                let synced_legacy = progress_dir.join("progress.json");
+                if synced_jsonl.exists() {
+                    Some(synced_jsonl)
+                } else if synced_legacy.exists() {
+                    Some(synced_legacy)
+                } else {
+                    None
+                }
+            };
 
-        // Fallback to sandbox location
-        let sandbox_path = biovault_home.parent().map(|parent| {
-            parent
-                .join(&participant.email)
-                .join("datasites")
-                .join(&participant.email)
-                .join("shared")
-                .join("flows")
-                .join(&flow_name)
-                .join(&session_id)
-                .join("_progress")
-                .join("progress.json")
-        });
-
-        let log_file = if synced_path.exists() {
-            Some(synced_path)
-        } else if let Some(ref sp) = sandbox_path {
-            if sp.exists() {
-                Some(sp.clone())
-            } else {
-                None
+            if let Some(path) = log_file {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // JSONL format - one JSON object per line
+                    for line in content.lines() {
+                        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+                            push_log(LogEntry {
+                                participant: participant.email.clone(),
+                                role: participant.role.clone(),
+                                timestamp: entry
+                                    .get("timestamp")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                event: entry
+                                    .get("event")
+                                    .and_then(|e| e.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                step_id: entry
+                                    .get("step_id")
+                                    .and_then(|s| s.as_str())
+                                    .map(|s| s.to_string()),
+                                message: entry
+                                    .get("message")
+                                    .and_then(|m| m.as_str())
+                                    .map(|m| m.to_string()),
+                            });
+                        }
+                    }
+                }
             }
-        } else {
-            None
-        };
 
-        if let Some(path) = log_file {
-            if let Ok(content) = fs::read_to_string(&path) {
-                // JSONL format - one JSON object per line
-                for line in content.lines() {
-                    if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
-                        all_logs.push(LogEntry {
-                            participant: participant.email.clone(),
-                            role: participant.role.clone(),
-                            timestamp: entry
-                                .get("timestamp")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            event: entry
-                                .get("event")
-                                .and_then(|e| e.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            step_id: entry
-                                .get("step_id")
-                                .and_then(|s| s.as_str())
-                                .map(|s| s.to_string()),
-                            message: entry
-                                .get("message")
-                                .and_then(|m| m.as_str())
-                                .map(|m| m.to_string()),
-                        });
+            // Fallback: synthesize events from shared step status files.
+            // This keeps the activity log populated even when log.jsonl lags behind.
+            if let Ok(entries) = fs::read_dir(&progress_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    if name == "state.json"
+                        || name == "log.jsonl"
+                        || name == "progress.json"
+                        || name == "syft.pub.yaml"
+                    {
+                        continue;
+                    }
+                    if !name.ends_with(".json") {
+                        continue;
+                    }
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(status) = serde_json::from_str::<SharedStepStatus>(&content) {
+                            let event = match status.status.as_str() {
+                                "Shared" => "step_shared",
+                                "Completed" => "step_completed",
+                                _ => continue,
+                            };
+                            let timestamp = Utc
+                                .timestamp_opt(status.timestamp, 0)
+                                .single()
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_default();
+                            push_log(LogEntry {
+                                participant: participant.email.clone(),
+                                role: if status.role.is_empty() {
+                                    participant.role.clone()
+                                } else {
+                                    status.role.clone()
+                                },
+                                timestamp,
+                                event: event.to_string(),
+                                step_id: Some(status.step_id.clone()),
+                                message: None,
+                            });
+                        }
                     }
                 }
             }
         }
     }
 
-    // Sort by timestamp
-    all_logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    // Sort by timestamp descending (newest first)
+    all_logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(all_logs)
 }
@@ -872,54 +1153,6 @@ pub async fn run_flow_step(
 
         fs::write(&output_file, serde_json::to_string_pretty(&result).unwrap())
             .map_err(|e| format!("Failed to write output: {}", e))?;
-    } else if step_id == "share_contribution" {
-        // Copy numbers.json from generate step to this step's output folder
-        let generate_output = work_dir
-            .as_ref()
-            .map(|d| get_step_path(d, 1, "generate").join("numbers.json"))
-            .ok_or_else(|| "No work directory".to_string())?;
-
-        let share_output = step_output_dir
-            .as_ref()
-            .map(|d| d.join("numbers.json"))
-            .ok_or_else(|| "No output directory".to_string())?;
-
-        if generate_output.exists() {
-            fs::copy(&generate_output, &share_output)
-                .map_err(|e| format!("Failed to copy numbers to share folder: {}", e))?;
-        } else {
-            return Err(format!(
-                "Generate output not found at {:?}",
-                generate_output
-            ));
-        }
-    } else if step_id == "share_result" {
-        // Copy result.json from aggregate step to this step's output folder
-        let aggregate_output = work_dir
-            .as_ref()
-            .map(|d| get_step_path(d, 3, "aggregate").join("result.json"))
-            .ok_or_else(|| "No work directory".to_string())?;
-
-        let share_output = step_output_dir
-            .as_ref()
-            .map(|d| d.join("result.json"))
-            .ok_or_else(|| "No output directory".to_string())?;
-
-        if aggregate_output.exists() {
-            fs::copy(&aggregate_output, &share_output)
-                .map_err(|e| format!("Failed to copy result to share folder: {}", e))?;
-        } else {
-            // Aggregator might run share_result before aggregate is done - just create empty placeholder
-            let placeholder = serde_json::json!({
-                "status": "pending",
-                "message": "Waiting for aggregation to complete"
-            });
-            fs::write(
-                &share_output,
-                serde_json::to_string_pretty(&placeholder).unwrap(),
-            )
-            .map_err(|e| format!("Failed to write placeholder: {}", e))?;
-        }
     } else if step_id == "aggregate" {
         // Get flow state to find contributors
         let (flow_name, participants) = {
@@ -944,28 +1177,23 @@ pub async fn run_flow_step(
         let mut all_numbers: Vec<i32> = Vec::new();
         let mut contributions: Vec<serde_json::Value> = Vec::new();
 
-        // Read contributions from each contributor's synced datasite
-        // Path: {biovault_home}/datasites/{contributor_email}/shared/flows/{flow_name}/{session_id}/2-share_contribution/numbers.json
-        // In sandbox mode, also check: {sandbox_root}/{contributor_email}/datasites/{contributor_email}/...
+        // Read contributions from each contributor's synced datasite.
+        // Prefer legacy "2-share_contribution/numbers.json" when present, and
+        // fall back to "1-generate/numbers.json" (share-as-part-of-step mode).
         for participant in &participants {
             // Skip non-contributors (aggregator doesn't contribute)
             if participant.role == "aggregator" {
                 continue;
             }
 
-            // Try synced location first
-            let synced_path = biovault_home
+            let synced_base = biovault_home
                 .join("datasites")
                 .join(&participant.email)
                 .join("shared")
                 .join("flows")
                 .join(&flow_name)
-                .join(&session_id)
-                .join("2-share_contribution")
-                .join("numbers.json");
-
-            // Fallback to sandbox location (for dev/test mode)
-            let sandbox_path = biovault_home.parent().map(|parent| {
+                .join(&session_id);
+            let sandbox_base = biovault_home.parent().map(|parent| {
                 parent
                     .join(&participant.email)
                     .join("datasites")
@@ -974,20 +1202,22 @@ pub async fn run_flow_step(
                     .join("flows")
                     .join(&flow_name)
                     .join(&session_id)
-                    .join("2-share_contribution")
-                    .join("numbers.json")
             });
-
-            let contributor_step_path = if synced_path.exists() {
-                synced_path
-            } else if let Some(ref sp) = sandbox_path {
-                if sp.exists() {
-                    sp.clone()
-                } else {
-                    continue; // Skip this contributor if no data found
-                }
-            } else {
-                continue;
+            let path_candidates = [
+                synced_base.join("1-generate").join("numbers.json"),
+                synced_base.join("2-share_contribution").join("numbers.json"),
+                sandbox_base
+                    .as_ref()
+                    .map(|p| p.join("1-generate").join("numbers.json"))
+                    .unwrap_or_default(),
+                sandbox_base
+                    .as_ref()
+                    .map(|p| p.join("2-share_contribution").join("numbers.json"))
+                    .unwrap_or_default(),
+            ];
+            let contributor_step_path = match path_candidates.iter().find(|p| p.exists()) {
+                Some(path) => path.clone(),
+                None => continue, // Skip this contributor if no data found
             };
 
             if let Ok(content) = fs::read_to_string(&contributor_step_path) {
@@ -1056,6 +1286,13 @@ pub async fn run_flow_step(
             Some(&step_id),
             &flow_state.my_role,
         );
+        write_progress_state(
+            &progress_dir,
+            &flow_state.my_role,
+            "step_completed",
+            Some(&step_id),
+            "Completed",
+        );
     }
 
     let completed_step = step.clone();
@@ -1072,7 +1309,15 @@ pub async fn share_step_outputs(
     session_id: String,
     step_id: String,
 ) -> Result<(), String> {
-    let (output_dir, share_to_emails, my_email, _thread_id) = {
+    let (
+        output_dir,
+        share_to_emails,
+        my_email,
+        thread_id,
+        flow_name,
+        step_name,
+        participants,
+    ) = {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get_mut(&session_id)
@@ -1094,23 +1339,17 @@ pub async fn share_step_outputs(
 
         step.status = StepStatus::Sharing;
 
-        let share_to_emails: Vec<String> = step
-            .share_to
-            .iter()
-            .filter_map(|role| {
-                flow_state
-                    .participants
-                    .iter()
-                    .find(|p| &p.role == role)
-                    .map(|p| p.email.clone())
-            })
-            .collect();
+        let share_to_emails =
+            resolve_share_recipients(&step.share_to, &flow_state.participants, &flow_state.my_email);
 
         (
             step.output_dir.clone(),
             share_to_emails,
             flow_state.my_email.clone(),
             flow_state.thread_id.clone(),
+            flow_state.flow_name.clone(),
+            step.name.clone(),
+            flow_state.participants.clone(),
         )
     };
 
@@ -1119,45 +1358,69 @@ pub async fn share_step_outputs(
     // Create syft.pub.yaml in output directory to enable SyftBox sync
     create_syft_pub_yaml(&output_dir, &my_email, &share_to_emails)?;
 
-    let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
-    let flow_state = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| "Flow session not found".to_string())?;
+    {
+        let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
 
-    let step = flow_state
-        .steps
-        .iter_mut()
-        .find(|s| s.id == step_id)
-        .ok_or_else(|| "Step not found".to_string())?;
+        let step = flow_state
+            .steps
+            .iter_mut()
+            .find(|s| s.id == step_id)
+            .ok_or_else(|| "Step not found".to_string())?;
 
-    step.status = StepStatus::Shared;
-    step.outputs_shared = true;
+        step.status = StepStatus::Shared;
+        step.outputs_shared = true;
 
-    // Save step status to shared _progress folder for cross-client syncing
-    if let Some(ref work_dir) = flow_state.work_dir {
-        let progress_dir = get_progress_path(work_dir);
-        let _ = fs::create_dir_all(&progress_dir);
-        let shared_status = SharedStepStatus {
-            step_id: step_id.clone(),
-            role: flow_state.my_role.clone(),
-            status: "Shared".to_string(),
-            timestamp: Utc::now().timestamp(),
-        };
-        let status_file = progress_dir.join(format!("{}_{}.json", flow_state.my_role, step_id));
-        if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
-            let _ = fs::write(&status_file, json);
+        // Save step status to shared _progress folder for cross-client syncing
+        if let Some(ref work_dir) = flow_state.work_dir {
+            let progress_dir = get_progress_path(work_dir);
+            let _ = fs::create_dir_all(&progress_dir);
+            let shared_status = SharedStepStatus {
+                step_id: step_id.clone(),
+                role: flow_state.my_role.clone(),
+                status: "Shared".to_string(),
+                timestamp: Utc::now().timestamp(),
+            };
+            let status_file = progress_dir.join(format!("{}_{}.json", flow_state.my_role, step_id));
+            if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
+                let _ = fs::write(&status_file, json);
+            }
+            // Also append to progress.json log
+            append_progress_log(
+                &progress_dir,
+                "step_shared",
+                Some(&step_id),
+                &flow_state.my_role,
+            );
+            write_progress_state(
+                &progress_dir,
+                &flow_state.my_role,
+                "step_shared",
+                Some(&step_id),
+                "Shared",
+            );
         }
-        // Also append to progress.json log
-        append_progress_log(
-            &progress_dir,
-            "step_shared",
-            Some(&step_id),
-            &flow_state.my_role,
-        );
+
+        // Update dependent steps: if all their dependencies are now met, mark them Ready
+        update_dependent_steps(flow_state, &step_id);
     }
 
-    // Update dependent steps: if all their dependencies are now met, mark them Ready
-    update_dependent_steps(flow_state, &step_id);
+    // Sharing outputs should also publish a chat artifact message for flow participants.
+    if !thread_id.trim().is_empty() {
+        let _ = publish_step_outputs_message(
+            &session_id,
+            &step_id,
+            &output_dir,
+            &thread_id,
+            &flow_name,
+            &my_email,
+            &step_name,
+            &participants,
+            true,
+        )?;
+    }
 
     Ok(())
 }
@@ -1253,56 +1516,138 @@ fn build_group_map_from_participants(
     let mut groups: HashMap<String, Vec<String>> = HashMap::new();
     let mut default_to_actual: HashMap<String, String> = HashMap::new();
 
-    // "all" group contains all participants
     let all_emails: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
     groups.insert("all".to_string(), all_emails.clone());
 
-    // Get default datasites from flow spec (for position mapping)
-    let default_datasites: Vec<String> = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("datasites"))
-        .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Build groups based on roles
-    // - Each unique role gets its own group
-    // - Also create aggregate groups (e.g., "contributors" for contributor1, contributor2)
+    // Build role-based groups first (robust fallback when flow datasite groups are unavailable).
     let mut role_groups: HashMap<String, Vec<String>> = HashMap::new();
-    for (i, p) in participants.iter().enumerate() {
-        // Add to exact role group
+    for p in participants {
         role_groups
             .entry(p.role.clone())
             .or_default()
             .push(p.email.clone());
 
-        // Also add to aggregate group (strip trailing digits)
         let base_role = p.role.trim_end_matches(|c: char| c.is_ascii_digit());
         if base_role != p.role {
-            // Has trailing digits, add to plural group
             let plural_role = format!("{}s", base_role);
             role_groups
                 .entry(plural_role)
                 .or_default()
                 .push(p.email.clone());
         }
+    }
 
-        // Map default datasite email to actual participant email (by position)
-        if i < default_datasites.len() {
-            default_to_actual.insert(default_datasites[i].clone(), p.email.clone());
+    // Parse default datasite list from canonical flow schema.
+    let default_datasites: Vec<String> = flow_spec
+        .get("spec")
+        .and_then(|s| s.get("inputs"))
+        .and_then(|i| i.get("datasites"))
+        .and_then(|d| d.get("default"))
+        .and_then(|arr| arr.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .or_else(|| {
+            flow_spec
+                .get("spec")
+                .and_then(|s| s.get("datasites"))
+                .and_then(|d| d.get("all"))
+                .and_then(|arr| arr.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+
+    // Default mapping:
+    // 1) direct literal-email matches
+    // 2) stable index fallback
+    for (i, default_email) in default_datasites.iter().enumerate() {
+        if let Some(p) = participants.iter().find(|p| p.email == *default_email) {
+            default_to_actual.insert(default_email.clone(), p.email.clone());
+        } else if let Some(p) = participants.get(i) {
+            default_to_actual.insert(default_email.clone(), p.email.clone());
         }
     }
 
-    // Merge role groups into main groups
-    for (role, members) in role_groups {
-        groups.insert(role, members);
+    // Parse explicit datasite groups from flow spec when available.
+    if let Some(spec_groups) = flow_spec
+        .get("spec")
+        .and_then(|s| s.get("datasites"))
+        .and_then(|d| d.get("groups"))
+        .and_then(|g| g.as_object())
+    {
+        for (group_name, group_def) in spec_groups {
+            let includes = group_def
+                .get("include")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let fallback_group_members = role_groups.get(group_name).cloned().unwrap_or_default();
+            let mut resolved_members: Vec<String> = Vec::new();
+
+            for (include_idx, include_item) in includes.iter().enumerate() {
+                let Some(token) = include_item.as_str() else {
+                    continue;
+                };
+                let trimmed = token.trim();
+
+                if trimmed == "{datasites[*]}" || trimmed.eq_ignore_ascii_case("all") {
+                    resolved_members.extend(all_emails.clone());
+                    continue;
+                }
+
+                if trimmed.contains('@') {
+                    // Either a real email or a default placeholder that already looks like email.
+                    let mapped = default_to_actual
+                        .get(trimmed)
+                        .cloned()
+                        .unwrap_or_else(|| trimmed.to_string());
+                    resolved_members.push(mapped);
+                    continue;
+                }
+
+                if trimmed.starts_with("{datasites[") && trimmed.ends_with("]}") {
+                    let idx_str = &trimmed["{datasites[".len()..trimmed.len() - 2];
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        if let Some(default_email) = default_datasites.get(idx) {
+                            if let Some(actual) = default_to_actual.get(default_email) {
+                                resolved_members.push(actual.clone());
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(mapped_group) = role_groups.get(trimmed) {
+                    resolved_members.extend(mapped_group.clone());
+                    continue;
+                }
+
+                // Ambiguous include token; preserve ordering against role-group fallback.
+                if let Some(member) = fallback_group_members.get(include_idx) {
+                    resolved_members.push(member.clone());
+                }
+            }
+
+            if !resolved_members.is_empty() {
+                resolved_members.sort();
+                resolved_members.dedup();
+                groups.insert(group_name.clone(), resolved_members);
+            }
+        }
     }
 
-    // Also add "clients" as alias for "contributors" if it exists
+    // Merge role groups where spec groups did not define them.
+    for (role, members) in role_groups {
+        groups.entry(role).or_insert(members);
+    }
+
     if let Some(contributors) = groups.get("contributors").cloned() {
         groups.insert("clients".to_string(), contributors);
     }
@@ -1336,6 +1681,68 @@ fn extract_share_to(step: &serde_json::Value) -> Vec<String> {
     }
 
     share_to
+}
+
+fn resolve_share_recipients(
+    raw_targets: &[String],
+    participants: &[FlowParticipant],
+    my_email: &str,
+) -> Vec<String> {
+    let mut resolved: HashSet<String> = HashSet::new();
+
+    for target in raw_targets {
+        let t = target.trim();
+        if t.is_empty() {
+            continue;
+        }
+
+        if t.eq_ignore_ascii_case("all") || t == "{datasites[*]}" || t == "*" {
+            for p in participants {
+                resolved.insert(p.email.clone());
+            }
+            continue;
+        }
+
+        if t == "{datasite.current}" {
+            resolved.insert(my_email.to_string());
+            continue;
+        }
+
+        if t.contains('@') {
+            resolved.insert(t.to_string());
+            continue;
+        }
+
+        if t.starts_with("{datasites[") && t.ends_with("]}") {
+            let idx_str = &t["{datasites[".len()..t.len() - 2];
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if let Some(p) = participants.get(idx) {
+                    resolved.insert(p.email.clone());
+                }
+            }
+            continue;
+        }
+
+        if let Some(p) = participants.iter().find(|p| p.role == t) {
+            resolved.insert(p.email.clone());
+            continue;
+        }
+
+        let singular = t.trim_end_matches('s');
+        for p in participants {
+            let role = p.role.as_str();
+            let role_singular = role.trim_end_matches(|c: char| c.is_ascii_digit());
+            if role == t
+                || role_singular == singular
+                || (t == "clients"
+                    && (role.starts_with("client") || role.starts_with("contributor")))
+            {
+                resolved.insert(p.email.clone());
+            }
+        }
+    }
+
+    resolved.into_iter().collect()
 }
 
 /// Get targets as a list of group names/emails
@@ -1483,7 +1890,7 @@ fn parse_flow_steps(
         let shares_output = !share_to.is_empty() || step.get("share").is_some();
 
         // Resolve targets to actual participant emails
-        let target_emails: Vec<String> = targets
+        let mut target_emails: Vec<String> = targets
             .iter()
             .flat_map(|target| {
                 // Check if it's a group name
@@ -1498,6 +1905,24 @@ fn parse_flow_steps(
                 }
             })
             .collect();
+        target_emails.sort();
+        target_emails.dedup();
+
+        let module_ref = step
+            .get("uses")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let module_path = module_ref.as_ref().and_then(|module_id| {
+            flow_spec
+                .get("spec")
+                .and_then(|s| s.get("modules"))
+                .and_then(|m| m.get(module_id))
+                .and_then(|m| m.get("source"))
+                .and_then(|s| s.get("path"))
+                .and_then(|p| p.as_str())
+                .map(|s| s.to_string())
+        });
+        let code_preview = serde_yaml::to_string(step).ok();
 
         // Determine initial status
         let initial_status = if is_barrier {
@@ -1525,48 +1950,27 @@ fn parse_flow_steps(
             target_emails,
             is_barrier,
             barrier_wait_for,
+            code_preview,
+            module_ref,
+            module_path,
         });
     }
 
     Ok(result)
 }
 
-/// Share step outputs to the chat thread so all participants can see and download
-#[tauri::command]
-pub async fn share_step_outputs_to_chat(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    step_id: String,
+fn publish_step_outputs_message(
+    session_id: &str,
+    step_id: &str,
+    output_dir: &PathBuf,
+    thread_id: &str,
+    flow_name: &str,
+    my_email: &str,
+    step_name: &str,
+    participants: &[FlowParticipant],
+    send_message: bool,
 ) -> Result<serde_json::Value, String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
-
-    // First, share the step outputs (creates syft.pub.yaml)
-    share_step_outputs(state.clone(), session_id.clone(), step_id.clone()).await?;
-
-    // Get the flow state info
-    let (output_dir, thread_id, flow_name, my_email, step_name, participants) = {
-        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
-        let flow_state = sessions
-            .get(&session_id)
-            .ok_or_else(|| "Flow session not found".to_string())?;
-
-        let step = flow_state
-            .steps
-            .iter()
-            .find(|s| s.id == step_id)
-            .ok_or_else(|| "Step not found".to_string())?;
-
-        (
-            step.output_dir.clone(),
-            flow_state.thread_id.clone(),
-            flow_state.flow_name.clone(),
-            flow_state.my_email.clone(),
-            step.name.clone(),
-            flow_state.participants.clone(),
-        )
-    };
-
-    let output_dir = output_dir.ok_or_else(|| "No output directory".to_string())?;
 
     // Read output files and encode as base64
     let mut results_data: Vec<serde_json::Value> = vec![];
@@ -1617,6 +2021,13 @@ pub async fn share_step_outputs_to_chat(
         .filter(|p| p.email != my_email)
         .map(|p| p.email.clone())
         .collect();
+    let mut group_participants: Vec<String> =
+        participants.iter().map(|p| p.email.clone()).collect();
+    if !group_participants.iter().any(|e| e == &my_email) {
+        group_participants.push(my_email.to_string());
+    }
+    group_participants.sort();
+    group_participants.dedup();
 
     // Create message body
     let body = format!(
@@ -1624,6 +2035,14 @@ pub async fn share_step_outputs_to_chat(
         step_name,
         results_data.len()
     );
+
+    if !send_message || thread_id.trim().is_empty() || recipients.is_empty() {
+        return Ok(serde_json::json!({
+            "success": true,
+            "files_shared": results_data.len(),
+            "recipients": recipients,
+        }));
+    }
 
     // Load config and message system
     let config =
@@ -1633,15 +2052,21 @@ pub async fn share_step_outputs_to_chat(
         .map_err(|e| format!("Failed to init message system: {}", e))?;
 
     // Send to each recipient (or to the thread if group chat)
-    let mut sent_message = None;
     for recipient in &recipients {
-        let mut msg =
-            biovault::messages::models::Message::new(my_email.clone(), recipient.clone(), body.clone());
+        let mut msg = biovault::messages::models::Message::new(
+            my_email.to_string(),
+            recipient.clone(),
+            body.clone(),
+        );
 
         msg.subject = Some(format!("Flow Results: {} - {}", flow_name, step_name));
-        msg.thread_id = Some(thread_id.clone());
+        msg.thread_id = Some(thread_id.to_string());
 
         msg.metadata = Some(serde_json::json!({
+            "group_chat": {
+                "participants": group_participants,
+                "is_group": true
+            },
             "flow_results": {
                 "flow_name": flow_name,
                 "session_id": session_id,
@@ -1657,10 +2082,6 @@ pub async fn share_step_outputs_to_chat(
 
         // Try to sync/send via RPC
         let _ = sync.send_message(&msg.id);
-
-        if sent_message.is_none() {
-            sent_message = Some(msg);
-        }
     }
 
     Ok(serde_json::json!({
@@ -1668,4 +2089,71 @@ pub async fn share_step_outputs_to_chat(
         "files_shared": results_data.len(),
         "recipients": recipients,
     }))
+}
+
+/// Share step outputs to the chat thread so all participants can see and download
+#[tauri::command]
+pub async fn share_step_outputs_to_chat(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    step_id: String,
+) -> Result<serde_json::Value, String> {
+    // If the step has not been shared yet, share it first.
+    // `share_step_outputs` already posts one results message when a thread is present.
+    let should_share_first = {
+        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+        let step = flow_state
+            .steps
+            .iter()
+            .find(|s| s.id == step_id)
+            .ok_or_else(|| "Step not found".to_string())?;
+        match step.status {
+            StepStatus::Completed => true,
+            StepStatus::Shared => false,
+            _ => {
+                return Err("Step must be completed/shared before posting to chat".to_string());
+            }
+        }
+    };
+
+    if should_share_first {
+        share_step_outputs(state.clone(), session_id.clone(), step_id.clone()).await?;
+    }
+
+    let (output_dir, thread_id, flow_name, my_email, step_name, participants) = {
+        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+        let step = flow_state
+            .steps
+            .iter()
+            .find(|s| s.id == step_id)
+            .ok_or_else(|| "Step not found".to_string())?;
+        (
+            step.output_dir.clone(),
+            flow_state.thread_id.clone(),
+            flow_state.flow_name.clone(),
+            flow_state.my_email.clone(),
+            step.name.clone(),
+            flow_state.participants.clone(),
+        )
+    };
+    let output_dir = output_dir.ok_or_else(|| "No output directory".to_string())?;
+
+    // If we just shared, do not duplicate the chat message.
+    publish_step_outputs_message(
+        &session_id,
+        &step_id,
+        &output_dir,
+        &thread_id,
+        &flow_name,
+        &my_email,
+        &step_name,
+        &participants,
+        !should_share_first,
+    )
 }

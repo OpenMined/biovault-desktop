@@ -390,18 +390,7 @@ test.describe('Multiparty messaging between three clients @pipelines-multiparty'
 			console.log(`  Client 1: ${uiBaseUrl}?ws=${wsPort1}&real=1`)
 			console.log(`  Client 2: ${uiBaseUrl}?ws=${wsPort2}&real=1`)
 			console.log(`  Client 3: ${uiBaseUrl}?ws=${wsPort3}&real=1`)
-			console.log('\nPress ENTER to exit or wait 60 seconds...')
-
-			await new Promise<void>((resolve) => {
-				const timeout = setTimeout(resolve, 60_000)
-				if (process.stdin.isTTY) {
-					process.stdin.resume()
-					process.stdin.once('data', () => {
-						clearTimeout(timeout)
-						resolve()
-					})
-				}
-			})
+			console.log('\nInteractive pause disabled; continuing cleanup.')
 		}
 
 		// Cleanup

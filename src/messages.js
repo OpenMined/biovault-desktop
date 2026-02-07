@@ -40,6 +40,7 @@ export function createMessagesModule({
 	let messagesRefreshInterval = null
 	let messagesRefreshInProgress = false
 	let threadActivityMap = new Map()
+	let threadParticipantsById = new Map()
 	let hasActivityBaseline = false
 	let notificationPermission = 'default'
 	let messageSyncUnlisten = null
@@ -73,17 +74,36 @@ export function createMessagesModule({
 		return SENDER_COLORS[getSenderColorIndex(email)]
 	}
 
+	function resolveParticipantIdentity(identity) {
+		const normalized = normalizeEmail(identity)
+		if (!normalized) return ''
+		if (normalized.includes('@')) return normalized
+		const current = normalizeEmail(getCurrentUserEmail())
+		const domain = current.includes('@') ? current.split('@')[1] : ''
+		return domain ? `${normalized}@${domain}` : normalized
+	}
+
+	function uniqueParticipantEmails(emails) {
+		return Array.from(
+			new Set(
+				(emails || [])
+					.map((email) => resolveParticipantIdentity(email))
+					.filter((email) => email.length > 0),
+			),
+		)
+	}
+
 	// Render participant chips with colors for thread header
 	function renderParticipantChips(participants, currentUserEmail) {
 		if (!participants || participants.length === 0) return ''
-		const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
+		const normalizedParticipants = uniqueParticipantEmails(participants)
+		const others = normalizedParticipants.filter((p) => !emailsMatch(p, currentUserEmail))
 		if (others.length === 0) return ''
 
 		return others
 			.map((email) => {
 				const color = getSenderColor(email)
-				const displayName = email.split('@')[0]
-				return `<span class="participant-chip" style="background-color: ${color.bg}; border-color: ${color.border};">${escapeHtml(displayName)}</span>`
+				return `<span class="participant-chip" title="${escapeHtml(email)}" style="background-color: ${color.bg}; border-color: ${color.border};">${escapeHtml(email)}</span>`
 			})
 			.join('')
 	}
@@ -687,10 +707,25 @@ export function createMessagesModule({
 	function collectParticipants(messages) {
 		const set = new Set()
 		messages.forEach((msg) => {
-			if (msg.from) set.add(normalizeEmail(msg.from))
-			if (msg.to) set.add(normalizeEmail(msg.to))
+			if (msg.from) set.add(resolveParticipantIdentity(msg.from))
+			if (msg.to) set.add(resolveParticipantIdentity(msg.to))
 		})
 		return Array.from(set)
+	}
+
+	function collectGroupParticipantsFromMessages(messages) {
+		const participants = new Set()
+		;(messages || []).forEach((msg) => {
+			const meta = normalizeMetadata(msg?.metadata)
+			const groupParticipants = meta?.group_chat?.participants
+			if (!Array.isArray(groupParticipants)) return
+				groupParticipants.forEach((email) => {
+					if (typeof email === 'string' && email.trim()) {
+						participants.add(resolveParticipantIdentity(email))
+					}
+				})
+			})
+			return Array.from(participants)
 	}
 
 	function formatParticipants(participants) {
@@ -1278,8 +1313,8 @@ export function createMessagesModule({
 				item.classList.add('unread')
 			}
 
-			const participants = thread.participants || []
-			const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
+				const participants = uniqueParticipantEmails(thread.participants || [])
+				const others = participants.filter((p) => !emailsMatch(p, currentUserEmail))
 
 			// Check if this is a self-message thread (only participant is current user)
 			const isSelfThread =
@@ -1434,12 +1469,19 @@ export function createMessagesModule({
 			renderModulePanel(messages)
 
 			const summary = messageThreads.find((thread) => thread.thread_id === threadId)
-			const participants = summary ? summary.participants : collectParticipants(messages)
-			const currentUserEmail = getCurrentUserEmail()
+			const messageParticipants = collectParticipants(messages)
+			const groupParticipants = collectGroupParticipantsFromMessages(messages)
+				const participants = Array.from(
+					new Set([...(summary?.participants || []), ...messageParticipants, ...groupParticipants]),
+				)
+				const normalizedParticipants = uniqueParticipantEmails(participants)
+				threadParticipantsById.set(threadId, normalizedParticipants)
+				const currentUserEmail = getCurrentUserEmail()
 
-			// Check if this is a self-message thread
-			const isSelfThread =
-				participants.length === 1 && emailsMatch(participants[0], currentUserEmail)
+				// Check if this is a self-message thread
+				const isSelfThread =
+					normalizedParticipants.length === 1 &&
+					emailsMatch(normalizedParticipants[0], currentUserEmail)
 
 			// Check if this is a session thread
 			const isSessionThread = !!(summary && summary.session_id)
@@ -1461,7 +1503,7 @@ export function createMessagesModule({
 			const participantsEl = document.getElementById('message-thread-participants')
 			if (participantsEl) {
 				if (isSessionThread) {
-					const chipsHtml = renderParticipantChips(participants, currentUserEmail)
+					const chipsHtml = renderParticipantChips(normalizedParticipants, currentUserEmail)
 					if (chipsHtml) {
 						participantsEl.innerHTML = `<span class="participant-label">Session with</span> ${chipsHtml}`
 					} else {
@@ -1471,7 +1513,7 @@ export function createMessagesModule({
 					participantsEl.textContent =
 						subjectText && subjectText !== NO_SUBJECT_PLACEHOLDER ? subjectText : 'Personal notes'
 				} else {
-					const chipsHtml = renderParticipantChips(participants, currentUserEmail)
+					const chipsHtml = renderParticipantChips(normalizedParticipants, currentUserEmail)
 					if (chipsHtml) {
 						participantsEl.innerHTML = chipsHtml
 					} else {
@@ -1480,13 +1522,13 @@ export function createMessagesModule({
 				}
 			}
 
-			updateConversationAvatar(participants, isSelfThread, isSessionThread)
+				updateConversationAvatar(normalizedParticipants, isSelfThread, isSessionThread)
 
 			const recipientInput = document.getElementById('message-recipient-input')
 			if (recipientInput) {
 				recipientInput.readOnly = true
 				if (!preserveComposeDraft) {
-					recipientInput.value = getPrimaryRecipient(participants)
+						recipientInput.value = getPrimaryRecipient(normalizedParticipants)
 				}
 			}
 
@@ -1594,10 +1636,14 @@ export function createMessagesModule({
 			// Replying to existing thread - use thread participants (excluding self)
 			const currentUser = getCurrentUserEmail()
 			const thread = messageThreads.find((t) => t.thread_id === activeThreadId)
-			if (thread?.participants) {
-				recipients = thread.participants.filter((p) => !emailsMatch(p, currentUser))
+				const knownParticipants =
+					threadParticipantsById.get(activeThreadId) || thread?.participants || []
+				if (knownParticipants.length > 0) {
+					recipients = knownParticipants.filter((p) => !emailsMatch(p, currentUser))
+				}
 			}
-		}
+
+			recipients = uniqueParticipantEmails(recipients)
 
 		if (recipients.length === 0) {
 			alert('Please enter at least one recipient')
@@ -2162,6 +2208,9 @@ export function createMessagesModule({
 					let runActions = null
 					let runButtons = null
 					let joinBtn = null
+					let runSelect = null
+					let runSelectOpenBtn = null
+					let runSelectSendBtn = null
 
 					const updateRunButtons = (flow) => {
 						if (!runButtons) return
@@ -2170,8 +2219,59 @@ export function createMessagesModule({
 						runButtons.mock.disabled = !enabled
 						runButtons.real.disabled = !enabled
 						runButtons.both.disabled = !enabled
-						if (joinBtn) {
-							joinBtn.disabled = !(flow && flowRequest.run_id)
+							if (joinBtn) {
+								joinBtn.disabled = !(flow && flowRequest.run_id)
+							}
+						}
+
+					const refreshFlowRequestActions = async () => {
+						if (!runActions) return
+						try {
+							const [flows, runs] = await Promise.all([invoke('get_flows'), invoke('get_flow_runs')])
+							const flow = (flows || []).find((p) => p?.name === flowRequest.flow_name)
+							updateRunButtons(flow)
+
+							if (!runSelect || !runSelectOpenBtn || !runSelectSendBtn) return
+
+							if (!flow) {
+								runSelect.__runMap = null
+								runSelect.__flowRef = null
+								runSelect.innerHTML = '<option value="">Import flow first</option>'
+								runSelect.disabled = true
+								runSelectOpenBtn.style.display = 'none'
+								runSelectSendBtn.style.display = 'none'
+								return
+							}
+
+							const matchingRuns = (runs || []).filter(
+								(run) => run.flow_id === flow.id && run.status === 'success',
+							)
+							if (matchingRuns.length === 0) {
+								runSelect.__runMap = new Map()
+								runSelect.__flowRef = flow
+								runSelect.innerHTML = '<option value="">No completed runs yet</option>'
+								runSelect.disabled = true
+								runSelectOpenBtn.style.display = 'none'
+								runSelectSendBtn.style.display = 'none'
+								return
+							}
+
+							runSelect.__runMap = new Map(matchingRuns.map((run) => [run.id, run]))
+							runSelect.__flowRef = flow
+							runSelect.innerHTML = matchingRuns
+								.map(
+									(run) =>
+										`<option value="${run.id}">${escapeHtml(formatRunSelectionLabel(run))}</option>`,
+								)
+								.join('')
+							runSelect.disabled = false
+							runSelectOpenBtn.style.display = ''
+							runSelectSendBtn.style.display = ''
+						} catch (error) {
+							console.error('Failed to refresh flow request actions:', error)
+							if (runSelect) {
+								runSelect.innerHTML = '<option value="">Failed to load runs</option>'
+							}
 						}
 					}
 
@@ -2212,10 +2312,10 @@ export function createMessagesModule({
 						})
 						actions.appendChild(syncBtn)
 
-						const importBtn = document.createElement('button')
-						importBtn.textContent = 'Import Flow'
-						importBtn.addEventListener('click', async () => {
-							try {
+							const importBtn = document.createElement('button')
+							importBtn.textContent = 'Import Flow'
+							importBtn.addEventListener('click', async () => {
+								try {
 								if (!flowRequest.flow_location) {
 									await dialog.message('Flow folder not found in request', {
 										title: 'Import Error',
@@ -2230,21 +2330,15 @@ export function createMessagesModule({
 									overwrite: false,
 								})
 
-								await dialog.message(
-									`Flow "${flowRequest.flow_name}" imported successfully!\n\nGo to Flows tab to view and run it.`,
-									{ title: 'Flow Imported', type: 'info' },
-								)
+									await dialog.message(
+										`Flow "${flowRequest.flow_name}" imported successfully!\n\nGo to Flows tab to view and run it.`,
+										{ title: 'Flow Imported', type: 'info' },
+									)
 
-								try {
-									const flows = await invoke('get_flows')
-									const flow = (flows || []).find((p) => p?.name === flowRequest.flow_name)
-									updateRunButtons(flow)
+									await refreshFlowRequestActions()
 								} catch (error) {
-									console.warn('Failed to refresh flow availability:', error)
-								}
-							} catch (error) {
-								console.error('Failed to import flow:', error)
-								await dialog.message('Failed to import flow: ' + (error?.message || error), {
+									console.error('Failed to import flow:', error)
+									await dialog.message('Failed to import flow: ' + (error?.message || error), {
 									title: 'Import Error',
 									type: 'error',
 								})
@@ -2336,38 +2430,65 @@ export function createMessagesModule({
 						runActions.appendChild(runRealBtn)
 						runActions.appendChild(runBothBtn)
 
-						if (flowRequest.run_id) {
-							joinBtn = document.createElement('button')
-							joinBtn.textContent = 'Join Run'
-							joinBtn.className = 'secondary'
-							joinBtn.disabled = true
-							joinBtn.addEventListener('click', async () => {
-								const flow = runButtons?.flow
-								if (!flow) {
-									await dialog.message('Import the flow first before joining.', {
-										title: 'Flow Required',
-										type: 'warning',
-									})
-									return
-								}
-								const inputOverrides = {}
-								if (
+							if (flowRequest.run_id) {
+								joinBtn = document.createElement('button')
+								joinBtn.textContent = 'Join Run'
+								joinBtn.className = 'secondary'
+								joinBtn.disabled = true
+								joinBtn.addEventListener('click', async () => {
+									let flow = runButtons?.flow
+									if (!flow) {
+										// Self-heal: try import+refresh so join does not look stuck.
+										try {
+											if (flowRequest.flow_location) {
+												await invoke('import_flow_from_request', {
+													name: flowRequest.flow_name,
+													flowLocation: flowRequest.flow_location,
+													overwrite: false,
+												})
+											}
+										} catch (error) {
+											console.warn('Auto-import before join failed:', error)
+										}
+										for (let i = 0; i < 8; i++) {
+											await refreshFlowRequestActions()
+											flow = runButtons?.flow
+											if (flow) break
+											await new Promise((r) => setTimeout(r, 400))
+										}
+										if (!flow) {
+											await dialog.message('Import the flow first before joining.', {
+												title: 'Flow Required',
+												type: 'warning',
+											})
+											return
+										}
+									}
+									const inputOverrides = {}
+									if (
 									flow?.spec?.inputs?.datasites &&
 									Array.isArray(flowRequest.datasites) &&
 									flowRequest.datasites.length > 0
 								) {
 									inputOverrides['inputs.datasites'] = flowRequest.datasites.join(',')
 								}
-								try {
-									await invoke('run_flow', {
-										flowId: flow.id,
-										inputOverrides,
-										runId: flowRequest.run_id,
-									})
-								} catch (error) {
-									console.error('Failed to start collaborative run:', error)
-									await dialog.message(
-										`Failed to start collaborative run: ${error?.message || error}`,
+									try {
+										joinBtn.disabled = true
+										joinBtn.textContent = 'Joining...'
+										await invoke('run_flow', {
+											flowId: flow.id,
+											inputOverrides,
+											runId: flowRequest.run_id,
+										})
+										await refreshFlowRequestActions()
+										joinBtn.textContent = 'Join Run'
+										joinBtn.disabled = false
+									} catch (error) {
+										joinBtn.disabled = false
+										joinBtn.textContent = 'Join Run'
+										console.error('Failed to start collaborative run:', error)
+										await dialog.message(
+											`Failed to start collaborative run: ${error?.message || error}`,
 										{ title: 'Run Error', type: 'error' },
 									)
 								}
@@ -2380,21 +2501,21 @@ export function createMessagesModule({
 						const resultsActions = document.createElement('div')
 						resultsActions.className = 'invite-actions'
 
-						const runSelect = document.createElement('select')
-						runSelect.className = 'form-control'
-						runSelect.style.flex = '1'
-						runSelect.innerHTML = '<option value="">Loading runs...</option>'
-						runSelect.disabled = true
+							runSelect = document.createElement('select')
+							runSelect.className = 'form-control'
+							runSelect.style.flex = '1'
+							runSelect.innerHTML = '<option value="">Loading runs...</option>'
+							runSelect.disabled = true
 
-						const openBtn = document.createElement('button')
-						openBtn.textContent = 'Show in Finder'
-						openBtn.className = 'secondary'
-						openBtn.disabled = true
-						openBtn.style.display = 'none'
-						openBtn.addEventListener('click', async () => {
-							const runId = parseInt(runSelect.value, 10)
-							if (!runId) return
-							const run = runSelect.__runMap?.get(runId)
+							runSelectOpenBtn = document.createElement('button')
+							runSelectOpenBtn.textContent = 'Show in Finder'
+							runSelectOpenBtn.className = 'secondary'
+							runSelectOpenBtn.disabled = true
+							runSelectOpenBtn.style.display = 'none'
+							runSelectOpenBtn.addEventListener('click', async () => {
+								const runId = parseInt(runSelect.value, 10)
+								if (!runId) return
+								const run = runSelect.__runMap?.get(runId)
 							if (!run) return
 							try {
 								const path = run.results_dir || run.work_dir
@@ -2408,20 +2529,20 @@ export function createMessagesModule({
 								await invoke('open_folder', { path })
 							} catch (error) {
 								console.error('Failed to open results folder:', error)
-								await dialog.message(`Failed to open folder: ${error?.message || error}`, {
-									title: 'Open Folder Error',
-									type: 'error',
-								})
-							}
-						})
+									await dialog.message(`Failed to open folder: ${error?.message || error}`, {
+										title: 'Open Folder Error',
+										type: 'error',
+									})
+								}
+							})
 
-						const sendBtn = document.createElement('button')
-						sendBtn.textContent = 'Send Back'
-						sendBtn.disabled = true
-						sendBtn.style.display = 'none'
-						sendBtn.addEventListener('click', async () => {
-							const runId = parseInt(runSelect.value, 10)
-							if (!runId) return
+							runSelectSendBtn = document.createElement('button')
+							runSelectSendBtn.textContent = 'Send Back'
+							runSelectSendBtn.disabled = true
+							runSelectSendBtn.style.display = 'none'
+							runSelectSendBtn.addEventListener('click', async () => {
+								const runId = parseInt(runSelect.value, 10)
+								if (!runId) return
 
 							const run = runSelect.__runMap?.get(runId)
 							const flow = runSelect.__flowRef
@@ -2634,13 +2755,13 @@ export function createMessagesModule({
 										type: 'warning',
 									})
 									return
-								}
+									}
 
-								try {
-									sendBtn.disabled = true
-									await invoke('send_flow_request_results', {
-										requestId: msg.id,
-										runId,
+									try {
+										runSelectSendBtn.disabled = true
+										await invoke('send_flow_request_results', {
+											requestId: msg.id,
+											runId,
 										outputPaths: selected,
 									})
 									await dialog.message('Results sent back to the shared folder.', {
@@ -2650,83 +2771,47 @@ export function createMessagesModule({
 									closeModal()
 								} catch (error) {
 									console.error('Failed to send flow results:', error)
-									await dialog.message(`Failed to send results: ${error?.message || error}`, {
-										title: 'Send Results Error',
-										type: 'error',
-									})
-								} finally {
-									sendBtn.disabled = false
-								}
+										await dialog.message(`Failed to send results: ${error?.message || error}`, {
+											title: 'Send Results Error',
+											type: 'error',
+										})
+									} finally {
+										runSelectSendBtn.disabled = false
+									}
+								})
 							})
-						})
 
-						resultsActions.appendChild(runSelect)
-						resultsActions.appendChild(openBtn)
-						resultsActions.appendChild(sendBtn)
-						requestCard.appendChild(resultsActions)
-						;(async () => {
-							try {
-								const [flows, runs] = await Promise.all([
-									invoke('get_flows'),
-									invoke('get_flow_runs'),
-								])
-								const flow = (flows || []).find((p) => p?.name === flowRequest.flow_name)
-								updateRunButtons(flow)
-								if (!flow) {
-									runSelect.innerHTML = '<option value="">Import flow first</option>'
-									return
-								}
-
-								const matchingRuns = (runs || []).filter(
-									(run) => run.flow_id === flow.id && run.status === 'success',
-								)
-								if (matchingRuns.length === 0) {
-									runSelect.innerHTML = '<option value="">No completed runs yet</option>'
-									return
-								}
-
-								runSelect.__runMap = new Map(matchingRuns.map((run) => [run.id, run]))
-								runSelect.__flowRef = flow
-								runSelect.innerHTML = matchingRuns
-									.map(
-										(run) =>
-											`<option value="${run.id}">${escapeHtml(
-												formatRunSelectionLabel(run),
-											)}</option>`,
-									)
-									.join('')
-								runSelect.disabled = false
-								openBtn.style.display = ''
-								sendBtn.style.display = ''
+							resultsActions.appendChild(runSelect)
+							resultsActions.appendChild(runSelectOpenBtn)
+							resultsActions.appendChild(runSelectSendBtn)
+							requestCard.appendChild(resultsActions)
 
 								const updateActionState = async () => {
-									const runId = parseInt(runSelect.value, 10)
-									const hasSelection = Number.isFinite(runId)
-									openBtn.disabled = !hasSelection
-									let hasResults = false
-									if (hasSelection) {
-										const run = runSelect.__runMap?.get(runId)
-										const resultsDir = run?.results_dir || run?.work_dir
-										if (resultsDir) {
-											try {
-												const entries = await invoke('list_results_tree', { root: resultsDir })
-												hasResults = (entries || []).some((entry) => !entry.is_dir)
-											} catch {
-												hasResults = false
-											}
+								const runId = parseInt(runSelect.value, 10)
+								const hasSelection = Number.isFinite(runId)
+								runSelectOpenBtn.disabled = !hasSelection
+								let hasResults = false
+								if (hasSelection) {
+									const run = runSelect.__runMap?.get(runId)
+									const resultsDir = run?.results_dir || run?.work_dir
+									if (resultsDir) {
+										try {
+											const entries = await invoke('list_results_tree', { root: resultsDir })
+											hasResults = (entries || []).some((entry) => !entry.is_dir)
+										} catch {
+											hasResults = false
 										}
 									}
-									sendBtn.disabled = !hasSelection || !hasResults
-									sendBtn.style.display = hasResults ? '' : 'none'
+								}
+									runSelectSendBtn.disabled = !hasSelection || !hasResults
+									runSelectSendBtn.style.display = hasResults ? '' : 'none'
 								}
 								runSelect.addEventListener('change', updateActionState)
-								updateActionState()
-							} catch (error) {
-								console.error('Failed to load flow runs:', error)
-								runSelect.innerHTML = '<option value="">Failed to load runs</option>'
+								;(async () => {
+									await refreshFlowRequestActions()
+									await updateActionState()
+								})()
 							}
-						})()
-					}
 
 					msgDiv.appendChild(requestCard)
 				}
@@ -2867,18 +2952,29 @@ export function createMessagesModule({
 
 					const statusEl = invitationCard.querySelector('.flow-invitation-status')
 
-					// Check if flow exists locally
+					// Check if this exact flow name exists locally.
+					// Do not infer from metadata name to avoid false positives.
 					const checkFlowExists = async () => {
 						try {
 							const flows = await invoke('get_flows')
-							return (flows || []).some(
-								(f) =>
-									f.name === flowInvitation.flow_name ||
-									f.metadata?.name === flowInvitation.flow_name,
-							)
+							return (flows || []).some((f) => f.name === flowInvitation.flow_name)
 						} catch {
 							return false
 						}
+					}
+
+					const importFlowFromInvitation = async (overwrite = false) => {
+						const flowSpec = flowInvitation.flow_spec
+						if (!flowSpec) {
+							throw new Error('No flow specification in invitation')
+						}
+						return await invoke('import_flow_from_json', {
+							request: {
+								name: flowInvitation.flow_name,
+								flow_json: flowSpec,
+								overwrite,
+							},
+						})
 					}
 
 					const importBtn = document.createElement('button')
@@ -2895,25 +2991,12 @@ export function createMessagesModule({
 						importBtn.disabled = true
 						importBtn.textContent = 'Importing...'
 						try {
-							// Import the flow from the invitation spec
-							const flowSpec = flowInvitation.flow_spec
 							console.log(
 								'[Flow Import] Flow spec:',
-								JSON.stringify(flowSpec, null, 2).substring(0, 500),
+								JSON.stringify(flowInvitation.flow_spec, null, 2).substring(0, 500),
 							)
-							if (!flowSpec) {
-								throw new Error('No flow specification in invitation')
-							}
-
-							// Import the flow using the JSON spec
 							console.log('[Flow Import] Calling import_flow_from_json...')
-							const result = await invoke('import_flow_from_json', {
-								request: {
-									name: flowInvitation.flow_name,
-									flow_json: flowSpec,
-									overwrite: false,
-								},
-							})
+							const result = await importFlowFromInvitation(false)
 							console.log('[Flow Import] Success:', result)
 
 							// Update UI
@@ -2931,6 +3014,23 @@ export function createMessagesModule({
 					joinBtn.addEventListener('click', async () => {
 						// If already joined, just navigate to Runs
 						if (joinBtn.classList.contains('joined')) {
+							// Recover from stale "joined but not imported" state.
+							const exists = await checkFlowExists()
+							if (!exists) {
+								try {
+									if (statusEl) statusEl.textContent = 'Importing flow...'
+									await importFlowFromInvitation(false)
+									if (statusEl) statusEl.textContent = '✓ Flow available'
+								} catch (error) {
+									if (dialog?.message) {
+										await dialog.message(`Flow is missing locally: ${error}`, {
+											title: 'Import Required',
+											kind: 'error',
+										})
+									}
+									return
+								}
+							}
 							const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
 							window.dispatchEvent(event)
 							return
@@ -2940,15 +3040,27 @@ export function createMessagesModule({
 							joinBtn.disabled = true
 							joinBtn.textContent = 'Joining...'
 
+							// Safety: ensure local flow import exists before accepting session.
+							// This prevents "View/Join without import" broken state.
+							let flowExists = await checkFlowExists()
+							if (!flowExists) {
+								if (statusEl) statusEl.textContent = 'Importing flow...'
+								await importFlowFromInvitation(false)
+								flowExists = await checkFlowExists()
+								if (!flowExists) {
+									throw new Error('Flow import did not complete locally')
+								}
+							}
+
 							// Accept the invitation (backend only, no modal)
-								const result = await invoke('accept_flow_invitation', {
-									sessionId: flowInvitation.session_id,
-									flowName: flowInvitation.flow_name,
-									flowSpec: flowInvitation.flow_spec,
-									participants: flowInvitation.participants,
-									autoRunAll: false,
-									threadId: activeThreadId ?? null,
-								})
+							const result = await invoke('accept_flow_invitation', {
+								sessionId: flowInvitation.session_id,
+								flowName: flowInvitation.flow_name,
+								flowSpec: flowInvitation.flow_spec,
+								participants: flowInvitation.participants,
+								autoRunAll: false,
+								threadId: activeThreadId ?? null,
+							})
 
 							console.log('[Join Flow] Accepted:', result)
 
@@ -3011,32 +3123,52 @@ export function createMessagesModule({
 					invitationCard.appendChild(actions)
 					msgDiv.appendChild(invitationCard)
 
-					// Check if flow already exists and if user already joined
-					checkFlowExists().then(async (exists) => {
-						if (exists) {
-							importBtn.style.display = 'none'
-							joinBtn.style.display = 'inline-block'
-							if (statusEl) statusEl.textContent = '✓ Flow available'
-
-							// Also check if user already joined this session
+					// Check if flow already exists and if user already joined.
+					// Keep "Import Flow" visible when joined but not imported locally.
+							checkFlowExists().then(async (exists) => {
+							let alreadyJoined = false
 							try {
 								const state = await invoke('get_multiparty_flow_state', {
 									sessionId: flowInvitation.session_id,
 								})
-								if (state && state.session_id) {
-									// User has already joined
-									joinBtn.textContent = '📋 View Flow'
-									joinBtn.classList.add('joined')
-									declineBtn.style.display = 'none'
-									if (statusEl) statusEl.textContent = '✓ Already joined'
-								}
+								alreadyJoined = !!(state && state.session_id && state.run_id)
 							} catch (e) {
-								// Session doesn't exist yet, user hasn't joined
 								console.log('[Flow Invitation] Session not found, user can join')
 							}
-						}
-					})
-				}
+
+							if (alreadyJoined) {
+								declineBtn.style.display = 'none'
+								if (exists) {
+									joinBtn.style.display = 'inline-block'
+									joinBtn.textContent = '📋 View Flow'
+									joinBtn.classList.add('joined')
+									importBtn.style.display = 'none'
+									if (statusEl) statusEl.textContent = '✓ Already joined'
+								} else {
+									// Joined session exists, but local flow import is missing.
+									// Enforce import first to avoid broken "View Flow" state.
+									importBtn.style.display = 'inline-block'
+									importBtn.disabled = false
+									importBtn.textContent = '📥 Import Flow'
+									joinBtn.style.display = 'none'
+									joinBtn.classList.add('joined')
+									if (statusEl) statusEl.textContent = 'Import flow to view joined session'
+								}
+								return
+							}
+
+							// Not joined yet: enforce Import -> Join ordering.
+							if (exists) {
+								joinBtn.style.display = 'inline-block'
+								importBtn.style.display = 'none'
+								if (statusEl) statusEl.textContent = '✓ Flow available'
+							} else if (statusEl) {
+								importBtn.style.display = 'inline-block'
+								joinBtn.style.display = 'none'
+								statusEl.textContent = 'Import flow, then join'
+							}
+						})
+					}
 
 				// Timestamp - show on last message of group
 				if (isLast && msg.created_at) {

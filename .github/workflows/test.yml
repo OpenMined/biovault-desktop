@@ -42,6 +42,7 @@ jobs:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || matrix.scenario != 'pipelines-multiparty-flow' }}
     strategy:
       fail-fast: false
       matrix:
@@ -78,6 +79,23 @@ jobs:
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
           - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop.exe
+          # pipelines-multiparty-flow (linux + mac + windows)
+          - scenario: pipelines-multiparty-flow
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+          - scenario: pipelines-multiparty-flow
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+          - scenario: pipelines-multiparty-flow
             platform: windows-x86_64
             runner: namespace-profile-windows-medium
             client_mode: rust
@@ -439,6 +457,18 @@ jobs:
             ${{ matrix.run_prefix }} ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
           else
             ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
+          fi
+
+      - name: Run pipelines multiparty flow scenario
+        if: matrix.scenario == 'pipelines-multiparty-flow'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-multiparty-flow
+          else
+            ./test-scenario.sh --pipelines-multiparty-flow
           fi
 
       - name: Upload test artifacts on failure

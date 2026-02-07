@@ -4017,14 +4017,13 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing stepId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse stepId: {}", e))?;
-            let result =
-                crate::commands::multiparty::share_step_outputs_to_chat(
-                    state.clone(),
-                    session_id,
-                    step_id,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
+            let result = crate::commands::multiparty::share_step_outputs_to_chat(
+                state.clone(),
+                session_id,
+                step_id,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_step_output_files" => {

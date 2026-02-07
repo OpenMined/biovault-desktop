@@ -14,6 +14,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const flowReconcileAt = new Map()
 	let flowReconcileInFlight = false
 	const multipartyPollingIntervals = new Map()
+	const multipartyActiveTabs = new Map()
+	const multipartyLastSyncAt = new Map()
+	const multipartyStepExpanded = new Map()
+	const multipartyCodeExpanded = new Map()
+
+	function getNestedState(map, sessionId) {
+		let nested = map.get(sessionId)
+		if (!nested) {
+			nested = new Map()
+			map.set(sessionId, nested)
+		}
+		return nested
+	}
 
 	// Start polling for multiparty state updates
 	function startMultipartyPolling(sessionId, runId) {
@@ -603,86 +616,223 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		`
 	}
 
+	function updateMultipartyRunCardState(runId, isComplete) {
+		const runCard = document.querySelector(`.flow-run-card[data-run-id="${runId}"]`)
+		if (!runCard) return
+		runCard.classList.toggle('mp-run-complete', !!isComplete)
+
+		const statusBadge = runCard.querySelector('.status-badge')
+		if (statusBadge && runCard.dataset.isMultiparty === 'true') {
+			if (isComplete) {
+				statusBadge.textContent = '✓ Complete'
+				statusBadge.classList.add('mp-run-status-complete')
+			} else {
+				statusBadge.classList.remove('mp-run-status-complete')
+				if (statusBadge.textContent?.includes('Complete')) {
+					statusBadge.textContent = '⋯ Running'
+				}
+			}
+		}
+	}
+
 	// Load and render multiparty steps for a run
 	async function loadMultipartySteps(sessionId, runId) {
 		const stepsContainer = document.querySelector(`.mp-steps-list[data-run-id="${runId}"]`)
 		if (!stepsContainer) return
 
 		// Preserve active tab state before refresh
-		const activeTab = stepsContainer.querySelector('.mp-tab.active')?.dataset?.tab || 'steps'
+		const activeTab =
+			multipartyActiveTabs.get(sessionId) ||
+			stepsContainer.querySelector('.mp-tab.active')?.dataset?.tab ||
+			'steps'
+		const previousScrollTop = stepsContainer.scrollTop
 
 		try {
-			// Fetch both flow state and all participant progress
-			const [state, allProgress] = await Promise.all([
+			// Keep shared _progress state fresh across peers without spamming sync requests.
+			const now = Date.now()
+			const lastSync = multipartyLastSyncAt.get(sessionId) || 0
+			if (now - lastSync > 2000) {
+				multipartyLastSyncAt.set(sessionId, now)
+				await invoke('trigger_syftbox_sync').catch(() => null)
+			}
+
+			// Fetch flow state, participant progress, and shared activity logs.
+			const [state, allProgress, activityLogs] = await Promise.all([
 				invoke('get_multiparty_flow_state', { sessionId }),
-				invoke('get_all_participant_progress', { sessionId }).catch(() => []),
-			])
+					invoke('get_all_participant_progress', { sessionId }).catch(() => []),
+					invoke('get_participant_logs', { sessionId }).catch(() => []),
+				])
 
 			if (!state || !state.steps) {
 				stepsContainer.innerHTML = '<div class="mp-no-steps">No steps found</div>'
 				return
 			}
 
-			// Build a map of step -> participants who completed/shared it
+			const normalizeKey = (value) => String(value || '').toLowerCase()
+			const isDoneForStep = (step, status) => {
+				if (!status) return false
+				if (step.shares_output) return status === 'Shared'
+				return status === 'Completed' || status === 'Shared'
+			}
+			// Build a map of step -> participant email -> progress record
 			const stepParticipants = {}
 			for (const p of allProgress) {
 				for (const s of p.steps || []) {
-					if (!stepParticipants[s.step_id]) stepParticipants[s.step_id] = []
-					stepParticipants[s.step_id].push({
+					if (!stepParticipants[s.step_id]) stepParticipants[s.step_id] = {}
+					stepParticipants[s.step_id][normalizeKey(p.email)] = {
 						email: p.email,
 						role: p.role,
 						status: s.status,
-					})
+						output_dir: s.output_dir || null,
+					}
+				}
+			}
+			// Fallback: infer per-participant step completion from shared activity logs.
+			for (const log of activityLogs || []) {
+				if (!log?.step_id || !log?.participant) continue
+				if (log.event !== 'step_completed' && log.event !== 'step_shared') continue
+				if (!stepParticipants[log.step_id]) stepParticipants[log.step_id] = {}
+				const key = normalizeKey(log.participant)
+				const existing = stepParticipants[log.step_id][key]
+				const existingStatus = existing?.status
+				const inferredStatus =
+					log.event === 'step_shared' || existingStatus === 'Shared' ? 'Shared' : 'Completed'
+				stepParticipants[log.step_id][key] = {
+					email: existing?.email || log.participant,
+					role: existing?.role || null,
+					status: inferredStatus,
+					output_dir: existing?.output_dir || null,
+				}
+			}
+			// Ensure current participant's latest in-memory state is reflected immediately.
+			const myEmail = state.my_email
+			if (myEmail) {
+				for (const step of state.steps || []) {
+					if (!stepParticipants[step.id]) stepParticipants[step.id] = {}
+					const existing = stepParticipants[step.id][normalizeKey(myEmail)] || {}
+					stepParticipants[step.id][normalizeKey(myEmail)] = {
+						email: myEmail,
+						role: state.my_role,
+						status: step.status,
+						output_dir: step.output_dir || existing.output_dir || null,
+					}
 				}
 			}
 
-			// Find next actionable step for "Run Next" button
-			const myNextStep = state.steps.find(
-				(s) => s.my_action && (s.status === 'Ready' || s.status === 'Pending'),
-			)
-
-			// Calculate TOTAL progress across all participants
-			let totalCompletedActions = 0
-			let totalActions = 0
-			for (const p of state.participants || []) {
-				const pSteps = allProgress.find((ap) => ap.email === p.email)?.steps || []
-				const completed = pSteps.filter(
-					(s) => s.status === 'Completed' || s.status === 'Shared',
-				).length
-				// Count steps this participant is responsible for
-				const mySteps = state.steps.filter((s) => {
-					// Check if this participant's role matches the step
-					return s.my_action ? p.email === state.my_email : true
-				})
-				totalCompletedActions += completed
+			const getParticipantStepStatus = (stepId, email) => {
+				const key = normalizeKey(email)
+				return stepParticipants[stepId]?.[key] || null
 			}
-			// Calculate TOTAL FLOW progress (X/4 total steps)
-			// Total steps = all unique steps in the flow
+
+			const getStepCompletion = (step) => {
+				const requiredEmails = (step.target_emails || []).filter(Boolean)
+				if (step.is_barrier) {
+					const done = isDoneForStep(step, step.status)
+					return {
+						requiredEmails,
+						allDone: done,
+						anyShared: step.status === 'Shared',
+					}
+				}
+				if (requiredEmails.length === 0) {
+					const done = isDoneForStep(step, step.status)
+					return {
+						requiredEmails,
+						allDone: done,
+						anyShared: step.status === 'Shared',
+					}
+				}
+				const participantRecords = requiredEmails
+					.map((email) => getParticipantStepStatus(step.id, email))
+					.filter(Boolean)
+				const allParticipantsDone = requiredEmails.every((email) => {
+					const status = getParticipantStepStatus(step.id, email)?.status
+					return isDoneForStep(step, status)
+				})
+				const globalDoneFromState = isDoneForStep(step, step.status) && !step.my_action
+				const allDone = allParticipantsDone || globalDoneFromState
+				return {
+					requiredEmails,
+					allDone,
+					anyShared: step.status === 'Shared' || participantRecords.some((p) => p.status === 'Shared'),
+				}
+			}
+
+			const getEffectiveStepStatus = (step, completion) => {
+				if (step.status === 'Failed' || step.status === 'Running' || step.status === 'Sharing') {
+					return step.status
+				}
+				if (completion.allDone) {
+					return completion.anyShared ? 'Shared' : 'Completed'
+				}
+				return step.status
+			}
+
+			// Find next actionable step for "Run Next" button
+			const myNextStep = state.steps.find((s) => {
+				const readyToShare = s.shares_output && s.status === 'Completed' && !s.outputs_shared
+				return s.my_action && (s.status === 'Ready' || readyToShare)
+			})
 			const totalSteps = state.steps.length
+			let completedSteps = state.steps.filter((step) => getStepCompletion(step).allDone).length
+			let allComplete = completedSteps === totalSteps && totalSteps > 0
 
-			// A step is "complete" when ALL participants who are responsible for it have completed/shared
-			// Use allProgress to check completion status for each step
-			let completedSteps = 0
-			for (const step of state.steps) {
-				// Find all participants who need to do this step (those who have this step in their progress)
-				// Or check if the step shows as completed/shared in state
-				const isStepDone = step.status === 'Completed' || step.status === 'Shared'
-
-				// For non-my-action steps, check if any participant has completed it
-				if (!step.my_action) {
-					const anyCompleted = allProgress.some((p) =>
-						p.steps?.some(
-							(s) => s.step_id === step.id && (s.status === 'Completed' || s.status === 'Shared'),
-						),
-					)
-					if (anyCompleted) completedSteps++
-				} else if (isStepDone) {
-					completedSteps++
+			if (!allComplete && state.thread_id) {
+				const myAssignedDone = (state.steps || []).filter((s) => s.my_action).every((s) => {
+					if (s.shares_output) return s.status === 'Shared' || s.outputs_shared
+					return s.status === 'Completed' || s.status === 'Shared'
+				})
+				const finalShareStepId = [...(state.steps || [])]
+					.reverse()
+					.find((s) => s.shares_output)?.id
+				if (myAssignedDone && finalShareStepId) {
+					try {
+						const threadMessages = await invoke('get_thread_messages', { threadId: state.thread_id })
+						const sawFinalShare = (threadMessages || []).some((msg) => {
+							const metadataRaw = msg?.metadata
+							if (!metadataRaw) return false
+							let metadata = metadataRaw
+							if (typeof metadataRaw === 'string') {
+								try {
+									metadata = JSON.parse(metadataRaw)
+								} catch (_e) {
+									return false
+								}
+							}
+							return metadata?.flow_results?.step_id === finalShareStepId
+						})
+						if (sawFinalShare) {
+							completedSteps = totalSteps
+							allComplete = totalSteps > 0
+						}
+					} catch (_e) {
+						// Ignore message-query errors; primary completion logic still applies.
+					}
 				}
 			}
 
 			const progressPercent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0
-			const allComplete = completedSteps === totalSteps && totalSteps > 0
+			updateMultipartyRunCardState(runId, allComplete)
+
+			const waitingOnMeStep = (state.steps || []).find(
+				(s) => s.my_action && (s.status === 'Ready' || (s.shares_output && s.status === 'Completed' && !s.outputs_shared)),
+			)
+			const waitingParticipants = []
+			for (const step of state.steps || []) {
+				const completion = getStepCompletion(step)
+				if (completion.allDone) continue
+				for (const email of completion.requiredEmails || []) {
+					const status = getParticipantStepStatus(step.id, email)?.status
+					if (!isDoneForStep(step, status)) waitingParticipants.push(email)
+				}
+			}
+			const waitingOnOthers = [...new Set(waitingParticipants)].filter((e) => e !== state.my_email)
+
+			const waitingBannerHtml = waitingOnMeStep
+				? `<div class="mp-waiting-banner is-you">⚠ Waiting on YOU: ${escapeHtml(waitingOnMeStep.name)}${waitingOnOthers.length ? ` | Others waiting: ${waitingOnOthers.map((e) => `<span class="mp-waiting-chip">${escapeHtml(e)}</span>`).join(' ')}` : ''}</div>`
+				: waitingOnOthers.length
+					? `<div class="mp-waiting-banner">Waiting on: ${waitingOnOthers.map((e) => `<span class="mp-waiting-chip">${escapeHtml(e)}</span>`).join(' ')}</div>`
+					: `<div class="mp-waiting-banner is-clear">No blockers</div>`
 
 			// Progress bar and Run Next button
 			const progressHtml = `
@@ -691,9 +841,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						<div class="mp-progress-fill" style="width: ${progressPercent}%"></div>
 					</div>
 					<div class="mp-progress-text">${allComplete ? '✓ Done' : `${completedSteps}/${totalSteps} steps complete`}</div>
+					${waitingBannerHtml}
+					<div class="mp-progress-actions">
+						<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.setAllStepsExpanded('${sessionId}', true)">Open All</button>
+						<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.setAllStepsExpanded('${sessionId}', false)">Close All</button>
+					</div>
 					${
 						myNextStep
-							? `<button class="mp-btn mp-run-next-btn" onclick="window.runsModule?.runStep('${sessionId}', '${myNextStep.id}')">
+							? `<button type="button" class="mp-btn mp-run-next-btn" onclick="window.runsModule?.runStep('${sessionId}', '${myNextStep.id}')">
 						▶ Run Next: ${escapeHtml(myNextStep.name)}
 					</button>`
 							: ''
@@ -703,13 +858,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 			// Render participant chips showing ALL participants for each step
 			// Shows checkbox status: ☑ = completed/shared, ☐ = not done yet, greyed = not involved
-			const renderParticipantChips = (stepId, stepTargetEmails) => {
-				const completedParticipants = stepParticipants[stepId] || []
+			const renderParticipantChips = (step, stepId, stepTargetEmails) => {
 				const allParticipants = state.participants || []
 
 				return `<div class="mp-step-participants">
-					${allParticipants
-						.map((p) => {
+						${allParticipants
+							.map((p) => {
 							// Check if this participant's email is in the step's target emails
 							const isInvolved = stepTargetEmails.includes(p.email)
 							if (!isInvolved) {
@@ -719,11 +873,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								</span>`
 							}
 
-							// Check if this participant has completed/shared this step
-							const completed = completedParticipants.find((cp) => cp.email === p.email)
-							const isComplete =
-								completed && (completed.status === 'Completed' || completed.status === 'Shared')
-							const isShared = completed?.status === 'Shared'
+								// Check if this participant has completed/shared this step
+								const completed = getParticipantStepStatus(stepId, p.email)
+								const isComplete = completed && isDoneForStep(step, completed.status)
+								const isShared = completed?.status === 'Shared'
 
 							const checkbox = isComplete ? '☑' : '☐'
 							const statusClass = isComplete ? (isShared ? 'shared' : 'completed') : 'pending'
@@ -734,32 +887,74 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							</span>`
 						})
 						.join('')}
-				</div>`
+					</div>`
+			}
+
+			const renderStepContributions = (step, completion) => {
+				const rows = completion.requiredEmails
+					.map((email) => {
+						const record = getParticipantStepStatus(step.id, email)
+						const sharedEnough = step.shares_output
+							? record?.status === 'Shared'
+							: record && (record.status === 'Completed' || record.status === 'Shared')
+						if (!record || !sharedEnough || !record.output_dir) return ''
+						const escapedPath = String(record.output_dir)
+							.replace(/\\/g, '\\\\')
+							.replace(/'/g, "\\'")
+						return `<div class="mp-step-contrib-row">
+							<span class="mp-step-contrib-label">${escapeHtml(record.email)} (${escapeHtml(record.status)})</span>
+							<button type="button" class="mp-btn mp-preview-btn mp-contrib-open-btn" onclick="window.runsModule?.openFolderPath('${escapedPath}')">📁 Show in Finder</button>
+						</div>`
+					})
+					.filter(Boolean)
+					.join('')
+				if (!rows) return ''
+				return `<div class="mp-step-contribs">${rows}</div>`
 			}
 
 			const stepsHtml = state.steps
 				.map((step) => {
-					const statusClass = `mp-step-${step.status.toLowerCase()}`
-					const statusIcon = getStepStatusIcon(step.status)
+					const completion = getStepCompletion(step)
+					const effectiveStatus = getEffectiveStepStatus(step, completion)
+					const statusClass = `mp-step-${effectiveStatus.toLowerCase()}`
+					const statusIcon = getStepStatusIcon(effectiveStatus)
 					const isMyAction = step.my_action
 					const isNextStep = myNextStep && step.id === myNextStep.id
+					const stepExpandedState = getNestedState(multipartyStepExpanded, sessionId)
+					const codeExpandedState = getNestedState(multipartyCodeExpanded, sessionId)
+					const defaultExpanded = !!isNextStep || effectiveStatus === 'Running' || effectiveStatus === 'Failed'
+					const isExpanded = stepExpandedState.has(step.id)
+						? stepExpandedState.get(step.id)
+						: defaultExpanded
 					const isCompleted =
-						step.status === 'Completed' || step.status === 'Shared' || step.status === 'Running'
+						effectiveStatus === 'Completed' ||
+						effectiveStatus === 'Shared' ||
+						effectiveStatus === 'Running'
 
 					// Only show auto toggle for pending/ready steps that are mine
 					const showAutoToggle = isMyAction && !isCompleted
 
 					return `
-						<div class="mp-step ${statusClass} ${isMyAction ? 'my-action' : 'other-action'} ${isNextStep ? 'next-step' : ''}" data-step-id="${escapeHtml(step.id)}">
-							<div class="mp-step-header">
+						<div class="mp-step ${statusClass} ${isMyAction ? 'my-action' : 'other-action'} ${isNextStep ? 'next-step' : ''} ${isExpanded ? 'expanded' : 'collapsed'}" data-step-id="${escapeHtml(step.id)}">
+							<button type="button" class="mp-step-header mp-step-toggle" onclick="window.runsModule?.toggleStepExpanded('${sessionId}', '${escapeHtml(step.id)}')">
+								<span class="mp-step-chevron">${isExpanded ? '▾' : '▸'}</span>
 								<span class="mp-step-status">${statusIcon}</span>
 								<span class="mp-step-name">${escapeHtml(step.name)}</span>
 								${isMyAction ? '<span class="mp-step-badge">Your step</span>' : ''}
 								${isNextStep ? '<span class="mp-step-badge mp-next-badge">Next</span>' : ''}
-							</div>
-							${renderParticipantChips(step.id, step.target_emails || [])}
-							<div class="mp-step-desc">${escapeHtml(step.description)}</div>
-							<div class="mp-step-controls">
+							</button>
+							<div class="mp-step-body">
+								${renderParticipantChips(step, step.id, step.target_emails || [])}
+								<div class="mp-step-desc">${escapeHtml(step.description)}</div>
+								${
+									step.code_preview
+										? `<details class="mp-step-code" ${codeExpandedState.get(step.id) ? 'open' : ''} ontoggle="window.runsModule?.rememberCodeToggle('${sessionId}','${escapeHtml(step.id)}', this.open)">
+								<summary>Show code</summary>
+								<pre class="mp-code-block">${escapeHtml(step.code_preview)}</pre>
+							</details>`
+										: ''
+								}
+								<div class="mp-step-controls">
 								${
 									showAutoToggle
 										? `<label class="mp-auto-toggle" title="Auto-run when ready">
@@ -770,10 +965,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 										onchange="window.runsModule?.toggleStepAutoRun(this)"
 									/>
 									<span>Auto</span>
-								</label>`
+									</label>`
 										: ''
 								}
-								${renderStepActions(step, sessionId, isMyAction)}
+								${renderStepActions(step, sessionId, isMyAction, effectiveStatus)}
+								</div>
+								${renderStepContributions(step, completion)}
 							</div>
 						</div>
 					`
@@ -782,15 +979,15 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 			// Build tabbed interface with Steps and Activity Log
 			const tabsHtml = `
-				<div class="mp-tabs-container">
+				<div class="mp-tabs-container" data-session="${escapeHtml(sessionId)}">
 					<div class="mp-tabs-header">
-						<button class="mp-tab active" data-tab="steps" onclick="window.runsModule?.switchTab(this, 'steps')">Steps</button>
-						<button class="mp-tab" data-tab="logs" onclick="window.runsModule?.switchTab(this, 'logs')">Activity Log</button>
+						<button type="button" class="mp-tab ${activeTab === 'steps' ? 'active' : ''}" data-tab="steps" onclick="window.runsModule?.switchTab(this, 'steps')">Steps</button>
+						<button type="button" class="mp-tab ${activeTab === 'logs' ? 'active' : ''}" data-tab="logs" onclick="window.runsModule?.switchTab(this, 'logs')">Activity Log</button>
 					</div>
-					<div class="mp-tab-content mp-tab-steps active" data-tab-content="steps">
+					<div class="mp-tab-content mp-tab-steps ${activeTab === 'steps' ? 'active' : ''}" data-tab-content="steps">
 						${stepsHtml}
 					</div>
-					<div class="mp-tab-content mp-tab-logs" data-tab-content="logs">
+					<div class="mp-tab-content mp-tab-logs ${activeTab === 'logs' ? 'active' : ''}" data-tab-content="logs">
 						<div class="mp-logs-content" data-session="${escapeHtml(sessionId)}">
 							<div class="mp-logs-loading">Loading logs...</div>
 						</div>
@@ -799,14 +996,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			`
 
 			stepsContainer.innerHTML = progressHtml + tabsHtml
-
-			// Restore active tab state
-			if (activeTab && activeTab !== 'steps') {
-				const tabBtn = stepsContainer.querySelector(`.mp-tab[data-tab="${activeTab}"]`)
-				if (tabBtn) {
-					window.runsModule?.switchTab(tabBtn, activeTab)
-				}
-			}
+			stepsContainer.scrollTop = previousScrollTop
 
 			// Load logs asynchronously
 			loadParticipantLogs(sessionId)
@@ -827,18 +1017,22 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				logsContainer.innerHTML = '<div class="mp-no-logs">No activity yet</div>'
 				return
 			}
+			const sortedLogs = [...logs].sort(
+				(a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime(),
+			)
 
-			const logsHtml = logs
+			const logsHtml = sortedLogs
 				.map((log) => {
 					const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''
 					const participant = log.participant || log.role
-					const eventText = log.event === 'joined'
-						? `${participant} joined the flow`
-						: log.event === 'step_completed'
-						? `${participant} completed step "${log.step_id}"`
-						: log.event === 'step_shared'
-						? `${participant} shared outputs from "${log.step_id}"`
-						: `${participant}: ${log.event}`
+					const eventText =
+						log.event === 'joined'
+							? `${participant} joined the flow`
+							: log.event === 'step_completed'
+								? `${participant} completed step "${log.step_id}"`
+								: log.event === 'step_shared'
+									? `${participant} shared outputs from "${log.step_id}"`
+									: `${participant}: ${log.event}`
 					return `<div class="mp-log-entry">
 						<span class="mp-log-time">${time}</span>
 						<span class="mp-log-event">${escapeHtml(eventText)}</span>
@@ -866,15 +1060,26 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return icons[status] || '❓'
 	}
 
-	function renderStepActions(step, sessionId, isMyAction) {
+	function renderStepActions(step, sessionId, isMyAction, effectiveStatus = step.status) {
 		if (!isMyAction) {
+			if (effectiveStatus === 'Shared') {
+				return '<span class="mp-shared">📨 Shared</span>'
+			}
+			if (effectiveStatus === 'Completed') {
+				return '<span class="mp-done">✓ Done</span>'
+			}
 			return '<span class="mp-waiting">Waiting for participant</span>'
 		}
 
 		const actions = []
+		if (step.module_path) {
+			actions.push(
+				`<button type="button" class="mp-btn mp-module-btn" onclick="window.runsModule?.viewStepModule('${step.module_path.replace(/'/g, "\\'")}')">📦 View Module</button>`,
+			)
+		}
 		if (step.status === 'Ready') {
 			actions.push(
-				`<button class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
+				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
 			)
 		}
 		if (step.status === 'Pending') {
@@ -885,10 +1090,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 		if (step.status === 'Completed' && step.shares_output && !step.outputs_shared) {
 			actions.push(
-				`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`,
+				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
 			)
 			actions.push(
-				`<button class="mp-btn mp-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">📤 Share to Chat</button>`,
+				`<button type="button" class="mp-btn mp-share-btn" onclick="window.runsModule?.shareStepOutputs('${sessionId}', '${step.id}')">📤 Share</button>`,
+			)
+		}
+		if (step.shares_output && step.outputs_shared && step.status !== 'Shared') {
+			actions.push(
+				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
+			)
+			actions.push('<span class="mp-shared">📨 Shared</span>')
+			actions.push(
+				`<button type="button" class="mp-btn mp-chat-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">💬 Share to Chat</button>`,
 			)
 		}
 		if (step.status === 'Completed' && !step.shares_output) {
@@ -897,12 +1111,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		if (step.status === 'Shared') {
 			// Preview should remain available after sharing
 			actions.push(
-				`<button class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Preview</button>`,
+				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
 			)
 			actions.push('<span class="mp-shared">📨 Shared</span>')
+			actions.push(
+				`<button type="button" class="mp-btn mp-chat-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">💬 Share to Chat</button>`,
+			)
 		}
 		if (step.status === 'WaitingForInputs') {
 			actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
+		}
+		if (!actions.length) {
+			if (effectiveStatus === 'Shared') return '<span class="mp-shared">📨 Shared</span>'
+			if (effectiveStatus === 'Completed') return '<span class="mp-done">✓ Done</span>'
 		}
 
 		return actions.join('')
@@ -926,6 +1147,32 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			console.error('Failed to toggle auto-run:', error)
 			checkbox.checked = !checkbox.checked
 		}
+	}
+	window.runsModule.toggleStepExpanded = function (sessionId, stepId) {
+		const expandedState = getNestedState(multipartyStepExpanded, sessionId)
+		const current = expandedState.get(stepId) ?? false
+		expandedState.set(stepId, !current)
+		const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+		if (runCard) {
+			const runId = runCard.dataset.runId
+			loadMultipartySteps(sessionId, runId).catch(() => {})
+		}
+	}
+	window.runsModule.setAllStepsExpanded = function (sessionId, expand) {
+		const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+		if (!runCard) return
+		const runId = runCard.dataset.runId
+		const steps = runCard.querySelectorAll('.mp-step[data-step-id]')
+		const expandedState = getNestedState(multipartyStepExpanded, sessionId)
+		steps.forEach((el) => {
+			const stepId = el.getAttribute('data-step-id')
+			if (stepId) expandedState.set(stepId, !!expand)
+		})
+		loadMultipartySteps(sessionId, runId).catch(() => {})
+	}
+	window.runsModule.rememberCodeToggle = function (sessionId, stepId, isOpen) {
+		const codeState = getNestedState(multipartyCodeExpanded, sessionId)
+		codeState.set(stepId, !!isOpen)
 	}
 	window.runsModule.runStep = async function (sessionId, stepId) {
 		try {
@@ -961,7 +1208,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 	window.runsModule.shareStepOutputs = async function (sessionId, stepId) {
-		if (!confirm('Share these outputs with other participants?')) return
 		try {
 			await invoke('share_step_outputs', { sessionId, stepId })
 			const runCard = document
@@ -977,10 +1223,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 	window.runsModule.shareStepOutputsToChat = async function (sessionId, stepId) {
-		if (!confirm('Share these results to the chat? All participants will be able to see and download them.')) return
 		try {
 			const result = await invoke('share_step_outputs_to_chat', { sessionId, stepId })
-			alert(`Results shared to chat! ${result.files_shared} file(s) sent to ${result.recipients.length} participant(s).`)
+			alert(
+				`Results shared to chat! ${result.files_shared} file(s) sent to ${result.recipients.length} participant(s).`,
+			)
 			const runCard = document
 				.querySelector(`[data-session-id="${sessionId}"]`)
 				?.closest('.flow-run-card')
@@ -993,9 +1240,31 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			alert(`Failed to share to chat: ${error}`)
 		}
 	}
+	window.runsModule.viewStepModule = async function (modulePath) {
+		if (!modulePath) return
+		try {
+			await invoke('open_folder', { path: modulePath })
+		} catch (error) {
+			console.error('Failed to open module path:', error)
+			alert(`Failed to open module path: ${error}`)
+		}
+	}
+	window.runsModule.openFolderPath = async function (folderPath) {
+		if (!folderPath) return
+		try {
+			await invoke('open_folder', { path: folderPath })
+		} catch (error) {
+			console.error('Failed to open folder path:', error)
+			alert(`Failed to open folder: ${error}`)
+		}
+	}
 	window.runsModule.switchTab = function (tabButton, tabName) {
 		const container = tabButton.closest('.mp-tabs-container')
 		if (!container) return
+		const sessionId = container.dataset.session
+		if (sessionId) {
+			multipartyActiveTabs.set(sessionId, tabName)
+		}
 
 		// Update tab buttons
 		container.querySelectorAll('.mp-tab').forEach((tab) => tab.classList.remove('active'))
@@ -1008,6 +1277,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const targetContent = container.querySelector(`[data-tab-content="${tabName}"]`)
 		if (targetContent) {
 			targetContent.classList.add('active')
+		}
+
+		if (tabName === 'logs' && sessionId) {
+			loadParticipantLogs(sessionId).catch(() => {})
 		}
 	}
 
@@ -1088,9 +1361,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					titleParts.push(typeLabel)
 				}
 				const runTitle = titleParts.join(' ')
-				const card = document.createElement('div')
-				card.className = 'flow-run-card'
-				card.dataset.runId = run.id
+					const card = document.createElement('div')
+					card.className = 'flow-run-card'
+					card.dataset.runId = run.id
 				card.style.cssText =
 					'background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; overflow: hidden; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);'
 
@@ -1292,7 +1565,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				</div>
 			`
 
-				const isMultiparty = runMetadata.type === 'multiparty'
+					const isMultiparty = runMetadata.type === 'multiparty'
+					card.dataset.isMultiparty = isMultiparty ? 'true' : 'false'
 
 				// Handle expand/collapse
 				const header = card.querySelector('.run-header')

@@ -342,10 +342,10 @@ After merging code from main, multiparty flows broke with empty steps. Root caus
 
 ### Data Structure Issue
 
-| Format | Structure | Problem |
-|--------|-----------|---------|
-| **FlowFileSpec** (YAML) | `spec.datasites.groups` with role definitions | Full group info |
-| **FlowSpec** (Rust) | `datasites: Vec<String>` flat list | Groups lost in conversion |
+| Format                  | Structure                                     | Problem                   |
+| ----------------------- | --------------------------------------------- | ------------------------- |
+| **FlowFileSpec** (YAML) | `spec.datasites.groups` with role definitions | Full group info           |
+| **FlowSpec** (Rust)     | `datasites: Vec<String>` flat list            | Groups lost in conversion |
 
 ### Fixes Applied to `src-tauri/src/commands/multiparty.rs`
 
@@ -359,6 +359,7 @@ fn build_group_map_from_participants(
 ```
 
 Creates:
+
 - `"all"` → all participant emails
 - `"contributor1"`, `"contributor2"`, `"aggregator"` → role-based groups
 - `"contributors"` → plural group from `contributorN` roles
@@ -421,6 +422,7 @@ let my_action = targets.iter().any(|target| {
 ### Goal: Unified Flow Syntax
 
 All flows should use same syntax as `syqure-distributed`:
+
 - Data moves via SyftBox sync, not shell scripts
 - No separate code paths for single vs multiparty
 - Steps target groups like `clients`, `aggregator`

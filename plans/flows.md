@@ -729,26 +729,31 @@ This prototype influenced the Flow spec's:
 ### Problem Summary
 
 Multiparty flows broke after merging code from main. The issues stem from data structure mismatches between:
+
 - **FlowFileSpec** (YAML format): Contains `spec.datasites.groups` with role definitions
 - **FlowSpec** (Rust struct): Flat `datasites: Vec<String>` loses group information
 
 ### Key Issues Fixed
 
 #### 1. Empty Steps Issue
+
 - **Cause**: `parse_flow_steps` looked for `flow_spec.spec.inputs.datasites.default` and `flow_spec.spec.datasites.groups` which don't exist in converted FlowSpec
 - **Fix**: Build groups from participants instead of flow spec
 
 #### 2. Wrong Field Name
+
 - **Cause**: Code looked for `step.run.targets` but FlowSpec uses `step.runs_on`
 - **Fix**: Check `runs_on` first, then fall back to `run.targets`
 
 #### 3. Resolved Emails Mismatch
+
 - **Cause**: `runs_on` contains default emails (e.g., "client1@sandbox.local") but actual participants have different emails
 - **Fix**: Created default-to-actual email mapping by position
 
 ### Code Changes in `src-tauri/src/commands/multiparty.rs`
 
 #### New Function: `build_group_map_from_participants`
+
 ```rust
 fn build_group_map_from_participants(
     participants: &[FlowParticipant],
@@ -800,6 +805,7 @@ fn build_group_map_from_participants(
 ```
 
 #### Updated `get_step_targets`
+
 ```rust
 fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
     // Try converted FlowSpec structure first (runs_on)
@@ -827,6 +833,7 @@ fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
 ```
 
 #### Updated `my_action` Determination
+
 ```rust
 let my_action = if !targets.is_empty() {
     targets.iter().any(|target| {
@@ -846,11 +853,13 @@ let my_action = if !targets.is_empty() {
 ### Reference Files
 
 #### `biovault/tests/scenarios/syqure-flow/flow.yaml`
+
 - Proper structure with `spec.datasites.groups`
 - Groups like "aggregator" and "clients" with `include` arrays
 - Steps use `run.targets: clients` or `run.targets: aggregator`
 
 #### `biovault/tests/scenarios/syqure-distributed.yaml`
+
 - Reference distributed test with parallel execution
 - Uses `bv run` command for each participant
 - Shows expected progress file structure
@@ -863,6 +872,7 @@ let my_action = if !targets.is_empty() {
 4. **Robust Testing**: UI testing via websocket bridge
 
 ### Test Command
+
 ```bash
 ./test-scenario.sh --pipelines-multiparty --interactive
 ```

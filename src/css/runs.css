@@ -929,7 +929,7 @@
 .mp-steps-list {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 18px;
 }
 
 .mp-steps-loading,
@@ -948,11 +948,13 @@
 }
 
 .mp-step {
-	padding: 12px 14px;
+	padding: 0;
 	background: #f8fafc;
 	border: 1px solid #e2e8f0;
-	border-radius: 8px;
+	border-radius: 10px;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 	transition: all 0.2s;
+	overflow: hidden;
 }
 
 .mp-step.my-action {
@@ -968,7 +970,18 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 4px;
+	width: 100%;
+	padding: 13px 14px;
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	text-align: left;
+}
+
+.mp-step-chevron {
+	font-size: 14px;
+	color: #64748b;
+	min-width: 12px;
 }
 
 .mp-step-status {
@@ -978,7 +991,8 @@
 .mp-step-name {
 	font-weight: 600;
 	color: #1f2937;
-	font-size: 13px;
+	font-size: 14px;
+	line-height: 1.2;
 }
 
 .mp-step-badge {
@@ -998,11 +1012,36 @@
 	margin-bottom: 8px;
 }
 
+.mp-step-body {
+	padding: 0 14px 12px 14px;
+}
+
+.mp-step.collapsed .mp-step-body {
+	display: none;
+}
+
 .mp-step-controls {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	flex-wrap: wrap;
+	margin-top: 8px;
+}
+
+.flow-run-card.mp-run-complete {
+	border-color: #86efac !important;
+	box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18), 0 10px 26px rgba(34, 197, 94, 0.12) !important;
+}
+
+.flow-run-card.mp-run-complete .run-header {
+	background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%) !important;
+	border-bottom-color: #bbf7d0 !important;
+}
+
+.status-badge.mp-run-status-complete {
+	background: linear-gradient(135deg, #d1fae5 0%, #86efac 100%) !important;
+	color: #166534 !important;
+	border-color: rgba(22, 101, 52, 0.25) !important;
 }
 
 .mp-auto-toggle {
@@ -1025,7 +1064,7 @@
 
 .mp-btn {
 	padding: 4px 10px;
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 500;
 	border: none;
 	border-radius: 4px;
@@ -1061,11 +1100,21 @@
 	background: #059669;
 }
 
+.mp-chat-share-btn {
+	background: #eef2ff;
+	color: #3730a3;
+	border: 1px solid #c7d2fe;
+}
+
+.mp-chat-share-btn:hover {
+	background: #e0e7ff;
+}
+
 .mp-waiting,
 .mp-running,
 .mp-done,
 .mp-shared {
-	font-size: 11px;
+	font-size: 12px;
 	color: #64748b;
 }
 
@@ -1131,9 +1180,57 @@
 }
 
 .mp-progress-text {
-	font-size: 12px;
+	font-size: 13px;
 	color: #475569;
 	margin-bottom: 10px;
+}
+
+.mp-progress-actions {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.mp-collapse-btn {
+	background: #ffffff;
+	border: 1px solid #d1d5db;
+	color: #475569;
+}
+
+.mp-collapse-btn:hover {
+	background: #f8fafc;
+}
+
+.mp-waiting-banner {
+	margin-bottom: 10px;
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: #eef2ff;
+	color: #3730a3;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.mp-waiting-banner.is-you {
+	background: #fee2e2;
+	color: #991b1b;
+	border: 1px solid #fecaca;
+	font-size: 14px;
+}
+
+.mp-waiting-banner.is-clear {
+	background: #dcfce7;
+	color: #166534;
+}
+
+.mp-waiting-chip {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.8);
+	margin-left: 6px;
+	font-size: 11px;
+	font-weight: 700;
 }
 
 .mp-run-next-btn {
@@ -1183,7 +1280,7 @@
 	display: flex;
 	gap: 6px;
 	flex-wrap: wrap;
-	margin-top: 8px;
+	margin-top: 2px;
 	padding: 4px 0;
 }
 
@@ -1225,6 +1322,32 @@
 	opacity: 0.6;
 }
 
+.mp-step-contribs {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed #dbeafe;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.mp-step-contrib-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.mp-step-contrib-label {
+	font-size: 11px;
+	color: #334155;
+}
+
+.mp-contrib-open-btn {
+	font-size: 10px;
+	padding: 3px 8px;
+}
+
 /* Tabs container */
 .mp-tabs-container {
 	margin-top: 16px;
@@ -1242,7 +1365,7 @@
 	border: none;
 	background: transparent;
 	color: #6b7280;
-	font-size: 14px;
+	font-size: 16px;
 	font-weight: 500;
 	cursor: pointer;
 	border-bottom: 2px solid transparent;
@@ -1278,6 +1401,29 @@
 	border-radius: 8px;
 	font-family: monospace;
 	font-size: 12px;
+}
+
+.mp-step-code {
+	margin-top: 8px;
+}
+
+.mp-step-code summary {
+	font-size: 13px;
+	font-weight: 600;
+	color: #334155;
+	cursor: pointer;
+}
+
+.mp-code-block {
+	margin-top: 8px;
+	padding: 12px;
+	border-radius: 8px;
+	border: 1px solid #1e293b;
+	background: #0f172a;
+	color: #dbeafe;
+	font-size: 12px;
+	line-height: 1.45;
+	overflow: auto;
 }
 
 .mp-log-entry {
