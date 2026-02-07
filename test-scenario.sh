@@ -61,6 +61,7 @@ INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 CLEANUP_ACTIVE=0
 NO_CLEANUP="${NO_CLEANUP:-0}" # Leave processes/sandbox running on exit for debugging
+NO_CLEANUP_SET=0
 
 show_usage() {
 	cat <<EOF
@@ -223,6 +224,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--no-cleanup)
 			NO_CLEANUP=1
+			NO_CLEANUP_SET=1
 			shift
 			;;
 		--warm-cache)
@@ -277,6 +279,15 @@ if [[ "$WARM_CACHE_SET" == "0" ]]; then
                 jupyter|jupyter-collab) WARM_CACHE=1 ;;
                 *) WARM_CACHE=0 ;;
 	esac
+fi
+
+# Preserve Syqure multiparty artifacts by default so failures/passes can be debugged from disk.
+# Override with SYQURE_MULTIPARTY_AUTO_PRESERVE=0 or explicit --no-cleanup/NO_CLEANUP.
+if [[ "$SCENARIO" == "syqure-multiparty-flow" && "$NO_CLEANUP_SET" != "1" ]]; then
+	auto_preserve="${SYQURE_MULTIPARTY_AUTO_PRESERVE:-1}"
+	if [[ "$auto_preserve" == "1" || "$auto_preserve" == "true" || "$auto_preserve" == "yes" ]]; then
+		NO_CLEANUP=1
+	fi
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
@@ -1086,6 +1097,128 @@ assert_tauri_binary_fresh() {
 	info "[DEBUG] Tauri binary is up to date (no newer source files found)"
 }
 
+syqure_platform_id() {
+	local os_name arch_name os_label arch_label
+	os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	arch_name="$(uname -m | tr '[:upper:]' '[:lower:]')"
+	os_label="$os_name"
+	arch_label="$arch_name"
+	case "$os_name" in
+		darwin) os_label="macos" ;;
+		linux) os_label="linux" ;;
+	esac
+	case "$arch_name" in
+		arm64|aarch64) arch_label="arm64" ;;
+		x86_64|amd64|i386|i686) arch_label="x86" ;;
+	esac
+	echo "${os_label}-${arch_label}"
+}
+
+syqure_repo_root_from_bin() {
+	local bin_path="$1"
+	if [[ -z "$bin_path" ]]; then
+		return 0
+	fi
+	if [[ "$bin_path" == */target/release/syqure || "$bin_path" == */target/debug/syqure ]]; then
+		(cd "$(dirname "$bin_path")/../.." && pwd -P)
+		return 0
+	fi
+	echo ""
+}
+
+configure_syqure_runtime_env() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+	local syq_root platform codon_candidate
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+
+	# Avoid stale extracted bundle copies when iterating on .codon files.
+	if [[ -z "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+		export SYQURE_SKIP_BUNDLE=1
+	fi
+
+	# Prefer local prebuilt Codon/Sequre tree in this workspace.
+	if [[ -z "${CODON_PATH:-}" ]]; then
+		platform="$(syqure_platform_id)"
+		codon_candidate="$syq_root/bin/${platform}/codon"
+		if [[ -d "$codon_candidate/lib/codon" ]]; then
+			export CODON_PATH="$codon_candidate"
+		fi
+	fi
+
+	info "Syqure runtime env: SYQURE_SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset} CODON_PATH=${CODON_PATH:-unset}"
+}
+
+assert_syqure_binary_fresh() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+
+	local syq_root profile newer auto_rebuild
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+	profile="release"
+	if [[ "$SEQURE_NATIVE_BIN" == */target/debug/* ]]; then
+		profile="debug"
+	fi
+	info "[DEBUG] assert_syqure_binary_fresh: checking $SEQURE_NATIVE_BIN ($profile)"
+
+	local candidates=(
+		"$syq_root/syqure/src"
+		"$syq_root/syqure/build.rs"
+		"$syq_root/syqure/Cargo.toml"
+		"$syq_root/Cargo.toml"
+		"$syq_root/Cargo.lock"
+		"$syq_root/sequre/stdlib"
+		"$syq_root/sequre/plugin.toml"
+	)
+	newer=""
+	for p in "${candidates[@]}"; do
+		if [[ -f "$p" ]]; then
+			if [[ "$p" -nt "$SEQURE_NATIVE_BIN" ]]; then
+				newer="$p"
+				break
+			fi
+		elif [[ -d "$p" ]]; then
+			newer="$(find "$p" -type f -newer "$SEQURE_NATIVE_BIN" -print -quit 2>/dev/null || true)"
+			if [[ -n "$newer" ]]; then
+				break
+			fi
+		fi
+	done
+	if [[ -z "$newer" ]]; then
+		info "[DEBUG] Syqure binary is up to date"
+		return 0
+	fi
+
+	auto_rebuild="${AUTO_REBUILD_SYQURE:-1}"
+	info "[DEBUG] Syqure binary is older than sources (e.g. $newer); AUTO_REBUILD_SYQURE=$auto_rebuild"
+	if [[ "$auto_rebuild" == "0" || "$auto_rebuild" == "false" || "$auto_rebuild" == "no" ]]; then
+		echo "Syqure rebuild required: (cd $syq_root && cargo build -p syqure --release)" >&2
+		exit 1
+	fi
+
+	timer_push "Cargo build (syqure release)"
+	if ! (cd "$syq_root" && cargo build -p syqure --release) >&2; then
+		info "Syqure release build failed; rebuilding bundle then retrying"
+		(cd "$syq_root" && ZSTD_NBTHREADS=1 ./syqure_bins.sh) >&2
+		(cd "$syq_root" && cargo build -p syqure --release) >&2
+	fi
+	timer_pop
+}
+
 launch_instance() {
 	local email="$1"
 	local home="$2"
@@ -1217,6 +1350,9 @@ start_tauri_instances() {
 			export BV_SYQURE_USE_DOCKER=1
 			info "Syqure binary not found; defaulting BV_SYQURE_USE_DOCKER=1"
 		fi
+
+		configure_syqure_runtime_env
+		assert_syqure_binary_fresh
 	fi
 
 	assert_tauri_binary_present

@@ -2444,20 +2444,20 @@ pub async fn run_flow_step(
             .iter()
             .find(|p| p.role == "aggregator")
             .map(|p| p.email.clone());
-        let array_length_value = aggregator_email
+        let array_length_path = aggregator_email.as_ref().and_then(|email| {
+            find_participant_step_file(
+                &biovault_home,
+                &my_email,
+                email,
+                &flow_name,
+                &session_id,
+                build_step_number,
+                "build_master",
+                "count.txt",
+            )
+        });
+        let array_length_value = array_length_path
             .as_ref()
-            .and_then(|email| {
-                find_participant_step_file(
-                    &biovault_home,
-                    &my_email,
-                    email,
-                    &flow_name,
-                    &session_id,
-                    build_step_number,
-                    "build_master",
-                    "count.txt",
-                )
-            })
             .and_then(|path| fs::read_to_string(path).ok())
             .map(|raw| raw.trim().to_string())
             .filter(|raw| !raw.is_empty());
@@ -2513,13 +2513,24 @@ pub async fn run_flow_step(
                 "secure_aggregate input counts: missing (expected for non-client parties)",
             );
         }
-        if let Some(array_len) = array_length_value {
-            cmd.env("BV_INPUT_ARRAY_LENGTH", &array_len)
-                .env("SEQURE_INPUT_ARRAY_LENGTH", &array_len);
+        if let Some(array_len_path) = array_length_path.as_ref() {
+            cmd.env("BV_INPUT_ARRAY_LENGTH", array_len_path)
+                .env("SEQURE_INPUT_ARRAY_LENGTH", array_len_path);
             append_private_step_log(
                 &session_id,
                 &step_id,
-                &format!("secure_aggregate input array_length: {}", array_len),
+                &format!(
+                    "secure_aggregate input array_length file: {}",
+                    array_len_path.display()
+                ),
+            );
+        }
+        if let Some(array_len) = array_length_value.as_ref() {
+            cmd.env("SEQURE_ARRAY_LENGTH", array_len);
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!("secure_aggregate input array_length value: {}", array_len),
             );
         }
         if env::var("SYQURE_BUNDLE_CACHE").is_err() {
@@ -2534,13 +2545,36 @@ pub async fn run_flow_step(
 
         run_command_with_private_logs(&session_id, &step_id, cmd)?;
 
-        // Keep compatibility with step share URLs expecting aggregated.json.
         let agg_counts_path = output_dir.join("aggregated_counts.json");
+        if !agg_counts_path.exists() {
+            return Err(format!(
+                "secure_aggregate did not produce output file {}",
+                agg_counts_path.display()
+            ));
+        }
+        let agg_len = fs::metadata(&agg_counts_path)
+            .map_err(|e| format!("Failed to stat {}: {}", agg_counts_path.display(), e))?
+            .len();
+        if agg_len == 0 {
+            return Err(format!(
+                "secure_aggregate output is empty: {}",
+                agg_counts_path.display()
+            ));
+        }
+
+        // Keep compatibility with step share URLs expecting aggregated.json.
         let agg_json_path = output_dir.join("aggregated.json");
-        if agg_counts_path.exists() && !agg_json_path.exists() {
+        if !agg_json_path.exists() {
             let rendered = fs::read_to_string(&agg_counts_path).map_err(|e| {
                 format!(
                     "Failed to read secure_aggregate output {}: {}",
+                    agg_counts_path.display(),
+                    e
+                )
+            })?;
+            serde_json::from_str::<serde_json::Value>(&rendered).map_err(|e| {
+                format!(
+                    "secure_aggregate output is not valid JSON ({}): {}",
                     agg_counts_path.display(),
                     e
                 )

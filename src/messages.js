@@ -2275,7 +2275,11 @@ export function createMessagesModule({
 						}
 					}
 
-					if (!group.isOutgoing) {
+					const currentUser = getCurrentUserEmail()
+					const requestSender = flowRequest.sender || msg.from
+					const isRequestSender = emailsMatch(requestSender, currentUser)
+
+					if (!group.isOutgoing && !isRequestSender) {
 						const syncBtn = document.createElement('button')
 						syncBtn.className = 'secondary'
 						syncBtn.textContent = 'Sync Request'
@@ -3096,7 +3100,9 @@ export function createMessagesModule({
 					declineBtn.textContent = 'Decline'
 
 					// Hide decline button if user is the sender (proposer)
-					const isSender = emailsMatch(msg.from, currentUser)
+					const invitationSender =
+						flowInvitation?.proposed_by || flowInvitation?.sender || flowInvitation?.from || msg.from
+					const isSender = emailsMatch(invitationSender, currentUser)
 					if (isSender) {
 						declineBtn.style.display = 'none'
 					}

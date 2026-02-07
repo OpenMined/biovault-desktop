@@ -118,6 +118,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 
 		if (running) {
+			// Keep completed timers frozen if a stale refresh briefly reports Running again.
+			if (existing.stoppedAt) {
+				return
+			}
 			if (!existing.startedAt) {
 				existing.startedAt = now
 			}
@@ -800,6 +804,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			const normalizeKey = (value) => String(value || '').toLowerCase()
+			const parseTimestampMs = (value) => {
+				if (!value) return null
+				const ts = Date.parse(String(value))
+				return Number.isFinite(ts) ? ts : null
+			}
 			const normalizeProgressStatus = (rawStatus) => {
 				const raw = String(rawStatus || '')
 				const normalized = raw.trim().toLowerCase()
@@ -874,6 +883,32 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					status: normalizeProgressStatus(inferredStatus),
 					output_dir: existing?.output_dir || null,
 				}
+			}
+
+			// Seed/freeze step timers from local participant activity logs so completed
+			// cards retain elapsed time across rerenders and sync refreshes.
+			const myEmailKey = normalizeKey(state.my_email)
+			for (const log of activityLogs || []) {
+				const stepId = String(log?.step_id || '').trim()
+				if (!stepId) continue
+				if (normalizeKey(log?.participant) !== myEmailKey) continue
+				const event = String(log?.event || '')
+				if (!['step_started', 'step_completed', 'step_shared'].includes(event)) continue
+				const tsMs = parseTimestampMs(log?.timestamp)
+				if (!tsMs) continue
+
+				const timerKey = getStepTimerKey(sessionId, stepId)
+				const current = multipartyStepTimers.get(timerKey) || {
+					startedAt: null,
+					stoppedAt: null,
+				}
+				if (event === 'step_started') {
+					if (!current.startedAt || tsMs < current.startedAt) current.startedAt = tsMs
+				} else {
+					if (!current.startedAt) current.startedAt = tsMs
+					if (!current.stoppedAt || tsMs > current.stoppedAt) current.stoppedAt = tsMs
+				}
+				multipartyStepTimers.set(timerKey, current)
 			}
 			// Ensure current participant's latest in-memory state is reflected immediately.
 			const myEmail = state.my_email
@@ -1718,7 +1753,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					status: run.status,
 					flow_id: run.flow_id,
 					created_at: run.created_at,
-					updated_at: run.updated_at || null,
 					results_dir: run.results_dir || null,
 					work_dir: run.work_dir || null,
 					metadata: run.metadata || null,
