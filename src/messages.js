@@ -3125,7 +3125,7 @@ export function createMessagesModule({
 
 					// Check if flow already exists and if user already joined.
 					// Keep "Import Flow" visible when joined but not imported locally.
-							checkFlowExists().then(async (exists) => {
+					checkFlowExists().then(async (exists) => {
 							let alreadyJoined = false
 							try {
 								const state = await invoke('get_multiparty_flow_state', {
@@ -3134,6 +3134,24 @@ export function createMessagesModule({
 								alreadyJoined = !!(state && state.session_id && state.run_id)
 							} catch (e) {
 								console.log('[Flow Invitation] Session not found, user can join')
+							}
+
+							// Sender already has the flow source; never force "Import Flow" on proposer cards.
+							if (isSender) {
+								importBtn.style.display = 'none'
+								joinBtn.style.display = 'inline-block'
+								declineBtn.style.display = 'none'
+								const joinedLocally = alreadyJoined || joinBtn.classList.contains('joined')
+								if (joinedLocally) {
+									joinBtn.textContent = '📋 View Flow'
+									joinBtn.classList.add('joined')
+									if (statusEl) statusEl.textContent = '✓ Already joined'
+								} else {
+									joinBtn.textContent = '🤝 Join Flow'
+									joinBtn.classList.remove('joined')
+									if (statusEl) statusEl.textContent = 'Join your collaborative run'
+								}
+								return
 							}
 
 							if (alreadyJoined) {

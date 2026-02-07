@@ -3943,6 +3943,33 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_multiparty_step_logs" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let lines: Option<usize> = args
+                .get("lines")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::multiparty::get_multiparty_step_logs(
+                state.clone(),
+                session_id,
+                step_id,
+                lines,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "set_step_auto_run" => {
             let session_id: String = serde_json::from_value(
                 args.get("sessionId")

@@ -929,7 +929,8 @@
 .mp-steps-list {
 	display: flex;
 	flex-direction: column;
-	gap: 18px;
+	gap: 24px;
+	padding: 4px 0;
 }
 
 .mp-steps-loading,
@@ -993,6 +994,14 @@
 	color: #1f2937;
 	font-size: 14px;
 	line-height: 1.2;
+}
+
+.mp-step-timer {
+	margin-left: 8px;
+	font-size: 11px;
+	font-weight: 600;
+	color: #64748b;
+	white-space: nowrap;
 }
 
 .mp-step-badge {
@@ -1127,7 +1136,7 @@
 }
 
 .mp-shared {
-	color: #8b5cf6;
+	color: #059669;
 }
 
 /* Step status styling */
@@ -1145,15 +1154,39 @@
 }
 .mp-step.mp-step-completed {
 	border-left: 3px solid #059669;
+	background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf3 100%);
+	border-color: #86efac;
 }
 .mp-step.mp-step-sharing {
 	border-left: 3px solid #8b5cf6;
 }
 .mp-step.mp-step-shared {
-	border-left: 3px solid #a855f7;
+	border-left: 3px solid #16a34a;
+	background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf3 100%);
+	border-color: #86efac;
 }
 .mp-step.mp-step-failed {
 	border-left: 3px solid #ef4444;
+}
+
+/* Future/inactive steps: keep them visually subdued */
+.mp-step.mp-step-pending,
+.mp-step.mp-step-waitingforinputs,
+.mp-step.mp-step-ready {
+	background: #ffffff;
+	border-color: #e5e7eb;
+	box-shadow: none;
+}
+
+.mp-step.mp-step-pending:not(.next-step),
+.mp-step.mp-step-waitingforinputs:not(.next-step),
+.mp-step.mp-step-ready:not(.next-step) {
+	opacity: 0.78;
+}
+
+.mp-step.other-action.mp-step-completed,
+.mp-step.other-action.mp-step-shared {
+	opacity: 1;
 }
 
 /* Progress section */
@@ -1254,9 +1287,20 @@
 
 /* Next step highlight */
 .mp-step.next-step {
-	background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-	border-left: 3px solid #3b82f6;
-	box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+	background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+	border-left: 4px solid #2563eb;
+	border-color: #93c5fd;
+	box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2), 0 8px 20px rgba(37, 99, 235, 0.22);
+	opacity: 1;
+}
+
+.mp-step.next-step .mp-step-name {
+	color: #1d4ed8;
+	font-weight: 700;
+}
+
+.mp-step.next-step .mp-step-header {
+	background: rgba(255, 255, 255, 0.35);
 }
 
 .mp-next-badge {
@@ -1310,9 +1354,9 @@
 }
 
 .mp-participant-chip.shared {
-	background: #dbeafe;
-	color: #1e40af;
-	border-color: #93c5fd;
+	background: #d1fae5;
+	color: #065f46;
+	border-color: #6ee7b7;
 }
 
 .mp-participant-chip.not-involved {
@@ -1414,6 +1458,17 @@
 	cursor: pointer;
 }
 
+.mp-step-logs {
+	margin-top: 8px;
+}
+
+.mp-step-logs summary {
+	font-size: 13px;
+	font-weight: 600;
+	color: #334155;
+	cursor: pointer;
+}
+
 .mp-code-block {
 	margin-top: 8px;
 	padding: 12px;
@@ -1424,6 +1479,20 @@
 	font-size: 12px;
 	line-height: 1.45;
 	overflow: auto;
+}
+
+.mp-step-log-block {
+	margin-top: 8px;
+	padding: 12px;
+	border-radius: 8px;
+	border: 1px solid #dbeafe;
+	background: #0b1220;
+	color: #cbd5e1;
+	font-size: 12px;
+	line-height: 1.45;
+	max-height: 240px;
+	overflow: auto;
+	white-space: pre-wrap;
 }
 
 .mp-log-entry {

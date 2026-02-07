@@ -1,12 +1,17 @@
 use crate::types::AppState;
 use biovault::messages::models::{FlowParticipant, MessageType};
+use biovault::subscriptions;
 use chrono::{TimeZone, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// Get the owner's email from config
 fn get_owner_email() -> Result<String, String> {
@@ -31,10 +36,167 @@ fn get_shared_flow_path(flow_name: &str, session_id: &str) -> Result<PathBuf, St
         .join(session_id))
 }
 
+fn ensure_flow_subscriptions(
+    flow_name: &str,
+    session_id: &str,
+    participant_emails: &[String],
+) -> Result<(), String> {
+    let config =
+        biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let my_email = config.email.clone();
+    let data_dir = config
+        .get_syftbox_data_dir()
+        .map_err(|e| format!("Failed to resolve SyftBox data dir: {}", e))?;
+    let syftsub_path = data_dir.join(".data").join("syft.sub.yaml");
+
+    let mut cfg =
+        subscriptions::load(&syftsub_path).unwrap_or_else(|_| subscriptions::default_config());
+    let run_path = format!("shared/flows/{}/{}", flow_name, session_id);
+    let mut changed = false;
+
+    for peer in participant_emails {
+        if peer.trim().is_empty() || peer.eq_ignore_ascii_case(&my_email) {
+            continue;
+        }
+
+        let rule = subscriptions::Rule {
+            action: subscriptions::Action::Allow,
+            datasite: Some(peer.clone()),
+            path: format!("{}/**", run_path),
+        };
+
+        let exists = cfg.rules.iter().any(|existing| {
+            existing.action == rule.action
+                && existing
+                    .datasite
+                    .as_deref()
+                    .map(|ds| ds.eq_ignore_ascii_case(peer))
+                    .unwrap_or(false)
+                && existing.path == rule.path
+        });
+
+        if !exists {
+            cfg.rules.push(rule);
+            changed = true;
+        }
+    }
+
+    if changed {
+        subscriptions::save(&syftsub_path, &cfg)
+            .map_err(|e| format!("Failed to write syft.sub.yaml: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// Get the step output path within a shared flow
 /// Structure: {flow_path}/{step_number}-{step_id}/
 fn get_step_path(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
     flow_path.join(format!("{}-{}", step_number, step_id))
+}
+
+fn get_padded_step_path(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
+    flow_path.join(format!("{:02}-{}", step_number, step_id))
+}
+
+fn merge_directory_missing_entries(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    if !source_dir.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(target_dir)
+        .map_err(|e| format!("Failed to create merge target {}: {}", target_dir.display(), e))?;
+
+    for entry in fs::read_dir(source_dir)
+        .map_err(|e| format!("Failed to read merge source {}: {}", source_dir.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read merge entry: {}", e))?;
+        let src_path = entry.path();
+        let dst_path = target_dir.join(entry.file_name());
+
+        if src_path.is_dir() {
+            merge_directory_missing_entries(&src_path, &dst_path)?;
+            continue;
+        }
+
+        if !dst_path.exists() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!(
+                        "Failed to create merge destination parent {}: {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
+            }
+            fs::copy(&src_path, &dst_path).map_err(|e| {
+                format!(
+                    "Failed to copy {} to {}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn canonicalize_step_dir_name(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
+    let canonical = get_step_path(flow_path, step_number, step_id);
+    let padded = get_padded_step_path(flow_path, step_number, step_id);
+
+    // If both exist, reconcile mixed historical layouts by merging padded-only files.
+    if canonical.exists() && padded.exists() {
+        // Reconcile mixed historical layouts by merging padded-only files.
+        let _ = merge_directory_missing_entries(&padded, &canonical);
+        let _ = fs::remove_dir_all(&padded);
+        return canonical;
+    }
+
+    // Preserve existing naming style to avoid creating duplicate step folders.
+    if canonical.exists() {
+        canonical
+    } else if padded.exists() {
+        padded
+    } else {
+        canonical
+    }
+}
+
+fn reconcile_local_step_dirs(flow_state: &MultipartyFlowState) {
+    let Some(work_dir) = flow_state.work_dir.as_ref() else {
+        return;
+    };
+    for (idx, step) in flow_state.steps.iter().enumerate() {
+        let _ = canonicalize_step_dir_name(work_dir, idx + 1, &step.id);
+    }
+}
+
+fn list_step_dirs_for_id(flow_dir: &Path, step_id: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let suffix = format!("-{}", step_id);
+    if let Ok(entries) = fs::read_dir(flow_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if name.ends_with(&suffix) {
+                matches.push(path);
+            }
+        }
+    }
+    matches
+}
+
+fn has_step_share_marker(flow_dir: &Path, step_id: &str) -> bool {
+    list_step_dirs_for_id(flow_dir, step_id)
+        .into_iter()
+        .any(|dir| dir.join("syft.pub.yaml").exists())
 }
 
 /// Get the progress path for coordination
@@ -43,40 +205,440 @@ fn get_progress_path(flow_path: &PathBuf) -> PathBuf {
     flow_path.join("_progress")
 }
 
-/// Return candidate flow directories for a participant from this node's perspective.
-/// 1) synced datasite path (real remote shape)
-/// 2) local sandbox sibling path (single-machine dev fallback)
-fn participant_flow_dirs(
+/// Private local step-log path (not synced/shared with other participants).
+fn get_private_step_log_path(session_id: &str, step_id: &str) -> Result<PathBuf, String> {
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let dir = biovault_home
+        .join(".biovault")
+        .join("multiparty_step_logs")
+        .join(session_id);
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create private step log directory: {}", e))?;
+    Ok(dir.join(format!("{}.log", step_id)))
+}
+
+fn append_private_step_log(session_id: &str, step_id: &str, message: &str) {
+    let Ok(path) = get_private_step_log_path(session_id, step_id) else {
+        return;
+    };
+    let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{} {}", Utc::now().to_rfc3339(), message);
+}
+
+fn read_tail_lines(path: &PathBuf, lines: usize) -> Result<String, String> {
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    let file = fs::File::open(path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let reader = BufReader::new(file);
+    let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+    if all_lines.is_empty() {
+        return Ok(String::new());
+    }
+    let selected: Vec<String> = all_lines
+        .into_iter()
+        .rev()
+        .take(lines)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Ok(selected.join("\n"))
+}
+
+fn count_files_recursive(root: &Path, suffix: &str) -> usize {
+    if !root.exists() {
+        return 0;
+    }
+    let mut total = 0usize;
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            total += count_files_recursive(&path, suffix);
+            continue;
+        }
+        if suffix.is_empty() {
+            total += 1;
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(suffix))
+            .unwrap_or(false)
+        {
+            total += 1;
+        }
+    }
+    total
+}
+
+fn select_step_log_lines(log_text: &str, step_id: &str, lines: usize) -> String {
+    let all_lines: Vec<String> = log_text.lines().map(|s| s.to_string()).collect();
+    if all_lines.is_empty() {
+        return String::new();
+    }
+
+    let window = lines.saturating_mul(4);
+    let start_index = all_lines.len().saturating_sub(window);
+    let tail_window: Vec<String> = all_lines.into_iter().skip(start_index).collect();
+
+    let step_lc = step_id.to_ascii_lowercase();
+    let needle_a = format!("step {}", step_lc);
+    let needle_b = format!("step '{}'", step_lc);
+    let needle_c = format!("step \"{}\"", step_lc);
+    let needle_d = format!("{}@", step_lc);
+    let needle_e = format!("\"step\":\"{}\"", step_lc);
+
+    let filtered: Vec<String> = tail_window
+        .iter()
+        .filter_map(|line| {
+            let lc = line.to_ascii_lowercase();
+            if lc.contains(&needle_a)
+                || lc.contains(&needle_b)
+                || lc.contains(&needle_c)
+                || lc.contains(&needle_d)
+                || lc.contains(&needle_e)
+            {
+                Some(line.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let selected: Vec<String> = if filtered.is_empty() {
+        tail_window
+            .into_iter()
+            .rev()
+            .take(lines)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    } else {
+        filtered
+            .into_iter()
+            .rev()
+            .take(lines)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    };
+
+    selected.join("\n")
+}
+
+fn append_private_step_log_lines(session_id: &str, step_id: &str, text: &str) {
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if !trimmed.is_empty() {
+            append_private_step_log(session_id, step_id, trimmed);
+        }
+    }
+}
+
+fn run_command_with_private_logs(
+    session_id: &str,
+    step_id: &str,
+    mut cmd: Command,
+) -> Result<(), String> {
+    let program = cmd.get_program().to_string_lossy().to_string();
+    let args = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    append_private_step_log(session_id, step_id, &format!("exec: {} {}", program, args));
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute {}: {}", program, e))?;
+    append_private_step_log_lines(
+        session_id,
+        step_id,
+        String::from_utf8_lossy(&output.stdout).as_ref(),
+    );
+    append_private_step_log_lines(
+        session_id,
+        step_id,
+        String::from_utf8_lossy(&output.stderr).as_ref(),
+    );
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Command failed for step '{}': {} {}",
+            step_id, program, args
+        ))
+    }
+}
+
+fn resolve_module_directory(
+    flow_name: &str,
+    module_path: Option<&str>,
+    module_ref: Option<&str>,
+) -> Option<PathBuf> {
+    let biovault_home = biovault::config::get_biovault_home().ok()?;
+    let flow_root = biovault_home.join("flows").join(flow_name);
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(path_str) = module_path.map(str::trim).filter(|s| !s.is_empty()) {
+        let raw = PathBuf::from(path_str);
+        if raw.is_absolute() {
+            candidates.push(raw);
+        } else {
+            candidates.push(flow_root.join(path_str.trim_start_matches("./")));
+        }
+    }
+
+    if let Some(module_ref) = module_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        let raw = PathBuf::from(module_ref);
+        if raw.is_absolute() {
+            candidates.push(raw);
+        } else {
+            let trimmed = module_ref.trim_start_matches("./");
+            // Handle path-like refs such as "./modules/gen-variants".
+            candidates.push(flow_root.join(trimmed));
+            // If ref already includes "modules/", avoid duplicating.
+            if let Some(stripped) = trimmed.strip_prefix("modules/") {
+                candidates.push(flow_root.join("modules").join(stripped));
+            } else {
+                candidates.push(flow_root.join("modules").join(trimmed));
+            }
+            // Handle short refs such as "gen_variants".
+            candidates.push(flow_root.join("modules").join(module_ref.replace('_', "-")));
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn read_syqure_runner_config(module_dir: &Path) -> Result<(String, String, u64), String> {
+    let module_yaml_path = if module_dir.join("module.yaml").exists() {
+        module_dir.join("module.yaml")
+    } else if module_dir.join("module.yml").exists() {
+        module_dir.join("module.yml")
+    } else {
+        return Err(format!(
+            "Missing module.yaml/module.yml in {}",
+            module_dir.display()
+        ));
+    };
+
+    let yaml = fs::read_to_string(&module_yaml_path).map_err(|e| {
+        format!(
+            "Failed to read module config {}: {}",
+            module_yaml_path.display(),
+            e
+        )
+    })?;
+    let parsed: serde_yaml::Value =
+        serde_yaml::from_str(&yaml).map_err(|e| format!("Invalid module yaml: {}", e))?;
+
+    let runner = parsed
+        .get("spec")
+        .and_then(|v| v.get("runner"))
+        .cloned()
+        .unwrap_or(serde_yaml::Value::Null);
+
+    let entrypoint = runner
+        .get("entrypoint")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "smpc_aggregate.codon".to_string());
+
+    let syqure_cfg = runner
+        .get("syqure")
+        .cloned()
+        .unwrap_or(serde_yaml::Value::Null);
+    let transport = syqure_cfg
+        .get("transport")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "file".to_string());
+    let poll_ms = syqure_cfg
+        .get("poll_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50);
+
+    Ok((entrypoint, transport, poll_ms))
+}
+
+fn resolve_syqure_binary() -> Result<PathBuf, String> {
+    if let Ok(bin) = env::var("SEQURE_NATIVE_BIN") {
+        let path = PathBuf::from(&bin);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = biovault_home.parent() {
+        candidates.push(parent.join("syqure").join("target").join("release").join("syqure"));
+        candidates.push(parent.join("syqure").join("target").join("debug").join("syqure"));
+    }
+    for candidate in candidates {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    let mut which_cmd = Command::new("which");
+    if let Ok(output) = which_cmd.arg("syqure").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                let binary = PathBuf::from(path);
+                if binary.exists() {
+                    return Ok(binary);
+                }
+            }
+        }
+    }
+
+    Err(
+        "Syqure binary not found. Set SEQURE_NATIVE_BIN or place syqure binary in PATH"
+            .to_string(),
+    )
+}
+
+fn setup_mpc_channel_permissions(
+    work_dir: &Path,
+    owner_email: &str,
+    party_emails: &[String],
+    local_party_id: usize,
+) -> Result<(), String> {
+    let mpc_root = work_dir.join("_mpc");
+    fs::create_dir_all(&mpc_root)
+        .map_err(|e| format!("Failed to create mpc root {}: {}", mpc_root.display(), e))?;
+
+    // Root-level permissions so all participants can discover MPC transport logs/channels.
+    create_syft_pub_yaml(&mpc_root, owner_email, party_emails)?;
+
+    for (remote_id, remote_email) in party_emails.iter().enumerate() {
+        if remote_id == local_party_id {
+            continue;
+        }
+        let channel_dir = mpc_root.join(format!("{}_to_{}", local_party_id, remote_id));
+        fs::create_dir_all(&channel_dir).map_err(|e| {
+            format!(
+                "Failed to create mpc channel {}: {}",
+                channel_dir.display(),
+                e
+            )
+        })?;
+
+        // Outgoing channel only needs to be readable by recipient.
+        let read_list = vec![remote_email.clone()];
+        create_syft_pub_yaml(&channel_dir, owner_email, &read_list)?;
+    }
+
+    Ok(())
+}
+
+fn find_participant_step_file(
     biovault_home: &PathBuf,
+    viewer_email: &str,
+    participant_email: &str,
+    flow_name: &str,
+    session_id: &str,
+    step_number: usize,
+    step_id: &str,
+    file_name: &str,
+) -> Option<PathBuf> {
+    participant_flow_dirs_for_viewer(
+        biovault_home,
+        viewer_email,
+        participant_email,
+        flow_name,
+        session_id,
+    )
+    .into_iter()
+    .find_map(|base| {
+        resolve_step_output_dir_for_base(&base, step_number, step_id)
+            .map(|dir| dir.join(file_name))
+            .filter(|path| path.exists())
+    })
+}
+
+fn find_sandbox_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|n| n.to_str()) == Some("sandbox"))
+        .map(|ancestor| ancestor.to_path_buf())
+}
+
+/// Return candidate flow directories for a participant from this viewer's perspective.
+/// 1) synced datasite path (what this viewer has received)
+/// 2) optional local sandbox sibling path, only for the viewer's own datasite
+fn participant_flow_dirs_for_viewer(
+    biovault_home: &PathBuf,
+    viewer_email: &str,
     participant_email: &str,
     flow_name: &str,
     session_id: &str,
 ) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     let mut seen = HashSet::new();
+    let mut push_dir = |candidate: PathBuf| {
+        if seen.insert(candidate.clone()) {
+            dirs.push(candidate);
+        }
+    };
 
-    let synced = biovault_home
+    // Primary: current BioVault home layout.
+    push_dir(
+        biovault_home
         .join("datasites")
         .join(participant_email)
         .join("shared")
         .join("flows")
         .join(flow_name)
-        .join(session_id);
-    if seen.insert(synced.clone()) {
-        dirs.push(synced);
+        .join(session_id),
+    );
+
+    // Fallback: derive from sandbox root if BIOVAULT_HOME points deeper than expected.
+    if let Some(sandbox_root) = find_sandbox_root(biovault_home) {
+        push_dir(
+            sandbox_root
+                .join(viewer_email)
+                .join("datasites")
+                .join(participant_email)
+                .join("shared")
+                .join("flows")
+                .join(flow_name)
+                .join(session_id),
+        );
     }
 
-    if let Some(parent) = biovault_home.parent() {
-        let sandbox = parent
-            .join(participant_email)
-            .join("datasites")
-            .join(participant_email)
-            .join("shared")
-            .join("flows")
-            .join(flow_name)
-            .join(session_id);
-        if seen.insert(sandbox.clone()) {
-            dirs.push(sandbox);
+    // Legacy local-sandbox sibling fallback for viewer's own datasite.
+    if viewer_email == participant_email {
+        if let Some(parent) = biovault_home.parent() {
+            push_dir(
+                parent
+                    .join(participant_email)
+                    .join("datasites")
+                    .join(participant_email)
+                    .join("shared")
+                    .join("flows")
+                    .join(flow_name)
+                    .join(session_id),
+            );
         }
     }
 
@@ -124,6 +686,16 @@ fn write_progress_state(
     status: &str,
 ) {
     let state_file = progress_dir.join("state.json");
+    // Flow runtime owns `_progress/state.json` with a structured `steps` map.
+    // Do not overwrite that shape with multiparty event snapshots.
+    if let Ok(existing) = fs::read_to_string(&state_file) {
+        if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
+            if existing_json.get("steps").is_some() {
+                return;
+            }
+        }
+    }
+
     let state = serde_json::json!({
         "updated_at": Utc::now().to_rfc3339(),
         "role": role,
@@ -258,14 +830,9 @@ static FLOW_SESSIONS: Lazy<Mutex<HashMap<String, MultipartyFlowState>>> =
 
 /// Update dependent steps: if all their dependencies are now completed/shared, mark them Ready
 fn update_dependent_steps(flow_state: &mut MultipartyFlowState, completed_step_id: &str) {
-    // Collect step statuses first to avoid borrow issues
-    let step_statuses: std::collections::HashMap<String, StepStatus> = flow_state
-        .steps
-        .iter()
-        .map(|s| (s.id.clone(), s.status.clone()))
-        .collect();
+    let mut steps_to_ready: HashSet<String> = HashSet::new();
 
-    for step in &mut flow_state.steps {
+    for step in &flow_state.steps {
         // Only update steps that are Pending and have this step as a dependency
         if step.status != StepStatus::Pending {
             continue;
@@ -281,13 +848,53 @@ fn update_dependent_steps(flow_state: &mut MultipartyFlowState, completed_step_i
         let all_deps_met = step
             .depends_on
             .iter()
-            .all(|dep_id| match step_statuses.get(dep_id) {
-                Some(StepStatus::Completed) | Some(StepStatus::Shared) => true,
-                _ => false,
-            });
+            .all(|dep_id| is_dependency_complete(flow_state, dep_id));
 
         if all_deps_met {
+            steps_to_ready.insert(step.id.clone());
+        }
+    }
+
+    for step in &mut flow_state.steps {
+        if steps_to_ready.contains(&step.id) {
             step.status = StepStatus::Ready;
+        }
+    }
+}
+
+/// Refresh local actionable step statuses from current dependency state.
+/// This is needed for collaborative sessions where dependencies may complete on
+/// remote participants between UI polls.
+fn refresh_step_statuses(flow_state: &mut MultipartyFlowState) {
+    let mut ready_step_ids: Vec<String> = Vec::new();
+
+    for step in &flow_state.steps {
+        if !step.my_action {
+            continue;
+        }
+        if step.is_barrier {
+            // Barrier progression is handled by update_barrier_steps based on
+            // cross-participant completion, not generic dependency refresh.
+            continue;
+        }
+        if step.status != StepStatus::Pending && step.status != StepStatus::WaitingForInputs {
+            continue;
+        }
+
+        let all_deps_met = step
+            .depends_on
+            .iter()
+            .all(|dep_id| is_dependency_complete(flow_state, dep_id));
+        if all_deps_met {
+            ready_step_ids.push(step.id.clone());
+        }
+    }
+
+    for step_id in ready_step_ids {
+        if let Some(step) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
+            if step.status == StepStatus::Pending || step.status == StepStatus::WaitingForInputs {
+                step.status = StepStatus::Ready;
+            }
         }
     }
 }
@@ -302,7 +909,10 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
     let mut barriers_to_complete: Vec<String> = Vec::new();
 
     for step in &flow_state.steps {
-        if step.status != StepStatus::WaitingForInputs || !step.is_barrier {
+        if !step.is_barrier {
+            continue;
+        }
+        if step.status != StepStatus::WaitingForInputs && step.status != StepStatus::Ready {
             continue;
         }
 
@@ -325,6 +935,7 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
                     check_participant_step_complete(
                         &flow_name,
                         &session_id,
+                        &flow_state.my_email,
                         &participant.email,
                         &participant.role,
                         wait_for_step_id,
@@ -348,24 +959,22 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
         }
     }
 
-    // Third pass: update steps that depend on completed barriers
-    let completed_step_ids: Vec<String> = flow_state
-        .steps
-        .iter()
-        .filter(|s| s.status == StepStatus::Completed || s.status == StepStatus::Shared)
-        .map(|s| s.id.clone())
-        .collect();
-
-    for step in &mut flow_state.steps {
+    // Third pass: update steps that depend on completed barriers/dependencies.
+    let mut steps_to_ready: HashSet<String> = HashSet::new();
+    for step in &flow_state.steps {
         if step.status == StepStatus::Pending && step.my_action {
-            // Check if all dependencies are complete
             let deps_complete = step
                 .depends_on
                 .iter()
-                .all(|dep| completed_step_ids.contains(dep));
+                .all(|dep| is_dependency_complete(flow_state, dep));
             if deps_complete {
-                step.status = StepStatus::Ready;
+                steps_to_ready.insert(step.id.clone());
             }
+        }
+    }
+    for step in &mut flow_state.steps {
+        if steps_to_ready.contains(&step.id) {
+            step.status = StepStatus::Ready;
         }
     }
 }
@@ -374,6 +983,7 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
 fn check_participant_step_complete(
     flow_name: &str,
     session_id: &str,
+    viewer_email: &str,
     participant_email: &str,
     participant_role: &str,
     step_id: &str,
@@ -384,17 +994,20 @@ fn check_participant_step_complete(
         Err(_) => return false,
     };
 
-    for progress_file in participant_flow_dirs(
+    let flow_dirs = participant_flow_dirs_for_viewer(
         &biovault_home,
+        viewer_email,
         participant_email,
         flow_name,
         session_id,
-    )
-    .into_iter()
-    .map(|base| {
-        base.join("_progress")
-            .join(format!("{}_{}.json", participant_role, step_id))
-    }) {
+    );
+
+    let mut saw_completed_without_share = false;
+
+    for base in &flow_dirs {
+        let progress_file = base
+            .join("_progress")
+            .join(format!("{}_{}.json", participant_role, step_id));
         if !progress_file.exists() {
             continue;
         }
@@ -402,20 +1015,116 @@ fn check_participant_step_complete(
         // Read and check the status
         if let Ok(content) = fs::read_to_string(&progress_file) {
             if let Ok(status) = serde_json::from_str::<SharedStepStatus>(&content) {
+                let normalized = normalize_progress_status(&status.status);
                 if require_shared {
-                    if status.status == "Shared" {
+                    if normalized == "Shared" {
                         return true;
+                    }
+                    if normalized == "Completed" {
+                        saw_completed_without_share = true;
                     }
                     continue;
                 }
-                if status.status == "Shared" || status.status == "Completed" {
+                if normalized == "Shared" || normalized == "Completed" {
                     return true;
                 }
             }
         }
     }
 
+    // Fallback for flows that only emit _progress/state.json.
+    for base in &flow_dirs {
+        let state_file = base.join("_progress").join("state.json");
+        if !state_file.exists() {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&state_file) else {
+            continue;
+        };
+        let Ok(state_json) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        let Some(step_state) = state_json
+            .get("steps")
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get(step_id))
+        else {
+            continue;
+        };
+
+        let normalized = normalize_progress_status(
+            step_state
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending"),
+        );
+        if require_shared {
+            if normalized == "Shared" {
+                return true;
+            }
+            if normalized == "Completed" {
+                saw_completed_without_share = true;
+            }
+        } else if normalized == "Shared" || normalized == "Completed" {
+            return true;
+        }
+    }
+
+    // Treat syft.pub.yaml as definitive shared evidence when status files lag.
+    if require_shared
+        && flow_dirs
+            .iter()
+            .any(|base| has_step_share_marker(base, step_id))
+    {
+        return true;
+    }
+
+    if require_shared && saw_completed_without_share {
+        return false;
+    }
+
     false
+}
+
+/// Returns true when a dependency step can be treated as complete for this session.
+/// This handles both local and cross-participant dependencies.
+fn is_dependency_complete(flow_state: &MultipartyFlowState, dep_step_id: &str) -> bool {
+    let Some(dep_step) = flow_state.steps.iter().find(|s| s.id == dep_step_id) else {
+        // Unknown dependency should not block execution.
+        return true;
+    };
+
+    if matches!(dep_step.status, StepStatus::Completed | StepStatus::Shared) {
+        return true;
+    }
+
+    if dep_step.target_emails.is_empty() {
+        return false;
+    }
+
+    // For shared-output dependencies (e.g., step.share...), require Shared.
+    // Otherwise Completed or Shared is sufficient.
+    let require_shared = dep_step.shares_output;
+
+    dep_step.target_emails.iter().all(|target_email| {
+        if let Some(participant) = flow_state
+            .participants
+            .iter()
+            .find(|p| &p.email == target_email)
+        {
+            check_participant_step_complete(
+                &flow_state.flow_name,
+                &flow_state.session_id,
+                &flow_state.my_email,
+                &participant.email,
+                &participant.role,
+                dep_step_id,
+                require_shared,
+            )
+        } else {
+            false
+        }
+    })
 }
 
 #[tauri::command]
@@ -454,6 +1163,10 @@ pub async fn send_flow_invitation(
     // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participant_roles.iter().map(|p| p.email.clone()).collect();
+    if let Err(err) = ensure_flow_subscriptions(&flow_name, &session_id, &all_participant_emails)
+    {
+        eprintln!("[Multiparty] Warning: failed to add flow subscriptions: {}", err);
+    }
     let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
     write_progress_state(&progress_dir, &my_role, "joined", None, "Accepted");
 
@@ -539,6 +1252,10 @@ pub async fn accept_flow_invitation(
     // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participants.iter().map(|p| p.email.clone()).collect();
+    if let Err(err) = ensure_flow_subscriptions(&flow_name, &session_id, &all_participant_emails)
+    {
+        eprintln!("[Multiparty] Warning: failed to add flow subscriptions: {}", err);
+    }
     let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
 
     // Look up flow_id from database.
@@ -630,6 +1347,9 @@ pub async fn get_multiparty_flow_state(
     let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
 
     if let Some(flow_state) = sessions.get_mut(&session_id) {
+        reconcile_local_step_dirs(flow_state);
+        // Pull dependency-driven readiness from synced participant progress.
+        refresh_step_statuses(flow_state);
         // Check if any WaitingForInputs steps can now proceed
         update_barrier_steps(flow_state);
         Ok(Some(flow_state.clone()))
@@ -686,11 +1406,11 @@ fn parse_progress_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 fn resolve_step_output_dir_for_base(base: &PathBuf, step_number: usize, step_id: &str) -> Option<PathBuf> {
-    let plain = base.join(format!("{}-{}", step_number, step_id));
-    if plain.exists() {
-        return Some(plain);
+    let canonical = canonicalize_step_dir_name(base, step_number, step_id);
+    if canonical.exists() {
+        return Some(canonical);
     }
-    let padded = base.join(format!("{:02}-{}", step_number, step_id));
+    let padded = get_padded_step_path(base, step_number, step_id);
     if padded.exists() {
         return Some(padded);
     }
@@ -737,13 +1457,14 @@ fn should_replace_step_status(
 pub async fn get_all_participant_progress(
     session_id: String,
 ) -> Result<Vec<ParticipantProgress>, String> {
-    let (flow_name, participants, step_meta) = {
+    let (flow_name, my_email, participants, step_meta) = {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get(&session_id)
             .ok_or_else(|| "Flow session not found".to_string())?;
         (
             flow_state.flow_name.clone(),
+            flow_state.my_email.clone(),
             flow_state.participants.clone(),
             flow_state
                 .steps
@@ -759,7 +1480,13 @@ pub async fn get_all_participant_progress(
     let mut all_progress = Vec::new();
 
     for participant in &participants {
-        let flow_dirs = participant_flow_dirs(&biovault_home, &participant.email, &flow_name, &session_id);
+        let flow_dirs = participant_flow_dirs_for_viewer(
+            &biovault_home,
+            &my_email,
+            &participant.email,
+            &flow_name,
+            &session_id,
+        );
         let mut steps_by_id: HashMap<String, ParticipantStepStatus> = HashMap::new();
 
         for (step_idx, (step_id, step_shares_output)) in step_meta.iter().enumerate() {
@@ -821,8 +1548,10 @@ pub async fn get_all_participant_progress(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("pending");
                             let mut status_normalized = normalize_progress_status(raw_status);
-                            // Flows with inline `share:` semantics often only report "completed".
-                            if *step_shares_output && status_normalized == "Completed" {
+                            if *step_shares_output
+                                && status_normalized == "Completed"
+                                && has_step_share_marker(base, step_id)
+                            {
                                 status_normalized = "Shared".to_string();
                             }
 
@@ -859,6 +1588,65 @@ pub async fn get_all_participant_progress(
             }
         }
 
+        // Final fallback: infer status from on-disk step output directories when
+        // status files are missing/lagging on a peer view.
+        for (step_idx, (step_id, step_shares_output)) in step_meta.iter().enumerate() {
+            if steps_by_id.contains_key(step_id) {
+                continue;
+            }
+            let step_number = step_idx + 1;
+            for base in &flow_dirs {
+                let Some(output_dir_path) = resolve_step_output_dir_for_base(base, step_number, step_id)
+                else {
+                    continue;
+                };
+
+                // Ignore placeholder dirs that have no real output payload yet.
+                let has_payload = fs::read_dir(&output_dir_path)
+                    .ok()
+                    .map(|entries| {
+                        entries.flatten().any(|entry| {
+                            let path = entry.path();
+                            if !path.is_file() {
+                                return false;
+                            }
+                            path.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|name| name != "syft.pub.yaml")
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                if !has_payload {
+                    continue;
+                }
+
+                let is_shared = output_dir_path.join("syft.pub.yaml").exists();
+                let inferred_status = if *step_shares_output {
+                    if is_shared { "Shared" } else { "Completed" }
+                } else {
+                    "Completed"
+                };
+
+                let inferred_ts = fs::metadata(&output_dir_path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|mtime| mtime.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .and_then(|d| i64::try_from(d.as_secs()).ok())
+                    .unwrap_or_else(|| Utc::now().timestamp());
+
+                let candidate = ParticipantStepStatus {
+                    step_id: step_id.clone(),
+                    status: inferred_status.to_string(),
+                    timestamp: inferred_ts,
+                    output_dir: Some(output_dir_path.to_string_lossy().to_string()),
+                };
+                if should_replace_step_status(steps_by_id.get(step_id), &candidate) {
+                    steps_by_id.insert(step_id.clone(), candidate);
+                }
+            }
+        }
+
         let mut steps = Vec::new();
         for (step_id, _) in &step_meta {
             if let Some(step_status) = steps_by_id.remove(step_id) {
@@ -889,13 +1677,14 @@ pub struct LogEntry {
 
 #[tauri::command]
 pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, String> {
-    let (flow_name, participants) = {
+    let (flow_name, my_email, participants) = {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get(&session_id)
             .ok_or_else(|| "Flow session not found".to_string())?;
         (
             flow_state.flow_name.clone(),
+            flow_state.my_email.clone(),
             flow_state.participants.clone(),
         )
     };
@@ -920,8 +1709,9 @@ pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, S
     };
 
     for participant in &participants {
-        for progress_dir in participant_flow_dirs(
+        for progress_dir in participant_flow_dirs_for_viewer(
             &biovault_home,
+            &my_email,
             &participant.email,
             &flow_name,
             &session_id,
@@ -929,20 +1719,10 @@ pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, S
         .into_iter()
         .map(|base| base.join("_progress"))
         {
-            // Try canonical log.jsonl, then legacy progress.json.
-            let log_file = {
-                let synced_jsonl = progress_dir.join("log.jsonl");
-                let synced_legacy = progress_dir.join("progress.json");
-                if synced_jsonl.exists() {
-                    Some(synced_jsonl)
-                } else if synced_legacy.exists() {
-                    Some(synced_legacy)
-                } else {
-                    None
-                }
-            };
-
-            if let Some(path) = log_file {
+            // Read canonical log.jsonl and legacy progress.json (both may exist
+            // and contain useful events).
+            let log_candidates = [progress_dir.join("log.jsonl"), progress_dir.join("progress.json")];
+            for path in log_candidates.into_iter().filter(|p| p.exists()) {
                 if let Ok(content) = fs::read_to_string(&path) {
                     // JSONL format - one JSON object per line
                     for line in content.lines() {
@@ -963,7 +1743,18 @@ pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, S
                                 step_id: entry
                                     .get("step_id")
                                     .and_then(|s| s.as_str())
-                                    .map(|s| s.to_string()),
+                                    .or_else(|| entry.get("step").and_then(|s| s.as_str()))
+                                    .and_then(|s| {
+                                        let trimmed = s.trim();
+                                        if trimmed.is_empty()
+                                            || trimmed.eq_ignore_ascii_case("null")
+                                            || trimmed.eq_ignore_ascii_case("undefined")
+                                        {
+                                            None
+                                        } else {
+                                            Some(trimmed.to_string())
+                                        }
+                                    }),
                                 message: entry
                                     .get("message")
                                     .and_then(|m| m.as_str())
@@ -1033,6 +1824,217 @@ pub async fn get_participant_logs(session_id: String) -> Result<Vec<LogEntry>, S
 }
 
 #[tauri::command]
+pub async fn get_multiparty_step_logs(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    step_id: String,
+    lines: Option<usize>,
+) -> Result<String, String> {
+    let (run_id, work_dir, flow_name, my_email) = {
+        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+        (
+            flow_state.run_id,
+            flow_state.work_dir.clone(),
+            flow_state.flow_name.clone(),
+            flow_state.my_email.clone(),
+        )
+    };
+
+    let lines = lines.unwrap_or(200).clamp(20, 2000);
+    let mut sections: Vec<String> = Vec::new();
+
+    // 1) Private per-step logs (local-only, never synced).
+    let private_log_path = get_private_step_log_path(&session_id, &step_id)?;
+    if private_log_path.exists() {
+        let private_tail = read_tail_lines(&private_log_path, lines)?;
+        if !private_tail.trim().is_empty() {
+            sections.push(format!(
+                "[Private Step Log]\n{}",
+                private_tail
+            ));
+        }
+    }
+
+    // 1b) Progress event stream for this local participant (JSONL under shared _progress).
+    // This captures step_started/step_completed/step_shared even when execution was backend-driven.
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let mut progress_candidates: Vec<PathBuf> = Vec::new();
+    for base in participant_flow_dirs_for_viewer(
+        &biovault_home,
+        &my_email,
+        &my_email,
+        &flow_name,
+        &session_id,
+    ) {
+        progress_candidates.push(base.join("_progress").join("log.jsonl"));
+        progress_candidates.push(base.join("_progress").join("progress.json"));
+    }
+    progress_candidates.sort();
+    progress_candidates.dedup();
+    for progress_path in progress_candidates {
+        if !progress_path.exists() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&progress_path) {
+            let mut matched: Vec<String> = Vec::new();
+            let mut unscoped: Vec<String> = Vec::new();
+            for line in content.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                let entry_step = entry
+                    .get("step_id")
+                    .or_else(|| entry.get("step"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let timestamp = entry
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let role = entry
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let event = entry
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let message = entry
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mut rendered = format!("{} [{}] {}", timestamp, role, event);
+                if !message.is_empty() {
+                    rendered.push_str(": ");
+                    rendered.push_str(message);
+                }
+                if entry_step == step_id {
+                    matched.push(rendered);
+                } else if entry_step.is_empty() {
+                    unscoped.push(rendered);
+                }
+            }
+            if !matched.is_empty() {
+                let selected: Vec<String> = matched
+                    .into_iter()
+                    .rev()
+                    .take(lines)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                sections.push(format!(
+                    "[Progress Log: {}]\n{}",
+                    progress_path.display(),
+                    selected.join("\n")
+                ));
+                break;
+            } else if !unscoped.is_empty() {
+                let selected: Vec<String> = unscoped
+                    .into_iter()
+                    .rev()
+                    .take(lines)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                sections.push(format!(
+                    "[Progress Log (unscoped): {}]\n{}",
+                    progress_path.display(),
+                    selected.join("\n")
+                ));
+                break;
+            }
+        }
+    }
+
+    // 1c) Local MPC transport diagnostics (important for secure_aggregate visibility).
+    for base in participant_flow_dirs_for_viewer(
+        &biovault_home,
+        &my_email,
+        &my_email,
+        &flow_name,
+        &session_id,
+    ) {
+        let mpc_dir = base.join("_mpc");
+        if !mpc_dir.exists() {
+            continue;
+        }
+
+        let transport_log = mpc_dir.join("file_transport.log");
+        if transport_log.exists() {
+            let transport_tail = read_tail_lines(&transport_log, lines)?;
+            if !transport_tail.trim().is_empty() {
+                sections.push(format!(
+                    "[MPC Transport Log: {}]\n{}",
+                    transport_log.display(),
+                    transport_tail
+                ));
+            }
+        }
+
+        let request_count = count_files_recursive(&mpc_dir, ".request");
+        let response_count = count_files_recursive(&mpc_dir, ".response");
+        if request_count > 0 || response_count > 0 {
+            sections.push(format!(
+                "[MPC File Progress]\nrequests={} responses={}",
+                request_count, response_count
+            ));
+        }
+    }
+
+    // 2) Fallback to flow.log (run-local execution log), filtered by step id.
+    let mut log_candidates: Vec<PathBuf> = Vec::new();
+    if let Some(wd) = work_dir {
+        log_candidates.push(wd.join("flow.log"));
+    }
+    if let Some(run_id) = run_id {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        if let Some(run) = biovault_db
+            .get_flow_run(run_id)
+            .map_err(|e| e.to_string())?
+        {
+            if let Some(results_dir) = run.results_dir.as_ref() {
+                log_candidates.push(PathBuf::from(results_dir).join("flow.log"));
+            }
+            log_candidates.push(PathBuf::from(run.work_dir).join("flow.log"));
+        }
+    }
+    log_candidates.sort();
+    log_candidates.dedup();
+
+    for log_path in log_candidates {
+        if !log_path.exists() {
+            continue;
+        }
+        if let Ok(text) = fs::read_to_string(&log_path) {
+            let selected = select_step_log_lines(&text, &step_id, lines);
+            if !selected.trim().is_empty() {
+                sections.push(format!(
+                    "[Run Log: {}]\n{}",
+                    log_path.display(),
+                    selected
+                ));
+                break;
+            }
+        }
+    }
+
+    if sections.is_empty() {
+        return Ok("No run logs available yet.".to_string());
+    }
+
+    Ok(sections.join("\n\n"))
+}
+
+#[tauri::command]
 pub async fn set_step_auto_run(
     session_id: String,
     step_id: String,
@@ -1059,20 +2061,36 @@ pub async fn run_flow_step(
     session_id: String,
     step_id: String,
 ) -> Result<StepState, String> {
-    let (work_dir, step_number) = {
+    let (
+        work_dir,
+        step_number,
+        step_numbers_by_id,
+        flow_name,
+        my_email,
+        _my_role,
+        participants,
+        module_path,
+        module_ref,
+    ) = {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get_mut(&session_id)
             .ok_or_else(|| "Flow session not found".to_string())?;
 
         // Get step info and check if it can run
-        let (step_deps, step_status, is_my_action) = {
+        let (step_deps, step_status, is_my_action, module_path, module_ref) = {
             let step = flow_state
                 .steps
                 .iter()
                 .find(|s| s.id == step_id)
                 .ok_or_else(|| "Step not found".to_string())?;
-            (step.depends_on.clone(), step.status.clone(), step.my_action)
+            (
+                step.depends_on.clone(),
+                step.status.clone(),
+                step.my_action,
+                step.module_path.clone(),
+                step.module_ref.clone(),
+            )
         };
 
         if !is_my_action {
@@ -1086,35 +2104,15 @@ pub async fn run_flow_step(
             ));
         }
 
-        // Only check local dependencies if step is not already marked Ready
-        // (If step is Ready, it was validated by update_barrier_steps via shared progress files)
-        if step_status != StepStatus::Ready {
-            for dep_id in &step_deps {
-                let dep_step = flow_state.steps.iter().find(|s| s.id == *dep_id);
-
-                if let Some(dep) = dep_step {
-                    match dep.status {
-                        StepStatus::Completed | StepStatus::Shared => {
-                            // Dependency satisfied
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Cannot run step '{}': dependency '{}' not completed (status: {:?})",
-                                step_id, dep_id, dep.status
-                            ));
-                        }
-                    }
-                }
+        // Always validate dependencies before running (including cross-participant deps).
+        for dep_id in &step_deps {
+            if !is_dependency_complete(flow_state, dep_id) {
+                return Err(format!(
+                    "Cannot run step '{}': dependency '{}' is not satisfied yet",
+                    step_id, dep_id
+                ));
             }
         }
-
-        let step = flow_state
-            .steps
-            .iter_mut()
-            .find(|s| s.id == step_id)
-            .ok_or_else(|| "Step not found".to_string())?;
-
-        step.status = StepStatus::Running;
 
         // Get step number (1-indexed) for path construction
         let step_number = flow_state
@@ -1124,13 +2122,56 @@ pub async fn run_flow_step(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        (flow_state.work_dir.clone(), step_number)
+        let step_numbers_by_id = flow_state
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id.clone(), i + 1))
+            .collect::<HashMap<_, _>>();
+
+        let step = flow_state
+            .steps
+            .iter_mut()
+            .find(|s| s.id == step_id)
+            .ok_or_else(|| "Step not found".to_string())?;
+
+        step.status = StepStatus::Running;
+        append_private_step_log(&session_id, &step_id, "step_started");
+        if let Some(ref work_dir) = flow_state.work_dir {
+            let progress_dir = get_progress_path(work_dir);
+            let _ = fs::create_dir_all(&progress_dir);
+            append_progress_log(
+                &progress_dir,
+                "step_started",
+                Some(&step_id),
+                &flow_state.my_role,
+            );
+            write_progress_state(
+                &progress_dir,
+                &flow_state.my_role,
+                "step_started",
+                Some(&step_id),
+                "Running",
+            );
+        }
+
+        (
+            flow_state.work_dir.clone(),
+            step_number,
+            step_numbers_by_id,
+            flow_state.flow_name.clone(),
+            flow_state.my_email.clone(),
+            flow_state.my_role.clone(),
+            flow_state.participants.clone(),
+            module_path,
+            module_ref,
+        )
     };
 
     // Step output path: {flow_path}/{step_number}-{step_id}/
     let step_output_dir = work_dir
         .as_ref()
-        .map(|d| get_step_path(d, step_number, &step_id));
+        .map(|d| canonicalize_step_dir_name(d, step_number, &step_id));
 
     if let Some(ref dir) = step_output_dir {
         fs::create_dir_all(dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
@@ -1155,17 +2196,6 @@ pub async fn run_flow_step(
             .map_err(|e| format!("Failed to write output: {}", e))?;
     } else if step_id == "aggregate" {
         // Get flow state to find contributors
-        let (flow_name, participants) = {
-            let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
-            let flow_state = sessions
-                .get(&session_id)
-                .ok_or_else(|| "Flow session not found".to_string())?;
-            (
-                flow_state.flow_name.clone(),
-                flow_state.participants.clone(),
-            )
-        };
-
         let biovault_home = biovault::config::get_biovault_home()
             .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
 
@@ -1249,6 +2279,275 @@ pub async fn run_flow_step(
 
         fs::write(&output_file, serde_json::to_string_pretty(&result).unwrap())
             .map_err(|e| format!("Failed to write output: {}", e))?;
+    } else if step_id == "gen_variants" {
+        let output_dir = step_output_dir
+            .as_ref()
+            .ok_or_else(|| "No output directory".to_string())?;
+        let module_dir = resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref())
+            .ok_or_else(|| "Failed to resolve module directory for gen_variants".to_string())?;
+        let script = module_dir.join("gen_variants.py");
+        if !script.exists() {
+            return Err(format!("Missing module script: {}", script.display()));
+        }
+        let mut cmd = Command::new("python3");
+        cmd.arg(script)
+            .env("BV_CURRENT_DATASITE", &my_email)
+            .env("BV_OUTPUT_RSIDS", output_dir.join("rsids.txt"))
+            .env("BV_OUTPUT_COUNTS", output_dir.join("counts.json"));
+        run_command_with_private_logs(&session_id, &step_id, cmd)?;
+    } else if step_id == "build_master" {
+        let output_dir = step_output_dir
+            .as_ref()
+            .ok_or_else(|| "No output directory".to_string())?;
+        let module_dir = resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref())
+            .ok_or_else(|| "Failed to resolve module directory for build_master".to_string())?;
+        let script = module_dir.join("build_master.py");
+        if !script.exists() {
+            return Err(format!("Missing module script: {}", script.display()));
+        }
+
+        let biovault_home = biovault::config::get_biovault_home()
+            .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+        let gen_step_number = *step_numbers_by_id.get("gen_variants").unwrap_or(&1usize);
+        let mut manifest_lines: Vec<String> = Vec::new();
+        for participant in &participants {
+            let role = participant.role.to_ascii_lowercase();
+            if !(role.starts_with("client") || role.starts_with("contributor")) {
+                continue;
+            }
+            if let Some(rsids_path) = find_participant_step_file(
+                &biovault_home,
+                &my_email,
+                &participant.email,
+                &flow_name,
+                &session_id,
+                gen_step_number,
+                "gen_variants",
+                "rsids.txt",
+            ) {
+                manifest_lines.push(format!("{}\t{}", participant.email, rsids_path.display()));
+            }
+        }
+        if manifest_lines.is_empty() {
+            return Err("No contributor rsids were found for build_master".to_string());
+        }
+        let manifest_path = output_dir.join("rsids_manifest.txt");
+        fs::write(&manifest_path, format!("{}\n", manifest_lines.join("\n")))
+            .map_err(|e| format!("Failed to write rsids manifest: {}", e))?;
+
+        let mut cmd = Command::new("python3");
+        cmd.arg(script)
+            .env("BV_INPUT_RSIDS_MANIFEST", &manifest_path)
+            .env("BV_OUTPUT_MASTER_LIST", output_dir.join("master_list.txt"))
+            .env("BV_OUTPUT_COUNT", output_dir.join("count.txt"));
+        run_command_with_private_logs(&session_id, &step_id, cmd)?;
+    } else if step_id == "align_counts" {
+        let output_dir = step_output_dir
+            .as_ref()
+            .ok_or_else(|| "No output directory".to_string())?;
+        let module_dir = resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref())
+            .ok_or_else(|| "Failed to resolve module directory for align_counts".to_string())?;
+        let script = module_dir.join("align_counts.py");
+        if !script.exists() {
+            return Err(format!("Missing module script: {}", script.display()));
+        }
+
+        let biovault_home = biovault::config::get_biovault_home()
+            .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+        let gen_step_number = *step_numbers_by_id.get("gen_variants").unwrap_or(&1usize);
+        let build_step_number = *step_numbers_by_id.get("build_master").unwrap_or(&2usize);
+
+        let counts_path = find_participant_step_file(
+            &biovault_home,
+            &my_email,
+            &my_email,
+            &flow_name,
+            &session_id,
+            gen_step_number,
+            "gen_variants",
+            "counts.json",
+        )
+        .ok_or_else(|| "Missing local counts.json from gen_variants".to_string())?;
+
+        let aggregator_email = participants
+            .iter()
+            .find(|p| p.role == "aggregator")
+            .map(|p| p.email.clone())
+            .unwrap_or_else(|| participants.first().map(|p| p.email.clone()).unwrap_or_default());
+        let master_list_path = find_participant_step_file(
+            &biovault_home,
+            &my_email,
+            &aggregator_email,
+            &flow_name,
+            &session_id,
+            build_step_number,
+            "build_master",
+            "master_list.txt",
+        )
+        .ok_or_else(|| "Missing master_list.txt from build_master".to_string())?;
+
+        let mut cmd = Command::new("python3");
+        cmd.arg(script)
+            .env("BV_INPUT_MASTER_LIST", master_list_path)
+            .env("BV_INPUT_COUNTS", counts_path)
+            .env("BV_OUTPUT_COUNTS_ARRAY", output_dir.join("counts_array.json"));
+        run_command_with_private_logs(&session_id, &step_id, cmd)?;
+    } else if step_id == "secure_aggregate" {
+        let output_dir = step_output_dir
+            .as_ref()
+            .ok_or_else(|| "No output directory".to_string())?;
+        let biovault_home = biovault::config::get_biovault_home()
+            .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+        let module_dir =
+            resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref())
+                .ok_or_else(|| {
+                    "Failed to resolve module directory for secure_aggregate".to_string()
+                })?;
+        let (entrypoint, transport, poll_ms) = read_syqure_runner_config(&module_dir)?;
+        let entrypoint_path = module_dir.join(&entrypoint);
+        if !entrypoint_path.exists() {
+            return Err(format!(
+                "Syqure entrypoint not found: {}",
+                entrypoint_path.display()
+            ));
+        }
+
+        let syqure_binary = resolve_syqure_binary()?;
+        let datasites_root = biovault_home.join("datasites");
+        let party_emails: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
+        let party_count = party_emails.len();
+        let party_id = party_emails
+            .iter()
+            .position(|email| email.eq_ignore_ascii_case(&my_email))
+            .unwrap_or(0);
+        let file_dir = format!("shared/flows/{}/{}/_mpc", flow_name, session_id);
+
+        if let Some(work_dir_path) = work_dir.as_ref() {
+            setup_mpc_channel_permissions(work_dir_path, &my_email, &party_emails, party_id)?;
+        } else {
+            return Err("Missing work directory for secure_aggregate".to_string());
+        }
+
+        let align_step_number = *step_numbers_by_id.get("align_counts").unwrap_or(&3usize);
+        let build_step_number = *step_numbers_by_id.get("build_master").unwrap_or(&2usize);
+        let counts_path = find_participant_step_file(
+            &biovault_home,
+            &my_email,
+            &my_email,
+            &flow_name,
+            &session_id,
+            align_step_number,
+            "align_counts",
+            "counts_array.json",
+        );
+        let aggregator_email = participants
+            .iter()
+            .find(|p| p.role == "aggregator")
+            .map(|p| p.email.clone());
+        let array_length_value = aggregator_email
+            .as_ref()
+            .and_then(|email| {
+                find_participant_step_file(
+                    &biovault_home,
+                    &my_email,
+                    email,
+                    &flow_name,
+                    &session_id,
+                    build_step_number,
+                    "build_master",
+                    "count.txt",
+                )
+            })
+            .and_then(|path| fs::read_to_string(path).ok())
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty());
+
+        append_private_step_log(
+            &session_id,
+            &step_id,
+            &format!(
+                "secure_aggregate start: syqure={} entrypoint={} party_id={} party_count={}",
+                syqure_binary.display(),
+                entrypoint_path.display(),
+                party_id,
+                party_count
+            ),
+        );
+
+        let mut cmd = Command::new(&syqure_binary);
+        cmd.arg(&entrypoint_path).arg("--").arg(party_id.to_string());
+        cmd.env("BV_CURRENT_DATASITE", &my_email)
+            .env("BV_FLOW_NAME", &flow_name)
+            .env("BV_RUN_ID", &session_id)
+            .env("BV_DATASITES", party_emails.join(","))
+            .env("BV_DATASITE_INDEX", party_id.to_string())
+            .env("BV_DATASITES_ROOT", &datasites_root)
+            .env("SYFTBOX_DATA_DIR", &biovault_home)
+            .env("BV_OUTPUT_AGGREGATED_COUNTS", output_dir.join("aggregated_counts.json"))
+            .env(
+                "SEQURE_OUTPUT_AGGREGATED_COUNTS",
+                output_dir.join("aggregated_counts.json"),
+            )
+            .env("SEQURE_TRANSPORT", transport)
+            .env("SEQURE_FILE_DIR", file_dir)
+            .env("SEQURE_FILE_POLL_MS", poll_ms.to_string())
+            .env("SEQURE_CP_COUNT", party_count.to_string())
+            .env("SEQURE_PARTY_EMAILS", party_emails.join(","))
+            .env("SEQURE_DATASITES_ROOT", &datasites_root)
+            .env("SEQURE_LOCAL_EMAIL", &my_email)
+            .env("SEQURE_FILE_KEEP", "1")
+            .env("SEQURE_FILE_DEBUG", "1");
+
+        if let Some(counts_path) = counts_path {
+            cmd.env("BV_INPUT_COUNTS", &counts_path)
+                .env("SEQURE_INPUT_COUNTS", &counts_path);
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!("secure_aggregate input counts: {}", counts_path.display()),
+            );
+        } else {
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                "secure_aggregate input counts: missing (expected for non-client parties)",
+            );
+        }
+        if let Some(array_len) = array_length_value {
+            cmd.env("BV_INPUT_ARRAY_LENGTH", &array_len)
+                .env("SEQURE_INPUT_ARRAY_LENGTH", &array_len);
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!("secure_aggregate input array_length: {}", array_len),
+            );
+        }
+        if env::var("SYQURE_BUNDLE_CACHE").is_err() {
+            cmd.env(
+                "SYQURE_BUNDLE_CACHE",
+                datasites_root
+                    .join(".syqure-cache")
+                    .join(&session_id)
+                    .join(format!("party-{}", party_id)),
+            );
+        }
+
+        run_command_with_private_logs(&session_id, &step_id, cmd)?;
+
+        // Keep compatibility with step share URLs expecting aggregated.json.
+        let agg_counts_path = output_dir.join("aggregated_counts.json");
+        let agg_json_path = output_dir.join("aggregated.json");
+        if agg_counts_path.exists() && !agg_json_path.exists() {
+            let rendered = fs::read_to_string(&agg_counts_path).map_err(|e| {
+                format!(
+                    "Failed to read secure_aggregate output {}: {}",
+                    agg_counts_path.display(),
+                    e
+                )
+            })?;
+            fs::write(&agg_json_path, rendered)
+                .map_err(|e| format!("Failed to write {}: {}", agg_json_path.display(), e))?;
+        }
     }
 
     let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
@@ -1264,6 +2563,7 @@ pub async fn run_flow_step(
 
     step.status = StepStatus::Completed;
     step.output_dir = step_output_dir.clone();
+    append_private_step_log(&session_id, &step_id, "step_completed");
 
     // Save step status to shared _progress folder for cross-client syncing
     if let Some(ref work_dir) = flow_state.work_dir {
@@ -1338,6 +2638,7 @@ pub async fn share_step_outputs(
         }
 
         step.status = StepStatus::Sharing;
+        append_private_step_log(&session_id, &step_id, "step_sharing_started");
 
         let share_to_emails =
             resolve_share_recipients(&step.share_to, &flow_state.participants, &flow_state.my_email);
@@ -1372,6 +2673,7 @@ pub async fn share_step_outputs(
 
         step.status = StepStatus::Shared;
         step.outputs_shared = true;
+        append_private_step_log(&session_id, &step_id, "step_shared");
 
         // Save step status to shared _progress folder for cross-client syncing
         if let Some(ref work_dir) = flow_state.work_dir {
@@ -1648,6 +2950,21 @@ fn build_group_map_from_participants(
         groups.entry(role).or_insert(members);
     }
 
+    if !groups.contains_key("contributors") {
+        let inferred_contributors: Vec<String> = participants
+            .iter()
+            .filter(|p| {
+                let role = p.role.to_ascii_lowercase();
+                role.starts_with("client") || role.starts_with("contributor")
+            })
+            .map(|p| p.email.clone())
+            .collect();
+        if !inferred_contributors.is_empty() {
+            groups.insert("contributors".to_string(), inferred_contributors.clone());
+            groups.entry("clients".to_string()).or_insert(inferred_contributors);
+        }
+    }
+
     if let Some(contributors) = groups.get("contributors").cloned() {
         groups.insert("clients".to_string(), contributors);
     }
@@ -1660,19 +2977,26 @@ fn build_group_map_from_participants(
     (groups, default_to_actual)
 }
 
-/// Extract share_to emails from step.share[*].permissions.read
+/// Extract share recipients from step.share[*].read.
+/// Accepts both:
+/// - share.<name>.permissions.read (canonical flow schema)
+/// - share.<name>.read (flattened schema variants)
 fn extract_share_to(step: &serde_json::Value) -> Vec<String> {
     let mut share_to = Vec::new();
 
     if let Some(share_block) = step.get("share").and_then(|s| s.as_object()) {
         for (_share_name, share_def) in share_block {
-            if let Some(perms) = share_def.get("permissions") {
-                if let Some(read_arr) = perms.get("read").and_then(|r| r.as_array()) {
-                    for reader in read_arr {
-                        if let Some(email) = reader.as_str() {
-                            if !share_to.contains(&email.to_string()) {
-                                share_to.push(email.to_string());
-                            }
+            let read_arr = share_def
+                .get("permissions")
+                .and_then(|perms| perms.get("read"))
+                .and_then(|r| r.as_array())
+                .or_else(|| share_def.get("read").and_then(|r| r.as_array()));
+
+            if let Some(read_arr) = read_arr {
+                for reader in read_arr {
+                    if let Some(target) = reader.as_str() {
+                        if !share_to.iter().any(|existing| existing == target) {
+                            share_to.push(target.to_string());
                         }
                     }
                 }
@@ -1797,6 +3121,53 @@ fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
     Vec::new()
 }
 
+fn collect_step_refs_from_value(value: &serde_json::Value, refs: &mut HashSet<String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            let mut offset = 0usize;
+            while let Some(found) = text[offset..].find("step.") {
+                let start = offset + found + 5; // skip `step.`
+                let remainder = &text[start..];
+                let dep_id: String = remainder
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                    .collect();
+                if !dep_id.is_empty() {
+                    refs.insert(dep_id);
+                }
+                offset = start;
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_step_refs_from_value(item, refs);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                collect_step_refs_from_value(v, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_with_step_dependencies(
+    step: &serde_json::Value,
+    known_step_ids: &HashSet<String>,
+) -> Vec<String> {
+    let mut refs: HashSet<String> = HashSet::new();
+    if let Some(with_block) = step.get("with") {
+        collect_step_refs_from_value(with_block, &mut refs);
+    }
+    let mut deps: Vec<String> = refs
+        .into_iter()
+        .filter(|id| known_step_ids.contains(id))
+        .collect();
+    deps.sort();
+    deps
+}
+
 fn parse_flow_steps(
     flow_spec: &serde_json::Value,
     my_email: &str,
@@ -1815,9 +3186,13 @@ fn parse_flow_steps(
         "[Multiparty] parse_flow_steps: my_email={}, groups={:?}",
         my_email, groups
     );
+    let known_step_ids: HashSet<String> = steps
+        .iter()
+        .filter_map(|s| s.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
     let mut result = Vec::new();
 
-    for step in steps {
+    for (step_index, step) in steps.iter().enumerate() {
         let id = step
             .get("id")
             .and_then(|v| v.as_str())
@@ -1836,7 +3211,7 @@ fn parse_flow_steps(
             .unwrap_or("")
             .to_string();
 
-        let depends_on: Vec<String> = step
+        let explicit_depends_on: Vec<String> = step
             .get("depends_on")
             .and_then(|v| v.as_array())
             .map(|arr| {
@@ -1845,6 +3220,14 @@ fn parse_flow_steps(
                     .collect()
             })
             .unwrap_or_default();
+        let inferred_depends_on = extract_with_step_dependencies(step, &known_step_ids);
+        let mut depends_set: HashSet<String> = HashSet::new();
+        for dep in explicit_depends_on.into_iter().chain(inferred_depends_on.into_iter()) {
+            if dep != id {
+                depends_set.insert(dep);
+            }
+        }
+        let mut depends_on: Vec<String> = depends_set.into_iter().collect();
 
         // Check if this is a barrier step
         let is_barrier = step.get("barrier").is_some();
@@ -1853,6 +3236,23 @@ fn parse_flow_steps(
             .and_then(|b| b.get("wait_for"))
             .and_then(|w| w.as_str())
             .map(|s| s.to_string());
+
+        // Some imported FlowSpec variants flatten `with` references and lose explicit
+        // dependency links. Keep UI sequencing stable by falling back to previous-step
+        // ordering when no dependencies are present.
+        if depends_on.is_empty() && !is_barrier && step_index > 0 {
+            if let Some(prev_step_id) = steps
+                .get(step_index - 1)
+                .and_then(|s| s.get("id"))
+                .and_then(|v| v.as_str())
+            {
+                if prev_step_id != id {
+                    depends_on.push(prev_step_id.to_string());
+                }
+            }
+        }
+        depends_on.sort();
+        depends_on.dedup();
 
         // Determine if my email is in the targets for this step
         let targets = get_step_targets(step);

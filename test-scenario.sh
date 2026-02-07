@@ -60,6 +60,7 @@ WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 CLEANUP_ACTIVE=0
+NO_CLEANUP="${NO_CLEANUP:-0}" # Leave processes/sandbox running on exit for debugging
 
 show_usage() {
 	cat <<EOF
@@ -92,6 +93,7 @@ Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
   --headed             Run playwright with headed browser
   --wait               Keep servers running after test completes (for inspection)
+  --no-cleanup         Do not stop static server/Tauri/logger/devstack on exit
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
@@ -217,6 +219,10 @@ while [[ $# -gt 0 ]]; do
 		--wait)
 			# Keep servers running after test completes
 			WAIT_MODE=1
+			shift
+			;;
+		--no-cleanup)
+			NO_CLEANUP=1
 			shift
 			;;
 		--warm-cache)
@@ -645,6 +651,10 @@ cleanup() {
 	fi
 	CLEANUP_ACTIVE=1
 	pause_for_interactive_exit
+	if [[ "$NO_CLEANUP" == "1" || "$NO_CLEANUP" == "true" ]]; then
+		info "No-cleanup mode enabled; leaving static server/Tauri/logger/devstack running."
+		return
+	fi
 
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
@@ -1939,8 +1949,44 @@ PY
 		fi
 		;;
 	syqure-multiparty-flow)
+		# Keep Syqure runtime env aligned with the distributed scenario.
+		# Do not force hotlink/quic/bundle defaults here; callers can opt in.
+		if [[ -n "${BV_SYFTBOX_HOTLINK:-}" ]]; then
+			export BV_SYFTBOX_HOTLINK
+		fi
+		if [[ -n "${BV_SYFTBOX_HOTLINK_QUIC:-}" ]]; then
+			export BV_SYFTBOX_HOTLINK_QUIC
+		fi
+		if [[ -n "${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-}" ]]; then
+			export BV_SYFTBOX_HOTLINK_QUIC_ONLY
+		fi
+		if [[ -n "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+			export SYQURE_SKIP_BUNDLE
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_DEBUG:-}" ]]; then
+			export SYFTBOX_HOTLINK_DEBUG
+		fi
+		if [[ -n "${SYQURE_DEBUG:-}" ]]; then
+			export SYQURE_DEBUG
+		fi
+		info "Syqure UI env: HOTLINK=${BV_SYFTBOX_HOTLINK:-unset} QUIC=${BV_SYFTBOX_HOTLINK_QUIC:-unset} QUIC_ONLY=${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-unset} SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset}"
+
 		start_static_server
 		start_tauri_instances
+
+		# Mirror syqure-distributed mode selection for secure-aggregate runtime entrypoint.
+		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
+		MODULE_YAML="$ROOT_DIR/biovault/tests/scenarios/syqure-flow/modules/secure-aggregate/module.yaml"
+		case "$MODE" in
+			he) ENTRY="he_aggregate.codon" ;;
+			smpc|"") ENTRY="smpc_aggregate.codon" ;;
+			*)
+				error "Unknown BV_SYQURE_AGG_MODE: $MODE (expected smpc|he)"
+				exit 1
+				;;
+		esac
+		perl -0pi -e "s/entrypoint: (smpc|he)_aggregate\\.codon/entrypoint: ${ENTRY}/g" "${MODULE_YAML}"
+		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY})"
 
 		info "=== Syqure Multiparty Flow Test ==="
 		info "Three clients will execute biovault/tests/scenarios/syqure-flow/flow.yaml via collaborative run."

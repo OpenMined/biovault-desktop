@@ -101,6 +101,10 @@ async function getSyftboxDataDir(backend: Backend): Promise<string> {
 	return dataDir
 }
 
+function didBundlePath(viewerDataDir: string, identity: string): string {
+	return path.join(resolveDatasitesRoot(viewerDataDir), identity, 'public', 'crypto', 'did.json')
+}
+
 function normalizeMetadata(metadata: any): any {
 	if (!metadata) return null
 	if (typeof metadata === 'string') {
@@ -193,6 +197,45 @@ async function runMultiRecipientCryptoSmoke(
 	console.log('Multi-recipient encryption smoke passed for all sender/recipient pairs')
 }
 
+async function waitForContactImport(
+	backend: Backend,
+	identity: string,
+	timeoutMs = 120_000,
+): Promise<void> {
+	const start = Date.now()
+	let lastError = ''
+	while (Date.now() - start < timeoutMs) {
+		try {
+			await backend.invoke('network_import_contact', { identity })
+			return
+		} catch (error) {
+			lastError = String(error)
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, SYNC_INTERVAL))
+	}
+	throw new Error(`Timed out waiting for DID/contact import for ${identity}: ${lastError}`)
+}
+
+async function waitForDidBundleOnViewer(
+	label: string,
+	viewerBackend: Backend,
+	viewerDataDir: string,
+	identity: string,
+	allBackends: Backend[],
+	timeoutMs = 120_000,
+): Promise<void> {
+	const start = Date.now()
+	const didPath = didBundlePath(viewerDataDir, identity)
+	while (Date.now() - start < timeoutMs) {
+		await Promise.all(allBackends.map((backend) => backend.invoke('trigger_syftbox_sync').catch(() => {})))
+		if (fs.existsSync(didPath)) return
+		await viewerBackend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, SYNC_INTERVAL))
+	}
+	throw new Error(`Timed out waiting for DID bundle (${label}): ${didPath}`)
+}
+
 async function clickMessagesTab(page: Page): Promise<void> {
 	const navTab = page.locator('.nav-item[data-tab="messages"]').first()
 	if (await navTab.isVisible().catch(() => false)) {
@@ -200,6 +243,132 @@ async function clickMessagesTab(page: Page): Promise<void> {
 		return
 	}
 	await page.locator('button:has-text("Messages")').first().click()
+}
+
+async function clickRunsTab(page: Page): Promise<void> {
+	const navTab = page.locator('.nav-item[data-tab="runs"]').first()
+	if (await navTab.isVisible().catch(() => false)) {
+		await navTab.click()
+		return
+	}
+	await page.locator('button:has-text("Runs")').first().click()
+}
+
+async function clickStepActionButton(
+	page: Page,
+	stepId: string,
+	buttonClass: string,
+	label: string,
+	timeoutMs = UI_TIMEOUT,
+): Promise<void> {
+	const startedAt = Date.now()
+	let lastError = ''
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			await clickRunsTab(page)
+			const openAllBtn = page
+				.locator('.mp-progress-actions .mp-collapse-btn:has-text("Open All")')
+				.first()
+			if (await openAllBtn.isVisible().catch(() => false)) {
+				await openAllBtn.click().catch(() => {})
+			}
+
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`).first()
+			await expect(step).toBeVisible({ timeout: 3_000 })
+			const actionBtn = step.locator(`button.${buttonClass}`).first()
+			await expect(actionBtn).toBeVisible({ timeout: 3_000 })
+			await expect(actionBtn).toBeEnabled({ timeout: 3_000 })
+			await actionBtn.click()
+			console.log(`${label}: clicked ${buttonClass} for ${stepId}`)
+			return
+		} catch (error) {
+			lastError = String(error)
+			await page.waitForTimeout(1_000)
+		}
+	}
+
+	throw new Error(`Timed out clicking ${buttonClass} for ${stepId} (${label}): ${lastError}`)
+}
+
+async function waitForLocalStepStatus(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	expectedStatuses: string[],
+	label: string,
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	const startedAt = Date.now()
+	let lastStatus = 'unknown'
+	let lastError = ''
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			const state = await backend.invoke('get_multiparty_flow_state', { sessionId }, 120_000)
+			const step = (state?.steps || []).find((entry: any) => entry?.id === stepId)
+			const status = step?.status ? String(step.status) : ''
+			if (status) {
+				lastStatus = status
+				if (expectedStatuses.includes(status)) return
+				if (status === 'Failed') {
+					const stepLogs = await backend
+						.invoke('get_multiparty_step_logs', { sessionId, stepId, lines: 240 })
+						.catch(() => '')
+					throw new Error(
+						`${label}: step "${stepId}" entered Failed state.\n${String(stepLogs || '')}`,
+					)
+				}
+			}
+		} catch (error) {
+			lastError = String(error)
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, 1200))
+	}
+	throw new Error(
+		`${label}: timed out waiting for step "${stepId}" statuses [${expectedStatuses.join(', ')}] (last=${lastStatus})` +
+			(lastError ? `\nLast error: ${lastError}` : ''),
+	)
+}
+
+async function waitForSessionRunId(
+	backend: Backend,
+	sessionId: string,
+	label: string,
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<number> {
+	const startedAt = Date.now()
+	let lastRunId = 0
+	let lastError = ''
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			const state = await backend.invoke('get_multiparty_flow_state', { sessionId }, 120_000)
+			const runId = Number(state?.run_id || 0)
+			if (runId > 0) return runId
+			lastRunId = runId
+		} catch (error) {
+			lastError = String(error)
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, 1200))
+	}
+	throw new Error(
+		`${label}: timed out waiting for multiparty run_id > 0 (last=${lastRunId})` +
+			(lastError ? `\nLast error: ${lastError}` : ''),
+	)
+}
+
+async function clickStepActionAndWait(
+	page: Page,
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	buttonClass: string,
+	label: string,
+	expectedStatuses: string[],
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	await clickStepActionButton(page, stepId, buttonClass, label, timeoutMs)
+	await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
 }
 
 async function importAndJoinInvitation(
@@ -274,8 +443,24 @@ async function waitForRunStatus(
 ): Promise<any> {
 	const startTime = Date.now()
 	let lastStatus = 'unknown'
+	let lastPollError = ''
+	let consecutivePollErrors = 0
 	while (Date.now() - startTime < timeoutMs) {
-		const runs = await backend.invoke('get_flow_runs', {})
+		let runs: any[] = []
+		try {
+			// get_flow_runs can be slow while Syqure compute is active; allow a longer WS timeout.
+			runs = await backend.invoke('get_flow_runs', {}, 120_000)
+			consecutivePollErrors = 0
+		} catch (error) {
+			lastPollError = String(error)
+			consecutivePollErrors += 1
+			if (consecutivePollErrors === 1 || consecutivePollErrors % 10 === 0) {
+				console.warn(`${label}: get_flow_runs poll error (${consecutivePollErrors}): ${lastPollError}`)
+			}
+			await backend.invoke('trigger_syftbox_sync').catch(() => {})
+			await new Promise((r) => setTimeout(r, 2_000))
+			continue
+		}
 		const run = (runs || []).find((r: any) => r.id === runId)
 		if (run?.status && run.status !== lastStatus) {
 			lastStatus = run.status
@@ -284,6 +469,7 @@ async function waitForRunStatus(
 		if (run && expectedStatuses.includes(run.status)) {
 			return run
 		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
 		await new Promise((r) => setTimeout(r, 2_000))
 	}
 	let logTail = ''
@@ -296,6 +482,7 @@ async function waitForRunStatus(
 	}
 	throw new Error(
 		`Timed out waiting for run ${runId} status: ${expectedStatuses.join(', ')} (last=${lastStatus})` +
+			(lastPollError ? `\nLast poll error: ${lastPollError}` : '') +
 			(logTail ? `\nLast log tail:\n${logTail}` : ''),
 	)
 }
@@ -326,6 +513,119 @@ function assertSharedRunDirExists(dataDir: string, ownerEmail: string, runId: st
 	const hasProgressDir =
 		fs.existsSync(path.join(runDir, '_progress')) || fs.existsSync(path.join(runDir, 'progress'))
 	expect(hasProgressDir).toBe(true)
+}
+
+function getSharedRunDir(
+	dataDir: string,
+	ownerEmail: string,
+	flowName: string,
+	runId: string,
+): string {
+	return path.join(
+		resolveDatasitesRoot(dataDir),
+		ownerEmail,
+		'shared',
+		'flows',
+		flowName,
+		runId,
+	)
+}
+
+function getSharedStepDirCandidates(runDir: string, stepNumber: number, stepId: string): string[] {
+	return [
+		path.join(runDir, `${stepNumber}-${stepId}`),
+		path.join(runDir, `${String(stepNumber).padStart(2, '0')}-${stepId}`),
+	]
+}
+
+function findExistingSharedStepDir(runDir: string, stepNumber: number, stepId: string): string | null {
+	for (const candidate of getSharedStepDirCandidates(runDir, stepNumber, stepId)) {
+		if (fs.existsSync(candidate)) return candidate
+	}
+	return null
+}
+
+async function waitForCondition(
+	check: () => boolean,
+	label: string,
+	timeoutMs = MESSAGE_TIMEOUT,
+	pollMs = 1000,
+): Promise<void> {
+	const startedAt = Date.now()
+	while (Date.now() - startedAt < timeoutMs) {
+		if (check()) return
+		await new Promise((resolve) => setTimeout(resolve, pollMs))
+	}
+	throw new Error(`Timed out waiting for condition: ${label}`)
+}
+
+async function waitForSharedFileOnViewers(
+	participantDataDirs: Map<string, string>,
+	ownerEmail: string,
+	flowName: string,
+	runId: string,
+	stepNumber: number,
+	stepId: string,
+	fileName: string,
+	requiredViewerEmails: string[],
+	timeoutMs = MESSAGE_TIMEOUT,
+): Promise<void> {
+	await waitForCondition(
+		() =>
+			requiredViewerEmails.every((viewerEmail) => {
+				const viewerDataDir = participantDataDirs.get(viewerEmail)
+				if (!viewerDataDir) return false
+				const runDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
+				const stepDir = findExistingSharedStepDir(runDir, stepNumber, stepId)
+				if (!stepDir) return false
+				return fs.existsSync(path.join(stepDir, fileName))
+			}),
+		`${ownerEmail}/${stepId}/${fileName} visible on ${requiredViewerEmails.join(', ')}`,
+		timeoutMs,
+	)
+}
+
+function findParticipantStepStatus(
+	allProgress: any[],
+	participantEmail: string,
+	stepId: string,
+): string | null {
+	const participant = (allProgress || []).find((entry) => entry?.email === participantEmail)
+	if (!participant) return null
+	const step = (participant.steps || []).find((entry: any) => entry?.step_id === stepId)
+	return step?.status || null
+}
+
+async function waitForProgressConvergence(
+	viewers: Array<{ label: string; backend: Backend }>,
+	sessionId: string,
+	expectedStatuses: Array<{ email: string; stepId: string; statuses: string[] }>,
+	timeoutMs = MESSAGE_TIMEOUT,
+): Promise<void> {
+	const startedAt = Date.now()
+	while (Date.now() - startedAt < timeoutMs) {
+		let allSatisfied = true
+
+		for (const viewer of viewers) {
+			await viewer.backend.invoke('trigger_syftbox_sync').catch(() => {})
+			const allProgress = await viewer.backend
+				.invoke('get_all_participant_progress', { sessionId })
+				.catch(() => [])
+			for (const expected of expectedStatuses) {
+				const status = findParticipantStepStatus(allProgress, expected.email, expected.stepId)
+				if (!status || !expected.statuses.includes(status)) {
+					allSatisfied = false
+					break
+				}
+			}
+			if (!allSatisfied) break
+		}
+
+		if (allSatisfied) return
+		await new Promise((resolve) => setTimeout(resolve, 1200))
+	}
+
+	throw new Error('Timed out waiting for cross-participant progress convergence')
 }
 
 test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-flow', () => {
@@ -393,13 +693,35 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			await backend2.invoke('get_dev_mode_info')
 			await backend3.invoke('get_dev_mode_info')
 
+			const dataDir1 = await getSyftboxDataDir(backend1)
+			const dataDir2 = await getSyftboxDataDir(backend2)
+			const dataDir3 = await getSyftboxDataDir(backend3)
+			const participantDataDirs = new Map<string, string>([
+				[email1, dataDir1],
+				[email2, dataDir2],
+				[email3, dataDir3],
+			])
+
+			const allBackends = [backend1, backend2, backend3]
+			await Promise.all([
+				waitForDidBundleOnViewer(email1, backend1, dataDir1, email2, allBackends),
+				waitForDidBundleOnViewer(email1, backend1, dataDir1, email3, allBackends),
+				waitForDidBundleOnViewer(email2, backend2, dataDir2, email1, allBackends),
+				waitForDidBundleOnViewer(email2, backend2, dataDir2, email3, allBackends),
+				waitForDidBundleOnViewer(email3, backend3, dataDir3, email1, allBackends),
+				waitForDidBundleOnViewer(email3, backend3, dataDir3, email2, allBackends),
+			])
+
 			// Pairwise contacts for encrypted invitation delivery.
-				await backend1.invoke('network_import_contact', { identity: email2 })
-				await backend1.invoke('network_import_contact', { identity: email3 })
-				await backend2.invoke('network_import_contact', { identity: email1 })
-				await backend2.invoke('network_import_contact', { identity: email3 })
-				await backend3.invoke('network_import_contact', { identity: email1 })
-				await backend3.invoke('network_import_contact', { identity: email2 })
+			// Wait/retry until DID bundles are visible across all three clients.
+			await Promise.all([
+				waitForContactImport(backend1, email2),
+				waitForContactImport(backend1, email3),
+				waitForContactImport(backend2, email1),
+				waitForContactImport(backend2, email3),
+				waitForContactImport(backend3, email1),
+				waitForContactImport(backend3, email2),
+			])
 
 				await runMultiRecipientCryptoSmoke([
 					{ email: email1, backend: backend1 },
@@ -429,9 +751,11 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			expect(syqureFlowAgg).toBeTruthy()
 			expect(syqureFlowAgg?.spec).toBeTruthy()
 
-			const runId = `syqure-ui-${Date.now()}`
-			const datasites = [email3, email1, email2]
 			const sessionId = `session-${Date.now()}`
+			// Keep runId aligned with multiparty session_id so the shared _progress and step paths
+			// are observed consistently by collaborative UI/state readers.
+			const runId = sessionId
+			const datasites = [email3, email1, email2]
 
 			const flowSpec = {
 				apiVersion: 'syftbox.openmined.org/v1alpha1',
@@ -469,6 +793,15 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			await importAndJoinInvitation(page2, backend2, email2, flowName)
 			await importAndJoinInvitation(page3, backend3, email3, flowName)
 
+			const [runId1, runId2, runId3] = await Promise.all([
+				waitForSessionRunId(backend1, sessionId, email1, 90_000),
+				waitForSessionRunId(backend2, sessionId, email2, 90_000),
+				waitForSessionRunId(backend3, sessionId, email3, 90_000),
+			])
+			expect(runId1).toBeGreaterThan(0)
+			expect(runId2).toBeGreaterThan(0)
+			expect(runId3).toBeGreaterThan(0)
+
 			const flows1 = await backend1.invoke('get_flows', {})
 			const flows2 = await backend2.invoke('get_flows', {})
 			const flows3 = await backend3.invoke('get_flows', {})
@@ -478,31 +811,187 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			expect(syqureFlow1).toBeTruthy()
 			expect(syqureFlow2).toBeTruthy()
 			expect(syqureFlow3).toBeTruthy()
+			// Drive execution through the same UI controls users use (Run/Share per participant window).
+			await Promise.all([clickRunsTab(page1), clickRunsTab(page2), clickRunsTab(page3)])
 
-			const [run1, run2, run3] = await Promise.all([
-				backend1.invoke('run_flow', {
-					flowId: syqureFlow1.id,
-					inputOverrides: { 'inputs.datasites': datasites.join(',') },
-					runId,
-				}),
-				backend2.invoke('run_flow', {
-					flowId: syqureFlow2.id,
-					inputOverrides: { 'inputs.datasites': datasites.join(',') },
-					runId,
-				}),
-				backend3.invoke('run_flow', {
-					flowId: syqureFlow3.id,
-					inputOverrides: { 'inputs.datasites': datasites.join(',') },
-					runId,
-				}),
+			// Stage 1: clients run + share gen_variants.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'gen_variants',
+					'mp-run-btn',
+					email1,
+					['Completed', 'Shared'],
+					180_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'gen_variants',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					180_000,
+				),
+			])
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'gen_variants',
+					'mp-share-btn',
+					email1,
+					['Shared'],
+					180_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'gen_variants',
+					'mp-share-btn',
+					email2,
+					['Shared'],
+					180_000,
+				),
 			])
 
-			const runId1 = run1?.id
-			const runId2 = run2?.id
-			const runId3 = run3?.id
-			expect(typeof runId1).toBe('number')
-			expect(typeof runId2).toBe('number')
-			expect(typeof runId3).toBe('number')
+			// Stage 2: aggregator run + share build_master.
+			await clickStepActionAndWait(
+				page3,
+				backend3,
+				sessionId,
+				'build_master',
+				'mp-run-btn',
+				email3,
+				['Completed', 'Shared'],
+				180_000,
+			)
+			await clickStepActionAndWait(
+				page3,
+				backend3,
+				sessionId,
+				'build_master',
+				'mp-share-btn',
+				email3,
+				['Shared'],
+				180_000,
+			)
+
+			// Stage 3: clients run align_counts.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'align_counts',
+					'mp-run-btn',
+					email1,
+					['Completed', 'Shared'],
+					180_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'align_counts',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					180_000,
+				),
+			])
+
+			// Stage 4: all parties run + share secure_aggregate.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'secure_aggregate',
+					'mp-run-btn',
+					email1,
+					['Completed', 'Shared'],
+					RUN_TIMEOUT_MS,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'secure_aggregate',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					RUN_TIMEOUT_MS,
+				),
+				clickStepActionAndWait(
+					page3,
+					backend3,
+					sessionId,
+					'secure_aggregate',
+					'mp-run-btn',
+					email3,
+					['Completed', 'Shared'],
+					RUN_TIMEOUT_MS,
+				),
+			])
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'secure_aggregate',
+					'mp-share-btn',
+					email1,
+					['Shared'],
+					RUN_TIMEOUT_MS,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'secure_aggregate',
+					'mp-share-btn',
+					email2,
+					['Shared'],
+					RUN_TIMEOUT_MS,
+				),
+				clickStepActionAndWait(
+					page3,
+					backend3,
+					sessionId,
+					'secure_aggregate',
+					'mp-share-btn',
+					email3,
+					['Shared'],
+					RUN_TIMEOUT_MS,
+				),
+			])
+
+			assertSharedRunDirExists(dataDir1, email1, runId)
+			assertSharedRunDirExists(dataDir2, email2, runId)
+			assertSharedRunDirExists(dataDir3, email3, runId)
+
+			// Verify each participant can observe converged step statuses from all parties.
+			const viewers = [
+				{ label: email1, backend: backend1 },
+				{ label: email2, backend: backend2 },
+				{ label: email3, backend: backend3 },
+			]
+			await waitForProgressConvergence(viewers, sessionId, [
+				{ email: email1, stepId: 'gen_variants', statuses: ['Shared', 'Completed'] },
+				{ email: email2, stepId: 'gen_variants', statuses: ['Shared', 'Completed'] },
+				{ email: email3, stepId: 'build_master', statuses: ['Shared', 'Completed'] },
+				{ email: email1, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
+				{ email: email2, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
+				{ email: email1, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
+				{ email: email2, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
+				{ email: email3, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
+			])
 
 			const finalRun1 = await waitForRunStatus(
 				backend1,
@@ -518,59 +1007,118 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 				RUN_TIMEOUT_MS,
 				email2,
 			)
-				const finalRun3 = await waitForRunStatus(
-					backend3,
-					runId3,
-					['success', 'failed', 'error'],
-					RUN_TIMEOUT_MS,
-					email3,
+			const finalRun3 = await waitForRunStatus(
+				backend3,
+				runId3,
+				['success', 'failed', 'error'],
+				RUN_TIMEOUT_MS,
+				email3,
+			)
+			console.log(
+				`Final run statuses: client1=${finalRun1.status}, client2=${finalRun2.status}, aggregator=${finalRun3.status}`,
+			)
+			expect(finalRun1.status).toBe('success')
+			expect(finalRun2.status).toBe('success')
+			expect(finalRun3.status).toBe('success')
+
+			// Verify _progress state/log files are synced and visible cross-datasite.
+			for (const ownerEmail of [email1, email2, email3]) {
+				for (const viewerEmail of [email1, email2, email3]) {
+					const viewerDataDir = participantDataDirs.get(viewerEmail)!
+					const runDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
+					await waitForCondition(
+						() => fs.existsSync(path.join(runDir, '_progress', 'state.json')),
+						`${viewerEmail} sees ${ownerEmail} _progress/state.json`,
+					)
+					await waitForCondition(
+						() =>
+							fs.existsSync(path.join(runDir, '_progress', 'log.jsonl')) ||
+							fs.existsSync(path.join(runDir, '_progress', 'progress.json')),
+						`${viewerEmail} sees ${ownerEmail} _progress log`,
+					)
+				}
+			}
+
+			// Stage 1 share: clients share rsids with aggregator.
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email1,
+				flowName,
+				runId,
+				1,
+				'gen_variants',
+				'rsids.txt',
+				[email1, email3],
+			)
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email2,
+				flowName,
+				runId,
+				1,
+				'gen_variants',
+				'rsids.txt',
+				[email2, email3],
+			)
+
+			// Stage 2 share: aggregator shares master list with all.
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email3,
+				flowName,
+				runId,
+				2,
+				'build_master',
+				'master_list.txt',
+				[email1, email2, email3],
+			)
+
+			// Final secure share: every participant shares secure_aggregate output back to all.
+			for (const ownerEmail of [email1, email2, email3]) {
+				await waitForSharedFileOnViewers(
+					participantDataDirs,
+					ownerEmail,
+					flowName,
+					runId,
+					5,
+					'secure_aggregate',
+					'aggregated.json',
+					[email1, email2, email3],
 				)
+			}
 
-				console.log(
-					`Final run statuses: client1=${finalRun1.status}, client2=${finalRun2.status}, aggregator=${finalRun3.status}`,
+			// Verify secure share permissions include all participants on each owner's final output.
+			for (const ownerEmail of [email1, email2, email3]) {
+				const ownerRunDir = getSharedRunDir(
+					participantDataDirs.get(ownerEmail)!,
+					ownerEmail,
+					flowName,
+					runId,
 				)
-				if (finalRun1.status !== 'success') {
-					const failLogs1 = await backend1.invoke('get_flow_run_logs_tail', { runId: runId1, lines: 1200 })
-					console.log(`client1 failed logs:\n${String(failLogs1 || '')}`)
+				const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
+				expect(secureDir).toBeTruthy()
+				const syftPubPath = path.join(secureDir!, 'syft.pub.yaml')
+				expect(fs.existsSync(syftPubPath)).toBe(true)
+				const syftPub = fs.readFileSync(syftPubPath, 'utf8')
+				expect(syftPub).toContain(`- ${email1}`)
+				expect(syftPub).toContain(`- ${email2}`)
+				expect(syftPub).toContain(`- ${email3}`)
+			}
+
+			for (const ownerEmail of [email1, email2, email3]) {
+				for (const viewerEmail of [email1, email2, email3]) {
+					const viewerDataDir = participantDataDirs.get(viewerEmail)!
+					const ownerRunDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
+					const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
+					expect(secureDir).toBeTruthy()
+					const aggregatedPath = path.join(secureDir!, 'aggregated.json')
+					expect(fs.existsSync(aggregatedPath)).toBe(true)
 				}
-				if (finalRun2.status !== 'success') {
-					const failLogs2 = await backend2.invoke('get_flow_run_logs_tail', { runId: runId2, lines: 1200 })
-					console.log(`client2 failed logs:\n${String(failLogs2 || '')}`)
-				}
-				if (finalRun3.status !== 'success') {
-					const failLogs3 = await backend3.invoke('get_flow_run_logs_tail', { runId: runId3, lines: 1200 })
-					console.log(`aggregator failed logs:\n${String(failLogs3 || '')}`)
-				}
-
-				expect(finalRun1.status).toBe('success')
-				expect(finalRun2.status).toBe('success')
-				expect(finalRun3.status).toBe('success')
-
-			const logs1 = await backend1.invoke('get_flow_run_logs_tail', { runId: runId1, lines: 400 })
-			const logs2 = await backend2.invoke('get_flow_run_logs_tail', { runId: runId2, lines: 400 })
-			const logs3 = await backend3.invoke('get_flow_run_logs_tail', { runId: runId3, lines: 400 })
-			expect(String(logs1 || '')).toContain('secure_aggregate')
-			expect(String(logs2 || '')).toContain('secure_aggregate')
-			expect(String(logs3 || '')).toContain('secure_aggregate')
-
-			const dataDir1 = await getSyftboxDataDir(backend1)
-			const dataDir2 = await getSyftboxDataDir(backend2)
-			const dataDir3 = await getSyftboxDataDir(backend3)
-			assertSharedRunDirExists(dataDir1, email1, runId)
-			assertSharedRunDirExists(dataDir2, email2, runId)
-			assertSharedRunDirExists(dataDir3, email3, runId)
-
-			const runRoot1 = finalRun1.results_dir || finalRun1.work_dir
-			const runRoot2 = finalRun2.results_dir || finalRun2.work_dir
-			const runRoot3 = finalRun3.results_dir || finalRun3.work_dir
-			expect(collectMatchingFiles(runRoot1, 'aggregated_counts.json').length).toBeGreaterThan(0)
-			expect(collectMatchingFiles(runRoot2, 'aggregated_counts.json').length).toBeGreaterThan(0)
-			expect(collectMatchingFiles(runRoot3, 'aggregated_counts.json').length).toBeGreaterThan(0)
+			}
 
 			log(logSocket, {
 				event: 'syqure-multiparty-flow-complete',
 				runId,
-				runIds: [runId1, runId2, runId3],
 			})
 		} finally {
 			if (page1) await page1.close().catch(() => {})

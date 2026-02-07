@@ -426,3 +426,50 @@ All flows should use same syntax as `syqure-distributed`:
 - Data moves via SyftBox sync, not shell scripts
 - No separate code paths for single vs multiparty
 - Steps target groups like `clients`, `aggregator`
+
+---
+
+## Checkpoint: Recent Commit Summary and Next Steps (Feb 7, 2026)
+
+### Recent commits on `madhava/multiparty`
+
+- `70445d6` (`multiparty`)
+  - Broad multiparty stack updates across backend/frontend/tests.
+  - Includes updates in:
+    - `src-tauri/src/commands/multiparty.rs`
+    - `src-tauri/src/commands/messages.rs`
+    - `src-tauri/src/commands/flows.rs`
+    - `src/runs.js`, `src/messages.js`, `src/css/runs.css`
+    - `tests/ui/messages-multiparty-flow.spec.ts`
+    - `tests/ui/syqure-multiparty-flow.spec.ts` (added)
+    - `test-scenario.sh`
+- `0b5ed43` (`multiparty working`)
+  - Earlier stabilization pass for multiparty execution/sync/UI behavior.
+
+### Current verified status
+
+- `./test-scenario.sh --pipelines-multiparty-flow --interactive` passes after latest multiparty fixes.
+- Final aggregate sharing is asserted to be secure and visible to participants in multiparty UI flow checks.
+- `./test-scenario.sh tests/scenarios/syqure-distributed.yaml` is reported working (long runtime is expected, ~7+ minutes).
+
+### Current Syqure UI blocker
+
+- `./test-scenario.sh --syqure-multiparty-flow --interactive` currently fails early in flow-copy verification.
+- Failure is in `tests/ui/syqure-multiparty-flow.spec.ts` where the test compares raw `flow.yaml` text to copied content.
+- Received payload appears encrypted/enveloped in this path, so raw text equality is too strict for this scenario.
+
+### Uncommitted work in progress
+
+- `test-scenario.sh`
+  - Added `BV_SYQURE_AGG_MODE` switch (`smpc`/`he`) for `--syqure-multiparty-flow`, mirroring distributed-mode selection.
+- `tests/ui/syqure-multiparty-flow.spec.ts`
+  - Added stronger convergence/sync/share assertions.
+  - Aligned `runId` with `sessionId` for consistent shared-path observation.
+
+### Next steps (execution order)
+
+1. Fix Syqure UI flow-copy assertion to validate semantic flow equivalence (or parse/decrypt envelope) instead of strict raw-text equality.
+2. Re-run `./test-scenario.sh --syqure-multiparty-flow --interactive` and confirm it advances past invitation/import/join into full run.
+3. Re-run `./test-scenario.sh tests/scenarios/syqure-distributed.yaml` as parity check on same flow artifacts and runtime mode.
+4. Keep multiparty regression guard green by re-running `./test-scenario.sh --pipelines-multiparty-flow --interactive`.
+5. If Syqure runtime stalls after assertion fix, separate UI/sync pass criteria from Syqure runtime pass criteria and gate with explicit known-issue marker until runtime patch is available.
