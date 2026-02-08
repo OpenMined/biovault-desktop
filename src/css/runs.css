@@ -298,51 +298,56 @@
 /* Flow Card */
 .flow-card {
 	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	border: 1.5px solid #e5e7eb;
 	border-radius: 12px;
-	padding: 24px;
-	cursor: pointer;
+	padding: 20px;
+	cursor: default;
 	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 12px;
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .flow-card:hover {
-	border-color: #10b981;
-	box-shadow: 0 10px 24px rgba(16, 185, 129, 0.12);
-	transform: translateY(-2px);
+	border-color: #cbd5e1;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+	transform: translateY(-1px);
 }
 
 .flow-card-header {
 	display: flex;
 	justify-content: space-between;
-	align-items: flex-start;
+	align-items: center;
 	gap: 12px;
 }
 
 .flow-card-title {
 	margin: 0;
-	font-size: 18px;
-	font-weight: 600;
-	color: #1f2937;
+	font-size: 16px;
+	font-weight: 700;
+	color: #0f172a;
 	flex: 1;
 	word-break: break-word;
+	letter-spacing: -0.01em;
 }
 
 .flow-card-menu {
 	background: none;
 	border: none;
-	color: #9ca3af;
+	color: #94a3b8;
 	cursor: pointer;
-	padding: 0;
-	font-size: 20px;
-	transition: color 0.2s;
+	padding: 4px;
+	border-radius: 6px;
+	transition: all 0.2s;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .flow-card-menu:hover {
-	color: #6b7280;
+	color: #475569;
+	background: #f1f5f9;
 }
 
 .flow-card-description {
@@ -377,6 +382,15 @@
 	align-items: center;
 	padding-top: 12px;
 	border-top: 1px solid #f3f4f6;
+	gap: 8px;
+}
+
+.flow-run-btn:hover {
+	background: #059669 !important;
+}
+
+.flow-run-data-btn:hover {
+	background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
 }
 
 .flow-step-count {

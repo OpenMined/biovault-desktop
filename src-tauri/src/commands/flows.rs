@@ -82,6 +82,9 @@ pub struct FlowState {
     /// Run status at last update
     #[serde(default)]
     pub status: Option<String>,
+    /// Actual nextflow command extracted from logs
+    #[serde(default)]
+    pub nextflow_command: Option<String>,
 }
 
 fn flow_state_path(results_dir: &Path) -> PathBuf {
@@ -1500,6 +1503,21 @@ pub async fn create_flow(
             .find(|p| p.name == name || p.flow_path == flow_dir_str);
 
         if let Some(existing_flow) = existing {
+            if is_import_dir {
+                // For local directory imports, just update the path reference
+                biovault_db
+                    .update_flow_path(existing_flow.id, &flow_dir_str)
+                    .map_err(|e| e.to_string())?;
+                let timestamp = chrono::Local::now().to_rfc3339();
+                return Ok(Flow {
+                    id: existing_flow.id,
+                    name,
+                    flow_path: flow_dir_str,
+                    created_at: existing_flow.created_at,
+                    updated_at: timestamp,
+                    spec: imported_spec,
+                });
+            }
             biovault_db
                 .delete_flow(existing_flow.id)
                 .map_err(|e| e.to_string())?;
@@ -2278,14 +2296,22 @@ pub async fn run_flow_impl(
                     ])
                     .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
-                // Try to find reference files from the database
+                // Get all files for reference lookup
                 let all_files = biovault::data::list_files(&biovault_db, None, None, false, None)
                     .unwrap_or_default();
-                let reference_file = all_files
+
+                // Build a map of file_id -> file_path for quick lookup
+                let file_path_map: std::collections::HashMap<i64, String> = all_files
+                    .iter()
+                    .map(|f| (f.id, f.file_path.clone()))
+                    .collect();
+
+                // Fallback references (first found in database)
+                let fallback_reference = all_files
                     .iter()
                     .find(|f| f.data_type.as_deref() == Some("Reference"))
                     .map(|f| f.file_path.clone());
-                let reference_index = all_files
+                let fallback_reference_index = all_files
                     .iter()
                     .find(|f| f.data_type.as_deref() == Some("ReferenceIndex"))
                     .map(|f| f.file_path.clone());
@@ -2312,12 +2338,36 @@ pub async fn run_flow_impl(
                         String::new()
                     };
 
+                    // Look up file-specific reference association
+                    let (ref_file, ref_index) =
+                        match biovault::data::get_file_reference(&biovault_db, record.id) {
+                            Ok((Some(ref_id), Some(idx_id))) => {
+                                let ref_path =
+                                    file_path_map.get(&ref_id).cloned().unwrap_or_default();
+                                let idx_path =
+                                    file_path_map.get(&idx_id).cloned().unwrap_or_default();
+                                (ref_path, idx_path)
+                            }
+                            Ok((Some(ref_id), None)) => {
+                                let ref_path =
+                                    file_path_map.get(&ref_id).cloned().unwrap_or_default();
+                                // Try to find matching index by convention (same name + .fai)
+                                let idx_path = fallback_reference_index.clone().unwrap_or_default();
+                                (ref_path, idx_path)
+                            }
+                            _ => {
+                                // Use fallback references
+                                (
+                                    fallback_reference.clone().unwrap_or_default(),
+                                    fallback_reference_index.clone().unwrap_or_default(),
+                                )
+                            }
+                        };
+
                     let ref_version = record
                         .grch_version
                         .clone()
                         .unwrap_or_else(|| "GRCh38".to_string());
-                    let ref_file = reference_file.clone().unwrap_or_default();
-                    let ref_index = reference_index.clone().unwrap_or_default();
 
                     writer
                         .write_record([
@@ -3032,7 +3082,7 @@ pub async fn pause_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> R
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
     let _ = fs::remove_file(&pid_path);
-    let _ = biovault_db.update_flow_run_status(run_id, "paused", false);
+    let _ = biovault_db.update_flow_run_status(run_id, "paused", true);
     append_flow_log(None, &log_path, "⏸️  Run paused successfully");
 
     Ok(())
@@ -3323,6 +3373,7 @@ pub fn save_flow_state_cmd(
     total: u32,
     concurrency: Option<u32>,
     container_count: u32,
+    nextflow_command: Option<String>,
 ) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let run = biovault_db
@@ -3337,6 +3388,10 @@ pub fn save_flow_state_cmd(
         .map(PathBuf::from)
         .ok_or_else(|| "No results directory".to_string())?;
 
+    // Preserve existing nextflow_command if not provided in this call
+    let effective_nf_cmd =
+        nextflow_command.or_else(|| load_flow_state(&results_dir).and_then(|s| s.nextflow_command));
+
     let flow_state = FlowState {
         completed,
         total,
@@ -3344,6 +3399,7 @@ pub fn save_flow_state_cmd(
         container_count,
         last_updated: Some(chrono::Utc::now().to_rfc3339()),
         status: Some(run.status.clone()),
+        nextflow_command: effective_nf_cmd,
     };
 
     save_flow_state(&results_dir, &flow_state)

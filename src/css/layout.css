@@ -82,16 +82,17 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	min-width: 24px;
-	height: 24px;
-	padding: 0 8px;
-	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-	color: #ffffff;
-	border-radius: 12px;
+	min-width: 22px;
+	height: 22px;
+	padding: 0 7px;
+	background: #f1f5f9;
+	color: #64748b;
+	border: 1px solid #e2e8f0;
+	border-radius: 6px;
 	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	font-weight: 600;
-	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+	white-space: nowrap;
 }
 
 .page-count-badge.muted {

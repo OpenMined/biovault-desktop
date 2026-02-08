@@ -75,6 +75,20 @@ pub async fn fetch_sample_data(samples: Vec<String>) -> Result<SampleDataFetchRe
                     preferred_dir = Some(sample_dir.join("23andme").to_string_lossy().to_string());
                 }
             }
+            "clinvar-grch38" | "clinvar_grch38" | "clinvar38" => {
+                participant_ids.push("ClinVar-GRCh38".to_string());
+                if preferred_dir.is_none() {
+                    preferred_dir =
+                        Some(sample_dir.join("databases").to_string_lossy().to_string());
+                }
+            }
+            "clinvar-grch37" | "clinvar_grch37" | "clinvar37" => {
+                participant_ids.push("ClinVar-GRCh37".to_string());
+                if preferred_dir.is_none() {
+                    preferred_dir =
+                        Some(sample_dir.join("databases").to_string_lossy().to_string());
+                }
+            }
             _ => {
                 participant_ids.push(sample);
             }
@@ -186,6 +200,20 @@ pub async fn fetch_sample_data_with_progress(
                 participant_ids.push("23andme".to_string());
                 if preferred_dir.is_none() {
                     preferred_dir = Some(sample_dir.join("23andme").to_string_lossy().to_string());
+                }
+            }
+            "clinvar-grch38" | "clinvar_grch38" | "clinvar38" => {
+                participant_ids.push("ClinVar-GRCh38".to_string());
+                if preferred_dir.is_none() {
+                    preferred_dir =
+                        Some(sample_dir.join("databases").to_string_lossy().to_string());
+                }
+            }
+            "clinvar-grch37" | "clinvar_grch37" | "clinvar37" => {
+                participant_ids.push("ClinVar-GRCh37".to_string());
+                if preferred_dir.is_none() {
+                    preferred_dir =
+                        Some(sample_dir.join("databases").to_string_lossy().to_string());
                 }
             }
             _ => {
@@ -385,6 +413,24 @@ pub async fn check_sample_downloaded(sample_id: String) -> Result<Option<String>
             if file_path.exists() {
                 return Ok(Some(
                     sample_dir.join("23andme").to_string_lossy().to_string(),
+                ));
+            }
+            return Ok(None);
+        }
+        "clinvar-grch38" | "clinvar_grch38" | "clinvar38" => {
+            let file_path = sample_dir.join("databases").join("clinvar.vcf.gz");
+            if file_path.exists() {
+                return Ok(Some(
+                    sample_dir.join("databases").to_string_lossy().to_string(),
+                ));
+            }
+            return Ok(None);
+        }
+        "clinvar-grch37" | "clinvar_grch37" | "clinvar37" => {
+            let file_path = sample_dir.join("databases").join("clinvar.vcf.gz");
+            if file_path.exists() {
+                return Ok(Some(
+                    sample_dir.join("databases").to_string_lossy().to_string(),
                 ));
             }
             return Ok(None);

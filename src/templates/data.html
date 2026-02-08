@@ -74,7 +74,20 @@
 				<h3>Sample Data</h3>
 				<p>Download curated files and import them in one click.</p>
 			</div>
-			<button id="sample-data-close" class="btn-text">Close</button>
+			<button id="sample-data-close" class="sample-data-close-btn">
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<line x1="18" y1="6" x2="6" y2="18"></line>
+					<line x1="6" y1="6" x2="18" y2="18"></line>
+				</svg>
+				Close
+			</button>
 		</div>
 		<div class="sample-data-grid">
 			<div class="sample-data-card">
@@ -112,6 +125,30 @@
 					<span class="sample-data-progress-text">Downloading...</span>
 				</div>
 				<button class="btn-secondary" data-sample-id="na06985-full">Download &amp; Import</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>ClinVar Database (GRCh38)</h4>
+					<p>NCBI ClinVar variant annotations for clinical significance</p>
+					<span class="sample-data-tag">Variant Database</span>
+				</div>
+				<div class="sample-data-progress" data-progress-id="clinvar-grch38" hidden>
+					<div class="sample-data-progress-bar"></div>
+					<span class="sample-data-progress-text">Downloading...</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="clinvar-grch38">Download</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>ClinVar Database (GRCh37)</h4>
+					<p>NCBI ClinVar variant annotations for clinical significance</p>
+					<span class="sample-data-tag">Variant Database</span>
+				</div>
+				<div class="sample-data-progress" data-progress-id="clinvar-grch37" hidden>
+					<div class="sample-data-progress-bar"></div>
+					<span class="sample-data-progress-text">Downloading...</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="clinvar-grch37">Download</button>
 			</div>
 		</div>
 	</section>
@@ -251,6 +288,57 @@
 			<!-- Participants-focused table (existing) -->
 			<div class="data-main-layout" id="participant-data-section">
 				<div class="files-panel">
+					<div class="files-type-filter-bar" id="files-type-filter-bar">
+						<span class="files-type-filter-label">Filter types</span>
+						<div class="files-type-filter-chips" role="group" aria-label="File type filters">
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="all"
+								aria-pressed="true"
+							>
+								<span>All</span>
+								<span class="file-type-filter-count" data-file-type-count="all">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="genotype"
+								aria-pressed="true"
+							>
+								<span>Genotype</span>
+								<span class="file-type-filter-count" data-file-type-count="genotype">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="vcf"
+								aria-pressed="true"
+							>
+								<span>VCF</span>
+								<span class="file-type-filter-count" data-file-type-count="vcf">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="raw"
+								aria-pressed="true"
+							>
+								<span>Raw</span>
+								<span class="file-type-filter-count" data-file-type-count="raw">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="other"
+								aria-pressed="true"
+							>
+								<span>Other</span>
+								<span class="file-type-filter-count" data-file-type-count="other">0</span>
+							</button>
+						</div>
+					</div>
+
 					<div class="files-table-wrapper">
 						<table class="files-table">
 							<thead>
@@ -278,6 +366,7 @@
 										Type
 										<span class="sort-indicator"></span>
 									</th>
+									<th class="col-reference">Reference</th>
 									<th class="col-source sortable-header" data-sort-field="source">
 										Source
 										<span class="sort-indicator"></span>
@@ -443,21 +532,51 @@
 							<h3 class="datasets-title">Reference Files</h3>
 							<p class="datasets-subtitle">Manage shared genome references and their indexes.</p>
 						</div>
-						<button id="download-grch38-btn" class="btn-secondary-sm">
-							<svg
-								width="14"
-								height="14"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
+						<div class="references-header-actions">
+							<button id="download-grch38-btn" class="btn-secondary-sm">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+									<polyline points="17 8 12 3 7 8"></polyline>
+									<line x1="12" y1="3" x2="12" y2="15"></line>
+								</svg>
+								<span>Download GRCh38</span>
+							</button>
+						</div>
+					</div>
+					<!-- Reference selection toolbar -->
+					<div id="reference-selection-toolbar" class="selection-toolbar" style="display: none">
+						<div class="selection-toolbar-content">
+							<span class="selection-count">
+								<span id="reference-selection-count">0</span> selected
+							</span>
+							<button
+								id="delete-selected-refs-btn"
+								class="btn-danger-small"
+								title="Delete selected references"
 							>
-								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-								<polyline points="17 8 12 3 7 8"></polyline>
-								<line x1="12" y1="3" x2="12" y2="15"></line>
-							</svg>
-							<span>Download GRCh38</span>
-						</button>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<polyline points="3 6 5 6 21 6"></polyline>
+									<path
+										d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+									></path>
+								</svg>
+								Delete
+							</button>
+						</div>
 					</div>
 					<div class="sample-data-progress" id="grch38-download-progress" hidden>
 						<div class="sample-data-progress-bar"></div>
@@ -483,6 +602,13 @@
 						<table class="files-table">
 							<thead>
 								<tr>
+									<th class="col-checkbox">
+										<input
+											type="checkbox"
+											id="select-all-references"
+											title="Select all references"
+										/>
+									</th>
 									<th class="col-file">File</th>
 									<th class="col-type">Type</th>
 									<th class="col-grch">GRCh</th>

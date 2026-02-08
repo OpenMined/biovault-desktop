@@ -82,10 +82,17 @@ const {
 	clearAllSelections,
 } = createDataModule({ invoke, dialog, getCurrentUserEmail })
 
-const { refreshLogs, displayLogs, setLogsAutoRefreshEnabled, clearLogs, copyLogs, openLogsFolder } =
-	createLogsModule({
-		invoke,
-	})
+const {
+	refreshLogs,
+	displayLogs,
+	setLogsAutoRefreshEnabled,
+	clearLogs,
+	copyLogs,
+	openLogsFolder,
+	toggleVerbose,
+} = createLogsModule({
+	invoke,
+})
 
 const {
 	prepareRunView,
@@ -589,6 +596,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 		copyLogs,
 		clearLogs,
 		openLogsFolder,
+		toggleVerbose,
 		handleSyftBoxAuthentication,
 		saveSettings,
 		checkDependenciesForPanel,
