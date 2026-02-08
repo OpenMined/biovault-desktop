@@ -108,6 +108,7 @@ clone_if_missing_async "syftbox" "https://github.com/OpenMined/syftbox.git" "mad
 clone_if_missing_async "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
 clone_if_missing_async "sbenv" "https://github.com/OpenMined/sbenv.git"
 clone_if_missing_async "bioscript" "https://github.com/OpenMined/bioscript.git"
+clone_if_missing_async "syqure" "https://github.com/OpenMined/syqure.git"
 wait_for_clones
 
 # Setup nested dependencies for syftbox-sdk
@@ -143,6 +144,7 @@ create_symlink "syftbox"
 create_symlink "biovault-beaver"
 create_symlink "sbenv"
 create_symlink "bioscript"
+create_symlink "syqure"
 
 echo ""
 echo "Workspace setup complete!"

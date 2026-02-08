@@ -199,6 +199,15 @@ jobs:
             build-essential \
             pkg-config
 
+      - name: Install syqure build dependencies (Linux)
+        if: runner.os == 'Linux' && matrix.scenario == 'syqure-multiparty-allele-freq'
+        run: |
+          UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-17 main" | sudo tee /etc/apt/sources.list.d/llvm-17.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev libgmp-dev zstd
+
       # NOTE: Docker setup for macOS removed since pipelines-collab tests are skipped on macOS
       # (GitHub macOS runners don't support nested virtualization needed for Docker)
       - name: Check Docker availability (macOS)
@@ -301,6 +310,15 @@ jobs:
         shell: pwsh
         run: cargo build --release
         working-directory: src-tauri
+
+      - name: Build native syqure binary
+        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+        env:
+          SYQURE_LLVM_INCLUDE: /usr/lib/llvm-17/include
+        run: |
+          cd syqure
+          chmod +x syqure_bins.sh
+          ./syqure_bins.sh
 
       - name: Install maturin (uv)
         if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'

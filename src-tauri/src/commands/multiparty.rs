@@ -17,6 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SEQURE_COMMUNICATION_PORT_STRIDE: usize = 1000;
 
+fn flow_spec_root<'a>(flow_spec: &'a serde_json::Value) -> &'a serde_json::Value {
+    flow_spec.get("spec").unwrap_or(flow_spec)
+}
+
 /// Get the owner's email from config
 fn get_owner_email() -> Result<String, String> {
     let config =
@@ -724,7 +728,7 @@ fn maybe_setup_mpc_channels(
     party_emails: &[String],
     session_id: &str,
 ) -> Result<Option<usize>, String> {
-    let has_mpc = flow_spec.get("spec").and_then(|s| s.get("mpc")).is_some();
+    let has_mpc = flow_spec_root(flow_spec).get("mpc").is_some();
     if !has_mpc {
         return Ok(None);
     }
@@ -770,9 +774,8 @@ fn maybe_setup_mpc_channels(
 }
 
 fn flow_has_hotlink_transport(flow_spec: &serde_json::Value) -> bool {
-    let modules = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("modules"))
+    let modules = flow_spec_root(flow_spec)
+        .get("modules")
         .and_then(|m| m.as_object());
     let Some(modules) = modules else {
         return false;
@@ -847,7 +850,7 @@ fn resolve_share_source_output(
     source_step_id: &str,
     share_name: &str,
 ) -> Option<String> {
-    let steps = flow_spec.get("spec")?.get("steps")?.as_array()?;
+    let steps = flow_spec_root(flow_spec).get("steps")?.as_array()?;
     for step in steps {
         let id = step.get("id")?.as_str()?;
         if id != source_step_id {
@@ -3695,6 +3698,7 @@ fn build_group_map_from_participants(
     participants: &[FlowParticipant],
     flow_spec: &serde_json::Value,
 ) -> (HashMap<String, Vec<String>>, HashMap<String, String>) {
+    let spec_root = flow_spec_root(flow_spec);
     let mut groups: HashMap<String, Vec<String>> = HashMap::new();
     let mut default_to_actual: HashMap<String, String> = HashMap::new();
 
@@ -3720,9 +3724,8 @@ fn build_group_map_from_participants(
     }
 
     // Parse default datasite list from canonical flow schema.
-    let default_datasites: Vec<String> = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("inputs"))
+    let default_datasites: Vec<String> = spec_root
+        .get("inputs")
         .and_then(|i| i.get("datasites"))
         .and_then(|d| d.get("default"))
         .and_then(|arr| arr.as_array())
@@ -3732,9 +3735,8 @@ fn build_group_map_from_participants(
                 .collect()
         })
         .or_else(|| {
-            flow_spec
-                .get("spec")
-                .and_then(|s| s.get("datasites"))
+            spec_root
+                .get("datasites")
                 .and_then(|d| d.get("all"))
                 .and_then(|arr| arr.as_array())
                 .map(|arr| {
@@ -3757,9 +3759,8 @@ fn build_group_map_from_participants(
     }
 
     // Parse explicit datasite groups from flow spec when available.
-    if let Some(spec_groups) = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("datasites"))
+    if let Some(spec_groups) = spec_root
+        .get("datasites")
         .and_then(|d| d.get("groups"))
         .and_then(|g| g.as_object())
     {
@@ -4055,9 +4056,9 @@ fn parse_flow_steps(
     my_email: &str,
     participants: &[FlowParticipant],
 ) -> Result<Vec<StepState>, String> {
-    let steps = flow_spec
-        .get("spec")
-        .and_then(|s| s.get("steps"))
+    let spec_root = flow_spec_root(flow_spec);
+    let steps = spec_root
+        .get("steps")
         .and_then(|s| s.as_array())
         .ok_or_else(|| "Invalid flow spec: missing steps".to_string())?;
 
@@ -4198,9 +4199,8 @@ fn parse_flow_steps(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let module_path = module_ref.as_ref().and_then(|module_id| {
-            flow_spec
-                .get("spec")
-                .and_then(|s| s.get("modules"))
+            spec_root
+                .get("modules")
                 .and_then(|m| m.get(module_id))
                 .and_then(|m| m.get("source"))
                 .and_then(|s| s.get("path"))

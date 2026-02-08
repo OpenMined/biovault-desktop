@@ -341,11 +341,57 @@ export function createProposeFlowModal({
 	let selectedFlow = null
 	let flowRoles = []
 	let roleAssignments = {}
+	let flowRoleDefaults = {}
 
 	function escapeHtml(text) {
 		const div = document.createElement('div')
 		div.textContent = text
 		return div.innerHTML
+	}
+
+	function isMultipartyFlow(flow) {
+		const spec = flow?.spec || flow || {}
+		if (spec.multiparty === true || flow?.multiparty === true) return true
+		if (Array.isArray(spec.roles) && spec.roles.length > 1) return true
+		if (Array.isArray(flow?.roles) && flow.roles.length > 1) return true
+		if (spec?.inputs?.datasites) return true
+		if (Array.isArray(spec?.datasites?.all) && spec.datasites.all.length > 1) return true
+		if (Array.isArray(spec?.datasites) && spec.datasites.length > 1) return true
+		return false
+	}
+
+	function getDefaultDatasitesFromFlow(flow) {
+		const spec = flow?.spec || flow || {}
+		if (Array.isArray(spec?.inputs?.datasites?.default)) {
+			return spec.inputs.datasites.default.filter(Boolean)
+		}
+		if (Array.isArray(spec?.datasites?.all)) {
+			return spec.datasites.all.filter(Boolean)
+		}
+		if (Array.isArray(spec?.datasites)) {
+			return spec.datasites.filter(Boolean)
+		}
+		return []
+	}
+
+	function inferFlowRoles(flow) {
+		const roles = Array.isArray(flow?.spec?.roles) ? flow.spec.roles : []
+		if (roles.length > 0) {
+			return { roles, defaults: {} }
+		}
+
+		const defaults = {}
+		const datasites = getDefaultDatasitesFromFlow(flow)
+		const participantCount = Math.max(datasites.length, 2)
+		const inferredRoles = Array.from({ length: participantCount }, (_, index) => {
+			const roleId = `participant${index + 1}`
+			if (datasites[index]) defaults[roleId] = datasites[index]
+			return {
+				id: roleId,
+				description: datasites[index] ? `Default: ${datasites[index]}` : '',
+			}
+		})
+		return { roles: inferredRoles, defaults }
 	}
 
 	async function open() {
@@ -359,6 +405,7 @@ export function createProposeFlowModal({
 		selectedFlow = null
 		flowRoles = []
 		roleAssignments = {}
+		flowRoleDefaults = {}
 
 		// Load multiparty flows
 		await loadMultipartyFlows()
@@ -375,6 +422,7 @@ export function createProposeFlowModal({
 		selectedFlow = null
 		flowRoles = []
 		roleAssignments = {}
+		flowRoleDefaults = {}
 	}
 
 	async function loadMultipartyFlows() {
@@ -401,16 +449,7 @@ export function createProposeFlowModal({
 			})
 
 			// Filter for multiparty flows - check various possible structures
-			const multipartyFlows = (flows || []).filter((f) => {
-				// Check spec.multiparty
-				if (f.spec?.multiparty === true) return true
-				// Check if it has roles defined (another indicator of multiparty)
-				if (Array.isArray(f.spec?.roles) && f.spec.roles.length > 1) return true
-				// Also check top-level in case spec is unwrapped
-				if (f.multiparty === true) return true
-				if (Array.isArray(f.roles) && f.roles.length > 1) return true
-				return false
-			})
+			const multipartyFlows = (flows || []).filter((f) => isMultipartyFlow(f))
 
 			console.log('[ProposeFlow] Multiparty flows:', multipartyFlows)
 
@@ -464,6 +503,8 @@ export function createProposeFlowModal({
 		if (!selectedOption?.value || !selectedOption.dataset.flowSpec) {
 			selectedFlow = null
 			flowRoles = []
+			flowRoleDefaults = {}
+			roleAssignments = {}
 			if (rolesSection) rolesSection.style.display = 'none'
 			if (messageSection) messageSection.style.display = 'none'
 			if (sendBtn) sendBtn.disabled = true
@@ -472,7 +513,10 @@ export function createProposeFlowModal({
 
 		try {
 			selectedFlow = JSON.parse(selectedOption.dataset.flowSpec)
-			flowRoles = selectedFlow.spec?.roles || []
+			const inferred = inferFlowRoles(selectedFlow)
+			flowRoles = inferred.roles
+			flowRoleDefaults = inferred.defaults
+			roleAssignments = {}
 			renderRoleAssignments()
 			if (rolesSection) rolesSection.style.display = 'block'
 			if (messageSection) messageSection.style.display = 'block'
@@ -508,7 +552,14 @@ export function createProposeFlowModal({
 
 				// Auto-assign if possible
 				let defaultValue = ''
-				if (idx < contacts.length) {
+				const preferred = flowRoleDefaults[roleId] || ''
+				const preferredInContacts = preferred
+					? contacts.find((c) => c.email.toLowerCase() === preferred.toLowerCase())
+					: null
+				if (preferredInContacts) {
+					defaultValue = preferredInContacts.email
+					roleAssignments[roleId] = defaultValue
+				} else if (idx < contacts.length) {
 					defaultValue = contacts[idx].email
 					roleAssignments[roleId] = defaultValue
 				}
