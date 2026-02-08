@@ -453,8 +453,21 @@ async function runStepViaBackendAndWait(
 	expectedStatuses: string[],
 	timeoutMs = RUN_TIMEOUT_MS,
 ): Promise<void> {
-	await backend.invoke('run_flow_step', { sessionId, stepId }, 120_000)
-	console.log(`${label}: backend started ${stepId}`)
+	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
+	try {
+		await backend.invoke('run_flow_step', { sessionId, stepId }, rpcTimeoutMs)
+		console.log(`${label}: backend started ${stepId}`)
+	} catch (error) {
+		const message = String(error || '')
+		if (
+			/WS invoke timeout: run_flow_step/i.test(message) ||
+			/step is not ready to run \(status:\s*(completed|shared|running)\)/i.test(message)
+		) {
+			console.log(`${label}: backend run_flow_step transient for ${stepId}: ${message}`)
+		} else {
+			throw error
+		}
+	}
 	await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
 }
 
@@ -468,13 +481,15 @@ async function runStepViaBackendWhenReadyAndWait(
 ): Promise<void> {
 	const startedAt = Date.now()
 	let lastError = ''
+	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
 	const transientStartError = (message: string): boolean =>
 		/dependency .* not satisfied yet/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingforinputs\)/i.test(message) ||
-		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message)
+		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message) ||
+		/WS invoke timeout: run_flow_step/i.test(message)
 	while (Date.now() - startedAt < timeoutMs) {
 		try {
-			await backend.invoke('run_flow_step', { sessionId, stepId }, 120_000)
+			await backend.invoke('run_flow_step', { sessionId, stepId }, rpcTimeoutMs)
 			console.log(`${label}: backend started ${stepId}`)
 			await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
 			return
@@ -505,8 +520,18 @@ async function shareStepViaBackendAndWait(
 	label: string,
 	timeoutMs = RUN_TIMEOUT_MS,
 ): Promise<void> {
-	await backend.invoke('share_step_outputs', { sessionId, stepId }, 120_000)
-	console.log(`${label}: backend shared ${stepId}`)
+	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
+	try {
+		await backend.invoke('share_step_outputs', { sessionId, stepId }, rpcTimeoutMs)
+		console.log(`${label}: backend shared ${stepId}`)
+	} catch (error) {
+		const message = String(error || '')
+		if (/WS invoke timeout: share_step_outputs/i.test(message)) {
+			console.log(`${label}: backend share_step_outputs transient for ${stepId}: ${message}`)
+		} else {
+			throw error
+		}
+	}
 	await waitForLocalStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
 }
 
