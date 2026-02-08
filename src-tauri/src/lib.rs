@@ -1697,6 +1697,7 @@ pub fn run() {
             commands::multiparty::get_multiparty_flow_state,
             commands::multiparty::get_all_participant_progress,
             commands::multiparty::get_participant_logs,
+            commands::multiparty::get_multiparty_step_diagnostics,
             commands::multiparty::set_step_auto_run,
             commands::multiparty::run_flow_step,
             commands::multiparty::share_step_outputs,

@@ -20,11 +20,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const multipartyCodeExpanded = new Map()
 	const multipartyLogExpanded = new Map()
 	const multipartyStepLogIntervals = new Map()
+	const multipartyStepLogCache = new Map()
 	const multipartyStepTimerIntervals = new Map()
 	const multipartyRenderedHtml = new Map()
 	const multipartyRenderKeys = new Map()
 	const multipartyStepTimers = new Map()
 	const multipartyParticipantStatusMemory = new Map()
+	const multipartyDiagnosticsSamples = new Map()
 	let runsRenderKey = ''
 
 	function getNestedState(map, sessionId) {
@@ -66,6 +68,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			multipartyStepTimerIntervals.delete(sessionId)
 		}
 		stopAllStepLogPolling(sessionId)
+		for (const key of multipartyDiagnosticsSamples.keys()) {
+			if (key.startsWith(`${sessionId}::`)) {
+				multipartyDiagnosticsSamples.delete(key)
+			}
+		}
 	}
 
 	function stopAllMultipartyPolling() {
@@ -78,6 +85,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		multipartyRenderKeys.clear()
 		multipartyStepTimers.clear()
 		multipartyParticipantStatusMemory.clear()
+		multipartyDiagnosticsSamples.clear()
 	}
 
 	function getStepLogKey(sessionId, stepId) {
@@ -183,6 +191,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			if (key.startsWith(prefix)) {
 				clearInterval(interval)
 				multipartyStepLogIntervals.delete(key)
+			}
+		}
+		for (const key of multipartyStepLogCache.keys()) {
+			if (key.startsWith(prefix)) {
+				multipartyStepLogCache.delete(key)
 			}
 		}
 	}
@@ -722,6 +735,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	function renderMultipartyDetails(runMetadata, runId) {
 		const { session_id, my_role, participants } = runMetadata
 		if (!session_id || !participants) return ''
+		const inputOverrides = runMetadata?.input_overrides || {}
+		const inputEntries = Object.entries(inputOverrides).filter(([key]) => key.startsWith('inputs.'))
 
 		const participantsHtml = participants
 			.map((p) => {
@@ -733,12 +748,36 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			})
 			.join('')
 
+		const inputsHtml =
+			inputEntries.length > 0
+				? `
+				<div class="mp-section mp-inputs-section">
+					<button class="mp-inputs-toggle" type="button" data-run-id="${runId}">
+						<span>⚙ Inputs</span>
+						<span class="mp-inputs-count">${inputEntries.length}</span>
+					</button>
+					<div class="mp-inputs-body" data-run-id="${runId}" style="display: none;">
+						${inputEntries
+							.map(
+								([key, value]) => `
+								<div class="mp-input-row">
+									<span class="mp-input-key">${escapeHtml(key)}</span>
+									<span class="mp-input-value">${escapeHtml(String(value))}</span>
+								</div>
+							`,
+							)
+							.join('')}
+					</div>
+				</div>`
+				: ''
+
 		return `
 			<div class="multiparty-details" data-session-id="${escapeHtml(session_id)}">
 				<div class="mp-section">
 					<div class="mp-section-title">👥 Participants</div>
 					<div class="mp-participants">${participantsHtml}</div>
 				</div>
+				${inputsHtml}
 				<div class="mp-section">
 					<div class="mp-section-title">📋 Steps</div>
 					<div class="mp-steps-list" data-run-id="${runId}">
@@ -792,15 +831,40 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			// Fetch flow state, participant progress, and shared activity logs.
 			const [state, allProgress, activityLogs] = await Promise.all([
 				invoke('get_multiparty_flow_state', { sessionId }),
-					invoke('get_all_participant_progress', { sessionId }).catch(() => []),
-					invoke('get_participant_logs', { sessionId }).catch(() => []),
-				])
+				invoke('get_all_participant_progress', { sessionId }).catch(() => []),
+				invoke('get_participant_logs', { sessionId }).catch(() => []),
+			])
 
 			if (!state || !state.steps) {
 				multipartyRenderedHtml.delete(sessionId)
 				multipartyRenderKeys.delete(sessionId)
 				stepsContainer.innerHTML = '<div class="mp-no-steps">No steps found</div>'
 				return
+			}
+
+			const diagnosticStepIds = [
+				...new Set(
+					(state.steps || [])
+						.filter((step) => {
+							const id = String(step?.id || '').toLowerCase()
+							const modulePath = String(step?.module_path || '').toLowerCase()
+							return id === 'secure_aggregate' || modulePath.includes('secure-aggregate')
+						})
+						.map((step) => step.id),
+				),
+			]
+			const diagnosticsByStepId = new Map()
+			if (diagnosticStepIds.length > 0) {
+				const diagnosticResults = await Promise.all(
+					diagnosticStepIds.map((stepId) =>
+						invoke('get_multiparty_step_diagnostics', { sessionId, stepId }).catch(() => null),
+					),
+				)
+				for (const diagnostics of diagnosticResults) {
+					if (diagnostics && diagnostics.step_id) {
+						diagnosticsByStepId.set(diagnostics.step_id, diagnostics)
+					}
+				}
 			}
 
 			const normalizeKey = (value) => String(value || '').toLowerCase()
@@ -823,7 +887,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 				if (normalized === 'shared') return 'Shared'
 				if (normalized === 'sharing') return 'Sharing'
-				if (normalized === 'running' || normalized === 'in_progress' || normalized === 'in-progress')
+				if (
+					normalized === 'running' ||
+					normalized === 'in_progress' ||
+					normalized === 'in-progress'
+				)
 					return 'Running'
 				if (normalized === 'ready') return 'Ready'
 				if (
@@ -1037,7 +1105,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				return {
 					requiredEmails,
 					allDone,
-					anyShared: step.status === 'Shared' || participantRecords.some((p) => p.status === 'Shared'),
+					anyShared:
+						step.status === 'Shared' || participantRecords.some((p) => p.status === 'Shared'),
 				}
 			}
 
@@ -1062,8 +1131,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 			const isMyStepActionable = (step) => {
 				if (!step?.my_action) return false
-				const readyToShare = step.shares_output && step.status === 'Completed' && !step.outputs_shared
-				const readyToRun = step.status === 'Ready' || (step.status === 'Pending' && areDependenciesSatisfied(step))
+				const readyToShare =
+					step.shares_output && step.status === 'Completed' && !step.outputs_shared
+				const readyToRun =
+					step.status === 'Ready' || (step.status === 'Pending' && areDependenciesSatisfied(step))
 				if (!readyToRun && !readyToShare) return false
 				return areDependenciesSatisfied(step)
 			}
@@ -1075,16 +1146,18 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			let allComplete = completedSteps === totalSteps && totalSteps > 0
 
 			if (!allComplete && state.thread_id) {
-				const myAssignedDone = (state.steps || []).filter((s) => s.my_action).every((s) => {
-					if (s.shares_output) return s.status === 'Shared' || s.outputs_shared
-					return s.status === 'Completed' || s.status === 'Shared'
-				})
-				const finalShareStepId = [...(state.steps || [])]
-					.reverse()
-					.find((s) => s.shares_output)?.id
+				const myAssignedDone = (state.steps || [])
+					.filter((s) => s.my_action)
+					.every((s) => {
+						if (s.shares_output) return s.status === 'Shared' || s.outputs_shared
+						return s.status === 'Completed' || s.status === 'Shared'
+					})
+				const finalShareStepId = [...(state.steps || [])].reverse().find((s) => s.shares_output)?.id
 				if (myAssignedDone && finalShareStepId) {
 					try {
-						const threadMessages = await invoke('get_thread_messages', { threadId: state.thread_id })
+						const threadMessages = await invoke('get_thread_messages', {
+							threadId: state.thread_id,
+						})
 						const sawFinalShare = (threadMessages || []).some((msg) => {
 							const metadataRaw = msg?.metadata
 							if (!metadataRaw) return false
@@ -1186,14 +1259,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				return `<div class="mp-step-participants">
 						${allParticipants
 							.map((p) => {
-							// Check if this participant's email is in the step's target emails
-							const isInvolved = stepTargetEmails.includes(p.email)
-							if (!isInvolved) {
-								// Greyed out - not involved in this step
-								return `<span class="mp-participant-chip not-involved" title="${escapeHtml(p.email)} - Not involved">
+								// Check if this participant's email is in the step's target emails
+								const isInvolved = stepTargetEmails.includes(p.email)
+								if (!isInvolved) {
+									// Greyed out - not involved in this step
+									return `<span class="mp-participant-chip not-involved" title="${escapeHtml(p.email)} - Not involved">
 									☐ ${escapeHtml(p.email)}
 								</span>`
-							}
+								}
 
 								// Check if this participant has completed/shared this step
 								const completed = getParticipantStepStatus(stepId, p.email)
@@ -1201,27 +1274,27 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								const isShared = completed?.status === 'Shared'
 								const isReadyToShare = step.shares_output && completed?.status === 'Completed'
 
-							const checkbox = isComplete ? '☑' : '☐'
-							const statusClass = isComplete
-								? isShared
-									? 'shared'
-									: 'completed'
-								: isReadyToShare
-									? 'ready-share'
-									: 'pending'
-							const statusText = isShared
-								? 'Shared'
-								: isComplete
-									? 'Completed'
+								const checkbox = isComplete ? '☑' : '☐'
+								const statusClass = isComplete
+									? isShared
+										? 'shared'
+										: 'completed'
 									: isReadyToShare
-										? 'Ready to share'
-										: 'Pending'
+										? 'ready-share'
+										: 'pending'
+								const statusText = isShared
+									? 'Shared'
+									: isComplete
+										? 'Completed'
+										: isReadyToShare
+											? 'Ready to share'
+											: 'Pending'
 
-							return `<span class="mp-participant-chip ${statusClass}" title="${escapeHtml(p.email)} - ${statusText}">
+								return `<span class="mp-participant-chip ${statusClass}" title="${escapeHtml(p.email)} - ${statusText}">
 								${checkbox} ${escapeHtml(p.email)}
 							</span>`
-						})
-						.join('')}
+							})
+							.join('')}
 					</div>`
 			}
 
@@ -1257,19 +1330,25 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					let statusIcon = getStepStatusIcon(effectiveStatus)
 					const isMyAction = step.my_action
 					const isNextStep = myNextStep && step.id === myNextStep.id
-					if (isMyAction && step.shares_output && step.status === 'Completed' && !step.outputs_shared) {
+					if (
+						isMyAction &&
+						step.shares_output &&
+						step.status === 'Completed' &&
+						!step.outputs_shared
+					) {
 						statusIcon = '📤'
 					}
 					const stepExpandedState = getNestedState(multipartyStepExpanded, sessionId)
 					const codeExpandedState = getNestedState(multipartyCodeExpanded, sessionId)
 					const logExpandedState = getNestedState(multipartyLogExpanded, sessionId)
-					const defaultExpanded = !!isNextStep || effectiveStatus === 'Running' || effectiveStatus === 'Failed'
+					const defaultExpanded =
+						!!isNextStep || effectiveStatus === 'Running' || effectiveStatus === 'Failed'
 					const isExpanded = stepExpandedState.has(step.id)
 						? stepExpandedState.get(step.id)
 						: defaultExpanded
 					const isLogExpanded = logExpandedState.get(step.id) === true
-						const isCompleted = effectiveStatus === 'Completed' || effectiveStatus === 'Shared'
-						const dependenciesSatisfied = areDependenciesSatisfied(step)
+					const isCompleted = effectiveStatus === 'Completed' || effectiveStatus === 'Shared'
+					const dependenciesSatisfied = areDependenciesSatisfied(step)
 
 					// Only show auto toggle for pending/ready steps that are mine
 					const showAutoToggle = isMyAction && !isCompleted
@@ -1284,9 +1363,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								${isMyAction ? '<span class="mp-step-badge">Your step</span>' : ''}
 								${isNextStep ? '<span class="mp-step-badge mp-next-badge">Next</span>' : ''}
 							</button>
-							<div class="mp-step-body">
-								${renderParticipantChips(step, step.id, step.target_emails || [])}
-								<div class="mp-step-desc">${escapeHtml(step.description)}</div>
+								<div class="mp-step-body">
+									${renderParticipantChips(step, step.id, step.target_emails || [])}
+									${renderStepConnectivity(step, sessionId, diagnosticsByStepId.get(step.id))}
+									<div class="mp-step-desc">${escapeHtml(step.description)}</div>
 								${
 									step.code_preview
 										? `<details class="mp-step-code" ${codeExpandedState.get(step.id) ? 'open' : ''} ontoggle="window.runsModule?.rememberCodeToggle('${sessionId}','${escapeHtml(step.id)}', this.open)">
@@ -1349,6 +1429,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				allComplete,
 				waitingOnMeStepId: waitingOnMeStep?.id || '',
 				waitingOnOthers: waitingOnOthers.slice().sort(),
+				diagnostics: Array.from(diagnosticsByStepId.values())
+					.map((diag) => ({
+						stepId: diag.step_id,
+						channels: (diag.channels || []).map((channel) => ({
+							id: channel.channel_id,
+							status: channel.status,
+							listener: channel.listener_up === true ? 1 : channel.listener_up === false ? -1 : 0,
+						})),
+						peers: (diag.peers || [])
+							.map((peer) => ({
+								email: peer.email,
+								status: peer.status,
+								mode: peer.mode_short || peer.mode || '',
+							}))
+							.sort((a, b) => String(a.email).localeCompare(String(b.email))),
+					}))
+					.sort((a, b) => String(a.stepId).localeCompare(String(b.stepId))),
 				steps: (state.steps || []).map((step) => {
 					const completion = getStepCompletion(step)
 					const effectiveStatus = getEffectiveStepStatus(step, completion)
@@ -1380,14 +1477,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				multipartyRenderedHtml.set(sessionId, nextHtml)
 				multipartyRenderKeys.set(sessionId, renderKey)
 
-				stepsContainer
-					.querySelectorAll('.mp-step-logs[open]')
-					.forEach((detailsEl) => {
-						const stepId = detailsEl.dataset.stepId
-						if (stepId) {
-							window.runsModule?.toggleStepLogs(detailsEl, sessionId, stepId, true)
-						}
-					})
+				stepsContainer.querySelectorAll('.mp-step-logs[open]').forEach((detailsEl) => {
+					const stepId = detailsEl.dataset.stepId
+					if (stepId) {
+						window.runsModule?.toggleStepLogs(detailsEl, sessionId, stepId, true)
+					}
+				})
 			}
 			refreshStepTimerNodes(sessionId)
 
@@ -1435,7 +1530,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 										? `${participant} started ${stepLabel}`
 										: log.event === 'barrier_completed'
 											? `${participant} completed barrier ${stepLabel}`
-									: `${participant}: ${log.event}`
+											: `${participant}: ${log.event}`
 					return `<div class="mp-log-entry">
 						<span class="mp-log-time">${time}</span>
 						<span class="mp-log-event">${escapeHtml(eventText)}</span>
@@ -1489,14 +1584,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-module-btn" onclick="window.runsModule?.viewStepModule('${step.module_path.replace(/'/g, "\\'")}')">📦 View Module</button>`,
 			)
 		}
-			if ((step.status === 'Ready' || step.status === 'Pending') && dependenciesSatisfied) {
-				actions.push(
-					`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
-				)
-			}
-			if ((step.status === 'Ready' || step.status === 'Pending') && !dependenciesSatisfied) {
-				actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
-			}
+		if ((step.status === 'Ready' || step.status === 'Pending') && dependenciesSatisfied) {
+			actions.push(
+				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
+			)
+		}
+		if ((step.status === 'Ready' || step.status === 'Pending') && !dependenciesSatisfied) {
+			actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
+		}
 		if (step.status === 'Running') {
 			actions.push('<span class="mp-running">Running...</span>')
 		}
@@ -1551,6 +1646,156 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return div.innerHTML
 	}
 
+	function formatByteCount(bytes) {
+		const value = Number(bytes || 0)
+		if (!Number.isFinite(value) || value <= 0) return '0 B'
+		const units = ['B', 'KB', 'MB', 'GB', 'TB']
+		let unitIndex = 0
+		let scaled = value
+		while (scaled >= 1024 && unitIndex < units.length - 1) {
+			scaled /= 1024
+			unitIndex += 1
+		}
+		const digits = scaled >= 100 || unitIndex === 0 ? 0 : 1
+		return `${scaled.toFixed(digits)} ${units[unitIndex]}`
+	}
+
+	function formatRate(bytesPerSec) {
+		const value = Number(bytesPerSec || 0)
+		if (!Number.isFinite(value) || value <= 0) return '0 B/s'
+		return `${formatByteCount(value)}/s`
+	}
+
+	function shortIdentity(value) {
+		const text = String(value || '')
+		if (!text) return 'unknown'
+		return text.split('@')[0] || text
+	}
+
+	function getDiagnosticsSampleKey(sessionId, stepId) {
+		return `${sessionId}::${stepId}::diag`
+	}
+
+	function getPeerRateMap(sessionId, stepId, peers) {
+		const key = getDiagnosticsSampleKey(sessionId, stepId)
+		const previous = multipartyDiagnosticsSamples.get(key) || {}
+		const next = {}
+		const rateMap = {}
+		const nowMs = Date.now()
+
+		for (const peer of peers || []) {
+			const email = String(peer?.email || '')
+			if (!email) continue
+			const txBytes = Number(peer?.tx_bytes || 0)
+			const rxBytes = Number(peer?.rx_bytes || 0)
+			const updatedMsRaw = Number(peer?.updated_ms || 0)
+			const updatedMs = Number.isFinite(updatedMsRaw) && updatedMsRaw > 0 ? updatedMsRaw : nowMs
+			let txRate = 0
+			let rxRate = 0
+			const prev = previous[email]
+			if (prev) {
+				const deltaMs = Math.max(1, updatedMs - Number(prev.updatedMs || prev.seenMs || 0))
+				txRate = (Math.max(0, txBytes - Number(prev.txBytes || 0)) * 1000) / deltaMs
+				rxRate = (Math.max(0, rxBytes - Number(prev.rxBytes || 0)) * 1000) / deltaMs
+			}
+			next[email] = {
+				txBytes,
+				rxBytes,
+				updatedMs,
+				seenMs: nowMs,
+			}
+			rateMap[email] = { txRate, rxRate }
+		}
+
+		multipartyDiagnosticsSamples.set(key, next)
+		return rateMap
+	}
+
+	function renderStepConnectivity(step, sessionId, diagnostics) {
+		if (!diagnostics) return ''
+		const channels = Array.isArray(diagnostics.channels) ? diagnostics.channels : []
+		const peers = Array.isArray(diagnostics.peers) ? diagnostics.peers : []
+		if (!channels.length && !peers.length) return ''
+
+		const peerRates = getPeerRateMap(sessionId, step.id, peers)
+		const anyConnected = channels.some((channel) => channel?.status === 'connected')
+		const anyEstablishing = channels.some((channel) => channel?.status === 'establishing')
+		const liveLabel = anyConnected ? 'Connected' : anyEstablishing ? 'Establishing' : 'Waiting'
+		const liveClass = anyConnected ? 'connected' : anyEstablishing ? 'establishing' : 'waiting'
+
+		const linksHtml = channels
+			.map((channel) => {
+				const status = String(channel?.status || 'waiting')
+				const fromLabel = shortIdentity(channel?.from_email || '')
+				const toLabel = shortIdentity(channel?.to_email || '')
+				const portLabel = channel?.port ? `port ${channel.port}` : 'port pending'
+				const listenerLabel =
+					channel?.listener_up === true
+						? 'listener up'
+						: channel?.listener_up === false
+							? 'listener down'
+							: 'listener pending'
+				return `<div class="mp-link-row is-${escapeHtml(status)}">
+					<span class="mp-net-dot"></span>
+					<span class="mp-link-end">${escapeHtml(fromLabel)}</span>
+					<span class="mp-link-arrow">→</span>
+					<span class="mp-link-end">${escapeHtml(toLabel)}</span>
+					<span class="mp-link-meta">${escapeHtml(portLabel)} · ${escapeHtml(listenerLabel)} · req ${escapeHtml(String(channel?.requests || 0))} / res ${escapeHtml(String(channel?.responses || 0))}</span>
+				</div>`
+			})
+			.join('')
+
+		const peersHtml = peers
+			.map((peer) => {
+				const email = String(peer?.email || '')
+				const status = String(peer?.status || 'pending')
+				const rates = peerRates[email] || { txRate: 0, rxRate: 0 }
+				const mode = String(peer?.mode_short || peer?.mode || 'unknown')
+				const txAvg = Number(peer?.tx_avg_send_ms || 0)
+				const rxAvg = Number(peer?.rx_avg_write_ms || 0)
+				const latencyParts = []
+				if (txAvg > 0) latencyParts.push(`TX ${txAvg.toFixed(1)}ms`)
+				if (rxAvg > 0) latencyParts.push(`RX ${rxAvg.toFixed(1)}ms`)
+				const latencyLabel = latencyParts.length ? latencyParts.join(' · ') : 'Latency n/a'
+				const ageMs = Number(peer?.age_ms || 0)
+				const freshness =
+					status === 'connected'
+						? 'live'
+						: status === 'stale'
+							? `${Math.round(ageMs / 1000)}s old`
+							: 'pending'
+				return `<div class="mp-peer-card is-${escapeHtml(status)}">
+					<div class="mp-peer-head">
+						<span class="mp-net-dot"></span>
+						<span class="mp-peer-name">${escapeHtml(shortIdentity(email))}</span>
+						<span class="mp-peer-mode">${escapeHtml(mode)}</span>
+					</div>
+					<div class="mp-peer-metric-row">
+						<span>TX ${escapeHtml(formatRate(rates.txRate))}</span>
+						<span>RX ${escapeHtml(formatRate(rates.rxRate))}</span>
+					</div>
+					<div class="mp-peer-metric-row subtle">
+						<span>${escapeHtml(latencyLabel)}</span>
+						<span>${escapeHtml(freshness)}</span>
+					</div>
+					<div class="mp-peer-metric-row subtle">
+						<span>Total TX ${escapeHtml(formatByteCount(peer?.tx_bytes || 0))}</span>
+						<span>Total RX ${escapeHtml(formatByteCount(peer?.rx_bytes || 0))}</span>
+					</div>
+				</div>`
+			})
+			.join('')
+
+		return `<div class="mp-net-panel">
+			<div class="mp-net-header">
+				<span class="mp-net-title">Transport connectivity</span>
+				<span class="mp-net-live is-${escapeHtml(liveClass)}">${escapeHtml(liveLabel)}</span>
+			</div>
+			${linksHtml ? `<div class="mp-net-links">${linksHtml}</div>` : ''}
+			${peersHtml ? `<div class="mp-peer-grid">${peersHtml}</div>` : ''}
+		</div>`
+	}
+
 	// Expose multiparty step controls to window
 	window.runsModule = window.runsModule || {}
 	window.runsModule.toggleStepAutoRun = async function (checkbox) {
@@ -1567,14 +1812,18 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const expandedState = getNestedState(multipartyStepExpanded, sessionId)
 		const current = expandedState.get(stepId) ?? false
 		expandedState.set(stepId, !current)
-		const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+		const runCard = document
+			.querySelector(`[data-session-id="${sessionId}"]`)
+			?.closest('.flow-run-card')
 		if (runCard) {
 			const runId = runCard.dataset.runId
 			loadMultipartySteps(sessionId, runId).catch(() => {})
 		}
 	}
 	window.runsModule.setAllStepsExpanded = function (sessionId, expand) {
-		const runCard = document.querySelector(`[data-session-id="${sessionId}"]`)?.closest('.flow-run-card')
+		const runCard = document
+			.querySelector(`[data-session-id="${sessionId}"]`)
+			?.closest('.flow-run-card')
 		if (!runCard) return
 		const runId = runCard.dataset.runId
 		const steps = runCard.querySelectorAll('.mp-step[data-step-id]')
@@ -1597,6 +1846,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 		const preEl = detailsEl?.querySelector('.mp-step-log-block')
 		if (!preEl) return
+		const cacheKey = getStepLogKey(sessionId, stepId)
 
 		const refreshLogs = async () => {
 			try {
@@ -1605,10 +1855,25 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					stepId,
 					lines: 240,
 				})
-				const rendered = String(text || '').trim()
-				preEl.textContent = rendered || 'No step-specific logs yet.'
+				const rendered = String(text || '').trim() || 'No step-specific logs yet.'
+				const previous = multipartyStepLogCache.get(cacheKey)
+				if (previous === rendered) return
+				const wasAtBottom = preEl.scrollHeight - preEl.scrollTop - preEl.clientHeight < 24
+				const previousScrollTop = preEl.scrollTop
+				preEl.textContent = rendered
+				multipartyStepLogCache.set(cacheKey, rendered)
+				if (wasAtBottom) {
+					preEl.scrollTop = preEl.scrollHeight
+				} else {
+					const maxScrollTop = Math.max(0, preEl.scrollHeight - preEl.clientHeight)
+					preEl.scrollTop = Math.min(previousScrollTop, maxScrollTop)
+				}
 			} catch (error) {
-				preEl.textContent = `Failed to load logs: ${error}`
+				const renderedError = `Failed to load logs: ${error}`
+				if (multipartyStepLogCache.get(cacheKey) !== renderedError) {
+					preEl.textContent = renderedError
+					multipartyStepLogCache.set(cacheKey, renderedError)
+				}
 			}
 		}
 
@@ -1758,7 +2023,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					metadata: run.metadata || null,
 				})),
 			)
-			if (!autoExpandRunId && container?.children?.length > 0 && runsRenderKey === nextRunsRenderKey) {
+			if (
+				!autoExpandRunId &&
+				container?.children?.length > 0 &&
+				runsRenderKey === nextRunsRenderKey
+			) {
 				return
 			}
 			runsRenderKey = nextRunsRenderKey
@@ -1819,9 +2088,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					titleParts.push(typeLabel)
 				}
 				const runTitle = titleParts.join(' ')
-					const card = document.createElement('div')
-					card.className = 'flow-run-card'
-					card.dataset.runId = run.id
+				const card = document.createElement('div')
+				card.className = 'flow-run-card'
+				card.dataset.runId = run.id
 				card.style.cssText =
 					'background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; overflow: hidden; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);'
 
@@ -2023,8 +2292,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				</div>
 			`
 
-					const isMultiparty = runMetadata.type === 'multiparty'
-					card.dataset.isMultiparty = isMultiparty ? 'true' : 'false'
+				const isMultiparty = runMetadata.type === 'multiparty'
+				card.dataset.isMultiparty = isMultiparty ? 'true' : 'false'
 
 				// Handle expand/collapse
 				const header = card.querySelector('.run-header')
@@ -2374,6 +2643,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 
 				container.appendChild(card)
+
+				const mpInputsToggle = card.querySelector('.mp-inputs-toggle')
+				if (mpInputsToggle) {
+					mpInputsToggle.addEventListener('click', () => {
+						const runId = mpInputsToggle.dataset.runId
+						const body = card.querySelector(`.mp-inputs-body[data-run-id="${runId}"]`)
+						if (!body) return
+						const expanded = body.style.display !== 'none'
+						body.style.display = expanded ? 'none' : 'block'
+					})
+				}
 
 				// Load steps AFTER card is in DOM
 				if (card.dataset.shouldLoadSteps === 'true') {

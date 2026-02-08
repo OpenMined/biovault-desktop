@@ -3894,6 +3894,11 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let thread_id: Option<String> = args
                 .get("threadId")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let input_overrides: Option<std::collections::HashMap<String, String>> = args
+                .get("inputOverrides")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|e| format!("Failed to parse inputOverrides: {}", e))?;
             let result = crate::commands::multiparty::accept_flow_invitation(
                 state.clone(),
                 session_id,
@@ -3902,6 +3907,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 participants,
                 auto_run_all,
                 thread_id,
+                input_overrides,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -3914,9 +3920,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing sessionId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
-            let result = crate::commands::multiparty::get_multiparty_flow_state(session_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::commands::multiparty::get_multiparty_flow_state(state.clone(), session_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_all_participant_progress" => {
@@ -3941,6 +3948,25 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::commands::multiparty::get_participant_logs(session_id)
                 .await
                 .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_multiparty_step_diagnostics" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result =
+                crate::commands::multiparty::get_multiparty_step_diagnostics(session_id, step_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_multiparty_step_logs" => {

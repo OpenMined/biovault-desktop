@@ -1,12 +1,12 @@
 /**
  * Syqure Multiparty Flow Test (Three Clients)
  * Uses the same invitation system as --pipelines-multiparty-flow, but executes
- * the real syqure flow from biovault/tests/scenarios/syqure-flow/flow.yaml.
+ * the real syqure flow from biovault/tests/scenarios/allele-freq-syqure/flow.yaml.
  *
  * Usage:
- *   ./test-scenario.sh --syqure-multiparty-flow --interactive
+ *   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive
  *
- * @tag syqure-multiparty-flow
+ * @tag syqure-multiparty-allele-freq
  */
 import { expect, test, type Page } from './playwright-fixtures'
 import WebSocket from 'ws'
@@ -21,12 +21,6 @@ const MESSAGE_TIMEOUT = 180_000
 const RUN_TIMEOUT_MS = Number.parseInt(
 	process.env.SYQURE_MULTIPARTY_RUN_TIMEOUT_MS || '1200000',
 	10,
-)
-const SECURE_ONLY_MODE = ['1', 'true', 'yes'].includes(
-	String(process.env.SYQURE_MULTIPARTY_SECURE_ONLY || '').toLowerCase(),
-)
-const CLI_PARITY_MODE = ['1', 'true', 'yes'].includes(
-	String(process.env.SYQURE_MULTIPARTY_CLI_PARITY || '').toLowerCase(),
 )
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
@@ -105,131 +99,6 @@ async function getSyftboxDataDir(backend: Backend): Promise<string> {
 		throw new Error('WS bridge did not return a usable data_dir (get_syftbox_config_info)')
 	}
 	return dataDir
-}
-
-function prepareSecureOnlyFixtures(sessionId: string): { countsPath: string; countPath: string } {
-	const fixturesDir = path.join(process.cwd(), 'artifacts', 'syqure-secure-only', sessionId)
-	fs.mkdirSync(fixturesDir, { recursive: true })
-
-	const counts = [3, 1, 0]
-	const countsPath = path.join(fixturesDir, 'counts_array.json')
-	const countPath = path.join(fixturesDir, 'count.txt')
-	fs.writeFileSync(countsPath, `${JSON.stringify(counts)}\n`, 'utf8')
-	fs.writeFileSync(countPath, `${counts.length}\n`, 'utf8')
-
-	return { countsPath, countPath }
-}
-
-function buildSecureOnlyFlowSpec(
-	datasites: [string, string, string],
-	countsPath: string,
-	countPath: string,
-	secureAggregateModulePath: string,
-): Record<string, any> {
-	return {
-		vars: {
-			flow_path: 'syft://{datasite.current}/shared/flows/{flow_name}',
-			run_path: '{vars.flow_path}/{run_id}',
-			step_path: '{vars.run_path}/{step.number}-{step.id}',
-		},
-		coordination: {
-			url: '{vars.run_path}/_progress',
-			share_with: 'all',
-		},
-		mpc: {
-			url: '{vars.run_path}/_mpc',
-			topology: 'mesh',
-		},
-		inputs: {
-			datasites: {
-				default: datasites,
-			},
-		},
-		datasites: {
-			all: 'inputs.datasites',
-			groups: {
-				aggregator: {
-					include: ['{datasites[0]}'],
-				},
-				clients: {
-					include: ['{datasites[1]}', '{datasites[2]}'],
-				},
-			},
-		},
-		modules: {
-			secure_aggregate: {
-				source: {
-					kind: 'local',
-					path: secureAggregateModulePath,
-				},
-				allow_dirty: true,
-				interface: {
-					inputs: [
-						{ name: 'counts', type: 'File' },
-						{ name: 'array_length', type: 'String' },
-					],
-					outputs: [{ name: 'aggregated_counts', type: 'File' }],
-				},
-				assets: [{ path: 'smpc_aggregate.codon' }, { path: 'he_aggregate.codon' }],
-			},
-		},
-		steps: [
-			{
-				id: 'secure_aggregate',
-				uses: 'secure_aggregate',
-				run: {
-					targets: 'all',
-					strategy: 'parallel',
-				},
-				with: {
-					counts: {
-						value: countsPath,
-						only: 'clients',
-					},
-					array_length: {
-						value: countPath,
-					},
-				},
-				share: {
-					result_shared: {
-						source: 'self.outputs.aggregated_counts',
-						url: '{vars.step_path}/aggregated.json',
-						permissions: {
-							read: ['{datasites[*]}'],
-							write: ['{datasite.current}'],
-						},
-					},
-				},
-			},
-		],
-	}
-}
-
-function applyCliParityModulePaths(
-	spec: Record<string, any>,
-	sourceFlowPath: string,
-): Record<string, any> {
-	const cloned = JSON.parse(JSON.stringify(spec || {}))
-	const modulesRoot = path.join(path.dirname(sourceFlowPath), 'modules')
-	const modules = cloned?.modules
-	if (!modules || typeof modules !== 'object') return cloned
-
-	for (const moduleDef of Object.values(modules as Record<string, any>)) {
-		const source = moduleDef?.source
-		if (!source || source.kind !== 'local' || typeof source.path !== 'string') continue
-
-		const modulePath = source.path.trim()
-		if (!modulePath) continue
-		if (path.isAbsolute(modulePath)) continue
-
-		let relativePath = modulePath.replace(/^[.][\\/]/, '')
-		if (relativePath.startsWith('modules/')) {
-			relativePath = relativePath.slice('modules/'.length)
-		}
-		source.path = path.join(modulesRoot, relativePath)
-	}
-
-	return cloned
 }
 
 function didBundlePath(viewerDataDir: string, identity: string): string {
@@ -638,9 +507,14 @@ function collectMatchingFiles(rootDir: string, filename: string): string[] {
 	return matches
 }
 
-function assertSharedRunDirExists(dataDir: string, ownerEmail: string, runId: string) {
+function assertSharedRunDirExists(
+	dataDir: string,
+	ownerEmail: string,
+	flowName: string,
+	runId: string,
+) {
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
-	const runDir = path.join(datasitesRoot, ownerEmail, 'shared', 'flows', 'syqure-flow', runId)
+	const runDir = path.join(datasitesRoot, ownerEmail, 'shared', 'flows', flowName, runId)
 	expect(fs.existsSync(runDir)).toBe(true)
 
 	const hasProgressDir =
@@ -655,182 +529,6 @@ function getSharedRunDir(
 	runId: string,
 ): string {
 	return path.join(resolveDatasitesRoot(dataDir), ownerEmail, 'shared', 'flows', flowName, runId)
-}
-
-type MpcTcpMarker = {
-	from: string
-	to: string
-	port: number
-	ports: Record<string, number>
-}
-
-function readMpcTcpMarker(markerPath: string): MpcTcpMarker {
-	const raw = fs.readFileSync(markerPath, 'utf8').trim()
-	const parsed = JSON.parse(raw)
-	return {
-		from: String(parsed?.from || ''),
-		to: String(parsed?.to || ''),
-		port: Number(parsed?.port || 0),
-		ports: Object.fromEntries(
-			Object.entries(parsed?.ports || {}).map(([email, port]) => [String(email), Number(port)]),
-		),
-	}
-}
-
-function normalizePortMap(portMap: Record<string, number>): string {
-	return Object.entries(portMap)
-		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([email, port]) => `${email}:${port}`)
-		.join('|')
-}
-
-function getExpectedMpcChannels(datasites: string[]) {
-	const channels: Array<{
-		from: string
-		to: string
-		fromIndex: number
-		toIndex: number
-		channelId: string
-	}> = []
-	for (let fromIndex = 0; fromIndex < datasites.length; fromIndex += 1) {
-		for (let toIndex = 0; toIndex < datasites.length; toIndex += 1) {
-			if (fromIndex === toIndex) continue
-			channels.push({
-				from: datasites[fromIndex],
-				to: datasites[toIndex],
-				fromIndex,
-				toIndex,
-				channelId: `${fromIndex}_to_${toIndex}`,
-			})
-		}
-	}
-	return channels
-}
-
-function assertMpcTopology(
-	participantDataDirs: Map<string, string>,
-	datasites: string[],
-	flowName: string,
-	runId: string,
-): void {
-	const channels = getExpectedMpcChannels(datasites)
-	const pairMarkers = new Map<string, MpcTcpMarker>()
-
-	for (const ownerEmail of datasites) {
-		const ownerDataDir = participantDataDirs.get(ownerEmail)
-		expect(ownerDataDir, `missing data dir for owner ${ownerEmail}`).toBeTruthy()
-		const ownerMpcDir = path.join(
-			getSharedRunDir(ownerDataDir!, ownerEmail, flowName, runId),
-			'_mpc',
-		)
-		expect(fs.existsSync(ownerMpcDir), `owner _mpc missing: ${ownerMpcDir}`).toBe(true)
-		expect(
-			fs.existsSync(path.join(ownerMpcDir, 'syft.pub.yaml')),
-			`owner _mpc/syft.pub.yaml missing: ${ownerMpcDir}`,
-		).toBe(true)
-	}
-
-	for (const channel of channels) {
-		const ownerDataDir = participantDataDirs.get(channel.from)
-		expect(ownerDataDir, `missing data dir for owner ${channel.from}`).toBeTruthy()
-
-		const ownerMpcDir = path.join(
-			getSharedRunDir(ownerDataDir!, channel.from, flowName, runId),
-			'_mpc',
-		)
-		const ownerChannelDir = path.join(ownerMpcDir, channel.channelId)
-		const ownerTcpPath = path.join(ownerChannelDir, 'stream.tcp')
-		const ownerAcceptPath = path.join(ownerChannelDir, 'stream.accept')
-		const ownerAclPath = path.join(ownerChannelDir, 'syft.pub.yaml')
-
-		expect(fs.existsSync(ownerChannelDir), `owner channel dir missing: ${ownerChannelDir}`).toBe(
-			true,
-		)
-		expect(fs.existsSync(ownerTcpPath), `owner stream.tcp missing: ${ownerTcpPath}`).toBe(true)
-		expect(fs.existsSync(ownerAcceptPath), `owner stream.accept missing: ${ownerAcceptPath}`).toBe(
-			true,
-		)
-		expect(
-			fs.existsSync(ownerAclPath),
-			`owner channel syft.pub.yaml missing: ${ownerAclPath}`,
-		).toBe(true)
-
-		const acceptValue = fs.readFileSync(ownerAcceptPath, 'utf8').trim()
-		expect(
-			acceptValue === '1' || acceptValue === 'true',
-			`owner stream.accept invalid (${ownerAcceptPath}): ${acceptValue}`,
-		).toBe(true)
-
-		const marker = readMpcTcpMarker(ownerTcpPath)
-		expect(marker.from, `stream.tcp from mismatch for ${ownerTcpPath}`).toBe(channel.from)
-		expect(marker.to, `stream.tcp to mismatch for ${ownerTcpPath}`).toBe(channel.to)
-		expect(marker.port > 0, `stream.tcp port invalid for ${ownerTcpPath}: ${marker.port}`).toBe(
-			true,
-		)
-		expect(
-			Number(marker.ports[channel.from]) > 0,
-			`stream.tcp ports missing sender (${channel.from}) for ${ownerTcpPath}`,
-		).toBe(true)
-		expect(
-			Number(marker.ports[channel.to]) > 0,
-			`stream.tcp ports missing recipient (${channel.to}) for ${ownerTcpPath}`,
-		).toBe(true)
-
-		const pairKey = [channel.from, channel.to].sort().join('<->')
-		const existing = pairMarkers.get(pairKey)
-		if (existing) {
-			expect(marker.port, `pair port mismatch for ${pairKey}`).toBe(existing.port)
-			expect(normalizePortMap(marker.ports), `pair port-map mismatch for ${pairKey}`).toBe(
-				normalizePortMap(existing.ports),
-			)
-		} else {
-			pairMarkers.set(pairKey, marker)
-		}
-
-		for (const viewerEmail of datasites) {
-			const viewerDataDir = participantDataDirs.get(viewerEmail)
-			expect(viewerDataDir, `missing data dir for viewer ${viewerEmail}`).toBeTruthy()
-			const viewerMpcDir = path.join(
-				getSharedRunDir(viewerDataDir!, channel.from, flowName, runId),
-				'_mpc',
-			)
-			const viewerChannelDir = path.join(viewerMpcDir, channel.channelId)
-			const viewerAclPath = path.join(viewerChannelDir, 'syft.pub.yaml')
-
-			expect(
-				fs.existsSync(viewerChannelDir),
-				`viewer channel dir missing (${viewerEmail}): ${viewerChannelDir}`,
-			).toBe(true)
-			expect(
-				fs.existsSync(viewerAclPath),
-				`viewer channel syft.pub.yaml missing (${viewerEmail}): ${viewerAclPath}`,
-			).toBe(true)
-		}
-	}
-}
-
-async function waitForMpcTopologyReady(
-	participantDataDirs: Map<string, string>,
-	datasites: string[],
-	flowName: string,
-	runId: string,
-	timeoutMs = MESSAGE_TIMEOUT,
-): Promise<void> {
-	const startedAt = Date.now()
-	let lastError = ''
-	while (Date.now() - startedAt < timeoutMs) {
-		try {
-			assertMpcTopology(participantDataDirs, datasites, flowName, runId)
-			return
-		} catch (error) {
-			lastError = String(error)
-		}
-		await new Promise((resolve) => setTimeout(resolve, 1200))
-	}
-	throw new Error(
-		`Timed out waiting for _mpc topology/port markers to be ready for run ${runId}` +
-			(lastError ? `\nLast topology error: ${lastError}` : ''),
-	)
 }
 
 function getSharedStepDirCandidates(runDir: string, stepNumber: number, stepId: string): string[] {
@@ -934,7 +632,7 @@ async function waitForProgressConvergence(
 	throw new Error('Timed out waiting for cross-participant progress convergence')
 }
 
-test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-flow', () => {
+test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-allele-freq', () => {
 	test('three clients join via invitation card and execute real syqure flow', async ({
 		browser,
 	}) => {
@@ -947,22 +645,16 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const email3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
 
-		const flowName = 'syqure-flow'
+		const flowName = 'allele-freq-syqure'
 		const sourceFlowPath = path.join(
 			process.cwd(),
 			'biovault',
 			'tests',
 			'scenarios',
-			'syqure-flow',
+			'allele-freq-syqure',
 			'flow.yaml',
 		)
 		expect(fs.existsSync(sourceFlowPath)).toBe(true)
-		const secureAggregateModulePath = CLI_PARITY_MODE
-			? path.join(path.dirname(sourceFlowPath), 'modules', 'secure-aggregate')
-			: './modules/secure-aggregate'
-		if (CLI_PARITY_MODE) {
-			expect(fs.existsSync(secureAggregateModulePath)).toBe(true)
-		}
 
 		let logSocket: WebSocket | null = null
 		let backend1: Backend | null = null
@@ -975,7 +667,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 		try {
 			logSocket = await ensureLogSocket()
 			log(logSocket, {
-				event: 'syqure-multiparty-flow-start',
+				event: 'syqure-multiparty-allele-freq-start',
 				email1,
 				email2,
 				email3,
@@ -1070,19 +762,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			// are observed consistently by collaborative UI/state readers.
 			const runId = sessionId
 			const datasites = [email3, email1, email2]
-			const secureStepNumber = SECURE_ONLY_MODE ? 1 : 5
-
-			const secureOnlyFixtures = SECURE_ONLY_MODE ? prepareSecureOnlyFixtures(sessionId) : null
-			const resolvedSpec = SECURE_ONLY_MODE
-				? buildSecureOnlyFlowSpec(
-						[email3, email1, email2],
-						secureOnlyFixtures!.countsPath,
-						secureOnlyFixtures!.countPath,
-						secureAggregateModulePath,
-					)
-				: CLI_PARITY_MODE
-					? applyCliParityModulePaths(syqureFlowAgg.spec, sourceFlowPath)
-					: syqureFlowAgg.spec
 
 			const flowSpec = {
 				apiVersion: 'syftbox.openmined.org/v1alpha1',
@@ -1091,17 +770,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 					name: flowName,
 					version: syqureFlowAgg?.version || '0.1.0',
 				},
-				spec: resolvedSpec,
-			}
-			if (SECURE_ONLY_MODE) {
-				console.log(
-					`secure-only mode enabled: counts=${secureOnlyFixtures!.countsPath} count=${secureOnlyFixtures!.countPath}`,
-				)
-			}
-			if (CLI_PARITY_MODE) {
-				console.log(
-					`cli-parity mode enabled: module paths resolved from ${path.dirname(sourceFlowPath)}`,
-				)
+				spec: syqureFlowAgg.spec,
 			}
 
 			const participants = [
@@ -1148,108 +817,102 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			expect(syqureFlow1).toBeTruthy()
 			expect(syqureFlow2).toBeTruthy()
 			expect(syqureFlow3).toBeTruthy()
-
 			// Drive execution through the same UI controls users use (Run/Share per participant window).
 			await Promise.all([clickRunsTab(page1), clickRunsTab(page2), clickRunsTab(page3)])
 
-			if (!SECURE_ONLY_MODE) {
-				// Stage 1: clients run + share gen_variants.
-				await Promise.all([
-					clickStepActionAndWait(
-						page1,
-						backend1,
-						sessionId,
-						'gen_variants',
-						'mp-run-btn',
-						email1,
-						['Completed', 'Shared'],
-						180_000,
-					),
-					clickStepActionAndWait(
-						page2,
-						backend2,
-						sessionId,
-						'gen_variants',
-						'mp-run-btn',
-						email2,
-						['Completed', 'Shared'],
-						180_000,
-					),
-				])
-				await Promise.all([
-					clickStepActionAndWait(
-						page1,
-						backend1,
-						sessionId,
-						'gen_variants',
-						'mp-share-btn',
-						email1,
-						['Shared'],
-						180_000,
-					),
-					clickStepActionAndWait(
-						page2,
-						backend2,
-						sessionId,
-						'gen_variants',
-						'mp-share-btn',
-						email2,
-						['Shared'],
-						180_000,
-					),
-				])
-
-				// Stage 2: aggregator run + share build_master.
-				await clickStepActionAndWait(
-					page3,
-					backend3,
+			// Stage 1: clients run + share gen_allele_freq.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
 					sessionId,
-					'build_master',
+					'gen_allele_freq',
 					'mp-run-btn',
-					email3,
+					email1,
 					['Completed', 'Shared'],
 					180_000,
-				)
-				await clickStepActionAndWait(
-					page3,
-					backend3,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
 					sessionId,
-					'build_master',
+					'gen_allele_freq',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					180_000,
+				),
+			])
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'gen_allele_freq',
 					'mp-share-btn',
-					email3,
+					email1,
 					['Shared'],
 					180_000,
-				)
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'gen_allele_freq',
+					'mp-share-btn',
+					email2,
+					['Shared'],
+					180_000,
+				),
+			])
 
-				// Stage 3: clients run align_counts.
-				await Promise.all([
-					clickStepActionAndWait(
-						page1,
-						backend1,
-						sessionId,
-						'align_counts',
-						'mp-run-btn',
-						email1,
-						['Completed', 'Shared'],
-						180_000,
-					),
-					clickStepActionAndWait(
-						page2,
-						backend2,
-						sessionId,
-						'align_counts',
-						'mp-run-btn',
-						email2,
-						['Completed', 'Shared'],
-						180_000,
-					),
-				])
+			// Stage 2: aggregator run + share build_master.
+			await clickStepActionAndWait(
+				page3,
+				backend3,
+				sessionId,
+				'build_master',
+				'mp-run-btn',
+				email3,
+				['Completed', 'Shared'],
+				180_000,
+			)
+			await clickStepActionAndWait(
+				page3,
+				backend3,
+				sessionId,
+				'build_master',
+				'mp-share-btn',
+				email3,
+				['Shared'],
+				180_000,
+			)
 
-				// Assert MPC channel directories/markers before secure_aggregate starts.
-				await waitForMpcTopologyReady(participantDataDirs, datasites, flowName, runId, 180_000)
-			}
+			// Stage 3: clients run align_counts.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'align_counts',
+					'mp-run-btn',
+					email1,
+					['Completed', 'Shared'],
+					180_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'align_counts',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					180_000,
+				),
+			])
 
-			// Final stage: all parties run + share secure_aggregate.
+			// Stage 4: all parties run secure_aggregate.
 			await Promise.all([
 				clickStepActionAndWait(
 					page1,
@@ -1282,6 +945,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 					RUN_TIMEOUT_MS,
 				),
 			])
+			// Stage 4b: clients share secure_aggregate outputs.
 			await Promise.all([
 				clickStepActionAndWait(
 					page1,
@@ -1303,21 +967,35 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 					['Shared'],
 					RUN_TIMEOUT_MS,
 				),
+			])
+
+			// Stage 5: clients run report_aggregate.
+			await Promise.all([
 				clickStepActionAndWait(
-					page3,
-					backend3,
+					page1,
+					backend1,
 					sessionId,
-					'secure_aggregate',
-					'mp-share-btn',
-					email3,
-					['Shared'],
-					RUN_TIMEOUT_MS,
+					'report_aggregate',
+					'mp-run-btn',
+					email1,
+					['Completed', 'Shared'],
+					240_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'report_aggregate',
+					'mp-run-btn',
+					email2,
+					['Completed', 'Shared'],
+					240_000,
 				),
 			])
 
-			assertSharedRunDirExists(dataDir1, email1, runId)
-			assertSharedRunDirExists(dataDir2, email2, runId)
-			assertSharedRunDirExists(dataDir3, email3, runId)
+			assertSharedRunDirExists(dataDir1, email1, flowName, runId)
+			assertSharedRunDirExists(dataDir2, email2, flowName, runId)
+			assertSharedRunDirExists(dataDir3, email3, flowName, runId)
 
 			// Verify each participant can observe converged step statuses from all parties.
 			const viewers = [
@@ -1325,23 +1003,18 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 				{ label: email2, backend: backend2 },
 				{ label: email3, backend: backend3 },
 			]
-			const expectedConvergence = SECURE_ONLY_MODE
-				? [
-						{ email: email1, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-						{ email: email2, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-						{ email: email3, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-					]
-				: [
-						{ email: email1, stepId: 'gen_variants', statuses: ['Shared', 'Completed'] },
-						{ email: email2, stepId: 'gen_variants', statuses: ['Shared', 'Completed'] },
-						{ email: email3, stepId: 'build_master', statuses: ['Shared', 'Completed'] },
-						{ email: email1, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
-						{ email: email2, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
-						{ email: email1, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-						{ email: email2, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-						{ email: email3, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-					]
-			await waitForProgressConvergence(viewers, sessionId, expectedConvergence)
+			await waitForProgressConvergence(viewers, sessionId, [
+				{ email: email1, stepId: 'gen_allele_freq', statuses: ['Shared', 'Completed'] },
+				{ email: email2, stepId: 'gen_allele_freq', statuses: ['Shared', 'Completed'] },
+				{ email: email3, stepId: 'build_master', statuses: ['Shared', 'Completed'] },
+				{ email: email1, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
+				{ email: email2, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
+				{ email: email1, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
+				{ email: email2, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
+				{ email: email3, stepId: 'secure_aggregate', statuses: ['Completed', 'Shared'] },
+				{ email: email1, stepId: 'report_aggregate', statuses: ['Completed', 'Shared'] },
+				{ email: email2, stepId: 'report_aggregate', statuses: ['Completed', 'Shared'] },
+			])
 
 			const finalRun1 = await waitForRunStatus(
 				backend1,
@@ -1371,6 +1044,17 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			expect(finalRun2.status).toBe('success')
 			expect(finalRun3.status).toBe('success')
 
+			const runRoot1 = finalRun1.results_dir || finalRun1.work_dir
+			const runRoot2 = finalRun2.results_dir || finalRun2.work_dir
+			expect(runRoot1 && fs.existsSync(runRoot1)).toBe(true)
+			expect(runRoot2 && fs.existsSync(runRoot2)).toBe(true)
+			expect(collectMatchingFiles(runRoot1, 'report.json').length).toBeGreaterThan(0)
+			expect(collectMatchingFiles(runRoot1, 'report.tsv').length).toBeGreaterThan(0)
+			expect(collectMatchingFiles(runRoot1, 'aggregated_allele_freq.tsv').length).toBeGreaterThan(0)
+			expect(collectMatchingFiles(runRoot2, 'report.json').length).toBeGreaterThan(0)
+			expect(collectMatchingFiles(runRoot2, 'report.tsv').length).toBeGreaterThan(0)
+			expect(collectMatchingFiles(runRoot2, 'aggregated_allele_freq.tsv').length).toBeGreaterThan(0)
+
 			// Verify _progress state/log files are synced and visible cross-datasite.
 			for (const ownerEmail of [email1, email2, email3]) {
 				for (const viewerEmail of [email1, email2, email3]) {
@@ -1389,69 +1073,63 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 				}
 			}
 
-			if (!SECURE_ONLY_MODE) {
-				// Stage 1 share: clients share rsids with aggregator.
-				await waitForSharedFileOnViewers(
-					participantDataDirs,
-					email1,
-					flowName,
-					runId,
-					1,
-					'gen_variants',
-					'rsids.txt',
-					[email1, email3],
-				)
-				await waitForSharedFileOnViewers(
-					participantDataDirs,
-					email2,
-					flowName,
-					runId,
-					1,
-					'gen_variants',
-					'rsids.txt',
-					[email2, email3],
-				)
+			// Stage 1 share: clients share rsids with aggregator.
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email1,
+				flowName,
+				runId,
+				1,
+				'gen_allele_freq',
+				'locus_index.json',
+				[email1, email3],
+			)
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email2,
+				flowName,
+				runId,
+				1,
+				'gen_allele_freq',
+				'locus_index.json',
+				[email2, email3],
+			)
 
-				// Stage 2 share: aggregator shares master list with all.
-				await waitForSharedFileOnViewers(
-					participantDataDirs,
-					email3,
-					flowName,
-					runId,
-					2,
-					'build_master',
-					'master_list.txt',
-					[email1, email2, email3],
-				)
-			}
+			// Stage 2 share: aggregator shares master list with all.
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email3,
+				flowName,
+				runId,
+				2,
+				'build_master',
+				'union_locus_index.json',
+				[email1, email2, email3],
+			)
 
-			// Final secure share: every participant shares secure_aggregate output back to all.
-			for (const ownerEmail of [email1, email2, email3]) {
+			// Final secure share: clients share secure_aggregate output back to all.
+			for (const ownerEmail of [email1, email2]) {
 				await waitForSharedFileOnViewers(
 					participantDataDirs,
 					ownerEmail,
 					flowName,
 					runId,
-					secureStepNumber,
+					5,
 					'secure_aggregate',
 					'aggregated_counts.json',
 					[email1, email2, email3],
 				)
 			}
 
-			// Verify secure share permissions include all participants on each owner's final output.
-			for (const ownerEmail of [email1, email2, email3]) {
+			// Verify secure share permissions include all participants on each client output.
+			for (const ownerEmail of [email1, email2]) {
 				const ownerRunDir = getSharedRunDir(
 					participantDataDirs.get(ownerEmail)!,
 					ownerEmail,
 					flowName,
 					runId,
 				)
-				const secureDir = findExistingSharedStepDir(
-					ownerRunDir,
-					secureStepNumber,
-					'secure_aggregate',
-				)
+				const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
 				expect(secureDir).toBeTruthy()
 				const syftPubPath = path.join(secureDir!, 'syft.pub.yaml')
 				expect(fs.existsSync(syftPubPath)).toBe(true)
@@ -1461,15 +1139,11 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 				expect(syftPub).toContain(`- ${email3}`)
 			}
 
-			for (const ownerEmail of [email1, email2, email3]) {
+			for (const ownerEmail of [email1, email2]) {
 				for (const viewerEmail of [email1, email2, email3]) {
 					const viewerDataDir = participantDataDirs.get(viewerEmail)!
 					const ownerRunDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
-					const secureDir = findExistingSharedStepDir(
-						ownerRunDir,
-						secureStepNumber,
-						'secure_aggregate',
-					)
+					const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
 					expect(secureDir).toBeTruthy()
 					const aggregatedPath = path.join(secureDir!, 'aggregated_counts.json')
 					expect(fs.existsSync(aggregatedPath)).toBe(true)
@@ -1477,7 +1151,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			}
 
 			log(logSocket, {
-				event: 'syqure-multiparty-flow-complete',
+				event: 'syqure-multiparty-allele-freq-complete',
 				runId,
 			})
 		} finally {

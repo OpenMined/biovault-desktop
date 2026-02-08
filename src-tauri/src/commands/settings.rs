@@ -459,6 +459,33 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
         crate::desktop_log!("⚠️ Failed to register profile for {}: {}", email, err);
     }
 
+    // Re-assert onboarding email after dependency/profile side effects.
+    // Some dependency save paths can rewrite config while onboarding is in-flight.
+    let final_config_path = biovault_path.join("config.yaml");
+    match biovault::config::Config::load() {
+        Ok(mut cfg) => {
+            if cfg.email.trim() != email.trim() {
+                cfg.email = email.clone();
+                if let Err(err) = cfg.save(&final_config_path) {
+                    crate::desktop_log!(
+                        "⚠️ Final onboarding email persist failed for {}: {}",
+                        email,
+                        err
+                    );
+                } else {
+                    crate::desktop_log!("✅ Final onboarding email persisted for {}", email);
+                }
+            }
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "⚠️ Failed final onboarding config load for {}: {}",
+                email,
+                err
+            );
+        }
+    }
+
     Ok(())
 }
 

@@ -418,26 +418,26 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// === Import and Join Flow via UI ===
 		console.log('\n--- Import and Join Flow via UI ---')
 
-			async function importAndJoinFlow(page: Page, label: string) {
-				// Wait for invitation card
-				const invitationCard = page.locator('.flow-invitation-card')
-				await invitationCard.waitFor({ timeout: UI_TIMEOUT })
-				console.log(`  ${label}: Found invitation card`)
+		async function importAndJoinFlow(page: Page, label: string) {
+			// Wait for invitation card
+			const invitationCard = page.locator('.flow-invitation-card')
+			await invitationCard.waitFor({ timeout: UI_TIMEOUT })
+			console.log(`  ${label}: Found invitation card`)
 
-				const importBtn = page.locator(
-					'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
-				)
-				const joinBtn = page.locator(
-					'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow")',
-				)
-				if (await importBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-					const joinInitiallyVisible = await joinBtn.isVisible().catch(() => false)
-					console.log(`  ${label}: Join button visible before import: ${joinInitiallyVisible}`)
-					expect(joinInitiallyVisible).toBe(false)
+			const importBtn = page.locator(
+				'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
+			)
+			const joinBtn = page.locator(
+				'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow")',
+			)
+			if (await importBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+				const joinInitiallyVisible = await joinBtn.isVisible().catch(() => false)
+				console.log(`  ${label}: Join button visible before import: ${joinInitiallyVisible}`)
+				expect(joinInitiallyVisible).toBe(false)
 
-					// Click Import Flow button
-					await importBtn.click()
-					console.log(`  ${label}: Clicked "Import Flow"`)
+				// Click Import Flow button
+				await importBtn.click()
+				console.log(`  ${label}: Clicked "Import Flow"`)
 
 				// Wait for import to complete (button should change or status should update)
 				await page.waitForTimeout(3000)
@@ -450,15 +450,15 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 				}
 
 				// Check if import button changed
-					const importBtnText = await importBtn.textContent().catch(() => '')
-					console.log(`  ${label}: Import button text after click: ${importBtnText}`)
-				} else {
-					console.log(`  ${label}: Import button not visible (flow may already be imported)`)
-				}
+				const importBtnText = await importBtn.textContent().catch(() => '')
+				console.log(`  ${label}: Import button text after click: ${importBtnText}`)
+			} else {
+				console.log(`  ${label}: Import button not visible (flow may already be imported)`)
+			}
 
-				// Click Join Flow button
-				const joinBtnVisible = await joinBtn.isVisible({ timeout: 5000 }).catch(() => false)
-				console.log(`  ${label}: Join button visible: ${joinBtnVisible}`)
+			// Click Join Flow button
+			const joinBtnVisible = await joinBtn.isVisible({ timeout: 5000 }).catch(() => false)
+			console.log(`  ${label}: Join button visible: ${joinBtnVisible}`)
 			if (!joinBtnVisible) {
 				// Debug: check what buttons are visible
 				const allButtons = await invitationCard.locator('button').allTextContents()
@@ -613,99 +613,99 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// === Execute Steps via UI ===
 		console.log('\n--- Executing Flow Steps via Runs UI ---')
 
-			async function ensureStepsTabActive(page: Page) {
-				const runCard = page.locator('.flow-run-card').first()
-				const stepsTab = runCard.locator('.mp-tab[data-tab="steps"]')
+		async function ensureStepsTabActive(page: Page) {
+			const runCard = page.locator('.flow-run-card').first()
+			const stepsTab = runCard.locator('.mp-tab[data-tab="steps"]')
 			if (await stepsTab.isVisible().catch(() => false)) {
 				await stepsTab.click().catch(() => {})
 				await runCard
 					.locator('.mp-tab-content[data-tab-content="steps"]')
 					.waitFor({ state: 'visible', timeout: UI_TIMEOUT })
 					.catch(() => {})
-				}
 			}
+		}
 
-			async function ensureStepExpanded(page: Page, stepId: string) {
+		async function ensureStepExpanded(page: Page, stepId: string) {
+			await ensureStepsTabActive(page)
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			await step.waitFor({ timeout: UI_TIMEOUT })
+			const isCollapsed = await step.evaluate((el) => el.classList.contains('collapsed'))
+			if (isCollapsed) {
+				await step.locator('.mp-step-toggle').click()
+				await page.waitForTimeout(150)
+			}
+		}
+
+		async function runStepInUI(page: Page, stepId: string, label: string) {
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			for (let attempt = 0; attempt < 12; attempt += 1) {
 				await ensureStepsTabActive(page)
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				await step.waitFor({ timeout: UI_TIMEOUT })
-				const isCollapsed = await step.evaluate((el) => el.classList.contains('collapsed'))
-				if (isCollapsed) {
-					await step.locator('.mp-step-toggle').click()
-					await page.waitForTimeout(150)
+				if (!(await step.isVisible().catch(() => false))) {
+					await page.waitForTimeout(400)
+					continue
+				}
+
+				await ensureStepExpanded(page, stepId)
+
+				const statusClass = await step.getAttribute('class')
+				if (
+					statusClass?.includes('mp-step-running') ||
+					statusClass?.includes('mp-step-completed') ||
+					statusClass?.includes('mp-step-shared')
+				) {
+					console.log(`    ${label}: ${stepId} already in progress/completed`)
+					return true
+				}
+
+				const runBtn = step.locator('.mp-run-btn, button:has-text("Run")')
+				if (await runBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
+					await runBtn.click()
+					console.log(`    ${label}: Clicked Run for ${stepId}`)
+					await page.waitForTimeout(1000)
+					return true
+				}
+
+				await page.waitForTimeout(500)
+				if (attempt === 5) {
+					// Mid-way nudge in headed runs where render can lag after many updates.
+					await page.click('button:has-text("Runs")').catch(() => {})
+					await page.waitForTimeout(400)
 				}
 			}
 
-			async function runStepInUI(page: Page, stepId: string, label: string) {
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				for (let attempt = 0; attempt < 12; attempt += 1) {
-					await ensureStepsTabActive(page)
-					if (!(await step.isVisible().catch(() => false))) {
-						await page.waitForTimeout(400)
-						continue
-					}
+			console.log(`    ${label}: Run button for ${stepId} never became clickable`)
+			return false
+		}
 
-					await ensureStepExpanded(page, stepId)
+		async function shareStepInUI(page: Page, stepId: string, label: string) {
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			for (let attempt = 0; attempt < 12; attempt += 1) {
+				await ensureStepsTabActive(page)
+				if (!(await step.isVisible().catch(() => false))) {
+					await page.waitForTimeout(400)
+					continue
+				}
+				await ensureStepExpanded(page, stepId)
 
-					const statusClass = await step.getAttribute('class')
-					if (
-						statusClass?.includes('mp-step-running') ||
-						statusClass?.includes('mp-step-completed') ||
-						statusClass?.includes('mp-step-shared')
-					) {
-						console.log(`    ${label}: ${stepId} already in progress/completed`)
-						return true
-					}
-
-					const runBtn = step.locator('.mp-run-btn, button:has-text("Run")')
-					if (await runBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
-						await runBtn.click()
-						console.log(`    ${label}: Clicked Run for ${stepId}`)
-						await page.waitForTimeout(1000)
-						return true
-					}
-
-					await page.waitForTimeout(500)
-					if (attempt === 5) {
-						// Mid-way nudge in headed runs where render can lag after many updates.
-						await page.click('button:has-text("Runs")').catch(() => {})
-						await page.waitForTimeout(400)
-					}
+				const statusClass = await step.getAttribute('class')
+				if (statusClass?.includes('mp-step-shared')) {
+					console.log(`    ${label}: ${stepId} already shared`)
+					return true
 				}
 
-				console.log(`    ${label}: Run button for ${stepId} never became clickable`)
-				return false
-			}
-
-			async function shareStepInUI(page: Page, stepId: string, label: string) {
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				for (let attempt = 0; attempt < 12; attempt += 1) {
-					await ensureStepsTabActive(page)
-					if (!(await step.isVisible().catch(() => false))) {
-						await page.waitForTimeout(400)
-						continue
-					}
-					await ensureStepExpanded(page, stepId)
-
-					const statusClass = await step.getAttribute('class')
-					if (statusClass?.includes('mp-step-shared')) {
-						console.log(`    ${label}: ${stepId} already shared`)
-						return true
-					}
-
-					const shareBtn = step.locator('.mp-share-btn, button:has-text("Share")')
-					if (await shareBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
-						await shareBtn.click()
-						console.log(`    ${label}: Clicked Share for ${stepId}`)
-						await page.waitForTimeout(1500)
-						return true
-					}
-
-					await page.waitForTimeout(500)
+				const shareBtn = step.locator('.mp-share-btn, button:has-text("Share")')
+				if (await shareBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
+					await shareBtn.click()
+					console.log(`    ${label}: Clicked Share for ${stepId}`)
+					await page.waitForTimeout(1500)
+					return true
 				}
-				console.log(`    ${label}: Share button for ${stepId} never became clickable`)
-				return false
+
+				await page.waitForTimeout(500)
 			}
+			console.log(`    ${label}: Share button for ${stepId} never became clickable`)
+			return false
+		}
 
 		// Helper to verify output files exist after running a step
 		async function verifyStepOutputFiles(
@@ -762,21 +762,21 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		}
 
 		// Helper to verify Run button visibility for a step
-			async function verifyRunButtonVisibility(
-				page: Page,
-				stepId: string,
+		async function verifyRunButtonVisibility(
+			page: Page,
+			stepId: string,
 			shouldBeVisible: boolean,
 			label: string,
 		) {
 			await ensureStepsTabActive(page)
 			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				if (!(await step.isVisible().catch(() => false))) {
-					console.log(`    ${label}: Step ${stepId} not visible on this page`)
-					return null
-				}
-				await ensureStepExpanded(page, stepId)
-				const runBtn = step.locator('.mp-run-btn')
-				const isVisible = await runBtn.isVisible().catch(() => false)
+			if (!(await step.isVisible().catch(() => false))) {
+				console.log(`    ${label}: Step ${stepId} not visible on this page`)
+				return null
+			}
+			await ensureStepExpanded(page, stepId)
+			const runBtn = step.locator('.mp-run-btn')
+			const isVisible = await runBtn.isVisible().catch(() => false)
 			console.log(
 				`    ${label}: Run button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
 			)
@@ -784,47 +784,47 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			return isVisible
 		}
 
-			// Helper to verify Preview button visibility
-				async function verifyPreviewButtonVisibility(
-					page: Page,
-					stepId: string,
-				shouldBeVisible: boolean,
-				label: string,
-			) {
-				await ensureStepsTabActive(page)
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-					if (!(await step.isVisible().catch(() => false))) {
-						return null
-					}
-					const previewBtn = step.locator('.mp-preview-btn').first()
-				let isVisible = await previewBtn.isVisible().catch(() => false)
-				if (shouldBeVisible && !isVisible) {
-					const deadline = Date.now() + UI_TIMEOUT
-					while (Date.now() < deadline) {
-						await ensureStepExpanded(page, stepId)
-						await page.waitForTimeout(250)
-						isVisible = await previewBtn.isVisible().catch(() => false)
-						if (isVisible) break
-					}
-				}
-				console.log(
-					`    ${label}: Preview button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
-				)
-				expect(isVisible).toBe(shouldBeVisible)
-				return isVisible
-		}
-
-			async function verifyShareButtonVisibility(
-				page: Page,
-				stepId: string,
+		// Helper to verify Preview button visibility
+		async function verifyPreviewButtonVisibility(
+			page: Page,
+			stepId: string,
 			shouldBeVisible: boolean,
 			label: string,
 		) {
-				await ensureStepsTabActive(page)
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				if (!(await step.isVisible().catch(() => false))) return null
-				await ensureStepExpanded(page, stepId)
-				const shareBtn = step.locator('.mp-share-btn').first()
+			await ensureStepsTabActive(page)
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			if (!(await step.isVisible().catch(() => false))) {
+				return null
+			}
+			const previewBtn = step.locator('.mp-preview-btn').first()
+			let isVisible = await previewBtn.isVisible().catch(() => false)
+			if (shouldBeVisible && !isVisible) {
+				const deadline = Date.now() + UI_TIMEOUT
+				while (Date.now() < deadline) {
+					await ensureStepExpanded(page, stepId)
+					await page.waitForTimeout(250)
+					isVisible = await previewBtn.isVisible().catch(() => false)
+					if (isVisible) break
+				}
+			}
+			console.log(
+				`    ${label}: Preview button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
+			)
+			expect(isVisible).toBe(shouldBeVisible)
+			return isVisible
+		}
+
+		async function verifyShareButtonVisibility(
+			page: Page,
+			stepId: string,
+			shouldBeVisible: boolean,
+			label: string,
+		) {
+			await ensureStepsTabActive(page)
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			if (!(await step.isVisible().catch(() => false))) return null
+			await ensureStepExpanded(page, stepId)
+			const shareBtn = step.locator('.mp-share-btn').first()
 			const isVisible = await shareBtn.isVisible().catch(() => false)
 			console.log(
 				`    ${label}: Share button for ${stepId}: visible=${isVisible}, expected=${shouldBeVisible}`,
@@ -833,16 +833,16 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			return isVisible
 		}
 
-			async function verifyContributionButtons(
-				page: Page,
-				stepId: string,
+		async function verifyContributionButtons(
+			page: Page,
+			stepId: string,
 			minimumCount: number,
 			label: string,
 		) {
-				await ensureStepsTabActive(page)
-				const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
-				await ensureStepExpanded(page, stepId)
-				const finderButtons = step.locator('.mp-contrib-open-btn')
+			await ensureStepsTabActive(page)
+			const step = page.locator(`.mp-step[data-step-id="${stepId}"]`)
+			await ensureStepExpanded(page, stepId)
+			const finderButtons = step.locator('.mp-contrib-open-btn')
 			const count = await finderButtons.count()
 			console.log(`    ${label}: Contribution finder buttons for ${stepId}: ${count}`)
 			expect(count).toBeGreaterThanOrEqual(minimumCount)
@@ -877,7 +877,10 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			const runCard = page.locator('.flow-run-card').first()
 			const start = Date.now()
 			while (Date.now() - start < timeoutMs) {
-				await runCard.locator('.mp-tab[data-tab="logs"]').click().catch(() => {})
+				await runCard
+					.locator('.mp-tab[data-tab="logs"]')
+					.click()
+					.catch(() => {})
 				await page.waitForTimeout(250)
 				const logsText =
 					(await runCard
@@ -912,9 +915,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 							return text.includes(expectedText)
 						})
 						if (found) {
-							console.log(
-								`    ${label}: Activity log matched via backend "${expectedText}"`,
-							)
+							console.log(`    ${label}: Activity log matched via backend "${expectedText}"`)
 							await runCard.locator('.mp-tab[data-tab="steps"]').click()
 							await runCard
 								.locator('.mp-tab-content[data-tab-content="steps"]')
@@ -994,22 +995,22 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		// Verify UI shows step as shared
 		await page1.waitForTimeout(500)
-			await verifyStepStatusInUI(page1, 'generate', 'Shared', email1)
-				const progress1AfterShare = await verifyProgressInUI(page1, email1)
-				expect(/0\/3|1\/3|2\/3/.test(progress1AfterShare || '')).toBe(true)
+		await verifyStepStatusInUI(page1, 'generate', 'Shared', email1)
+		const progress1AfterShare = await verifyProgressInUI(page1, email1)
+		expect(/0\/3|1\/3|2\/3/.test(progress1AfterShare || '')).toBe(true)
 
 		const sharedGenerate2 = await shareStepInUI(page2, 'generate', email2)
 		expect(sharedGenerate2).toBe(true)
 
 		// Verify UI shows step as shared
 		await page2.waitForTimeout(500)
-			await verifyStepStatusInUI(page2, 'generate', 'Shared', email2)
-				const progress2AfterShare = await verifyProgressInUI(page2, email2)
-				expect(/0\/3|1\/3|2\/3|Done/.test(progress2AfterShare || '')).toBe(true)
+		await verifyStepStatusInUI(page2, 'generate', 'Shared', email2)
+		const progress2AfterShare = await verifyProgressInUI(page2, email2)
+		expect(/0\/3|1\/3|2\/3|Done/.test(progress2AfterShare || '')).toBe(true)
 
-			// Aggregator should expose contributor finder links on generate step.
-			await backend3.invoke('trigger_syftbox_sync').catch(() => {})
-			await verifyContributionButtons(page3, 'generate', 2, email3)
+		// Aggregator should expose contributor finder links on generate step.
+		await backend3.invoke('trigger_syftbox_sync').catch(() => {})
+		await verifyContributionButtons(page3, 'generate', 2, email3)
 
 		// Simulate receiving shared inputs at aggregator
 		// In real flow, this would happen via messaging - for now we verify generate outputs exist
@@ -1097,11 +1098,14 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const aggPermText = fs.readFileSync(String(aggPermFile), 'utf-8')
 		const readPrincipals = extractReadPrincipalsFromSyftPub(aggPermText)
 		expect(readPrincipals).toEqual(expect.arrayContaining([email1, email2, email3]))
-			// Aggregate output may be directly resolvable (no per-contribution finder button needed).
-			await verifyContributionButtons(page1, 'aggregate', 0, email1)
-			await verifyContributionButtons(page2, 'aggregate', 0, email2)
+		// Aggregate output may be directly resolvable (no per-contribution finder button needed).
+		await verifyContributionButtons(page1, 'aggregate', 0, email1)
+		await verifyContributionButtons(page2, 'aggregate', 0, email2)
 		const waitingBannerClient1 =
-			(await runCard1.locator('.mp-waiting-banner').innerText().catch(() => '')) || ''
+			(await runCard1
+				.locator('.mp-waiting-banner')
+				.innerText()
+				.catch(() => '')) || ''
 		expect(waitingBannerClient1.toLowerCase()).not.toContain(email2.toLowerCase())
 
 		// Shared step outputs should be published into chat messages with metadata/files
@@ -1217,13 +1221,13 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const finalProgress2 = await verifyProgressInUI(page2, email2)
 		const finalProgress3 = await verifyProgressInUI(page3, email3)
 
-			// All clients should see full flow completion.
-			expect(finalProgress1).toContain('Done')
-			expect(finalProgress2).toContain('Done')
-			expect(finalProgress3).toContain('Done')
-			expect(await runCard1.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
-			expect(await runCard2.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
-			expect(await runCard3.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
+		// All clients should see full flow completion.
+		expect(finalProgress1).toContain('Done')
+		expect(finalProgress2).toContain('Done')
+		expect(finalProgress3).toContain('Done')
+		expect(await runCard1.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
+		expect(await runCard2.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
+		expect(await runCard3.evaluate((el) => el.classList.contains('mp-run-complete'))).toBe(true)
 
 		// === Verify Results in Chat ===
 		console.log('\n--- Checking for Shared Results in Chat ---')
