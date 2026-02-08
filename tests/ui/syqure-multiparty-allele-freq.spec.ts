@@ -214,7 +214,9 @@ async function sendMessageWithRetry(
 			await new Promise((r) => setTimeout(r, 400 * attempt))
 		}
 	}
-	throw lastError instanceof Error ? lastError : new Error(String(lastError || 'send_message failed'))
+	throw lastError instanceof Error
+		? lastError
+		: new Error(String(lastError || 'send_message failed'))
 }
 
 async function waitForContactImport(
@@ -580,7 +582,9 @@ async function importAndJoinInvitation(
 				if (pickerVisible) {
 					const genotypeRow = inputPicker
 						.locator('.flow-input-picker-row')
-						.filter({ has: page.locator('.flow-input-picker-label', { hasText: 'genotype_files' }) })
+						.filter({
+							has: page.locator('.flow-input-picker-label', { hasText: 'genotype_files' }),
+						})
 						.first()
 					const checkboxes = genotypeRow.locator('input.flow-input-picker-checkbox')
 					const checkboxCount = await checkboxes.count()
@@ -598,8 +602,8 @@ async function importAndJoinInvitation(
 							await selectAllVisible.check()
 						}
 						let checkedCount = await checkboxes
-							.evaluateAll((nodes) =>
-								nodes.filter((node) => (node as HTMLInputElement).checked).length,
+							.evaluateAll(
+								(nodes) => nodes.filter((node) => (node as HTMLInputElement).checked).length,
 							)
 							.catch(() => 0)
 						for (
@@ -610,8 +614,8 @@ async function importAndJoinInvitation(
 							await checkboxes.nth(idx).check()
 						}
 						checkedCount = await checkboxes
-							.evaluateAll((nodes) =>
-								nodes.filter((node) => (node as HTMLInputElement).checked).length,
+							.evaluateAll(
+								(nodes) => nodes.filter((node) => (node as HTMLInputElement).checked).length,
 							)
 							.catch(() => 0)
 						if (checkedCount < genotypeFileCount) {
@@ -632,17 +636,14 @@ async function importAndJoinInvitation(
 								)
 							}
 							const picked = allValues.slice(0, genotypeFileCount)
-							await select.evaluate(
-								(node, values) => {
-									const wanted = new Set(values)
-									const input = node as HTMLSelectElement
-									for (const option of Array.from(input.options)) {
-										option.selected = wanted.has(option.value)
-									}
-									input.dispatchEvent(new Event('change', { bubbles: true }))
-								},
-								picked,
-							)
+							await select.evaluate((node, values) => {
+								const wanted = new Set(values)
+								const input = node as HTMLSelectElement
+								for (const option of Array.from(input.options)) {
+									option.selected = wanted.has(option.value)
+								}
+								input.dispatchEvent(new Event('change', { bubbles: true }))
+							}, picked)
 						}
 					}
 					const continueBtn = inputPicker.locator('button.flow-input-picker-confirm').first()
@@ -651,9 +652,7 @@ async function importAndJoinInvitation(
 					let submitted = false
 					for (let attempt = 0; attempt < 4; attempt += 1) {
 						await continueBtn.click({ force: true })
-						const closed = await inputPicker
-							.isHidden({ timeout: 5_000 })
-							.catch(() => false)
+						const closed = await inputPicker.isHidden({ timeout: 5_000 }).catch(() => false)
 						if (closed) {
 							submitted = true
 							break
@@ -1065,20 +1064,8 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				},
 			})
 
-			await importAndJoinInvitation(
-				page1,
-				backend1,
-				email1,
-				flowName,
-				ALLELE_FREQ_EXPECTED_FILES,
-			)
-			await importAndJoinInvitation(
-				page2,
-				backend2,
-				email2,
-				flowName,
-				ALLELE_FREQ_EXPECTED_FILES,
-			)
+			await importAndJoinInvitation(page1, backend1, email1, flowName, ALLELE_FREQ_EXPECTED_FILES)
+			await importAndJoinInvitation(page2, backend2, email2, flowName, ALLELE_FREQ_EXPECTED_FILES)
 			await importAndJoinInvitation(page3, backend3, email3, flowName, 0)
 
 			const [runId1, runId2, runId3] = await Promise.all([
@@ -1196,38 +1183,26 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 
 			// Stage 3: clients run align_counts.
 			await Promise.all([
-				runStepViaBackendWhenReadyAndWait(
-					backend1,
-					sessionId,
-					'align_counts',
-					email1,
-					['Completed', 'Shared'],
-				),
-				runStepViaBackendWhenReadyAndWait(
-					backend2,
-					sessionId,
-					'align_counts',
-					email2,
-					['Completed', 'Shared'],
-				),
+				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'align_counts', email1, [
+					'Completed',
+					'Shared',
+				]),
+				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'align_counts', email2, [
+					'Completed',
+					'Shared',
+				]),
 			])
 
 			// Stage 3b: run explicit barrier after align_counts so downstream deps converge.
 			await Promise.all([
-				runStepViaBackendWhenReadyAndWait(
-					backend1,
-					sessionId,
-					'mpc_barrier',
-					email1,
-					['Completed', 'Shared'],
-				),
-				runStepViaBackendWhenReadyAndWait(
-					backend2,
-					sessionId,
-					'mpc_barrier',
-					email2,
-					['Completed', 'Shared'],
-				),
+				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'mpc_barrier', email1, [
+					'Completed',
+					'Shared',
+				]),
+				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'mpc_barrier', email2, [
+					'Completed',
+					'Shared',
+				]),
 			])
 
 			// Stage 4: run secure_aggregate via backend commands.
@@ -1268,20 +1243,14 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 
 			// Stage 5: clients run report_aggregate.
 			await Promise.all([
-				runStepViaBackendAndWait(
-					backend1,
-					sessionId,
-					'report_aggregate',
-					email1,
-					['Completed', 'Shared'],
-				),
-				runStepViaBackendAndWait(
-					backend2,
-					sessionId,
-					'report_aggregate',
-					email2,
-					['Completed', 'Shared'],
-				),
+				runStepViaBackendAndWait(backend1, sessionId, 'report_aggregate', email1, [
+					'Completed',
+					'Shared',
+				]),
+				runStepViaBackendAndWait(backend2, sessionId, 'report_aggregate', email2, [
+					'Completed',
+					'Shared',
+				]),
 			])
 
 			assertSharedRunDirExists(dataDir1, email1, flowName, runId)

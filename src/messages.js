@@ -186,9 +186,17 @@ export function createMessagesModule({
 	}
 
 	function isTargetedForRole(targets, role, currentUser) {
-		const normalizedRole = String(role || '').trim().toLowerCase()
-		const normalizedUser = String(currentUser || '').trim().toLowerCase()
-		const list = normalizeTargetList(targets).map((target) => String(target || '').trim().toLowerCase())
+		const normalizedRole = String(role || '')
+			.trim()
+			.toLowerCase()
+		const normalizedUser = String(currentUser || '')
+			.trim()
+			.toLowerCase()
+		const list = normalizeTargetList(targets).map((target) =>
+			String(target || '')
+				.trim()
+				.toLowerCase(),
+		)
 		if (list.length === 0 || list.includes('all') || list.includes('*')) return true
 		if (normalizedRole && list.includes(normalizedRole)) return true
 		// Common group aliases used in flow specs (e.g. "only: clients")
@@ -240,10 +248,16 @@ export function createMessagesModule({
 	}
 
 	function shouldHideInputForRole(inputName, role, type) {
-		const normalizedRole = String(role || '').trim().toLowerCase()
+		const normalizedRole = String(role || '')
+			.trim()
+			.toLowerCase()
 		if (!normalizedRole) return false
-		const normalizedName = String(inputName || '').trim().toLowerCase()
-		const normalizedType = String(type || '').trim().toLowerCase()
+		const normalizedName = String(inputName || '')
+			.trim()
+			.toLowerCase()
+		const normalizedType = String(type || '')
+			.trim()
+			.toLowerCase()
 		const isGenotypeInput =
 			normalizedName.includes('genotype') || normalizedType.includes('genotyperecord')
 		return isGenotypeInput && normalizedRole.startsWith('aggregator')
@@ -343,67 +357,69 @@ export function createMessagesModule({
 			label.appendChild(hint)
 			row.appendChild(label)
 
-				if (fileLike && sortedFiles.length > 0) {
-					const selectedValues = new Set(parseInputList(currentText))
-					let fileSelect = null
-					let fileCheckboxes = []
-					let selectedValuesSet = null
-					if (listLike) {
-						selectedValuesSet = new Set(selectedValues)
-						if (selectedValuesSet.size === 0 && String(name).toLowerCase().includes('genotype')) {
-							const genotypeFiles = sortedFiles.filter(fileLooksLikeGenotype)
-							const preselectFiles = genotypeFiles.length > 0 ? genotypeFiles : sortedFiles
-							preselectFiles.forEach((file) => {
-								if (file?.file_path) selectedValuesSet.add(file.file_path)
-							})
-						}
-						let filterTerm = ''
-						let filterType = ''
-						let lastClickedVisibleIndex = null
-
-						const controls = document.createElement('div')
-						controls.className = 'flow-input-picker-controls'
-
-						const searchInput = document.createElement('input')
-						searchInput.className = 'flow-input-picker-search'
-						searchInput.type = 'text'
-						searchInput.placeholder = 'Filter files by name, participant, type, source'
-						controls.appendChild(searchInput)
-
-						const typeFilter = document.createElement('select')
-						typeFilter.className = 'flow-input-picker-type-filter'
-						typeFilter.innerHTML = '<option value="">All Types</option>'
-						const allTypes = [...new Set(sortedFiles.map((file) => String(file.data_type || '').trim()))]
-							.filter(Boolean)
-							.sort((a, b) => a.localeCompare(b))
-						allTypes.forEach((type) => {
-							const option = document.createElement('option')
-							option.value = type
-							option.textContent = type
-							typeFilter.appendChild(option)
+			if (fileLike && sortedFiles.length > 0) {
+				const selectedValues = new Set(parseInputList(currentText))
+				let fileSelect = null
+				let fileCheckboxes = []
+				let selectedValuesSet = null
+				if (listLike) {
+					selectedValuesSet = new Set(selectedValues)
+					if (selectedValuesSet.size === 0 && String(name).toLowerCase().includes('genotype')) {
+						const genotypeFiles = sortedFiles.filter(fileLooksLikeGenotype)
+						const preselectFiles = genotypeFiles.length > 0 ? genotypeFiles : sortedFiles
+						preselectFiles.forEach((file) => {
+							if (file?.file_path) selectedValuesSet.add(file.file_path)
 						})
-						controls.appendChild(typeFilter)
+					}
+					let filterTerm = ''
+					let filterType = ''
+					let lastClickedVisibleIndex = null
 
-						row.appendChild(controls)
+					const controls = document.createElement('div')
+					controls.className = 'flow-input-picker-controls'
 
-						const selectAllRow = document.createElement('label')
-						selectAllRow.className = 'flow-input-picker-select-all-row'
-						const selectAllCheckbox = document.createElement('input')
-						selectAllCheckbox.type = 'checkbox'
-						selectAllCheckbox.className = 'flow-input-picker-select-all'
-						const selectAllText = document.createElement('span')
-						selectAllText.textContent = 'Select all visible'
-						selectAllRow.appendChild(selectAllCheckbox)
-						selectAllRow.appendChild(selectAllText)
-						row.appendChild(selectAllRow)
+					const searchInput = document.createElement('input')
+					searchInput.className = 'flow-input-picker-search'
+					searchInput.type = 'text'
+					searchInput.placeholder = 'Filter files by name, participant, type, source'
+					controls.appendChild(searchInput)
 
-						const fileList = document.createElement('div')
-						fileList.className = 'flow-input-picker-file-list'
-						row.appendChild(fileList)
+					const typeFilter = document.createElement('select')
+					typeFilter.className = 'flow-input-picker-type-filter'
+					typeFilter.innerHTML = '<option value="">All Types</option>'
+					const allTypes = [
+						...new Set(sortedFiles.map((file) => String(file.data_type || '').trim())),
+					]
+						.filter(Boolean)
+						.sort((a, b) => a.localeCompare(b))
+					allTypes.forEach((type) => {
+						const option = document.createElement('option')
+						option.value = type
+						option.textContent = type
+						typeFilter.appendChild(option)
+					})
+					controls.appendChild(typeFilter)
 
-						const table = document.createElement('table')
-						table.className = 'flow-input-picker-table'
-						table.innerHTML = `
+					row.appendChild(controls)
+
+					const selectAllRow = document.createElement('label')
+					selectAllRow.className = 'flow-input-picker-select-all-row'
+					const selectAllCheckbox = document.createElement('input')
+					selectAllCheckbox.type = 'checkbox'
+					selectAllCheckbox.className = 'flow-input-picker-select-all'
+					const selectAllText = document.createElement('span')
+					selectAllText.textContent = 'Select all visible'
+					selectAllRow.appendChild(selectAllCheckbox)
+					selectAllRow.appendChild(selectAllText)
+					row.appendChild(selectAllRow)
+
+					const fileList = document.createElement('div')
+					fileList.className = 'flow-input-picker-file-list'
+					row.appendChild(fileList)
+
+					const table = document.createElement('table')
+					table.className = 'flow-input-picker-table'
+					table.innerHTML = `
 							<thead>
 								<tr>
 									<th></th>
@@ -414,54 +430,54 @@ export function createMessagesModule({
 								</tr>
 							</thead>
 						`
-						const tbody = document.createElement('tbody')
-						table.appendChild(tbody)
-						fileList.appendChild(table)
+					const tbody = document.createElement('tbody')
+					table.appendChild(tbody)
+					fileList.appendChild(table)
 
-						const matchesFilter = (file) => {
-							if (filterType && String(file.data_type || '') !== filterType) return false
-							if (!filterTerm) return true
-							const term = filterTerm.toLowerCase()
-							const values = [
-								file.file_path,
-								file.participant_id,
-								file.data_type,
-								file.source,
-								file.grch_version,
-							]
-								.filter(Boolean)
-								.map((value) => String(value).toLowerCase())
-							return values.some((value) => value.includes(term))
+					const matchesFilter = (file) => {
+						if (filterType && String(file.data_type || '') !== filterType) return false
+						if (!filterTerm) return true
+						const term = filterTerm.toLowerCase()
+						const values = [
+							file.file_path,
+							file.participant_id,
+							file.data_type,
+							file.source,
+							file.grch_version,
+						]
+							.filter(Boolean)
+							.map((value) => String(value).toLowerCase())
+						return values.some((value) => value.includes(term))
+					}
+
+					const updateSelectAllState = (visibleFiles) => {
+						if (!visibleFiles.length) {
+							selectAllCheckbox.checked = false
+							selectAllCheckbox.indeterminate = false
+							return
 						}
+						const selectedCount = visibleFiles.filter((file) =>
+							selectedValuesSet.has(file.file_path),
+						).length
+						selectAllCheckbox.checked = selectedCount === visibleFiles.length
+						selectAllCheckbox.indeterminate =
+							selectedCount > 0 && selectedCount < visibleFiles.length
+					}
 
-						const updateSelectAllState = (visibleFiles) => {
-							if (!visibleFiles.length) {
-								selectAllCheckbox.checked = false
-								selectAllCheckbox.indeterminate = false
-								return
-							}
-							const selectedCount = visibleFiles.filter((file) =>
-								selectedValuesSet.has(file.file_path),
-							).length
-							selectAllCheckbox.checked = selectedCount === visibleFiles.length
-							selectAllCheckbox.indeterminate =
-								selectedCount > 0 && selectedCount < visibleFiles.length
-						}
-
-						const renderFileRows = () => {
-							tbody.innerHTML = ''
-							fileCheckboxes = []
-							lastClickedVisibleIndex = null
-							const visibleFiles = sortedFiles.filter(matchesFilter)
-							visibleFiles.forEach((file, visibleIndex) => {
-								const fullPath = file.file_path
-								const fileName = fullPath.split('/').pop() || fullPath
-								const rowEl = document.createElement('tr')
-								rowEl.className = 'flow-input-picker-file-row'
-								const participant = file.participant_id || '-'
-								const typeText = file.data_type || '-'
-								const sourceText = file.source || '-'
-								rowEl.innerHTML = `
+					const renderFileRows = () => {
+						tbody.innerHTML = ''
+						fileCheckboxes = []
+						lastClickedVisibleIndex = null
+						const visibleFiles = sortedFiles.filter(matchesFilter)
+						visibleFiles.forEach((file, visibleIndex) => {
+							const fullPath = file.file_path
+							const fileName = fullPath.split('/').pop() || fullPath
+							const rowEl = document.createElement('tr')
+							rowEl.className = 'flow-input-picker-file-row'
+							const participant = file.participant_id || '-'
+							const typeText = file.data_type || '-'
+							const sourceText = file.source || '-'
+							rowEl.innerHTML = `
 									<td><input type="checkbox" class="flow-input-picker-checkbox" value="${escapeHtml(fullPath)}" ${
 										selectedValuesSet.has(fullPath) ? 'checked' : ''
 									}></td>
@@ -470,65 +486,65 @@ export function createMessagesModule({
 									<td>${escapeHtml(typeText)}</td>
 									<td>${escapeHtml(sourceText)}</td>
 								`
-								const checkbox = rowEl.querySelector('.flow-input-picker-checkbox')
-								fileCheckboxes.push(checkbox)
-								const setSelected = (checked) => {
-									if (checked) selectedValuesSet.add(fullPath)
-									else selectedValuesSet.delete(fullPath)
-									checkbox.checked = checked
-								}
-								const applyClick = (checked, shiftKey) => {
-									if (shiftKey && lastClickedVisibleIndex !== null) {
-										const start = Math.min(lastClickedVisibleIndex, visibleIndex)
-										const end = Math.max(lastClickedVisibleIndex, visibleIndex)
-										for (let idx = start; idx <= end; idx += 1) {
-											const target = visibleFiles[idx]
-											if (checked) selectedValuesSet.add(target.file_path)
-											else selectedValuesSet.delete(target.file_path)
-										}
-										renderFileRows()
-										return
+							const checkbox = rowEl.querySelector('.flow-input-picker-checkbox')
+							fileCheckboxes.push(checkbox)
+							const setSelected = (checked) => {
+								if (checked) selectedValuesSet.add(fullPath)
+								else selectedValuesSet.delete(fullPath)
+								checkbox.checked = checked
+							}
+							const applyClick = (checked, shiftKey) => {
+								if (shiftKey && lastClickedVisibleIndex !== null) {
+									const start = Math.min(lastClickedVisibleIndex, visibleIndex)
+									const end = Math.max(lastClickedVisibleIndex, visibleIndex)
+									for (let idx = start; idx <= end; idx += 1) {
+										const target = visibleFiles[idx]
+										if (checked) selectedValuesSet.add(target.file_path)
+										else selectedValuesSet.delete(target.file_path)
 									}
-									setSelected(checked)
-									lastClickedVisibleIndex = visibleIndex
-									updateSelectAllState(visibleFiles)
+									renderFileRows()
+									return
 								}
-								rowEl.addEventListener('click', (event) => {
-									if (event.target?.tagName === 'INPUT') return
-									applyClick(!selectedValuesSet.has(fullPath), event.shiftKey)
-								})
-								checkbox.addEventListener('click', (event) => {
-									event.stopPropagation()
-									applyClick(checkbox.checked, event.shiftKey)
-								})
-								tbody.appendChild(rowEl)
+								setSelected(checked)
+								lastClickedVisibleIndex = visibleIndex
+								updateSelectAllState(visibleFiles)
+							}
+							rowEl.addEventListener('click', (event) => {
+								if (event.target?.tagName === 'INPUT') return
+								applyClick(!selectedValuesSet.has(fullPath), event.shiftKey)
 							})
-							updateSelectAllState(visibleFiles)
-						}
-
-						searchInput.addEventListener('input', () => {
-							filterTerm = String(searchInput.value || '').trim()
-							renderFileRows()
-						})
-						typeFilter.addEventListener('change', () => {
-							filterType = String(typeFilter.value || '').trim()
-							renderFileRows()
-						})
-						selectAllCheckbox.addEventListener('change', () => {
-							const visibleFiles = sortedFiles.filter(matchesFilter)
-							visibleFiles.forEach((file) => {
-								if (selectAllCheckbox.checked) selectedValuesSet.add(file.file_path)
-								else selectedValuesSet.delete(file.file_path)
+							checkbox.addEventListener('click', (event) => {
+								event.stopPropagation()
+								applyClick(checkbox.checked, event.shiftKey)
 							})
-							renderFileRows()
+							tbody.appendChild(rowEl)
 						})
+						updateSelectAllState(visibleFiles)
+					}
 
+					searchInput.addEventListener('input', () => {
+						filterTerm = String(searchInput.value || '').trim()
 						renderFileRows()
-					} else {
-						fileSelect = document.createElement('select')
-						fileSelect.className = 'flow-input-picker-select'
-						fileSelect.multiple = false
-						fileSelect.size = 1
+					})
+					typeFilter.addEventListener('change', () => {
+						filterType = String(typeFilter.value || '').trim()
+						renderFileRows()
+					})
+					selectAllCheckbox.addEventListener('change', () => {
+						const visibleFiles = sortedFiles.filter(matchesFilter)
+						visibleFiles.forEach((file) => {
+							if (selectAllCheckbox.checked) selectedValuesSet.add(file.file_path)
+							else selectedValuesSet.delete(file.file_path)
+						})
+						renderFileRows()
+					})
+
+					renderFileRows()
+				} else {
+					fileSelect = document.createElement('select')
+					fileSelect.className = 'flow-input-picker-select'
+					fileSelect.multiple = false
+					fileSelect.size = 1
 
 					const empty = document.createElement('option')
 					empty.value = ''
@@ -563,12 +579,12 @@ export function createMessagesModule({
 					inputKey,
 					fileLike,
 					listLike,
-						defaultText,
-						fileSelect,
-						fileCheckboxes,
-						selectedValuesSet,
-						manual,
-					})
+					defaultText,
+					fileSelect,
+					fileCheckboxes,
+					selectedValuesSet,
+					manual,
+				})
 			} else {
 				const input = document.createElement('input')
 				input.className = 'flow-input-picker-text'
@@ -597,22 +613,22 @@ export function createMessagesModule({
 				cleanup()
 				resolve(null)
 			}
-				const confirm = () => {
-					const overrides = { ...initialOverrides }
+			const confirm = () => {
+				const overrides = { ...initialOverrides }
 
-					fieldRefs.forEach((field) => {
-						let value = ''
-						if (field.fileLike) {
-							const selected = field.listLike
-								? Array.from(field.selectedValuesSet || []).filter(Boolean)
-								: Array.from(field.fileSelect?.selectedOptions || [])
-										.map((option) => option.value)
-										.filter(Boolean)
-							const manualValues = parseInputList(field.manual?.value || '')
-							const combined = selected.length > 0 ? selected : manualValues
-							if (field.listLike) {
-								value = combined.join(',')
-							} else {
+				fieldRefs.forEach((field) => {
+					let value = ''
+					if (field.fileLike) {
+						const selected = field.listLike
+							? Array.from(field.selectedValuesSet || []).filter(Boolean)
+							: Array.from(field.fileSelect?.selectedOptions || [])
+									.map((option) => option.value)
+									.filter(Boolean)
+						const manualValues = parseInputList(field.manual?.value || '')
+						const combined = selected.length > 0 ? selected : manualValues
+						if (field.listLike) {
+							value = combined.join(',')
+						} else {
 							value = combined[0] || ''
 						}
 					} else {
@@ -3621,14 +3637,14 @@ export function createMessagesModule({
 								flowInvitation.flow_spec,
 								flowInvitation.participants,
 							)
-								const selectedOverrides = await promptFlowInputOverrides({
-									flowName: flowInvitation.flow_name,
-									flowSpec: flowInvitation.flow_spec,
-									initialOverrides,
-									includeDatasites: false,
-									participants: flowInvitation.participants,
-									currentUser,
-								})
+							const selectedOverrides = await promptFlowInputOverrides({
+								flowName: flowInvitation.flow_name,
+								flowSpec: flowInvitation.flow_spec,
+								initialOverrides,
+								includeDatasites: false,
+								participants: flowInvitation.participants,
+								currentUser,
+							})
 							if (!selectedOverrides) {
 								joinBtn.disabled = false
 								joinBtn.textContent = '🤝 Join Flow'

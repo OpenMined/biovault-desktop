@@ -42,7 +42,6 @@ jobs:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || matrix.scenario != 'pipelines-multiparty-flow' }}
     strategy:
       fail-fast: false
       matrix:

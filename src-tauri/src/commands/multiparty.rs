@@ -3071,14 +3071,7 @@ pub async fn run_flow_step(
             .ok_or_else(|| "Flow session not found".to_string())?;
 
         // Get step info and check if it can run
-        let (
-            step_deps,
-            step_status,
-            is_my_action,
-            module_path,
-            module_ref,
-            with_bindings,
-        ) = {
+        let (step_deps, step_status, is_my_action, module_path, module_ref, with_bindings) = {
             let step = flow_state
                 .steps
                 .iter()

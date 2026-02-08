@@ -955,7 +955,9 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 	function extractInputDefaultValue(inputSpec) {
 		if (inputSpec && typeof inputSpec === 'object' && !Array.isArray(inputSpec)) {
-			return Object.prototype.hasOwnProperty.call(inputSpec, 'default') ? inputSpec.default : undefined
+			return Object.prototype.hasOwnProperty.call(inputSpec, 'default')
+				? inputSpec.default
+				: undefined
 		}
 		return undefined
 	}
@@ -7438,27 +7440,27 @@ steps:${
 					}
 				}
 
-					if (startLocal) {
-						let inputOverrides = {}
-						if (flow?.spec?.inputs?.datasites) {
-							inputOverrides['inputs.datasites'] = datasites.join(',')
+				if (startLocal) {
+					let inputOverrides = {}
+					if (flow?.spec?.inputs?.datasites) {
+						inputOverrides['inputs.datasites'] = datasites.join(',')
+					}
+					if (flow?.spec?.inputs && Object.keys(flow.spec.inputs).length > 0) {
+						const configured = await promptFlowInputOverridesFromData({
+							flowName: flow.name,
+							flowSpec: flow.spec,
+							initialOverrides: inputOverrides,
+						})
+						if (configured === null) {
+							submitBtn.disabled = false
+							submitBtn.textContent = 'Start Collaborative Run'
+							return
 						}
-						if (flow?.spec?.inputs && Object.keys(flow.spec.inputs).length > 0) {
-							const configured = await promptFlowInputOverridesFromData({
-								flowName: flow.name,
-								flowSpec: flow.spec,
-								initialOverrides: inputOverrides,
-							})
-							if (configured === null) {
-								submitBtn.disabled = false
-								submitBtn.textContent = 'Start Collaborative Run'
-								return
-							}
-							inputOverrides = configured
-						}
-						await invoke('run_flow', {
-							flowId: flow.id,
-							inputOverrides,
+						inputOverrides = configured
+					}
+					await invoke('run_flow', {
+						flowId: flow.id,
+						inputOverrides,
 						runId,
 					})
 				}
