@@ -486,6 +486,8 @@ async function runStepViaBackendWhenReadyAndWait(
 		/dependency .* not satisfied yet/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingforinputs\)/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message) ||
+		/step is not ready to run \(status:\s*failed\)/i.test(message) ||
+		/Shell workflow exited with code/i.test(message) ||
 		/WS invoke timeout: run_flow_step/i.test(message)
 	while (Date.now() - startedAt < timeoutMs) {
 		try {
