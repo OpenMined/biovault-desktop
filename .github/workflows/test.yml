@@ -320,10 +320,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{ github.workspace }}/../syqure
-          # SSH→HTTPS rewrite for submodule URLs
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-          git submodule update --init --recursive
+          # Override SSH submodule URLs to HTTPS (no SSH keys in CI)
+          git config --file .gitmodules submodule.codon.url https://github.com/madhavajay/codon.git
+          git config --file .gitmodules submodule.sequre.url https://github.com/madhavajay/sequre.git
+          git submodule sync
+          git submodule update --init --depth 1 codon sequre
           # Build bundle and binary (matches syqure CI smoke test)
           BUNDLE_ROOT="bin/linux-x86/codon"
           BUNDLE_DIR="$(mktemp -d)"
