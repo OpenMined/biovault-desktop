@@ -1102,13 +1102,37 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			// Drive execution through the same UI controls users use (Run/Share per participant window).
 			await Promise.all([clickRunsTab(page1), clickRunsTab(page2), clickRunsTab(page3)])
 
-			// Stage 1: clients run + share gen_allele_freq.
+			// Stage 1: clients run gen_allele_freq (local-only output).
 			await Promise.all([
 				clickStepActionAndWait(
 					page1,
 					backend1,
 					sessionId,
 					'gen_allele_freq',
+					'mp-run-btn',
+					email1,
+					['Completed'],
+					180_000,
+				),
+				clickStepActionAndWait(
+					page2,
+					backend2,
+					sessionId,
+					'gen_allele_freq',
+					'mp-run-btn',
+					email2,
+					['Completed'],
+					180_000,
+				),
+			])
+
+			// Stage 1b: clients share only locus_index derived artifact.
+			await Promise.all([
+				clickStepActionAndWait(
+					page1,
+					backend1,
+					sessionId,
+					'share_locus_index',
 					'mp-run-btn',
 					email1,
 					['Completed', 'Shared'],
@@ -1118,7 +1142,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					page2,
 					backend2,
 					sessionId,
-					'gen_allele_freq',
+					'share_locus_index',
 					'mp-run-btn',
 					email2,
 					['Completed', 'Shared'],
@@ -1130,7 +1154,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					page1,
 					backend1,
 					sessionId,
-					'gen_allele_freq',
+					'share_locus_index',
 					'mp-share-btn',
 					email1,
 					['Shared'],
@@ -1140,7 +1164,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					page2,
 					backend2,
 					sessionId,
-					'gen_allele_freq',
+					'share_locus_index',
 					'mp-share-btn',
 					email2,
 					['Shared'],
@@ -1235,10 +1259,11 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				),
 			])
 
-			// Stage 4b: clients share secure_aggregate outputs via backend commands.
+			// Stage 4b: all parties share secure_aggregate outputs via backend commands.
 			await Promise.all([
 				shareStepViaBackendAndWait(backend1, sessionId, 'secure_aggregate', email1, RUN_TIMEOUT_MS),
 				shareStepViaBackendAndWait(backend2, sessionId, 'secure_aggregate', email2, RUN_TIMEOUT_MS),
+				shareStepViaBackendAndWait(backend3, sessionId, 'secure_aggregate', email3, RUN_TIMEOUT_MS),
 			])
 
 			// Stage 5: clients run report_aggregate.
@@ -1270,8 +1295,10 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				{ label: email3, backend: backend3 },
 			]
 			await waitForProgressConvergence(viewers, sessionId, [
-				{ email: email1, stepId: 'gen_allele_freq', statuses: ['Shared', 'Completed'] },
-				{ email: email2, stepId: 'gen_allele_freq', statuses: ['Shared', 'Completed'] },
+				{ email: email1, stepId: 'gen_allele_freq', statuses: ['Completed'] },
+				{ email: email2, stepId: 'gen_allele_freq', statuses: ['Completed'] },
+				{ email: email1, stepId: 'share_locus_index', statuses: ['Shared', 'Completed'] },
+				{ email: email2, stepId: 'share_locus_index', statuses: ['Shared', 'Completed'] },
 				{ email: email3, stepId: 'build_master', statuses: ['Shared', 'Completed'] },
 				{ email: email1, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
 				{ email: email2, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
@@ -1338,15 +1365,15 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				}
 			}
 
-			// Stage 1 share: clients share rsids with aggregator.
+			// Stage 1 share: clients share locus index with aggregator (no raw allele_freq sharing).
 			await waitForSharedFileOnViewers(
 				participantDataDirs,
 				email1,
 				flowName,
 				runId,
-				1,
-				'gen_allele_freq',
-				'locus_index.json',
+				2,
+				'share_locus_index',
+				'locus_index.tsv',
 				[email1, email3],
 			)
 			await waitForSharedFileOnViewers(
@@ -1354,9 +1381,9 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				email2,
 				flowName,
 				runId,
-				1,
-				'gen_allele_freq',
-				'locus_index.json',
+				2,
+				'share_locus_index',
+				'locus_index.tsv',
 				[email2, email3],
 			)
 
@@ -1366,7 +1393,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				email3,
 				flowName,
 				runId,
-				2,
+				3,
 				'build_master',
 				'union_locus_index.json',
 				[email1, email2, email3],
@@ -1379,7 +1406,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					ownerEmail,
 					flowName,
 					runId,
-					5,
+					6,
 					'secure_aggregate',
 					'aggregated_counts.json',
 					[email1, email2, email3],
@@ -1394,7 +1421,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					flowName,
 					runId,
 				)
-				const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
+				const secureDir = findExistingSharedStepDir(ownerRunDir, 6, 'secure_aggregate')
 				expect(secureDir).toBeTruthy()
 				const syftPubPath = path.join(secureDir!, 'syft.pub.yaml')
 				expect(fs.existsSync(syftPubPath)).toBe(true)
@@ -1408,7 +1435,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				for (const viewerEmail of [email1, email2, email3]) {
 					const viewerDataDir = participantDataDirs.get(viewerEmail)!
 					const ownerRunDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
-					const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
+					const secureDir = findExistingSharedStepDir(ownerRunDir, 6, 'secure_aggregate')
 					expect(secureDir).toBeTruthy()
 					const aggregatedPath = path.join(secureDir!, 'aggregated_counts.json')
 					expect(fs.existsSync(aggregatedPath)).toBe(true)
