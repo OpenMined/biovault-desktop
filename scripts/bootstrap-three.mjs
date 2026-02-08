@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import WebSocket from 'ws'
+import fs from 'node:fs'
+import path from 'node:path'
 
 function parseArgs(argv) {
 	const args = new Map()
@@ -176,6 +178,43 @@ function buildFlowSpec(flowName, client1, client2, aggregator) {
 	}
 }
 
+function inferFlowNameFromYamlFile(flowFilePath) {
+	const text = fs.readFileSync(flowFilePath, 'utf8')
+	const metadataBlock = text.match(/metadata:\s*([\s\S]*?)(?:\n[a-zA-Z_][a-zA-Z0-9_]*:|\n$)/m)
+	if (metadataBlock) {
+		const m = metadataBlock[1].match(/^\s*name:\s*["']?([A-Za-z0-9._-]+)["']?\s*$/m)
+		if (m?.[1]) return m[1]
+	}
+	const topLevel = text.match(/^\s*name:\s*["']?([A-Za-z0-9._-]+)["']?\s*$/m)
+	if (topLevel?.[1]) return topLevel[1]
+	return path.basename(flowFilePath).replace(/\.(ya?ml)$/i, '')
+}
+
+async function importFlowProject(backends, flowFilePath) {
+	await Promise.all(
+		backends.map(async ({ backend, email }) => {
+			await backend.invoke(
+				'import_flow',
+				{
+					flowFile: flowFilePath,
+					overwrite: true,
+				},
+				120_000,
+			)
+			console.log(`[bootstrap] imported flow file on ${email}: ${flowFilePath}`)
+		}),
+	)
+}
+
+async function resolveInvitationFlowSpec(backend, flowName) {
+	const flows = await backend.invoke('get_flows', {})
+	const flow = (flows || []).find((entry) => entry?.name === flowName)
+	if (!flow?.spec) {
+		throw new Error(`flow "${flowName}" not found after import`)
+	}
+	return flow.spec
+}
+
 async function ensureOnboarded(backend, email, label) {
 	const onboarded = await backend.invoke('check_is_onboarded')
 	if (onboarded) {
@@ -203,42 +242,64 @@ async function main() {
 	const email1 = args.get('email1') || 'client1@sandbox.local'
 	const email2 = args.get('email2') || 'client2@sandbox.local'
 	const email3 = args.get('email3') || 'aggregator@sandbox.local'
-	const flowName = args.get('flow') || 'multiparty'
+	const requestedFlowName = args.get('flow') || 'multiparty'
+	const flowFileArg = args.get('flow-file') || ''
+	const explicitFlowName = args.get('flow-name') || ''
+	const flowFilePath = flowFileArg ? path.resolve(process.cwd(), flowFileArg) : ''
+	if (flowFilePath && !fs.existsSync(flowFilePath)) {
+		throw new Error(`flow file not found: ${flowFilePath}`)
+	}
 
 	const backend1 = await connectBackend(ws1, email1)
 	const backend2 = await connectBackend(ws2, email2)
 	const backend3 = await connectBackend(ws3, email3)
-		try {
-			await ensureOnboarded(backend1, email1, email1)
-			await ensureOnboarded(backend2, email2, email2)
-			await ensureOnboarded(backend3, email3, email3)
+	try {
+		await ensureOnboarded(backend1, email1, email1)
+		await ensureOnboarded(backend2, email2, email2)
+		await ensureOnboarded(backend3, email3, email3)
 
-			await backend1.invoke('trigger_syftbox_sync').catch(() => {})
-			await backend2.invoke('trigger_syftbox_sync').catch(() => {})
-			await backend3.invoke('trigger_syftbox_sync').catch(() => {})
-			await sleep(1500)
+		await backend1.invoke('trigger_syftbox_sync').catch(() => {})
+		await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+		await backend3.invoke('trigger_syftbox_sync').catch(() => {})
+		await sleep(1500)
 
-			console.log('[bootstrap] importing contacts...')
-			await importContactWithRetry(backend1, email1, email2)
-			await importContactWithRetry(backend1, email1, email3)
-			await importContactWithRetry(backend2, email2, email1)
-			await importContactWithRetry(backend2, email2, email3)
-			await importContactWithRetry(backend3, email3, email1)
-			await importContactWithRetry(backend3, email3, email2)
+		console.log('[bootstrap] importing contacts...')
+		await importContactWithRetry(backend1, email1, email2)
+		await importContactWithRetry(backend1, email1, email3)
+		await importContactWithRetry(backend2, email2, email1)
+		await importContactWithRetry(backend2, email2, email3)
+		await importContactWithRetry(backend3, email3, email1)
+		await importContactWithRetry(backend3, email3, email2)
 
-		const flowSpec = buildFlowSpec(flowName, email1, email2, email3)
-		console.log(`[bootstrap] importing flow "${flowName}" on aggregator...`)
-		await backend3.invoke(
-			'import_flow_from_json',
-			{
-				request: {
-					name: flowName,
-					flow_json: flowSpec,
-					overwrite: true,
+		let flowName = requestedFlowName
+		let flowSpec = null
+		if (flowFilePath) {
+			flowName = explicitFlowName || inferFlowNameFromYamlFile(flowFilePath)
+			console.log(`[bootstrap] importing project flow "${flowName}" from ${flowFilePath}`)
+			await importFlowProject(
+				[
+					{ backend: backend1, email: email1 },
+					{ backend: backend2, email: email2 },
+					{ backend: backend3, email: email3 },
+				],
+				flowFilePath,
+			)
+			flowSpec = await resolveInvitationFlowSpec(backend3, flowName)
+		} else {
+			flowSpec = buildFlowSpec(flowName, email1, email2, email3)
+			console.log(`[bootstrap] importing flow "${flowName}" on aggregator...`)
+			await backend3.invoke(
+				'import_flow_from_json',
+				{
+					request: {
+						name: flowName,
+						flow_json: flowSpec,
+						overwrite: true,
+					},
 				},
-			},
-			60_000,
-		)
+				60_000,
+			)
+		}
 
 		const sessionId = `session-${Date.now()}`
 		const participants = [

@@ -70,6 +70,10 @@ Multiparty Flow Development Environment (3 clients)
 Options:
   --reset             Reset sandbox and devstack before starting
   --bootstrap         Auto-onboard + trust keys + create multiparty invitation
+  --bootstrap-project FILE
+                      Flow YAML file to import/share during bootstrap
+  --bootstrap-project-name NAME
+                      Override flow name used in invitation metadata
   --skip-sync-check   Skip the sbdev sync probe
   --stop              Stop devstack and desktop processes
   --single [EMAIL]    Launch only one desktop (default: first client)
@@ -90,6 +94,8 @@ SINGLE_MODE=0
 SINGLE_TARGET=""
 SKIP_SYNC_CHECK=0
 BOOTSTRAP_FLAG=0
+BOOTSTRAP_PROJECT_FILE=""
+BOOTSTRAP_PROJECT_NAME=""
 
 CLIENTS=()
 
@@ -117,6 +123,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --bootstrap)
       BOOTSTRAP_FLAG=1
+      ;;
+    --bootstrap-project)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--bootstrap-project requires a flow YAML path"
+        exit 1
+      fi
+      BOOTSTRAP_PROJECT_FILE="$2"
+      shift
+      ;;
+    --bootstrap-project-name)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--bootstrap-project-name requires a value"
+        exit 1
+      fi
+      BOOTSTRAP_PROJECT_NAME="$2"
+      shift
       ;;
     -h|--help)
       usage
@@ -548,6 +570,8 @@ run_bootstrap() {
   ws2=$((WS_PORT_BASE + 1))
   ws3=$((WS_PORT_BASE + 2))
   local flow_name="${MULTIPARTY_FLOW_NAME:-multiparty}"
+  local project_file="${BOOTSTRAP_PROJECT_FILE:-${MULTIPARTY_BOOTSTRAP_PROJECT:-}}"
+  local project_name="${BOOTSTRAP_PROJECT_NAME:-${MULTIPARTY_BOOTSTRAP_PROJECT_NAME:-}}"
 
   log_header "Bootstrapping multiparty setup"
   if [[ ! -f "$SCRIPT_DIR/scripts/bootstrap-three.mjs" ]]; then
@@ -555,13 +579,25 @@ run_bootstrap() {
     exit 1
   fi
 
-  node "$SCRIPT_DIR/scripts/bootstrap-three.mjs" \
-    --ws1 "$ws1" --email1 "${CLIENTS[0]}" \
-    --ws2 "$ws2" --email2 "${CLIENTS[1]}" \
-    --ws3 "$ws3" --email3 "${CLIENTS[2]}" \
+  local -a bootstrap_args=(
+    --ws1 "$ws1" --email1 "${CLIENTS[0]}"
+    --ws2 "$ws2" --email2 "${CLIENTS[1]}"
+    --ws3 "$ws3" --email3 "${CLIENTS[2]}"
     --flow "$flow_name"
+  )
+  if [[ -n "$project_file" ]]; then
+    bootstrap_args+=(--flow-file "$project_file")
+  fi
+  if [[ -n "$project_name" ]]; then
+    bootstrap_args+=(--flow-name "$project_name")
+  fi
 
-  log_success "Bootstrap complete (onboarding, trust, flow import, group invitation)"
+  node "$SCRIPT_DIR/scripts/bootstrap-three.mjs" "${bootstrap_args[@]}"
+  local mode_msg="Bootstrap complete (onboarding, trust, flow import, group invitation)"
+  if [[ -n "$project_file" ]]; then
+    mode_msg="Bootstrap complete (onboarding, trust, imported project flow + group invitation)"
+  fi
+  log_success "$mode_msg"
 }
 
 launch_three_instances() {
