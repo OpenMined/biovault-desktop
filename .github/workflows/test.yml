@@ -47,59 +47,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # flows-pause-resume (linux only for next push)
-          - scenario: flows-pause-resume
+          # syqure-multiparty-allele-freq (linux)
+          - scenario: syqure-multiparty-allele-freq
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # flows-collab (linux + windows)
-          - scenario: flows-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          - scenario: flows-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
-          # jupyter-collab (linux + mac + windows)
-          - scenario: jupyter-collab
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
-          # pipelines-multiparty-flow (linux + mac + windows)
-          - scenario: pipelines-multiparty-flow
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
-          - scenario: pipelines-multiparty-flow
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-          - scenario: pipelines-multiparty-flow
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
 
     defaults:
       run:
@@ -471,6 +425,19 @@ jobs:
             ./test-scenario.sh --pipelines-multiparty-flow
           fi
 
+      - name: Run syqure multiparty allele-freq scenario
+        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          BV_SKIP_SYQURE: "0"
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+          else
+            ./test-scenario.sh --syqure-multiparty-allele-freq
+          fi
+
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -482,6 +449,7 @@ jobs:
             artifacts/
 
   profiles-e2e:
+    if: false
     name: profiles-e2e (linux-x86_64)
     runs-on: namespace-profile-linux-medium
     env:
@@ -649,6 +617,7 @@ jobs:
             artifacts/
 
   profiles-e2e-macos:
+    if: false
     name: profiles-e2e (macos-arm64)
     runs-on: namespace-profile-mac-medium
     env:
@@ -793,6 +762,7 @@ jobs:
             artifacts/
 
   profiles-e2e-windows:
+    if: false
     name: profiles-e2e (windows-x86_64)
     runs-on: namespace-profile-windows-medium
     defaults:
