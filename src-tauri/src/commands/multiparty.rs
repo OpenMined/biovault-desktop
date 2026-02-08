@@ -44,6 +44,76 @@ fn get_shared_flow_path(flow_name: &str, session_id: &str) -> Result<PathBuf, St
         .join(session_id))
 }
 
+fn load_multiparty_state_from_disk(session_id: &str) -> Result<Option<MultipartyFlowState>, String> {
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let owner = get_owner_email()?;
+    let flows_root = biovault_home
+        .join("datasites")
+        .join(&owner)
+        .join("shared")
+        .join("flows");
+
+    if !flows_root.exists() {
+        return Ok(None);
+    }
+
+    let flow_dirs = fs::read_dir(&flows_root)
+        .map_err(|e| format!("Failed to read flows root {}: {}", flows_root.display(), e))?;
+
+    for flow_entry in flow_dirs.flatten() {
+        let flow_dir = flow_entry.path();
+        if !flow_dir.is_dir() {
+            continue;
+        }
+        let session_dir = flow_dir.join(session_id);
+        if !session_dir.is_dir() {
+            continue;
+        }
+        let state_path = session_dir.join("multiparty.state.json");
+        if !state_path.exists() {
+            continue;
+        }
+
+        let raw = fs::read_to_string(&state_path)
+            .map_err(|e| format!("Failed to read {}: {}", state_path.display(), e))?;
+        let mut parsed: MultipartyFlowState = serde_json::from_str(&raw)
+            .map_err(|e| format!("Failed to parse {}: {}", state_path.display(), e))?;
+
+        // Ensure work_dir is valid after app restarts / path migrations.
+        parsed.work_dir = Some(session_dir);
+        return Ok(Some(parsed));
+    }
+
+    Ok(None)
+}
+
+fn state_file_for_flow(flow_state: &MultipartyFlowState) -> Result<PathBuf, String> {
+    if let Some(work_dir) = flow_state.work_dir.as_ref() {
+        return Ok(work_dir.join("multiparty.state.json"));
+    }
+    let flow_path = get_shared_flow_path(&flow_state.flow_name, &flow_state.session_id)?;
+    Ok(flow_path.join("multiparty.state.json"))
+}
+
+fn persist_multiparty_state(flow_state: &MultipartyFlowState) -> Result<(), String> {
+    let state_path = state_file_for_flow(flow_state)?;
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create state directory {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+    let state_json = serde_json::to_string_pretty(flow_state)
+        .map_err(|e| format!("Failed to serialize state: {}", e))?;
+    fs::write(&state_path, state_json)
+        .map_err(|e| format!("Failed to write state file {}: {}", state_path.display(), e))?;
+    Ok(())
+}
+
 fn ensure_flow_subscriptions(
     flow_name: &str,
     session_id: &str,
@@ -1989,6 +2059,7 @@ pub async fn send_flow_invitation(
         flow_spec: Some(flow_spec.clone()),
         syqure_port_base,
     };
+    let _ = persist_multiparty_state(&flow_state);
 
     {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
@@ -2140,10 +2211,7 @@ pub async fn accept_flow_invitation(
     };
 
     // Save state to file for persistence
-    let state_path = work_dir.join("multiparty.state.json");
-    let state_json = serde_json::to_string_pretty(&flow_state)
-        .map_err(|e| format!("Failed to serialize state: {}", e))?;
-    fs::write(&state_path, state_json).map_err(|e| format!("Failed to write state file: {}", e))?;
+    persist_multiparty_state(&flow_state)?;
 
     // Log "joined" event to progress.json
     let progress_dir = get_progress_path(&work_dir);
@@ -2169,6 +2237,18 @@ pub async fn get_multiparty_flow_state(
     state: tauri::State<'_, AppState>,
     session_id: String,
 ) -> Result<Option<MultipartyFlowState>, String> {
+    // Recover from restart: restore session snapshot from disk when memory map is empty.
+    let should_restore = {
+        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        !sessions.contains_key(&session_id)
+    };
+    if should_restore {
+        if let Some(restored) = load_multiparty_state_from_disk(&session_id)? {
+            let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+            sessions.insert(session_id.clone(), restored);
+        }
+    }
+
     let (snapshot, terminal_update) = {
         let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         if let Some(flow_state) = sessions.get_mut(&session_id) {
@@ -2178,6 +2258,7 @@ pub async fn get_multiparty_flow_state(
             // Check if any WaitingForInputs steps can now proceed
             update_barrier_steps(flow_state);
             let terminal_update = collect_terminal_run_update(flow_state);
+            let _ = persist_multiparty_state(flow_state);
             (Some(flow_state.clone()), terminal_update)
         } else {
             (None, None)
@@ -3044,6 +3125,7 @@ pub async fn set_step_auto_run(
         .ok_or_else(|| "Step not found".to_string())?;
 
     step.auto_run = auto_run;
+    let _ = persist_multiparty_state(state);
     Ok(())
 }
 
@@ -3153,6 +3235,7 @@ pub async fn run_flow_step(
                 "Running",
             );
         }
+        let _ = persist_multiparty_state(flow_state);
 
         (
             flow_state.work_dir.clone(),
@@ -3423,6 +3506,7 @@ pub async fn run_flow_step(
                     );
                 }
                 terminal_update = collect_terminal_run_update(flow_state);
+                let _ = persist_multiparty_state(flow_state);
             }
             drop(sessions);
             apply_terminal_run_update(state.inner(), terminal_update);
@@ -3481,6 +3565,7 @@ pub async fn run_flow_step(
     update_dependent_steps(flow_state, &step_id);
 
     let terminal_update = collect_terminal_run_update(flow_state);
+    let _ = persist_multiparty_state(flow_state);
 
     drop(sessions);
     apply_terminal_run_update(state.inner(), terminal_update);
@@ -3500,36 +3585,41 @@ pub async fn share_step_outputs(
             .get_mut(&session_id)
             .ok_or_else(|| "Flow session not found".to_string())?;
 
-        let step = flow_state
-            .steps
-            .iter_mut()
-            .find(|s| s.id == step_id)
-            .ok_or_else(|| "Step not found".to_string())?;
+        let (output_dir, step_name, share_to) = {
+            let step = flow_state
+                .steps
+                .iter_mut()
+                .find(|s| s.id == step_id)
+                .ok_or_else(|| "Step not found".to_string())?;
 
-        if step.status != StepStatus::Completed {
-            return Err("Step must be completed before sharing".to_string());
-        }
+            if step.status != StepStatus::Completed {
+                return Err("Step must be completed before sharing".to_string());
+            }
 
-        if !step.shares_output {
-            return Err("This step does not share outputs".to_string());
-        }
+            if !step.shares_output {
+                return Err("This step does not share outputs".to_string());
+            }
 
-        step.status = StepStatus::Sharing;
-        append_private_step_log(&session_id, &step_id, "step_sharing_started");
+            step.status = StepStatus::Sharing;
+            append_private_step_log(&session_id, &step_id, "step_sharing_started");
 
-        let share_to_emails = resolve_share_recipients(
-            &step.share_to,
-            &flow_state.participants,
-            &flow_state.my_email,
-        );
+            (
+                step.output_dir.clone(),
+                step.name.clone(),
+                step.share_to.clone(),
+            )
+        };
+        let share_to_emails =
+            resolve_share_recipients(&share_to, &flow_state.participants, &flow_state.my_email);
+        let _ = persist_multiparty_state(flow_state);
 
         (
-            step.output_dir.clone(),
+            output_dir,
             share_to_emails,
             flow_state.my_email.clone(),
             flow_state.thread_id.clone(),
             flow_state.flow_name.clone(),
-            step.name.clone(),
+            step_name,
             flow_state.participants.clone(),
         )
     };
@@ -3587,7 +3677,9 @@ pub async fn share_step_outputs(
 
         // Update dependent steps: if all their dependencies are now met, mark them Ready
         update_dependent_steps(flow_state, &step_id);
-        collect_terminal_run_update(flow_state)
+        let terminal_update = collect_terminal_run_update(flow_state);
+        let _ = persist_multiparty_state(flow_state);
+        terminal_update
     };
 
     apply_terminal_run_update(state.inner(), terminal_update);
@@ -3687,6 +3779,7 @@ pub async fn receive_flow_step_outputs(
             step.status = StepStatus::Ready;
         }
     }
+    let _ = persist_multiparty_state(flow_state);
 
     Ok(())
 }

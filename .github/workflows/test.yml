@@ -102,6 +102,7 @@ jobs:
       - name: Setup workspace
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BV_SKIP_SYQURE: ${{ contains(matrix.scenario, 'syqure') && '0' || '1' }}
         run: |
           chmod +x scripts/setup-workspace.sh
           ./scripts/setup-workspace.sh
@@ -316,11 +317,24 @@ jobs:
       - name: Build native syqure binary
         if: matrix.scenario == 'syqure-multiparty-allele-freq'
         env:
-          SYQURE_LLVM_INCLUDE: /usr/lib/llvm-17/include
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd syqure
-          chmod +x syqure_bins.sh
-          ./syqure_bins.sh
+          cd ${{ github.workspace }}/../syqure
+          # SSH→HTTPS rewrite for submodule URLs
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git submodule update --init --recursive
+          # Build bundle and binary (matches syqure CI smoke test)
+          BUNDLE_ROOT="bin/linux-x86/codon"
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
+          export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
+          export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"
+          export SYQURE_CPP_LIB_DIRS="$BUNDLE_ROOT/lib/codon"
+          export SYQURE_LLVM_INCLUDE="$(llvm-config-17 --includedir)"
+          cargo build -p syqure
 
       - name: Install maturin (uv)
         if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
