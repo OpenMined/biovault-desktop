@@ -3424,6 +3424,9 @@ pub async fn run_flow_step(
 
         eprintln!("[tauri-trace] run_flow_step calling execute_dynamic step={} party={}/{} pid={} thread={:?}",
             step_id, party_id_idx, party_emails.len(), std::process::id(), std::thread::current().id());
+        // Important: pass party/session context through task-local scope.
+        // Avoid reintroducing process-global env mutation here; concurrent
+        // Tauri parties can race and produce non-deterministic Syqure wiring.
         let run_result = run_dynamic::with_execution_context(
             dynamic_ctx,
             run_dynamic::execute_dynamic(
