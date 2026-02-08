@@ -54,16 +54,6 @@ export async function completeOnboarding(
 ): Promise<boolean> {
 	log(logSocket, { event: 'onboarding-start', email })
 
-	// Set up a persistent dialog handler that accepts all dialogs during onboarding.
-	// This is more robust than page.once() which can miss dialogs due to timing.
-	const dialogHandler = (dialog: import('@playwright/test').Dialog) => {
-		console.log(
-			`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`,
-		)
-		dialog.accept().catch(() => {})
-	}
-	page.on('dialog', dialogHandler)
-
 	try {
 		await waitForAppReady(page, { timeout: 30_000 })
 		if (await ensureProfileSelected(page, { timeout: 30_000 })) {
@@ -93,7 +83,15 @@ export async function completeOnboarding(
 		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
 		console.log(`${email}: [onboarding] Clicking skip-dependencies-btn...`)
 		const step2StartTime = Date.now()
+		const maybeDialog = page.waitForEvent('dialog', { timeout: 3_000 }).catch(() => null)
 		await page.locator('#skip-dependencies-btn').click()
+		const dialog = await maybeDialog
+		if (dialog) {
+			console.log(
+				`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`,
+			)
+			await dialog.accept().catch(() => {})
+		}
 		// Wait for step 2 to be hidden before checking step 3
 		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
 		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 30000 })
@@ -242,8 +240,7 @@ export async function completeOnboarding(
 		console.log(`${email}: Onboarding complete!`)
 		return true // Onboarding was performed
 	} finally {
-		// Clean up the dialog handler
-		page.off('dialog', dialogHandler)
+		// no-op
 	}
 }
 

@@ -1381,7 +1381,6 @@ pub async fn create_flow(
         }
     }
 
-    let mut flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
     let mut imported_spec: Option<FlowSpec> = None;
 
     // If importing from a file, always copy to managed directory (like GitHub imports)
@@ -1432,12 +1431,12 @@ pub async fn create_flow(
             .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
         flow_dir = managed_flow_dir.clone();
-        flow_yaml_path = managed_flow_dir.join(FLOW_YAML_FILE);
 
         // Preserve full flow directory contents (including local modules/assets).
         copy_local_flow_dir(source_parent, &managed_flow_dir)?;
         imported_spec = flow.to_flow_spec().ok();
     } else {
+        let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
         fs::create_dir_all(&flow_dir)
             .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 

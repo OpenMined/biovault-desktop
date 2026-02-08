@@ -13,7 +13,7 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::{Path, PathBuf};
 
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SEQURE_COMMUNICATION_PORT_STRIDE: usize = 1000;
 
@@ -296,199 +296,6 @@ fn count_files_recursive(root: &Path, suffix: &str) -> usize {
 fn tcp_port_is_listening(port: u16) -> bool {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     TcpStream::connect_timeout(&addr.into(), Duration::from_millis(120)).is_ok()
-}
-
-fn expected_syqure_peer_ports(
-    global_base: usize,
-    local_party_id: usize,
-    party_count: usize,
-) -> Option<Vec<(usize, u16)>> {
-    let parties = party_count.max(2);
-    // Mirror runtime behavior: each party gets its own communication base.
-    let local_base = global_base + local_party_id * SEQURE_COMMUNICATION_PORT_STRIDE;
-    let mut expected = Vec::new();
-    for remote_id in 0..parties {
-        if remote_id == local_party_id {
-            continue;
-        }
-        let port = mpc_comm_port_with_base(local_base, local_party_id, remote_id, parties);
-        expected.push((remote_id, u16::try_from(port).ok()?));
-    }
-    Some(expected)
-}
-
-fn wait_for_syqure_proxy_ports(
-    session_id: &str,
-    step_id: &str,
-    global_base: usize,
-    local_party_id: usize,
-    party_count: usize,
-) -> Result<(), String> {
-    let timeout_ms = env::var("BV_SYQURE_PROXY_READY_TIMEOUT_MS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(45_000)
-        .clamp(1_000, 180_000);
-
-    let expected = expected_syqure_peer_ports(global_base, local_party_id, party_count)
-        .ok_or_else(|| "Failed to compute expected Syqure peer ports".to_string())?;
-    if expected.is_empty() {
-        return Ok(());
-    }
-
-    append_private_step_log(
-        session_id,
-        step_id,
-        &format!(
-            "secure_aggregate tcp expected ports: {}",
-            expected
-                .iter()
-                .map(|(peer, port)| format!("CP{}<->CP{}={}", local_party_id, peer, port))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    );
-
-    let started = Instant::now();
-    let mut next_log_ms = 0u64;
-    loop {
-        let mut pending: Vec<String> = Vec::new();
-        for (peer_id, port) in &expected {
-            if !tcp_port_is_listening(*port) {
-                pending.push(format!("CP{}:{} (for CP{})", local_party_id, port, peer_id));
-            }
-        }
-        if pending.is_empty() {
-            append_private_step_log(
-                session_id,
-                step_id,
-                &format!(
-                    "secure_aggregate tcp proxy ready in {}ms",
-                    started.elapsed().as_millis()
-                ),
-            );
-            return Ok(());
-        }
-
-        let elapsed_ms = started.elapsed().as_millis() as u64;
-        if elapsed_ms >= timeout_ms {
-            let message = format!(
-                "secure_aggregate tcp proxy not ready after {}ms; pending listeners: {}",
-                elapsed_ms,
-                pending.join(", ")
-            );
-            append_private_step_log(session_id, step_id, &message);
-            return Err(message);
-        }
-
-        if elapsed_ms >= next_log_ms {
-            append_private_step_log(
-                session_id,
-                step_id,
-                &format!(
-                    "secure_aggregate waiting for tcp listeners ({}ms): {}",
-                    elapsed_ms,
-                    pending.join(", ")
-                ),
-            );
-            next_log_ms = elapsed_ms.saturating_add(5_000);
-        }
-
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
-
-fn syqure_proxy_ready_step_id(step_id: &str) -> String {
-    format!("__syqure_proxy_ready_{}", step_id)
-}
-
-fn write_syqure_proxy_ready(progress_dir: &PathBuf, role: &str, step_id: &str) {
-    let ready_step_id = syqure_proxy_ready_step_id(step_id);
-    let shared_status = SharedStepStatus {
-        step_id: ready_step_id.clone(),
-        role: role.to_string(),
-        status: "Completed".to_string(),
-        timestamp: Utc::now().timestamp(),
-    };
-
-    let status_file = progress_dir.join(format!("{}_{}.json", role, ready_step_id));
-    if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
-        let _ = fs::write(&status_file, json);
-    }
-
-    append_progress_log(progress_dir, "syqure_proxy_ready", Some(step_id), role);
-}
-
-fn wait_for_syqure_proxy_cluster_ready(
-    flow_name: &str,
-    session_id: &str,
-    step_id: &str,
-    viewer_email: &str,
-    participants: &[FlowParticipant],
-) -> Result<(), String> {
-    let timeout_ms = env::var("BV_SYQURE_PROXY_CLUSTER_READY_TIMEOUT_MS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(60_000)
-        .clamp(1_000, 300_000);
-
-    let readiness_step_id = syqure_proxy_ready_step_id(step_id);
-    let started = Instant::now();
-    let mut next_log_ms = 0u64;
-    loop {
-        let mut pending: Vec<String> = Vec::new();
-        for participant in participants {
-            if !check_participant_step_complete(
-                flow_name,
-                session_id,
-                viewer_email,
-                &participant.email,
-                &participant.role,
-                &readiness_step_id,
-                false,
-            ) {
-                pending.push(participant.email.clone());
-            }
-        }
-
-        if pending.is_empty() {
-            append_private_step_log(
-                session_id,
-                step_id,
-                &format!(
-                    "secure_aggregate proxy readiness sync complete in {}ms",
-                    started.elapsed().as_millis()
-                ),
-            );
-            return Ok(());
-        }
-
-        let elapsed_ms = started.elapsed().as_millis() as u64;
-        if elapsed_ms >= timeout_ms {
-            let message = format!(
-                "secure_aggregate proxy readiness sync timed out after {}ms; pending peers: {}",
-                elapsed_ms,
-                pending.join(", ")
-            );
-            append_private_step_log(session_id, step_id, &message);
-            return Err(message);
-        }
-
-        if elapsed_ms >= next_log_ms {
-            append_private_step_log(
-                session_id,
-                step_id,
-                &format!(
-                    "secure_aggregate waiting for peer proxy readiness ({}ms): {}",
-                    elapsed_ms,
-                    pending.join(", ")
-                ),
-            );
-            next_log_ms = elapsed_ms.saturating_add(5_000);
-        }
-
-        std::thread::sleep(Duration::from_millis(250));
-    }
 }
 
 fn select_step_log_lines(log_text: &str, step_id: &str, lines: usize) -> String {
@@ -1057,6 +864,7 @@ fn resolve_share_source_output(
 
 fn resolve_with_bindings(
     with_bindings: &HashMap<String, serde_json::Value>,
+    input_overrides: &HashMap<String, String>,
     flow_spec: &serde_json::Value,
     flow_name: &str,
     session_id: &str,
@@ -1098,6 +906,7 @@ fn resolve_with_bindings(
         let resolved = resolve_single_binding(
             base_ref,
             is_url_list,
+            input_overrides,
             flow_spec,
             flow_name,
             session_id,
@@ -1153,6 +962,7 @@ fn is_email_in_group(email: &str, group_name: &str, groups: &HashMap<String, Vec
 fn resolve_single_binding(
     base_ref: &str,
     is_url_list: bool,
+    input_overrides: &HashMap<String, String>,
     flow_spec: &serde_json::Value,
     flow_name: &str,
     session_id: &str,
@@ -1163,6 +973,129 @@ fn resolve_single_binding(
     work_dir: &Path,
     input_name: &str,
 ) -> Result<Option<String>, String> {
+    fn maybe_convert_genotype_list_to_samplesheet(
+        input_name: &str,
+        base_ref: &str,
+        raw_value: &str,
+        work_dir: &Path,
+    ) -> Result<Option<String>, String> {
+        let normalized_input = input_name.trim().to_ascii_lowercase();
+        let normalized_ref = base_ref.trim().to_ascii_lowercase();
+        let is_genotype_list_binding = normalized_input == "participants"
+            || normalized_input.contains("genotype")
+            || normalized_ref.ends_with(".genotype_files")
+            || normalized_ref.ends_with(".samplesheet");
+        if !is_genotype_list_binding {
+            return Ok(None);
+        }
+
+        let files: Vec<String> = raw_value
+            .split(',')
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_string())
+            .collect();
+        if files.len() < 2 {
+            return Ok(None);
+        }
+        if !files.iter().all(|path| Path::new(path).is_file()) {
+            return Ok(None);
+        }
+
+        let generated_dir = work_dir.join("_inputs").join("generated");
+        fs::create_dir_all(&generated_dir).map_err(|e| {
+            format!(
+                "Failed to create generated inputs dir {}: {}",
+                generated_dir.display(),
+                e
+            )
+        })?;
+
+        let out_path = generated_dir.join(format!("{}_selected.csv", input_name));
+        let mut csv = String::from("participant_id,genotype_file\n");
+        for (idx, file_path) in files.iter().enumerate() {
+            let participant_id = Path::new(file_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("participant");
+            let safe_participant = participant_id.replace(',', "_");
+            let escaped_path = file_path.replace('"', "\"\"");
+            csv.push_str(&format!("{},\"{}\"\n", safe_participant, escaped_path));
+            if idx > 10_000 {
+                break;
+            }
+        }
+
+        fs::write(&out_path, csv).map_err(|e| {
+            format!(
+                "Failed to write generated samplesheet {}: {}",
+                out_path.display(),
+                e
+            )
+        })?;
+        Ok(Some(out_path.to_string_lossy().to_string()))
+    }
+
+    if let Some(input_name) = base_ref.strip_prefix("inputs.") {
+        if let Some(value) = input_overrides
+            .get(base_ref)
+            .or_else(|| input_overrides.get(input_name))
+        {
+            if let Some(generated_samplesheet) =
+                maybe_convert_genotype_list_to_samplesheet(input_name, base_ref, value, work_dir)?
+            {
+                return Ok(Some(generated_samplesheet));
+            }
+            return Ok(Some(value.clone()));
+        }
+
+        if let Some(default_value) = flow_spec
+            .get("spec")
+            .and_then(|s| s.get("inputs"))
+            .and_then(|inputs| inputs.get(input_name))
+            .and_then(|input| input.get("default"))
+        {
+            return match default_value {
+                serde_json::Value::Null => Ok(None),
+                serde_json::Value::String(s) => {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(trimmed.to_string()))
+                    }
+                }
+                serde_json::Value::Array(arr) => {
+                    let joined = arr
+                        .iter()
+                        .filter_map(|v| match v {
+                            serde_json::Value::String(s) => {
+                                let trimmed = s.trim();
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Some(trimmed.to_string())
+                                }
+                            }
+                            _ => Some(v.to_string()),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    if joined.trim().is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(joined))
+                    }
+                }
+                other => Ok(Some(other.to_string())),
+            };
+        }
+
+        return Ok(None);
+    }
+
     let parts: Vec<&str> = base_ref.split('.').collect();
     if parts.len() < 4 || parts[0] != "step" {
         return Ok(Some(base_ref.to_string()));
@@ -3123,8 +3056,8 @@ pub async fn run_flow_step(
         step_numbers_by_id,
         flow_name,
         my_email,
-        my_role,
         participants,
+        input_overrides,
         module_path,
         module_ref,
         with_bindings,
@@ -3138,7 +3071,14 @@ pub async fn run_flow_step(
             .ok_or_else(|| "Flow session not found".to_string())?;
 
         // Get step info and check if it can run
-        let (step_deps, step_status, is_my_action, module_path, module_ref, with_bindings) = {
+        let (
+            step_deps,
+            step_status,
+            is_my_action,
+            module_path,
+            module_ref,
+            with_bindings,
+        ) = {
             let step = flow_state
                 .steps
                 .iter()
@@ -3224,8 +3164,8 @@ pub async fn run_flow_step(
             step_numbers_by_id,
             flow_state.flow_name.clone(),
             flow_state.my_email.clone(),
-            flow_state.my_role.clone(),
             flow_state.participants.clone(),
+            flow_state.input_overrides.clone(),
             module_path,
             module_ref,
             with_bindings,
@@ -3368,6 +3308,7 @@ pub async fn run_flow_step(
 
         let step_args = resolve_with_bindings(
             &with_bindings,
+            &input_overrides,
             flow_spec_ref,
             &flow_name,
             &session_id,

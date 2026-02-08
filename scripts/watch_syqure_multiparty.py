@@ -229,13 +229,22 @@ def telemetry_line(
     return line, {"tx_bytes": tx, "rx_bytes": rx, "updated_ms": updated_ms}
 
 
-def snapshot(prefix: str, sandbox: Path, flow: str, emails: List[str], prev_tel: Dict[str, dict]) -> Dict[str, dict]:
+def snapshot(
+    prefix: str,
+    sandbox: Path,
+    flow: str,
+    emails: List[str],
+    prev_tel: Dict[str, dict],
+    emit_wait: bool,
+) -> Tuple[Dict[str, dict], bool]:
     session = latest_session(sandbox, flow, emails)
     ts = time.strftime("%H:%M:%S")
-    print(f"{prefix} {ts} flow={flow} session={session or '-'}")
+    if session or emit_wait:
+        print(f"{prefix} {ts} flow={flow} session={session or '-'}")
     if not session:
-        print(f"{prefix} waiting for session-* in {sandbox}")
-        return prev_tel
+        if emit_wait:
+            print(f"{prefix} waiting for session-* in {sandbox}")
+        return prev_tel, False
 
     next_tel: Dict[str, dict] = dict(prev_tel)
     for email in emails:
@@ -271,7 +280,7 @@ def snapshot(prefix: str, sandbox: Path, flow: str, emails: List[str], prev_tel:
         )
         print(f"{prefix} {role:<10} secure_tail: {secure_tail}")
 
-    return next_tel
+    return next_tel, True
 
 
 def main() -> int:
@@ -287,8 +296,24 @@ def main() -> int:
         return 1
 
     prev_tel: Dict[str, dict] = {}
+    had_session = False
+    last_wait_log_at = 0.0
     while True:
-        prev_tel = snapshot(args.prefix, sandbox, args.flow, emails, prev_tel)
+        now = time.time()
+        emit_wait = False
+        if not had_session and (last_wait_log_at <= 0.0 or (now - last_wait_log_at) >= 30.0):
+            emit_wait = True
+        prev_tel, has_session = snapshot(
+            args.prefix,
+            sandbox,
+            args.flow,
+            emails,
+            prev_tel,
+            emit_wait,
+        )
+        if emit_wait and not has_session:
+            last_wait_log_at = now
+        had_session = has_session
         if args.once:
             return 0
         time.sleep(max(args.interval, 0.2))

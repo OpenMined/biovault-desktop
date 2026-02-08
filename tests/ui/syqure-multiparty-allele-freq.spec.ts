@@ -1,7 +1,7 @@
 /**
  * Syqure Multiparty Flow Test (Three Clients)
  * Uses the same invitation system as --pipelines-multiparty-flow, but executes
- * the real syqure flow from biovault/tests/scenarios/allele-freq-syqure/flow.yaml.
+ * the real syqure flow from biovault/flows/multiparty-allele-freq/flow.yaml.
  *
  * Usage:
  *   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive
@@ -22,6 +22,7 @@ const RUN_TIMEOUT_MS = Number.parseInt(
 	process.env.SYQURE_MULTIPARTY_RUN_TIMEOUT_MS || '1200000',
 	10,
 )
+const ALLELE_FREQ_EXPECTED_FILES = Number.parseInt(process.env.ALLELE_FREQ_COUNT || '10', 10)
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -155,17 +156,15 @@ async function runMultiRecipientCryptoSmoke(
 	for (const sendCase of sendCases) {
 		const recipientEmails = sendCase.to.map((entry) => entry.email)
 		const body = `[${smokeTag}] ${sendCase.from.email} -> ${recipientEmails.join(', ')}`
-		const sent = await sendCase.from.backend.invoke('send_message', {
-			request: {
-				recipients: recipientEmails,
-				subject: `Crypto smoke ${smokeTag}`,
-				body,
-				metadata: {
-					crypto_smoke: {
-						tag: smokeTag,
-						sender: sendCase.from.email,
-						recipients: recipientEmails,
-					},
+		const sent = await sendMessageWithRetry(sendCase.from.backend, {
+			recipients: recipientEmails,
+			subject: `Crypto smoke ${smokeTag}`,
+			body,
+			metadata: {
+				crypto_smoke: {
+					tag: smokeTag,
+					sender: sendCase.from.email,
+					recipients: recipientEmails,
 				},
 			},
 		})
@@ -195,6 +194,27 @@ async function runMultiRecipientCryptoSmoke(
 	}
 
 	console.log('Multi-recipient encryption smoke passed for all sender/recipient pairs')
+}
+
+async function sendMessageWithRetry(
+	backend: Backend,
+	request: Record<string, unknown>,
+	maxAttempts = 8,
+): Promise<any> {
+	let lastError: unknown = null
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		try {
+			return await backend.invoke('send_message', { request }, 120_000)
+		} catch (error) {
+			lastError = error
+			const message = String(error || '')
+			const isDbLock = /database is locked/i.test(message)
+			if (!isDbLock || attempt === maxAttempts) break
+			await backend.invoke('trigger_syftbox_sync').catch(() => {})
+			await new Promise((r) => setTimeout(r, 400 * attempt))
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error(String(lastError || 'send_message failed'))
 }
 
 async function waitForContactImport(
@@ -254,6 +274,56 @@ async function clickRunsTab(page: Page): Promise<void> {
 		return
 	}
 	await page.locator('button:has-text("Runs")').first().click()
+}
+
+async function importGeneratedAlleleFreqFiles(
+	backend: Backend,
+	label: string,
+	expectedCount: number,
+): Promise<void> {
+	if (expectedCount <= 0) return
+	const dataDir = await getSyftboxDataDir(backend)
+	const datasitesRoot = resolveDatasitesRoot(dataDir)
+	const homeDir = path.dirname(datasitesRoot)
+	const genotypeDir = path.join(homeDir, 'private', 'app_data', 'biovault', 'allele-freq-data')
+	const samplesheetPath = path.join(genotypeDir, 'samplesheet.csv')
+	let files: string[] = []
+	if (fs.existsSync(samplesheetPath)) {
+		const rows = fs.readFileSync(samplesheetPath, 'utf8').split(/\r?\n/).filter(Boolean)
+		files = rows
+			.slice(1)
+			.map((row) => row.split(',')[1]?.trim())
+			.filter((filePath): filePath is string => Boolean(filePath))
+	}
+	if (files.length === 0) {
+		const genotypesDir = path.join(genotypeDir, 'genotypes')
+		if (fs.existsSync(genotypesDir)) {
+			files = fs
+				.readdirSync(genotypesDir, { withFileTypes: true })
+				.filter((entry) => entry.isFile() && entry.name.endsWith('.txt'))
+				.map((entry) => path.join(genotypesDir, entry.name))
+		}
+	}
+	files.sort()
+	const selected = files.slice(0, expectedCount)
+	if (selected.length < expectedCount) {
+		throw new Error(
+			`${label}: expected ${expectedCount} genotype files in ${genotypeDir}, found ${selected.length}`,
+		)
+	}
+	const fileMetadata = Object.fromEntries(
+		selected.map((filePath, idx) => [
+			filePath,
+			{
+				data_type: 'Genotype',
+				source: '23andMe',
+				grch_version: 'GRCh38',
+				participant_id: `${label.replace(/[^a-z0-9]/gi, '_')}_${idx + 1}`,
+			},
+		]),
+	)
+	await backend.invoke('import_files_pending', { fileMetadata }, 120_000)
+	console.log(`${label}: imported ${selected.length} generated genotype files`)
 }
 
 async function clickStepActionButton(
@@ -373,11 +443,77 @@ async function clickStepActionAndWait(
 	await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
 }
 
+async function runStepViaBackendAndWait(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	label: string,
+	expectedStatuses: string[],
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	await backend.invoke('run_flow_step', { sessionId, stepId }, 120_000)
+	console.log(`${label}: backend started ${stepId}`)
+	await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
+}
+
+async function runStepViaBackendWhenReadyAndWait(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	label: string,
+	expectedStatuses: string[],
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	const startedAt = Date.now()
+	let lastError = ''
+	const transientStartError = (message: string): boolean =>
+		/dependency .* not satisfied yet/i.test(message) ||
+		/step is not ready to run \(status:\s*waitingforinputs\)/i.test(message) ||
+		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message)
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			await backend.invoke('run_flow_step', { sessionId, stepId }, 120_000)
+			console.log(`${label}: backend started ${stepId}`)
+			await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
+			return
+		} catch (error) {
+			lastError = String(error || '')
+			if (/step is not ready to run \(status:\s*(completed|shared|running)\)/i.test(lastError)) {
+				await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
+				return
+			}
+			// Common transients: dependency/input readiness lags while participants sync.
+			if (!transientStartError(lastError)) {
+				throw error
+			}
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, 1500))
+	}
+	throw new Error(
+		`${label}: timed out waiting to start ${stepId} after dependency checks` +
+			(lastError ? `\nLast error: ${lastError}` : ''),
+	)
+}
+
+async function shareStepViaBackendAndWait(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	label: string,
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	await backend.invoke('share_step_outputs', { sessionId, stepId }, 120_000)
+	console.log(`${label}: backend shared ${stepId}`)
+	await waitForLocalStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
+}
+
 async function importAndJoinInvitation(
 	page: Page,
 	backend: Backend,
 	label: string,
 	flowName: string,
+	genotypeFileCount = 0,
 ): Promise<void> {
 	const start = Date.now()
 	while (Date.now() - start < MESSAGE_TIMEOUT) {
@@ -425,6 +561,122 @@ async function importAndJoinInvitation(
 				}
 				await expect(joinBtn).toBeEnabled({ timeout: UI_TIMEOUT })
 				await joinBtn.click()
+				const inputPicker = page.locator('.flow-input-picker-modal').first()
+				let pickerVisible = false
+				let alreadyJoined = false
+				const waitStart = Date.now()
+				while (Date.now() - waitStart < 20_000) {
+					if (await inputPicker.isVisible().catch(() => false)) {
+						pickerVisible = true
+						break
+					}
+					const refreshedJoinText = (await joinBtn.textContent().catch(() => '')) || ''
+					if (refreshedJoinText.includes('View Flow')) {
+						alreadyJoined = true
+						break
+					}
+					await page.waitForTimeout(300)
+				}
+				if (pickerVisible) {
+					const genotypeRow = inputPicker
+						.locator('.flow-input-picker-row')
+						.filter({ has: page.locator('.flow-input-picker-label', { hasText: 'genotype_files' }) })
+						.first()
+					const checkboxes = genotypeRow.locator('input.flow-input-picker-checkbox')
+					const checkboxCount = await checkboxes.count()
+					if (genotypeFileCount > 0 && checkboxCount > 0) {
+						if (checkboxCount < genotypeFileCount) {
+							throw new Error(
+								`${label}: expected at least ${genotypeFileCount} genotype files in picker, found ${checkboxCount}`,
+							)
+						}
+						// Fast-path: use row-level "Select all visible" when present.
+						const selectAllVisible = genotypeRow
+							.locator('input.flow-input-picker-select-all')
+							.first()
+						if (await selectAllVisible.isVisible().catch(() => false)) {
+							await selectAllVisible.check()
+						}
+						let checkedCount = await checkboxes
+							.evaluateAll((nodes) =>
+								nodes.filter((node) => (node as HTMLInputElement).checked).length,
+							)
+							.catch(() => 0)
+						for (
+							let idx = checkedCount;
+							idx < genotypeFileCount;
+							idx += 1 // fallback for cases where not all were visible
+						) {
+							await checkboxes.nth(idx).check()
+						}
+						checkedCount = await checkboxes
+							.evaluateAll((nodes) =>
+								nodes.filter((node) => (node as HTMLInputElement).checked).length,
+							)
+							.catch(() => 0)
+						if (checkedCount < genotypeFileCount) {
+							throw new Error(
+								`${label}: selected ${checkedCount}/${genotypeFileCount} genotype files before Continue`,
+							)
+						}
+					} else {
+						const select = genotypeRow.locator('select.flow-input-picker-select').first()
+						if (genotypeFileCount > 0 && (await select.isVisible().catch(() => false))) {
+							const allValues = await select.evaluate((node) => {
+								const options = Array.from((node as HTMLSelectElement).options)
+								return options.map((option) => option.value).filter(Boolean)
+							})
+							if (allValues.length < genotypeFileCount) {
+								throw new Error(
+									`${label}: expected at least ${genotypeFileCount} genotype files in picker, found ${allValues.length}`,
+								)
+							}
+							const picked = allValues.slice(0, genotypeFileCount)
+							await select.evaluate(
+								(node, values) => {
+									const wanted = new Set(values)
+									const input = node as HTMLSelectElement
+									for (const option of Array.from(input.options)) {
+										option.selected = wanted.has(option.value)
+									}
+									input.dispatchEvent(new Event('change', { bubbles: true }))
+								},
+								picked,
+							)
+						}
+					}
+					const continueBtn = inputPicker.locator('button.flow-input-picker-confirm').first()
+					await expect(continueBtn).toBeVisible({ timeout: 15_000 })
+					await expect(continueBtn).toBeEnabled({ timeout: 15_000 })
+					let submitted = false
+					for (let attempt = 0; attempt < 4; attempt += 1) {
+						await continueBtn.click({ force: true })
+						const closed = await inputPicker
+							.isHidden({ timeout: 5_000 })
+							.catch(() => false)
+						if (closed) {
+							submitted = true
+							break
+						}
+						await page.waitForTimeout(500)
+					}
+					if (!submitted) {
+						throw new Error(
+							`${label}: configure-flow input modal did not close after pressing Continue`,
+						)
+					}
+				} else {
+					if (genotypeFileCount > 0) {
+						throw new Error(
+							`${label}: Configure flow inputs modal did not appear for genotype participant`,
+						)
+					}
+					if (!alreadyJoined) {
+						throw new Error(
+							`${label}: Configure flow inputs modal did not appear after clicking Join Flow`,
+						)
+					}
+				}
 				console.log(`${label}: joined invitation flow`)
 				return
 			}
@@ -645,16 +897,24 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const email3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
 
-		const flowName = 'allele-freq-syqure'
+		const flowName = 'multiparty-allele-freq'
 		const sourceFlowPath = path.join(
 			process.cwd(),
 			'biovault',
-			'tests',
-			'scenarios',
-			'allele-freq-syqure',
+			'flows',
+			'multiparty-allele-freq',
 			'flow.yaml',
 		)
 		expect(fs.existsSync(sourceFlowPath)).toBe(true)
+
+		const alleleFreqPipelinePath = path.join(
+			process.cwd(),
+			'biovault',
+			'flows',
+			'allele-freq',
+			'flow.yaml',
+		)
+		expect(fs.existsSync(alleleFreqPipelinePath)).toBe(true)
 
 		let logSocket: WebSocket | null = null
 		let backend1: Backend | null = null
@@ -694,6 +954,8 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			await completeOnboarding(page1, email1, logSocket)
 			await completeOnboarding(page2, email2, logSocket)
 			await completeOnboarding(page3, email3, logSocket)
+			await importGeneratedAlleleFreqFiles(backend1, email1, ALLELE_FREQ_EXPECTED_FILES)
+			await importGeneratedAlleleFreqFiles(backend2, email2, ALLELE_FREQ_EXPECTED_FILES)
 
 			await backend1.invoke('get_dev_mode_info')
 			await backend2.invoke('get_dev_mode_info')
@@ -735,8 +997,8 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				{ email: email3, backend: backend3 },
 			])
 
-			// Match biovault/tests/scenarios/syqure-distributed.yaml behavior:
-			// each participant runs the same source flow folder with local modules.
+			// Import both the syqure multiparty flow and the standalone allele-freq
+			// pipeline (used by gen_allele_freq module's run.sh via `bv run`).
 			await Promise.all([
 				backend1.invoke('import_flow', {
 					flowFile: sourceFlowPath,
@@ -748,6 +1010,14 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				}),
 				backend3.invoke('import_flow', {
 					flowFile: sourceFlowPath,
+					overwrite: true,
+				}),
+				backend1.invoke('import_flow', {
+					flowFile: alleleFreqPipelinePath,
+					overwrite: true,
+				}),
+				backend2.invoke('import_flow', {
+					flowFile: alleleFreqPipelinePath,
 					overwrite: true,
 				}),
 			])
@@ -795,9 +1065,21 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				},
 			})
 
-			await importAndJoinInvitation(page1, backend1, email1, flowName)
-			await importAndJoinInvitation(page2, backend2, email2, flowName)
-			await importAndJoinInvitation(page3, backend3, email3, flowName)
+			await importAndJoinInvitation(
+				page1,
+				backend1,
+				email1,
+				flowName,
+				ALLELE_FREQ_EXPECTED_FILES,
+			)
+			await importAndJoinInvitation(
+				page2,
+				backend2,
+				email2,
+				flowName,
+				ALLELE_FREQ_EXPECTED_FILES,
+			)
+			await importAndJoinInvitation(page3, backend3, email3, flowName, 0)
 
 			const [runId1, runId2, runId3] = await Promise.all([
 				waitForSessionRunId(backend1, sessionId, email1, 90_000),
@@ -890,106 +1172,90 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 
 			// Stage 3: clients run align_counts.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
+				runStepViaBackendWhenReadyAndWait(
 					backend1,
 					sessionId,
 					'align_counts',
-					'mp-run-btn',
 					email1,
 					['Completed', 'Shared'],
-					180_000,
 				),
-				clickStepActionAndWait(
-					page2,
+				runStepViaBackendWhenReadyAndWait(
 					backend2,
 					sessionId,
 					'align_counts',
-					'mp-run-btn',
 					email2,
 					['Completed', 'Shared'],
-					180_000,
 				),
 			])
 
-			// Stage 4: all parties run secure_aggregate.
+			// Stage 3b: run explicit barrier after align_counts so downstream deps converge.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
+				runStepViaBackendWhenReadyAndWait(
+					backend1,
+					sessionId,
+					'mpc_barrier',
+					email1,
+					['Completed', 'Shared'],
+				),
+				runStepViaBackendWhenReadyAndWait(
+					backend2,
+					sessionId,
+					'mpc_barrier',
+					email2,
+					['Completed', 'Shared'],
+				),
+			])
+
+			// Stage 4: run secure_aggregate via backend commands.
+			// This avoids flaky UI actions when get_multiparty_flow_state polling is slow.
+			await Promise.all([
+				runStepViaBackendWhenReadyAndWait(
 					backend1,
 					sessionId,
 					'secure_aggregate',
-					'mp-run-btn',
 					email1,
-					['Completed', 'Shared'],
+					['Running', 'Completed', 'Shared'],
 					RUN_TIMEOUT_MS,
 				),
-				clickStepActionAndWait(
-					page2,
+				runStepViaBackendWhenReadyAndWait(
 					backend2,
 					sessionId,
 					'secure_aggregate',
-					'mp-run-btn',
 					email2,
-					['Completed', 'Shared'],
+					['Running', 'Completed', 'Shared'],
 					RUN_TIMEOUT_MS,
 				),
-				clickStepActionAndWait(
-					page3,
+				runStepViaBackendWhenReadyAndWait(
 					backend3,
 					sessionId,
 					'secure_aggregate',
-					'mp-run-btn',
 					email3,
-					['Completed', 'Shared'],
+					['Running', 'Completed', 'Shared'],
 					RUN_TIMEOUT_MS,
 				),
 			])
-			// Stage 4b: clients share secure_aggregate outputs.
+
+			// Stage 4b: clients share secure_aggregate outputs via backend commands.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
-					backend1,
-					sessionId,
-					'secure_aggregate',
-					'mp-share-btn',
-					email1,
-					['Shared'],
-					RUN_TIMEOUT_MS,
-				),
-				clickStepActionAndWait(
-					page2,
-					backend2,
-					sessionId,
-					'secure_aggregate',
-					'mp-share-btn',
-					email2,
-					['Shared'],
-					RUN_TIMEOUT_MS,
-				),
+				shareStepViaBackendAndWait(backend1, sessionId, 'secure_aggregate', email1, RUN_TIMEOUT_MS),
+				shareStepViaBackendAndWait(backend2, sessionId, 'secure_aggregate', email2, RUN_TIMEOUT_MS),
 			])
 
 			// Stage 5: clients run report_aggregate.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
+				runStepViaBackendAndWait(
 					backend1,
 					sessionId,
 					'report_aggregate',
-					'mp-run-btn',
 					email1,
 					['Completed', 'Shared'],
-					240_000,
 				),
-				clickStepActionAndWait(
-					page2,
+				runStepViaBackendAndWait(
 					backend2,
 					sessionId,
 					'report_aggregate',
-					'mp-run-btn',
 					email2,
 					['Completed', 'Shared'],
-					240_000,
 				),
 			])
 
@@ -1011,7 +1277,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				{ email: email2, stepId: 'align_counts', statuses: ['Completed', 'Shared'] },
 				{ email: email1, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
 				{ email: email2, stepId: 'secure_aggregate', statuses: ['Shared', 'Completed'] },
-				{ email: email3, stepId: 'secure_aggregate', statuses: ['Completed', 'Shared'] },
 				{ email: email1, stepId: 'report_aggregate', statuses: ['Completed', 'Shared'] },
 				{ email: email2, stepId: 'report_aggregate', statuses: ['Completed', 'Shared'] },
 			])

@@ -27,6 +27,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const multipartyStepTimers = new Map()
 	const multipartyParticipantStatusMemory = new Map()
 	const multipartyDiagnosticsSamples = new Map()
+	const multipartyLoadInFlight = new Map()
 	let runsRenderKey = ''
 
 	function getNestedState(map, sessionId) {
@@ -43,10 +44,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		stopMultipartyPolling(sessionId)
 		// Poll every 3 seconds for state updates from other participants
 		const interval = setInterval(async () => {
+			if (multipartyLoadInFlight.get(sessionId)) return
+			multipartyLoadInFlight.set(sessionId, true)
 			try {
 				await loadMultipartySteps(sessionId, runId)
 			} catch (err) {
 				console.warn('Multiparty polling error:', err)
+			} finally {
+				multipartyLoadInFlight.set(sessionId, false)
 			}
 		}, 3000)
 		multipartyPollingIntervals.set(sessionId, interval)
@@ -68,6 +73,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			multipartyStepTimerIntervals.delete(sessionId)
 		}
 		stopAllStepLogPolling(sessionId)
+		multipartyLoadInFlight.delete(sessionId)
 		for (const key of multipartyDiagnosticsSamples.keys()) {
 			if (key.startsWith(`${sessionId}::`)) {
 				multipartyDiagnosticsSamples.delete(key)
@@ -86,6 +92,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		multipartyStepTimers.clear()
 		multipartyParticipantStatusMemory.clear()
 		multipartyDiagnosticsSamples.clear()
+		multipartyLoadInFlight.clear()
 	}
 
 	function getStepLogKey(sessionId, stepId) {
@@ -94,6 +101,89 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 
 	function getStepTimerKey(sessionId, stepId) {
 		return `${sessionId}::${stepId}`
+	}
+
+	async function showDockerWarningModal(runAction) {
+		return new Promise((resolve) => {
+			const existing = document.getElementById('docker-warning-modal')
+			if (existing) existing.remove()
+
+			const overlay = document.createElement('div')
+			overlay.id = 'docker-warning-modal'
+			overlay.style.cssText =
+				'position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 9999;'
+
+			const modal = document.createElement('div')
+			modal.style.cssText =
+				'background: #ffffff; color: #0f172a; width: min(460px, 92vw); border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,0.25); padding: 22px 24px; display: flex; flex-direction: column; gap: 14px;'
+
+			modal.innerHTML = `
+				<div style="display:flex; gap:12px; align-items:flex-start;">
+					<div style="width:14px; height:14px; margin-top:2px; color:#b91c1c;">⚠️</div>
+					<div style="flex:1;">
+						<div style="font-weight:700; font-size:16px; margin-bottom:6px;">Docker isn’t running</div>
+						<div style="font-size:13px; line-height:1.4; color:#334155;">
+							Start Docker Desktop, then re-check. You can also choose to run anyway (it may fail).
+						</div>
+						<div id="docker-check-status" style="margin-top:8px; font-size:12px; color:#b91c1c;"></div>
+					</div>
+				</div>
+				<div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+					<button id="docker-cancel" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; color:#0f172a; font-weight:600; cursor:pointer;">Cancel</button>
+					<button id="docker-run-anyway" style="padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-weight:700; cursor:pointer;">Run anyway</button>
+					<button id="docker-recheck" style="padding:10px 14px; border-radius:8px; border:none; background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; font-weight:700; cursor:pointer;">I started Docker, re-check</button>
+				</div>
+			`
+
+			const statusEl = modal.querySelector('#docker-check-status')
+
+			function close() {
+				overlay.remove()
+			}
+
+			modal.querySelector('#docker-cancel').addEventListener('click', () => {
+				close()
+				resolve(false)
+			})
+
+			modal.querySelector('#docker-run-anyway').addEventListener('click', async () => {
+				close()
+				await runAction()
+				resolve(true)
+			})
+
+			modal.querySelector('#docker-recheck').addEventListener('click', async () => {
+				statusEl.textContent = 'Checking Docker...'
+				statusEl.style.color = '#0f172a'
+				try {
+					const running = await invoke('check_docker_running')
+					if (running) {
+						statusEl.textContent = 'Docker is running! Running step...'
+						statusEl.style.color = '#15803d'
+						close()
+						await runAction()
+						resolve(true)
+					} else {
+						statusEl.textContent = 'Still not running. Please start Docker then click re-check.'
+						statusEl.style.color = '#b91c1c'
+					}
+				} catch (err) {
+					console.error('Docker re-check failed:', err)
+					statusEl.textContent = 'Could not check Docker (see console).'
+					statusEl.style.color = '#b91c1c'
+				}
+			})
+
+			overlay.addEventListener('click', (e) => {
+				if (e.target === overlay) {
+					close()
+					resolve(false)
+				}
+			})
+
+			overlay.appendChild(modal)
+			document.body.appendChild(overlay)
+		})
 	}
 
 	function formatClockDuration(ms) {
@@ -1333,7 +1423,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					if (
 						isMyAction &&
 						step.shares_output &&
-						step.status === 'Completed' &&
+						effectiveStatus === 'Completed' &&
 						!step.outputs_shared
 					) {
 						statusIcon = '📤'
@@ -1346,7 +1436,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const isExpanded = stepExpandedState.has(step.id)
 						? stepExpandedState.get(step.id)
 						: defaultExpanded
-					const isLogExpanded = logExpandedState.get(step.id) === true
+					const defaultLogExpanded = effectiveStatus === 'Running' || effectiveStatus === 'Failed'
+					const isLogExpanded = logExpandedState.has(step.id)
+						? logExpandedState.get(step.id) === true
+						: defaultLogExpanded
 					const isCompleted = effectiveStatus === 'Completed' || effectiveStatus === 'Shared'
 					const dependenciesSatisfied = areDependenciesSatisfied(step)
 
@@ -1376,8 +1469,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 										: ''
 								}
 								<details class="mp-step-logs" data-step-id="${escapeHtml(step.id)}" ${isLogExpanded ? 'open' : ''} ontoggle="window.runsModule?.toggleStepLogs(this, '${sessionId}', '${escapeHtml(step.id)}', this.open)">
-									<summary>Show logs</summary>
-									<pre class="mp-step-log-block">Open to stream local module logs for this step...</pre>
+									<summary>
+										<span>Show logs</span>
+										<button type="button" class="mp-log-copy-btn" onclick="window.runsModule?.copyStepLogs(event, this, '${sessionId}', '${escapeHtml(step.id)}')">Copy logs</button>
+									</summary>
+									<pre class="mp-step-log-block">Loading logs...</pre>
 								</details>
 								<div class="mp-step-controls">
 								${
@@ -1484,15 +1580,33 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					}
 				})
 			}
+			stepsContainer.querySelector('.mp-steps-transient-error')?.remove()
 			refreshStepTimerNodes(sessionId)
 
 			// Load logs asynchronously
 			loadParticipantLogs(sessionId)
 		} catch (error) {
 			console.error('Failed to load multiparty steps:', error)
-			multipartyRenderedHtml.delete(sessionId)
-			multipartyRenderKeys.delete(sessionId)
-			stepsContainer.innerHTML = `<div class="mp-error">Failed to load steps: ${escapeHtml(String(error))}</div>`
+			const hasRenderedSteps = !!stepsContainer.querySelector('.mp-tabs-container')
+			if (!hasRenderedSteps) {
+				multipartyRenderedHtml.delete(sessionId)
+				multipartyRenderKeys.delete(sessionId)
+				stepsContainer.innerHTML = `<div class="mp-error">Failed to load steps: ${escapeHtml(String(error))}</div>`
+				return
+			}
+			// Keep last good render and surface a non-blocking warning.
+			const existing = stepsContainer.querySelector('.mp-steps-transient-error')
+			const message = `Temporary refresh issue: ${escapeHtml(String(error))}`
+			if (existing) {
+				existing.innerHTML = message
+			} else {
+				const banner = document.createElement('div')
+				banner.className = 'mp-steps-transient-error'
+				banner.innerHTML = message
+				banner.style.cssText =
+					'margin: 8px 0 12px; padding: 8px 10px; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; border-radius: 8px; font-size: 12px;'
+				stepsContainer.prepend(banner)
+			}
 		}
 	}
 
@@ -1584,18 +1698,18 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-module-btn" onclick="window.runsModule?.viewStepModule('${step.module_path.replace(/'/g, "\\'")}')">📦 View Module</button>`,
 			)
 		}
-		if ((step.status === 'Ready' || step.status === 'Pending') && dependenciesSatisfied) {
+		if ((effectiveStatus === 'Ready' || effectiveStatus === 'Pending') && dependenciesSatisfied) {
 			actions.push(
 				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
 			)
 		}
-		if ((step.status === 'Ready' || step.status === 'Pending') && !dependenciesSatisfied) {
+		if ((effectiveStatus === 'Ready' || effectiveStatus === 'Pending') && !dependenciesSatisfied) {
 			actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
 		}
-		if (step.status === 'Running') {
+		if (effectiveStatus === 'Running') {
 			actions.push('<span class="mp-running">Running...</span>')
 		}
-		if (step.status === 'Completed' && step.shares_output && !step.outputs_shared) {
+		if (effectiveStatus === 'Completed' && step.shares_output && !step.outputs_shared) {
 			actions.push(
 				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
 			)
@@ -1603,7 +1717,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-share-btn" onclick="window.runsModule?.shareStepOutputs('${sessionId}', '${step.id}')">📤 Share</button>`,
 			)
 		}
-		if (step.shares_output && step.outputs_shared && step.status !== 'Shared') {
+		if (step.shares_output && step.outputs_shared && effectiveStatus !== 'Shared') {
 			actions.push(
 				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
 			)
@@ -1612,10 +1726,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-chat-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">💬 Share to Chat</button>`,
 			)
 		}
-		if (step.status === 'Completed' && !step.shares_output) {
+		if (effectiveStatus === 'Completed' && !step.shares_output) {
 			actions.push('<span class="mp-done">✓ Done</span>')
 		}
-		if (step.status === 'Shared') {
+		if (effectiveStatus === 'Shared') {
 			// Preview should remain available after sharing
 			actions.push(
 				`<button type="button" class="mp-btn mp-preview-btn" onclick="window.runsModule?.previewStepOutputs('${sessionId}', '${step.id}')">📁 Show in Finder</button>`,
@@ -1881,8 +1995,43 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const interval = setInterval(refreshLogs, 2000)
 		multipartyStepLogIntervals.set(getStepLogKey(sessionId, stepId), interval)
 	}
-	window.runsModule.runStep = async function (sessionId, stepId) {
+	window.runsModule.copyStepLogs = async function (event, buttonEl, sessionId, stepId) {
 		try {
+			event?.preventDefault?.()
+			event?.stopPropagation?.()
+			const cacheKey = getStepLogKey(sessionId, stepId)
+			let text = String(multipartyStepLogCache.get(cacheKey) || '').trim()
+			if (!text) {
+				const fetched = await invoke('get_multiparty_step_logs', {
+					sessionId,
+					stepId,
+					lines: 240,
+				})
+				text = String(fetched || '').trim()
+				if (text) multipartyStepLogCache.set(cacheKey, text)
+			}
+			if (!text) text = 'No step-specific logs yet.'
+			await navigator.clipboard.writeText(text)
+			if (buttonEl) {
+				const original = buttonEl.textContent
+				buttonEl.textContent = 'Copied'
+				setTimeout(() => {
+					buttonEl.textContent = original || 'Copy logs'
+				}, 1200)
+			}
+		} catch (error) {
+			console.error('Failed to copy step logs:', error)
+			if (buttonEl) {
+				const original = buttonEl.textContent
+				buttonEl.textContent = 'Copy failed'
+				setTimeout(() => {
+					buttonEl.textContent = original || 'Copy logs'
+				}, 1600)
+			}
+		}
+	}
+	window.runsModule.runStep = async function (sessionId, stepId) {
+		const executeStep = async () => {
 			await invoke('run_flow_step', { sessionId, stepId })
 			// Refresh the steps display
 			const runCard = document
@@ -1891,6 +2040,22 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			if (runCard) {
 				const runId = runCard.dataset.runId
 				await loadMultipartySteps(sessionId, runId)
+			}
+		}
+
+		try {
+			let dockerRunning = true
+			try {
+				dockerRunning = await invoke('check_docker_running')
+			} catch (checkError) {
+				console.warn('Docker check failed before multiparty step run:', checkError)
+				dockerRunning = false
+			}
+
+			if (dockerRunning) {
+				await executeStep()
+			} else {
+				await showDockerWarningModal(executeStep)
 			}
 		} catch (error) {
 			console.error('Failed to run step:', error)

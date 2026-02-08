@@ -1940,25 +1940,31 @@ prepare_allele_freq_ui_inputs() {
 		force_args=(--force)
 	fi
 
-	bash "$gen_script" \
-		--output-dir "$c1_out" \
-		--count "$file_count" \
-		--seed "${ALLELE_FREQ_CLIENT1_SEED:-42}" \
-		--apol1-het "${ALLELE_FREQ_CLIENT1_APOL1_HET:-0.6}" \
-		--apol1-hom-alt "${ALLELE_FREQ_CLIENT1_APOL1_HOM_ALT:-0.2}" \
-		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}" \
-		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}" \
-		"${force_args[@]}" >>"$LOG_FILE" 2>&1
+	local -a gen_cmd_client1=(
+		bash "$gen_script"
+		--output-dir "$c1_out"
+		--count "$file_count"
+		--seed "${ALLELE_FREQ_CLIENT1_SEED:-42}"
+		--apol1-het "${ALLELE_FREQ_CLIENT1_APOL1_HET:-0.6}"
+		--apol1-hom-alt "${ALLELE_FREQ_CLIENT1_APOL1_HOM_ALT:-0.2}"
+		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}"
+		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}"
+	)
+	append_array_items gen_cmd_client1 force_args
+	"${gen_cmd_client1[@]}" >>"$LOG_FILE" 2>&1
 
-	bash "$gen_script" \
-		--output-dir "$c2_out" \
-		--count "$file_count" \
-		--seed "${ALLELE_FREQ_CLIENT2_SEED:-43}" \
-		--thal-het "${ALLELE_FREQ_CLIENT2_THAL_HET:-0.5}" \
-		--thal-hom-alt "${ALLELE_FREQ_CLIENT2_THAL_HOM_ALT:-0.3}" \
-		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}" \
-		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}" \
-		"${force_args[@]}" >>"$LOG_FILE" 2>&1
+	local -a gen_cmd_client2=(
+		bash "$gen_script"
+		--output-dir "$c2_out"
+		--count "$file_count"
+		--seed "${ALLELE_FREQ_CLIENT2_SEED:-43}"
+		--thal-het "${ALLELE_FREQ_CLIENT2_THAL_HET:-0.5}"
+		--thal-hom-alt "${ALLELE_FREQ_CLIENT2_THAL_HOM_ALT:-0.3}"
+		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}"
+		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}"
+	)
+	append_array_items gen_cmd_client2 force_args
+	"${gen_cmd_client2[@]}" >>"$LOG_FILE" 2>&1
 
 	info "Prepared allele-freq inputs:"
 	info "  client1: ${c1_out}"
@@ -2600,6 +2606,8 @@ PY
 	syqure-multiparty-allele-freq)
 		# Keep Syqure runtime env aligned with the distributed scenario defaults.
 		# Allow callers to override explicitly via environment.
+		export BV_AGG_THREADS="${BV_AGG_THREADS:-2}"
+		export BV_EMIT_MAX_FORKS="${BV_EMIT_MAX_FORKS:-2}"
 		export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
 		export BV_SYFTBOX_HOTLINK_SOCKET_ONLY="${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-1}"
 		export BV_SYFTBOX_HOTLINK_TCP_PROXY="${BV_SYFTBOX_HOTLINK_TCP_PROXY:-1}"
@@ -2620,6 +2628,10 @@ PY
 			export SYQURE_DEBUG
 		fi
 		info "Syqure UI env: HOTLINK=${BV_SYFTBOX_HOTLINK:-unset} SOCKET_ONLY=${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-unset} QUIC=${BV_SYFTBOX_HOTLINK_QUIC:-unset} QUIC_ONLY=${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-unset} SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset}"
+		info "Allele-freq exec env: BV_AGG_THREADS=${BV_AGG_THREADS} BV_EMIT_MAX_FORKS=${BV_EMIT_MAX_FORKS}"
+		if [[ -n "${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH:-}" ]]; then
+			info "Allele-freq debug override: BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH=${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH}"
+		fi
 
 		start_static_server
 		start_tauri_instances
@@ -2627,11 +2639,11 @@ PY
 
 		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
 		TRANSPORT="${BV_SYQURE_TRANSPORT:-hotlink}"
-		MODULE_YAML="$ROOT_DIR/biovault/tests/scenarios/allele-freq-syqure/modules/secure-aggregate/module.yaml"
+		MODULE_YAML="$ROOT_DIR/biovault/flows/multiparty-allele-freq/modules/secure-aggregate/module.yaml"
 		case "$MODE" in
 			smpc|"") ENTRY="secure_aggregate.codon" ;;
 			he)
-				error "BV_SYQURE_AGG_MODE=he is not supported for allele-freq-syqure (only smpc)"
+				error "BV_SYQURE_AGG_MODE=he is not supported for multiparty-allele-freq (only smpc)"
 				exit 1
 				;;
 			*)
@@ -2643,7 +2655,7 @@ PY
 		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY}) transport: ${TRANSPORT}"
 
 		info "=== Syqure Multiparty Allele-Freq Flow Test ==="
-		info "Three clients will execute biovault/tests/scenarios/allele-freq-syqure/flow.yaml via collaborative run."
+		info "Three clients will execute biovault/flows/multiparty-allele-freq/flow.yaml via collaborative run."
 		info ""
 		info "Open these URLs in your browser:"
 		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
@@ -2653,7 +2665,7 @@ PY
 		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
 
 		timer_push "Playwright: @syqure-multiparty-allele-freq"
-		start_syqure_watchdog "allele-freq-syqure"
+		start_syqure_watchdog "multiparty-allele-freq"
 		run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
 		stop_syqure_watchdog
 		timer_pop
