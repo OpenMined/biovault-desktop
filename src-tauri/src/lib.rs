@@ -1363,9 +1363,28 @@ pub fn run() {
                 });
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_title(&window_title);
+            // Create the main window programmatically so we can set data_directory
+            // for per-instance WebView data isolation (localStorage, cookies, etc.).
+            let mut wb = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::App(Default::default()),
+            )
+            .title(&window_title)
+            .inner_size(1100.0, 700.0)
+            .min_inner_size(900.0, 600.0);
 
+            if let Some(ref data_dir) = webview_data_dir {
+                crate::desktop_log!(
+                    "🔒 WebView data directory: {}",
+                    data_dir.display()
+                );
+                wb = wb.data_directory(data_dir.clone());
+            }
+
+            let window = wb.build()?;
+
+            {
                 // Handle window close event - minimize to tray instead of quitting
                 let window_clone = window.clone();
                 let app_handle = app.handle().clone();
