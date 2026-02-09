@@ -18,6 +18,7 @@ MANIFEST_BRANCH="${MANIFEST_BRANCH:-}"
 REPO_BIN_DIR="${REPO_BIN_DIR:-$ROOT_DIR/.repo-bin}"
 REPO_BIN="${REPO_BIN:-$REPO_BIN_DIR/repo}"
 MANIFEST_REPO_DIR="${MANIFEST_REPO_DIR:-$ROOT_DIR/.repo-manifest}"
+REPO_DEPTH="${REPO_DEPTH:-1}"
 MANIFEST_BRANCH_DEFAULT=""
 
 cd "$ROOT_DIR"
@@ -363,6 +364,30 @@ run_repo() {
   PAGER=cat GIT_PAGER=cat LESS=FRX "${REPO_CMD[@]}" "$@"
 }
 
+repo_depth_arg() {
+  local depth="${REPO_DEPTH:-}"
+  if [[ "$depth" =~ ^[0-9]+$ ]] && [[ "$depth" -gt 0 ]]; then
+    printf '%s' "$depth"
+  fi
+}
+
+ensure_syqure_manifest_override() {
+  if run_repo manifest -r 2>/dev/null | grep -q 'path="syqure"'; then
+    return 0
+  fi
+
+  local local_manifest_dir="$ROOT_DIR/.repo/local_manifests"
+  local local_manifest_file="$local_manifest_dir/syqure.xml"
+  mkdir -p "$local_manifest_dir"
+  cat > "$local_manifest_file" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <project name="madhavajay/syqure" path="syqure" revision="main" />
+</manifest>
+EOF
+  echo -e "${CYAN}→ added local manifest override for syqure${NC}"
+}
+
 repo_init() {
   local init_mode="${1:-}"
   if [[ -n "$init_mode" && "$init_mode" != "--https" ]]; then
@@ -378,13 +403,24 @@ repo_init() {
   local url
   url="$(resolve_manifest_url)"
   local branch="${MANIFEST_BRANCH:-$MANIFEST_BRANCH_DEFAULT}"
+  local depth
+  depth="$(repo_depth_arg)"
 
   if [[ -n "$branch" ]]; then
-    run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
+    if [[ -n "$depth" ]]; then
+      run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch" --depth="$depth"
+    else
+      run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
+    fi
   else
-    run_repo init -u "$url" -m "$MANIFEST_FILE"
+    if [[ -n "$depth" ]]; then
+      run_repo init -u "$url" -m "$MANIFEST_FILE" --depth="$depth"
+    else
+      run_repo init -u "$url" -m "$MANIFEST_FILE"
+    fi
   fi
 
+  ensure_syqure_manifest_override
   ensure_origin_remotes
   ensure_syft_crypto_submodule
   ensure_syqure_submodules
@@ -484,7 +520,14 @@ PY
   git -C "$tmpdir" add "$MANIFEST_FILE" >/dev/null 2>&1
   git -C "$tmpdir" commit -m "Manifest for HTTPS" >/dev/null 2>&1 || true
 
-  run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
+  local depth
+  depth="$(repo_depth_arg)"
+  if [[ -n "$depth" ]]; then
+    run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main --depth="$depth"
+  else
+    run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
+  fi
+  ensure_syqure_manifest_override
   ensure_origin_remotes "$tmpdir/$MANIFEST_FILE"
   ensure_syft_crypto_submodule
   ensure_syqure_submodules
@@ -523,9 +566,12 @@ ensure_syqure_submodules() {
 
   echo -e "${CYAN}→ ${repo} submodules${NC}"
   git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
-  if ! git -C "$repo" submodule update --init --recursive; then
-    echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
-    return 1
+  if ! git -C "$repo" submodule update --init --recursive --depth 1; then
+    echo -e "${YELLOW}WARN: ${repo} shallow submodule update failed; retrying full depth${NC}"
+    if ! git -C "$repo" submodule update --init --recursive; then
+      echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
+      return 1
+    fi
   fi
 }
 
@@ -547,6 +593,8 @@ repo_sync() {
     echo "Unknown sync option: $force" >&2
     exit 1
   fi
+
+  ensure_syqure_manifest_override
 
   if [[ "$mode" == "branch" && "$force" == "--force" ]]; then
     echo -e "${YELLOW}→ Force syncing (discarding local commits/changes)${NC}"

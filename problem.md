@@ -319,6 +319,65 @@ Status:
 - However, run `29509851-4d5275f979db` still timed out; telemetry plateau showed:
   - `client2 rx=0` while other counters were non-zero.
 
+## Latest Findings (2026-02-09, current session)
+
+### Baseline checks and smoke validation
+- Tooling and targeted checks passed:
+  - `./repo tools`
+  - `go test ./internal/server ./internal/syftmsg` (syftbox)
+  - `cargo check -p syftbox-rs` (syftbox/rust)
+- Fast Syqure Docker sanity check remains green:
+  - `cd syqure && ./run_syqure_tcp_examples.sh --docker --smpc`
+  - Latest observed pass: `Done ... in 27s`
+
+### Scenario harness fix (fail before secure step)
+- `tests/scenarios/syqure-distributed.yaml` used `VAR=... time cmd`, which fails on this environment (`time: command not found`).
+- Patched to `time VAR=... cmd` for all 3 parallel flow steps.
+- This removed an immediate non-transport failure mode.
+
+### Added fail-fast assertions (avoid long waits on instant networking faults)
+- `biovault/test-scenario.sh`:
+  - added Docker bridge gateway fallback detection for `BV_SYQURE_CP_HOST` (`docker network inspect bridge ... Gateway`)
+  - hard-fail if container route to selected host proxy IP is impossible (`ip route get`)
+  - hard-fail in hotlink mode if no host IP can be detected
+- `biovault/cli/src/cli/commands/run_dynamic.rs`:
+  - container preflight now errors immediately on `Network is unreachable` instead of warning+continuing
+
+### H1 implemented: Docker direct TCP over shared per-run network (proxy bypass)
+- Implemented in `biovault/cli/src/cli/commands/run_dynamic.rs`:
+  - default for Docker + `transport: hotlink` is now direct TCP mode (`BV_SYQURE_DOCKER_DIRECT=1` by default)
+  - creates/uses per-run Docker bridge network: `syqure-net-{run_id}`
+  - deterministic party IPs: `172.29.0.2`, `.3`, `.4` (overrideable via env)
+  - forces:
+    - `SEQURE_TRANSPORT=tcp`
+    - `SEQURE_TCP_PROXY=0`
+    - `SEQURE_CP_IPS=<fixed party ips>`
+  - docker run now attaches `--network <run-net> --ip <party-ip>`
+- `biovault/test-scenario.sh` updated:
+  - prints `Syqure Docker direct TCP mode enabled (shared network, proxy bypassed).`
+  - skips host-proxy detection/preflight when direct mode is active
+
+### H1 validation status
+- Run `29510048-fe42afb20d27` confirmed:
+  - network created: `syqure-net-29510048-fe42afb20d27`
+  - container IP assignments:
+    - `pid0 -> 172.29.0.2`
+    - `pid1 -> 172.29.0.3`
+    - `pid2 -> 172.29.0.4`
+- So H1 wiring is active and deterministic.
+
+### New issue uncovered during H1 runs
+- Behavior observed on H1 run `29510048-fe42afb20d27`:
+  - `pid1` and `pid2` containers disappeared while `pid0` remained up.
+  - with default `--rm`, evidence for exited peers was lost.
+- Re-ran with `BIOVAULT_SYQURE_KEEP_CONTAINERS=1` (`29510056-7552f587fb5c`) to preserve evidence.
+- In some reruns, scenario process exited between mode-selection output and parallel-step launch (no active `syqure-*` containers), indicating an additional runner/control-flow issue separate from the original hotlink-proxy plateau.
+
+### Current next step
+1. Re-run H1 with `BIOVAULT_SYQURE_KEEP_CONTAINERS=1` and capture full per-party container exit codes/logs.
+2. Add explicit run-scenario trace around transition from "Select Syqure aggregation mode" -> parallel launch to pinpoint early-exit path.
+3. If peers are exiting due to CP bootstrap mismatch, add direct-mode specific fail-fast validation of `SEQURE_CP_IPS`, party id mapping, and startup reachability before entering MPC.
+
 Root cause refinement:
 - In WS fallback mode (`webrtc_connected=0`), server hotlink data forwarding is sender-locked (`session.FromUser`).
 - Reusing an inbound session created by peer as local outbound causes server to drop local data (sender mismatch).
@@ -387,3 +446,117 @@ Live checks:
 Implement strict self-session exclusion + peer-aware matching in `syftbox/rust/src/hotlink_manager.rs`, then validate with:
 1. `./test-scenario.sh --webrtc-flow`
 2. full docker syqure distributed command above
+
+---
+
+## Deep Analysis (2026-02-09, current session continued)
+
+### Root Cause Identified: `canonical_tcp_key` + Unidirectional Server Sessions
+
+After deep code tracing through `hotlink_manager.rs`, `server.go`, and `flow.rs`, the fundamental bug is now clear:
+
+**The problem in one sentence:** `canonical_tcp_key` maps both directions of a channel pair to the same hotlink session path, but the server enforces unidirectional sessions — only `session.FromUser` can send data (server.go line 545: `if msg.ClientInfo.User != session.FromUser { return }`).
+
+**Detailed trace:**
+
+1. Both parties in a channel (e.g. client1 and client2 for channel `0_to_1`) have markers under their own datasites:
+   - `client1@.../shared/flows/.../0_to_1/stream.tcp`
+   - `client2@.../shared/flows/.../0_to_1/stream.tcp`
+
+2. `canonical_tcp_key` normalizes both to the SAME path:
+   - Uses `min(email)` as prefix, `min(pid)_to_max(pid)` as channel dir
+   - Both resolve to: `client1@.../0_to_1/stream.tcp.request`
+
+3. Both parties try to send on this same canonical path. The first party to `HotlinkOpen` becomes `session.FromUser`. The server then silently drops all data frames from the other party (`msg.ClientInfo.User != session.FromUser`).
+
+4. Result: only one direction of data flows. MPC requires bidirectional exchange → deadlock.
+
+### Why Previous Patches (A-G) Didn't Work
+
+- **Patch B (remote-owner routing)**: Tried sending on the peer's path. Fails because ACL `isOwner()` check requires path to start with sender's email. Permission denied.
+- **Patch C (self-route guard)**: Tried to detect self-sessions. Didn't help because the fundamental issue is path collision, not self-routing.
+- **Patch E (inbound adoption bypass)**: Avoided reusing peer's inbound session for outbound. Still fails because both parties create separate sessions on the same canonical path — server still locks to one FromUser.
+- **Patches F, G (targeted open, single-accept)**: Improved session hygiene but canonical path means the server sees both parties' sessions as the "same channel" and can't disambiguate.
+
+### Fix: Directional Outbound Paths
+
+**Approach:** Each party sends on its OWN namespace path and registers a TCP writer for the PEER's namespace path. This guarantees:
+- Write-ACL always passes (sending on own path = isOwner() true)
+- No session collision (each party has a unique outbound session)
+- Server correctly routes data to the intended peer
+
+**Concrete key mapping for channel `0_to_1` between client1 and client2:**
+
+| Party | Outbound (sends on) | Peer Inbound (listens for) |
+|-------|---------------------|---------------------------|
+| client1 | `client1@.../0_to_1/stream.tcp.request` | `client2@.../0_to_1/stream.tcp.request` |
+| client2 | `client2@.../0_to_1/stream.tcp.request` | `client1@.../0_to_1/stream.tcp.request` |
+
+Note: the channel directory name (`0_to_1`) is the SAME for both parties — it represents the pair, not a direction. Only the email prefix differs.
+
+### Implementation in `hotlink_manager.rs`
+
+Three changes in `run_tcp_proxy`:
+
+1. **`outbound_key`** changed from `canonical_tcp_key` to `local_tcp_key` (which preserves the marker's own email prefix):
+   ```rust
+   let outbound_key = local_outbound_tcp_key(&rel_marker, &info, local_email.as_deref())
+       .unwrap_or_else(|| channel_key.clone());
+   ```
+   `local_outbound_tcp_key` simply delegates to `local_tcp_key` — the marker path already starts with the local email.
+
+2. **`peer_inbound_tcp_key`** added: computes the path the peer would send on (same channel dir, peer's email prefix). TCP writer is registered under this key so incoming peer data can be routed to the local TCP socket.
+
+3. **Cleanup**: peer_inbound writer key cleaned up on TCP connection close.
+
+### Bug Found in Initial Fix (PID Swapping)
+
+The first version of `peer_inbound_tcp_key` incorrectly swapped the PIDs:
+```
+// WRONG: produced client2@.../1_to_0/stream.tcp.request
+comps[channel_idx] = format!("{}_to_{}", peer_pid, local_pid);
+```
+
+This was wrong because both parties use the SAME directory name `0_to_1`. The PIDs come from the directory name (`parse_channel_pids`), not from party roles. Both parties' markers parse `from_pid=0, to_pid=1` because the directory is always `0_to_1`.
+
+**Fix:** Don't touch the channel directory at all. Just swap the email prefix:
+```rust
+// CORRECT: produces client2@.../0_to_1/stream.tcp.request
+comps[0] = peer_email.to_string();
+// channel_idx left unchanged
+```
+
+This was corrected in the code. The `local_outbound_tcp_key` was also simplified to just delegate to `local_tcp_key`.
+
+### Existing Test Infrastructure (WebRTC Itself Is Reliable)
+
+The WebRTC transport layer is well-tested and not the problem:
+
+1. **Docker NAT Traversal Test** (`syftbox/docker/nat-test.sh` + `docker-compose-nat-test.yml`):
+   - Full simulated NAT: Alice and Bob on isolated Docker networks
+   - TURN relay (coturn) bridges the networks
+   - Verifies network isolation, WebRTC data channel through NAT
+   - CI workflow triggers on hotlink code changes
+   - `just nat-test` / `just nat-test-debug`
+
+2. **Go Integration Tests** (`syftbox/cmd/devstack/`):
+   - `hotlink_tcp_proxy_test.go` — TCP proxy marker + bidirectional data
+   - `hotlink_protocol_test.go` — session lifecycle
+   - `hotlink_latency_test.go` — latency benchmarks
+
+3. **Smoke Test** (`biovault/tests/scenarios/hotlink-tcp-smoke.yaml`):
+   - 2-peer transport-only test, asserts strict WebRTC (no WS fallback)
+
+The bug is entirely in the Rust-side TCP proxy key routing logic in `hotlink_manager.rs`, not in WebRTC, the Go server, or the signaling layer.
+
+### Current Status
+
+- Code changes complete and corrected (PID swap bug fixed)
+- **Not yet rebuilt or tested** — build + smoke test is the immediate next step
+- The `--webrtc-flow` smoke test (hotlink-tcp-smoke.yaml) successfully reaches the data transfer step with ports listening. Previous run stalled at transfer because of the PID swapping bug. With the fix, data should route correctly.
+
+### Remaining Risk
+
+The smoke test uses a single channel `0_to_1` between 2 parties. The full MPC scenario uses 3 channels (`0_to_1`, `0_to_2`, `1_to_2`) across 3 parties. Both should work with the directional approach since each party's outbound is always under their own email prefix.
+
+One edge case to watch: `canonical_tcp_key` is still computed and used as a TCP writer mapping key (for backward compat with any code path that might deliver data on the canonical path). If there's a code path that sends on the canonical path, data would still go to the wrong session. But the outbound_key change ensures WE don't send on canonical — we send on our own path.
