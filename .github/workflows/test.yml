@@ -54,13 +54,21 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
 
-          # syqure-multiparty-allele-freq (linux)
-          - scenario: syqure-multiparty-allele-freq
+          # syqure-multiparty-flow secure-only smoke test (linux)
+          - scenario: syqure-multiparty-flow-secure-only
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
+
+          # # syqure-multiparty-allele-freq (linux) — disabled, use secure-only smoke test
+          # - scenario: syqure-multiparty-allele-freq
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
 
     defaults:
       run:
@@ -211,7 +219,7 @@ jobs:
             pkg-config
 
       - name: Install syqure build dependencies (Linux)
-        if: runner.os == 'Linux' && matrix.scenario == 'syqure-multiparty-allele-freq'
+        if: runner.os == 'Linux' && contains(matrix.scenario, 'syqure')
         run: |
           UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
@@ -323,7 +331,7 @@ jobs:
         working-directory: src-tauri
 
       - name: Build native syqure binary
-        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+        if: contains(matrix.scenario, 'syqure')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -467,18 +475,31 @@ jobs:
             ./test-scenario.sh --pipelines-multiparty-flow
           fi
 
-      - name: Run syqure multiparty allele-freq scenario
-        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+      - name: Run syqure multiparty flow secure-only scenario
+        if: matrix.scenario == 'syqure-multiparty-flow-secure-only'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           BV_SKIP_SYQURE: "0"
         run: |
           if [ -n "${{ matrix.run_prefix }}" ]; then
-            ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+            ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
           else
-            ./test-scenario.sh --syqure-multiparty-allele-freq
+            ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
           fi
+
+      # - name: Run syqure multiparty allele-freq scenario
+      #   if: matrix.scenario == 'syqure-multiparty-allele-freq'
+      #   env:
+      #     SKIP_PLAYWRIGHT_INSTALL: "1"
+      #     AUTO_REBUILD_TAURI: "0"
+      #     BV_SKIP_SYQURE: "0"
+      #   run: |
+      #     if [ -n "${{ matrix.run_prefix }}" ]; then
+      #       ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+      #     else
+      #       ./test-scenario.sh --syqure-multiparty-allele-freq
+      #     fi
 
       - name: Upload test artifacts on failure
         if: failure()

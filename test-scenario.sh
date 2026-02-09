@@ -827,6 +827,20 @@ ensure_playwright_browsers() {
 # Kill any dangling Jupyter processes from previous runs
 kill_workspace_jupyter
 
+# Kill any stale bv-desktop/syftboxd/syqure processes from previous runs in this workspace.
+# These cause port conflicts, file lock contention, and non-deterministic test failures.
+stale_pids="$(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+if [[ -n "$stale_pids" ]]; then
+	info "Killing stale workspace processes from previous runs: $stale_pids"
+	echo "$stale_pids" | xargs kill 2>/dev/null || true
+	sleep 1
+	# Force-kill survivors
+	stale_pids="$(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+	if [[ -n "$stale_pids" ]]; then
+		echo "$stale_pids" | xargs kill -9 2>/dev/null || true
+	fi
+fi
+
 # Find an available UI port
 if [[ "$UI_PORT_EXPLICIT" == "1" ]]; then
 	while ! is_port_free "$UI_PORT"; do
@@ -1056,10 +1070,10 @@ cleanup() {
 	CLEANUP_ACTIVE=1
 	stop_syqure_watchdog
 	pause_for_interactive_exit
-	if [[ "$NO_CLEANUP" == "1" || "$NO_CLEANUP" == "true" ]]; then
-		info "No-cleanup mode enabled; leaving static server/Tauri/logger/devstack running."
-		return
-	fi
+
+	# Always kill processes — NO_CLEANUP only preserves sandbox files, never processes.
+	# Stale bv-desktop / syftboxd / syqure processes cause port conflicts and
+	# non-deterministic failures on subsequent runs.
 
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
@@ -1113,6 +1127,26 @@ cleanup() {
 			fi
 			bash "$DEVSTACK_SCRIPT" "${stop_args[@]}" >/dev/null 2>&1 || true
 		fi
+	fi
+
+	# Final sweep: kill any process from this workspace that survived the graceful stops.
+	# This catches orphaned syftboxd daemons, syqure binaries, and child processes
+	# that the parent bv-desktop didn't clean up on exit.
+	local stale_count=0
+	while IFS= read -r pid; do
+		if [[ -n "$pid" && "$pid" != "$$" ]]; then
+			kill "$pid" 2>/dev/null && ((stale_count++)) || true
+		fi
+	done < <(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)
+	if [[ "$stale_count" -gt 0 ]]; then
+		info "Killed $stale_count stale workspace processes"
+		sleep 1
+		# Force-kill anything that didn't respond to SIGTERM
+		while IFS= read -r pid; do
+			if [[ -n "$pid" && "$pid" != "$$" ]]; then
+				kill -9 "$pid" 2>/dev/null || true
+			fi
+		done < <(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)
 	fi
 
 	# Close out any in-progress timers so failures still report partial durations.
