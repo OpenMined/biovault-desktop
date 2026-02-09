@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SEQURE_COMMUNICATION_PORT_STRIDE: usize = 1000;
 
-fn flow_spec_root<'a>(flow_spec: &'a serde_json::Value) -> &'a serde_json::Value {
+fn flow_spec_root(flow_spec: &serde_json::Value) -> &serde_json::Value {
     flow_spec.get("spec").unwrap_or(flow_spec)
 }
 
@@ -1441,7 +1441,8 @@ fn create_syft_pub_yaml(
                             for r in readers {
                                 if let Some(email) = r.as_str() {
                                     let email_s = email.to_string();
-                                    if !all_readers.iter().any(|e| e.eq_ignore_ascii_case(&email_s)) {
+                                    if !all_readers.iter().any(|e| e.eq_ignore_ascii_case(&email_s))
+                                    {
                                         all_readers.push(email_s);
                                     }
                                 }
@@ -1473,8 +1474,13 @@ fn create_syft_pub_yaml(
 
     println!(
         "[Multiparty] {} syft.pub.yaml at {:?} with read access for: {:?}",
-        if perm_path.exists() { "Updated" } else { "Created" },
-        perm_path, all_readers
+        if perm_path.exists() {
+            "Updated"
+        } else {
+            "Created"
+        },
+        perm_path,
+        all_readers
     );
 
     Ok(())
@@ -3203,7 +3209,10 @@ pub async fn run_flow_step(
 
         if step_status == StepStatus::Failed {
             if let Some(s) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
-                println!("[Multiparty] Retrying failed step '{}' — resetting to Ready", step_id);
+                println!(
+                    "[Multiparty] Retrying failed step '{}' — resetting to Ready",
+                    step_id
+                );
                 s.status = StepStatus::Ready;
                 append_private_step_log(&session_id, &step_id, "step_retry");
             }
@@ -3661,8 +3670,13 @@ pub async fn share_step_outputs(
             .into_iter()
             .map(|email| default_to_actual.get(&email).cloned().unwrap_or(email))
             .collect::<Vec<String>>();
-        let share_to_emails =
-            resolve_share_recipients(&share_to, &flow_state.participants, &flow_state.my_email, &datasites_order, &groups);
+        let share_to_emails = resolve_share_recipients(
+            &share_to,
+            &flow_state.participants,
+            &flow_state.my_email,
+            &datasites_order,
+            &groups,
+        );
         let _ = persist_multiparty_state(flow_state);
 
         (

@@ -2533,7 +2533,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
 			multiparty: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
-			multiparty_allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
+			multiparty_allele_freq:
+				'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
 			syqure_demo: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
 		}
 
