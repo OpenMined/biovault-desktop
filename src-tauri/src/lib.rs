@@ -1117,6 +1117,15 @@ pub fn run() {
         format!("BioVault - {}", email)
     };
 
+    // Isolate WebView data (localStorage, cookies) per instance using biovault_home_dir.
+    // Without this, multiple Tauri instances with the same bundle identifier share
+    // a single WKWebView data store on macOS, causing identity/state cross-contamination.
+    let webview_data_dir = if !profile_picker_mode && !biovault_home_dir.as_os_str().is_empty() {
+        Some(biovault_home_dir.join("webview-data"))
+    } else {
+        None
+    };
+
     let (conn, queue_processor_paused) = if profile_picker_mode {
         (
             Connection::open_in_memory().expect("Could not open in-memory desktop database"),
