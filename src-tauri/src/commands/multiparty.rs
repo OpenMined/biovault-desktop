@@ -811,21 +811,12 @@ fn maybe_setup_mpc_channels(
         .position(|email| email.eq_ignore_ascii_case(my_email))
         .unwrap_or(0);
 
+    // TCP proxy is always on (syqure integrated). Only an explicit
+    // SEQURE_TCP_PROXY=0 can disable it (e.g. Windows container path).
     let tcp_proxy_enabled = env::var("SEQURE_TCP_PROXY")
         .ok()
         .map(|v| is_truthy(&v))
-        .or_else(|| env::var("BV_SYQURE_TCP_PROXY").ok().map(|v| is_truthy(&v)))
-        .or_else(|| {
-            env::var("BV_SYFTBOX_HOTLINK_TCP_PROXY")
-                .ok()
-                .map(|v| is_truthy(&v))
-        })
-        .or_else(|| {
-            env::var("SYFTBOX_HOTLINK_TCP_PROXY")
-                .ok()
-                .map(|v| is_truthy(&v))
-        })
-        .unwrap_or_else(|| flow_has_hotlink_transport(flow_spec));
+        .unwrap_or(true);
 
     let syqure_port_base = if tcp_proxy_enabled {
         Some(stable_syqure_port_base_for_run(session_id, party_count)?)
@@ -1425,8 +1416,9 @@ fn write_progress_state(
     }
 }
 
-/// Create syft.pub.yaml in output directory to enable SyftBox sync
-/// This allows recipients to read the shared outputs via their synced datasites
+/// Create or update syft.pub.yaml in output directory to enable SyftBox sync.
+/// Merges new readers into any existing permission file so that sharing steps
+/// can widen access after a step initially creates owner-only permissions.
 fn create_syft_pub_yaml(
     output_dir: &PathBuf,
     owner_email: &str,
@@ -1434,9 +1426,31 @@ fn create_syft_pub_yaml(
 ) -> Result<(), String> {
     let perm_path = output_dir.join("syft.pub.yaml");
 
-    // Don't overwrite if exists
+    let mut all_readers: Vec<String> = read_emails.to_vec();
+
     if perm_path.exists() {
-        return Ok(());
+        if let Ok(contents) = fs::read_to_string(&perm_path) {
+            if let Ok(existing) = serde_yaml::from_str::<serde_json::Value>(&contents) {
+                if let Some(rules) = existing.get("rules").and_then(|r| r.as_array()) {
+                    for rule in rules {
+                        if let Some(readers) = rule
+                            .get("access")
+                            .and_then(|a| a.get("read"))
+                            .and_then(|r| r.as_array())
+                        {
+                            for r in readers {
+                                if let Some(email) = r.as_str() {
+                                    let email_s = email.to_string();
+                                    if !all_readers.iter().any(|e| e.eq_ignore_ascii_case(&email_s)) {
+                                        all_readers.push(email_s);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     let doc = serde_json::json!({
@@ -1445,7 +1459,7 @@ fn create_syft_pub_yaml(
                 "pattern": "**",
                 "access": {
                     "admin": [owner_email],
-                    "read": read_emails,
+                    "read": all_readers,
                     "write": Vec::<String>::new(),
                 },
             },
@@ -1458,8 +1472,9 @@ fn create_syft_pub_yaml(
     fs::write(&perm_path, yaml).map_err(|e| format!("Failed to write syft.pub.yaml: {}", e))?;
 
     println!(
-        "[Multiparty] Created syft.pub.yaml at {:?} with read access for: {:?}",
-        perm_path, read_emails
+        "[Multiparty] {} syft.pub.yaml at {:?} with read access for: {:?}",
+        if perm_path.exists() { "Updated" } else { "Created" },
+        perm_path, all_readers
     );
 
     Ok(())
@@ -1610,6 +1625,14 @@ struct HotlinkTelemetrySnapshot {
 
 static FLOW_SESSIONS: Lazy<Mutex<HashMap<String, MultipartyFlowState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Remove a multiparty session from in-memory cache so invitations can be re-accepted.
+/// Called when a flow run is deleted to allow "Join Flow" again from messages.
+pub fn clear_multiparty_session(session_id: &str) {
+    if let Ok(mut sessions) = FLOW_SESSIONS.lock() {
+        sessions.remove(session_id);
+    }
+}
 
 /// Update dependent steps: if all their dependencies are now completed/shared, mark them Ready
 fn update_dependent_steps(flow_state: &mut MultipartyFlowState, completed_step_id: &str) {
@@ -3178,7 +3201,13 @@ pub async fn run_flow_step(
             return Err("This step is not your action".to_string());
         }
 
-        if step_status != StepStatus::Ready && step_status != StepStatus::Pending {
+        if step_status == StepStatus::Failed {
+            if let Some(s) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
+                println!("[Multiparty] Retrying failed step '{}' — resetting to Ready", step_id);
+                s.status = StepStatus::Ready;
+                append_private_step_log(&session_id, &step_id, "step_retry");
+            }
+        } else if step_status != StepStatus::Ready && step_status != StepStatus::Pending {
             return Err(format!(
                 "Step is not ready to run (status: {:?})",
                 step_status
@@ -3611,8 +3640,29 @@ pub async fn share_step_outputs(
                 step.share_to.clone(),
             )
         };
+        let (groups, default_to_actual) = flow_state
+            .flow_spec
+            .as_ref()
+            .map(|spec| build_group_map_from_participants(&flow_state.participants, spec))
+            .unwrap_or_default();
+        let datasites_order: Vec<String> = flow_state
+            .flow_spec
+            .as_ref()
+            .and_then(|spec| spec.get("inputs"))
+            .and_then(|i| i.get("datasites"))
+            .and_then(|d| d.get("default"))
+            .and_then(|arr| arr.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|email| default_to_actual.get(&email).cloned().unwrap_or(email))
+            .collect::<Vec<String>>();
         let share_to_emails =
-            resolve_share_recipients(&share_to, &flow_state.participants, &flow_state.my_email);
+            resolve_share_recipients(&share_to, &flow_state.participants, &flow_state.my_email, &datasites_order, &groups);
         let _ = persist_multiparty_state(flow_state);
 
         (
@@ -3989,6 +4039,8 @@ fn resolve_share_recipients(
     raw_targets: &[String],
     participants: &[FlowParticipant],
     my_email: &str,
+    datasites_order: &[String],
+    groups: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
     let mut resolved: HashSet<String> = HashSet::new();
 
@@ -4018,8 +4070,21 @@ fn resolve_share_recipients(
         if t.starts_with("{datasites[") && t.ends_with("]}") {
             let idx_str = &t["{datasites[".len()..t.len() - 2];
             if let Ok(idx) = idx_str.parse::<usize>() {
-                if let Some(p) = participants.get(idx) {
+                if let Some(email) = datasites_order.get(idx) {
+                    resolved.insert(email.clone());
+                } else if let Some(p) = participants.get(idx) {
                     resolved.insert(p.email.clone());
+                }
+            }
+            continue;
+        }
+
+        // {groups.aggregator} or {groups.clients} → resolve group name to emails
+        if t.starts_with("{groups.") && t.ends_with("}") {
+            let group_name = &t["{groups.".len()..t.len() - 1];
+            if let Some(members) = groups.get(group_name) {
+                for email in members {
+                    resolved.insert(email.clone());
                 }
             }
             continue;

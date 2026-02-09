@@ -2722,7 +2722,7 @@ pub async fn get_flow_runs(state: tauri::State<'_, AppState>) -> Result<Vec<Run>
 pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get work directory before deleting
+    // Get run details before deleting
     let run = biovault_db
         .get_flow_run(run_id)
         .map_err(|e| e.to_string())?;
@@ -2732,11 +2732,20 @@ pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> 
         .delete_flow_run(run_id)
         .map_err(|e| e.to_string())?;
 
-    // Delete work directory if it exists
     if let Some(r) = run {
+        // Clear multiparty session so the invitation can be re-accepted from messages
+        if let Some(ref metadata_str) = r.metadata {
+            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
+                if let Some(sid) = metadata.get("session_id").and_then(|v| v.as_str()) {
+                    super::multiparty::clear_multiparty_session(sid);
+                }
+            }
+        }
+
+        // Delete work directory if it exists
         let path = PathBuf::from(r.work_dir);
         if path.exists() {
-            fs::remove_dir_all(&path).ok(); // Ignore errors here
+            fs::remove_dir_all(&path).ok();
         }
     }
 

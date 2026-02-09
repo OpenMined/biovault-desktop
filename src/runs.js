@@ -1775,6 +1775,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-chat-share-btn" onclick="window.runsModule?.shareStepOutputsToChat('${sessionId}', '${step.id}')">💬 Share to Chat</button>`,
 			)
 		}
+		if (effectiveStatus === 'Failed') {
+			actions.push(
+				`<button type="button" class="mp-btn mp-retry-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">🔄 Retry</button>`,
+			)
+		}
 		if (step.status === 'WaitingForInputs') {
 			actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
 		}

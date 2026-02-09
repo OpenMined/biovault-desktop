@@ -1781,6 +1781,7 @@ pub fn run() {
             commands::multiparty::share_step_outputs,
             commands::multiparty::share_step_outputs_to_chat,
             commands::multiparty::get_step_output_files,
+            commands::multiparty::get_multiparty_step_logs,
             commands::multiparty::receive_flow_step_outputs,
         ])
         .build(tauri::generate_context!())

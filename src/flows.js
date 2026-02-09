@@ -2322,6 +2322,31 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty_allele_freq')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Allele Freq</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC-secured allele frequency</div>
+									</div>
+								</div>
+							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('syqure_demo')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+											<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+											<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+										</svg>
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Syqure Demo</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC rsid aggregation demo</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -2508,6 +2533,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
 			multiparty: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
+			multiparty_allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
+			syqure_demo: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
 		}
 
 		const templateNames = {
@@ -2517,6 +2544,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			thalassemia: 'Thalassemia Classifier',
 			allele_freq: 'Allele Frequency',
 			multiparty: 'Multiparty Demo',
+			multiparty_allele_freq: 'Multiparty Allele Freq',
+			syqure_demo: 'Syqure Demo',
 		}
 
 		// Use local path if available, otherwise use GitHub URL

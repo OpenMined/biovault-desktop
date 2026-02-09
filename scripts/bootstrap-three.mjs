@@ -215,6 +215,172 @@ async function resolveInvitationFlowSpec(backend, flowName) {
 	return flow.spec
 }
 
+async function waitForStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs = 300_000) {
+	const start = Date.now()
+	let lastStatus = ''
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const state = await backend.invoke('get_multiparty_flow_state', { sessionId }, 120_000)
+			const step = (state?.steps || []).find((s) => s?.id === stepId)
+			const status = step?.status ? String(step.status) : ''
+			if (status) {
+				lastStatus = status
+				if (expectedStatuses.includes(status)) return
+				if (status === 'Failed') {
+					throw new Error(`${label}: step "${stepId}" entered Failed state`)
+				}
+			}
+		} catch (error) {
+			if (String(error).includes('Failed state')) throw error
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await sleep(1500)
+	}
+	throw new Error(`${label}: timed out waiting for "${stepId}" [${expectedStatuses}] (last=${lastStatus})`)
+}
+
+async function runStepAndWait(backend, sessionId, stepId, label, timeoutMs = 300_000) {
+	const start = Date.now()
+	const rpcTimeout = 120_000
+	while (Date.now() - start < timeoutMs) {
+		try {
+			await backend.invoke('run_flow_step', { sessionId, stepId }, rpcTimeout)
+			console.log(`[auto-run] ${label}: started ${stepId}`)
+			break
+		} catch (error) {
+			const msg = String(error)
+			if (/step is not ready to run \(status:\s*(completed|shared|running)\)/i.test(msg)) {
+				console.log(`[auto-run] ${label}: ${stepId} already running/done`)
+				break
+			}
+			if (
+				/dependency.*not satisfied/i.test(msg) ||
+				/not ready to run.*waiting/i.test(msg) ||
+				/WS invoke timeout/i.test(msg)
+			) {
+				await backend.invoke('trigger_syftbox_sync').catch(() => {})
+				await sleep(1500)
+				continue
+			}
+			throw error
+		}
+	}
+	await waitForStepStatus(backend, sessionId, stepId, ['Completed', 'Shared'], label, timeoutMs)
+	console.log(`[auto-run] ${label}: ${stepId} completed`)
+}
+
+async function shareStepAndWait(backend, sessionId, stepId, label, timeoutMs = 300_000) {
+	const rpcTimeout = 120_000
+	try {
+		await backend.invoke('share_step_outputs', { sessionId, stepId }, rpcTimeout)
+		console.log(`[auto-run] ${label}: shared ${stepId}`)
+	} catch (error) {
+		if (!/WS invoke timeout/i.test(String(error))) throw error
+		console.log(`[auto-run] ${label}: share timeout (transient), waiting for status...`)
+	}
+	await waitForStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
+	console.log(`[auto-run] ${label}: ${stepId} shared`)
+}
+
+async function autoRunFlowSteps(backends, sessionId, flowSpec, participants, stopBefore) {
+	const { b1, b2, b3, e1, e2, e3 } = backends
+
+	console.log('[auto-run] accepting invitation on all backends...')
+	const threadId = null
+	await Promise.all([
+		b1.invoke('accept_flow_invitation', {
+			sessionId, flowName: flowSpec?.metadata?.name || 'flow',
+			flowSpec, participants, autoRunAll: false, threadId,
+		}, 120_000),
+		b2.invoke('accept_flow_invitation', {
+			sessionId, flowName: flowSpec?.metadata?.name || 'flow',
+			flowSpec, participants, autoRunAll: false, threadId,
+		}, 120_000),
+		b3.invoke('accept_flow_invitation', {
+			sessionId, flowName: flowSpec?.metadata?.name || 'flow',
+			flowSpec, participants, autoRunAll: false, threadId,
+		}, 120_000),
+	])
+	console.log('[auto-run] all backends accepted')
+
+	await sleep(2000)
+	await b1.invoke('trigger_syftbox_sync').catch(() => {})
+	await b2.invoke('trigger_syftbox_sync').catch(() => {})
+	await b3.invoke('trigger_syftbox_sync').catch(() => {})
+
+	// Extract step ids from flow spec
+	const steps = flowSpec?.spec?.steps || flowSpec?.steps || []
+	const stepIds = steps.map((s) => s.id).filter(Boolean)
+	console.log(`[auto-run] flow steps: ${stepIds.join(', ')}`)
+	if (stopBefore) {
+		console.log(`[auto-run] will stop before: ${stopBefore}`)
+	}
+
+	for (const stepDef of steps) {
+		const sid = stepDef.id
+		if (!sid) continue
+		if (stopBefore && sid === stopBefore) {
+			console.log(`[auto-run] stopping before step: ${sid}`)
+			break
+		}
+
+		// Skip barrier steps - they auto-resolve
+		if (stepDef.barrier) {
+			console.log(`[auto-run] skipping barrier: ${sid}`)
+			continue
+		}
+
+		const targets = stepDef.run?.targets || ''
+		const isClients = targets === 'clients' || targets === 'contributors'
+		const isAggregator = targets === 'aggregator'
+		const isAll = targets === 'all'
+
+		if (isClients) {
+			console.log(`[auto-run] running ${sid} on clients...`)
+			await Promise.all([
+				runStepAndWait(b1, sessionId, sid, e1),
+				runStepAndWait(b2, sessionId, sid, e2),
+			])
+			if (stepDef.share) {
+				console.log(`[auto-run] sharing ${sid} from clients...`)
+				await Promise.all([
+					shareStepAndWait(b1, sessionId, sid, e1),
+					shareStepAndWait(b2, sessionId, sid, e2),
+				])
+				await b3.invoke('trigger_syftbox_sync').catch(() => {})
+				await sleep(2000)
+			}
+		} else if (isAggregator) {
+			console.log(`[auto-run] running ${sid} on aggregator...`)
+			await runStepAndWait(b3, sessionId, sid, e3)
+			if (stepDef.share) {
+				console.log(`[auto-run] sharing ${sid} from aggregator...`)
+				await shareStepAndWait(b3, sessionId, sid, e3)
+				await b1.invoke('trigger_syftbox_sync').catch(() => {})
+				await b2.invoke('trigger_syftbox_sync').catch(() => {})
+				await sleep(2000)
+			}
+		} else if (isAll) {
+			console.log(`[auto-run] running ${sid} on all...`)
+			await Promise.all([
+				runStepAndWait(b1, sessionId, sid, e1),
+				runStepAndWait(b2, sessionId, sid, e2),
+				runStepAndWait(b3, sessionId, sid, e3),
+			])
+			if (stepDef.share) {
+				console.log(`[auto-run] sharing ${sid} from all...`)
+				await Promise.all([
+					shareStepAndWait(b1, sessionId, sid, e1),
+					shareStepAndWait(b2, sessionId, sid, e2),
+					shareStepAndWait(b3, sessionId, sid, e3),
+				])
+			}
+		}
+	}
+
+	console.log('[auto-run] done')
+}
+
 async function ensureOnboarded(backend, email, label) {
 	const onboarded = await backend.invoke('check_is_onboarded')
 	if (onboarded) {
@@ -245,6 +411,8 @@ async function main() {
 	const requestedFlowName = args.get('flow') || 'multiparty'
 	const flowFileArg = args.get('flow-file') || ''
 	const explicitFlowName = args.get('flow-name') || ''
+	const autoRun = args.has('auto-run')
+	const stopBefore = args.get('stop-before') || ''
 	const flowFilePath = flowFileArg ? path.resolve(process.cwd(), flowFileArg) : ''
 	if (flowFilePath && !fs.existsSync(flowFilePath)) {
 		throw new Error(`flow file not found: ${flowFilePath}`)
@@ -302,10 +470,12 @@ async function main() {
 		}
 
 		const sessionId = `session-${Date.now()}`
+		// Order must match flow.yaml inputs.datasites.default: [aggregator, client1, client2]
+		// so that {datasites[0]} = aggregator, {datasites[1]} = client1, etc.
 		const participants = [
+			{ email: email3, role: 'aggregator' },
 			{ email: email1, role: 'contributor1' },
 			{ email: email2, role: 'contributor2' },
-			{ email: email3, role: 'aggregator' },
 		]
 		console.log('[bootstrap] creating group thread + flow invitation...')
 		const invitation = await backend3.invoke(
@@ -335,6 +505,16 @@ async function main() {
 		console.log(
 			`[bootstrap] done: thread=${invitation?.thread_id || 'unknown'} session=${sessionId}`,
 		)
+
+		if (autoRun) {
+			await autoRunFlowSteps(
+				{ b1: backend1, b2: backend2, b3: backend3, e1: email1, e2: email2, e3: email3 },
+				sessionId,
+				flowSpec,
+				participants,
+				stopBefore || null,
+			)
+		}
 	} finally {
 		await backend1.close().catch(() => {})
 		await backend2.close().catch(() => {})

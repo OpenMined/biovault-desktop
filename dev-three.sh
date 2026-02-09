@@ -74,6 +74,8 @@ Options:
                       Flow YAML file to import/share during bootstrap
   --bootstrap-project-name NAME
                       Override flow name used in invitation metadata
+  --auto-run          Auto-accept invitation and run all flow steps
+  --stop-before STEP  Stop auto-run before this step id (e.g. secure_aggregate)
   --skip-sync-check   Skip the sbdev sync probe
   --stop              Stop devstack and desktop processes
   --single [EMAIL]    Launch only one desktop (default: first client)
@@ -96,6 +98,8 @@ SKIP_SYNC_CHECK=0
 BOOTSTRAP_FLAG=0
 BOOTSTRAP_PROJECT_FILE=""
 BOOTSTRAP_PROJECT_NAME=""
+AUTO_RUN_FLAG=0
+STOP_BEFORE_STEP=""
 
 CLIENTS=()
 
@@ -138,6 +142,17 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       BOOTSTRAP_PROJECT_NAME="$2"
+      shift
+      ;;
+    --auto-run)
+      AUTO_RUN_FLAG=1
+      ;;
+    --stop-before)
+      if [[ -z "${2:-}" ]]; then
+        log_error "--stop-before requires a step id"
+        exit 1
+      fi
+      STOP_BEFORE_STEP="$2"
       shift
       ;;
     -h|--help)
@@ -344,11 +359,10 @@ PY
 
   local -a env_prefix=(BIOVAULT_DISABLE_PROFILES=1)
   if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then
-    if [[ "${BV_SYFTBOX_BACKEND:-embedded}" == "process" ]]; then
-      env_prefix+=(BV_DEVSTACK_CLIENT_MODE=go)
-    else
-      env_prefix+=(BV_DEVSTACK_CLIENT_MODE=embedded)
-    fi
+    # Multiparty/syqure flows need rust SyftBox daemons for hotlink/TCP proxy
+    # transport. dev-three.sh always enables hotlink, so default to rust.
+    # (matches CI matrix: client_mode=rust and test-scenario.sh line 354-355)
+    env_prefix+=(BV_DEVSTACK_CLIENT_MODE=rust)
   fi
   env "${env_prefix[@]}" bash "$DEVSTACK_SCRIPT" "${args[@]}"
 
@@ -405,6 +419,24 @@ launch_desktop_instance() {
   export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
   export DEV_WS_BRIDGE=1
   export DEV_WS_BRIDGE_PORT="$ws_port"
+
+  # Hotlink/TCP proxy vars already exported in main() before devstack starts.
+  # Syqure binary/codon discovery (per-instance, depends on WORKSPACE_ROOT)
+  if [[ -z "${SEQURE_NATIVE_BIN:-}" ]]; then
+    local syqure_dev="$WORKSPACE_ROOT/syqure/target/release/syqure"
+    if [[ -x "$syqure_dev" ]]; then
+      export SEQURE_NATIVE_BIN="$syqure_dev"
+    fi
+  fi
+  if [[ -z "${CODON_PATH:-}" ]]; then
+    local arch; arch="$(uname -m)"
+    local os_tag="macos"
+    [[ "$(uname -s)" == "Linux" ]] && os_tag="linux"
+    local codon_candidate="$WORKSPACE_ROOT/syqure/bin/${os_tag}-${arch}/codon"
+    if [[ -d "$codon_candidate" ]]; then
+      export CODON_PATH="$codon_candidate"
+    fi
+  fi
 
   local pkg_cmd="npm"
   local role_label=""
@@ -591,6 +623,12 @@ run_bootstrap() {
   if [[ -n "$project_name" ]]; then
     bootstrap_args+=(--flow-name "$project_name")
   fi
+  if (( AUTO_RUN_FLAG )); then
+    bootstrap_args+=(--auto-run)
+  fi
+  if [[ -n "$STOP_BEFORE_STEP" ]]; then
+    bootstrap_args+=(--stop-before "$STOP_BEFORE_STEP")
+  fi
 
   node "$SCRIPT_DIR/scripts/bootstrap-three.mjs" "${bootstrap_args[@]}"
   local mode_msg="Bootstrap complete (onboarding, trust, flow import, group invitation)"
@@ -623,13 +661,15 @@ launch_three_instances() {
     run_bootstrap
     cat <<EOF
 
-Bootstrap is ready. Keep using these three windows:
+Bootstrap is ready. Desktop instances running:
   Client1:    ${CLIENTS[0]} (ws:${WS_PORT_BASE})
   Client2:    ${CLIENTS[1]} (ws:$((WS_PORT_BASE + 1)))
   Aggregator: ${CLIENTS[2]} (ws:$((WS_PORT_BASE + 2)))
 
-Use "./dev-three.sh --stop" when done.
+Press Ctrl+C to stop all instances.
 EOF
+    # Wait for background desktop processes so Ctrl+C triggers cleanup
+    wait
     return
   fi
 
@@ -644,7 +684,6 @@ EOF
   launch_desktop_instance "${CLIENTS[1]}" 2 "bg"  # client2
   sleep 2
 
-  trap 'stop_desktops' EXIT
   launch_desktop_instance "${CLIENTS[0]}" 1 "fg"  # client1 (foreground)
 }
 
@@ -658,13 +697,61 @@ launch_single_instance() {
   launch_desktop_instance "$email" 1 "fg"
 }
 
+kill_stale_processes() {
+  local stale_pids
+  stale_pids="$(pgrep -f "$WORKSPACE_ROOT.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+  if [[ -n "$stale_pids" ]]; then
+    log_warn "Killing stale workspace processes from previous runs: $stale_pids"
+    echo "$stale_pids" | xargs kill 2>/dev/null || true
+    sleep 1
+    stale_pids="$(pgrep -f "$WORKSPACE_ROOT.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+    if [[ -n "$stale_pids" ]]; then
+      echo "$stale_pids" | xargs kill -9 2>/dev/null || true
+    fi
+  fi
+}
+
+cleanup_on_exit() {
+  log_info "Shutting down all desktop processes..."
+  # Kill all background jobs spawned by this script
+  jobs -p 2>/dev/null | xargs -r kill 2>/dev/null || true
+  stop_desktops
+  kill_stale_processes
+  log_success "Cleanup complete"
+}
+
 main() {
   check_requirements
+  kill_stale_processes
 
   if (( STOP_FLAG )); then
     stop_stack
     exit 0
   fi
+
+  # Ensure all child processes are cleaned up on Ctrl+C / exit
+  trap cleanup_on_exit INT TERM EXIT
+
+  # Hotlink/TCP proxy env must be exported BEFORE devstack starts so the
+  # rust SyftBox daemons inherit them and enable hotlink transport.
+  # (test-scenario.sh does this at lines 349-393, before start_devstack)
+  export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
+  export BV_SYFTBOX_HOTLINK_SOCKET_ONLY="${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-1}"
+  export BV_SYFTBOX_HOTLINK_TCP_PROXY="${BV_SYFTBOX_HOTLINK_TCP_PROXY:-1}"
+  export BV_SYFTBOX_HOTLINK_QUIC="${BV_SYFTBOX_HOTLINK_QUIC:-1}"
+  export BV_SYFTBOX_HOTLINK_QUIC_ONLY="${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-0}"
+  export BV_SYQURE_TCP_PROXY="${BV_SYQURE_TCP_PROXY:-1}"
+  export SYFTBOX_HOTLINK="${SYFTBOX_HOTLINK:-$BV_SYFTBOX_HOTLINK}"
+  export SYFTBOX_HOTLINK_SOCKET_ONLY="${SYFTBOX_HOTLINK_SOCKET_ONLY:-$BV_SYFTBOX_HOTLINK_SOCKET_ONLY}"
+  export SYFTBOX_HOTLINK_TCP_PROXY="${SYFTBOX_HOTLINK_TCP_PROXY:-$BV_SYFTBOX_HOTLINK_TCP_PROXY}"
+  export SYFTBOX_HOTLINK_QUIC="${SYFTBOX_HOTLINK_QUIC:-$BV_SYFTBOX_HOTLINK_QUIC}"
+  export SYFTBOX_HOTLINK_QUIC_ONLY="${SYFTBOX_HOTLINK_QUIC_ONLY:-$BV_SYFTBOX_HOTLINK_QUIC_ONLY}"
+
+  # Force Tauri Rust backend recompile so dev always uses fresh code.
+  # cargo tauri dev watches src-tauri/src but may miss workspace deps.
+  log_info "Rebuilding Tauri backend (cargo build)..."
+  (cd "$SCRIPT_DIR/src-tauri" && cargo build 2>&1 | tail -1)
+  log_success "Tauri backend ready"
 
   start_stack
   load_state

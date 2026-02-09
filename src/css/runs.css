@@ -1186,6 +1186,15 @@
 	background: #e2e8f0;
 }
 
+.mp-retry-btn {
+	background: #f59e0b;
+	color: white;
+}
+
+.mp-retry-btn:hover {
+	background: #d97706;
+}
+
 .mp-share-btn {
 	background: #10b981;
 	color: white;
