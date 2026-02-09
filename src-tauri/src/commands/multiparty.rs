@@ -2035,6 +2035,10 @@ pub struct StepState {
     pub module_path: Option<String>,
     #[serde(default)]
     pub with_bindings: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub input_waiting_on: Vec<String>,
+    #[serde(default)]
+    pub input_waiting_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2159,7 +2163,15 @@ fn update_dependent_steps(flow_state: &mut MultipartyFlowState, completed_step_i
 /// This is needed for collaborative sessions where dependencies may complete on
 /// remote participants between UI polls.
 fn refresh_step_statuses(flow_state: &mut MultipartyFlowState) {
-    let mut ready_step_ids: Vec<String> = Vec::new();
+    let step_numbers_by_id = flow_state
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.id.clone(), i + 1))
+        .collect::<HashMap<_, _>>();
+    let all_steps_snapshot = flow_state.steps.clone();
+
+    let mut updates: Vec<(String, StepStatus, Vec<String>, Option<String>)> = Vec::new();
 
     for step in &flow_state.steps {
         if !step.my_action {
@@ -2170,7 +2182,10 @@ fn refresh_step_statuses(flow_state: &mut MultipartyFlowState) {
             // cross-participant completion, not generic dependency refresh.
             continue;
         }
-        if step.status != StepStatus::Pending && step.status != StepStatus::WaitingForInputs {
+        if step.status != StepStatus::Pending
+            && step.status != StepStatus::WaitingForInputs
+            && step.status != StepStatus::Ready
+        {
             continue;
         }
 
@@ -2178,15 +2193,112 @@ fn refresh_step_statuses(flow_state: &mut MultipartyFlowState) {
             .depends_on
             .iter()
             .all(|dep_id| is_dependency_complete(flow_state, dep_id));
-        if all_deps_met {
-            ready_step_ids.push(step.id.clone());
+        if !all_deps_met {
+            updates.push((step.id.clone(), StepStatus::Pending, Vec::new(), None));
+            continue;
         }
+
+        let (status, waiting_on, reason) = check_step_input_readiness(
+            flow_state,
+            step,
+            &step_numbers_by_id,
+            &all_steps_snapshot,
+        );
+        updates.push((step.id.clone(), status, waiting_on, reason));
     }
 
-    for step_id in ready_step_ids {
+    for (step_id, status, waiting_on, reason) in updates {
         if let Some(step) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
-            if step.status == StepStatus::Pending || step.status == StepStatus::WaitingForInputs {
-                step.status = StepStatus::Ready;
+            step.status = status;
+            step.input_waiting_on = waiting_on;
+            step.input_waiting_reason = reason;
+        }
+    }
+}
+
+fn extract_waiting_emails_from_binding_error(err: &str) -> Vec<String> {
+    let mut emails = Vec::new();
+    if let Some(start_idx) = err.find("participants [") {
+        let start = start_idx + "participants [".len();
+        if let Some(end_rel) = err[start..].find(']') {
+            let inner = &err[start..start + end_rel];
+            for part in inner.split(',') {
+                let email = part.trim();
+                if !email.is_empty() {
+                    emails.push(email.to_string());
+                }
+            }
+        }
+    } else if let Some(start_idx) = err.find("participant '") {
+        let start = start_idx + "participant '".len();
+        if let Some(end_rel) = err[start..].find('\'') {
+            let email = err[start..start + end_rel].trim();
+            if !email.is_empty() {
+                emails.push(email.to_string());
+            }
+        }
+    }
+    emails.sort();
+    emails.dedup();
+    emails
+}
+
+fn check_step_input_readiness(
+    flow_state: &MultipartyFlowState,
+    step: &StepState,
+    step_numbers_by_id: &HashMap<String, usize>,
+    all_steps_snapshot: &[StepState],
+) -> (StepStatus, Vec<String>, Option<String>) {
+    if step.with_bindings.is_empty() {
+        return (StepStatus::Ready, Vec::new(), None);
+    }
+    let Some(flow_spec_ref) = flow_state.flow_spec.as_ref() else {
+        return (
+            StepStatus::WaitingForInputs,
+            Vec::new(),
+            Some("Flow spec not available for input readiness check".to_string()),
+        );
+    };
+    let Some(work_dir_ref) = flow_state.work_dir.as_ref() else {
+        return (
+            StepStatus::WaitingForInputs,
+            Vec::new(),
+            Some("Work directory not available for input readiness check".to_string()),
+        );
+    };
+    let biovault_home = match biovault::config::get_biovault_home() {
+        Ok(path) => path,
+        Err(err) => {
+            return (
+                StepStatus::WaitingForInputs,
+                Vec::new(),
+                Some(format!("Unable to read BioVault home: {}", err)),
+            )
+        }
+    };
+
+    match resolve_with_bindings(
+        &step.with_bindings,
+        &flow_state.input_overrides,
+        flow_spec_ref,
+        &flow_state.flow_name,
+        &flow_state.session_id,
+        &flow_state.my_email,
+        &biovault_home,
+        step_numbers_by_id,
+        all_steps_snapshot,
+        work_dir_ref,
+        &flow_state.participants,
+    ) {
+        Ok(_) => (StepStatus::Ready, Vec::new(), None),
+        Err(err) => {
+            if err.contains("Failed to resolve flow binding") {
+                let waiting_on = extract_waiting_emails_from_binding_error(&err);
+                (StepStatus::WaitingForInputs, waiting_on, Some(err))
+            } else {
+                // Non-binding errors should surface at run time instead of permanently
+                // blocking readiness state.
+                (StepStatus::Ready, Vec::new(), None)
             }
         }
     }
@@ -3126,6 +3238,49 @@ pub async fn get_all_participant_progress(
     Ok(all_progress)
 }
 
+#[tauri::command]
+pub async fn get_multiparty_participant_datasite_path(
+    session_id: String,
+    participant_email: String,
+) -> Result<String, String> {
+    {
+        let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+        let known = flow_state
+            .participants
+            .iter()
+            .any(|p| p.email.eq_ignore_ascii_case(&participant_email));
+        if !known {
+            return Err(format!(
+                "Participant '{}' not part of session '{}'",
+                participant_email, session_id
+            ));
+        }
+    }
+
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+
+    let direct = biovault_home.join("datasites").join(&participant_email);
+    if direct.exists() {
+        return Ok(direct.to_string_lossy().to_string());
+    }
+
+    if let Some(sandbox_root) = find_sandbox_root(&biovault_home) {
+        let sibling = sandbox_root
+            .join(&participant_email)
+            .join("datasites")
+            .join(&participant_email);
+        if sibling.exists() {
+            return Ok(sibling.to_string_lossy().to_string());
+        }
+    }
+
+    Ok(direct.to_string_lossy().to_string())
+}
+
 /// Get progress log entries from all participants (JSONL format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
@@ -3761,6 +3916,36 @@ pub async fn run_flow_step(
 
         let all_steps_snapshot = flow_state.steps.clone();
 
+        // Pre-run with-binding readiness check: do not start step execution until
+        // required upstream artifacts are actually readable.
+        if let Some(step_ref) = flow_state.steps.iter().find(|s| s.id == step_id) {
+            let (input_status, waiting_on, waiting_reason) = check_step_input_readiness(
+                flow_state,
+                step_ref,
+                &step_numbers_by_id,
+                &all_steps_snapshot,
+            );
+            if input_status == StepStatus::WaitingForInputs {
+                if let Some(step_mut) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
+                    step_mut.status = StepStatus::WaitingForInputs;
+                    step_mut.input_waiting_on = waiting_on.clone();
+                    step_mut.input_waiting_reason = waiting_reason.clone();
+                }
+                let _ = persist_multiparty_state(flow_state);
+                return Err(waiting_reason.unwrap_or_else(|| {
+                    if waiting_on.is_empty() {
+                        format!("Step '{}' is waiting for required shared inputs", step_id)
+                    } else {
+                        format!(
+                            "Step '{}' is waiting for shared inputs from {}",
+                            step_id,
+                            waiting_on.join(", ")
+                        )
+                    }
+                }));
+            }
+        }
+
         let step = flow_state
             .steps
             .iter_mut()
@@ -3768,6 +3953,8 @@ pub async fn run_flow_step(
             .ok_or_else(|| "Step not found".to_string())?;
 
         step.status = StepStatus::Running;
+        step.input_waiting_on.clear();
+        step.input_waiting_reason = None;
         append_private_step_log(&session_id, &step_id, "step_started");
         if let Some(ref work_dir) = flow_state.work_dir {
             let progress_dir = get_progress_path(work_dir);
@@ -4029,6 +4216,8 @@ pub async fn run_flow_step(
             if let Some(flow_state) = sessions.get_mut(&session_id) {
                 if let Some(step) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
                     step.status = StepStatus::Failed;
+                    step.input_waiting_on.clear();
+                    step.input_waiting_reason = None;
                 }
                 flow_state.status = FlowSessionStatus::Failed;
                 if let Some(ref work_dir) = flow_state.work_dir {
@@ -4081,6 +4270,8 @@ pub async fn run_flow_step(
 
     step.status = StepStatus::Completed;
     step.output_dir = step_output_dir.clone();
+    step.input_waiting_on.clear();
+    step.input_waiting_reason = None;
     append_private_step_log(&session_id, &step_id, "step_completed");
 
     // Save step status to shared _progress folder for cross-client syncing
@@ -4993,6 +5184,8 @@ fn parse_flow_steps(
             module_ref,
             module_path,
             with_bindings,
+            input_waiting_on: Vec::new(),
+            input_waiting_reason: None,
         });
     }
 
