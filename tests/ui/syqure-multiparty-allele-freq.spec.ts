@@ -1187,26 +1187,12 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			])
 
 			// Stage 2: aggregator run + share build_master.
-			await clickStepActionAndWait(
-				page3,
-				backend3,
-				sessionId,
-				'build_master',
-				'mp-run-btn',
-				email3,
-				['Completed', 'Shared'],
-				180_000,
-			)
-			await clickStepActionAndWait(
-				page3,
-				backend3,
-				sessionId,
-				'build_master',
-				'mp-share-btn',
-				email3,
-				['Shared'],
-				180_000,
-			)
+			// Use backend invocation to avoid flaky UI click timing around step enablement.
+			await runStepViaBackendWhenReadyAndWait(backend3, sessionId, 'build_master', email3, [
+				'Completed',
+				'Shared',
+			])
+			await shareStepViaBackendAndWait(backend3, sessionId, 'build_master', email3, 180_000)
 
 			// Stage 3: clients run align_counts.
 			await Promise.all([

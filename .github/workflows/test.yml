@@ -46,6 +46,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # pipelines-multiparty-flow smoke test (linux)
+          - scenario: pipelines-multiparty-flow
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+
           # syqure-multiparty-allele-freq (linux)
           - scenario: syqure-multiparty-allele-freq
             platform: linux-x86_64

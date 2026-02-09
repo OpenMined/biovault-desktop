@@ -9,10 +9,23 @@ import { ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 export async function ensureLogSocket(): Promise<WebSocket | null> {
 	if (!process.env.UNIFIED_LOG_WS) return null
 	const socket = new WebSocket(process.env.UNIFIED_LOG_WS)
-	await new Promise<void>((resolve, reject) => {
-		socket.once('open', resolve)
-		socket.once('error', reject)
+	await new Promise<void>((resolve) => {
+		let settled = false
+		const done = () => {
+			if (settled) return
+			settled = true
+			resolve()
+		}
+		socket.once('open', done)
+		socket.once('error', done)
+		setTimeout(done, 1500)
 	})
+	if (socket.readyState !== WebSocket.OPEN) {
+		try {
+			socket.terminate()
+		} catch {}
+		return null
+	}
 	return socket
 }
 
