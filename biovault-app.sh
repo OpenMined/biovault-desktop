@@ -12,7 +12,7 @@ set -euo pipefail
 # Each instance gets unique ports for SyftBox, WS bridge, and HTTP bridge.
 # The window title includes the email so you can tell them apart.
 
-APP_BIN="/Applications/BioVault.app/Contents/MacOS/bv-desktop"
+APP_BIN="${APP_BIN:-/Applications/BioVault.app/Contents/MacOS/bv-desktop}"
 APP_PIDS=()
 SED_PIDS=()
 
@@ -31,6 +31,9 @@ Options:
   --emails CSV    Comma-separated list of emails (one BioVault instance per email)
   --stop          Kill all running bv-desktop instances launched by this script
   -h, --help      Show this help
+
+Environment:
+  APP_BIN         Path to bv-desktop binary (default: /Applications/BioVault.app/Contents/MacOS/bv-desktop)
 
 Example:
   $0 --emails alice@openmined.org,bob@openmined.org,carol@openmined.org ./multiparty-test
@@ -73,7 +76,18 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --stop)
-      pkill -f "bv-desktop" 2>/dev/null && echo "Stopped bv-desktop processes" || echo "No bv-desktop processes found"
+      mapfile -t pids < <(pgrep -f -- "$APP_BIN" || true)
+      if [[ ${#pids[@]} -eq 0 ]]; then
+        echo "No matching processes found for APP_BIN=$APP_BIN"
+      else
+        kill "${pids[@]}" 2>/dev/null || true
+        sleep 1
+        mapfile -t remaining < <(pgrep -f -- "$APP_BIN" || true)
+        if [[ ${#remaining[@]} -gt 0 ]]; then
+          kill -9 "${remaining[@]}" 2>/dev/null || true
+        fi
+        echo "Stopped ${#pids[@]} process(es) for APP_BIN=$APP_BIN"
+      fi
       exit 0
       ;;
     -h|--help)
@@ -105,8 +119,8 @@ if [[ -z "$BASE_PATH" ]]; then
 fi
 
 if [[ ! -x "$APP_BIN" ]]; then
-  echo -e "${RED}BioVault.app not found at $APP_BIN${NC}"
-  echo "Install BioVault.app to /Applications first."
+  echo -e "${RED}bv-desktop not found at $APP_BIN${NC}"
+  echo "Set APP_BIN to a valid executable path."
   exit 1
 fi
 
@@ -131,13 +145,21 @@ trap cleanup INT TERM EXIT
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}  BioVault Multiparty Launcher (${#EMAIL_LIST[@]} instances)${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}Binary:${NC} $APP_BIN"
 echo -e "${YELLOW}Base path:${NC} $BASE_PATH"
 echo ""
 
 for i in "${!EMAIL_LIST[@]}"; do
   email="${EMAIL_LIST[$i]}"
   home_dir="$BASE_PATH/$email"
+  env_home="$home_dir/.env-home"
+  xdg_config_home="$env_home/.config"
+  xdg_cache_home="$env_home/.cache"
+  xdg_data_home="$env_home/.local/share"
+  xdg_state_home="$env_home/.local/state"
+  tmp_dir="$env_home/tmp"
   mkdir -p "$home_dir"
+  mkdir -p "$xdg_config_home" "$xdg_cache_home" "$xdg_data_home" "$xdg_state_home" "$tmp_dir"
 
   # Each instance gets 3 unique ports, spaced by 10 per instance
   offset=$((i * 10))
@@ -147,6 +169,7 @@ for i in "${!EMAIL_LIST[@]}"; do
 
   echo -e "${GREEN}[$((i+1))]${NC} $email"
   echo -e "    Home:        $home_dir"
+  echo -e "    Env HOME:    $env_home"
   echo -e "    SyftBox:     http://127.0.0.1:$syftbox_port"
   echo -e "    WS bridge:   $ws_bridge_port"
   echo -e "    HTTP bridge: $http_bridge_port"
@@ -158,13 +181,20 @@ for i in "${!EMAIL_LIST[@]}"; do
     USER="$USER" \
     PATH="$PATH" \
     SHELL="$SHELL" \
-    TMPDIR="${TMPDIR:-/tmp}" \
+    TMPDIR="$tmp_dir" \
+    XDG_CONFIG_HOME="$xdg_config_home" \
+    XDG_CACHE_HOME="$xdg_cache_home" \
+    XDG_DATA_HOME="$xdg_data_home" \
+    XDG_STATE_HOME="$xdg_state_home" \
     DISPLAY="${DISPLAY:-}" \
     TERM="${TERM:-xterm-256color}" \
     LANG="${LANG:-en_US.UTF-8}" \
     BIOVAULT_HOME="$home_dir" \
+    BIOVAULT_PROFILES_DIR="$home_dir/.bvprofiles" \
     BIOVAULT_DISABLE_PROFILES=1 \
     BIOVAULT_WINDOW_TITLE="BioVault — $email" \
+    SYFTBOX_EMAIL="$email" \
+    SYFTBOX_DATA_DIR="$home_dir" \
     SYFTBOX_CLIENT_URL="http://127.0.0.1:$syftbox_port" \
     DEV_WS_BRIDGE_PORT="$ws_bridge_port" \
     DEV_WS_BRIDGE_HTTP_PORT="$http_bridge_port" \

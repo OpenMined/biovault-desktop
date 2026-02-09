@@ -2887,14 +2887,20 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					if (step.uses) {
 						try {
 							await invoke('delete_module', { moduleId: step.uses })
-						} catch (_) {}
+						} catch (_) {
+							/* ignore cleanup errors */
+						}
 					}
 				}
 				try {
 					await invoke('delete_flow', { flowId: existingFlow.id })
-				} catch (_) {}
+				} catch (_) {
+					/* ignore cleanup errors */
+				}
 			}
-		} catch (_) {}
+		} catch (_) {
+			/* ignore cleanup errors */
+		}
 	}
 
 	async function submitFlowURL(overwrite = false, urlOverride = null) {
@@ -2971,6 +2977,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		closeImportOptionsModal()
 
 		let selected = selectedPath
+		let inferredName = 'this flow'
 		try {
 			if (!selected) {
 				selected = await dialog.open({
@@ -3022,7 +3029,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 			let flowDir = selected
 			let flowFile = null
-			let inferredName = lastParentName || fileName || 'imported-flow'
+			inferredName = lastParentName || fileName || 'imported-flow'
 
 			if (isYamlFile) {
 				if (parentNormalized) {

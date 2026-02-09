@@ -374,14 +374,159 @@ export function createProposeFlowModal({
 		return []
 	}
 
+	function resolveDefaultFromIncludeToken(token, defaultDatasites) {
+		const trimmed = String(token || '').trim()
+		if (!trimmed) return ''
+		if (trimmed.includes('@')) return trimmed
+		if (trimmed.startsWith('{datasites[') && trimmed.endsWith(']}')) {
+			const idxStr = trimmed.slice('{datasites['.length, -2)
+			const idx = Number.parseInt(idxStr, 10)
+			if (Number.isFinite(idx) && idx >= 0 && idx < defaultDatasites.length) {
+				return defaultDatasites[idx] || ''
+			}
+		}
+		return ''
+	}
+
+	function collectStepTargetTokens(spec) {
+		const steps = Array.isArray(spec?.steps) ? spec.steps : []
+		const tokens = []
+		for (const step of steps) {
+			const runTargets = step?.run?.targets ?? step?.runs_on
+			if (Array.isArray(runTargets)) {
+				runTargets.forEach((t) => tokens.push(String(t || '').trim()))
+			} else if (typeof runTargets === 'string') {
+				tokens.push(runTargets.trim())
+			}
+			const barrierTargets = step?.barrier?.targets
+			if (Array.isArray(barrierTargets)) {
+				barrierTargets.forEach((t) => tokens.push(String(t || '').trim()))
+			} else if (typeof barrierTargets === 'string') {
+				tokens.push(barrierTargets.trim())
+			}
+		}
+		return tokens.filter(Boolean)
+	}
+
+	function normalizeRoleFromTargetToken(token) {
+		const t = String(token || '').trim().toLowerCase()
+		if (!t) return null
+		if (t === 'all' || t === '*' || t === '{datasites[*]}' || t === '{datasite.current}') return null
+		if (t.startsWith('{groups.') && t.endsWith('}')) {
+			const name = t.slice('{groups.'.length, -1).trim()
+			if (!name) return null
+			if (name === 'contributor' || name === 'contributors') return 'clients'
+			return name
+		}
+		if (t.includes('@')) {
+			const local = t.split('@')[0] || ''
+			if (/^aggregator\d*$/.test(local)) return 'aggregator'
+			if (/^(client|contributor)\d+$/.test(local)) return 'clients'
+			if (local === 'client' || local === 'clients' || local === 'contributor' || local === 'contributors') return 'clients'
+			return local || null
+		}
+		if (t === 'contributor' || t === 'contributors') return 'clients'
+		return t
+	}
+
+	function inferRolesFromStepTargets(spec, defaultDatasites) {
+		const tokens = collectStepTargetTokens(spec)
+		if (tokens.length === 0) return null
+
+		const order = []
+		const counts = {}
+		for (const token of tokens) {
+			const role = normalizeRoleFromTargetToken(token)
+			if (!role) continue
+			if (!order.includes(role)) order.push(role)
+			if (counts[role] == null) counts[role] = 0
+
+			if (token.includes('@')) {
+				const local = token.split('@')[0].toLowerCase()
+				if (/^(client|contributor)\d+$/.test(local)) {
+					counts[role] += 1
+				} else if (counts[role] === 0) {
+					counts[role] = 1
+				}
+			} else if (counts[role] === 0) {
+				counts[role] = 1
+			}
+		}
+
+		if (order.length === 0) return null
+
+		let totalSlots = Object.values(counts).reduce((sum, n) => sum + (n || 0), 0)
+		if (defaultDatasites.length > totalSlots) {
+			const remainder = defaultDatasites.length - totalSlots
+			const expandable =
+				order.find((r) => r === 'clients') ||
+				order.find((r) => r.endsWith('s')) ||
+				order[0]
+			counts[expandable] = (counts[expandable] || 0) + remainder
+			totalSlots += remainder
+		}
+
+		const roles = []
+		for (const role of order) {
+			const count = Math.max(1, counts[role] || 0)
+			for (let i = 0; i < count; i += 1) {
+				const roleId = count > 1 ? `${role}_${i + 1}` : role
+				roles.push({
+					id: roleId,
+					role,
+					label: count > 1 ? `${role} ${i + 1}` : role,
+				})
+			}
+		}
+		return roles.length > 0 ? roles : null
+	}
+
 	function inferFlowRoles(flow) {
-		const roles = Array.isArray(flow?.spec?.roles) ? flow.spec.roles : []
+		const spec = flow?.spec || flow || {}
+		const roles = Array.isArray(spec?.roles) ? spec.roles : []
 		if (roles.length > 0) {
 			return { roles, defaults: {} }
 		}
 
+		const defaultDatasites = getDefaultDatasitesFromFlow(flow)
+		const groups = spec?.datasites?.groups
+		if (groups && typeof groups === 'object') {
+			const inferredRoles = []
+			const defaults = {}
+
+			for (const [groupName, groupDef] of Object.entries(groups)) {
+				const include = Array.isArray(groupDef?.include) ? groupDef.include : []
+				const slotCount = Math.max(include.length, 1)
+
+				for (let i = 0; i < slotCount; i += 1) {
+					const roleId = slotCount > 1 ? `${groupName}_${i + 1}` : groupName
+					const defaultEmail = resolveDefaultFromIncludeToken(include[i], defaultDatasites)
+					if (defaultEmail) defaults[roleId] = defaultEmail
+					inferredRoles.push({
+						id: roleId,
+						role: groupName,
+						label: slotCount > 1 ? `${groupName} ${i + 1}` : groupName,
+						description: defaultEmail ? `Default: ${defaultEmail}` : '',
+					})
+				}
+			}
+
+			if (inferredRoles.length > 0) {
+				return { roles: inferredRoles, defaults }
+			}
+		}
+
+		const rolesFromTargets = inferRolesFromStepTargets(spec, defaultDatasites)
+		if (rolesFromTargets && rolesFromTargets.length > 0) {
+			const defaults = {}
+			for (let i = 0; i < Math.min(defaultDatasites.length, rolesFromTargets.length); i += 1) {
+				defaults[rolesFromTargets[i].id] = defaultDatasites[i]
+			}
+			return { roles: rolesFromTargets, defaults }
+		}
+
 		const defaults = {}
-		const datasites = getDefaultDatasitesFromFlow(flow)
+		const datasites = defaultDatasites
 		const participantCount = Math.max(datasites.length, 2)
 		const inferredRoles = Array.from({ length: participantCount }, (_, index) => {
 			const roleId = `participant${index + 1}`
@@ -545,10 +690,10 @@ export function createProposeFlowModal({
 			}
 		}
 
-		container.innerHTML = flowRoles
-			.map((role, idx) => {
-				const roleId = role.id || role
-				const roleDesc = role.description || ''
+			container.innerHTML = flowRoles
+				.map((role, idx) => {
+					const roleId = role.id || role
+					const roleLabel = role.label || roleId
 
 				// Auto-assign if possible
 				let defaultValue = ''
@@ -571,19 +716,19 @@ export function createProposeFlowModal({
 					)
 					.join('')
 
-				return `
-				<div class="propose-flow-role-row">
-					<div class="propose-flow-role-label">${escapeHtml(roleId)}</div>
-					<span class="propose-flow-role-arrow">→</span>
-					<select class="propose-flow-role-select" data-role="${escapeHtml(roleId)}" onchange="window.proposeFlowModal.updateRoleAssignment('${escapeHtml(roleId)}', this.value)">
-						<option value="">-- Select --</option>
-						${optionsHtml}
-					</select>
-				</div>
-			`
-			})
-			.join('')
-	}
+					return `
+						<div class="propose-flow-role-row">
+							<div class="propose-flow-role-label">${escapeHtml(roleLabel)}</div>
+							<span class="propose-flow-role-arrow">→</span>
+							<select class="propose-flow-role-select" data-role="${escapeHtml(roleId)}" onchange="window.proposeFlowModal.updateRoleAssignment('${escapeHtml(roleId)}', this.value)">
+								<option value="">-- Select --</option>
+								${optionsHtml}
+							</select>
+						</div>
+					`
+				})
+				.join('')
+		}
 
 	function updateRoleAssignment(roleId, email) {
 		if (email) {
@@ -618,9 +763,10 @@ export function createProposeFlowModal({
 		// Build participants list from role assignments
 		const participants = flowRoles.map((role) => {
 			const roleId = role.id || role
+			const roleName = role.role || roleId
 			return {
 				email: roleAssignments[roleId],
-				role: roleId,
+				role: roleName,
 			}
 		})
 

@@ -664,8 +664,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					flowNfCommandCache.set(run.id, nfCmd)
 					populateNfCommand(run.id, nfCmd)
 					// Persist to state file so it survives re-renders
-					if (progress && progress.total) {
-						saveFlowState(run.id, progress, null, 0, nfCmd)
+					const cachedProgress = flowProgressCache.get(run.id)
+					if (cachedProgress && cachedProgress.total) {
+						saveFlowState(run.id, cachedProgress, null, 0, nfCmd)
 					}
 				}
 			}
