@@ -481,11 +481,13 @@ jobs:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
           BV_SKIP_SYQURE: "0"
+          SYQURE_SCENARIO_TIMEOUT: "20m"
         run: |
+          # Hard cap runtime so a stuck syqure flow cannot burn CI minutes indefinitely.
           if [ -n "${{ matrix.run_prefix }}" ]; then
-            ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
           else
-            ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
           fi
 
       # - name: Run syqure multiparty allele-freq scenario
@@ -494,11 +496,12 @@ jobs:
       #     SKIP_PLAYWRIGHT_INSTALL: "1"
       #     AUTO_REBUILD_TAURI: "0"
       #     BV_SKIP_SYQURE: "0"
+      #     SYQURE_SCENARIO_TIMEOUT: "20m"
       #   run: |
       #     if [ -n "${{ matrix.run_prefix }}" ]; then
-      #       ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+      #       timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
       #     else
-      #       ./test-scenario.sh --syqure-multiparty-allele-freq
+      #       timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-allele-freq
       #     fi
 
       - name: Upload test artifacts on failure

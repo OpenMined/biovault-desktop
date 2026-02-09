@@ -44,7 +44,9 @@ fn get_shared_flow_path(flow_name: &str, session_id: &str) -> Result<PathBuf, St
         .join(session_id))
 }
 
-fn load_multiparty_state_from_disk(session_id: &str) -> Result<Option<MultipartyFlowState>, String> {
+fn load_multiparty_state_from_disk(
+    session_id: &str,
+) -> Result<Option<MultipartyFlowState>, String> {
     let biovault_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     let owner = get_owner_email()?;

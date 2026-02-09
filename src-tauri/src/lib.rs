@@ -603,8 +603,15 @@ fn expose_bundled_binaries(app: &tauri::App) {
                         .join("resources")
                         .join("syqure")
                         .join("syqure"),
-                    cwd.join("syqure").join("target").join("release").join("syqure"),
-                    cwd.join("..").join("syqure").join("target").join("release").join("syqure"),
+                    cwd.join("syqure")
+                        .join("target")
+                        .join("release")
+                        .join("syqure"),
+                    cwd.join("..")
+                        .join("syqure")
+                        .join("target")
+                        .join("release")
+                        .join("syqure"),
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
                         .join("syqure")

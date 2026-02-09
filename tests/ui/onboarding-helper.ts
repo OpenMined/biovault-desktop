@@ -96,19 +96,77 @@ export async function completeOnboarding(
 		await expect(page.locator('#onboarding-step-2')).toBeVisible({ timeout: 5000 })
 		console.log(`${email}: [onboarding] Clicking skip-dependencies-btn...`)
 		const step2StartTime = Date.now()
-		const maybeDialog = page.waitForEvent('dialog', { timeout: 3_000 }).catch(() => null)
-		await page.locator('#skip-dependencies-btn').click()
-		const dialog = await maybeDialog
-		if (dialog) {
+		const skipBtn = page.locator('#skip-dependencies-btn')
+		const dialogHandler = async (dialog: any) => {
 			console.log(
 				`[onboarding] Accepting dialog: ${dialog.type()} - ${dialog.message().slice(0, 50)}`,
 			)
 			await dialog.accept().catch(() => {})
 		}
-		// Wait for step 2 to be hidden before checking step 3
-		// Increased timeout: dialog acceptance + invoke('update_saved_dependency_states') can take time in CI
-		await expect(page.locator('#onboarding-step-2')).toBeHidden({ timeout: 30000 })
-		console.log(`${email}: [onboarding] Step 2 hidden after ${Date.now() - step2StartTime}ms`)
+		page.on('dialog', dialogHandler)
+		try {
+			for (let attempt = 1; attempt <= 3; attempt++) {
+				const clickErr = await skipBtn
+					.click({ force: true, timeout: 8_000 })
+					.then(() => null)
+					.catch((err) => err)
+				if (clickErr) {
+					console.log(
+						`${email}: [onboarding] Step 2 click attempt ${attempt} failed, trying JS fallback`,
+					)
+					await page
+						.evaluate(() => {
+							const btn = document.querySelector(
+								'#skip-dependencies-btn',
+							) as HTMLButtonElement | null
+							btn?.click()
+						})
+						.catch(() => {})
+				}
+
+				// Consider step complete if dependencies step is hidden OR downstream step appears.
+				const step2Hidden = await page
+					.locator('#onboarding-step-2')
+					.isHidden({ timeout: 12_000 })
+					.catch(() => false)
+				const step4Visible = await page
+					.locator('#onboarding-step-4')
+					.isVisible({ timeout: 500 })
+					.catch(() => false)
+				const runViewVisible = await page
+					.locator('#run-view')
+					.isVisible({ timeout: 500 })
+					.catch(() => false)
+				if (step2Hidden || step4Visible || runViewVisible) {
+					console.log(
+						`${email}: [onboarding] Step 2 complete after ${Date.now() - step2StartTime}ms (attempt ${attempt})`,
+					)
+					break
+				}
+				console.log(
+					`${email}: [onboarding] Step 2 still visible after attempt ${attempt}, retrying...`,
+				)
+				if (attempt === 3) {
+					const step2Html = await page
+						.locator('#onboarding-step-2')
+						.innerHTML()
+						.catch(() => '')
+					const onboardingState = await page
+						.evaluate(() => ({
+							checkComplete: (window as any).__ONBOARDING_CHECK_COMPLETE__ ?? null,
+							navReady: (window as any).__NAV_HANDLERS_READY__ ?? null,
+							eventReady: (window as any).__EVENT_HANDLERS_READY__ ?? null,
+						}))
+						.catch(() => null)
+					throw new Error(
+						`${email}: onboarding step 2 did not advance after 3 attempts (${Date.now() - step2StartTime}ms). ` +
+							`state=${JSON.stringify(onboardingState)} step2HtmlPrefix=${step2Html.slice(0, 240)}`,
+					)
+				}
+			}
+		} finally {
+			page.off('dialog', dialogHandler)
+		}
 
 		// Step 3: Choose BioVault Home
 		await expect(page.locator('#onboarding-step-3')).toBeVisible({ timeout: 5000 })

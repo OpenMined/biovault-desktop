@@ -1557,6 +1557,13 @@ syqure_repo_root_from_bin() {
 	echo ""
 }
 
+syqure_plugin_lib_name() {
+	case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
+		darwin) echo "libsequre.dylib" ;;
+		*) echo "libsequre.so" ;;
+	esac
+}
+
 configure_syqure_runtime_env() {
 	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" && "$SCENARIO" != "syqure-multiparty-allele-freq" ]]; then
 		return 0
@@ -1564,18 +1571,44 @@ configure_syqure_runtime_env() {
 	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
 		return 0
 	fi
-	local syq_root platform codon_candidate
+	local syq_root platform codon_candidate codon_expected_suffix
 	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
 	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
 		return 0
 	fi
 
+	platform="$(syqure_platform_id)"
+	codon_candidate="$syq_root/bin/${platform}/codon"
+	codon_expected_suffix="/bin/${platform}/codon"
+
+	# Fail-fast guard: if CODON_PATH is set but clearly for another platform
+	# (e.g. macos-arm64 on Linux), override with current-platform bundle.
+	if [[ -n "${CODON_PATH:-}" ]]; then
+		if [[ "$CODON_PATH" != *"$codon_expected_suffix" ]]; then
+			if [[ -d "$codon_candidate/lib/codon" ]]; then
+				info "Overriding mismatched CODON_PATH=$CODON_PATH with platform path $codon_candidate"
+				export CODON_PATH="$codon_candidate"
+			else
+				echo "ERROR: CODON_PATH points to another platform: $CODON_PATH" >&2
+				echo "Expected current platform bundle under: $codon_candidate" >&2
+				echo "Fix CODON_PATH or build/install syqure codon bundle for $(syqure_platform_id)." >&2
+				exit 1
+			fi
+		fi
+	fi
+
 	# Prefer local prebuilt Codon/Sequre tree in this workspace.
 	if [[ -z "${CODON_PATH:-}" ]]; then
-		platform="$(syqure_platform_id)"
-		codon_candidate="$syq_root/bin/${platform}/codon"
 		if [[ -d "$codon_candidate/lib/codon" ]]; then
 			export CODON_PATH="$codon_candidate"
+		fi
+	fi
+
+	# Hard fail before launching Tauri/Syqure if CODON_PATH is invalid.
+	if [[ -n "${CODON_PATH:-}" ]]; then
+		if [[ ! -d "${CODON_PATH}/lib/codon" ]]; then
+			echo "ERROR: CODON_PATH is invalid (missing lib/codon): $CODON_PATH" >&2
+			exit 1
 		fi
 	fi
 
@@ -1649,6 +1682,63 @@ assert_syqure_binary_fresh() {
 		(cd "$syq_root" && cargo build -p syqure --release) >&2
 	fi
 	timer_pop
+}
+
+assert_syqure_bundle_ready() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" && "$SCENARIO" != "syqure-multiparty-allele-freq" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+
+	local syq_root platform codon_root plugin_name
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+	platform="$(syqure_platform_id)"
+	codon_root="$syq_root/bin/${platform}/codon"
+	plugin_name="$(syqure_plugin_lib_name)"
+
+	local missing=0
+	local required=(
+		"$codon_root/bin/codon"
+		"$codon_root/lib/codon/stdlib"
+		"$codon_root/lib/codon/plugins/sequre/build/$plugin_name"
+	)
+	local p
+	for p in "${required[@]}"; do
+		if [[ ! -e "$p" ]]; then
+			info "[DEBUG] Missing syqure bundle asset: $p"
+			missing=1
+		fi
+	done
+
+	if [[ "$missing" -eq 0 ]]; then
+		info "[DEBUG] Syqure bundle is present for platform $platform"
+		return 0
+	fi
+
+	local auto_rebuild_bins="${AUTO_REBUILD_SYQURE_BINS:-1}"
+	if [[ "$auto_rebuild_bins" == "0" || "$auto_rebuild_bins" == "false" || "$auto_rebuild_bins" == "no" ]]; then
+		echo "Syqure platform bundle missing for $platform." >&2
+		echo "Run: (cd $syq_root && ZSTD_NBTHREADS=1 ./syqure_bins.sh)" >&2
+		exit 1
+	fi
+
+	info "Rebuilding syqure platform bundle via syqure_bins.sh (platform=$platform)"
+	timer_push "Syqure bundle build"
+	(cd "$syq_root" && ZSTD_NBTHREADS=1 ./syqure_bins.sh) >&2
+	timer_pop
+
+	for p in "${required[@]}"; do
+		if [[ ! -e "$p" ]]; then
+			echo "Syqure bundle build incomplete, missing: $p" >&2
+			exit 1
+		fi
+	done
+	info "[DEBUG] Syqure bundle verified after rebuild"
 }
 
 launch_instance() {
@@ -1785,6 +1875,7 @@ start_tauri_instances() {
 
 		configure_syqure_runtime_env
 		assert_syqure_binary_fresh
+		assert_syqure_bundle_ready
 	fi
 
 	assert_tauri_binary_present
