@@ -18,6 +18,7 @@ src-tauri/resources/syftbox/syftbox
 src-tauri/resources/syftbox/syftbox.exe
 src-tauri/resources/syqure/syqure
 src-tauri/resources/syqure/syqure.exe
+src-tauri/resources/syqure/lib/
 src-tauri/resources/bundled/
 
 # Editor directories and files

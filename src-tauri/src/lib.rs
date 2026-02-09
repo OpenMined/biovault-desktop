@@ -10,7 +10,7 @@ use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WebviewUrl,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -1101,8 +1101,14 @@ pub fn run() {
         load_biovault_email(&Some(biovault_home_dir.clone()))
     };
 
-    // Build window title - include debug info if BIOVAULT_DEBUG_BANNER is set
-    let window_title = if std::env::var("BIOVAULT_DEBUG_BANNER")
+    // Build window title - allow explicit override, debug banner, or default
+    let window_title = if let Ok(custom) = std::env::var("BIOVAULT_WINDOW_TITLE") {
+        if custom.trim().is_empty() {
+            format!("BioVault - {}", email)
+        } else {
+            custom
+        }
+    } else if std::env::var("BIOVAULT_DEBUG_BANNER")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
     {

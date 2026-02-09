@@ -68,7 +68,10 @@ export async function completeOnboarding(
 	log(logSocket, { event: 'onboarding-start', email })
 
 	const isVisible = async (selector: string, timeout = 1000): Promise<boolean> =>
-		page.locator(selector).isVisible({ timeout }).catch(() => false)
+		page
+			.locator(selector)
+			.isVisible({ timeout })
+			.catch(() => false)
 	const waitVisible = async (selector: string, timeout = 1000): Promise<boolean> =>
 		page
 			.locator(selector)
