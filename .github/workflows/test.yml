@@ -62,13 +62,13 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
 
-          # # syqure-multiparty-allele-freq (linux) — disabled, use secure-only smoke test
-          # - scenario: syqure-multiparty-allele-freq
-          #   platform: linux-x86_64
-          #   runner: namespace-profile-linux-medium
-          #   client_mode: rust
-          #   tauri_binary: src-tauri/target/release/bv-desktop
-          #   run_prefix: "xvfb-run -a"
+          # syqure-multiparty-allele-freq (linux)
+          - scenario: syqure-multiparty-allele-freq
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
 
     defaults:
       run:
@@ -490,19 +490,20 @@ jobs:
             timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
           fi
 
-      # - name: Run syqure multiparty allele-freq scenario
-      #   if: matrix.scenario == 'syqure-multiparty-allele-freq'
-      #   env:
-      #     SKIP_PLAYWRIGHT_INSTALL: "1"
-      #     AUTO_REBUILD_TAURI: "0"
-      #     BV_SKIP_SYQURE: "0"
-      #     SYQURE_SCENARIO_TIMEOUT: "20m"
-      #   run: |
-      #     if [ -n "${{ matrix.run_prefix }}" ]; then
-      #       timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
-      #     else
-      #       timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-allele-freq
-      #     fi
+      - name: Run syqure multiparty allele-freq scenario
+        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          BV_SKIP_SYQURE: "0"
+          SYQURE_SCENARIO_TIMEOUT: "20m"
+        run: |
+          # Hard cap runtime so a stuck syqure flow cannot burn CI minutes indefinitely.
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+          else
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-allele-freq
+          fi
 
       - name: Upload test artifacts on failure
         if: failure()
