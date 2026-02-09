@@ -4,6 +4,7 @@ use crate::types::{
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::flow_spec::FlowFile;
+use biovault::flow_spec::FlowModuleDef;
 use biovault::flow_spec::FlowSpec;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
@@ -33,6 +34,26 @@ fn parse_thread_filter(scope: Option<&str>) -> Result<MessageFilterScope, String
         "sent" | "outbox" => Ok(MessageFilterScope::Sent),
         "all" | "threads" => Ok(MessageFilterScope::All),
         other => Err(format!("Unknown message filter: {}", other)),
+    }
+}
+
+fn add_group_chat_participants(
+    metadata: &Option<serde_json::Value>,
+    participants: &mut HashSet<String>,
+) {
+    let Some(meta) = metadata else { return };
+    let Some(group_chat) = meta.get("group_chat") else {
+        return;
+    };
+    let Some(group_participants) = group_chat.get("participants").and_then(|p| p.as_array()) else {
+        return;
+    };
+    for email in group_participants {
+        if let Some(email) = email.as_str() {
+            if !email.trim().is_empty() {
+                participants.insert(email.trim().to_string());
+            }
+        }
     }
 }
 
@@ -126,16 +147,42 @@ fn copy_flow_folder(
 }
 
 fn collect_flow_modules(
+    flow_file: &FlowFile,
     spec: &FlowSpec,
     flow_root: &Path,
     db: &biovault::data::BioVaultDb,
 ) -> Result<Vec<PathBuf>, String> {
     let mut modules = HashSet::new();
+    let mut explicit_local_module_names = HashSet::new();
+
+    for (module_name, module_def) in &flow_file.spec.modules {
+        if let FlowModuleDef::Ref(module_ref) = module_def {
+            if let Some(source) = &module_ref.source {
+                if let Some(source_path) = source.path.as_ref().map(|p| p.trim()) {
+                    if !source_path.is_empty() {
+                        let candidate = if source_path.starts_with('/') {
+                            PathBuf::from(source_path)
+                        } else {
+                            flow_root.join(source_path)
+                        };
+                        if candidate.exists() {
+                            explicit_local_module_names.insert(module_name.clone());
+                            modules.insert(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     for step in &spec.steps {
         let Some(uses) = step.uses.as_ref() else {
             continue;
         };
+
+        if explicit_local_module_names.contains(uses) {
+            continue;
+        }
 
         if uses.starts_with("http://")
             || uses.starts_with("https://")
@@ -476,6 +523,7 @@ pub fn list_message_threads(
                 if !msg.to.is_empty() {
                     participants.insert(msg.to.clone());
                 }
+                add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
             let subject = last_msg
@@ -563,6 +611,17 @@ pub fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, Strin
     Ok(messages)
 }
 
+/// Generate a deterministic thread ID for group chats based on sorted participants
+fn generate_group_thread_id(participants: &[String]) -> String {
+    let mut sorted: Vec<&str> = participants.iter().map(|s| s.as_str()).collect();
+    sorted.sort();
+    let joined = sorted.join(",");
+    let mut hasher = Sha256::new();
+    hasher.update(joined.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    format!("group-{}", &hash[..16])
+}
+
 #[tauri::command]
 pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String> {
     if request.body.trim().is_empty() {
@@ -573,6 +632,104 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
     let (db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
+    // Check if this is a group message (multiple recipients)
+    let recipients: Vec<String> = request
+        .recipients
+        .as_ref()
+        .map(|r| {
+            r.iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // If we have multiple recipients, handle as group message
+    if recipients.len() > 1 || (recipients.len() == 1 && request.to.is_none()) {
+        let recipients = if recipients.is_empty() {
+            // Fall back to single `to` if recipients is empty
+            vec![request
+                .to
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| "At least one recipient is required".to_string())?]
+        } else {
+            recipients
+        };
+
+        // Build the full participant list (sender + all recipients)
+        let mut all_participants: Vec<String> = recipients.clone();
+        all_participants.push(config.email.clone());
+        all_participants.sort();
+        all_participants.dedup();
+
+        // Generate deterministic thread ID for group
+        let group_thread_id = generate_group_thread_id(&all_participants);
+
+        // Prepare metadata with group info
+        let mut base_metadata = request.metadata.clone().unwrap_or(serde_json::json!({}));
+        if let Some(obj) = base_metadata.as_object_mut() {
+            obj.insert(
+                "group_chat".to_string(),
+                serde_json::json!({
+                    "participants": all_participants,
+                    "is_group": true,
+                }),
+            );
+        }
+
+        let mut first_message: Option<VaultMessage> = None;
+
+        // Send to each recipient
+        for recipient in &recipients {
+            let mut message = VaultMessage::new(
+                config.email.clone(),
+                recipient.clone(),
+                request.body.clone(),
+            );
+
+            if let Some(subject) = request.subject.as_ref().filter(|s| !s.trim().is_empty()) {
+                message.subject = Some(subject.clone());
+            }
+
+            message.thread_id = Some(group_thread_id.clone());
+            message.metadata = Some(base_metadata.clone());
+
+            if let Some(kind) = request
+                .message_type
+                .as_ref()
+                .map(|s| s.trim().to_lowercase())
+            {
+                use biovault::messages::MessageType;
+                match kind.as_str() {
+                    "text" | "" => {
+                        message.message_type = MessageType::Text;
+                    }
+                    _ => {
+                        message.message_type = MessageType::Text;
+                    }
+                }
+            }
+
+            db.insert_message(&message)
+                .map_err(|e| format!("Failed to store message: {}", e))?;
+
+            sync.send_message(&message.id)
+                .map_err(|e| format!("Failed to send message to {}: {}", recipient, e))?;
+
+            if first_message.is_none() {
+                let updated = db
+                    .get_message(&message.id)
+                    .map_err(|e| format!("Failed to reload message: {}", e))?
+                    .unwrap_or(message);
+                first_message = Some(updated);
+            }
+        }
+
+        return Ok(first_message.unwrap());
+    }
+
+    // Single recipient flow (existing logic)
     let mut message = if let Some(reply_id) = request.reply_to.as_ref() {
         let original = db
             .get_message(reply_id)
@@ -580,6 +737,73 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
             .ok_or_else(|| format!("Original message not found: {}", reply_id))?;
         let mut reply =
             VaultMessage::reply_to(&original, config.email.clone(), request.body.clone());
+
+        // For group chat replies, send to all participants except self
+        if let Some(meta) = original.metadata.as_ref() {
+            if let Some(group_chat) = meta.get("group_chat") {
+                if let Some(participants) =
+                    group_chat.get("participants").and_then(|p| p.as_array())
+                {
+                    let other_participants: Vec<String> = participants
+                        .iter()
+                        .filter_map(|p| p.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|p| p != &config.email)
+                        .collect();
+
+                    if other_participants.len() > 1 {
+                        // This is a group reply - send to all others
+                        let group_thread_id = original.thread_id.clone().unwrap_or_else(|| {
+                            let mut all: Vec<String> = participants
+                                .iter()
+                                .filter_map(|p| p.as_str())
+                                .map(|s| s.to_string())
+                                .collect();
+                            all.sort();
+                            generate_group_thread_id(&all)
+                        });
+
+                        let mut base_metadata =
+                            request.metadata.clone().unwrap_or(serde_json::json!({}));
+                        if let Some(obj) = base_metadata.as_object_mut() {
+                            obj.insert("group_chat".to_string(), group_chat.clone());
+                        }
+
+                        let mut first_message: Option<VaultMessage> = None;
+
+                        for recipient in &other_participants {
+                            let mut msg = VaultMessage::new(
+                                config.email.clone(),
+                                recipient.clone(),
+                                request.body.clone(),
+                            );
+                            msg.thread_id = Some(group_thread_id.clone());
+                            msg.parent_id = Some(original.id.clone());
+                            msg.subject = original.subject.clone();
+                            msg.metadata = Some(base_metadata.clone());
+
+                            db.insert_message(&msg)
+                                .map_err(|e| format!("Failed to store message: {}", e))?;
+
+                            sync.send_message(&msg.id).map_err(|e| {
+                                format!("Failed to send message to {}: {}", recipient, e)
+                            })?;
+
+                            if first_message.is_none() {
+                                let updated = db
+                                    .get_message(&msg.id)
+                                    .map_err(|e| format!("Failed to reload message: {}", e))?
+                                    .unwrap_or(msg);
+                                first_message = Some(updated);
+                            }
+                        }
+
+                        return Ok(first_message.unwrap());
+                    }
+                }
+            }
+        }
+
         // Allow callers to override the recipient even when sending a reply.
         // This is important for "threaded" app messages (e.g. session chat/accept/reject)
         // where we want to reply in-thread but still direct the message to the peer.
@@ -928,11 +1152,19 @@ pub fn send_flow_request(
         .map_err(|e| format!("Failed to resolve submissions folder: {}", e))?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let unique_ms = Utc::now().timestamp_millis();
+    let recipient_slug: String = recipient
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
     let mut hasher = Sha256::new();
     hasher.update(flow_content.as_bytes());
     let flow_hash = hex::encode(hasher.finalize());
     let short_hash = flow_hash.get(0..8).unwrap_or(&flow_hash).to_string();
-    let submission_folder_name = format!("{}-{}-{}", flow_name, timestamp, short_hash);
+    let submission_folder_name = format!(
+        "{}-{}-{}-{}-{}",
+        flow_name, timestamp, short_hash, recipient_slug, unique_ms
+    );
 
     let submission_path = submission_root.join(&submission_folder_name);
     copy_flow_folder(
@@ -942,8 +1174,12 @@ pub fn send_flow_request(
         &recipient,
     )?;
 
-    let module_paths =
-        collect_flow_modules(&flow_spec_struct, Path::new(&flow.flow_path), &biovault_db)?;
+    let module_paths = collect_flow_modules(
+        &flow_file,
+        &flow_spec_struct,
+        Path::new(&flow.flow_path),
+        &biovault_db,
+    )?;
     let modules_dest_root = submission_path.join("modules");
     let mut included_modules: Vec<String> = Vec::new();
     let mut seen_module_dirs = HashSet::new();
@@ -1571,6 +1807,7 @@ pub fn refresh_messages_batched(
                 if !msg.to.is_empty() {
                     participants.insert(msg.to.clone());
                 }
+                add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
             let subject = last_msg

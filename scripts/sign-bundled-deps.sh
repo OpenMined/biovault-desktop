@@ -74,6 +74,15 @@ if [[ -f "$SYQURE_DIR/syqure" ]]; then
 fi
 echo ""
 
+# Sign codon/sequre libs bundled with syqure
+echo "Signing syqure codon/sequre libs..."
+if [[ -d "$SYQURE_DIR/lib/codon" ]]; then
+  find "$SYQURE_DIR/lib/codon" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) | while read -r bin; do
+    sign_binary "$bin" || true
+  done
+fi
+echo ""
+
 # Sign uv
 echo "Signing uv binaries..."
 if [[ -d "$BUNDLED_DIR/uv" ]]; then

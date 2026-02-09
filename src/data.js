@@ -916,7 +916,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Checkbox handler
+		// Checkbox handler with shift-click support
 		const checkbox = row.querySelector('.file-checkbox')
 		const setFileSelected = (targetId, selected) => {
 			if (selected) {
@@ -984,8 +984,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			) {
 				return
 			}
-			checkbox.checked = !checkbox.checked
-			checkbox.dispatchEvent(new Event('change'))
+			const fileId = parseInt(row.dataset.fileId)
+			const newChecked = !selectedFileIds.includes(fileId)
+			checkbox.checked = newChecked
+			setFileSelected(fileId, newChecked)
+			updateDeleteButton()
+			updateSelectAllCheckbox()
+			updateActionButtons()
+			syncSelectionToSessionStorage()
+			lastClickedFileId = fileId
 		})
 
 		row.style.cursor = 'pointer'
@@ -1243,6 +1250,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// Clear all file selections
 	function clearAllSelections() {
 		selectedFileIds = []
+		lastClickedFileId = null
 
 		// Remove selected class from all rows
 		document.querySelectorAll('.file-row.selected').forEach((row) => {

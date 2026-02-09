@@ -7,6 +7,7 @@ import { createRunsModule } from './runs.js'
 import { createModulesModule } from './modules.js'
 import { createFlowsModule } from './flows.js'
 import { createMessagesModule } from './messages.js'
+import { createMultipartyFlowModal, createProposeFlowModal } from './multiparty-flow-modal.js'
 import { createImportModule } from './import.js'
 import { createProgressUI } from './progress-ui.js'
 import { createCltManager } from './clt-manager.js'
@@ -186,6 +187,21 @@ const {
 	getMessagesAuthorized,
 	showInviteOptions: showMessagesInviteOptions,
 } = messagesModule
+
+// Create multiparty flow modal
+const multipartyFlowModal = createMultipartyFlowModal({
+	invoke,
+	dialog,
+})
+
+// Create propose flow modal
+const proposeFlowModal = createProposeFlowModal({
+	invoke,
+	dialog,
+	getCurrentUserEmail,
+	getThreadParticipants: () => messagesModule.getActiveThreadParticipants(),
+	sendMessage: (req) => messagesModule.sendMessageToRecipients(req),
+})
 
 // Expose messages module globally for test actions (e.g., notification test button wiring)
 window.__messagesModule = messagesModule

@@ -302,7 +302,7 @@ export function createLogsModule({ invoke }) {
 		'Peer scan complete:',
 		'[Network Dataset Debug]',
 		'Dataset scan complete:',
-		'sync actions: uploads=0 downloads=0 remote_deletes=0 local_deletes=0 conflicts=0',
+		'sync actions:',
 		'scan_remote: server returned',
 		'sync reconcile start:',
 		'SyftBox queue poll',
@@ -312,6 +312,7 @@ export function createLogsModule({ invoke }) {
 		'bundle not cached:',
 		'updateThreadActivity:',
 		'GET http://127.0.0.1:7938/v1/sync/status',
+		'files, ignored=',
 	]
 
 	function filterVerboseLines(text) {

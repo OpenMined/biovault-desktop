@@ -10,7 +10,7 @@ use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WebviewUrl,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -560,6 +560,80 @@ fn expose_bundled_binaries(app: &tauri::App) {
             }
         }
     }
+
+    // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
+    // Keep parity with Windows behavior: respect an explicit valid override, else use
+    // bundled/dev candidates.
+    let mut allow_syqure_override = true;
+    if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            let existing_path = std::path::PathBuf::from(&existing);
+            if existing_path.exists() {
+                crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
+                allow_syqure_override = false;
+            } else {
+                crate::desktop_log!(
+                    "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
+                    existing_path.display()
+                );
+            }
+        }
+    }
+
+    if allow_syqure_override {
+        let syqure_candidates = [
+            "syqure/syqure".to_string(),
+            "resources/syqure/syqure".to_string(),
+        ];
+        let mut syqure_path = syqure_candidates
+            .iter()
+            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+            .filter(|p| p.exists());
+
+        if syqure_path.is_none() {
+            if let Ok(cwd) = std::env::current_dir() {
+                let dev_paths = [
+                    cwd.join("src-tauri")
+                        .join("resources")
+                        .join("syqure")
+                        .join("syqure"),
+                    cwd.join("resources").join("syqure").join("syqure"),
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("resources")
+                        .join("syqure")
+                        .join("syqure"),
+                    cwd.join("syqure")
+                        .join("target")
+                        .join("release")
+                        .join("syqure"),
+                    cwd.join("..")
+                        .join("syqure")
+                        .join("target")
+                        .join("release")
+                        .join("syqure"),
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("syqure")
+                        .join("target")
+                        .join("release")
+                        .join("syqure"),
+                ];
+                for p in dev_paths {
+                    if p.exists() {
+                        syqure_path = Some(p);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(p) = syqure_path.filter(|p| p.exists()) {
+            let s = p.to_string_lossy().to_string();
+            std::env::set_var("SEQURE_NATIVE_BIN", &s);
+            crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1027,14 +1101,29 @@ pub fn run() {
         load_biovault_email(&Some(biovault_home_dir.clone()))
     };
 
-    // Build window title - include debug info if BIOVAULT_DEBUG_BANNER is set
-    let window_title = if std::env::var("BIOVAULT_DEBUG_BANNER")
+    // Build window title - allow explicit override, debug banner, or default
+    let window_title = if let Ok(custom) = std::env::var("BIOVAULT_WINDOW_TITLE") {
+        if custom.trim().is_empty() {
+            format!("BioVault - {}", email)
+        } else {
+            custom
+        }
+    } else if std::env::var("BIOVAULT_DEBUG_BANNER")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
     {
         format!("BioVault - {} [{}]", email, home_display)
     } else {
         format!("BioVault - {}", email)
+    };
+
+    // Isolate WebView data (localStorage, cookies) per instance using biovault_home_dir.
+    // Without this, multiple Tauri instances with the same bundle identifier share
+    // a single WKWebView data store on macOS, causing identity/state cross-contamination.
+    let webview_data_dir = if !profile_picker_mode && !biovault_home_dir.as_os_str().is_empty() {
+        Some(biovault_home_dir.join("webview-data"))
+    } else {
+        None
     };
 
     let (conn, queue_processor_paused) = if profile_picker_mode {
@@ -1274,9 +1363,28 @@ pub fn run() {
                 });
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_title(&window_title);
+            // Create the main window programmatically so we can set data_directory
+            // for per-instance WebView data isolation (localStorage, cookies, etc.).
+            let mut wb = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::App(Default::default()),
+            )
+            .title(&window_title)
+            .inner_size(1100.0, 700.0)
+            .min_inner_size(900.0, 600.0);
 
+            if let Some(ref data_dir) = webview_data_dir {
+                crate::desktop_log!(
+                    "🔒 WebView data directory: {}",
+                    data_dir.display()
+                );
+                wb = wb.data_directory(data_dir.clone());
+            }
+
+            let window = wb.build()?;
+
+            {
                 // Handle window close event - minimize to tray instead of quitting
                 let window_clone = window.clone();
                 let app_handle = app.handle().clone();
@@ -1535,6 +1643,7 @@ pub fn run() {
             get_flows,
             get_runs_base_dir,
             create_flow,
+            import_flow_from_json,
             load_flow_editor,
             save_flow_editor,
             delete_flow,
@@ -1694,6 +1803,21 @@ pub fn run() {
             add_dataset_to_session,
             remove_dataset_from_session,
             list_session_datasets,
+            // Multiparty flow commands
+            commands::multiparty::send_flow_invitation,
+            commands::multiparty::accept_flow_invitation,
+            commands::multiparty::get_multiparty_flow_state,
+            commands::multiparty::get_all_participant_progress,
+            commands::multiparty::get_multiparty_participant_datasite_path,
+            commands::multiparty::get_participant_logs,
+            commands::multiparty::get_multiparty_step_diagnostics,
+            commands::multiparty::set_step_auto_run,
+            commands::multiparty::run_flow_step,
+            commands::multiparty::share_step_outputs,
+            commands::multiparty::share_step_outputs_to_chat,
+            commands::multiparty::get_step_output_files,
+            commands::multiparty::get_multiparty_step_logs,
+            commands::multiparty::receive_flow_step_outputs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

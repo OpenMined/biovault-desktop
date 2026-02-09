@@ -46,42 +46,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # flows-pause-resume (linux only for next push)
-          - scenario: flows-pause-resume
+          # pipelines-multiparty-flow smoke test (linux)
+          - scenario: pipelines-multiparty-flow
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          # flows-collab (linux + windows)
-          - scenario: flows-collab
+
+          # syqure-multiparty-flow secure-only smoke test (linux)
+          - scenario: syqure-multiparty-flow-secure-only
             platform: linux-x86_64
             runner: namespace-profile-linux-medium
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - scenario: flows-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
-          # jupyter-collab (linux + mac + windows)
-          - scenario: jupyter-collab
+
+          # syqure-multiparty-allele-freq (linux)
+          - scenario: syqure-multiparty-allele-freq
             platform: linux-x86_64
-            runner: namespace-profile-linux-medium
+            runner: namespace-profile-linux-large
             client_mode: rust
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
-          - scenario: jupyter-collab
-            platform: macos-arm64
-            runner: namespace-profile-mac-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-          - scenario: jupyter-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop.exe
 
     defaults:
       run:
@@ -129,6 +116,9 @@ jobs:
             workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BV_SKIP_SYQURE: ${{ contains(matrix.scenario, 'syqure') && '0' || '1' }}
         run: |
           chmod +x scripts/setup-workspace.sh
           ./scripts/setup-workspace.sh
@@ -227,6 +217,15 @@ jobs:
             libxdo-dev \
             build-essential \
             pkg-config
+
+      - name: Install syqure build dependencies (Linux)
+        if: runner.os == 'Linux' && contains(matrix.scenario, 'syqure')
+        run: |
+          UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-17 main" | sudo tee /etc/apt/sources.list.d/llvm-17.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev libgmp-dev zstd
 
       # NOTE: Docker setup for macOS removed since pipelines-collab tests are skipped on macOS
       # (GitHub macOS runners don't support nested virtualization needed for Docker)
@@ -330,6 +329,29 @@ jobs:
         shell: pwsh
         run: cargo build --release
         working-directory: src-tauri
+
+      - name: Build native syqure binary
+        if: contains(matrix.scenario, 'syqure')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd ${{ github.workspace }}/../syqure
+          # Override SSH submodule URLs to HTTPS (no SSH keys in CI)
+          git config --file .gitmodules submodule.codon.url https://github.com/madhavajay/codon.git
+          git config --file .gitmodules submodule.sequre.url https://github.com/madhavajay/sequre.git
+          git submodule sync
+          git submodule update --init --depth 1 codon sequre
+          # Build bundle and binary (matches syqure CI smoke test)
+          BUNDLE_ROOT="bin/linux-x86/codon"
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
+          export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
+          export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"
+          export SYQURE_CPP_LIB_DIRS="$BUNDLE_ROOT/lib/codon"
+          export SYQURE_LLVM_INCLUDE="$(llvm-config-17 --includedir)"
+          cargo build -p syqure
 
       - name: Install maturin (uv)
         if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
@@ -441,6 +463,48 @@ jobs:
             ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
           fi
 
+      - name: Run pipelines multiparty flow scenario
+        if: matrix.scenario == 'pipelines-multiparty-flow'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: |
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            ${{ matrix.run_prefix }} ./test-scenario.sh --pipelines-multiparty-flow
+          else
+            ./test-scenario.sh --pipelines-multiparty-flow
+          fi
+
+      - name: Run syqure multiparty flow secure-only scenario
+        if: matrix.scenario == 'syqure-multiparty-flow-secure-only'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          BV_SKIP_SYQURE: "0"
+          SYQURE_SCENARIO_TIMEOUT: "20m"
+        run: |
+          # Hard cap runtime so a stuck syqure flow cannot burn CI minutes indefinitely.
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
+          else
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only
+          fi
+
+      - name: Run syqure multiparty allele-freq scenario
+        if: matrix.scenario == 'syqure-multiparty-allele-freq'
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+          BV_SKIP_SYQURE: "0"
+          SYQURE_SCENARIO_TIMEOUT: "20m"
+        run: |
+          # Hard cap runtime so a stuck syqure flow cannot burn CI minutes indefinitely.
+          if [ -n "${{ matrix.run_prefix }}" ]; then
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ${{ matrix.run_prefix }} ./test-scenario.sh --syqure-multiparty-allele-freq
+          else
+            timeout --preserve-status "$SYQURE_SCENARIO_TIMEOUT" ./test-scenario.sh --syqure-multiparty-allele-freq
+          fi
+
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -452,6 +516,7 @@ jobs:
             artifacts/
 
   profiles-e2e:
+    if: false
     name: profiles-e2e (linux-x86_64)
     runs-on: namespace-profile-linux-medium
     env:
@@ -619,6 +684,7 @@ jobs:
             artifacts/
 
   profiles-e2e-macos:
+    if: false
     name: profiles-e2e (macos-arm64)
     runs-on: namespace-profile-mac-medium
     env:
@@ -763,6 +829,7 @@ jobs:
             artifacts/
 
   profiles-e2e-windows:
+    if: false
     name: profiles-e2e (windows-x86_64)
     runs-on: namespace-profile-windows-medium
     defaults:

@@ -459,6 +459,33 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
         crate::desktop_log!("⚠️ Failed to register profile for {}: {}", email, err);
     }
 
+    // Re-assert onboarding email after dependency/profile side effects.
+    // Some dependency save paths can rewrite config while onboarding is in-flight.
+    let final_config_path = biovault_path.join("config.yaml");
+    match biovault::config::Config::load() {
+        Ok(mut cfg) => {
+            if cfg.email.trim() != email.trim() {
+                cfg.email = email.clone();
+                if let Err(err) = cfg.save(&final_config_path) {
+                    crate::desktop_log!(
+                        "⚠️ Final onboarding email persist failed for {}: {}",
+                        email,
+                        err
+                    );
+                } else {
+                    crate::desktop_log!("✅ Final onboarding email persisted for {}", email);
+                }
+            }
+        }
+        Err(err) => {
+            crate::desktop_log!(
+                "⚠️ Failed final onboarding config load for {}: {}",
+                email,
+                err
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -468,12 +495,6 @@ pub fn get_settings() -> Result<Settings, String> {
     let biovault_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
     let settings_path = biovault_home.join("database").join("settings.json");
-    let legacy_settings_path = dirs::desktop_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join("Desktop")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("BioVault")
-        .join("database")
-        .join("settings.json");
     println!(
         "⚙️ [get_settings] settings_path: {}",
         settings_path.display()
@@ -484,11 +505,6 @@ pub fn get_settings() -> Result<Settings, String> {
         let content = fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?
-    } else if legacy_settings_path.exists() {
-        // Back-compat migration from legacy Desktop/BioVault location.
-        let content = fs::read_to_string(&legacy_settings_path)
-            .map_err(|e| format!("Failed to read legacy settings: {}", e))?;
-        serde_json::from_str(&content).unwrap_or_default()
     } else {
         println!("⚙️ [get_settings] settings.json does NOT exist, using defaults");
         Settings::default()

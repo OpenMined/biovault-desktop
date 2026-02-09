@@ -364,6 +364,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("import_flow", "flows", false),
         cmd_async("import_flow_from_message", "flows", false),
         cmd_async("import_flow_from_request", "flows", false),
+        cmd_async("import_flow_from_json", "flows", false),
         cmd_long("import_flow_with_deps", "flows", false),
         cmd_long("run_flow", "flows", false),
         cmd_async("get_flow_runs", "flows", true),
@@ -3033,6 +3034,19 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "import_flow_from_json" => {
+            let request: crate::commands::flows::ImportFlowFromJsonRequest =
+                serde_json::from_value(
+                    args.get("request")
+                        .cloned()
+                        .ok_or_else(|| "Missing request".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse request: {}", e))?;
+            let result = crate::commands::flows::import_flow_from_json(state.clone(), request)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "run_flow" => {
             // Try to get the main window for event emission (optional in WS bridge mode)
             let window = app.get_webview_window("main");
@@ -3850,6 +3864,277 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .and_then(|v| serde_json::from_value(v).ok());
             let result =
                 crate::commands::sql::sql_export_query(state.clone(), query, destination, options)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // Multiparty flow commands
+        "send_flow_invitation" => {
+            let thread_id: String = serde_json::from_value(
+                args.get("threadId")
+                    .cloned()
+                    .ok_or_else(|| "Missing threadId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse threadId: {}", e))?;
+            let flow_name: String = serde_json::from_value(
+                args.get("flowName")
+                    .cloned()
+                    .ok_or_else(|| "Missing flowName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowName: {}", e))?;
+            let flow_spec: serde_json::Value = args
+                .get("flowSpec")
+                .cloned()
+                .ok_or_else(|| "Missing flowSpec".to_string())?;
+            let participant_roles: Vec<biovault::messages::models::FlowParticipant> =
+                serde_json::from_value(
+                    args.get("participantRoles")
+                        .cloned()
+                        .ok_or_else(|| "Missing participantRoles".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse participantRoles: {}", e))?;
+            let result = crate::commands::multiparty::send_flow_invitation(
+                state.clone(),
+                thread_id,
+                flow_name,
+                flow_spec,
+                participant_roles,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "accept_flow_invitation" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let flow_name: String = serde_json::from_value(
+                args.get("flowName")
+                    .cloned()
+                    .ok_or_else(|| "Missing flowName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowName: {}", e))?;
+            let flow_spec: serde_json::Value = args
+                .get("flowSpec")
+                .cloned()
+                .ok_or_else(|| "Missing flowSpec".to_string())?;
+            let participants: Vec<biovault::messages::models::FlowParticipant> =
+                serde_json::from_value(
+                    args.get("participants")
+                        .cloned()
+                        .ok_or_else(|| "Missing participants".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse participants: {}", e))?;
+            let auto_run_all: bool = args
+                .get("autoRunAll")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(false);
+            let thread_id: Option<String> = args
+                .get("threadId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let input_overrides: Option<std::collections::HashMap<String, String>> = args
+                .get("inputOverrides")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|e| format!("Failed to parse inputOverrides: {}", e))?;
+            let result = crate::commands::multiparty::accept_flow_invitation(
+                state.clone(),
+                session_id,
+                flow_name,
+                flow_spec,
+                participants,
+                auto_run_all,
+                thread_id,
+                input_overrides,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_multiparty_flow_state" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result =
+                crate::commands::multiparty::get_multiparty_flow_state(state.clone(), session_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_all_participant_progress" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::commands::multiparty::get_all_participant_progress(session_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_participant_logs" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let result = crate::commands::multiparty::get_participant_logs(session_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_multiparty_step_diagnostics" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result =
+                crate::commands::multiparty::get_multiparty_step_diagnostics(session_id, step_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_multiparty_step_logs" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let lines: Option<usize> = args
+                .get("lines")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::multiparty::get_multiparty_step_logs(
+                state.clone(),
+                session_id,
+                step_id,
+                lines,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "set_step_auto_run" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let auto_run: bool = serde_json::from_value(
+                args.get("autoRun")
+                    .cloned()
+                    .ok_or_else(|| "Missing autoRun".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse autoRun: {}", e))?;
+            crate::commands::multiparty::set_step_auto_run(session_id, step_id, auto_run)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "run_flow_step" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result =
+                crate::commands::multiparty::run_flow_step(state.clone(), session_id, step_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "share_step_outputs" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            crate::commands::multiparty::share_step_outputs(state.clone(), session_id, step_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "share_step_outputs_to_chat" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result = crate::commands::multiparty::share_step_outputs_to_chat(
+                state.clone(),
+                session_id,
+                step_id,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_step_output_files" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result = crate::commands::multiparty::get_step_output_files(session_id, step_id)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
 

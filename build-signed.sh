@@ -90,6 +90,58 @@ case "$(uname -s)" in
       echo "❌ syqure binary not found at syqure/target/debug/syqure" >&2
       exit 1
     fi
+    # Bundle codon/sequre libs alongside syqure so dyld finds them via @loader_path/lib/codon
+    if [[ -d syqure/target/dist/syqure/lib/codon ]]; then
+      echo "Copying codon/sequre libs to resources/syqure/lib/codon..."
+      rm -rf src-tauri/resources/syqure/lib/codon
+      mkdir -p src-tauri/resources/syqure/lib/codon
+      cp -RL syqure/target/dist/syqure/lib/codon/. src-tauri/resources/syqure/lib/codon/
+    fi
+    # Fix dylib paths: bundle transitive homebrew deps and rewrite absolute paths
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      CODON_LIB="src-tauri/resources/syqure/lib/codon"
+      # Bundle libzstd alongside codon libs
+      ZSTD_LIB=""
+      if command -v brew >/dev/null 2>&1; then
+        ZSTD_PREFIX="$(brew --prefix zstd 2>/dev/null || true)"
+        if [[ -n "$ZSTD_PREFIX" && -f "$ZSTD_PREFIX/lib/libzstd.1.dylib" ]]; then
+          ZSTD_LIB="$ZSTD_PREFIX/lib/libzstd.1.dylib"
+        fi
+      fi
+      if [[ -z "$ZSTD_LIB" ]]; then
+        for candidate in /opt/homebrew/opt/zstd/lib/libzstd.1.dylib /usr/local/opt/zstd/lib/libzstd.1.dylib; do
+          if [[ -f "$candidate" ]]; then
+            ZSTD_LIB="$candidate"
+            break
+          fi
+        done
+      fi
+      if [[ -n "$ZSTD_LIB" ]]; then
+        echo "Bundling libzstd from $ZSTD_LIB"
+        cp -L "$ZSTD_LIB" "$CODON_LIB/libzstd.1.dylib"
+        chmod u+w "$CODON_LIB/libzstd.1.dylib"
+      else
+        echo "Warning: libzstd not found; codon dylibs may fail to load" >&2
+      fi
+      # Rewrite absolute homebrew paths to @loader_path in all dylibs
+      echo "Rewriting dylib paths to @loader_path..."
+      for dylib in "$CODON_LIB"/*.dylib; do
+        [[ -f "$dylib" ]] || continue
+        # Rewrite any /opt/homebrew/.../libzstd.1.dylib or /usr/local/.../libzstd.1.dylib
+        otool -L "$dylib" 2>/dev/null | awk '{print $1}' | { grep -E '/(opt|usr/local)/' || true; } | while read -r abs_path; do
+          lib_name="$(basename "$abs_path")"
+          echo "  $(basename "$dylib"): $abs_path -> @loader_path/$lib_name"
+          install_name_tool -change "$abs_path" "@loader_path/$lib_name" "$dylib"
+        done
+        # Fix install name if it's an absolute homebrew path
+        current_id="$(otool -D "$dylib" 2>/dev/null | tail -1)"
+        if [[ "$current_id" == /opt/* || "$current_id" == /usr/local/opt/* ]]; then
+          lib_name="$(basename "$current_id")"
+          echo "  Fixing install name: $(basename "$dylib") -> @loader_path/$lib_name"
+          install_name_tool -id "@loader_path/$lib_name" "$dylib"
+        fi
+      done
+    fi
     ;;
 esac
 

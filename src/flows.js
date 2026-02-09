@@ -887,8 +887,45 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			// Check why it wasn't handled
 			const context = getPendingDataRunContext()
 			const hasData = hasPendingData(context)
+			const flow = flowState.flows.find((p) => p.id === flowId)
 
 			if (!hasData) {
+				if (flow && flow.spec?.inputs && Object.keys(flow.spec.inputs).length > 0) {
+					const overrides = await promptFlowInputOverridesFromData({
+						flowName: flow.name,
+						flowSpec: flow.spec,
+						initialOverrides: {},
+					})
+					if (overrides) {
+						const missingRequired = Object.entries(flow.spec.inputs || {})
+							.filter(([name, spec]) => isRequiredInputSpec(spec))
+							.filter(([name]) => {
+								const key = `inputs.${name}`
+								return !String(overrides[key] || '').trim()
+							})
+							.map(([name]) => name)
+						if (missingRequired.length === 0) {
+							try {
+								const run = await invoke('run_flow', {
+									flowId,
+									inputOverrides: overrides,
+									resultsDir: null,
+								})
+								if (typeof sessionStorage !== 'undefined') {
+									sessionStorage.setItem('autoExpandRunId', String(run.id))
+								}
+								alert(`Flow started! Run ID: ${run.id}`)
+								if (navigateTo) navigateTo('runs')
+								return
+							} catch (error) {
+								console.error('Failed to start flow with input overrides:', error)
+								alert('Failed to run flow: ' + (error?.message || error))
+								return
+							}
+						}
+					}
+				}
+
 				// No data selected - prompt user to select data first
 				if (dialog && dialog.confirm) {
 					const shouldNavigate = await dialog.confirm(
@@ -908,7 +945,6 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				}
 			} else {
 				// Data is selected but flow might not be compatible
-				const flow = flowState.flows.find((p) => p.id === flowId)
 				const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
 				if (flow && !flowAcceptsShape(flow, selectionShape)) {
 					if (dialog && dialog.message) {
@@ -935,6 +971,289 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			if (inputSpec.rawType) return inputSpec.rawType
 		}
 		return ''
+	}
+
+	function extractInputDefaultValue(inputSpec) {
+		if (inputSpec && typeof inputSpec === 'object' && !Array.isArray(inputSpec)) {
+			return Object.prototype.hasOwnProperty.call(inputSpec, 'default')
+				? inputSpec.default
+				: undefined
+		}
+		return undefined
+	}
+
+	function normalizeInputDefaultValue(defaultValue) {
+		if (defaultValue === undefined || defaultValue === null) return ''
+		if (Array.isArray(defaultValue)) {
+			return defaultValue
+				.map((value) => String(value).trim())
+				.filter(Boolean)
+				.join(',')
+		}
+		if (typeof defaultValue === 'object') {
+			try {
+				return JSON.stringify(defaultValue)
+			} catch {
+				return ''
+			}
+		}
+		return String(defaultValue)
+	}
+
+	function parseInputListValue(rawValue) {
+		if (Array.isArray(rawValue)) {
+			return rawValue.map((value) => String(value).trim()).filter(Boolean)
+		}
+		const text = String(rawValue || '')
+			.trim()
+			.replace(/\n/g, ',')
+		if (!text) return []
+		return text
+			.split(',')
+			.map((value) => value.trim())
+			.filter(Boolean)
+	}
+
+	function isListInputType(type, defaultValue) {
+		if (Array.isArray(defaultValue)) return true
+		const parsed = parseTypeExpr(String(type || ''))
+		if (parsed?.kind === 'List') return true
+		const normalized = String(type || '').toLowerCase()
+		return normalized.includes('list') || normalized.includes('array') || normalized.includes('[')
+	}
+
+	function isFileInputTypeNode(node) {
+		if (!node || !node.kind) return false
+		if (node.kind === 'List') return isFileInputTypeNode(node.inner)
+		const normalized = String(node.kind || '')
+			.trim()
+			.toLowerCase()
+		return (
+			normalized === 'file' ||
+			normalized === 'directory' ||
+			normalized === 'genotype' ||
+			normalized === 'genotyperecord' ||
+			normalized.includes('file') ||
+			normalized.includes('dir') ||
+			normalized.includes('path') ||
+			normalized.includes('dataset') ||
+			normalized.includes('genotype')
+		)
+	}
+
+	function isFileInputType(type) {
+		const text = String(type || '')
+		const parsed = parseTypeExpr(text)
+		if (parsed && isFileInputTypeNode(parsed)) return true
+		const normalized = text.toLowerCase()
+		return (
+			normalized.includes('file') ||
+			normalized.includes('dir') ||
+			normalized.includes('path') ||
+			normalized.includes('dataset') ||
+			normalized.includes('genotype')
+		)
+	}
+
+	function isRequiredInputSpec(inputSpec) {
+		const inputType = describeInputType(inputSpec)
+		if (inputType && String(inputType).trim().endsWith('?')) return false
+		const defaultValue = extractInputDefaultValue(inputSpec)
+		return defaultValue === undefined || defaultValue === null || String(defaultValue).trim() === ''
+	}
+
+	async function promptFlowInputOverridesFromData({
+		flowName,
+		flowSpec,
+		initialOverrides = {},
+		includeDatasites = false,
+	}) {
+		const inputs = flowSpec?.inputs || {}
+		const entries = Object.entries(inputs).filter(([name]) =>
+			includeDatasites ? true : name !== 'datasites',
+		)
+		if (entries.length === 0) return { ...initialOverrides }
+
+		let files = []
+		try {
+			const loaded = await invoke('get_files')
+			files = Array.isArray(loaded) ? loaded : []
+		} catch (error) {
+			console.warn('Failed to load local files for flow input picker:', error)
+		}
+		const sortedFiles = files
+			.filter((file) => file && typeof file.file_path === 'string' && file.file_path.length > 0)
+			.sort((a, b) => {
+				const at = Date.parse(a.updated_at || a.created_at || '') || 0
+				const bt = Date.parse(b.updated_at || b.created_at || '') || 0
+				return bt - at
+			})
+
+		const modal = document.createElement('div')
+		modal.className = 'flow-input-picker-modal'
+		modal.innerHTML = `
+			<div class="flow-input-picker-backdrop"></div>
+			<div class="flow-input-picker-content">
+				<div class="flow-input-picker-header">
+					<h3>Configure Flow Inputs</h3>
+					<p>${escapeHtml(flowName || 'Flow')}</p>
+				</div>
+				<div class="flow-input-picker-body"></div>
+				<div class="flow-input-picker-footer">
+					<button type="button" class="flow-input-picker-cancel">Cancel</button>
+					<button type="button" class="flow-input-picker-confirm">Continue</button>
+				</div>
+			</div>
+		`
+		document.body.appendChild(modal)
+		const body = modal.querySelector('.flow-input-picker-body')
+		const fieldRefs = []
+
+		entries.forEach(([name, inputSpec]) => {
+			const inputKey = `inputs.${name}`
+			const type = describeInputType(inputSpec) || 'String'
+			const defaultValue = extractInputDefaultValue(inputSpec)
+			const defaultText = normalizeInputDefaultValue(defaultValue)
+			const currentText = String(initialOverrides[inputKey] || defaultText || '').trim()
+			const listLike = isListInputType(type, defaultValue)
+			const fileLike = isFileInputType(type)
+
+			const row = document.createElement('div')
+			row.className = 'flow-input-picker-row'
+
+			const label = document.createElement('label')
+			label.className = 'flow-input-picker-label'
+			label.textContent = name
+			const hint = document.createElement('div')
+			hint.className = 'flow-input-picker-hint'
+			hint.textContent = `Type: ${type}`
+			label.appendChild(hint)
+			row.appendChild(label)
+
+			if (fileLike && sortedFiles.length > 0) {
+				const selectedValues = new Set(parseInputListValue(currentText))
+				let fileSelect = null
+				let fileCheckboxes = []
+				if (listLike) {
+					const fileList = document.createElement('div')
+					fileList.className = 'flow-input-picker-file-list'
+					sortedFiles.forEach((file) => {
+						const fullPath = file.file_path
+						const parts = fullPath.split('/')
+						const fileName = parts[parts.length - 1] || fullPath
+						const dataType = file.data_type ? ` (${file.data_type})` : ''
+						const item = document.createElement('label')
+						item.className = 'flow-input-picker-file-item'
+						const checkbox = document.createElement('input')
+						checkbox.type = 'checkbox'
+						checkbox.className = 'flow-input-picker-checkbox'
+						checkbox.value = fullPath
+						checkbox.checked = selectedValues.has(fullPath)
+						const text = document.createElement('span')
+						text.textContent = `${fileName}${dataType}`
+						item.appendChild(checkbox)
+						item.appendChild(text)
+						fileList.appendChild(item)
+						fileCheckboxes.push(checkbox)
+					})
+					row.appendChild(fileList)
+				} else {
+					fileSelect = document.createElement('select')
+					fileSelect.className = 'flow-input-picker-select'
+					const empty = document.createElement('option')
+					empty.value = ''
+					empty.textContent = 'Select a local file...'
+					fileSelect.appendChild(empty)
+					sortedFiles.forEach((file) => {
+						const option = document.createElement('option')
+						const fullPath = file.file_path
+						const parts = fullPath.split('/')
+						const fileName = parts[parts.length - 1] || fullPath
+						const dataType = file.data_type ? ` (${file.data_type})` : ''
+						option.value = fullPath
+						option.textContent = `${fileName}${dataType}`
+						if (selectedValues.has(fullPath)) option.selected = true
+						fileSelect.appendChild(option)
+					})
+					row.appendChild(fileSelect)
+				}
+
+				const manual = document.createElement('input')
+				manual.className = 'flow-input-picker-text'
+				manual.type = 'text'
+				manual.value = currentText
+				manual.placeholder = listLike
+					? 'Or enter comma-separated paths/values'
+					: 'Or enter a custom path/value'
+				row.appendChild(manual)
+
+				fieldRefs.push({
+					name,
+					inputKey,
+					fileLike,
+					listLike,
+					defaultText,
+					fileSelect,
+					fileCheckboxes,
+					manual,
+				})
+			} else {
+				const input = document.createElement('input')
+				input.className = 'flow-input-picker-text'
+				input.type = 'text'
+				input.value = currentText
+				input.placeholder = defaultText ? `Default: ${defaultText}` : 'Enter value'
+				row.appendChild(input)
+				fieldRefs.push({
+					name,
+					inputKey,
+					fileLike: false,
+					listLike,
+					defaultText,
+					textInput: input,
+				})
+			}
+
+			body.appendChild(row)
+		})
+
+		return new Promise((resolve) => {
+			const cleanup = () => modal.remove()
+			const cancel = () => {
+				cleanup()
+				resolve(null)
+			}
+			const confirm = () => {
+				const overrides = { ...initialOverrides }
+				fieldRefs.forEach((field) => {
+					let value = ''
+					if (field.fileLike) {
+						const selected = field.listLike
+							? Array.from(field.fileCheckboxes || [])
+									.filter((checkbox) => checkbox.checked)
+									.map((checkbox) => checkbox.value)
+									.filter(Boolean)
+							: Array.from(field.fileSelect?.selectedOptions || [])
+									.map((option) => option.value)
+									.filter(Boolean)
+						const manualValues = parseInputListValue(field.manual?.value || '')
+						const combined = selected.length > 0 ? selected : manualValues
+						value = field.listLike ? combined.join(',') : combined[0] || ''
+					} else {
+						value = String(field.textInput?.value || '').trim()
+					}
+					if (!value && field.defaultText) value = field.defaultText
+					if (value) overrides[field.inputKey] = value
+					else delete overrides[field.inputKey]
+				})
+				cleanup()
+				resolve(overrides)
+			}
+
+			modal.querySelector('.flow-input-picker-backdrop')?.addEventListener('click', cancel)
+			modal.querySelector('.flow-input-picker-cancel')?.addEventListener('click', cancel)
+			modal.querySelector('.flow-input-picker-confirm')?.addEventListener('click', confirm)
+		})
 	}
 
 	function splitTypeTopLevel(value, delimiter) {
@@ -983,6 +1302,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			case 'participantsheet':
 				return 'ParticipantSheet'
 			case 'genotyperecord':
+				return 'GenotypeRecord'
+			case 'genotype':
 				return 'GenotypeRecord'
 			case 'biovaultcontext':
 				return 'BiovaultContext'
@@ -1985,6 +2306,47 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+											<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+											<circle cx="9" cy="7" r="4"></circle>
+											<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+											<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+										</svg>
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Demo</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">3-party collaborative flow</div>
+									</div>
+								</div>
+							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty_allele_freq')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Allele Freq</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC-secured allele frequency</div>
+									</div>
+								</div>
+							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('syqure_demo')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+											<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+											<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+										</svg>
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Syqure Demo</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC rsid aggregation demo</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -2170,6 +2532,10 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			thalassemia:
 				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
 			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
+			multiparty: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
+			multiparty_allele_freq:
+				'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
+			syqure_demo: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
 		}
 
 		const templateNames = {
@@ -2178,6 +2544,9 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			herc2: 'HERC2 Classifier',
 			thalassemia: 'Thalassemia Classifier',
 			allele_freq: 'Allele Frequency',
+			multiparty: 'Multiparty Demo',
+			multiparty_allele_freq: 'Multiparty Allele Freq',
+			syqure_demo: 'Syqure Demo',
 		}
 
 		// Use local path if available, otherwise use GitHub URL
@@ -2518,14 +2887,20 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					if (step.uses) {
 						try {
 							await invoke('delete_module', { moduleId: step.uses })
-						} catch (_) {}
+						} catch (_) {
+							/* ignore cleanup errors */
+						}
 					}
 				}
 				try {
 					await invoke('delete_flow', { flowId: existingFlow.id })
-				} catch (_) {}
+				} catch (_) {
+					/* ignore cleanup errors */
+				}
 			}
-		} catch (_) {}
+		} catch (_) {
+			/* ignore cleanup errors */
+		}
 	}
 
 	async function submitFlowURL(overwrite = false, urlOverride = null) {
@@ -2602,6 +2977,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		closeImportOptionsModal()
 
 		let selected = selectedPath
+		let inferredName = 'this flow'
 		try {
 			if (!selected) {
 				selected = await dialog.open({
@@ -2653,7 +3029,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 			let flowDir = selected
 			let flowFile = null
-			let inferredName = lastParentName || fileName || 'imported-flow'
+			inferredName = lastParentName || fileName || 'imported-flow'
 
 			if (isYamlFile) {
 				if (parentNormalized) {
@@ -7150,9 +7526,22 @@ steps:${
 				}
 
 				if (startLocal) {
-					const inputOverrides = {}
+					let inputOverrides = {}
 					if (flow?.spec?.inputs?.datasites) {
 						inputOverrides['inputs.datasites'] = datasites.join(',')
+					}
+					if (flow?.spec?.inputs && Object.keys(flow.spec.inputs).length > 0) {
+						const configured = await promptFlowInputOverridesFromData({
+							flowName: flow.name,
+							flowSpec: flow.spec,
+							initialOverrides: inputOverrides,
+						})
+						if (configured === null) {
+							submitBtn.disabled = false
+							submitBtn.textContent = 'Start Collaborative Run'
+							return
+						}
+						inputOverrides = configured
 					}
 					await invoke('run_flow', {
 						flowId: flow.id,

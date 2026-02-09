@@ -5,7 +5,10 @@ const pausedTests = new Set<string>()
 let warnedNoTty = false
 
 function shouldPauseInteractive() {
-	return process.env.INTERACTIVE_MODE === '1'
+	if (process.env.INTERACTIVE_MODE !== '1') return false
+	const raw = (process.env.PLAYWRIGHT_INTERACTIVE_PAUSE ?? '').trim().toLowerCase()
+	if (raw === '0' || raw === 'false' || raw === 'no') return false
+	return true
 }
 
 async function promptForEnter(message: string) {

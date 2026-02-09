@@ -13,7 +13,6 @@ use walkdir::WalkDir;
 
 // Use CLI library types and functions
 use biovault::cli::commands::flow::run_flow as cli_run_flow;
-use biovault::cli::commands::module_management::{resolve_flow_dependencies, DependencyContext};
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Flow, Run, RunConfig};
 pub use biovault::flow_spec::FlowSpec;
@@ -293,6 +292,50 @@ fn clear_nextflow_locks(
     }
 
     Ok(total_removed)
+}
+
+fn copy_local_flow_dir(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| format!("Failed to create destination: {}", e))?;
+
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(src)
+            .map_err(|e| format!("Failed to resolve path: {}", e))?;
+
+        if should_skip_request_path(rel) {
+            continue;
+        }
+
+        let dest_path = dest.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest_path).map_err(|e| {
+                format!("Failed to create directory {}: {}", dest_path.display(), e)
+            })?;
+            continue;
+        }
+
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        fs::copy(path, &dest_path).map_err(|e| {
+            format!(
+                "Failed to copy {} to {}: {}",
+                path.display(),
+                dest_path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 fn list_nextflow_locks(flow_path: &Path) -> Vec<PathBuf> {
@@ -1341,7 +1384,6 @@ pub async fn create_flow(
         }
     }
 
-    let mut flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
     let mut imported_spec: Option<FlowSpec> = None;
 
     // If importing from a file, always copy to managed directory (like GitHub imports)
@@ -1392,43 +1434,12 @@ pub async fn create_flow(
             .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
         flow_dir = managed_flow_dir.clone();
-        flow_yaml_path = managed_flow_dir.join(FLOW_YAML_FILE);
 
-        // Resolve and import dependencies
-        // Use spawn_blocking because BioVaultDb is not Send
-        // base_path is the directory containing flow.yaml (where module.yaml might also be)
-        let dependency_context = DependencyContext::Local {
-            base_path: source_parent.to_path_buf(), // This is already the directory containing flow.yaml
-        };
-        let flow_yaml_path_clone = flow_yaml_path.clone();
-
-        let flow_result = tauri::async_runtime::spawn_blocking(move || {
-            tauri::async_runtime::block_on(async {
-                let spec = FlowFile::parse_yaml(&yaml_str)
-                    .map_err(|e| format!("Failed to parse flow.yaml: {}", e))?;
-                let mut spec = spec
-                    .to_flow_spec()
-                    .map_err(|e| format!("Failed to convert flow spec: {}", e))?;
-                resolve_flow_dependencies(
-                    &mut spec,
-                    &dependency_context,
-                    &flow_yaml_path_clone,
-                    overwrite,
-                    true, // quiet = true for Tauri (no console output)
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-                Ok::<FlowSpec, String>(spec)
-            })
-        })
-        .await
-        .map_err(|e| format!("Failed to spawn dependency resolution: {}", e))?;
-
-        let spec = flow_result.map_err(|e| format!("Failed to resolve dependencies: {}", e))?;
-
-        // Note: resolve_flow_dependencies already saves the spec (with description preserved)
-        imported_spec = Some(spec);
+        // Preserve full flow directory contents (including local modules/assets).
+        copy_local_flow_dir(source_parent, &managed_flow_dir)?;
+        imported_spec = flow.to_flow_spec().ok();
     } else {
+        let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
         fs::create_dir_all(&flow_dir)
             .map_err(|e| format!("Failed to create flow directory: {}", e))?;
 
@@ -1462,6 +1473,8 @@ pub async fn create_flow(
             let default_spec = FlowSpec {
                 name: name.clone(),
                 description: None,
+                multiparty: None,
+                roles: Vec::new(),
                 context: None,
                 vars: Default::default(),
                 coordination: None,
@@ -1512,6 +1525,106 @@ pub async fn create_flow(
     }
 
     // Register in database using CLI library
+    let id = biovault_db
+        .register_flow(&name, &flow_dir_str)
+        .map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Local::now().to_rfc3339();
+
+    Ok(Flow {
+        id,
+        name,
+        flow_path: flow_dir_str,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        spec: imported_spec,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportFlowFromJsonRequest {
+    pub name: String,
+    pub flow_json: serde_json::Value,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[tauri::command]
+pub async fn import_flow_from_json(
+    state: tauri::State<'_, AppState>,
+    request: ImportFlowFromJsonRequest,
+) -> Result<Flow, String> {
+    let ImportFlowFromJsonRequest {
+        name,
+        flow_json,
+        overwrite,
+    } = request;
+
+    let flows_dir = get_flows_dir()?;
+    fs::create_dir_all(&flows_dir)
+        .map_err(|e| format!("Failed to create flows directory: {}", e))?;
+
+    let flow_dir = flows_dir.join(&name);
+
+    // Always allow overwrite for invitation imports - check DB first
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+    let flow_dir_str = flow_dir.to_string_lossy().to_string();
+
+    // Check if flow already exists in DB
+    let existing = biovault_db
+        .list_flows()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.name == name || p.flow_path == flow_dir_str);
+
+    if let Some(existing_flow) = existing {
+        // Flow already exists - return it (no need to re-import)
+        if !overwrite {
+            return Ok(existing_flow);
+        }
+        // Delete existing for overwrite
+        biovault_db
+            .delete_flow(existing_flow.id)
+            .map_err(|e| e.to_string())?;
+    }
+
+    if flow_dir.exists() && overwrite {
+        fs::remove_dir_all(&flow_dir)
+            .map_err(|e| format!("Failed to remove existing flow directory: {}", e))?;
+    }
+
+    fs::create_dir_all(&flow_dir).map_err(|e| format!("Failed to create flow directory: {}", e))?;
+
+    // The flow_json might be a Flow object (from get_flows) or a FlowFile
+    // Try to extract the spec and build a proper FlowFile
+    let flow_file: FlowFile = if flow_json.get("apiVersion").is_some() {
+        // It's already a FlowFile format
+        serde_json::from_value(flow_json.clone())
+            .map_err(|e| format!("Failed to parse FlowFile JSON: {}", e))?
+    } else if let Some(spec_value) = flow_json.get("spec") {
+        // It's a Flow object with a spec field - reconstruct FlowFile
+        let spec: FlowSpec = serde_json::from_value(spec_value.clone())
+            .map_err(|e| format!("Failed to parse FlowSpec: {}", e))?;
+        FlowFile::from_flow_spec(&spec)
+            .map_err(|e| format!("Failed to build FlowFile from spec: {}", e))?
+    } else {
+        // Try to parse as FlowSpec directly
+        let spec: FlowSpec = serde_json::from_value(flow_json.clone())
+            .map_err(|e| format!("Failed to parse as FlowSpec: {}", e))?;
+        FlowFile::from_flow_spec(&spec)
+            .map_err(|e| format!("Failed to build FlowFile from spec: {}", e))?
+    };
+
+    let yaml_content = serde_yaml::to_string(&flow_file)
+        .map_err(|e| format!("Failed to convert flow to YAML: {}", e))?;
+
+    let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);
+    fs::write(&flow_yaml_path, &yaml_content)
+        .map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
+
+    // Parse spec for return value
+    let imported_spec = flow_file.to_flow_spec().ok();
+
     let id = biovault_db
         .register_flow(&name, &flow_dir_str)
         .map_err(|e| e.to_string())?;
@@ -2609,7 +2722,7 @@ pub async fn get_flow_runs(state: tauri::State<'_, AppState>) -> Result<Vec<Run>
 pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> Result<(), String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
-    // Get work directory before deleting
+    // Get run details before deleting
     let run = biovault_db
         .get_flow_run(run_id)
         .map_err(|e| e.to_string())?;
@@ -2619,11 +2732,20 @@ pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> 
         .delete_flow_run(run_id)
         .map_err(|e| e.to_string())?;
 
-    // Delete work directory if it exists
     if let Some(r) = run {
+        // Clear multiparty session so the invitation can be re-accepted from messages
+        if let Some(ref metadata_str) = r.metadata {
+            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
+                if let Some(sid) = metadata.get("session_id").and_then(|v| v.as_str()) {
+                    super::multiparty::clear_multiparty_session(sid);
+                }
+            }
+        }
+
+        // Delete work directory if it exists
         let path = PathBuf::from(r.work_dir);
         if path.exists() {
-            fs::remove_dir_all(&path).ok(); // Ignore errors here
+            fs::remove_dir_all(&path).ok();
         }
     }
 
@@ -2652,6 +2774,16 @@ pub async fn reconcile_flow_runs(state: tauri::State<'_, AppState>) -> Result<()
         if run.status != "running" && run.status != "paused" {
             continue;
         }
+
+        // Skip multiparty runs - they don't have a process to track
+        if let Some(ref metadata_str) = run.metadata {
+            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
+                if metadata.get("type").and_then(|v| v.as_str()) == Some("multiparty") {
+                    continue;
+                }
+            }
+        }
+
         let results_dir = run
             .results_dir
             .as_ref()

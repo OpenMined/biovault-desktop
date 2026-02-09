@@ -74,12 +74,19 @@ clone_if_missing_async() {
     local name="$1"
     local url="$2"
     local branch="${3:-}"
+    local optional="${4:-0}"
     if [[ -d "$PARENT_DIR/$name" ]]; then
         echo "$name already exists at $PARENT_DIR/$name"
         return 0
     fi
     (
-        clone_if_missing "$name" "$url" "$branch"
+        if ! clone_if_missing "$name" "$url" "$branch"; then
+            if [[ "$optional" == "1" ]]; then
+                echo "⚠️  Optional dependency '$name' clone failed; continuing without it."
+                exit 0
+            fi
+            exit 1
+        fi
     ) &
     CLONE_PIDS+=($!)
 }
@@ -108,6 +115,12 @@ clone_if_missing_async "syftbox" "https://github.com/OpenMined/syftbox.git" "mad
 clone_if_missing_async "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
 clone_if_missing_async "sbenv" "https://github.com/OpenMined/sbenv.git"
 clone_if_missing_async "bioscript" "https://github.com/OpenMined/bioscript.git"
+if [[ "${BV_SKIP_SYQURE:-0}" == "1" || "${SKIP_SYQURE_CLONE:-0}" == "1" ]]; then
+    echo "Skipping syqure clone (BV_SKIP_SYQURE=${BV_SKIP_SYQURE:-0}, SKIP_SYQURE_CLONE=${SKIP_SYQURE_CLONE:-0})"
+else
+    # syqure may be private/inaccessible in some CI contexts; treat as optional here.
+    clone_if_missing_async "syqure" "https://github.com/madhavajay/syqure.git" "" "1"
+fi
 wait_for_clones
 
 # Setup nested dependencies for syftbox-sdk
@@ -143,6 +156,9 @@ create_symlink "syftbox"
 create_symlink "biovault-beaver"
 create_symlink "sbenv"
 create_symlink "bioscript"
+if [[ -d "$PARENT_DIR/syqure" ]]; then
+    create_symlink "syqure"
+fi
 
 echo ""
 echo "Workspace setup complete!"

@@ -40,11 +40,27 @@ if [[ ! -d "$SYFTBOX_SDK_DIR" && -d "$BIOVAULT_DIR/syftbox-sdk" ]]; then
 	SYFTBOX_SDK_DIR="$BIOVAULT_DIR/syftbox-sdk"
 fi
 DEVSTACK_SCRIPT="$BIOVAULT_DIR/tests/scripts/devstack.sh"
-WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-3333}"
+UI_PORT_EXPLICIT=0
+if [[ -n "${UI_PORT+x}" && -n "${UI_PORT}" ]]; then
+	UI_PORT_EXPLICIT=1
+fi
+WS_PORT_BASE_EXPLICIT=0
+if [[ -n "${DEV_WS_BRIDGE_PORT_BASE+x}" && -n "${DEV_WS_BRIDGE_PORT_BASE}" ]]; then
+	WS_PORT_BASE_EXPLICIT=1
+fi
+UNIFIED_LOG_PORT_EXPLICIT=0
+if [[ -n "${UNIFIED_LOG_PORT+x}" && -n "${UNIFIED_LOG_PORT}" ]]; then
+	UNIFIED_LOG_PORT_EXPLICIT=1
+fi
+WS_PORT_BASE="${DEV_WS_BRIDGE_PORT_BASE:-}"
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-scenario.log}"
-LOG_PORT="${UNIFIED_LOG_PORT:-9756}"
-UI_PORT="${UI_PORT:-8082}"
-MAX_PORT="${MAX_PORT:-8092}"
+LOG_PORT="${UNIFIED_LOG_PORT:-}"
+UI_PORT="${UI_PORT:-}"
+UI_PORT_MIN="${UI_PORT_MIN:-8082}"
+UI_PORT_MAX="${UI_PORT_MAX:-${MAX_PORT:-8999}}"
+MAX_PORT="$UI_PORT_MAX"
+WS_PORT_MIN="${DEV_WS_BRIDGE_PORT_MIN:-3333}"
+LOG_PORT_MIN="${UNIFIED_LOG_PORT_MIN:-9756}"
 TRACE=${TRACE:-0}
 DEVSTACK_RESET="${DEVSTACK_RESET:-1}"
 TIMING="${TIMING:-1}"
@@ -60,6 +76,15 @@ WARM_CACHE_SET=0
 INTERACTIVE_MODE=0  # Headed browsers for visibility
 WAIT_MODE=0  # Keep everything running after test completes
 CLEANUP_ACTIVE=0
+# Treat explicit env NO_CLEANUP as user intent so scenario auto-preserve does not override it.
+NO_CLEANUP_SET=0
+if [[ -n "${NO_CLEANUP+x}" ]]; then
+	NO_CLEANUP_SET=1
+fi
+NO_CLEANUP="${NO_CLEANUP:-0}" # Leave processes/sandbox running on exit for debugging
+SYQURE_MULTIPARTY_SECURE_ONLY="${SYQURE_MULTIPARTY_SECURE_ONLY:-0}"
+SYQURE_MULTIPARTY_CLI_PARITY="${SYQURE_MULTIPARTY_CLI_PARITY:-0}"
+SYQURE_DUMP_TRAFFIC="${SYQURE_DUMP_TRAFFIC:-0}"
 
 show_usage() {
 	cat <<EOF
@@ -79,6 +104,10 @@ Scenario Options (pick one):
   --flows-collab   Run two-client flow collaboration test
   --flows-pause-resume  Test flow pause/resume with state persistence
   --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
+  --pipelines-multiparty  Run three-client multiparty messaging test
+  --pipelines-multiparty-flow  Run three-client multiparty flow execution test
+  --syqure-multiparty-flow  Run three-client Syqure collaborative flow (real flow.yaml)
+  --syqure-multiparty-allele-freq  Run three-client Syqure collaborative allele-freq flow UI test
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -87,8 +116,12 @@ Scenario Options (pick one):
 
 Other Options:
   --interactive, -i    Run with visible browser windows (alias for --headed)
+  --syqure-secure-only Run only secure_aggregate in --syqure-multiparty-flow (seeded fixed inputs)
+  --syqure-cli-parity  Make --syqure-multiparty-flow runtime match CLI distributed flow defaults
+  --syqure-dump-traffic Enable verbose hotlink TCP proxy traffic dumps (very noisy)
   --headed             Run playwright with headed browser
   --wait               Keep servers running after test completes (for inspection)
+  --no-cleanup         Do not stop static server/Tauri/logger/devstack on exit
   --no-warm-cache      Skip pre-building Jupyter venv cache (default: warm cache)
   --help, -h           Show this help message
 
@@ -98,6 +131,19 @@ Environment Variables (flows-solo):
 
 Environment Variables (flows-gwas):
   GWAS_DATA_DIR             GWAS dataset directory (default: /Users/madhavajay/dev/biovaults/datasets/jordan_gwas)
+
+Environment Variables (ports):
+  UI_PORT                  Force UI server port (otherwise random in UI_PORT_MIN..UI_PORT_MAX)
+  UI_PORT_MIN/UI_PORT_MAX  UI random range (defaults: 8082..8999)
+  DEV_WS_BRIDGE_PORT_BASE  Force WS bridge base (otherwise random in DEV_WS_BRIDGE_PORT_MIN..DEV_WS_BRIDGE_PORT_MAX)
+  DEV_WS_BRIDGE_PORT_MIN/MAX  WS bridge random range (defaults: 3333..3499)
+  UNIFIED_LOG_PORT         Force unified logger port (otherwise random in UNIFIED_LOG_PORT_MIN..UNIFIED_LOG_PORT_MAX)
+  UNIFIED_LOG_PORT_MIN/MAX Unified logger random range (defaults: 9756..9856)
+  BV_SYQURE_PORT_BASE      Force Syqure TCP proxy base
+  BV_SYQURE_PORT_BASE_MIN/MAX  Syqure base random range for Syqure UI scenarios (defaults: 20000..auto-max)
+  SYFTBOX_HOTLINK_TCP_DUMP=1      Log TCP proxy payload chunks (hex dump)
+  SYFTBOX_HOTLINK_TCP_DUMP_FULL=1 Log full payload hex (can generate huge logs)
+  SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW  Preview bytes when full dump disabled (default: 64)
 
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
@@ -109,6 +155,12 @@ Examples:
   ./test-scenario.sh --flows-solo   # Run flow test with synthetic data
   ./test-scenario.sh --flows-gwas   # Run GWAS flow test
   ./test-scenario.sh --syqure-flow --interactive  # Launch 3 clients for Syqure flow
+  ./test-scenario.sh --pipelines-multiparty --interactive  # Launch 3 clients for multiparty messaging
+  ./test-scenario.sh --syqure-multiparty-flow --interactive  # Run Syqure collaborative flow UI test
+  ./test-scenario.sh --syqure-multiparty-flow --syqure-secure-only --interactive  # Run only secure_aggregate stage
+  ./test-scenario.sh --syqure-multiparty-flow --syqure-cli-parity --interactive  # Align desktop run with CLI runtime defaults
+  ./test-scenario.sh --syqure-multiparty-flow --syqure-dump-traffic --interactive  # Enable TCP proxy payload dumps
+  ./test-scenario.sh --syqure-multiparty-allele-freq --interactive  # Run Syqure collaborative allele-freq flow UI test
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
@@ -167,6 +219,22 @@ while [[ $# -gt 0 ]]; do
 			SCENARIO="syqure-flow"
 			shift
 			;;
+		--pipelines-multiparty)
+			SCENARIO="pipelines-multiparty"
+			shift
+			;;
+		--pipelines-multiparty-flow)
+			SCENARIO="pipelines-multiparty-flow"
+			shift
+			;;
+		--syqure-multiparty-flow)
+			SCENARIO="syqure-multiparty-flow"
+			shift
+			;;
+		--syqure-multiparty-allele-freq)
+			SCENARIO="syqure-multiparty-allele-freq"
+			shift
+			;;
 		--file-transfer)
 			SCENARIO="file-transfer"
 			shift
@@ -197,9 +265,26 @@ while [[ $# -gt 0 ]]; do
 			INTERACTIVE_MODE=1
 			shift
 			;;
+		--syqure-secure-only)
+			SYQURE_MULTIPARTY_SECURE_ONLY=1
+			shift
+			;;
+		--syqure-cli-parity)
+			SYQURE_MULTIPARTY_CLI_PARITY=1
+			shift
+			;;
+		--syqure-dump-traffic)
+			SYQURE_DUMP_TRAFFIC=1
+			shift
+			;;
 		--wait)
 			# Keep servers running after test completes
 			WAIT_MODE=1
+			shift
+			;;
+		--no-cleanup)
+			NO_CLEANUP=1
+			NO_CLEANUP_SET=1
 			shift
 			;;
 		--warm-cache)
@@ -241,8 +326,13 @@ if [[ -z "$SCENARIO" ]]; then
 fi
 
 # Default to embedded SyftBox backend unless explicitly overridden.
+# CLI-parity mode for Syqure multiparty uses external backend by default.
 if [[ -z "${BV_SYFTBOX_BACKEND:-}" ]]; then
-        export BV_SYFTBOX_BACKEND=embedded
+        if [[ "$SCENARIO" == "syqure-multiparty-flow" && "$SYQURE_MULTIPARTY_CLI_PARITY" == "1" ]]; then
+                export BV_SYFTBOX_BACKEND=external
+        else
+                export BV_SYFTBOX_BACKEND=embedded
+        fi
 fi
 if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" ]]; then
         export BV_DEVSTACK_CLIENT_MODE=embedded
@@ -254,6 +344,60 @@ if [[ "$WARM_CACHE_SET" == "0" ]]; then
                 jupyter|jupyter-collab) WARM_CACHE=1 ;;
                 *) WARM_CACHE=0 ;;
 	esac
+fi
+
+# Syqure UI scenarios require hotlink-related env to be present before devstack starts,
+# so embedded/rust client daemons pick up TCP proxy settings.
+if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+	# Hotlink/TCP proxy transport depends on SyftBox rust daemons.
+	# Keep this as the default for Syqure UI scenarios unless user explicitly overrides.
+	if [[ -z "${BV_DEVSTACK_CLIENT_MODE:-}" || "${BV_DEVSTACK_CLIENT_MODE}" == "embedded" ]]; then
+		export BV_DEVSTACK_CLIENT_MODE=rust
+	fi
+
+	export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
+	export BV_SYFTBOX_HOTLINK_SOCKET_ONLY="${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-1}"
+	export BV_SYFTBOX_HOTLINK_TCP_PROXY="${BV_SYFTBOX_HOTLINK_TCP_PROXY:-1}"
+	export BV_SYFTBOX_HOTLINK_QUIC="${BV_SYFTBOX_HOTLINK_QUIC:-1}"
+	export BV_SYFTBOX_HOTLINK_QUIC_ONLY="${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-0}"
+	export BV_SYQURE_TCP_PROXY="${BV_SYQURE_TCP_PROXY:-1}"
+	# Devstack daemons read SYFTBOX_* directly; mirror BV_* defaults for UI scenarios.
+	export SYFTBOX_HOTLINK="${SYFTBOX_HOTLINK:-$BV_SYFTBOX_HOTLINK}"
+	export SYFTBOX_HOTLINK_SOCKET_ONLY="${SYFTBOX_HOTLINK_SOCKET_ONLY:-$BV_SYFTBOX_HOTLINK_SOCKET_ONLY}"
+	export SYFTBOX_HOTLINK_TCP_PROXY="${SYFTBOX_HOTLINK_TCP_PROXY:-$BV_SYFTBOX_HOTLINK_TCP_PROXY}"
+	export SYFTBOX_HOTLINK_QUIC="${SYFTBOX_HOTLINK_QUIC:-$BV_SYFTBOX_HOTLINK_QUIC}"
+	export SYFTBOX_HOTLINK_QUIC_ONLY="${SYFTBOX_HOTLINK_QUIC_ONLY:-$BV_SYFTBOX_HOTLINK_QUIC_ONLY}"
+	if [[ -n "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+		export SYQURE_SKIP_BUNDLE
+	fi
+		if [[ -n "${SYFTBOX_HOTLINK_DEBUG:-}" ]]; then
+			export SYFTBOX_HOTLINK_DEBUG
+		fi
+		if [[ "$SYQURE_DUMP_TRAFFIC" == "1" ]]; then
+			export SYFTBOX_HOTLINK_TCP_DUMP="${SYFTBOX_HOTLINK_TCP_DUMP:-1}"
+			export SYFTBOX_HOTLINK_DEBUG="${SYFTBOX_HOTLINK_DEBUG:-1}"
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_TCP_DUMP:-}" ]]; then
+			export SYFTBOX_HOTLINK_TCP_DUMP
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_TCP_DUMP_FULL:-}" ]]; then
+			export SYFTBOX_HOTLINK_TCP_DUMP_FULL
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW:-}" ]]; then
+			export SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW
+		fi
+		if [[ -n "${SYQURE_DEBUG:-}" ]]; then
+			export SYQURE_DEBUG
+		fi
+fi
+
+# Preserve Syqure multiparty artifacts by default so failures/passes can be debugged from disk.
+# Override with SYQURE_MULTIPARTY_AUTO_PRESERVE=0 or explicit --no-cleanup/NO_CLEANUP.
+if [[ ( "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ) && "$NO_CLEANUP_SET" != "1" ]]; then
+	auto_preserve="${SYQURE_MULTIPARTY_AUTO_PRESERVE:-1}"
+	if [[ "$auto_preserve" == "1" || "$auto_preserve" == "true" || "$auto_preserve" == "yes" ]]; then
+		NO_CLEANUP=1
+	fi
 fi
 
 # Default behavior: UI scenarios do onboarding (create keys in-app), so skip devstack biovault bootstrap.
@@ -368,6 +512,12 @@ kill_workspace_jupyter() {
 
 is_port_free() {
 	local port="$1"
+	if command -v lsof >/dev/null 2>&1; then
+		if lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+			return 1
+		fi
+		return 0
+	fi
 	python3 - "$port" >/dev/null 2>&1 <<'PY'
 import socket, sys
 port = int(sys.argv[1])
@@ -399,12 +549,52 @@ pick_free_port() {
 	return 1
 }
 
+random_port_in_range() {
+	local min="$1"
+	local max="$2"
+	if [[ "$min" -le 0 || "$max" -le 0 || "$max" -lt "$min" ]]; then
+		return 1
+	fi
+	local span=$((max - min + 1))
+	echo $((min + RANDOM % span))
+}
+
+pick_free_port_randomized() {
+	local min="$1"
+	local max="$2"
+	local start
+	start="$(random_port_in_range "$min" "$max" || true)"
+	if [[ -z "$start" ]]; then
+		return 1
+	fi
+	local picked
+	picked="$(pick_free_port "$start" "$max" || true)"
+	if [[ -n "$picked" ]]; then
+		echo "$picked"
+		return 0
+	fi
+	if [[ "$start" -gt "$min" ]]; then
+		picked="$(pick_free_port "$min" "$((start - 1))" || true)"
+		if [[ -n "$picked" ]]; then
+			echo "$picked"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 pick_ws_port_base() {
 	local start="$1"
 	local max="${2:-3499}"
 	local count="${3:-2}"
+	if [[ "$count" -le 0 ]]; then
+		return 1
+	fi
 	local port="$start"
-	while [[ "$port" -lt "$max" ]]; do
+	while [[ "$port" -le "$max" ]]; do
+		if [[ "$((port + count - 1))" -gt "$max" ]]; then
+			break
+		fi
 		local ok=1
 		local i=0
 		while [[ "$i" -lt "$count" ]]; do
@@ -419,6 +609,124 @@ pick_ws_port_base() {
 			return 0
 		fi
 		port=$((port + 1))
+	done
+	return 1
+}
+
+pick_ws_port_base_randomized() {
+	local min="$1"
+	local max="$2"
+	local count="${3:-2}"
+	if [[ "$count" -le 0 || "$max" -lt "$min" ]]; then
+		return 1
+	fi
+	local max_start=$((max - count + 1))
+	if [[ "$max_start" -lt "$min" ]]; then
+		return 1
+	fi
+	local start
+	start="$(random_port_in_range "$min" "$max_start" || true)"
+	if [[ -z "$start" ]]; then
+		return 1
+	fi
+	local picked
+	picked="$(pick_ws_port_base "$start" "$max" "$count" || true)"
+	if [[ -n "$picked" ]]; then
+		echo "$picked"
+		return 0
+	fi
+	if [[ "$start" -gt "$min" ]]; then
+		picked="$(pick_ws_port_base "$min" "$((start - 1 + count - 1))" "$count" || true)"
+		if [[ -n "$picked" ]]; then
+			echo "$picked"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+syqure_max_base_port() {
+	local party_count="${1:-2}"
+	local parties="$party_count"
+	if [[ "$parties" -lt 2 ]]; then
+		parties=2
+	fi
+	local max_party_base_delta=$(((parties - 1) * 1000))
+	local max_pair_offset=$((parties * (parties - 1) / 2))
+	local reserve=$((max_party_base_delta + max_pair_offset + 10000 + parties))
+	echo $((65535 - reserve))
+}
+
+syqure_mpc_comm_port_with_base() {
+	local base="$1"
+	local local_pid="$2"
+	local remote_pid="$3"
+	local parties="$4"
+	local min_pid="$local_pid"
+	local max_pid="$remote_pid"
+	if [[ "$remote_pid" -lt "$local_pid" ]]; then
+		min_pid="$remote_pid"
+		max_pid="$local_pid"
+	fi
+	local offset_major=$((min_pid * parties - min_pid * (min_pid + 1) / 2))
+	local offset_minor=$((max_pid - min_pid))
+	echo $((base + offset_major + offset_minor))
+}
+
+syqure_port_base_is_available() {
+	local global_base="$1"
+	local party_count="${2:-2}"
+	local parties="$party_count"
+	if [[ "$parties" -lt 2 ]]; then
+		parties=2
+	fi
+	local party_id
+	local remote_id
+	for ((party_id = 0; party_id < parties; party_id++)); do
+		local party_base=$((global_base + party_id * 1000))
+		local sharing_port=$((party_base + 10000))
+		if ! is_port_free "$sharing_port"; then
+			return 1
+		fi
+		for ((remote_id = 0; remote_id < parties; remote_id++)); do
+			if [[ "$remote_id" -eq "$party_id" ]]; then
+				continue
+			fi
+			local comm_port
+			comm_port="$(syqure_mpc_comm_port_with_base "$party_base" "$party_id" "$remote_id" "$parties")"
+			if ! is_port_free "$comm_port"; then
+				return 1
+			fi
+		done
+	done
+	return 0
+}
+
+pick_syqure_port_base_randomized() {
+	local party_count="${1:-2}"
+	local min="${2:-20000}"
+	local max="${3:-$(syqure_max_base_port "$party_count")}"
+	if [[ "$max" -lt "$min" ]]; then
+		return 1
+	fi
+	local start
+	start="$(random_port_in_range "$min" "$max" || true)"
+	if [[ -z "$start" ]]; then
+		return 1
+	fi
+	local span=$((max - min + 1))
+	local candidate="$start"
+	local i=0
+	while [[ "$i" -lt "$span" ]]; do
+		if syqure_port_base_is_available "$candidate" "$party_count"; then
+			echo "$candidate"
+			return 0
+		fi
+		candidate=$((candidate + 1))
+		if [[ "$candidate" -gt "$max" ]]; then
+			candidate="$min"
+		fi
+		i=$((i + 1))
 	done
 	return 1
 }
@@ -519,15 +827,38 @@ ensure_playwright_browsers() {
 # Kill any dangling Jupyter processes from previous runs
 kill_workspace_jupyter
 
+# Kill any stale bv-desktop/syftboxd/syqure processes from previous runs in this workspace.
+# These cause port conflicts, file lock contention, and non-deterministic test failures.
+stale_pids="$(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+if [[ -n "$stale_pids" ]]; then
+	info "Killing stale workspace processes from previous runs: $stale_pids"
+	echo "$stale_pids" | xargs kill 2>/dev/null || true
+	sleep 1
+	# Force-kill survivors
+	stale_pids="$(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)"
+	if [[ -n "$stale_pids" ]]; then
+		echo "$stale_pids" | xargs kill -9 2>/dev/null || true
+	fi
+fi
+
 # Find an available UI port
-while ! is_port_free "$UI_PORT"; do
-	if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
-		echo "No available port between ${UI_PORT:-8082} and ${MAX_PORT}" >&2
+if [[ "$UI_PORT_EXPLICIT" == "1" ]]; then
+	while ! is_port_free "$UI_PORT"; do
+		if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
+			echo "No available port between ${UI_PORT} and ${MAX_PORT}" >&2
+			exit 1
+		fi
+		UI_PORT=$((UI_PORT + 1))
+		info "UI port in use, trying ${UI_PORT}"
+	done
+else
+	UI_PORT="$(pick_free_port_randomized "$UI_PORT_MIN" "$MAX_PORT" || true)"
+	if [[ -z "$UI_PORT" ]]; then
+		echo "No available UI port between ${UI_PORT_MIN} and ${MAX_PORT}" >&2
 		exit 1
 	fi
-	UI_PORT=$((UI_PORT + 1))
-	info "UI port in use, trying ${UI_PORT}"
-done
+	info "Selected UI port ${UI_PORT} (range ${UI_PORT_MIN}-${MAX_PORT})"
+fi
 
 export UI_PORT
 export UI_BASE_URL="http://localhost:${UI_PORT}"
@@ -535,15 +866,42 @@ export DISABLE_UPDATER=1
 export DEV_WS_BRIDGE=1
 
 WS_PORT_COUNT=2
-if [[ "$SCENARIO" == "syqure-flow" ]]; then
+if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 	WS_PORT_COUNT=3
 fi
-WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "${DEV_WS_BRIDGE_PORT_MAX:-3499}" "$WS_PORT_COUNT" || true)"
+WS_PORT_MAX="${DEV_WS_BRIDGE_PORT_MAX:-3499}"
+if [[ "$WS_PORT_BASE_EXPLICIT" == "1" ]]; then
+	WS_PORT_BASE="$(pick_ws_port_base "$WS_PORT_BASE" "$WS_PORT_MAX" "$WS_PORT_COUNT" || true)"
+else
+	WS_PORT_BASE="$(pick_ws_port_base_randomized "$WS_PORT_MIN" "$WS_PORT_MAX" "$WS_PORT_COUNT" || true)"
+fi
 if [[ -z "$WS_PORT_BASE" ]]; then
-	echo "Could not find ${WS_PORT_COUNT} free consecutive WS ports starting at ${DEV_WS_BRIDGE_PORT_BASE:-3333}" >&2
+	if [[ "$WS_PORT_BASE_EXPLICIT" == "1" ]]; then
+		echo "Could not find ${WS_PORT_COUNT} free consecutive WS ports starting at ${DEV_WS_BRIDGE_PORT_BASE}" >&2
+	else
+		echo "Could not find ${WS_PORT_COUNT} free consecutive WS ports in range ${WS_PORT_MIN}-${WS_PORT_MAX}" >&2
+	fi
 	exit 1
 fi
 export DEV_WS_BRIDGE_PORT_BASE="$WS_PORT_BASE"
+
+# Pick a free Syqure TCP proxy base unless explicitly configured
+if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+	SYQURE_PARTY_COUNT=3
+	if [[ "$SCENARIO" == "syqure-multiparty-flow" && "$SYQURE_MULTIPARTY_CLI_PARITY" == "1" && -z "${BV_SYQURE_PORT_BASE+x}" && -z "${SEQURE_COMMUNICATION_PORT+x}" ]]; then
+		info "Syqure CLI-parity mode: letting run_dynamic allocate BV_SYQURE_PORT_BASE from run_id."
+	elif [[ -z "${BV_SYQURE_PORT_BASE+x}" && -z "${SEQURE_COMMUNICATION_PORT+x}" ]]; then
+		SYQURE_PORT_BASE_MIN="${BV_SYQURE_PORT_BASE_MIN:-20000}"
+		SYQURE_PORT_BASE_MAX="${BV_SYQURE_PORT_BASE_MAX:-$(syqure_max_base_port "$SYQURE_PARTY_COUNT")}"
+		BV_SYQURE_PORT_BASE="$(pick_syqure_port_base_randomized "$SYQURE_PARTY_COUNT" "$SYQURE_PORT_BASE_MIN" "$SYQURE_PORT_BASE_MAX" || true)"
+		if [[ -z "$BV_SYQURE_PORT_BASE" ]]; then
+			echo "Could not find free Syqure port base in range ${SYQURE_PORT_BASE_MIN}-${SYQURE_PORT_BASE_MAX}" >&2
+			exit 1
+		fi
+		export BV_SYQURE_PORT_BASE
+		info "Selected Syqure TCP proxy base ${BV_SYQURE_PORT_BASE} (range ${SYQURE_PORT_BASE_MIN}-${SYQURE_PORT_BASE_MAX})"
+	fi
+fi
 
 CLIENT1_EMAIL="${CLIENT1_EMAIL:-client1@sandbox.local}"
 CLIENT2_EMAIL="${CLIENT2_EMAIL:-client2@sandbox.local}"
@@ -555,18 +913,19 @@ TAURI2_PID=""
 TAURI3_PID=""
 AGG_HOME=""
 AGG_CFG=""
+SYQURE_WATCH_PID=""
 
 # Pick a free unified logger port unless explicitly configured
-if [[ -n "${UNIFIED_LOG_PORT+x}" ]]; then
+LOG_PORT_MAX="${UNIFIED_LOG_PORT_MAX:-9856}"
+if [[ "$UNIFIED_LOG_PORT_EXPLICIT" == "1" ]]; then
 	if ! is_port_free "$LOG_PORT"; then
 		echo "UNIFIED_LOG_PORT=$LOG_PORT is already in use; choose a different port" >&2
 		exit 1
 	fi
 else
-	LOG_PORT_MAX="${UNIFIED_LOG_PORT_MAX:-9856}"
-	LOG_PORT="$(pick_free_port "$LOG_PORT" "$LOG_PORT_MAX" || true)"
+	LOG_PORT="$(pick_free_port_randomized "$LOG_PORT_MIN" "$LOG_PORT_MAX" || true)"
 	if [[ -z "$LOG_PORT" ]]; then
-		echo "No available unified logger port between ${UNIFIED_LOG_PORT:-9756} and ${LOG_PORT_MAX}" >&2
+		echo "No available unified logger port between ${LOG_PORT_MIN} and ${LOG_PORT_MAX}" >&2
 		exit 1
 	fi
 fi
@@ -617,9 +976,91 @@ PY
 	return 1
 }
 
-wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT_S:-5}" || {
-	echo "Unified logger failed to start on :${LOG_PORT}" >&2
-	exit 1
+if ! wait_for_listener "$LOG_PORT" "$LOGGER_PID" "unified logger" "${UNIFIED_LOG_WAIT_S:-5}"; then
+	logger_required="${UNIFIED_LOG_REQUIRED:-0}"
+	logger_required_lc="$(printf '%s' "$logger_required" | tr '[:upper:]' '[:lower:]')"
+	if [[ "$logger_required_lc" == "1" || "$logger_required_lc" == "true" || "$logger_required_lc" == "yes" || "$logger_required_lc" == "on" ]]; then
+		echo "Unified logger failed to start on :${LOG_PORT}" >&2
+		exit 1
+	fi
+	echo "Warning: Unified logger failed to start on :${LOG_PORT}; continuing without unified WS logs" >&2
+	kill "$LOGGER_PID" >/dev/null 2>&1 || true
+	LOGGER_PID=""
+	UNIFIED_LOG_WS_URL=""
+fi
+
+is_enabled_flag() {
+	local value
+	value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+	[[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+stop_syqure_watchdog() {
+	if [[ -n "${SYQURE_WATCH_PID:-}" ]]; then
+		kill "$SYQURE_WATCH_PID" 2>/dev/null || true
+		wait "$SYQURE_WATCH_PID" 2>/dev/null || true
+		SYQURE_WATCH_PID=""
+	fi
+}
+
+start_syqure_watchdog() {
+	local flow_name="$1"
+	local enabled="${SYQURE_MULTIPARTY_WATCH:-1}"
+	local interval="${SYQURE_MULTIPARTY_WATCH_INTERVAL:-2}"
+	local watcher="$ROOT_DIR/scripts/watch_syqure_multiparty.py"
+	if ! is_enabled_flag "$enabled"; then
+		return 0
+	fi
+	if [[ ! -f "$watcher" ]]; then
+		info "Syqure watcher script not found: $watcher"
+		return 0
+	fi
+	stop_syqure_watchdog
+	info "Starting Syqure watcher (flow=${flow_name}, interval=${interval}s)"
+	python3 "$watcher" \
+		--sandbox "$SANDBOX_ROOT" \
+		--flow "$flow_name" \
+		--interval "$interval" \
+		--prefix "[syq-watch]" &
+	SYQURE_WATCH_PID=$!
+}
+
+kill_stale_syftboxd_locks() {
+	local sandbox_root="$1"
+	local matched=0
+
+	# Previous no-cleanup runs can leave embedded `bv syftboxd start --foreground`
+	# processes alive, which hold workspace locks and prevent devstack clients
+	# from starting their own daemons.
+	local pids
+	pids="$(
+		ps -axo pid=,command= 2>/dev/null | awk '
+			/(^|[[:space:]])(bv|biovault)([[:space:]]|$)/ &&
+			/(^|[[:space:]])syftboxd([[:space:]]|$)/ &&
+			/(^|[[:space:]])start([[:space:]]|$)/ &&
+			/(^|[[:space:]])--foreground([[:space:]]|$)/ {
+				print $1
+			}
+		' || true
+	)"
+
+	while IFS= read -r pid; do
+		[[ -z "${pid:-}" ]] && continue
+		local cmd_with_env
+		cmd_with_env="$(ps eww -p "$pid" -o command= 2>/dev/null || true)"
+		if [[ -z "$cmd_with_env" ]]; then
+			continue
+		fi
+		if [[ "$cmd_with_env" == *"$sandbox_root"* ]]; then
+			info "Killing stale syftboxd lock holder pid=$pid (sandbox=$sandbox_root)"
+			kill "$pid" 2>/dev/null || true
+			matched=1
+		fi
+	done <<< "$pids"
+
+	if [[ "$matched" == "1" ]]; then
+		sleep 1
+	fi
 }
 
 cleanup() {
@@ -627,7 +1068,12 @@ cleanup() {
 		return
 	fi
 	CLEANUP_ACTIVE=1
+	stop_syqure_watchdog
 	pause_for_interactive_exit
+
+	# Always kill processes — NO_CLEANUP only preserves sandbox files, never processes.
+	# Stale bv-desktop / syftboxd / syqure processes cause port conflicts and
+	# non-deterministic failures on subsequent runs.
 
 	if [[ -n "${SERVER_PID:-}" ]]; then
 		info "Stopping static server"
@@ -670,7 +1116,7 @@ cleanup() {
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 			local agg="${AGG_EMAIL:-aggregator@sandbox.local}"
 			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
-			if [[ "$SCENARIO" == "syqure-flow" ]]; then
+			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 				DEVSTACK_CLIENTS="${c1},${c2},${agg}"
 			else
 				DEVSTACK_CLIENTS="${c1},${c2}"
@@ -681,6 +1127,26 @@ cleanup() {
 			fi
 			bash "$DEVSTACK_SCRIPT" "${stop_args[@]}" >/dev/null 2>&1 || true
 		fi
+	fi
+
+	# Final sweep: kill any process from this workspace that survived the graceful stops.
+	# This catches orphaned syftboxd daemons, syqure binaries, and child processes
+	# that the parent bv-desktop didn't clean up on exit.
+	local stale_count=0
+	while IFS= read -r pid; do
+		if [[ -n "$pid" && "$pid" != "$$" ]]; then
+			kill "$pid" 2>/dev/null && ((stale_count++)) || true
+		fi
+	done < <(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)
+	if [[ "$stale_count" -gt 0 ]]; then
+		info "Killed $stale_count stale workspace processes"
+		sleep 1
+		# Force-kill anything that didn't respond to SIGTERM
+		while IFS= read -r pid; do
+			if [[ -n "$pid" && "$pid" != "$$" ]]; then
+				kill -9 "$pid" 2>/dev/null || true
+			fi
+		done < <(pgrep -f "$ROOT_DIR.*(bv-desktop|bv syftboxd|syqure|syftbox-rs)" 2>/dev/null || true)
 	fi
 
 	# Close out any in-progress timers so failures still report partial durations.
@@ -711,8 +1177,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
+	# Clear stale syftboxd lock holders from prior no-cleanup runs before touching devstack.
+	kill_stale_syftboxd_locks "$SANDBOX_ROOT"
+
 	# Start devstack with two or three clients (reset by default to avoid stale state)
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
 		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
 	else
@@ -786,7 +1255,7 @@ if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
 	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
 	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
 	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 		AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
 		AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
 	fi
@@ -799,7 +1268,7 @@ PY
 
 	info "Client1 home: $CLIENT1_HOME"
 	info "Client2 home: $CLIENT2_HOME"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 		info "Aggregator home: $AGG_HOME"
 	fi
 	info "Server URL: $SERVER_URL"
@@ -904,7 +1373,7 @@ start_static_server() {
 	local port_check_count=0
 	while ! is_port_free "$UI_PORT"; do
 		if [[ "${UI_PORT}" -ge "${MAX_PORT}" ]]; then
-			echo "No available port between 8082 and ${MAX_PORT}" >&2
+			echo "No available port between ${UI_PORT_MIN} and ${MAX_PORT}" >&2
 			exit 1
 		fi
 		info "UI port ${UI_PORT} now in use, trying $((UI_PORT + 1))"
@@ -1059,6 +1528,219 @@ assert_tauri_binary_fresh() {
 	info "[DEBUG] Tauri binary is up to date (no newer source files found)"
 }
 
+syqure_platform_id() {
+	local os_name arch_name os_label arch_label
+	os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	arch_name="$(uname -m | tr '[:upper:]' '[:lower:]')"
+	os_label="$os_name"
+	arch_label="$arch_name"
+	case "$os_name" in
+		darwin) os_label="macos" ;;
+		linux) os_label="linux" ;;
+	esac
+	case "$arch_name" in
+		arm64|aarch64) arch_label="arm64" ;;
+		x86_64|amd64|i386|i686) arch_label="x86" ;;
+	esac
+	echo "${os_label}-${arch_label}"
+}
+
+syqure_repo_root_from_bin() {
+	local bin_path="$1"
+	if [[ -z "$bin_path" ]]; then
+		return 0
+	fi
+	if [[ "$bin_path" == */target/release/syqure || "$bin_path" == */target/debug/syqure ]]; then
+		(cd "$(dirname "$bin_path")/../.." && pwd -P)
+		return 0
+	fi
+	echo ""
+}
+
+syqure_plugin_lib_name() {
+	case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
+		darwin) echo "libsequre.dylib" ;;
+		*) echo "libsequre.so" ;;
+	esac
+}
+
+configure_syqure_runtime_env() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" && "$SCENARIO" != "syqure-multiparty-allele-freq" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+	local syq_root platform codon_candidate codon_expected_suffix
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+
+	platform="$(syqure_platform_id)"
+	codon_candidate="$syq_root/bin/${platform}/codon"
+	codon_expected_suffix="/bin/${platform}/codon"
+
+	# Fail-fast guard: if CODON_PATH is set but clearly for another platform
+	# (e.g. macos-arm64 on Linux), override with current-platform bundle.
+	if [[ -n "${CODON_PATH:-}" ]]; then
+		if [[ "$CODON_PATH" != *"$codon_expected_suffix" ]]; then
+			if [[ -d "$codon_candidate/lib/codon" ]]; then
+				info "Overriding mismatched CODON_PATH=$CODON_PATH with platform path $codon_candidate"
+				export CODON_PATH="$codon_candidate"
+			else
+				echo "ERROR: CODON_PATH points to another platform: $CODON_PATH" >&2
+				echo "Expected current platform bundle under: $codon_candidate" >&2
+				echo "Fix CODON_PATH or build/install syqure codon bundle for $(syqure_platform_id)." >&2
+				exit 1
+			fi
+		fi
+	fi
+
+	# Prefer local prebuilt Codon/Sequre tree in this workspace.
+	if [[ -z "${CODON_PATH:-}" ]]; then
+		if [[ -d "$codon_candidate/lib/codon" ]]; then
+			export CODON_PATH="$codon_candidate"
+		fi
+	fi
+
+	# Hard fail before launching Tauri/Syqure if CODON_PATH is invalid.
+	if [[ -n "${CODON_PATH:-}" ]]; then
+		if [[ ! -d "${CODON_PATH}/lib/codon" ]]; then
+			echo "ERROR: CODON_PATH is invalid (missing lib/codon): $CODON_PATH" >&2
+			exit 1
+		fi
+	fi
+
+	info "Syqure runtime env: SYQURE_SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset} CODON_PATH=${CODON_PATH:-unset}"
+}
+
+assert_syqure_binary_fresh() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" && "$SCENARIO" != "syqure-multiparty-allele-freq" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+
+	local syq_root profile newer auto_rebuild
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+	profile="release"
+	if [[ "$SEQURE_NATIVE_BIN" == */target/debug/* ]]; then
+		profile="debug"
+	fi
+	info "[DEBUG] assert_syqure_binary_fresh: checking $SEQURE_NATIVE_BIN ($profile)"
+
+	local candidates=(
+		"$syq_root/syqure/src"
+		"$syq_root/syqure/build.rs"
+		"$syq_root/syqure/Cargo.toml"
+		"$syq_root/Cargo.toml"
+		"$syq_root/Cargo.lock"
+		"$syq_root/sequre/stdlib"
+		"$syq_root/sequre/plugin.toml"
+	)
+	newer=""
+	for p in "${candidates[@]}"; do
+		if [[ -f "$p" ]]; then
+			if [[ "$p" -nt "$SEQURE_NATIVE_BIN" ]]; then
+				newer="$p"
+				break
+			fi
+		elif [[ -d "$p" ]]; then
+			newer="$(find "$p" -type f -newer "$SEQURE_NATIVE_BIN" -print -quit 2>/dev/null || true)"
+			if [[ -n "$newer" ]]; then
+				break
+			fi
+		fi
+	done
+	if [[ -z "$newer" ]]; then
+		info "[DEBUG] Syqure binary is up to date"
+		return 0
+	fi
+
+	auto_rebuild="${AUTO_REBUILD_SYQURE:-1}"
+	info "[DEBUG] Syqure binary is older than sources (e.g. $newer); AUTO_REBUILD_SYQURE=$auto_rebuild"
+	if [[ "$auto_rebuild" == "0" || "$auto_rebuild" == "false" || "$auto_rebuild" == "no" ]]; then
+		echo "Syqure rebuild required: (cd $syq_root && cargo build -p syqure --release)" >&2
+		exit 1
+	fi
+
+	# A plain `cargo build` can be a no-op for Sequre/Codon source changes because
+	# Cargo does not track those files directly. Force a clean rebuild whenever we
+	# already know the binary is stale to ensure the runtime bundle is refreshed.
+	info "[DEBUG] Forcing clean syqure rebuild because source mtime is newer than binary"
+	(cd "$syq_root" && cargo clean -p syqure) >&2 || true
+
+	timer_push "Cargo build (syqure release)"
+	if ! (cd "$syq_root" && cargo build -p syqure --release) >&2; then
+		info "Syqure release build failed; rebuilding bundle then retrying"
+		(cd "$syq_root" && ZSTD_NBTHREADS=1 ./syqure_bins.sh) >&2
+		(cd "$syq_root" && cargo build -p syqure --release) >&2
+	fi
+	timer_pop
+}
+
+assert_syqure_bundle_ready() {
+	if [[ "$SCENARIO" != "syqure-flow" && "$SCENARIO" != "syqure-multiparty-flow" && "$SCENARIO" != "syqure-multiparty-allele-freq" ]]; then
+		return 0
+	fi
+	if [[ -z "${SEQURE_NATIVE_BIN:-}" || ! -x "${SEQURE_NATIVE_BIN:-}" ]]; then
+		return 0
+	fi
+
+	local syq_root platform codon_root plugin_name
+	syq_root="$(syqure_repo_root_from_bin "$SEQURE_NATIVE_BIN")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+	platform="$(syqure_platform_id)"
+	codon_root="$syq_root/bin/${platform}/codon"
+	plugin_name="$(syqure_plugin_lib_name)"
+
+	local missing=0
+	local required=(
+		"$codon_root/bin/codon"
+		"$codon_root/lib/codon/stdlib"
+		"$codon_root/lib/codon/plugins/sequre/build/$plugin_name"
+	)
+	local p
+	for p in "${required[@]}"; do
+		if [[ ! -e "$p" ]]; then
+			info "[DEBUG] Missing syqure bundle asset: $p"
+			missing=1
+		fi
+	done
+
+	if [[ "$missing" -eq 0 ]]; then
+		info "[DEBUG] Syqure bundle is present for platform $platform"
+		return 0
+	fi
+
+	local auto_rebuild_bins="${AUTO_REBUILD_SYQURE_BINS:-1}"
+	if [[ "$auto_rebuild_bins" == "0" || "$auto_rebuild_bins" == "false" || "$auto_rebuild_bins" == "no" ]]; then
+		echo "Syqure platform bundle missing for $platform." >&2
+		echo "Run: (cd $syq_root && ZSTD_NBTHREADS=1 ./syqure_bins.sh)" >&2
+		exit 1
+	fi
+
+	info "Rebuilding syqure platform bundle via syqure_bins.sh (platform=$platform)"
+	timer_push "Syqure bundle build"
+	(cd "$syq_root" && ZSTD_NBTHREADS=1 ./syqure_bins.sh) >&2
+	timer_pop
+
+	for p in "${required[@]}"; do
+		if [[ ! -e "$p" ]]; then
+			echo "Syqure bundle build incomplete, missing: $p" >&2
+			exit 1
+		fi
+	done
+	info "[DEBUG] Syqure bundle verified after rebuild"
+}
+
 launch_instance() {
 	local email="$1"
 	local home="$2"
@@ -1168,6 +1850,34 @@ wait_ws() {
 }
 
 start_tauri_instances() {
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+		if [[ -z "${SEQURE_NATIVE_BIN:-}" ]]; then
+			local syqure_candidates=(
+				"$WORKSPACE_ROOT/syqure/target/release/syqure"
+				"$WORKSPACE_ROOT/syqure/target/debug/syqure"
+				"$BIOVAULT_DIR/../syqure/target/release/syqure"
+				"$BIOVAULT_DIR/../syqure/target/debug/syqure"
+			)
+			local candidate
+			for candidate in "${syqure_candidates[@]}"; do
+				if [[ -x "$candidate" ]]; then
+					export SEQURE_NATIVE_BIN="$candidate"
+					info "Using SEQURE_NATIVE_BIN=$SEQURE_NATIVE_BIN"
+					break
+				fi
+			done
+		fi
+
+		if [[ -z "${SEQURE_NATIVE_BIN:-}" && -z "${BV_SYQURE_USE_DOCKER:-}" ]]; then
+			export BV_SYQURE_USE_DOCKER=1
+			info "Syqure binary not found; defaulting BV_SYQURE_USE_DOCKER=1"
+		fi
+
+		configure_syqure_runtime_env
+		assert_syqure_binary_fresh
+		assert_syqure_bundle_ready
+	fi
+
 	assert_tauri_binary_present
 	assert_tauri_binary_fresh
 
@@ -1193,7 +1903,7 @@ start_tauri_instances() {
 		exit 1
 	}
 
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 		info "Launching Tauri for aggregator on WS port $((WS_PORT_BASE + 2))"
 		TAURI3_PID=$(launch_instance "$AGG_EMAIL" "$AGG_HOME" "$AGG_CFG" "$((WS_PORT_BASE + 2))")
 		info "Waiting for aggregator WS bridge..."
@@ -1208,7 +1918,7 @@ start_tauri_instances() {
 
 	info "Client1 UI: ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
 	info "Client2 UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
-	if [[ "$SCENARIO" == "syqure-flow" ]]; then
+	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
 		info "Aggregator UI: ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
 	fi
 	timer_pop
@@ -1333,6 +2043,58 @@ run_ui_grep() {
 	append_array_items cmd FORWARD_ARGS
 
 	"${cmd[@]}" | tee -a "$LOG_FILE"
+}
+
+prepare_allele_freq_ui_inputs() {
+	local gen_script="$ROOT_DIR/biovault/tests/scripts/gen_allele_freq_data.sh"
+	local file_count="${ALLELE_FREQ_COUNT:-1}"
+	local force_regen="${ALLELE_FREQ_FORCE_REGEN:-0}"
+	local c1_out="$CLIENT1_HOME/private/app_data/biovault/allele-freq-data"
+	local c2_out="$CLIENT2_HOME/private/app_data/biovault/allele-freq-data"
+
+	if [[ ! -f "$gen_script" ]]; then
+		error "Missing allele-freq generator script: $gen_script"
+		exit 1
+	fi
+
+	timer_push "Prepare allele-freq inputs"
+	info "Preparing allele-freq synthetic inputs for UI run (count=${file_count})"
+
+	local -a force_args=()
+	if [[ "$force_regen" == "1" || "$force_regen" == "true" || "$force_regen" == "yes" ]]; then
+		force_args=(--force)
+	fi
+
+	local -a gen_cmd_client1=(
+		bash "$gen_script"
+		--output-dir "$c1_out"
+		--count "$file_count"
+		--seed "${ALLELE_FREQ_CLIENT1_SEED:-42}"
+		--apol1-het "${ALLELE_FREQ_CLIENT1_APOL1_HET:-0.6}"
+		--apol1-hom-alt "${ALLELE_FREQ_CLIENT1_APOL1_HOM_ALT:-0.2}"
+		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}"
+		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}"
+	)
+	append_array_items gen_cmd_client1 force_args
+	"${gen_cmd_client1[@]}" >>"$LOG_FILE" 2>&1
+
+	local -a gen_cmd_client2=(
+		bash "$gen_script"
+		--output-dir "$c2_out"
+		--count "$file_count"
+		--seed "${ALLELE_FREQ_CLIENT2_SEED:-43}"
+		--thal-het "${ALLELE_FREQ_CLIENT2_THAL_HET:-0.5}"
+		--thal-hom-alt "${ALLELE_FREQ_CLIENT2_THAL_HOM_ALT:-0.3}"
+		--no-call-frequency "${ALLELE_FREQ_NO_CALL_FREQUENCY:-0.2}"
+		--no-call-token "${ALLELE_FREQ_NO_CALL_TOKEN:--}"
+	)
+	append_array_items gen_cmd_client2 force_args
+	"${gen_cmd_client2[@]}" >>"$LOG_FILE" 2>&1
+
+	info "Prepared allele-freq inputs:"
+	info "  client1: ${c1_out}"
+	info "  client2: ${c2_out}"
+	timer_pop
 }
 
 sanitize_playwright_args() {
@@ -1843,6 +2605,198 @@ PY
 
 		if [[ "$WAIT_MODE" == "1" || "$INTERACTIVE_MODE" == "1" ]]; then
 			info "Interactive mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-multiparty)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Multiparty Messaging Test ==="
+		info "Three clients will exchange keys and hello messages."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Client3:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		# Run the multiparty messaging test
+		timer_push "Playwright: @pipelines-multiparty"
+		# Match only the exact tag and exclude @pipelines-multiparty-flow.
+		run_ui_grep "@pipelines-multiparty(?!-)" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	pipelines-multiparty-flow)
+		start_static_server
+		start_tauri_instances
+
+		info "=== Multiparty Flow Test ==="
+		info "Three clients will execute a multiparty flow with manual steps."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		# Run the multiparty flow test
+		timer_push "Playwright: @pipelines-multiparty-flow"
+		run_ui_grep "@pipelines-multiparty-flow" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
+		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	syqure-multiparty-flow)
+		# Keep Syqure runtime env aligned with the distributed scenario defaults.
+		# Allow callers to override explicitly via environment.
+		export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
+		export BV_SYFTBOX_HOTLINK_SOCKET_ONLY="${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-1}"
+		export BV_SYFTBOX_HOTLINK_TCP_PROXY="${BV_SYFTBOX_HOTLINK_TCP_PROXY:-1}"
+		export BV_SYFTBOX_HOTLINK_QUIC="${BV_SYFTBOX_HOTLINK_QUIC:-1}"
+		export BV_SYFTBOX_HOTLINK_QUIC_ONLY="${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-0}"
+		export SYFTBOX_HOTLINK="${SYFTBOX_HOTLINK:-$BV_SYFTBOX_HOTLINK}"
+		export SYFTBOX_HOTLINK_SOCKET_ONLY="${SYFTBOX_HOTLINK_SOCKET_ONLY:-$BV_SYFTBOX_HOTLINK_SOCKET_ONLY}"
+		export SYFTBOX_HOTLINK_TCP_PROXY="${SYFTBOX_HOTLINK_TCP_PROXY:-$BV_SYFTBOX_HOTLINK_TCP_PROXY}"
+		export SYFTBOX_HOTLINK_QUIC="${SYFTBOX_HOTLINK_QUIC:-$BV_SYFTBOX_HOTLINK_QUIC}"
+		export SYFTBOX_HOTLINK_QUIC_ONLY="${SYFTBOX_HOTLINK_QUIC_ONLY:-$BV_SYFTBOX_HOTLINK_QUIC_ONLY}"
+		if [[ -n "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+			export SYQURE_SKIP_BUNDLE
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_DEBUG:-}" ]]; then
+			export SYFTBOX_HOTLINK_DEBUG
+		fi
+		if [[ -n "${SYQURE_DEBUG:-}" ]]; then
+			export SYQURE_DEBUG
+		fi
+		info "Syqure UI env: HOTLINK=${BV_SYFTBOX_HOTLINK:-unset} SOCKET_ONLY=${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-unset} QUIC=${BV_SYFTBOX_HOTLINK_QUIC:-unset} QUIC_ONLY=${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-unset} SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset}"
+
+		start_static_server
+		start_tauri_instances
+
+		# Mirror syqure-distributed mode/transport selection for secure-aggregate runtime.
+		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
+		TRANSPORT="${BV_SYQURE_TRANSPORT:-hotlink}"
+		MODULE_YAML="$ROOT_DIR/biovault/tests/scenarios/syqure-flow/modules/secure-aggregate/module.yaml"
+		case "$MODE" in
+			he) ENTRY="he_aggregate.codon" ;;
+			smpc|"") ENTRY="smpc_aggregate.codon" ;;
+			*)
+				error "Unknown BV_SYQURE_AGG_MODE: $MODE (expected smpc|he)"
+				exit 1
+				;;
+		esac
+		python3 -c "import pathlib,re; path = pathlib.Path(r'${MODULE_YAML}'); text = path.read_text(); text = text.replace('entrypoint: smpc_aggregate.codon', f'entrypoint: ${ENTRY}'); text = text.replace('entrypoint: he_aggregate.codon', f'entrypoint: ${ENTRY}'); text = re.sub(r'transport: .*', f'transport: ${TRANSPORT}', text); path.write_text(text)"
+		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY}) transport: ${TRANSPORT}"
+
+		info "=== Syqure Multiparty Flow Test ==="
+		info "Three clients will execute biovault/tests/scenarios/syqure-flow/flow.yaml via collaborative run."
+		if [[ "$SYQURE_MULTIPARTY_SECURE_ONLY" == "1" ]]; then
+			info "Secure-only mode: running only secure_aggregate with seeded fixed inputs."
+		fi
+		if [[ "$SYQURE_MULTIPARTY_CLI_PARITY" == "1" ]]; then
+			info "CLI-parity mode: backend=${BV_SYFTBOX_BACKEND:-unset} BV_SYQURE_TCP_PROXY=${BV_SYQURE_TCP_PROXY:-unset} BV_SYQURE_PORT_BASE=${BV_SYQURE_PORT_BASE:-auto}."
+		fi
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		timer_push "Playwright: @syqure-multiparty-flow"
+		start_syqure_watchdog "syqure-flow"
+		run_ui_grep "@syqure-multiparty-flow" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "SYQURE_MULTIPARTY_SECURE_ONLY=$SYQURE_MULTIPARTY_SECURE_ONLY" "SYQURE_MULTIPARTY_CLI_PARITY=$SYQURE_MULTIPARTY_CLI_PARITY"
+		stop_syqure_watchdog
+		timer_pop
+
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	syqure-multiparty-allele-freq)
+		# Keep Syqure runtime env aligned with the distributed scenario defaults.
+		# Allow callers to override explicitly via environment.
+		export BV_AGG_THREADS="${BV_AGG_THREADS:-2}"
+		export BV_EMIT_MAX_FORKS="${BV_EMIT_MAX_FORKS:-2}"
+		export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
+		export BV_SYFTBOX_HOTLINK_SOCKET_ONLY="${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-1}"
+		export BV_SYFTBOX_HOTLINK_TCP_PROXY="${BV_SYFTBOX_HOTLINK_TCP_PROXY:-1}"
+		export BV_SYFTBOX_HOTLINK_QUIC="${BV_SYFTBOX_HOTLINK_QUIC:-1}"
+		export BV_SYFTBOX_HOTLINK_QUIC_ONLY="${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-0}"
+		export SYFTBOX_HOTLINK="${SYFTBOX_HOTLINK:-$BV_SYFTBOX_HOTLINK}"
+		export SYFTBOX_HOTLINK_SOCKET_ONLY="${SYFTBOX_HOTLINK_SOCKET_ONLY:-$BV_SYFTBOX_HOTLINK_SOCKET_ONLY}"
+		export SYFTBOX_HOTLINK_TCP_PROXY="${SYFTBOX_HOTLINK_TCP_PROXY:-$BV_SYFTBOX_HOTLINK_TCP_PROXY}"
+		export SYFTBOX_HOTLINK_QUIC="${SYFTBOX_HOTLINK_QUIC:-$BV_SYFTBOX_HOTLINK_QUIC}"
+		export SYFTBOX_HOTLINK_QUIC_ONLY="${SYFTBOX_HOTLINK_QUIC_ONLY:-$BV_SYFTBOX_HOTLINK_QUIC_ONLY}"
+		if [[ -n "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+			export SYQURE_SKIP_BUNDLE
+		fi
+		if [[ -n "${SYFTBOX_HOTLINK_DEBUG:-}" ]]; then
+			export SYFTBOX_HOTLINK_DEBUG
+		fi
+		if [[ -n "${SYQURE_DEBUG:-}" ]]; then
+			export SYQURE_DEBUG
+		fi
+		info "Syqure UI env: HOTLINK=${BV_SYFTBOX_HOTLINK:-unset} SOCKET_ONLY=${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-unset} QUIC=${BV_SYFTBOX_HOTLINK_QUIC:-unset} QUIC_ONLY=${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-unset} SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset}"
+		info "Allele-freq exec env: BV_AGG_THREADS=${BV_AGG_THREADS} BV_EMIT_MAX_FORKS=${BV_EMIT_MAX_FORKS}"
+		if [[ -n "${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH:-}" ]]; then
+			info "Allele-freq debug override: BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH=${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH}"
+		fi
+
+		start_static_server
+		start_tauri_instances
+		prepare_allele_freq_ui_inputs
+
+		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
+		TRANSPORT="${BV_SYQURE_TRANSPORT:-hotlink}"
+		MODULE_YAML="$ROOT_DIR/biovault/flows/multiparty-allele-freq/modules/secure-aggregate/module.yaml"
+		case "$MODE" in
+			smpc|"") ENTRY="secure_aggregate.codon" ;;
+			he)
+				error "BV_SYQURE_AGG_MODE=he is not supported for multiparty-allele-freq (only smpc)"
+				exit 1
+				;;
+			*)
+				error "Unknown BV_SYQURE_AGG_MODE: $MODE (expected smpc|he)"
+				exit 1
+				;;
+		esac
+		python3 -c "import pathlib,re; path = pathlib.Path(r'${MODULE_YAML}'); text = path.read_text(); text = re.sub(r'entrypoint: [A-Za-z0-9_]+\\.codon', f'entrypoint: ${ENTRY}', text); text = re.sub(r'transport: .*', f'transport: ${TRANSPORT}', text); path.write_text(text)"
+		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY}) transport: ${TRANSPORT}"
+
+		info "=== Syqure Multiparty Allele-Freq Flow Test ==="
+		info "Three clients will execute biovault/flows/multiparty-allele-freq/flow.yaml via collaborative run."
+		info ""
+		info "Open these URLs in your browser:"
+		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
+		info "  Client2:     ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 1))&real=1"
+		info "  Aggregator:  ${UI_BASE_URL}?ws=$((WS_PORT_BASE + 2))&real=1"
+		info ""
+		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
+
+		timer_push "Playwright: @syqure-multiparty-allele-freq"
+		start_syqure_watchdog "multiparty-allele-freq"
+		run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		stop_syqure_watchdog
+		timer_pop
+
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
 			while true; do sleep 1; done
 		fi
 		;;

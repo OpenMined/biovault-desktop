@@ -239,6 +239,14 @@ New-Item -ItemType Directory -Force -Path $nxfDest | Out-Null
 Set-Content -Path (Join-Path $javaDest "README.txt") -Value "Java runs via Docker container on Windows" -Encoding UTF8
 Set-Content -Path (Join-Path $nxfDest "README.txt") -Value "Nextflow runs via Docker container on Windows" -Encoding UTF8
 
+# Syqure placeholder (uses Docker container on Windows)
+$syqureDest = Join-Path $repoRoot "src-tauri\resources\syqure"
+New-Item -ItemType Directory -Force -Path $syqureDest | Out-Null
+if (-not (Test-Path (Join-Path $syqureDest "syqure.exe"))) {
+  Set-Content -Path (Join-Path $syqureDest "syqure.exe") -Value "" -Encoding UTF8
+}
+Set-Content -Path (Join-Path $syqureDest "README.txt") -Value "Syqure runs via Docker container on Windows" -Encoding UTF8
+
 <#
 # DISABLED: Java bundling - not needed on Windows (Docker provides it)
 Write-Host "== Fetching Java (Temurin JRE) =="

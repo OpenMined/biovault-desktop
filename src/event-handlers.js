@@ -224,6 +224,16 @@ export function setupEventHandlers({
 		sendMessageBtn.addEventListener('click', sendCurrentMessage)
 	}
 
+	// Messages - Propose Flow (multiparty)
+	const proposeFlowBtn = document.getElementById('propose-flow-btn')
+	if (proposeFlowBtn) {
+		proposeFlowBtn.addEventListener('click', () => {
+			if (window.proposeFlowModal) {
+				window.proposeFlowModal.open()
+			}
+		})
+	}
+
 	// Messages - SyftBox toggle
 	const syftboxToggle = document.getElementById('message-syftbox-toggle')
 	if (syftboxToggle) {
