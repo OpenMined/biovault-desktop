@@ -1246,6 +1246,30 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 				return step.status
 			}
+			const toTitleWords = (value) =>
+				String(value || '')
+					.replace(/[_-]+/g, ' ')
+					.trim()
+					.split(/\s+/)
+					.filter(Boolean)
+					.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+					.join(' ')
+			const resolveStepDisplayName = (step) => {
+				const id = String(step?.id || '').trim()
+				const name = String(step?.name || '').trim()
+				if (!id && !name) return 'Step'
+				if (name && name.toLowerCase() !== id.toLowerCase()) return name
+
+				const code = String(step?.code_preview || '')
+				const shareKeyMatch = code.match(/share:\s*\n\s+([A-Za-z0-9_-]+)\s*:/m)
+				const shareKey = shareKeyMatch?.[1] || ''
+				const noun = shareKey ? toTitleWords(shareKey.replace(/_shared$/i, '')) : ''
+				const verb = toTitleWords(id)
+				if (verb && noun && !verb.toLowerCase().includes(noun.toLowerCase())) {
+					return `${verb} ${noun}`
+				}
+				return verb || name || id
+			}
 			const stepById = new Map((state.steps || []).map((s) => [s.id, s]))
 			const areDependenciesSatisfied = (step) => {
 				const deps = Array.isArray(step?.depends_on) ? step.depends_on : []
@@ -1347,8 +1371,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				waitingOnMeStep.shares_output &&
 				waitingOnMeStep.status === 'Completed' &&
 				!waitingOnMeStep.outputs_shared
-					? `share ${waitingOnMeStep.name}`
-					: waitingOnMeStep?.name || 'next step'
+					? `share ${resolveStepDisplayName(waitingOnMeStep)}`
+					: resolveStepDisplayName(waitingOnMeStep) || 'next step'
 
 			const waitingBannerHtml = waitingOnMeStep
 				? `<div class="mp-waiting-banner is-you">⚠ Waiting on YOU: ${escapeHtml(waitingOnMeLabel)}${waitingOnOthers.length ? ` | Others waiting: ${waitingOnOthers.map((e) => `<span class="mp-waiting-chip">${escapeHtml(e)}</span>`).join(' ')}` : ''}</div>`
@@ -1371,7 +1395,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					${
 						myNextStep
 							? `<button type="button" class="mp-btn mp-run-next-btn" onclick="window.runsModule?.runStep('${sessionId}', '${myNextStep.id}')">
-						▶ Run Next: ${escapeHtml(myNextStep.name)}
+						▶ Run Next: ${escapeHtml(resolveStepDisplayName(myNextStep))}
 					</button>`
 							: ''
 					}
@@ -1488,7 +1512,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							<button type="button" class="mp-step-header mp-step-toggle" onclick="window.runsModule?.toggleStepExpanded('${sessionId}', '${escapeHtml(step.id)}')">
 								<span class="mp-step-chevron">${isExpanded ? '▾' : '▸'}</span>
 								<span class="mp-step-status">${statusIcon}</span>
-								<span class="mp-step-name">${escapeHtml(step.name)}</span>
+								<span class="mp-step-name">${escapeHtml(resolveStepDisplayName(step))}</span>
 								<span class="mp-step-timer" data-session-id="${escapeHtml(sessionId)}" data-step-id="${escapeHtml(step.id)}">${stepTimerLabel ? `⏱ ${escapeHtml(stepTimerLabel)}` : ''}</span>
 								${isMyAction ? '<span class="mp-step-badge">Your step</span>' : ''}
 								${isNextStep ? '<span class="mp-step-badge mp-next-badge">Next</span>' : ''}

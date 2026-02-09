@@ -169,6 +169,105 @@ fn ensure_flow_subscriptions(
     Ok(())
 }
 
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create destination {}: {}", dst.display(), e))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))? {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+            }
+            fs::copy(&src_path, &dst_path).map_err(|e| {
+                format!(
+                    "Failed to copy {} -> {}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn publish_flow_source_for_session(
+    flow_name: &str,
+    work_dir: &Path,
+    owner_email: &str,
+    participant_emails: &[String],
+    flow_spec: &serde_json::Value,
+) -> Result<Option<PathBuf>, String> {
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    let source_flow_dir = biovault_home.join("flows").join(flow_name);
+    if !source_flow_dir.exists() {
+        return Ok(None);
+    }
+
+    let dest_flow_dir = work_dir.join("_flow_source");
+    if dest_flow_dir.exists() {
+        fs::remove_dir_all(&dest_flow_dir).map_err(|e| {
+            format!(
+                "Failed to clear existing flow source {}: {}",
+                dest_flow_dir.display(),
+                e
+            )
+        })?;
+    }
+    copy_dir_recursive(&source_flow_dir, &dest_flow_dir)?;
+
+    // Ensure all referenced modules are bundled into _flow_source/modules,
+    // even when the source flow points to modules outside flows/<flow_name>/modules.
+    let spec_root = flow_spec_root(flow_spec);
+    if let Some(steps) = spec_root.get("steps").and_then(|s| s.as_array()) {
+        for step in steps {
+            let module_ref = step.get("uses").and_then(|v| v.as_str());
+            let module_path = module_ref.and_then(|module_id| {
+                spec_root
+                    .get("modules")
+                    .and_then(|m| m.get(module_id))
+                    .and_then(|m| m.get("source"))
+                    .and_then(|s| s.get("path"))
+                    .and_then(|p| p.as_str())
+            });
+
+            let Some(src_module_dir) =
+                resolve_module_directory(flow_name, module_path, module_ref)
+            else {
+                continue;
+            };
+
+            let module_name = src_module_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    module_path
+                        .and_then(|p| PathBuf::from(p).file_name().map(|n| n.to_string_lossy().to_string()))
+                })
+                .or_else(|| {
+                    module_ref
+                        .map(|r| r.trim_start_matches("./").trim_start_matches("modules/").replace('_', "-"))
+                })
+                .unwrap_or_else(|| "module".to_string());
+
+            let dest_module_dir = dest_flow_dir.join("modules").join(module_name);
+            if !dest_module_dir.exists() {
+                copy_dir_recursive(&src_module_dir, &dest_module_dir)?;
+            }
+        }
+    }
+
+    create_syft_pub_yaml(&dest_flow_dir, owner_email, participant_emails)?;
+    Ok(Some(dest_flow_dir))
+}
+
 /// Get the step output path within a shared flow
 /// Structure: {flow_path}/{step_number}-{step_id}/
 fn get_step_path(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
@@ -379,10 +478,47 @@ fn select_step_log_lines(log_text: &str, step_id: &str, lines: usize) -> String 
     if all_lines.is_empty() {
         return String::new();
     }
+    let include_noisy_syftbox = env::var("BV_INCLUDE_NOISY_SYFTBOX_LOGS")
+        .ok()
+        .map(|v| is_truthy(&v))
+        .unwrap_or(false);
+
+    let filtered_source: Vec<String> = if include_noisy_syftbox {
+        all_lines.clone()
+    } else {
+        all_lines
+            .iter()
+            .filter_map(|line| {
+                let lc = line.to_ascii_lowercase();
+                if lc.contains("acl staging grace") {
+                    return None;
+                }
+                let is_syftbox_noise = lc.contains("syftbox")
+                    && (lc.contains("network")
+                        || lc.contains("websocket")
+                        || lc.contains("http")
+                        || lc.contains("queue")
+                        || lc.contains("heartbeat")
+                        || lc.contains("poll"));
+                let keep = !is_syftbox_noise
+                    || lc.contains("syqure")
+                    || lc.contains("mpc")
+                    || lc.contains("secure_aggregate")
+                    || lc.contains("tcp proxy")
+                    || lc.contains("step_")
+                    || lc.contains("step ");
+                if keep {
+                    Some(line.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
 
     let window = lines.saturating_mul(4);
-    let start_index = all_lines.len().saturating_sub(window);
-    let tail_window: Vec<String> = all_lines.into_iter().skip(start_index).collect();
+    let start_index = filtered_source.len().saturating_sub(window);
+    let tail_window: Vec<String> = filtered_source.into_iter().skip(start_index).collect();
 
     let step_lc = step_id.to_ascii_lowercase();
     let needle_a = format!("step {}", step_lc);
@@ -429,6 +565,112 @@ fn select_step_log_lines(log_text: &str, step_id: &str, lines: usize) -> String 
     };
 
     selected.join("\n")
+}
+
+fn collect_step_readiness_blockers(flow_state: &MultipartyFlowState, step_id: &str) -> Vec<String> {
+    let Some(step) = flow_state.steps.iter().find(|s| s.id == step_id) else {
+        return vec![format!("step '{}' not found in session state", step_id)];
+    };
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "status={:?} my_action={} is_barrier={} shares_output={}",
+        step.status, step.my_action, step.is_barrier, step.shares_output
+    ));
+    if !step.targets.is_empty() {
+        lines.push(format!("targets={}", step.targets.join(", ")));
+    }
+    if !step.target_emails.is_empty() {
+        lines.push(format!("target_emails={}", step.target_emails.join(", ")));
+    }
+
+    for dep_id in &step.depends_on {
+        let Some(dep_step) = flow_state.steps.iter().find(|s| s.id == *dep_id) else {
+            lines.push(format!("dependency '{}' missing from session state", dep_id));
+            continue;
+        };
+
+        let dep_complete = is_dependency_complete(flow_state, dep_id);
+        lines.push(format!(
+            "dependency '{}' status={:?} complete={} require_shared={}",
+            dep_id, dep_step.status, dep_complete, dep_step.shares_output
+        ));
+        if dep_complete {
+            continue;
+        }
+
+        if dep_step.target_emails.is_empty() {
+            lines.push(format!(
+                "  - dependency '{}' has no resolved target_emails",
+                dep_id
+            ));
+            continue;
+        }
+
+        for target_email in &dep_step.target_emails {
+            if let Some(participant) = flow_state
+                .participants
+                .iter()
+                .find(|p| p.email.eq_ignore_ascii_case(target_email))
+            {
+                let done = check_participant_step_complete(
+                    &flow_state.flow_name,
+                    &flow_state.session_id,
+                    &flow_state.my_email,
+                    &participant.email,
+                    &participant.role,
+                    dep_id,
+                    dep_step.shares_output,
+                );
+                lines.push(format!(
+                    "  - participant {} role={} dependency '{}' complete={}",
+                    participant.email, participant.role, dep_id, done
+                ));
+            } else {
+                lines.push(format!(
+                    "  - participant '{}' for dependency '{}' not found in participant map",
+                    target_email, dep_id
+                ));
+            }
+        }
+    }
+
+    if step.is_barrier {
+        if let Some(wait_for) = &step.barrier_wait_for {
+            lines.push(format!("barrier.wait_for={}", wait_for));
+            let require_shared = flow_state
+                .steps
+                .iter()
+                .find(|s| s.id == *wait_for)
+                .map(|s| s.shares_output)
+                .unwrap_or(false);
+            for target_email in &step.target_emails {
+                if let Some(participant) = flow_state
+                    .participants
+                    .iter()
+                    .find(|p| p.email.eq_ignore_ascii_case(target_email))
+                {
+                    let done = check_participant_step_complete(
+                        &flow_state.flow_name,
+                        &flow_state.session_id,
+                        &flow_state.my_email,
+                        &participant.email,
+                        &participant.role,
+                        wait_for,
+                        require_shared,
+                    );
+                    lines.push(format!(
+                        "  - barrier target {} wait_for '{}' complete={} require_shared={}",
+                        participant.email, wait_for, done, require_shared
+                    ));
+                }
+            }
+        } else {
+            lines.push("barrier step has no wait_for configured".to_string());
+        }
+    }
+
+    lines
 }
 
 fn collect_mpc_tcp_channel_diagnostics(mpc_dir: &Path) -> Vec<MultipartyMpcChannelDiagnostics> {
@@ -595,7 +837,19 @@ fn resolve_module_directory(
     module_ref: Option<&str>,
 ) -> Option<PathBuf> {
     let biovault_home = biovault::config::get_biovault_home().ok()?;
-    let flow_root = biovault_home.join("flows").join(flow_name);
+    let default_flow_root = biovault_home.join("flows").join(flow_name);
+    let flow_root = biovault::data::BioVaultDb::new()
+        .ok()
+        .and_then(|db| db.list_flows().ok())
+        .and_then(|flows| {
+            flows
+                .into_iter()
+                .find(|flow| flow.name == flow_name)
+                .map(|flow| PathBuf::from(flow.flow_path))
+        })
+        .filter(|p| p.exists())
+        .unwrap_or(default_flow_root);
+    let modules_root = biovault_home.join("modules");
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -604,7 +858,9 @@ fn resolve_module_directory(
         if raw.is_absolute() {
             candidates.push(raw);
         } else {
-            candidates.push(flow_root.join(path_str.trim_start_matches("./")));
+            let trimmed = path_str.trim_start_matches("./");
+            candidates.push(flow_root.join(trimmed));
+            candidates.push(modules_root.join(trimmed.trim_start_matches("modules/")));
         }
     }
 
@@ -616,20 +872,69 @@ fn resolve_module_directory(
             let trimmed = module_ref.trim_start_matches("./");
             // Handle path-like refs such as "./modules/gen-variants".
             candidates.push(flow_root.join(trimmed));
+            candidates.push(modules_root.join(trimmed.trim_start_matches("modules/")));
             // If ref already includes "modules/", avoid duplicating.
             if let Some(stripped) = trimmed.strip_prefix("modules/") {
                 candidates.push(flow_root.join("modules").join(stripped));
+                candidates.push(modules_root.join(stripped));
             } else {
                 candidates.push(flow_root.join("modules").join(trimmed));
+                candidates.push(modules_root.join(trimmed));
             }
             // Handle short refs such as "gen_variants".
             candidates.push(flow_root.join("modules").join(module_ref.replace('_', "-")));
+            candidates.push(modules_root.join(module_ref.replace('_', "-")));
         }
     }
 
     candidates.sort();
     candidates.dedup();
-    candidates.into_iter().find(|candidate| candidate.exists())
+    if let Some(found) = candidates.into_iter().find(|candidate| candidate.exists()) {
+        return Some(found);
+    }
+
+    // Fallback: support version-suffixed module directories in global modules root,
+    // e.g. flow references "./modules/gen-variants" while installed module is
+    // "modules/gen-variants-0.1.1".
+    let mut lookup_names: Vec<String> = Vec::new();
+    if let Some(path_str) = module_path.map(str::trim).filter(|s| !s.is_empty()) {
+        let base = PathBuf::from(path_str.trim_start_matches("./"));
+        if let Some(name) = base.file_name().and_then(|n| n.to_str()) {
+            lookup_names.push(name.to_string());
+        }
+    }
+    if let Some(module_ref) = module_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        let base = PathBuf::from(module_ref.trim_start_matches("./"));
+        if let Some(name) = base.file_name().and_then(|n| n.to_str()) {
+            lookup_names.push(name.to_string());
+        }
+        lookup_names.push(module_ref.trim_start_matches("./modules/").replace('_', "-"));
+    }
+    lookup_names.sort();
+    lookup_names.dedup();
+
+    if let Ok(entries) = fs::read_dir(&modules_root) {
+        let mut versioned_matches: Vec<PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            for base in &lookup_names {
+                if name == *base || name.starts_with(&format!("{}-", base)) {
+                    versioned_matches.push(path.clone());
+                    break;
+                }
+            }
+        }
+        if !versioned_matches.is_empty() {
+            versioned_matches.sort();
+            return versioned_matches.last().cloned();
+        }
+    }
+
+    None
 }
 
 fn read_syqure_runner_config(module_dir: &Path) -> Result<(String, String, u64), String> {
@@ -683,6 +988,122 @@ fn read_syqure_runner_config(module_dir: &Path) -> Result<(String, String, u64),
         .unwrap_or(50);
 
     Ok((entrypoint, transport, poll_ms))
+}
+
+fn validate_module_assets_exist(module_dir: &Path) -> Result<(), String> {
+    let module_yaml_path = if module_dir.join("module.yaml").exists() {
+        module_dir.join("module.yaml")
+    } else if module_dir.join("module.yml").exists() {
+        module_dir.join("module.yml")
+    } else {
+        return Ok(());
+    };
+
+    let yaml = fs::read_to_string(&module_yaml_path).map_err(|e| {
+        format!(
+            "Failed to read module config {}: {}",
+            module_yaml_path.display(),
+            e
+        )
+    })?;
+    let parsed: serde_yaml::Value =
+        serde_yaml::from_str(&yaml).map_err(|e| format!("Invalid module yaml: {}", e))?;
+
+    let assets = parsed
+        .get("spec")
+        .and_then(|v| v.get("assets"))
+        .and_then(|v| v.as_sequence())
+        .cloned()
+        .unwrap_or_default();
+    if assets.is_empty() {
+        return Ok(());
+    }
+
+    let mut missing: Vec<String> = Vec::new();
+    for asset in assets {
+        let rel_path = asset
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        let Some(rel_path) = rel_path else {
+            continue;
+        };
+        let abs = module_dir.join(rel_path);
+        if !abs.exists() {
+            missing.push(rel_path.to_string());
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Module assets missing in {}: {}",
+            module_dir.display(),
+            missing.join(", ")
+        ))
+    }
+}
+
+fn preflight_validate_flow_modules(flow_name: &str, flow_spec: &serde_json::Value) -> Result<(), String> {
+    let spec_root = flow_spec_root(flow_spec);
+    let steps = spec_root
+        .get("steps")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut issues: Vec<String> = Vec::new();
+
+    for step in steps {
+        let step_id = step
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-step");
+
+        let module_ref = step.get("uses").and_then(|v| v.as_str());
+        if module_ref.is_none() {
+            continue;
+        }
+
+        let module_path = module_ref.and_then(|module_id| {
+            spec_root
+                .get("modules")
+                .and_then(|m| m.get(module_id))
+                .and_then(|m| m.get("source"))
+                .and_then(|s| s.get("path"))
+                .and_then(|p| p.as_str())
+        });
+
+        let Some(module_dir) =
+            resolve_module_directory(flow_name, module_path, module_ref)
+        else {
+            issues.push(format!(
+                "step '{}' references module '{}' but it could not be resolved",
+                step_id,
+                module_ref.unwrap_or("<unknown>")
+            ));
+            continue;
+        };
+
+        if let Err(err) = validate_module_assets_exist(&module_dir) {
+            issues.push(format!("step '{}': {}", step_id, err));
+        }
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Flow invitation blocked: missing module files/assets.\n{}",
+            issues
+                .into_iter()
+                .map(|i| format!("- {}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+    }
 }
 
 fn is_truthy(value: &str) -> bool {
@@ -1061,7 +1482,7 @@ fn resolve_single_binding(
             .filter(|part| !part.is_empty())
             .map(|part| part.to_string())
             .collect();
-        if files.len() < 2 {
+        if files.is_empty() {
             return Ok(None);
         }
         if !files.iter().all(|path| Path::new(path).is_file()) {
@@ -1216,6 +1637,7 @@ fn resolve_single_binding(
         let manifest_path = manifest_dir.join(format!("{}.manifest.txt", input_name));
 
         let mut manifest_lines = Vec::new();
+        let mut unresolved_targets = Vec::new();
         for target_email in &source_target_emails {
             if let Some(path) = find_participant_step_file(
                 &biovault_home.to_path_buf(),
@@ -1228,11 +1650,28 @@ fn resolve_single_binding(
                 &file_name,
             ) {
                 manifest_lines.push(format!("{}\t{}", target_email, path.display()));
+            } else {
+                unresolved_targets.push(target_email.clone());
             }
         }
 
+        if !unresolved_targets.is_empty() {
+            return Err(format!(
+                "Failed to resolve flow binding '{}' (input '{}'): missing '{}' from step '{}' for participants [{}] in run '{}' (viewer: {})",
+                base_ref,
+                input_name,
+                file_name,
+                source_step_id,
+                unresolved_targets.join(", "),
+                session_id,
+                my_email
+            ));
+        }
         if manifest_lines.is_empty() {
-            return Ok(None);
+            return Err(format!(
+                "Failed to resolve flow binding '{}' (input '{}'): no participant outputs were found for step '{}' in run '{}' (viewer: {})",
+                base_ref, input_name, source_step_id, session_id, my_email
+            ));
         }
         fs::write(&manifest_path, manifest_lines.join("\n"))
             .map_err(|e| format!("Failed to write manifest: {}", e))?;
@@ -1256,7 +1695,14 @@ fn resolve_single_binding(
             source_step_id,
             &file_name,
         );
-        Ok(path.map(|p| p.to_string_lossy().to_string()))
+        let resolved = path.map(|p| p.to_string_lossy().to_string());
+        if resolved.is_none() {
+            return Err(format!(
+                "Failed to resolve flow binding '{}' (input '{}'): missing '{}' from step '{}' for participant '{}' in run '{}' (viewer: {})",
+                base_ref, input_name, file_name, source_step_id, source_email, session_id, my_email
+            ));
+        }
+        Ok(resolved)
     }
 }
 
@@ -1279,10 +1725,45 @@ fn find_participant_step_file(
     )
     .into_iter()
     .find_map(|base| {
-        resolve_step_output_dir_for_base(&base, step_number, step_id)
+        let direct = resolve_step_output_dir_for_base(&base, step_number, step_id)
+            .map(|dir| dir.join(file_name))
+            .filter(|path| path.exists());
+        if direct.is_some() {
+            return direct;
+        }
+        // Fallback: tolerate step-number drift by locating any "<n>-<step_id>" directory.
+        resolve_step_output_dir_by_id_any_number(&base, step_id)
             .map(|dir| dir.join(file_name))
             .filter(|path| path.exists())
     })
+}
+
+fn resolve_step_output_dir_by_id_any_number(base: &PathBuf, step_id: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(base).ok()?;
+    let mut best: Option<(usize, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some((num_str, id_part)) = name.split_once('-') else {
+            continue;
+        };
+        if id_part != step_id {
+            continue;
+        }
+        let Ok(num) = num_str.parse::<usize>() else {
+            continue;
+        };
+        match &best {
+            Some((best_num, _)) if num <= *best_num => {}
+            _ => best = Some((num, path)),
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 fn find_sandbox_root(path: &Path) -> Option<PathBuf> {
@@ -1892,7 +2373,15 @@ fn check_participant_step_complete(
     }
 
     if require_shared && saw_completed_without_share {
-        return false;
+        // Only relax shared-vs-completed for the legacy demo "multiparty" flow's
+        // generate step. Broadly treating Completed as Shared can let downstream
+        // steps (e.g. report_aggregate in Syqure flows) start before shared
+        // artifacts are durable/visible, which causes intermittent hangs.
+        let legacy_generate_barrier =
+            flow_name.eq_ignore_ascii_case("multiparty") && step_id == "generate";
+        if legacy_generate_barrier {
+            return true;
+        }
     }
 
     false
@@ -2042,6 +2531,8 @@ pub async fn send_flow_invitation(
         .map(|p| p.role.clone())
         .unwrap_or_else(|| "organizer".to_string());
 
+    preflight_validate_flow_modules(&flow_name, &flow_spec)?;
+
     let steps = parse_flow_steps(&flow_spec, &my_email, &participant_roles)?;
 
     // Set up work_dir for the proposer too (same as accept_flow_invitation)
@@ -2066,6 +2557,21 @@ pub async fn send_flow_invitation(
     }
     let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
     write_progress_state(&progress_dir, &my_role, "joined", None, "Accepted");
+
+    if let Ok(Some(flow_source_dir)) =
+        publish_flow_source_for_session(
+            &flow_name,
+            &work_dir,
+            &my_email,
+            &all_participant_emails,
+            &flow_spec,
+        )
+    {
+        crate::desktop_log!(
+            "📦 Published flow source for invitation: {}",
+            flow_source_dir.display()
+        );
+    }
 
     let syqure_port_base = maybe_setup_mpc_channels(
         &flow_spec,
@@ -2903,7 +3409,7 @@ pub async fn get_multiparty_step_logs(
     step_id: String,
     lines: Option<usize>,
 ) -> Result<String, String> {
-    let (run_id, work_dir, flow_name, my_email) = {
+    let (run_id, work_dir, flow_name, my_email, flow_state_snapshot) = {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get(&session_id)
@@ -2913,11 +3419,16 @@ pub async fn get_multiparty_step_logs(
             flow_state.work_dir.clone(),
             flow_state.flow_name.clone(),
             flow_state.my_email.clone(),
+            flow_state.clone(),
         )
     };
 
     let lines = lines.unwrap_or(200).clamp(20, 2000);
     let mut sections: Vec<String> = Vec::new();
+    let readiness = collect_step_readiness_blockers(&flow_state_snapshot, &step_id);
+    if !readiness.is_empty() {
+        sections.push(format!("[Readiness Debug]\n{}", readiness.join("\n")));
+    }
 
     // 1) Private per-step logs (local-only, never synced).
     let private_log_path = get_private_step_log_path(&session_id, &step_id)?;
@@ -3417,6 +3928,9 @@ pub async fn run_flow_step(
                 .ok_or_else(|| {
                     format!("Failed to resolve module directory for step '{}'", step_id)
                 })?;
+        validate_module_assets_exist(&module_dir).map_err(|e| {
+            format!("Step '{}' failed preflight: {}", step_id, e)
+        })?;
 
         let biovault_home = biovault::config::get_biovault_home()
             .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
@@ -4011,6 +4525,55 @@ fn build_group_map_from_participants(
         groups.insert("clients".to_string(), contributors);
     }
 
+    // Legacy compatibility: allow old flow targets like client1@sandbox.local
+    // and aggregator@sandbox.local to resolve to runtime participant emails.
+    let aggregator_email = participants
+        .iter()
+        .find(|p| p.role.eq_ignore_ascii_case("aggregator"))
+        .map(|p| p.email.clone())
+        .or_else(|| {
+            groups
+                .get("aggregator")
+                .and_then(|members| members.first())
+                .cloned()
+        });
+    if let Some(agg) = aggregator_email {
+        for alias in [
+            "aggregator",
+            "aggregator@sandbox.local",
+            "aggregator@openmined.org",
+        ] {
+            default_to_actual.insert(alias.to_string(), agg.clone());
+            default_to_actual.insert(alias.to_ascii_lowercase(), agg.clone());
+        }
+    }
+
+    let client_like: Vec<String> = participants
+        .iter()
+        .filter(|p| {
+            let role = p.role.to_ascii_lowercase();
+            role == "clients"
+                || role == "contributors"
+                || role.starts_with("client")
+                || role.starts_with("contributor")
+        })
+        .map(|p| p.email.clone())
+        .collect();
+    for (idx, email) in client_like.iter().enumerate() {
+        let n = idx + 1;
+        for alias in [
+            format!("client{}", n),
+            format!("client{}@sandbox.local", n),
+            format!("client{}@openmined.org", n),
+            format!("contributor{}", n),
+            format!("contributor{}@sandbox.local", n),
+            format!("contributor{}@openmined.org", n),
+        ] {
+            default_to_actual.insert(alias.clone(), email.clone());
+            default_to_actual.insert(alias.to_ascii_lowercase(), email.clone());
+        }
+    }
+
     println!(
         "[Multiparty] build_group_map_from_participants: groups={:?}, default_to_actual={:?}",
         groups, default_to_actual
@@ -4178,6 +4741,16 @@ fn get_step_targets(step: &serde_json::Value) -> Vec<String> {
     Vec::new()
 }
 
+fn mapped_target_email(
+    target: &str,
+    default_to_actual: &HashMap<String, String>,
+) -> Option<String> {
+    default_to_actual
+        .get(target)
+        .cloned()
+        .or_else(|| default_to_actual.get(&target.to_ascii_lowercase()).cloned())
+}
+
 fn collect_step_refs_from_value(value: &serde_json::Value, refs: &mut HashSet<String>) {
     match value {
         serde_json::Value::String(text) => {
@@ -4331,7 +4904,7 @@ fn parse_flow_steps(
                 }
                 // Check if target is a default datasite email that maps to my email
                 // (handles case where runs_on was resolved to default emails)
-                if let Some(actual_email) = default_to_actual.get(target) {
+                if let Some(actual_email) = mapped_target_email(target, &default_to_actual) {
                     if actual_email == my_email {
                         return true;
                     }
@@ -4356,7 +4929,8 @@ fn parse_flow_steps(
                 // Check if it's a group name
                 if let Some(group_members) = groups.get(target) {
                     group_members.clone()
-                } else if let Some(actual_email) = default_to_actual.get(target) {
+                } else if let Some(actual_email) = mapped_target_email(target, &default_to_actual)
+                {
                     // Target is a default datasite email, map to actual participant
                     vec![actual_email.clone()]
                 } else {
@@ -4501,6 +5075,16 @@ fn publish_step_outputs_message(
         step_name,
         results_data.len()
     );
+    let results_manifest: Vec<serde_json::Value> = results_data
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "file_name": entry.get("file_name").cloned().unwrap_or(serde_json::Value::Null),
+                "size_bytes": entry.get("size_bytes").cloned().unwrap_or(serde_json::Value::Null),
+                "is_text": entry.get("is_text").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            })
+        })
+        .collect();
 
     if !send_message || thread_id.trim().is_empty() || recipients.is_empty() {
         return Ok(serde_json::json!({
@@ -4539,7 +5123,7 @@ fn publish_step_outputs_message(
                 "step_id": step_id,
                 "step_name": step_name,
                 "sender": my_email,
-                "files": results_data,
+                "files": results_manifest,
             }
         }));
 

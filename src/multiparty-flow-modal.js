@@ -435,16 +435,20 @@ export function createProposeFlowModal({
 
 		const order = []
 		const counts = {}
+		const explicitRoleTargets = {}
 		for (const token of tokens) {
 			const role = normalizeRoleFromTargetToken(token)
 			if (!role) continue
 			if (!order.includes(role)) order.push(role)
 			if (counts[role] == null) counts[role] = 0
+			if (!explicitRoleTargets[role]) explicitRoleTargets[role] = new Set()
 
 			if (token.includes('@')) {
 				const local = token.split('@')[0].toLowerCase()
 				if (/^(client|contributor)\d+$/.test(local)) {
-					counts[role] += 1
+					// Count explicit numbered targets only once per unique label.
+					explicitRoleTargets[role].add(local)
+					counts[role] = explicitRoleTargets[role].size
 				} else if (counts[role] === 0) {
 					counts[role] = 1
 				}
@@ -466,10 +470,21 @@ export function createProposeFlowModal({
 			totalSlots += remainder
 		}
 
+		// Preserve aggregator visibility when present.
+		if (order.includes('aggregator')) {
+			const withoutAggregator = order.filter((r) => r !== 'aggregator')
+			order.splice(0, order.length, 'aggregator', ...withoutAggregator)
+		}
+
+		// Never infer more slots than default datasites when defaults are available.
+		// This prevents repeated step targets from inflating role rows (e.g. clients 1..6).
+		const maxSlots = defaultDatasites.length > 0 ? defaultDatasites.length : Number.MAX_SAFE_INTEGER
+
 		const roles = []
 		for (const role of order) {
 			const count = Math.max(1, counts[role] || 0)
 			for (let i = 0; i < count; i += 1) {
+				if (roles.length >= maxSlots) break
 				const roleId = count > 1 ? `${role}_${i + 1}` : role
 				roles.push({
 					id: roleId,
@@ -477,6 +492,7 @@ export function createProposeFlowModal({
 					label: count > 1 ? `${role} ${i + 1}` : role,
 				})
 			}
+			if (roles.length >= maxSlots) break
 		}
 		return roles.length > 0 ? roles : null
 	}
@@ -490,6 +506,60 @@ export function createProposeFlowModal({
 
 		const defaultDatasites = getDefaultDatasitesFromFlow(flow)
 		const groups = spec?.datasites?.groups
+		if (defaultDatasites.length > 0) {
+			// If groups are not preserved in the loaded flow spec, infer semantic roles
+			// from step targets (e.g. clients/aggregator) before falling back to generic
+			// participant slots.
+			const hasGroups =
+				!!groups && typeof groups === 'object' && Object.keys(groups).length > 0
+			if (!hasGroups) {
+				const rolesFromTargets = inferRolesFromStepTargets(spec, defaultDatasites)
+				if (rolesFromTargets && rolesFromTargets.length > 0) {
+					const selectedRoles = rolesFromTargets.slice(0, defaultDatasites.length)
+					const defaults = {}
+					for (let i = 0; i < Math.min(defaultDatasites.length, selectedRoles.length); i += 1) {
+						defaults[selectedRoles[i].id] = defaultDatasites[i]
+					}
+					return { roles: selectedRoles, defaults }
+				}
+			}
+
+			const inferredRoles = []
+			const defaults = {}
+			const roleCounts = {}
+
+			for (let i = 0; i < defaultDatasites.length; i += 1) {
+				const email = defaultDatasites[i]
+				let roleName = 'participant'
+
+				if (groups && typeof groups === 'object') {
+					for (const [groupName, groupDef] of Object.entries(groups)) {
+						const include = Array.isArray(groupDef?.include) ? groupDef.include : []
+						for (const token of include) {
+							const resolved = resolveDefaultFromIncludeToken(token, defaultDatasites)
+							if (resolved && resolved.toLowerCase() === String(email).toLowerCase()) {
+								roleName = groupName
+								break
+							}
+						}
+						if (roleName !== 'participant') break
+					}
+				}
+
+				roleCounts[roleName] = (roleCounts[roleName] || 0) + 1
+				const countForRole = roleCounts[roleName]
+				const roleId = countForRole > 1 ? `${roleName}_${countForRole}` : roleName
+				defaults[roleId] = email
+				inferredRoles.push({
+					id: roleId,
+					role: roleName,
+					label: countForRole > 1 ? `${roleName} ${countForRole}` : roleName,
+					description: `Default: ${email}`,
+				})
+			}
+
+			return { roles: inferredRoles, defaults }
+		}
 		if (groups && typeof groups === 'object') {
 			const inferredRoles = []
 			const defaults = {}
@@ -678,17 +748,31 @@ export function createProposeFlowModal({
 		// Get current user and thread participants
 		const currentUser = getCurrentUserEmail ? getCurrentUserEmail() : ''
 		const participants = getThreadParticipants ? getThreadParticipants() : []
-
-		// Build list of available contacts (current user + thread participants)
+		// Build list of available contacts with stable de-duplication.
+		// Use live identities only (current user + thread participants).
+		// Do not filter role-like sandbox emails here because they are valid identities
+		// in local/dev scenarios (e.g., client1@sandbox.local, aggregator@sandbox.local).
 		const contacts = []
-		if (currentUser) {
-			contacts.push({ email: currentUser, isMe: true })
-		}
-		for (const p of participants) {
-			if (p && p !== currentUser) {
-				contacts.push({ email: p, isMe: false })
+		const seenEmails = new Set()
+		const addContact = (email, isMe = false) => {
+			const normalized = String(email || '').trim()
+			if (!normalized) return
+			const key = normalized.toLowerCase()
+			if (seenEmails.has(key)) {
+				if (isMe) {
+					const existing = contacts.find((c) => c.email.toLowerCase() === key)
+					if (existing) existing.isMe = true
+				}
+				return
 			}
+			seenEmails.add(key)
+			contacts.push({ email: normalized, isMe })
 		}
+
+		addContact(currentUser, true)
+		for (const p of participants) addContact(p, String(p || '').trim() === currentUser)
+
+		const usedAutoAssignments = new Set()
 
 			container.innerHTML = flowRoles
 				.map((role, idx) => {
@@ -701,12 +785,20 @@ export function createProposeFlowModal({
 				const preferredInContacts = preferred
 					? contacts.find((c) => c.email.toLowerCase() === preferred.toLowerCase())
 					: null
-				if (preferredInContacts) {
+				if (
+					preferredInContacts &&
+					!usedAutoAssignments.has(preferredInContacts.email.toLowerCase())
+				) {
 					defaultValue = preferredInContacts.email
+				} else {
+					const fallback = contacts.find(
+						(c) => !usedAutoAssignments.has(c.email.toLowerCase()),
+					)
+					if (fallback) defaultValue = fallback.email
+				}
+				if (defaultValue) {
 					roleAssignments[roleId] = defaultValue
-				} else if (idx < contacts.length) {
-					defaultValue = contacts[idx].email
-					roleAssignments[roleId] = defaultValue
+					usedAutoAssignments.add(defaultValue.toLowerCase())
 				}
 
 				const optionsHtml = contacts
@@ -739,9 +831,40 @@ export function createProposeFlowModal({
 		updateSendButton()
 	}
 
+	function syncRoleAssignmentsFromDom() {
+		const container = document.getElementById('propose-flow-roles-list')
+		if (!container) return
+		const selects = container.querySelectorAll('.propose-flow-role-select')
+		for (const select of selects) {
+			const roleId = select.getAttribute('data-role')
+			if (!roleId) continue
+			const value = String(select.value || '').trim()
+			if (value) {
+				roleAssignments[roleId] = value
+			} else {
+				delete roleAssignments[roleId]
+			}
+		}
+	}
+
 	function updateSendButton() {
 		const sendBtn = document.getElementById('propose-flow-send-btn')
 		if (!sendBtn) return
+		syncRoleAssignmentsFromDom()
+		if (!selectedFlow) {
+			const flowSelect = document.getElementById('propose-flow-select')
+			const selectedIndex = typeof flowSelect?.selectedIndex === 'number' ? flowSelect.selectedIndex : -1
+			const selectedOption =
+				selectedIndex >= 0 && flowSelect?.options ? flowSelect.options[selectedIndex] : null
+			const serialized = selectedOption?.dataset?.flowSpec
+			if (serialized) {
+				try {
+					selectedFlow = JSON.parse(serialized)
+				} catch (error) {
+					console.warn('Failed to rehydrate selected flow from dropdown:', error)
+				}
+			}
+		}
 
 		// Enable if all roles are assigned
 		const allRolesAssigned = flowRoles.every((role) => {
@@ -752,23 +875,148 @@ export function createProposeFlowModal({
 		sendBtn.disabled = !selectedFlow || !allRolesAssigned
 	}
 
+	function collectParticipantsFromDom() {
+		const container = document.getElementById('propose-flow-roles-list')
+		const participants = []
+		for (const role of flowRoles) {
+			const roleId = role.id || role
+			const roleName = role.role || roleId
+			let email = String(roleAssignments[roleId] || '').trim()
+			if (!email && container) {
+				const selects = container.querySelectorAll('.propose-flow-role-select')
+				const select = Array.from(selects).find(
+					(el) => String(el.getAttribute('data-role') || '') === String(roleId),
+				)
+				email = String(select?.value || '').trim()
+			}
+			participants.push({
+				email,
+				role: roleName,
+				role_id: roleId,
+			})
+		}
+		return participants
+	}
+
+	function remapFlowSpecForParticipants(flow, participants) {
+		// Clone so the original flow object in the modal state remains untouched.
+		const flowCopy = JSON.parse(JSON.stringify(flow))
+		const specRoot = flowCopy?.spec || flowCopy
+		if (!specRoot || typeof specRoot !== 'object') return flowCopy
+
+		const roleToEmail = new Map()
+		const roleIdToEmail = new Map()
+		const orderedEmails = []
+		for (const p of participants) {
+			const email = String(p?.email || '').trim()
+			if (!email) continue
+			if (!orderedEmails.includes(email)) orderedEmails.push(email)
+			if (p?.role) {
+				const key = String(p.role).trim().toLowerCase()
+				if (key && !roleToEmail.has(key)) roleToEmail.set(key, email)
+			}
+			if (p?.role_id) {
+				const key = String(p.role_id).trim().toLowerCase()
+				if (key && !roleIdToEmail.has(key)) roleIdToEmail.set(key, email)
+			}
+		}
+
+		const resolveToken = (token) => {
+			const trimmed = String(token || '').trim()
+			if (!trimmed) return ''
+			if (trimmed.startsWith('{datasites[') && trimmed.endsWith(']}')) {
+				const idxStr = trimmed.slice('{datasites['.length, -2)
+				const idx = Number.parseInt(idxStr, 10)
+				if (Number.isFinite(idx) && idx >= 0 && idx < orderedEmails.length) {
+					return orderedEmails[idx]
+				}
+			}
+			if (trimmed.includes('@')) return trimmed
+			const lookup = trimmed.toLowerCase()
+			if (roleIdToEmail.has(lookup)) return roleIdToEmail.get(lookup) || ''
+			if (roleToEmail.has(lookup)) return roleToEmail.get(lookup) || ''
+			if ((lookup === 'client' || lookup === 'contributor') && roleToEmail.has('clients')) {
+				return roleToEmail.get('clients') || ''
+			}
+			return ''
+		}
+
+		if (specRoot.datasites && typeof specRoot.datasites === 'object') {
+			specRoot.datasites.all = [...orderedEmails]
+			if (specRoot.datasites.groups && typeof specRoot.datasites.groups === 'object') {
+				for (const [groupName, groupDef] of Object.entries(specRoot.datasites.groups)) {
+					const include = Array.isArray(groupDef?.include) ? groupDef.include : []
+					const remapped = []
+					for (const item of include) {
+						const token = String(item || '').trim()
+						if (!token) continue
+						if (token === '{datasites[*]}' || token.toLowerCase() === 'all') {
+							remapped.push(...orderedEmails)
+							continue
+						}
+						const mapped = resolveToken(token)
+						if (mapped) remapped.push(mapped)
+					}
+					if (remapped.length > 0) {
+						groupDef.include = [...new Set(remapped)]
+					}
+				}
+			}
+		}
+
+		if (specRoot.inputs?.datasites && typeof specRoot.inputs.datasites === 'object') {
+			specRoot.inputs.datasites.default = [...orderedEmails]
+		}
+
+		return flowCopy
+	}
+
 	async function sendInvitation() {
 		if (!selectedFlow) {
 			console.error('No flow selected')
 			return
 		}
+		syncRoleAssignmentsFromDom()
 
-		const flowName = selectedFlow.metadata?.name || selectedFlow.name || 'multiparty'
+		const participants = collectParticipantsFromDom()
+		const remappedFlowSpec = remapFlowSpecForParticipants(selectedFlow, participants)
+		const flowName = remappedFlowSpec?.metadata?.name || remappedFlowSpec?.name || 'multiparty'
 
-		// Build participants list from role assignments
-		const participants = flowRoles.map((role) => {
-			const roleId = role.id || role
-			const roleName = role.role || roleId
-			return {
-				email: roleAssignments[roleId],
-				role: roleName,
+		const missingRoles = participants.filter((p) => !p.email)
+		if (missingRoles.length > 0) {
+			if (dialog?.message) {
+				await dialog.message('Please assign an email for every role before sending.', {
+					title: 'Missing Role Assignments',
+					kind: 'warning',
+				})
 			}
-		})
+			return
+		}
+
+		const roleIdsByEmail = new Map()
+		for (const p of participants) {
+			const list = roleIdsByEmail.get(p.email) || []
+			list.push(p.role_id)
+			roleIdsByEmail.set(p.email, list)
+		}
+		const duplicateAssignments = Array.from(roleIdsByEmail.entries()).filter(
+			([, roles]) => roles.length > 1,
+		)
+		if (duplicateAssignments.length > 0) {
+			const details = duplicateAssignments
+				.map(([email, roles]) => `${email} (${roles.join(', ')})`)
+				.join('\n')
+			if (dialog?.message) {
+				await dialog.message(
+					`Each role must be assigned to a different participant.\n\nDuplicate assignments:\n${details}`,
+					{
+						title: 'Duplicate Role Assignments',
+						kind: 'warning',
+					},
+				)
+			}
+			return
+		}
 
 		// Get message text
 		const messageInput = document.getElementById('propose-flow-message')
@@ -777,7 +1025,9 @@ export function createProposeFlowModal({
 
 		// Get recipients (all participants except current user)
 		const currentUser = getCurrentUserEmail ? getCurrentUserEmail() : ''
-		const recipients = participants.filter((p) => p.email !== currentUser).map((p) => p.email)
+		const recipients = Array.from(
+			new Set(participants.filter((p) => p.email !== currentUser).map((p) => p.email)),
+		)
 
 		if (recipients.length === 0) {
 			if (dialog?.message) {
@@ -797,7 +1047,7 @@ export function createProposeFlowModal({
 			const sessionId = await invoke('send_flow_invitation', {
 				threadId,
 				flowName,
-				flowSpec: selectedFlow,
+				flowSpec: remappedFlowSpec,
 				participantRoles: participants,
 			})
 
@@ -810,8 +1060,13 @@ export function createProposeFlowModal({
 					flow_invitation: {
 						flow_name: flowName,
 						session_id: sessionId,
+						proposed_by: currentUser || null,
+						flow_location:
+							currentUser && sessionId
+								? `syft://${currentUser}/shared/flows/${flowName}/${sessionId}/_flow_source`
+								: null,
 						participants,
-						flow_spec: selectedFlow,
+						flow_spec: remappedFlowSpec,
 					},
 				},
 			})
@@ -829,10 +1084,6 @@ export function createProposeFlowModal({
 					},
 				)
 			}
-
-			// Navigate to Runs tab
-			const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
-			window.dispatchEvent(event)
 		} catch (error) {
 			console.error('Failed to send invitation:', error)
 			if (dialog?.message) {

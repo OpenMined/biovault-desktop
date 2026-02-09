@@ -3544,11 +3544,152 @@ export function createMessagesModule({
 						}
 					}
 
+					const invitationSender =
+						flowInvitation?.proposed_by ||
+						flowInvitation?.sender ||
+						flowInvitation?.from ||
+						msg.from
+					const flowLocation =
+						flowInvitation?.flow_location ||
+						(invitationSender && flowInvitation?.session_id
+							? `syft://${invitationSender}/shared/flows/${flowInvitation.flow_name}/${flowInvitation.session_id}/_flow_source`
+							: null)
+
+					const syncFlowLocation = async (location) => {
+						const parsed = parseSyftUrl(location)
+						if (!parsed?.datasite || !parsed?.path) return
+						const rawPath = String(parsed.path || '').replace(/^\/+/, '')
+						const parentPath = `${parsed.datasite}/${rawPath.replace(/\/_flow_source\/?$/i, '')}`
+						const sourcePath = `${parsed.datasite}/${rawPath}`
+						try {
+							await invoke('sync_tree_set_subscription', {
+								path: parentPath,
+								allow: true,
+								isDir: true,
+							})
+						} catch (error) {
+							console.warn('[Flow Import] Failed to set parent subscription:', error)
+						}
+						try {
+							await invoke('sync_tree_set_subscription', {
+								path: sourcePath,
+								allow: true,
+								isDir: true,
+							})
+						} catch (error) {
+							console.warn('[Flow Import] Failed to set source subscription:', error)
+						}
+						try {
+							await invoke('trigger_syftbox_sync')
+						} catch {}
+					}
+
+					const waitForFlowSourceReady = async (location, maxAttempts = 30) => {
+						let localRoot = null
+						try {
+							localRoot = await invoke('resolve_syft_url_to_local_path', { syftUrl: location })
+						} catch (error) {
+							console.warn('[Flow Import] Failed to resolve syft url:', error)
+							return false
+						}
+						if (!localRoot) return false
+
+						for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+							try {
+								const rootExists = await invoke('path_exists', { path: localRoot })
+								const flowYamlExists = await invoke('path_exists', {
+									path: `${localRoot}/flow.yaml`,
+								})
+								const flowYmlExists = await invoke('path_exists', {
+									path: `${localRoot}/flow.yml`,
+								})
+								if (rootExists && (flowYamlExists || flowYmlExists)) {
+									return true
+								}
+							} catch (error) {
+								console.warn('[Flow Import] Failed while checking source path:', error)
+							}
+							await syncFlowLocation(location)
+							await new Promise((resolve) => setTimeout(resolve, 900))
+						}
+						return false
+					}
+
+					const withTimeout = async (promise, ms, label) => {
+						let timeoutId
+						const timeoutPromise = new Promise((_, reject) => {
+							timeoutId = setTimeout(() => {
+								reject(new Error(`${label} timed out after ${ms}ms`))
+							}, ms)
+						})
+						try {
+							return await Promise.race([promise, timeoutPromise])
+						} finally {
+							clearTimeout(timeoutId)
+						}
+					}
+
+					const getLocalFlowSourcePath = async (location) => {
+						try {
+							return await invoke('resolve_syft_url_to_local_path', { syftUrl: location })
+						} catch {
+							return null
+						}
+					}
+
 					const importFlowFromInvitation = async (overwrite = false) => {
 						const flowSpec = flowInvitation.flow_spec
-						if (!flowSpec) {
-							throw new Error('No flow specification in invitation')
+						if (flowLocation) {
+							if (statusEl) statusEl.textContent = 'Syncing flow files...'
+							await syncFlowLocation(flowLocation)
+							const sourceReady = await waitForFlowSourceReady(flowLocation, 30)
+							if (!sourceReady) {
+								const localPath = await getLocalFlowSourcePath(flowLocation)
+								if (statusEl && localPath) {
+									statusEl.textContent = `⚠ Flow source not ready at: ${localPath}`
+								}
+								throw new Error(
+									localPath
+										? `Flow source not available yet at ${localPath}. Please retry.`
+										: 'Flow source not available yet. Please retry in a few seconds.',
+								)
+							}
+							let lastError = null
+							for (let attempt = 1; attempt <= 20; attempt += 1) {
+								try {
+									if (statusEl) {
+										statusEl.textContent = `Importing flow... (attempt ${attempt}/20)`
+									}
+									return await withTimeout(
+										invoke('import_flow_from_request', {
+											name: flowInvitation.flow_name,
+											flowLocation,
+											overwrite,
+										}),
+										45000,
+										'import_flow_from_request',
+									)
+								} catch (error) {
+									lastError = error
+									console.warn(
+										`[Flow Import] import_flow_from_request attempt ${attempt}/20 failed:`,
+										error,
+									)
+									// Flow source files can arrive slightly later than the invitation message.
+									// Nudge sync and retry before giving up.
+									await waitForFlowSourceReady(flowLocation, 1)
+									await syncFlowLocation(flowLocation)
+									await new Promise((resolve) => setTimeout(resolve, 900))
+								}
+							}
+							throw (
+								lastError ||
+								new Error(
+									'Flow source was not available yet. Please sync and try importing again.',
+								)
+							)
 						}
+						if (!flowSpec) throw new Error('No flow specification in invitation')
 						return await invoke('import_flow_from_json', {
 							request: {
 								name: flowInvitation.flow_name,
@@ -3567,10 +3708,82 @@ export function createMessagesModule({
 					joinBtn.textContent = '🤝 Join Flow'
 					joinBtn.style.display = 'none'
 
+					const syncBtn = document.createElement('button')
+					syncBtn.className = 'flow-invitation-btn'
+					syncBtn.textContent = '🔄 Sync Flow Files'
+					syncBtn.addEventListener('click', async () => {
+						if (!flowLocation) {
+							if (statusEl) statusEl.textContent = '⚠ No flow location available in invitation.'
+							return
+						}
+						syncBtn.disabled = true
+						const originalText = syncBtn.textContent
+						syncBtn.textContent = 'Syncing...'
+						try {
+							if (statusEl) statusEl.textContent = 'Syncing flow files...'
+							await syncFlowLocation(flowLocation)
+							const sourceReady = await waitForFlowSourceReady(flowLocation, 30)
+							if (sourceReady) {
+								if (statusEl) statusEl.textContent = '✓ Flow files synced and ready to import'
+							} else {
+								const localPath = await getLocalFlowSourcePath(flowLocation)
+								if (statusEl) {
+									statusEl.textContent = localPath
+										? `⚠ Sync requested, but flow files are not ready yet at ${localPath}`
+										: '⚠ Sync requested, but flow files are not ready yet. Try again shortly.'
+								}
+							}
+						} catch (error) {
+							console.error('Failed to sync flow files:', error)
+							if (statusEl) statusEl.textContent = `⚠ Sync failed: ${error}`
+						} finally {
+							syncBtn.disabled = false
+							syncBtn.textContent = originalText
+						}
+					})
+
+					const showFilesBtn = document.createElement('button')
+					showFilesBtn.className = 'flow-invitation-btn'
+					showFilesBtn.textContent = '📂 Show Flow Files'
+					showFilesBtn.addEventListener('click', async () => {
+						try {
+							if (flowLocation) {
+								await syncFlowLocation(flowLocation)
+								const folderPath = await invoke('resolve_syft_url_to_local_path', {
+									syftUrl: flowLocation,
+								})
+								const exists = await invoke('path_exists', { path: folderPath })
+								if (!exists) {
+									if (statusEl) {
+										statusEl.textContent =
+											'⚠ Flow folder not synced yet. Click again after a few seconds.'
+									}
+									return
+								}
+								await invoke('open_folder', { path: folderPath })
+								if (statusEl) statusEl.textContent = `📂 Opened: ${folderPath}`
+								return
+							}
+
+							const flows = await invoke('get_flows')
+							const match = (flows || []).find((f) => f.name === flowInvitation.flow_name)
+							if (match?.flow_path) {
+								await invoke('open_folder', { path: match.flow_path })
+								if (statusEl) statusEl.textContent = `📂 Opened: ${match.flow_path}`
+								return
+							}
+							if (statusEl) statusEl.textContent = '⚠ Could not locate flow files on disk.'
+						} catch (error) {
+							console.error('Failed to open flow files:', error)
+							if (statusEl) statusEl.textContent = `⚠ Failed to open flow files: ${error}`
+						}
+					})
+
 					importBtn.addEventListener('click', async () => {
 						console.log('[Flow Import] Button clicked')
 						importBtn.disabled = true
 						importBtn.textContent = 'Importing...'
+						let importCompleted = false
 						try {
 							console.log(
 								'[Flow Import] Flow spec:',
@@ -3584,11 +3797,53 @@ export function createMessagesModule({
 							importBtn.style.display = 'none'
 							joinBtn.style.display = 'inline-block'
 							if (statusEl) statusEl.textContent = '✓ Flow imported'
+							importCompleted = true
 						} catch (error) {
+							const errText = String(error?.message || error || '')
+							const alreadyExists = /already exists/i.test(errText)
+							if (alreadyExists) {
+								let shouldOverwrite = false
+								if (dialog?.confirm) {
+									shouldOverwrite = await dialog.confirm(
+										`Flow "${flowInvitation.flow_name}" already exists. Overwrite flow and submodules?`,
+										{
+											title: 'Overwrite Flow',
+											kind: 'warning',
+										},
+									)
+								}
+
+								if (shouldOverwrite) {
+									try {
+										importBtn.textContent = 'Overwriting...'
+										const result = await importFlowFromInvitation(true)
+										console.log('[Flow Import] Overwrite success:', result)
+										importBtn.style.display = 'none'
+										joinBtn.style.display = 'inline-block'
+										if (statusEl) statusEl.textContent = '✓ Flow overwritten'
+										importCompleted = true
+										return
+									} catch (overwriteErr) {
+										console.error('[Flow Import] Overwrite failed:', overwriteErr)
+										importBtn.disabled = false
+										importBtn.textContent = '📥 Import Flow'
+										if (statusEl) statusEl.textContent = `⚠ Import failed: ${overwriteErr}`
+										return
+									}
+								}
+							}
+
 							console.error('[Flow Import] Failed:', error)
 							importBtn.disabled = false
 							importBtn.textContent = '📥 Import Flow'
 							if (statusEl) statusEl.textContent = `⚠ Import failed: ${error}`
+						} finally {
+							if (!importCompleted) {
+								importBtn.disabled = false
+								if (importBtn.textContent !== '📥 Import Flow') {
+									importBtn.textContent = '📥 Import Flow'
+								}
+							}
 						}
 					})
 
@@ -3659,7 +3914,11 @@ export function createMessagesModule({
 								flowSpec: flowInvitation.flow_spec,
 								participants: flowInvitation.participants,
 								autoRunAll: false,
-								threadId: activeThreadId ?? null,
+								threadId:
+									(activeThreadId && String(activeThreadId).trim()) ||
+									(msg?.thread_id && String(msg.thread_id).trim()) ||
+									(flowInvitation?.thread_id && String(flowInvitation.thread_id).trim()) ||
+									null,
 								inputOverrides: selectedOverrides,
 							})
 
@@ -3672,10 +3931,7 @@ export function createMessagesModule({
 
 							// Hide Decline button after joining
 							declineBtn.style.display = 'none'
-
-							// Navigate to Runs tab
-							const event = new CustomEvent('navigate-to-tab', { detail: { tab: 'runs' } })
-							window.dispatchEvent(event)
+							if (statusEl) statusEl.textContent = '✓ Joined flow'
 						} catch (error) {
 							console.error('Failed to accept flow invitation:', error)
 							joinBtn.disabled = false
@@ -3691,17 +3947,14 @@ export function createMessagesModule({
 
 					actions.appendChild(importBtn)
 					actions.appendChild(joinBtn)
+					actions.appendChild(syncBtn)
+					actions.appendChild(showFilesBtn)
 
 					const declineBtn = document.createElement('button')
 					declineBtn.className = 'flow-invitation-btn decline-btn'
 					declineBtn.textContent = 'Decline'
 
 					// Hide decline button if user is the sender (proposer)
-					const invitationSender =
-						flowInvitation?.proposed_by ||
-						flowInvitation?.sender ||
-						flowInvitation?.from ||
-						msg.from
 					const isSender = emailsMatch(invitationSender, currentUser)
 					if (isSender) {
 						declineBtn.style.display = 'none'
@@ -3825,6 +4078,10 @@ export function createMessagesModule({
 
 	function getActiveThreadParticipants() {
 		if (!activeThreadId) return []
+		const normalized = threadParticipantsById.get(activeThreadId)
+		if (Array.isArray(normalized) && normalized.length > 0) {
+			return normalized
+		}
 		const thread = messageThreads.find((t) => t.thread_id === activeThreadId)
 		if (!thread) return []
 		return thread.participants || []

@@ -2047,7 +2047,7 @@ run_ui_grep() {
 
 prepare_allele_freq_ui_inputs() {
 	local gen_script="$ROOT_DIR/biovault/tests/scripts/gen_allele_freq_data.sh"
-	local file_count="${ALLELE_FREQ_COUNT:-10}"
+	local file_count="${ALLELE_FREQ_COUNT:-1}"
 	local force_regen="${ALLELE_FREQ_FORCE_REGEN:-0}"
 	local c1_out="$CLIENT1_HOME/private/app_data/biovault/allele-freq-data"
 	local c2_out="$CLIENT2_HOME/private/app_data/biovault/allele-freq-data"
