@@ -263,6 +263,7 @@ jobs:
       - configure-build-matrix
     if: ${{ needs.configure-build-matrix.outputs.has-targets == 'true' }}
     strategy:
+      fail-fast: false
       matrix: ${{ fromJSON(needs.configure-build-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.runs-on }}
     env:
@@ -275,6 +276,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: 1
+      NO_CLEANUP: 1
       TAURI_CLI_LOG_LEVEL: trace
       LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
       LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
