@@ -1812,6 +1812,7 @@ pub fn run() {
             commands::multiparty::get_participant_logs,
             commands::multiparty::get_multiparty_step_diagnostics,
             commands::multiparty::set_step_auto_run,
+            commands::multiparty::force_complete_flow_step,
             commands::multiparty::run_flow_step,
             commands::multiparty::share_step_outputs,
             commands::multiparty::share_step_outputs_to_chat,

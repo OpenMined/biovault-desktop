@@ -3941,6 +3941,121 @@ pub async fn set_step_auto_run(
 }
 
 #[tauri::command]
+pub async fn force_complete_flow_step(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    step_id: String,
+) -> Result<StepState, String> {
+    let (forced_step, terminal_update) = {
+        let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+
+        let forced_status_label = {
+            let step = flow_state
+                .steps
+                .iter_mut()
+                .find(|s| s.id == step_id)
+                .ok_or_else(|| "Step not found".to_string())?;
+
+            if !step.my_action {
+                return Err("This step is not your action".to_string());
+            }
+
+            if step.status == StepStatus::Running {
+                return Err("Cannot force-complete a running step".to_string());
+            }
+
+            if step.status == StepStatus::Completed || step.status == StepStatus::Shared {
+                return Ok(step.clone());
+            }
+
+            let label = if step.shares_output {
+                step.status = StepStatus::Shared;
+                step.outputs_shared = true;
+                "Shared"
+            } else {
+                step.status = StepStatus::Completed;
+                "Completed"
+            };
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!("step_forced status={}", label),
+            );
+            label.to_string()
+        };
+
+        if flow_state.status == FlowSessionStatus::Failed
+            && !flow_state
+                .steps
+                .iter()
+                .any(|s| s.status == StepStatus::Failed)
+        {
+            let previous_status = flow_state.status.clone();
+            let repaired_status = derive_non_terminal_flow_status(flow_state);
+            flow_state.status = repaired_status.clone();
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!(
+                    "force_state_repair: flow_status {} -> {}",
+                    flow_session_status_name(&previous_status),
+                    flow_session_status_name(&repaired_status)
+                ),
+            );
+        }
+
+        if let Some(ref work_dir) = flow_state.work_dir {
+            let progress_dir = get_progress_path(work_dir);
+            let _ = fs::create_dir_all(&progress_dir);
+            let shared_status = SharedStepStatus {
+                step_id: step_id.clone(),
+                role: flow_state.my_role.clone(),
+                status: forced_status_label.clone(),
+                timestamp: Utc::now().timestamp(),
+            };
+            let status_file = progress_dir.join(format!("{}_{}.json", flow_state.my_role, step_id));
+            if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
+                let _ = fs::write(&status_file, json);
+            }
+            append_progress_log(
+                &progress_dir,
+                "step_forced",
+                Some(&step_id),
+                &flow_state.my_role,
+            );
+            write_progress_state(
+                &progress_dir,
+                &flow_state.my_role,
+                "step_forced",
+                Some(&step_id),
+                &forced_status_label,
+            );
+        }
+
+        update_dependent_steps(flow_state, &step_id);
+        refresh_step_statuses(flow_state);
+        update_barrier_steps(flow_state);
+
+        let forced_step = flow_state
+            .steps
+            .iter()
+            .find(|s| s.id == step_id)
+            .cloned()
+            .ok_or_else(|| "Step not found".to_string())?;
+        let terminal_update = collect_terminal_run_update(flow_state);
+        let _ = persist_multiparty_state(flow_state);
+
+        (forced_step, terminal_update)
+    };
+
+    apply_terminal_run_update(state.inner(), terminal_update);
+    Ok(forced_step)
+}
+
+#[tauri::command]
 pub async fn run_flow_step(
     state: tauri::State<'_, AppState>,
     session_id: String,

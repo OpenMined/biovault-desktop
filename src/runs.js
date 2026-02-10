@@ -1800,6 +1800,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		if (step.status === 'WaitingForInputs') {
 			actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
 		}
+		const canForceComplete =
+			effectiveStatus === 'Pending' ||
+			effectiveStatus === 'WaitingForInputs' ||
+			effectiveStatus === 'Failed' ||
+			(effectiveStatus === 'Ready' && !dependenciesSatisfied)
+		if (canForceComplete) {
+			const forceLabel = step.shares_output ? '⏭ Force Share' : '⏭ Force Complete'
+			actions.push(
+				`<button type="button" class="mp-btn mp-force-btn" onclick="window.runsModule?.forceCompleteStep('${sessionId}', '${step.id}')">${forceLabel}</button>`,
+			)
+		}
 		if (!actions.length) {
 			if (effectiveStatus === 'Shared') return '<span class="mp-shared">📨 Shared</span>'
 			if (effectiveStatus === 'Completed') {
@@ -2152,6 +2163,31 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			console.error('Failed to run step:', error)
 			alert(`Failed to run step: ${error}`)
+		}
+	}
+	window.runsModule.forceCompleteStep = async function (sessionId, stepId) {
+		try {
+			const confirmed = dialog?.ask
+				? await dialog.ask(
+						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+						{ title: 'Force Step Status', type: 'warning' },
+				  )
+				: confirm(
+						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+				  )
+			if (!confirmed) return
+
+			await invoke('force_complete_flow_step', { sessionId, stepId })
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
+			if (runCard) {
+				const runId = runCard.dataset.runId
+				await loadMultipartySteps(sessionId, runId)
+			}
+		} catch (error) {
+			console.error('Failed to force-complete step:', error)
+			alert(`Failed to force-complete step: ${error}`)
 		}
 	}
 	window.runsModule.previewStepOutputs = async function (sessionId, stepId) {

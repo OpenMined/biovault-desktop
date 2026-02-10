@@ -178,6 +178,16 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 				'<span class="waiting-text">Waiting for inputs from other participants...</span>',
 			)
 		}
+		if (
+			step.status === 'Pending' ||
+			step.status === 'WaitingForInputs' ||
+			step.status === 'Failed'
+		) {
+			const forceLabel = step.shares_output ? '⏭ Force Share' : '⏭ Force Complete'
+			actions.push(
+				`<button class="step-btn run-btn" onclick="window.multipartyFlowModal.forceCompleteStep('${step.id}')">${forceLabel}</button>`,
+			)
+		}
 
 		return `<div class="step-actions">${actions.join('')}</div>`
 	}
@@ -227,6 +237,37 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			console.error('Failed to run step:', error)
 			if (dialog?.message) {
 				await dialog.message(`Failed to run step: ${error}`, { title: 'Error', kind: 'error' })
+			}
+		}
+	}
+
+	async function forceCompleteStep(stepId) {
+		if (!currentSessionId) return
+
+		const confirmed = await dialog?.ask(
+			'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+			{
+				title: 'Force Step Status',
+				kind: 'warning',
+				okLabel: 'Force',
+				cancelLabel: 'Cancel',
+			},
+		)
+		if (!confirmed) return
+
+		try {
+			await invoke('force_complete_flow_step', {
+				sessionId: currentSessionId,
+				stepId,
+			})
+			await refreshFlowState()
+		} catch (error) {
+			console.error('Failed to force-complete step:', error)
+			if (dialog?.message) {
+				await dialog.message(`Failed to force-complete step: ${error}`, {
+					title: 'Error',
+					kind: 'error',
+				})
 			}
 		}
 	}
@@ -321,6 +362,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		closeModal,
 		toggleAutoRun,
 		runStep,
+		forceCompleteStep,
 		previewOutputs,
 		shareOutputs,
 		acceptInvitation,

@@ -558,7 +558,7 @@ async function runStepViaBackendWhenReadyAndWait(
 	let lastError = ''
 	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
 	const transientStartError = (message: string): boolean =>
-		/dependenc(?:y|ies) .* not satisfied yet/i.test(message) ||
+		/not satisfied yet/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingforinputs\)/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message) ||
 		/step is not ready to run \(status:\s*failed\)/i.test(message) ||
