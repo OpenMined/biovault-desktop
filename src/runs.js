@@ -83,7 +83,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 
-	function stopAllMultipartyPolling() {
+	function _stopAllMultipartyPolling() {
 		multipartyPollingIntervals.forEach((_, sessionId) => stopMultipartyPolling(sessionId))
 		multipartyStepLogIntervals.forEach((interval) => clearInterval(interval))
 		multipartyStepLogIntervals.clear()
@@ -2175,7 +2175,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const start = Date.now()
 			let attempt = 0
 			let lastError = null
-			while (true) {
+			while (Date.now() - start < maxWaitMs + retryDelayMs) {
 				try {
 					await executeStep()
 					return

@@ -898,7 +898,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					})
 					if (overrides) {
 						const missingRequired = Object.entries(flow.spec.inputs || {})
-							.filter(([name, spec]) => isRequiredInputSpec(spec))
+							.filter(([_name, spec]) => isRequiredInputSpec(spec))
 							.filter(([name]) => {
 								const key = `inputs.${name}`
 								return !String(overrides[key] || '').trim()

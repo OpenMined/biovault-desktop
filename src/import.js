@@ -31,6 +31,7 @@ export function createImportModule({
 	let fileDetectedDataTypes = {}
 	let fileDetectedGrch = {}
 	let fileTypeOverrides = {}
+	// eslint-disable-next-line no-unused-vars
 	let fileSharedOverride = {}
 	let referenceOptions = []
 	let referenceIndexOptions = []

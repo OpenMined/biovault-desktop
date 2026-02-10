@@ -1,5 +1,6 @@
 export function createMultipartyFlowModal({ invoke, dialog }) {
 	let currentSessionId = null
+	// eslint-disable-next-line no-unused-vars
 	let currentFlowState = null
 	let pollInterval = null
 
@@ -102,7 +103,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			.join('')
 	}
 
-	function renderSteps(modal, steps, myRole) {
+	function renderSteps(modal, steps, _myRole) {
 		const container = modal.querySelector('.multiparty-steps-list')
 		if (!container) return
 
@@ -835,7 +836,7 @@ export function createProposeFlowModal({
 		const usedAutoAssignments = new Set()
 
 		container.innerHTML = flowRoles
-			.map((role, idx) => {
+			.map((role, _idx) => {
 				const roleId = role.id || role
 				const roleLabel = role.label || roleId
 
@@ -1003,7 +1004,7 @@ export function createProposeFlowModal({
 		if (specRoot.datasites && typeof specRoot.datasites === 'object') {
 			specRoot.datasites.all = [...orderedEmails]
 			if (specRoot.datasites.groups && typeof specRoot.datasites.groups === 'object') {
-				for (const [groupName, groupDef] of Object.entries(specRoot.datasites.groups)) {
+				for (const [_groupName, groupDef] of Object.entries(specRoot.datasites.groups)) {
 					const include = Array.isArray(groupDef?.include) ? groupDef.include : []
 					const remapped = []
 					for (const item of include) {
