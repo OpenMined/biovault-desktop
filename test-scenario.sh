@@ -85,6 +85,7 @@ NO_CLEANUP="${NO_CLEANUP:-0}" # Leave processes/sandbox running on exit for debu
 SYQURE_MULTIPARTY_SECURE_ONLY="${SYQURE_MULTIPARTY_SECURE_ONLY:-0}"
 SYQURE_MULTIPARTY_CLI_PARITY="${SYQURE_MULTIPARTY_CLI_PARITY:-0}"
 SYQURE_DUMP_TRAFFIC="${SYQURE_DUMP_TRAFFIC:-0}"
+SYQURE_ALLELE_AGG_MODE="${SYQURE_ALLELE_AGG_MODE:-0}"
 USE_EXISTING_DATASITES="${USE_EXISTING_DATASITES:-0}"
 EXISTING_DATASITES_BASE="${EXISTING_DATASITES_BASE:-}"
 SERVER_URL_OVERRIDE="${SERVER_URL_OVERRIDE:-${LIVE_SERVER_URL:-}}"
@@ -111,6 +112,7 @@ Scenario Options (pick one):
   --pipelines-multiparty-flow  Run three-client multiparty flow execution test
   --syqure-multiparty-flow  Run three-client Syqure collaborative flow (real flow.yaml)
   --syqure-multiparty-allele-freq  Run three-client Syqure collaborative allele-freq flow UI test
+  --syqure-allele-agg  Run three-client Syqure allele-agg flow UI test (picker-selected allele_freq.tsv)
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -179,6 +181,7 @@ Examples:
   ./test-scenario.sh --syqure-multiparty-flow --syqure-cli-parity --interactive  # Align desktop run with CLI runtime defaults
   ./test-scenario.sh --syqure-multiparty-flow --syqure-dump-traffic --interactive  # Enable TCP proxy payload dumps
   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive  # Run Syqure collaborative allele-freq flow UI test
+  ./test-scenario.sh --syqure-allele-agg --interactive  # Run Syqure allele-agg flow with picker-selected TSV inputs
   ./test-scenario.sh --syqure-multiparty-flow --reuse-existing-datasites /Users/me/biovaults --live-server-url https://20.40.47.91:8443
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
@@ -252,6 +255,13 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--syqure-multiparty-allele-freq)
 			SCENARIO="syqure-multiparty-allele-freq"
+			shift
+			;;
+		--syqure-allele-agg)
+			# Alias onto syqure-multiparty-allele-freq scenario plumbing (same 3-client Syqure stack),
+			# but run the dedicated @syqure-allele-agg Playwright spec.
+			SCENARIO="syqure-multiparty-allele-freq"
+			SYQURE_ALLELE_AGG_MODE=1
 			shift
 			;;
 		--file-transfer)
@@ -2897,18 +2907,30 @@ PY
 			export SYQURE_DEBUG
 		fi
 		info "Syqure UI env: HOTLINK=${BV_SYFTBOX_HOTLINK:-unset} SOCKET_ONLY=${BV_SYFTBOX_HOTLINK_SOCKET_ONLY:-unset} QUIC=${BV_SYFTBOX_HOTLINK_QUIC:-unset} P2P_ONLY=${BV_SYFTBOX_HOTLINK_P2P_ONLY:-unset} QUIC_ONLY=${BV_SYFTBOX_HOTLINK_QUIC_ONLY:-unset} SKIP_BUNDLE=${SYQURE_SKIP_BUNDLE:-unset}"
-		info "Allele-freq exec env: BV_AGG_THREADS=${BV_AGG_THREADS} BV_EMIT_MAX_FORKS=${BV_EMIT_MAX_FORKS}"
-		if [[ -n "${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH:-}" ]]; then
-			info "Allele-freq debug override: BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH=${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH}"
+		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+			info "Allele-agg test mode enabled (picker-selected allele_freq.tsv inputs)"
+			info "Allele-agg source TSV: ${SYQURE_ALLELE_AGG_SOURCE_TSV:-$ROOT_DIR/data/allele_freq.tsv}"
+			info "Allele-agg trim lines: ${SYQURE_ALLELE_AGG_TRIM_LINES:-1000}"
+		else
+			info "Allele-freq exec env: BV_AGG_THREADS=${BV_AGG_THREADS} BV_EMIT_MAX_FORKS=${BV_EMIT_MAX_FORKS}"
+			if [[ -n "${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH:-}" ]]; then
+				info "Allele-freq debug override: BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH=${BV_ALLELE_FREQ_FORCE_ARRAY_LENGTH}"
+			fi
 		fi
 
 		start_static_server
 		start_tauri_instances
-		prepare_allele_freq_ui_inputs
+		if [[ "$SYQURE_ALLELE_AGG_MODE" != "1" ]]; then
+			prepare_allele_freq_ui_inputs
+		fi
 
 		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
 		TRANSPORT="${BV_SYQURE_TRANSPORT:-hotlink}"
-		MODULE_YAML="$ROOT_DIR/biovault/flows/multiparty-allele-freq/modules/secure-aggregate/module.yaml"
+		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+			MODULE_YAML="$ROOT_DIR/biovault/flows/syqure-allele-agg/modules/secure-aggregate/module.yaml"
+		else
+			MODULE_YAML="$ROOT_DIR/biovault/flows/multiparty-allele-freq/modules/secure-aggregate/module.yaml"
+		fi
 		case "$MODE" in
 			smpc|"") ENTRY="secure_aggregate.codon" ;;
 			he)
@@ -2923,8 +2945,13 @@ PY
 		python3 -c "import pathlib,re; path = pathlib.Path(r'${MODULE_YAML}'); text = path.read_text(); text = re.sub(r'entrypoint: [A-Za-z0-9_]+\\.codon', f'entrypoint: ${ENTRY}', text); text = re.sub(r'transport: .*', f'transport: ${TRANSPORT}', text); path.write_text(text)"
 		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY}) transport: ${TRANSPORT}"
 
-		info "=== Syqure Multiparty Allele-Freq Flow Test ==="
-		info "Three clients will execute biovault/flows/multiparty-allele-freq/flow.yaml via collaborative run."
+		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+			info "=== Syqure Allele-Agg Flow Test ==="
+			info "Three clients will execute biovault/flows/syqure-allele-agg/flow.yaml via collaborative run."
+		else
+			info "=== Syqure Multiparty Allele-Freq Flow Test ==="
+			info "Three clients will execute biovault/flows/multiparty-allele-freq/flow.yaml via collaborative run."
+		fi
 		info ""
 		info "Open these URLs in your browser:"
 		info "  Client1:     ${UI_BASE_URL}?ws=${WS_PORT_BASE}&real=1"
@@ -2933,9 +2960,15 @@ PY
 		info ""
 		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
 
-		timer_push "Playwright: @syqure-multiparty-allele-freq"
-		start_syqure_watchdog "multiparty-allele-freq"
-		run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+			timer_push "Playwright: @syqure-allele-agg"
+			start_syqure_watchdog "syqure-allele-agg"
+			run_ui_grep "@syqure-allele-agg" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "SYQURE_ALLELE_AGG_SOURCE_TSV=${SYQURE_ALLELE_AGG_SOURCE_TSV:-$ROOT_DIR/data/allele_freq.tsv}" "SYQURE_ALLELE_AGG_TRIM_LINES=${SYQURE_ALLELE_AGG_TRIM_LINES:-1000}"
+		else
+			timer_push "Playwright: @syqure-multiparty-allele-freq"
+			start_syqure_watchdog "multiparty-allele-freq"
+			run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		fi
 		stop_syqure_watchdog
 		timer_pop
 
