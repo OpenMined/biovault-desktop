@@ -315,149 +315,153 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		log(logSocket, { event: 'key-exchange-complete' })
 
 		// === Create Flow Invitation ===
-			console.log('\n--- Creating Flow Invitation ---')
-			const timestamp = Date.now()
-			const flowName = 'multiparty'
-			const fixtureModuleName = `invite-fixture-${timestamp}`
-			const fixtureModuleDirName = fixtureModuleName
-			const fixtureAssetRelativePath = 'assets/fixture-data.txt'
-			const fixtureAssetContent = `fixture asset for ${fixtureModuleName}`
-			let sessionId = ''
+		console.log('\n--- Creating Flow Invitation ---')
+		const timestamp = Date.now()
+		const flowName = 'multiparty'
+		const fixtureModuleName = `invite-fixture-${timestamp}`
+		const fixtureModuleDirName = fixtureModuleName
+		const fixtureAssetRelativePath = 'assets/fixture-data.txt'
+		const fixtureAssetContent = `fixture asset for ${fixtureModuleName}`
+		let sessionId = ''
 
-				// Ensure aggregator has a multiparty flow available in local Flows before opening modal.
-				const flowSpec = {
-					apiVersion: 'syftbox.openmined.org/v1alpha1',
-					kind: 'Flow',
-					metadata: {
-						name: flowName,
-						version: '0.1.0',
-					},
-					spec: {
-						vars: {
-							flow_path: 'syft://{datasite.current}/shared/flows/{flow_name}',
-							run_path: '{vars.flow_path}/{run_id}',
-							step_path: '{vars.run_path}/{step.number}-{step.id}',
-						},
-						coordination: {
-							url: '{vars.run_path}/_progress',
-							share_with: 'all',
-						},
-						datasites: {
-							all: [email3, email1, email2],
-							groups: {
-								aggregator: { include: [email3] },
-								clients: { include: [email1, email2] },
-							},
-						},
-						steps: [
-							{
-								id: 'generate',
-								name: 'Generate Numbers',
-								description: 'Generate random numbers locally',
-								run: { targets: 'clients', strategy: 'parallel' },
-								share: {
-									numbers_shared: {
-										source: 'self.outputs.numbers',
-										url: '{vars.step_path}/numbers.json',
-										permissions: { read: [email3] },
-									},
-								},
-							},
-							{
-								id: 'contributions_ready',
-								name: 'Wait for Contributions',
-								description: 'Wait for all contributors to share',
-								barrier: {
-									wait_for: 'generate',
-									targets: 'clients',
-									timeout: 300,
-								},
-							},
-							{
-								id: 'aggregate',
-								name: 'Aggregate Sum',
-								description: 'Compute sum of all contributions',
-								run: { targets: 'aggregator' },
-								depends_on: ['contributions_ready'],
-								share: {
-									result_shared: {
-										source: 'self.outputs.result',
-										url: '{vars.step_path}/result.json',
-										permissions: { read: [email1, email2, email3] },
-									},
-								},
-							},
-						],
-					},
-				}
-
-				await backend3.invoke(
-					'import_flow_from_json',
-					{
-						request: {
-							name: flowName,
-							flow_json: flowSpec,
-							overwrite: true,
-						},
-					},
-					60_000,
-				)
-
-				// Add a fixture module + asset to the flow folder so invitation source sync/import
-				// can be validated for bundled module files.
-				const proposerFlows = await backend3.invoke('get_flows')
-				const proposerFlow = (proposerFlows || []).find(
-					(f: any) =>
-						String(f?.name || f?.metadata?.name || '')
-							.trim()
-							.toLowerCase() === flowName.toLowerCase(),
-				)
-				const proposerFlowPath = String(proposerFlow?.flow_path || '').trim()
-				expect(proposerFlowPath).toBeTruthy()
-
-				const fixtureModulePath = `${proposerFlowPath}/modules/${fixtureModuleDirName}`
-				fs.mkdirSync(`${fixtureModulePath}/assets`, { recursive: true })
-				fs.writeFileSync(
-					`${fixtureModulePath}/module.yaml`,
-					[
-						'apiVersion: syftbox.openmined.org/v1alpha1',
-						'kind: Module',
-						'metadata:',
-						`  name: ${fixtureModuleName}`,
-						'  version: 0.1.0',
-						'spec:',
-						'  runner:',
-						'    kind: shell',
-						'    template: shell',
-						'    entrypoint: run.sh',
-						'  assets:',
-						`    - path: ${fixtureAssetRelativePath}`,
-						'  outputs:',
-						'    - name: done',
-						'      type: File',
-						'      format: { kind: txt }',
-						'      path: done.txt',
-						'',
-					].join('\n'),
-				)
-				fs.writeFileSync(`${fixtureModulePath}/run.sh`, '#!/usr/bin/env bash\necho done > done.txt\n')
-				fs.writeFileSync(
-					`${fixtureModulePath}/${fixtureAssetRelativePath}`,
-					`${fixtureAssetContent}\n`,
-				)
-
-				// Bootstrap a group thread first so Propose Flow has all participants in-context.
-				const bootstrap = await backend3.invoke('send_message', {
-					request: {
-						recipients: [email1, email2],
-					body: `bootstrap thread ${timestamp}`,
-					subject: 'Multiparty bootstrap',
+		// Ensure aggregator has a multiparty flow available in local Flows before opening modal.
+		const flowSpec = {
+			apiVersion: 'syftbox.openmined.org/v1alpha1',
+			kind: 'Flow',
+			metadata: {
+				name: flowName,
+				version: '0.1.0',
+			},
+			spec: {
+				vars: {
+					flow_path: 'syft://{datasite.current}/shared/flows/{flow_name}',
+					run_path: '{vars.flow_path}/{run_id}',
+					step_path: '{vars.run_path}/{step.number}-{step.id}',
 				},
-			})
-			const threadId = bootstrap.thread_id
+				coordination: {
+					url: '{vars.run_path}/_progress',
+					share_with: 'all',
+				},
+				datasites: {
+					// Intentionally use canonical placeholders to exercise role mapping.
+					all: [
+						'aggregator@flow.example',
+						'contributor1@flow.example',
+						'contributor2@flow.example',
+					],
+					groups: {
+						aggregator: { include: ['aggregator@flow.example'] },
+						clients: {
+							include: ['contributor1@flow.example', 'contributor2@flow.example'],
+						},
+					},
+				},
+				steps: [
+					{
+						id: 'generate',
+						name: 'Generate Numbers',
+						description: 'Generate random numbers locally',
+						run: { targets: 'clients', strategy: 'parallel' },
+						share: {
+							numbers_shared: {
+								source: 'self.outputs.numbers',
+								url: '{vars.step_path}/numbers.json',
+								permissions: { read: [email3] },
+							},
+						},
+					},
+					{
+						id: 'contributions_ready',
+						name: 'Wait for Contributions',
+						description: 'Wait for all contributors to share',
+						barrier: {
+							wait_for: 'generate',
+							targets: 'clients',
+							timeout: 300,
+						},
+					},
+					{
+						id: 'aggregate',
+						name: 'Aggregate Sum',
+						description: 'Compute sum of all contributions',
+						run: { targets: 'aggregator' },
+						depends_on: ['contributions_ready'],
+						share: {
+							result_shared: {
+								source: 'self.outputs.result',
+								url: '{vars.step_path}/result.json',
+								permissions: { read: [email1, email2, email3] },
+							},
+						},
+					},
+				],
+			},
+		}
 
-			// === Navigate to Messages and View Invitation in UI ===
-			console.log('\n--- Navigating to Messages UI ---')
+		await backend3.invoke(
+			'import_flow_from_json',
+			{
+				request: {
+					name: flowName,
+					flow_json: flowSpec,
+					overwrite: true,
+				},
+			},
+			60_000,
+		)
+
+		// Add a fixture module + asset to the flow folder so invitation source sync/import
+		// can be validated for bundled module files.
+		const proposerFlows = await backend3.invoke('get_flows')
+		const proposerFlow = (proposerFlows || []).find(
+			(f: any) =>
+				String(f?.name || f?.metadata?.name || '')
+					.trim()
+					.toLowerCase() === flowName.toLowerCase(),
+		)
+		const proposerFlowPath = String(proposerFlow?.flow_path || '').trim()
+		expect(proposerFlowPath).toBeTruthy()
+
+		const fixtureModulePath = `${proposerFlowPath}/modules/${fixtureModuleDirName}`
+		fs.mkdirSync(`${fixtureModulePath}/assets`, { recursive: true })
+		fs.writeFileSync(
+			`${fixtureModulePath}/module.yaml`,
+			[
+				'apiVersion: syftbox.openmined.org/v1alpha1',
+				'kind: Module',
+				'metadata:',
+				`  name: ${fixtureModuleName}`,
+				'  version: 0.1.0',
+				'spec:',
+				'  runner:',
+				'    kind: shell',
+				'    template: shell',
+				'    entrypoint: run.sh',
+				'  assets:',
+				`    - path: ${fixtureAssetRelativePath}`,
+				'  outputs:',
+				'    - name: done',
+				'      type: File',
+				'      format: { kind: txt }',
+				'      path: done.txt',
+				'',
+			].join('\n'),
+		)
+		fs.writeFileSync(`${fixtureModulePath}/run.sh`, '#!/usr/bin/env bash\necho done > done.txt\n')
+		fs.writeFileSync(`${fixtureModulePath}/${fixtureAssetRelativePath}`, `${fixtureAssetContent}\n`)
+
+		// Bootstrap a group thread first so Propose Flow has all participants in-context.
+		const bootstrap = await backend3.invoke('send_message', {
+			request: {
+				recipients: [email1, email2],
+				body: `bootstrap thread ${timestamp}`,
+				subject: 'Multiparty bootstrap',
+			},
+		})
+		const threadId = bootstrap.thread_id
+
+		// === Navigate to Messages and View Invitation in UI ===
+		console.log('\n--- Navigating to Messages UI ---')
 
 		async function navigateToMessagesAndFindThread(page: Page, label: string) {
 			await page.click('button:has-text("Messages")')
@@ -484,156 +488,162 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		console.log('Navigating client2 to Messages...')
 		await navigateToMessagesAndFindThread(page2, email2)
 
-			console.log('Navigating aggregator to Messages...')
-			await navigateToMessagesAndFindThread(page3, email3)
+		console.log('Navigating aggregator to Messages...')
+		await navigateToMessagesAndFindThread(page3, email3)
 
-			// Aggregator creates flow invitation using the actual Propose Flow modal UI.
-			console.log('\n--- Creating Flow Invitation via UI Modal ---')
-			const proposeBtn = page3.locator('#propose-flow-btn')
-			await proposeBtn.waitFor({ timeout: UI_TIMEOUT })
-			await expect(proposeBtn).toBeVisible()
-			await proposeBtn.click()
+		// Aggregator creates flow invitation using the actual Propose Flow modal UI.
+		console.log('\n--- Creating Flow Invitation via UI Modal ---')
+		const proposeBtn = page3.locator('#propose-flow-btn')
+		await proposeBtn.waitFor({ timeout: UI_TIMEOUT })
+		await expect(proposeBtn).toBeVisible()
+		await proposeBtn.click()
 
-			const proposeModal = page3.locator('#propose-flow-modal')
-			await proposeModal.waitFor({ timeout: UI_TIMEOUT })
-			await page3.selectOption('#propose-flow-select', { label: flowName })
-			await page3.waitForTimeout(500)
+		const proposeModal = page3.locator('#propose-flow-modal')
+		await proposeModal.waitFor({ timeout: UI_TIMEOUT })
+		await page3.selectOption('#propose-flow-select', { label: flowName })
+		await page3.waitForTimeout(500)
 
-			const roleRows = page3.locator('#propose-flow-roles-list .propose-flow-role-row')
-			const roleCount = await roleRows.count()
-			console.log(`  Aggregator: role rows in modal = ${roleCount}`)
-			expect(roleCount).toBe(3)
+		const roleRows = page3.locator('#propose-flow-roles-list .propose-flow-role-row')
+		const roleCount = await roleRows.count()
+		console.log(`  Aggregator: role rows in modal = ${roleCount}`)
+		expect(roleCount).toBe(3)
 
-				// Assign roles by label content with unique participant mapping.
-				const allCandidates = [email1, email2, email3]
-				const usedEmails = new Set<string>()
-				for (let i = 0; i < roleCount; i += 1) {
-					const row = roleRows.nth(i)
-					const roleLabel = (
-						(await row.locator('.propose-flow-role-label').textContent().catch(() => '')) || ''
-					)
-						.toLowerCase()
-						.trim()
-					const select = roleRows.nth(i).locator('select')
-					let preferred = ''
-					if (roleLabel.includes('aggregator')) {
-						preferred = email3
-					} else if (roleLabel.includes('client') || roleLabel.includes('contributor')) {
-						if (roleLabel.includes('1')) {
-							preferred = email1
-						} else if (roleLabel.includes('2')) {
-							preferred = email2
-						}
-					}
-					const selectedEmail =
-						(preferred && !usedEmails.has(preferred) ? preferred : '') ||
-						allCandidates.find((candidate) => !usedEmails.has(candidate)) ||
-						preferred ||
-						email1
-					await select.selectOption(selectedEmail)
-					usedEmails.add(selectedEmail)
-				}
-
-				await page3
-					.locator('#propose-flow-message')
-					.fill(`Join me in a multiparty flow! Flow: ${flowName} - ${timestamp}`)
-				const sendBtn = page3.locator('#propose-flow-send-btn')
-				await sendBtn.waitFor({ timeout: UI_TIMEOUT })
-				await expect
-					.poll(async () => {
-						try {
-							return await sendBtn.isEnabled()
-						} catch {
-							return false
-						}
-					}, { timeout: UI_TIMEOUT })
-					.toBe(true)
-				await sendBtn.click({ timeout: UI_TIMEOUT })
-				let modalClosed = false
-				try {
-					await expect(proposeModal).toBeHidden({ timeout: 6000 })
-					modalClosed = true
-				} catch {
-					console.log('  Aggregator: modal still open after click, using JS send fallback')
-					await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
-					await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
-					modalClosed = true
-				}
-				expect(modalClosed).toBe(true)
-				await page3.waitForTimeout(1500)
-
-			const invitationForClient1 = await waitForThreadMessageMatching(
-				backend1,
-				threadId,
-				(msg) => normalizeMetadata(msg?.metadata)?.flow_invitation?.flow_name === flowName,
-				'flow invitation message (from UI modal)',
+		// Assign roles by label content with unique participant mapping.
+		const allCandidates = [email1, email2, email3]
+		const usedEmails = new Set<string>()
+		for (let i = 0; i < roleCount; i += 1) {
+			const row = roleRows.nth(i)
+			const roleLabel = (
+				(await row
+					.locator('.propose-flow-role-label')
+					.textContent()
+					.catch(() => '')) || ''
 			)
-			const invitationMeta = normalizeMetadata(invitationForClient1?.metadata)?.flow_invitation
-			sessionId = invitationMeta?.session_id || invitationMeta?.sessionId || ''
-			const invitationFlowLocation = String(invitationMeta?.flow_location || '').trim()
-			expect(sessionId).toBeTruthy()
-			expect(invitationFlowLocation).toBeTruthy()
+				.toLowerCase()
+				.trim()
+			const select = roleRows.nth(i).locator('select')
+			let preferred = ''
+			if (roleLabel.includes('aggregator')) {
+				preferred = email3
+			} else if (roleLabel.includes('client') || roleLabel.includes('contributor')) {
+				if (roleLabel.includes('1')) {
+					preferred = email1
+				} else if (roleLabel.includes('2')) {
+					preferred = email2
+				}
+			}
+			const selectedEmail =
+				(preferred && !usedEmails.has(preferred) ? preferred : '') ||
+				allCandidates.find((candidate) => !usedEmails.has(candidate)) ||
+				preferred ||
+				email1
+			await select.selectOption(selectedEmail)
+			usedEmails.add(selectedEmail)
+		}
 
-			console.log(`Flow invitation sent via UI! Thread ID: ${threadId}, Session ID: ${sessionId}`)
-			log(logSocket, { event: 'flow-invitation-sent', sessionId, threadId })
+		await page3
+			.locator('#propose-flow-message')
+			.fill(`Join me in a multiparty flow! Flow: ${flowName} - ${timestamp}`)
+		const sendBtn = page3.locator('#propose-flow-send-btn')
+		await sendBtn.waitFor({ timeout: UI_TIMEOUT })
+		await expect
+			.poll(
+				async () => {
+					try {
+						return await sendBtn.isEnabled()
+					} catch {
+						return false
+					}
+				},
+				{ timeout: UI_TIMEOUT },
+			)
+			.toBe(true)
+		await sendBtn.click({ timeout: UI_TIMEOUT })
+		let modalClosed = false
+		try {
+			await expect(proposeModal).toBeHidden({ timeout: 6000 })
+			modalClosed = true
+		} catch {
+			console.log('  Aggregator: modal still open after click, using JS send fallback')
+			await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
+			await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
+			modalClosed = true
+		}
+		expect(modalClosed).toBe(true)
+		await page3.waitForTimeout(1500)
 
-			// Wait for invitation cards to render
-			console.log('\n--- Waiting for Flow Invitation Cards ---')
-			await page1.waitForTimeout(2000)
-			await page2.waitForTimeout(2000)
+		const invitationForClient1 = await waitForThreadMessageMatching(
+			backend1,
+			threadId,
+			(msg) => normalizeMetadata(msg?.metadata)?.flow_invitation?.flow_name === flowName,
+			'flow invitation message (from UI modal)',
+		)
+		const invitationMeta = normalizeMetadata(invitationForClient1?.metadata)?.flow_invitation
+		sessionId = invitationMeta?.session_id || invitationMeta?.sessionId || ''
+		const invitationFlowLocation = String(invitationMeta?.flow_location || '').trim()
+		expect(sessionId).toBeTruthy()
+		expect(invitationFlowLocation).toBeTruthy()
+
+		console.log(`Flow invitation sent via UI! Thread ID: ${threadId}, Session ID: ${sessionId}`)
+		log(logSocket, { event: 'flow-invitation-sent', sessionId, threadId })
+
+		// Wait for invitation cards to render
+		console.log('\n--- Waiting for Flow Invitation Cards ---')
+		await page1.waitForTimeout(2000)
+		await page2.waitForTimeout(2000)
 
 		// === Import and Join Flow via UI ===
 		console.log('\n--- Import and Join Flow via UI ---')
 
-			async function importAndJoinFlow(page: Page, label: string, backend: Backend) {
-				// Ensure thread view includes both inbound/outbound messages.
-				const allFilterBtn = page.locator('.message-filter[data-filter="all"]')
-				if (await allFilterBtn.isVisible().catch(() => false)) {
-					await allFilterBtn.click().catch(() => {})
-					await page.waitForTimeout(250)
-				}
-				const refreshBtn = page.locator('#refresh-messages-btn')
-				if (await refreshBtn.isVisible().catch(() => false)) {
-					await refreshBtn.click().catch(() => {})
-					await page.waitForTimeout(1200)
-				}
+		async function importAndJoinFlow(page: Page, label: string, backend: Backend) {
+			// Ensure thread view includes both inbound/outbound messages.
+			const allFilterBtn = page.locator('.message-filter[data-filter="all"]')
+			if (await allFilterBtn.isVisible().catch(() => false)) {
+				await allFilterBtn.click().catch(() => {})
+				await page.waitForTimeout(250)
+			}
+			const refreshBtn = page.locator('#refresh-messages-btn')
+			if (await refreshBtn.isVisible().catch(() => false)) {
+				await refreshBtn.click().catch(() => {})
+				await page.waitForTimeout(1200)
+			}
 
-				// Wait for invitation card
-				const invitationCard = page
-					.locator('#messages-main:visible #message-conversation .flow-invitation-card:visible')
+			// Wait for invitation card
+			const invitationCard = page
+				.locator('#messages-main:visible #message-conversation .flow-invitation-card:visible')
+				.first()
+			try {
+				await invitationCard.waitFor({ timeout: UI_TIMEOUT })
+				console.log(`  ${label}: Found visible invitation card`)
+			} catch {
+				// Sender can already be joined and only have a View button available; accept that path.
+				const directOpenBtn = page
+					.locator(
+						'#messages-main:visible button:has-text("View Flow"), #messages-main:visible button:has-text("Join Flow")',
+					)
 					.first()
-				try {
-					await invitationCard.waitFor({ timeout: UI_TIMEOUT })
-					console.log(`  ${label}: Found visible invitation card`)
-				} catch {
-					// Sender can already be joined and only have a View button available; accept that path.
-					const directOpenBtn = page
-						.locator(
-							'#messages-main:visible button:has-text("View Flow"), #messages-main:visible button:has-text("Join Flow")',
-						)
-						.first()
-					if (await directOpenBtn.isVisible().catch(() => false)) {
-						console.log(`  ${label}: Invitation card not visible; using direct flow button`)
-						await directOpenBtn.click()
-						await page.waitForTimeout(800)
-						return
-					}
-					throw new Error(`${label}: flow invitation UI not visible in message thread`)
+				if (await directOpenBtn.isVisible().catch(() => false)) {
+					console.log(`  ${label}: Invitation card not visible; using direct flow button`)
+					await directOpenBtn.click()
+					await page.waitForTimeout(800)
+					return
 				}
+				throw new Error(`${label}: flow invitation UI not visible in message thread`)
+			}
 
-				const importBtn = invitationCard.locator(
-					'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
-				)
-				const syncBtn = invitationCard.locator(
-					'.flow-invitation-btn:has-text("Sync Flow Files"), button:has-text("Sync Flow Files")',
-				)
-				const showFilesBtn = invitationCard.locator(
-					'.flow-invitation-btn:has-text("Show Flow Files"), button:has-text("Show Flow Files")',
-				)
-				const joinBtn = invitationCard.locator(
-					'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow"), button:has-text("View Flow")',
-				)
-				const statusEl = invitationCard.locator('.flow-invitation-status')
+			const importBtn = invitationCard.locator(
+				'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
+			)
+			const syncBtn = invitationCard.locator(
+				'.flow-invitation-btn:has-text("Sync Flow Files"), button:has-text("Sync Flow Files")',
+			)
+			const showFilesBtn = invitationCard.locator(
+				'.flow-invitation-btn:has-text("Show Flow Files"), button:has-text("Show Flow Files")',
+			)
+			const joinBtn = invitationCard.locator(
+				'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow"), button:has-text("View Flow")',
+			)
+			const statusEl = invitationCard.locator('.flow-invitation-status')
 			if (await importBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
 				const joinInitiallyVisible = await joinBtn.isVisible().catch(() => false)
 				console.log(`  ${label}: Join button visible before import: ${joinInitiallyVisible}`)
@@ -643,19 +653,17 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 				await syncBtn.waitFor({ timeout: UI_TIMEOUT })
 				await syncBtn.click()
 				await expect
-					.poll(
-						async () => ((await statusEl.textContent().catch(() => '')) || '').trim(),
-						{ timeout: 45_000 },
-					)
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 45_000,
+					})
 					.toContain('Flow files synced and ready to import')
 
 				await showFilesBtn.waitFor({ timeout: UI_TIMEOUT })
 				await showFilesBtn.click()
 				await expect
-					.poll(
-						async () => ((await statusEl.textContent().catch(() => '')) || '').trim(),
-						{ timeout: 20_000 },
-					)
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 20_000,
+					})
 					.toContain('Opened:')
 
 				// Ensure synced source includes fixture module + asset.
@@ -696,10 +704,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 				console.log(`  ${label}: Clicked "Import Flow"`)
 
 				await expect
-					.poll(
-						async () => ((await statusEl.textContent().catch(() => '')) || '').trim(),
-						{ timeout: 60_000 },
-					)
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 60_000,
+					})
 					.toContain('Flow imported')
 
 				// Check if import button changed
@@ -731,10 +738,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 					)
 					.toBe(true)
 				const importedAssetText = fs
-					.readFileSync(
-						`${importedFixture.module_path}/${fixtureAssetRelativePath}`,
-						'utf-8',
-					)
+					.readFileSync(`${importedFixture.module_path}/${fixtureAssetRelativePath}`, 'utf-8')
 					.trim()
 				expect(importedAssetText).toContain(fixtureAssetContent)
 			} else {
@@ -1398,31 +1402,31 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		expect(waitingBannerClient1.toLowerCase()).not.toContain(email2.toLowerCase())
 
 		// Shared step outputs should be published into chat messages with metadata/files
-			const contributionSharedMsg = await waitForThreadMessageMatching(
-				backend3,
-				threadId,
-				(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'generate',
-				'contribution share results message',
-			)
+		const contributionSharedMsg = await waitForThreadMessageMatching(
+			backend3,
+			threadId,
+			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'generate',
+			'contribution share results message',
+		)
 		const contributionMeta = normalizeMetadata(contributionSharedMsg?.metadata)?.flow_results
 		expect(Array.isArray(contributionMeta?.files)).toBe(true)
 		expect(contributionMeta?.files?.length).toBeGreaterThan(0)
 
-			const resultSharedMsg = await waitForThreadMessageMatching(
-				backend1,
-				threadId,
-				(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
-				'final result share message',
-			)
+		const resultSharedMsg = await waitForThreadMessageMatching(
+			backend1,
+			threadId,
+			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
+			'final result share message',
+		)
 		const resultMeta = normalizeMetadata(resultSharedMsg?.metadata)?.flow_results
 		expect(Array.isArray(resultMeta?.files)).toBe(true)
 		expect(resultMeta?.files?.length).toBeGreaterThan(0)
-			const resultSharedMsgClient2 = await waitForThreadMessageMatching(
-				backend2,
-				threadId,
-				(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
-				'final result share message (client2)',
-			)
+		const resultSharedMsgClient2 = await waitForThreadMessageMatching(
+			backend2,
+			threadId,
+			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
+			'final result share message (client2)',
+		)
 		const resultMetaClient2 = normalizeMetadata(resultSharedMsgClient2?.metadata)?.flow_results
 		expect(Array.isArray(resultMetaClient2?.files)).toBe(true)
 		expect(resultMetaClient2?.files?.length).toBeGreaterThan(0)
@@ -1454,12 +1458,12 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const helloMessages = [hello1, hello2, hello3]
 		for (const participant of participantsBackends) {
 			for (const hello of helloMessages) {
-					await waitForThreadMessageMatching(
-						participant.backend,
-						threadId,
-						(msg) => (msg?.body || '').includes(hello),
-						`${participant.email} sees hello message`,
-					)
+				await waitForThreadMessageMatching(
+					participant.backend,
+					threadId,
+					(msg) => (msg?.body || '').includes(hello),
+					`${participant.email} sees hello message`,
+				)
 			}
 		}
 
@@ -1557,7 +1561,10 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		for (let i = 0; i < secondRoleCount; i += 1) {
 			const row = secondRoleRows.nth(i)
 			const roleLabel = (
-				(await row.locator('.propose-flow-role-label').textContent().catch(() => '')) || ''
+				(await row
+					.locator('.propose-flow-role-label')
+					.textContent()
+					.catch(() => '')) || ''
 			)
 				.toLowerCase()
 				.trim()
@@ -1584,19 +1591,24 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			.locator('#propose-flow-message')
 			.fill(`Second run in same thread (reordered clients) - ${secondTimestamp}`)
 		await expect
-			.poll(async () => {
-				try {
-					return await sendBtn.isEnabled()
-				} catch {
-					return false
-				}
-			}, { timeout: UI_TIMEOUT })
+			.poll(
+				async () => {
+					try {
+						return await sendBtn.isEnabled()
+					} catch {
+						return false
+					}
+				},
+				{ timeout: UI_TIMEOUT },
+			)
 			.toBe(true)
 		await sendBtn.click()
 		try {
 			await expect(proposeModal).toBeHidden({ timeout: 6000 })
 		} catch {
-			console.log('  Aggregator: second invite modal still open after click, using JS send fallback')
+			console.log(
+				'  Aggregator: second invite modal still open after click, using JS send fallback',
+			)
 			await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
 			await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
 		}

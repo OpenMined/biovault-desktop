@@ -189,13 +189,13 @@ const {
 } = messagesModule
 
 // Create multiparty flow modal
-const multipartyFlowModal = createMultipartyFlowModal({
+const _multipartyFlowModal = createMultipartyFlowModal({
 	invoke,
 	dialog,
 })
 
 // Create propose flow modal
-const proposeFlowModal = createProposeFlowModal({
+const _proposeFlowModal = createProposeFlowModal({
 	invoke,
 	dialog,
 	getCurrentUserEmail,

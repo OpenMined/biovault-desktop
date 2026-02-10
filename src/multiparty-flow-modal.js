@@ -1,5 +1,6 @@
 export function createMultipartyFlowModal({ invoke, dialog }) {
 	let currentSessionId = null
+	// eslint-disable-next-line no-unused-vars
 	let currentFlowState = null
 	let pollInterval = null
 
@@ -102,7 +103,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			.join('')
 	}
 
-	function renderSteps(modal, steps, myRole) {
+	function renderSteps(modal, steps, _myRole) {
 		const container = modal.querySelector('.multiparty-steps-list')
 		if (!container) return
 
@@ -141,8 +142,12 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		}
 
 		const actions = []
+		const isSecureAggregate = String(step?.id || '').toLowerCase() === 'secure_aggregate'
+		const canRunFromStatus = isSecureAggregate
+			? step.status === 'Ready'
+			: step.status === 'Ready' || step.status === 'Pending'
 
-		if (step.status === 'Ready' || step.status === 'Pending') {
+		if (canRunFromStatus) {
 			actions.push(
 				`<button class="step-btn run-btn" onclick="window.multipartyFlowModal.runStep('${step.id}')">▶ Run Step</button>`,
 			)
@@ -172,6 +177,16 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		if (step.status === 'WaitingForInputs') {
 			actions.push(
 				'<span class="waiting-text">Waiting for inputs from other participants...</span>',
+			)
+		}
+		if (
+			step.status === 'Pending' ||
+			step.status === 'WaitingForInputs' ||
+			step.status === 'Failed'
+		) {
+			const forceLabel = step.shares_output ? '⏭ Force Share' : '⏭ Force Complete'
+			actions.push(
+				`<button class="step-btn run-btn" onclick="window.multipartyFlowModal.forceCompleteStep('${step.id}')">${forceLabel}</button>`,
 			)
 		}
 
@@ -223,6 +238,37 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			console.error('Failed to run step:', error)
 			if (dialog?.message) {
 				await dialog.message(`Failed to run step: ${error}`, { title: 'Error', kind: 'error' })
+			}
+		}
+	}
+
+	async function forceCompleteStep(stepId) {
+		if (!currentSessionId) return
+
+		const confirmed = await dialog?.ask(
+			'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+			{
+				title: 'Force Step Status',
+				kind: 'warning',
+				okLabel: 'Force',
+				cancelLabel: 'Cancel',
+			},
+		)
+		if (!confirmed) return
+
+		try {
+			await invoke('force_complete_flow_step', {
+				sessionId: currentSessionId,
+				stepId,
+			})
+			await refreshFlowState()
+		} catch (error) {
+			console.error('Failed to force-complete step:', error)
+			if (dialog?.message) {
+				await dialog.message(`Failed to force-complete step: ${error}`, {
+					title: 'Error',
+					kind: 'error',
+				})
 			}
 		}
 	}
@@ -317,6 +363,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		closeModal,
 		toggleAutoRun,
 		runStep,
+		forceCompleteStep,
 		previewOutputs,
 		shareOutputs,
 		acceptInvitation,
@@ -409,9 +456,12 @@ export function createProposeFlowModal({
 	}
 
 	function normalizeRoleFromTargetToken(token) {
-		const t = String(token || '').trim().toLowerCase()
+		const t = String(token || '')
+			.trim()
+			.toLowerCase()
 		if (!t) return null
-		if (t === 'all' || t === '*' || t === '{datasites[*]}' || t === '{datasite.current}') return null
+		if (t === 'all' || t === '*' || t === '{datasites[*]}' || t === '{datasite.current}')
+			return null
 		if (t.startsWith('{groups.') && t.endsWith('}')) {
 			const name = t.slice('{groups.'.length, -1).trim()
 			if (!name) return null
@@ -422,7 +472,13 @@ export function createProposeFlowModal({
 			const local = t.split('@')[0] || ''
 			if (/^aggregator\d*$/.test(local)) return 'aggregator'
 			if (/^(client|contributor)\d+$/.test(local)) return 'clients'
-			if (local === 'client' || local === 'clients' || local === 'contributor' || local === 'contributors') return 'clients'
+			if (
+				local === 'client' ||
+				local === 'clients' ||
+				local === 'contributor' ||
+				local === 'contributors'
+			)
+				return 'clients'
 			return local || null
 		}
 		if (t === 'contributor' || t === 'contributors') return 'clients'
@@ -463,9 +519,7 @@ export function createProposeFlowModal({
 		if (defaultDatasites.length > totalSlots) {
 			const remainder = defaultDatasites.length - totalSlots
 			const expandable =
-				order.find((r) => r === 'clients') ||
-				order.find((r) => r.endsWith('s')) ||
-				order[0]
+				order.find((r) => r === 'clients') || order.find((r) => r.endsWith('s')) || order[0]
 			counts[expandable] = (counts[expandable] || 0) + remainder
 			totalSlots += remainder
 		}
@@ -510,8 +564,7 @@ export function createProposeFlowModal({
 			// If groups are not preserved in the loaded flow spec, infer semantic roles
 			// from step targets (e.g. clients/aggregator) before falling back to generic
 			// participant slots.
-			const hasGroups =
-				!!groups && typeof groups === 'object' && Object.keys(groups).length > 0
+			const hasGroups = !!groups && typeof groups === 'object' && Object.keys(groups).length > 0
 			if (!hasGroups) {
 				const rolesFromTargets = inferRolesFromStepTargets(spec, defaultDatasites)
 				if (rolesFromTargets && rolesFromTargets.length > 0) {
@@ -621,6 +674,14 @@ export function createProposeFlowModal({
 		flowRoles = []
 		roleAssignments = {}
 		flowRoleDefaults = {}
+
+		// Reset section visibility
+		const rolesSection = document.getElementById('propose-flow-roles-section')
+		const messageSection = document.getElementById('propose-flow-message-section')
+		const sendBtn = document.getElementById('propose-flow-send-btn')
+		if (rolesSection) rolesSection.style.display = 'none'
+		if (messageSection) messageSection.style.display = 'none'
+		if (sendBtn) sendBtn.disabled = true
 
 		// Load multiparty flows
 		await loadMultipartyFlows()
@@ -774,10 +835,10 @@ export function createProposeFlowModal({
 
 		const usedAutoAssignments = new Set()
 
-			container.innerHTML = flowRoles
-				.map((role, idx) => {
-					const roleId = role.id || role
-					const roleLabel = role.label || roleId
+		container.innerHTML = flowRoles
+			.map((role, _idx) => {
+				const roleId = role.id || role
+				const roleLabel = role.label || roleId
 
 				// Auto-assign if possible
 				let defaultValue = ''
@@ -791,9 +852,7 @@ export function createProposeFlowModal({
 				) {
 					defaultValue = preferredInContacts.email
 				} else {
-					const fallback = contacts.find(
-						(c) => !usedAutoAssignments.has(c.email.toLowerCase()),
-					)
+					const fallback = contacts.find((c) => !usedAutoAssignments.has(c.email.toLowerCase()))
 					if (fallback) defaultValue = fallback.email
 				}
 				if (defaultValue) {
@@ -808,7 +867,7 @@ export function createProposeFlowModal({
 					)
 					.join('')
 
-					return `
+				return `
 						<div class="propose-flow-role-row">
 							<div class="propose-flow-role-label">${escapeHtml(roleLabel)}</div>
 							<span class="propose-flow-role-arrow">→</span>
@@ -818,9 +877,9 @@ export function createProposeFlowModal({
 							</select>
 						</div>
 					`
-				})
-				.join('')
-		}
+			})
+			.join('')
+	}
 
 	function updateRoleAssignment(roleId, email) {
 		if (email) {
@@ -853,7 +912,8 @@ export function createProposeFlowModal({
 		syncRoleAssignmentsFromDom()
 		if (!selectedFlow) {
 			const flowSelect = document.getElementById('propose-flow-select')
-			const selectedIndex = typeof flowSelect?.selectedIndex === 'number' ? flowSelect.selectedIndex : -1
+			const selectedIndex =
+				typeof flowSelect?.selectedIndex === 'number' ? flowSelect.selectedIndex : -1
 			const selectedOption =
 				selectedIndex >= 0 && flowSelect?.options ? flowSelect.options[selectedIndex] : null
 			const serialized = selectedOption?.dataset?.flowSpec
@@ -944,7 +1004,7 @@ export function createProposeFlowModal({
 		if (specRoot.datasites && typeof specRoot.datasites === 'object') {
 			specRoot.datasites.all = [...orderedEmails]
 			if (specRoot.datasites.groups && typeof specRoot.datasites.groups === 'object') {
-				for (const [groupName, groupDef] of Object.entries(specRoot.datasites.groups)) {
+				for (const [_groupName, groupDef] of Object.entries(specRoot.datasites.groups)) {
 					const include = Array.isArray(groupDef?.include) ? groupDef.include : []
 					const remapped = []
 					for (const item of include) {

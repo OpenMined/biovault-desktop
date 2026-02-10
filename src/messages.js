@@ -808,7 +808,7 @@ export function createMessagesModule({
 		renderRecipientChips()
 	}
 
-	function setRecipientChips(emails) {
+	function _setRecipientChips(emails) {
 		recipientChips = [...emails]
 		renderRecipientChips()
 	}
@@ -3581,7 +3581,9 @@ export function createMessagesModule({
 						}
 						try {
 							await invoke('trigger_syftbox_sync')
-						} catch {}
+						} catch {
+							/* sync trigger intentionally ignored */
+						}
 					}
 
 					const waitForFlowSourceReady = async (location, maxAttempts = 30) => {
@@ -3684,9 +3686,7 @@ export function createMessagesModule({
 							}
 							throw (
 								lastError ||
-								new Error(
-									'Flow source was not available yet. Please sync and try importing again.',
-								)
+								new Error('Flow source was not available yet. Please sync and try importing again.')
 							)
 						}
 						if (!flowSpec) throw new Error('No flow specification in invitation')

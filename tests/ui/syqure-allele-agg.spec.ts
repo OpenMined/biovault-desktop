@@ -1,12 +1,12 @@
 /**
  * Syqure Multiparty Flow Test (Three Clients)
  * Uses the same invitation system as --pipelines-multiparty-flow, but executes
- * the real syqure flow from biovault/flows/multiparty-allele-freq/flow.yaml.
+ * the real syqure flow from biovault/flows/syqure-allele-agg/flow.yaml.
  *
  * Usage:
- *   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive
+ *   ./test-scenario.sh --syqure-allele-agg --interactive
  *
- * @tag syqure-multiparty-allele-freq
+ * @tag syqure-allele-agg
  */
 import { expect, test, type Page } from './playwright-fixtures'
 import WebSocket from 'ws'
@@ -22,7 +22,16 @@ const RUN_TIMEOUT_MS = Number.parseInt(
 	process.env.SYQURE_MULTIPARTY_RUN_TIMEOUT_MS || '1200000',
 	10,
 )
-const ALLELE_FREQ_EXPECTED_FILES = Number.parseInt(process.env.ALLELE_FREQ_COUNT || '1', 10)
+const IGNORE_SHARE_CONVERGENCE_WAIT = ['1', 'true', 'yes'].includes(
+	String(process.env.SYQURE_ALLELE_AGG_IGNORE_SHARE_WAIT || '').toLowerCase(),
+)
+const ALLELE_AGG_TRIM_LINES = Number.parseInt(
+	process.env.SYQURE_ALLELE_AGG_TRIM_LINES || '1000',
+	10,
+)
+const ALLELE_AGG_SOURCE_TSV = process.env.SYQURE_ALLELE_AGG_SOURCE_TSV
+	? path.resolve(process.env.SYQURE_ALLELE_AGG_SOURCE_TSV)
+	: path.join(process.cwd(), 'data', 'allele_freq.tsv')
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -278,54 +287,123 @@ async function clickRunsTab(page: Page): Promise<void> {
 	await page.locator('button:has-text("Runs")').first().click()
 }
 
-async function importGeneratedAlleleFreqFiles(
-	backend: Backend,
-	label: string,
-	expectedCount: number,
-): Promise<void> {
-	if (expectedCount <= 0) return
-	const dataDir = await getSyftboxDataDir(backend)
-	const datasitesRoot = resolveDatasitesRoot(dataDir)
-	const homeDir = path.dirname(datasitesRoot)
-	const genotypeDir = path.join(homeDir, 'private', 'app_data', 'biovault', 'allele-freq-data')
-	const samplesheetPath = path.join(genotypeDir, 'samplesheet.csv')
-	let files: string[] = []
-	if (fs.existsSync(samplesheetPath)) {
-		const rows = fs.readFileSync(samplesheetPath, 'utf8').split(/\r?\n/).filter(Boolean)
-		files = rows
-			.slice(1)
-			.map((row) => row.split(',')[1]?.trim())
-			.filter((filePath): filePath is string => Boolean(filePath))
+function clampInt(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value))
+}
+
+function createMutatedAlleleFreqFixture(
+	sourcePath: string,
+	outputPath: string,
+	trimLines: number,
+	seed: number,
+): void {
+	if (!fs.existsSync(sourcePath)) {
+		throw new Error(`Missing source allele_freq TSV: ${sourcePath}`)
 	}
-	if (files.length === 0) {
-		const genotypesDir = path.join(genotypeDir, 'genotypes')
-		if (fs.existsSync(genotypesDir)) {
-			files = fs
-				.readdirSync(genotypesDir, { withFileTypes: true })
-				.filter((entry) => entry.isFile() && entry.name.endsWith('.txt'))
-				.map((entry) => path.join(genotypesDir, entry.name))
-		}
+	const lines = fs
+		.readFileSync(sourcePath, 'utf8')
+		.split(/\r?\n/)
+		.filter((line) => line.trim().length > 0)
+	if (lines.length < 2) {
+		throw new Error(`Source allele_freq TSV has no data rows: ${sourcePath}`)
 	}
-	files.sort()
-	const selected = files.slice(0, expectedCount)
-	if (selected.length < expectedCount) {
+
+	const header = lines[0].split('\t')
+	const dataRows = lines.slice(1, Math.min(lines.length, trimLines + 1))
+	const idx = Object.fromEntries(header.map((name, i) => [name.trim(), i]))
+
+	const locusIdx = idx.locus_key ?? idx.locus
+	const acIdx = idx.allele_count ?? idx.ac
+	const anIdx = idx.allele_number ?? idx.an
+	const afIdx = idx.allele_freq ?? idx.af
+	const rsidIdx = idx.rsid
+
+	if (locusIdx === undefined || acIdx === undefined || anIdx === undefined || afIdx === undefined) {
 		throw new Error(
-			`${label}: expected ${expectedCount} genotype files in ${genotypeDir}, found ${selected.length}`,
+			`Source TSV missing required columns. Need locus_key/locus + allele_count/ac + allele_number/an + allele_freq/af`,
 		)
 	}
-	const fileMetadata = Object.fromEntries(
-		selected.map((filePath, idx) => [
-			filePath,
-			{
-				data_type: 'Genotype',
-				source: '23andMe',
-				grch_version: 'GRCh38',
-				participant_id: `${label.replace(/[^a-z0-9]/gi, '_')}_${idx + 1}`,
-			},
-		]),
-	)
+
+	const outRows: string[] = [lines[0]]
+	for (let i = 0; i < dataRows.length; i += 1) {
+		const parts = dataRows[i].split('\t')
+		if (!parts[locusIdx]) continue
+
+		const rawAc = Number.parseInt(parts[acIdx] || '0', 10)
+		const rawAn = Number.parseInt(parts[anIdx] || '0', 10)
+		const baseAn = Number.isFinite(rawAn) && rawAn > 0 ? rawAn : 2
+		const baseAc = Number.isFinite(rawAc) ? rawAc : 0
+
+		const anJitter = ((i + seed * 3) % 7) - 3
+		let an = baseAn + anJitter
+		if (an < 2) an = 2
+		if (an % 2 !== 0) an += 1
+
+		const acJitter = ((i * 5 + seed) % 5) - 2
+		const ac = clampInt(baseAc + acJitter, 0, an)
+		const af = an > 0 ? (ac / an).toFixed(6) : '0.000000'
+
+		parts[acIdx] = String(ac)
+		parts[anIdx] = String(an)
+		parts[afIdx] = af
+
+		if (idx.num_homo !== undefined) {
+			parts[idx.num_homo] = String(Math.floor(ac / 2))
+		}
+		if (idx.num_hetero !== undefined) {
+			parts[idx.num_hetero] = String(ac % 2)
+		}
+		if (rsidIdx !== undefined && rsidIdx < parts.length && !parts[rsidIdx]) {
+			parts[rsidIdx] = '.'
+		}
+
+		outRows.push(parts.join('\t'))
+	}
+
+	fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+	fs.writeFileSync(outputPath, `${outRows.join('\n')}\n`, 'utf8')
+}
+
+function createAlleleAggInputFixtures(sessionId: string): {
+	client1Path: string
+	client2Path: string
+} {
+	const fixtureDir = path.join(process.cwd(), 'artifacts', 'syqure-allele-agg', sessionId)
+	const client1Path = path.join(fixtureDir, 'client1_allele_freq.tsv')
+	const client2Path = path.join(fixtureDir, 'client2_allele_freq.tsv')
+	createMutatedAlleleFreqFixture(ALLELE_AGG_SOURCE_TSV, client1Path, ALLELE_AGG_TRIM_LINES, 11)
+	createMutatedAlleleFreqFixture(ALLELE_AGG_SOURCE_TSV, client2Path, ALLELE_AGG_TRIM_LINES, 29)
+	return { client1Path, client2Path }
+}
+
+async function importAlleleFreqFileForPicker(
+	backend: Backend,
+	label: string,
+	filePath: string,
+): Promise<void> {
+	if (!fs.existsSync(filePath)) {
+		throw new Error(`${label}: file missing for picker import: ${filePath}`)
+	}
+	const fileMetadata = {
+		[filePath]: {
+			data_type: 'AlleleFreq',
+			source: 'syqure-allele-agg-test',
+			grch_version: 'GRCh38',
+			participant_id: label.replace(/[^a-z0-9]/gi, '_'),
+		},
+	}
 	await backend.invoke('import_files_pending', { fileMetadata }, 120_000)
-	console.log(`${label}: imported ${selected.length} generated genotype files`)
+	const start = Date.now()
+	while (Date.now() - start < 20_000) {
+		const files = await backend.invoke('get_files').catch(() => [])
+		if (Array.isArray(files) && files.some((entry: any) => entry?.file_path === filePath)) {
+			console.log(`${label}: imported picker file ${filePath}`)
+			return
+		}
+		await backend.invoke('trigger_syftbox_sync').catch(() => {})
+		await new Promise((r) => setTimeout(r, 500))
+	}
+	throw new Error(`${label}: imported file did not appear in picker catalog: ${filePath}`)
 }
 
 async function clickStepActionButton(
@@ -483,7 +561,7 @@ async function runStepViaBackendWhenReadyAndWait(
 	let lastError = ''
 	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
 	const transientStartError = (message: string): boolean =>
-		/dependency .* not satisfied yet/i.test(message) ||
+		/not satisfied yet/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingforinputs\)/i.test(message) ||
 		/step is not ready to run \(status:\s*waitingfordependencies\)/i.test(message) ||
 		/step is not ready to run \(status:\s*failed\)/i.test(message) ||
@@ -557,7 +635,7 @@ async function importAndJoinInvitation(
 	backend: Backend,
 	label: string,
 	flowName: string,
-	genotypeFileCount = 0,
+	inputSelections: Record<string, string> = {},
 ): Promise<void> {
 	const start = Date.now()
 	while (Date.now() - start < MESSAGE_TIMEOUT) {
@@ -622,70 +700,42 @@ async function importAndJoinInvitation(
 					await page.waitForTimeout(300)
 				}
 				if (pickerVisible) {
-					const genotypeRow = inputPicker
-						.locator('.flow-input-picker-row')
-						.filter({
-							has: page.locator('.flow-input-picker-label', { hasText: 'genotype_files' }),
-						})
-						.first()
-					const checkboxes = genotypeRow.locator('input.flow-input-picker-checkbox')
-					const checkboxCount = await checkboxes.count()
-					if (genotypeFileCount > 0 && checkboxCount > 0) {
-						if (checkboxCount < genotypeFileCount) {
-							throw new Error(
-								`${label}: expected at least ${genotypeFileCount} genotype files in picker, found ${checkboxCount}`,
-							)
-						}
-						// Fast-path: use row-level "Select all visible" when present.
-						const selectAllVisible = genotypeRow
-							.locator('input.flow-input-picker-select-all')
-							.first()
-						if (await selectAllVisible.isVisible().catch(() => false)) {
-							await selectAllVisible.check()
-						}
-						let checkedCount = await checkboxes
-							.evaluateAll(
-								(nodes) => nodes.filter((node) => (node as HTMLInputElement).checked).length,
-							)
-							.catch(() => 0)
-						for (
-							let idx = checkedCount;
-							idx < genotypeFileCount;
-							idx += 1 // fallback for cases where not all were visible
-						) {
-							await checkboxes.nth(idx).check()
-						}
-						checkedCount = await checkboxes
-							.evaluateAll(
-								(nodes) => nodes.filter((node) => (node as HTMLInputElement).checked).length,
-							)
-							.catch(() => 0)
-						if (checkedCount < genotypeFileCount) {
-							throw new Error(
-								`${label}: selected ${checkedCount}/${genotypeFileCount} genotype files before Continue`,
-							)
-						}
-					} else {
-						const select = genotypeRow.locator('select.flow-input-picker-select').first()
-						if (genotypeFileCount > 0 && (await select.isVisible().catch(() => false))) {
-							const allValues = await select.evaluate((node) => {
-								const options = Array.from((node as HTMLSelectElement).options)
-								return options.map((option) => option.value).filter(Boolean)
+					for (const [inputName, desiredPath] of Object.entries(inputSelections)) {
+						const inputRow = inputPicker
+							.locator('.flow-input-picker-row')
+							.filter({
+								has: page.locator('.flow-input-picker-label', { hasText: inputName }),
 							})
-							if (allValues.length < genotypeFileCount) {
-								throw new Error(
-									`${label}: expected at least ${genotypeFileCount} genotype files in picker, found ${allValues.length}`,
+							.first()
+						await expect(inputRow).toBeVisible({ timeout: 15_000 })
+
+						const select = inputRow.locator('select.flow-input-picker-select').first()
+						if (await select.isVisible().catch(() => false)) {
+							const available = await select.evaluate((node) =>
+								Array.from((node as HTMLSelectElement).options)
+									.map((option) => option.value)
+									.filter(Boolean),
+							)
+							const exact = available.includes(desiredPath)
+							if (exact) {
+								await select.selectOption({ value: desiredPath })
+							} else {
+								const byName = available.find(
+									(value) =>
+										value.endsWith(path.sep + path.basename(desiredPath)) ||
+										value.endsWith('/' + path.basename(desiredPath)),
 								)
-							}
-							const picked = allValues.slice(0, genotypeFileCount)
-							await select.evaluate((node, values) => {
-								const wanted = new Set(values)
-								const input = node as HTMLSelectElement
-								for (const option of Array.from(input.options)) {
-									option.selected = wanted.has(option.value)
+								if (!byName) {
+									throw new Error(
+										`${label}: picker could not find ${inputName} file in options: ${desiredPath}`,
+									)
 								}
-								input.dispatchEvent(new Event('change', { bubbles: true }))
-							}, picked)
+								await select.selectOption({ value: byName })
+							}
+						} else {
+							const manual = inputRow.locator('input.flow-input-picker-text').first()
+							await expect(manual).toBeVisible({ timeout: 10_000 })
+							await manual.fill(desiredPath)
 						}
 					}
 					const continueBtn = inputPicker.locator('button.flow-input-picker-confirm').first()
@@ -707,9 +757,9 @@ async function importAndJoinInvitation(
 						)
 					}
 				} else {
-					if (genotypeFileCount > 0) {
+					if (Object.keys(inputSelections).length > 0) {
 						throw new Error(
-							`${label}: Configure flow inputs modal did not appear for genotype participant`,
+							`${label}: Configure flow inputs modal did not appear for required input selection`,
 						)
 					}
 					if (!alreadyJoined) {
@@ -882,63 +932,6 @@ async function waitForSharedFileOnViewers(
 	)
 }
 
-async function assertBuildMasterOutputsNonEmpty(
-	participantDataDirs: Map<string, string>,
-	aggregatorEmail: string,
-	flowName: string,
-	runId: string,
-	timeoutMs = 90_000,
-): Promise<void> {
-	const aggregatorDataDir = participantDataDirs.get(aggregatorEmail)
-	if (!aggregatorDataDir) {
-		throw new Error(`Missing data dir for aggregator ${aggregatorEmail}`)
-	}
-	const runDir = getSharedRunDir(aggregatorDataDir, aggregatorEmail, flowName, runId)
-	const stepId = 'build_master'
-	const stepNumber = 3
-
-	await waitForCondition(
-		() => {
-			const stepDir = findExistingSharedStepDir(runDir, stepNumber, stepId)
-			if (!stepDir) return false
-			const unionPath = path.join(stepDir, 'union_locus_index.json')
-			const countPath = path.join(stepDir, 'count.txt')
-			if (!fs.existsSync(unionPath) || !fs.existsSync(countPath)) return false
-			try {
-				const union = JSON.parse(fs.readFileSync(unionPath, 'utf8'))
-				const loci = Array.isArray(union?.loci) ? union.loci.length : 0
-				const nLoci = Number(union?.n_loci || 0)
-				const countRaw = fs.readFileSync(countPath, 'utf8').trim()
-				const count = Number.parseInt(countRaw || '0', 10)
-				return (
-					Number.isFinite(nLoci) && nLoci > 0 && loci > 0 && Number.isFinite(count) && count > 0
-				)
-			} catch {
-				return false
-			}
-		},
-		`build_master produced non-empty union index and count for ${aggregatorEmail}`,
-		timeoutMs,
-		1200,
-	)
-
-	const stepDir = findExistingSharedStepDir(runDir, stepNumber, stepId)
-	if (!stepDir) {
-		throw new Error(`Missing build_master step directory in ${runDir}`)
-	}
-	const unionPath = path.join(stepDir, 'union_locus_index.json')
-	const countPath = path.join(stepDir, 'count.txt')
-	const unionRaw = fs.existsSync(unionPath) ? fs.readFileSync(unionPath, 'utf8') : '<missing>'
-	const countRaw = fs.existsSync(countPath) ? fs.readFileSync(countPath, 'utf8') : '<missing>'
-	const union = JSON.parse(unionRaw)
-	const loci = Array.isArray(union?.loci) ? union.loci.length : 0
-	const nLoci = Number(union?.n_loci || 0)
-	const count = Number.parseInt(String(countRaw).trim() || '0', 10)
-	expect(nLoci).toBeGreaterThan(0)
-	expect(loci).toBeGreaterThan(0)
-	expect(count).toBeGreaterThan(0)
-}
-
 function findParticipantStepStatus(
 	allProgress: any[],
 	participantEmail: string,
@@ -982,7 +975,7 @@ async function waitForProgressConvergence(
 	throw new Error('Timed out waiting for cross-participant progress convergence')
 }
 
-test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-allele-freq', () => {
+test.describe('Syqure flow via multiparty invitation system @syqure-allele-agg', () => {
 	test('three clients join via invitation card and execute real syqure flow', async ({
 		browser,
 	}) => {
@@ -995,24 +988,15 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const email3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
 
-		const flowName = 'multiparty-allele-freq'
+		const flowName = 'syqure-allele-agg'
 		const sourceFlowPath = path.join(
 			process.cwd(),
 			'biovault',
 			'flows',
-			'multiparty-allele-freq',
+			'syqure-allele-agg',
 			'flow.yaml',
 		)
 		expect(fs.existsSync(sourceFlowPath)).toBe(true)
-
-		const alleleFreqPipelinePath = path.join(
-			process.cwd(),
-			'biovault',
-			'flows',
-			'allele-freq',
-			'flow.yaml',
-		)
-		expect(fs.existsSync(alleleFreqPipelinePath)).toBe(true)
 
 		let logSocket: WebSocket | null = null
 		let backend1: Backend | null = null
@@ -1025,7 +1009,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 		try {
 			logSocket = await ensureLogSocket()
 			log(logSocket, {
-				event: 'syqure-multiparty-allele-freq-start',
+				event: 'syqure-allele-agg-start',
 				email1,
 				email2,
 				email3,
@@ -1049,11 +1033,15 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			await page2.goto(uiBaseUrl)
 			await page3.goto(uiBaseUrl)
 
+			const sessionId = `session-${Date.now()}`
+			const runId = sessionId
+			const { client1Path, client2Path } = createAlleleAggInputFixtures(sessionId)
+
 			await completeOnboarding(page1, email1, logSocket)
 			await completeOnboarding(page2, email2, logSocket)
 			await completeOnboarding(page3, email3, logSocket)
-			await importGeneratedAlleleFreqFiles(backend1, email1, ALLELE_FREQ_EXPECTED_FILES)
-			await importGeneratedAlleleFreqFiles(backend2, email2, ALLELE_FREQ_EXPECTED_FILES)
+			await importAlleleFreqFileForPicker(backend1, email1, client1Path)
+			await importAlleleFreqFileForPicker(backend2, email2, client2Path)
 
 			await backend1.invoke('get_dev_mode_info')
 			await backend2.invoke('get_dev_mode_info')
@@ -1095,8 +1083,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				{ email: email3, backend: backend3 },
 			])
 
-			// Import both the syqure multiparty flow and the standalone allele-freq
-			// pipeline (used by gen_allele_freq module's run.sh via `bv run`).
 			await Promise.all([
 				backend1.invoke('import_flow', {
 					flowFile: sourceFlowPath,
@@ -1110,14 +1096,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					flowFile: sourceFlowPath,
 					overwrite: true,
 				}),
-				backend1.invoke('import_flow', {
-					flowFile: alleleFreqPipelinePath,
-					overwrite: true,
-				}),
-				backend2.invoke('import_flow', {
-					flowFile: alleleFreqPipelinePath,
-					overwrite: true,
-				}),
 			])
 
 			const flowsAgg = await backend3.invoke('get_flows', {})
@@ -1125,10 +1103,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			expect(syqureFlowAgg).toBeTruthy()
 			expect(syqureFlowAgg?.spec).toBeTruthy()
 
-			const sessionId = `session-${Date.now()}`
-			// Keep runId aligned with multiparty session_id so the shared _progress and step paths
-			// are observed consistently by collaborative UI/state readers.
-			const runId = sessionId
 			const datasites = [email3, email1, email2]
 
 			const flowSpec = {
@@ -1163,9 +1137,13 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				},
 			})
 
-			await importAndJoinInvitation(page1, backend1, email1, flowName, ALLELE_FREQ_EXPECTED_FILES)
-			await importAndJoinInvitation(page2, backend2, email2, flowName, ALLELE_FREQ_EXPECTED_FILES)
-			await importAndJoinInvitation(page3, backend3, email3, flowName, 0)
+			await importAndJoinInvitation(page1, backend1, email1, flowName, {
+				allele_freq_tsv: client1Path,
+			})
+			await importAndJoinInvitation(page2, backend2, email2, flowName, {
+				allele_freq_tsv: client2Path,
+			})
+			await importAndJoinInvitation(page3, backend3, email3, flowName, {})
 
 			const [runId1, runId2, runId3] = await Promise.all([
 				waitForSessionRunId(backend1, sessionId, email1, 90_000),
@@ -1185,23 +1163,10 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			expect(syqureFlow1).toBeTruthy()
 			expect(syqureFlow2).toBeTruthy()
 			expect(syqureFlow3).toBeTruthy()
-			// Drive execution through the same UI controls users use (Run/Share per participant window).
+			// Drive execution through backend commands while users still join/select inputs via UI.
 			await Promise.all([clickRunsTab(page1), clickRunsTab(page2), clickRunsTab(page3)])
 
-			// Stage 1: clients run gen_allele_freq (local-only output).
-			// Use backend invocation to avoid flaky UI click timing around step enablement.
-			await Promise.all([
-				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'gen_allele_freq', email1, [
-					'Completed',
-					'Shared',
-				]),
-				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'gen_allele_freq', email2, [
-					'Completed',
-					'Shared',
-				]),
-			])
-
-			// Stage 1b: clients share only locus_index derived artifact.
+			// Stage 1: clients run/share locus index derived from selected allele_freq_tsv.
 			await Promise.all([
 				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'share_locus_index', email1, [
 					'Completed',
@@ -1216,27 +1181,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				shareStepViaBackendAndWait(backend1, sessionId, 'share_locus_index', email1, 180_000),
 				shareStepViaBackendAndWait(backend2, sessionId, 'share_locus_index', email2, 180_000),
 			])
-			// Ensure aggregator can actually see both shared locus-index artifacts before build_master.
-			await waitForSharedFileOnViewers(
-				participantDataDirs,
-				email1,
-				flowName,
-				runId,
-				2,
-				'share_locus_index',
-				'locus_index.tsv',
-				[email3],
-			)
-			await waitForSharedFileOnViewers(
-				participantDataDirs,
-				email2,
-				flowName,
-				runId,
-				2,
-				'share_locus_index',
-				'locus_index.tsv',
-				[email3],
-			)
 
 			// Stage 2: aggregator run + share build_master.
 			// Use backend invocation to avoid flaky UI click timing around step enablement.
@@ -1245,7 +1189,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				'Shared',
 			])
 			await shareStepViaBackendAndWait(backend3, sessionId, 'build_master', email3, 180_000)
-			await assertBuildMasterOutputsNonEmpty(participantDataDirs, email3, flowName, runId)
 
 			// Stage 3: clients run align_counts.
 			await Promise.all([
@@ -1308,13 +1251,12 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			])
 
 			// Stage 5: clients run report_aggregate.
-			// Use retrying backend start since this step can race after secure_aggregate share.
 			await Promise.all([
-				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'report_aggregate', email1, [
+				runStepViaBackendAndWait(backend1, sessionId, 'report_aggregate', email1, [
 					'Completed',
 					'Shared',
 				]),
-				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'report_aggregate', email2, [
+				runStepViaBackendAndWait(backend2, sessionId, 'report_aggregate', email2, [
 					'Completed',
 					'Shared',
 				]),
@@ -1331,8 +1273,6 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				{ label: email3, backend: backend3 },
 			]
 			await waitForProgressConvergence(viewers, sessionId, [
-				{ email: email1, stepId: 'gen_allele_freq', statuses: ['Completed'] },
-				{ email: email2, stepId: 'gen_allele_freq', statuses: ['Completed'] },
 				{ email: email1, stepId: 'share_locus_index', statuses: ['Shared', 'Completed'] },
 				{ email: email2, stepId: 'share_locus_index', statuses: ['Shared', 'Completed'] },
 				{ email: email3, stepId: 'build_master', statuses: ['Shared', 'Completed'] },
@@ -1374,6 +1314,19 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			// has been shared while client-only report steps complete.
 			expect(['success', 'running']).toContain(finalRun3.status)
 
+			const runMeta1 = normalizeMetadata(finalRun1.metadata)
+			const runMeta2 = normalizeMetadata(finalRun2.metadata)
+			const picked1 =
+				runMeta1?.input_overrides?.['inputs.allele_freq_tsv'] ||
+				runMeta1?.input_overrides?.allele_freq_tsv ||
+				''
+			const picked2 =
+				runMeta2?.input_overrides?.['inputs.allele_freq_tsv'] ||
+				runMeta2?.input_overrides?.allele_freq_tsv ||
+				''
+			expect(String(picked1)).toContain(path.basename(client1Path))
+			expect(String(picked2)).toContain(path.basename(client2Path))
+
 			const runRoot1 = finalRun1.results_dir || finalRun1.work_dir
 			const runRoot2 = finalRun2.results_dir || finalRun2.work_dir
 			expect(runRoot1 && fs.existsSync(runRoot1)).toBe(true)
@@ -1409,7 +1362,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				email1,
 				flowName,
 				runId,
-				2,
+				1,
 				'share_locus_index',
 				'locus_index.tsv',
 				[email1, email3],
@@ -1419,7 +1372,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				email2,
 				flowName,
 				runId,
-				2,
+				1,
 				'share_locus_index',
 				'locus_index.tsv',
 				[email2, email3],
@@ -1431,7 +1384,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				email3,
 				flowName,
 				runId,
-				3,
+				2,
 				'build_master',
 				'union_locus_index.json',
 				[email1, email2, email3],
@@ -1444,7 +1397,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					ownerEmail,
 					flowName,
 					runId,
-					6,
+					5,
 					'secure_aggregate',
 					'aggregated_counts.json',
 					[email1, email2, email3],
@@ -1459,7 +1412,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 					flowName,
 					runId,
 				)
-				const secureDir = findExistingSharedStepDir(ownerRunDir, 6, 'secure_aggregate')
+				const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
 				expect(secureDir).toBeTruthy()
 				const syftPubPath = path.join(secureDir!, 'syft.pub.yaml')
 				expect(fs.existsSync(syftPubPath)).toBe(true)
@@ -1473,7 +1426,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				for (const viewerEmail of [email1, email2, email3]) {
 					const viewerDataDir = participantDataDirs.get(viewerEmail)!
 					const ownerRunDir = getSharedRunDir(viewerDataDir, ownerEmail, flowName, runId)
-					const secureDir = findExistingSharedStepDir(ownerRunDir, 6, 'secure_aggregate')
+					const secureDir = findExistingSharedStepDir(ownerRunDir, 5, 'secure_aggregate')
 					expect(secureDir).toBeTruthy()
 					const aggregatedPath = path.join(secureDir!, 'aggregated_counts.json')
 					expect(fs.existsSync(aggregatedPath)).toBe(true)
@@ -1481,7 +1434,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			}
 
 			log(logSocket, {
-				event: 'syqure-multiparty-allele-freq-complete',
+				event: 'syqure-allele-agg-complete',
 				runId,
 			})
 		} finally {

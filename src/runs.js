@@ -83,7 +83,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 
-	function stopAllMultipartyPolling() {
+	function _stopAllMultipartyPolling() {
 		multipartyPollingIntervals.forEach((_, sessionId) => stopMultipartyPolling(sessionId))
 		multipartyStepLogIntervals.forEach((interval) => clearInterval(interval))
 		multipartyStepLogIntervals.clear()
@@ -1271,6 +1271,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				return verb || name || id
 			}
 			const stepById = new Map((state.steps || []).map((s) => [s.id, s]))
+			const isSecureAggregateStep = (step) => {
+				const id = String(step?.id || '').toLowerCase()
+				const modulePath = String(step?.module_path || '').toLowerCase()
+				return id === 'secure_aggregate' || modulePath.includes('secure-aggregate')
+			}
 			const areDependenciesSatisfied = (step) => {
 				const deps = Array.isArray(step?.depends_on) ? step.depends_on : []
 				if (deps.length === 0) return true
@@ -1284,8 +1289,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				if (!step?.my_action) return false
 				const readyToShare =
 					step.shares_output && step.status === 'Completed' && !step.outputs_shared
-				const readyToRun =
-					step.status === 'Ready' || (step.status === 'Pending' && areDependenciesSatisfied(step))
+				const isSecure = isSecureAggregateStep(step)
+				const readyToRun = isSecure
+					? step.status === 'Ready'
+					: step.status === 'Ready' || step.status === 'Pending'
 				if (!readyToRun && !readyToShare) return false
 				return areDependenciesSatisfied(step)
 			}
@@ -1511,8 +1518,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					}
 					const codeExpandedState = getNestedState(multipartyCodeExpanded, sessionId)
 					const logExpandedState = getNestedState(multipartyLogExpanded, sessionId)
-					const defaultExpanded =
-						!!isNextStep || effectiveStatus === 'Running' || effectiveStatus === 'Failed'
+					const defaultExpanded = true
 					const isExpanded = stepExpandedState.has(step.id)
 						? stepExpandedState.get(step.id)
 						: defaultExpanded
@@ -1782,12 +1788,16 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				`<button type="button" class="mp-btn mp-module-btn" onclick="window.runsModule?.viewStepModule('${step.module_path.replace(/'/g, "\\'")}')">📦 View Module</button>`,
 			)
 		}
-		if ((effectiveStatus === 'Ready' || effectiveStatus === 'Pending') && dependenciesSatisfied) {
+		const isSecureAggregate = String(step?.id || '').toLowerCase() === 'secure_aggregate'
+		const canRunForStatus = isSecureAggregate
+			? effectiveStatus === 'Ready'
+			: effectiveStatus === 'Ready' || effectiveStatus === 'Pending'
+		if (canRunForStatus && dependenciesSatisfied) {
 			actions.push(
 				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
 			)
 		}
-		if ((effectiveStatus === 'Ready' || effectiveStatus === 'Pending') && !dependenciesSatisfied) {
+		if (canRunForStatus && !dependenciesSatisfied) {
 			actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
 		}
 		if (effectiveStatus === 'Running') {
@@ -1840,6 +1850,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			} else {
 				actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
 			}
+		}
+		const canForceComplete =
+			effectiveStatus === 'Pending' ||
+			effectiveStatus === 'WaitingForInputs' ||
+			effectiveStatus === 'Failed' ||
+			(effectiveStatus === 'Ready' && !dependenciesSatisfied)
+		if (canForceComplete) {
+			const forceLabel = step.shares_output ? '⏭ Force Share' : '⏭ Force Complete'
+			actions.push(
+				`<button type="button" class="mp-btn mp-force-btn" onclick="window.runsModule?.forceCompleteStep('${sessionId}', '${step.id}')">${forceLabel}</button>`,
+			)
 		}
 		if (!actions.length) {
 			if (effectiveStatus === 'Shared') return '<span class="mp-shared">📨 Shared</span>'
@@ -2142,6 +2163,40 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 		}
 
+		const isSecureAggregate = String(stepId || '').toLowerCase() === 'secure_aggregate'
+		const canRetryPeerNotReady = (error) => {
+			if (!isSecureAggregate) return false
+			const text = String(error || '').toLowerCase()
+			return text.includes('peer not ready') || text.includes('peer_listener_precheck failed')
+		}
+		const executeStepWithPeerWait = async () => {
+			const maxWaitMs = 60000
+			const retryDelayMs = 1500
+			const start = Date.now()
+			let attempt = 0
+			let lastError = null
+			while (Date.now() - start < maxWaitMs + retryDelayMs) {
+				try {
+					await executeStep()
+					return
+				} catch (error) {
+					if (!canRetryPeerNotReady(error)) throw error
+					lastError = error
+					attempt += 1
+					const elapsedMs = Date.now() - start
+					console.warn(
+						`[Multiparty] secure_aggregate waiting for peer readiness (attempt=${attempt}, elapsed_ms=${elapsedMs})`,
+					)
+					if (elapsedMs >= maxWaitMs) {
+						throw new Error(
+							`Timed out waiting for peer readiness after ${Math.round(elapsedMs / 1000)}s. Last error: ${lastError}`,
+						)
+					}
+					await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+				}
+			}
+		}
+
 		try {
 			let dockerRunning = true
 			try {
@@ -2152,13 +2207,38 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			if (dockerRunning) {
-				await executeStep()
+				await executeStepWithPeerWait()
 			} else {
-				await showDockerWarningModal(executeStep)
+				await showDockerWarningModal(executeStepWithPeerWait)
 			}
 		} catch (error) {
 			console.error('Failed to run step:', error)
 			alert(`Failed to run step: ${error}`)
+		}
+	}
+	window.runsModule.forceCompleteStep = async function (sessionId, stepId) {
+		try {
+			const confirmed = dialog?.ask
+				? await dialog.ask(
+						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+						{ title: 'Force Step Status', type: 'warning' },
+					)
+				: confirm(
+						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
+					)
+			if (!confirmed) return
+
+			await invoke('force_complete_flow_step', { sessionId, stepId })
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
+			if (runCard) {
+				const runId = runCard.dataset.runId
+				await loadMultipartySteps(sessionId, runId)
+			}
+		} catch (error) {
+			console.error('Failed to force-complete step:', error)
+			alert(`Failed to force-complete step: ${error}`)
 		}
 	}
 	window.runsModule.openParticipantDatasite = async function (sessionId, participantEmail) {
@@ -2191,7 +2271,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 
 			await invoke('pause_flow_run', { runId })
-
 			const runCard = document
 				.querySelector(`[data-session-id="${sessionId}"]`)
 				?.closest('.flow-run-card')

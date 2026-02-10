@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use syftbox_sdk::syftbox::control as syftctl;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
@@ -575,6 +575,372 @@ pub struct SyftBoxDiagnostics {
     pub refresh_token: Option<String>,
     pub status: Option<SyftBoxStatus>,
     pub control_plane_requests: Vec<ControlPlaneLogEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TurnProbeResult {
+    pub ok: bool,
+    pub turn_url: String,
+    pub host: String,
+    pub port: u16,
+    pub resolved_addrs: Vec<String>,
+    pub tcp_reachable: bool,
+    pub udp_send_ok: bool,
+    pub udp_response_ok: bool,
+    pub stun_binding_ok: bool,
+    pub reflexive_addr: Option<String>,
+    pub rtt_ms: Option<u128>,
+    pub details: String,
+    pub attempt_logs: Vec<String>,
+}
+
+fn set_default_env_var_if_unset(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        std::env::set_var(key, value);
+    }
+}
+
+fn apply_syftbox_fast_mode_defaults() {
+    // Keep this fallback-capable (no strict/p2p-only) for normal desktop usage.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_SOCKET_ONLY", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_TCP_PROXY", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_QUIC", "1");
+
+    // Explicitly pin known-good fast tuning defaults.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE", "61440");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH", "1048576");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS", "1500");
+
+    // Keep packet-level hotlink logs off by default to avoid overwhelming
+    // desktop log windows. Set SYFTBOX_HOTLINK_DEBUG=1 when deep transport
+    // debugging is needed.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_DEBUG", "0");
+}
+
+fn resolve_turn_target(server_url: &str) -> Result<(String, u16, String), String> {
+    let trimmed = server_url.trim();
+    if trimmed.is_empty() {
+        return Err("Server URL is empty".to_string());
+    }
+
+    if let Ok(ice_servers) = std::env::var("SYFTBOX_HOTLINK_ICE_SERVERS") {
+        if !ice_servers.trim().is_empty() {
+            if let Some(raw_turn) = ice_servers
+                .split(',')
+                .map(|v| v.trim())
+                .find(|v| v.starts_with("turn:") || v.starts_with("turns:"))
+            {
+                let no_proto = raw_turn
+                    .trim_start_matches("turn:")
+                    .trim_start_matches("turns:");
+                let host_port = no_proto.split('?').next().unwrap_or(no_proto);
+                if let Some((host, port_str)) = host_port.rsplit_once(':') {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        return Ok((host.to_string(), port, raw_turn.to_string()));
+                    }
+                }
+                return Ok((host_port.to_string(), 3478, raw_turn.to_string()));
+            }
+        }
+    }
+
+    let parsed = reqwest::Url::parse(trimmed).map_err(|e| format!("Invalid server URL: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Server URL has no host".to_string())?
+        .to_string();
+    let turn_url = format!("turn:{host}:3478?transport=udp");
+    Ok((host, 3478, turn_url))
+}
+
+#[tauri::command]
+pub fn test_turn_connection(server_url: Option<String>) -> Result<TurnProbeResult, String> {
+    let resolved_server_url = if let Some(v) = server_url {
+        v
+    } else {
+        let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+        cfg.syftbox_credentials
+            .as_ref()
+            .and_then(|c| c.server_url.clone())
+            .unwrap_or_else(|| "https://syftbox.net".to_string())
+    };
+
+    let (host, port, turn_url) = resolve_turn_target(&resolved_server_url)?;
+    let socket_addrs: Vec<_> = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve {host}:{port}: {e}"))?
+        .collect();
+    let mut attempt_logs: Vec<String> = Vec::new();
+    attempt_logs.push(format!("server_url={}", resolved_server_url.trim()));
+    attempt_logs.push(format!("resolved_turn_url={turn_url}"));
+    if let Ok(ice_servers) = std::env::var("SYFTBOX_HOTLINK_ICE_SERVERS") {
+        if !ice_servers.trim().is_empty() {
+            attempt_logs.push(format!("env_ice_servers={ice_servers}"));
+        }
+    }
+    let turn_user_set = std::env::var("SYFTBOX_HOTLINK_TURN_USER")
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let turn_pass_set = std::env::var("SYFTBOX_HOTLINK_TURN_PASS")
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    attempt_logs.push(format!(
+        "env_turn_user_set={turn_user_set} env_turn_pass_set={turn_pass_set}"
+    ));
+
+    if socket_addrs.is_empty() {
+        return Err(format!("No addresses resolved for {host}:{port}"));
+    }
+
+    let resolved_addrs: Vec<String> = socket_addrs.iter().map(|a| a.to_string()).collect();
+    attempt_logs.push(format!("resolved_addrs={}", resolved_addrs.join(",")));
+
+    let timeout = Duration::from_secs(2);
+    let mut tcp_reachable = false;
+    for addr in &socket_addrs {
+        match TcpStream::connect_timeout(addr, timeout) {
+            Ok(_) => {
+                tcp_reachable = true;
+                attempt_logs.push(format!("tcp_connect {addr} -> ok"));
+                break;
+            }
+            Err(e) => {
+                attempt_logs.push(format!("tcp_connect {addr} -> fail ({e})"));
+            }
+        }
+    }
+
+    let mut udp_send_ok = false;
+    let mut udp_response_ok = false;
+    let mut stun_binding_ok = false;
+    let mut reflexive_addr: Option<String> = None;
+    let mut rtt_ms: Option<u128> = None;
+    let mut stun_failure: Option<String> = None;
+
+    for addr in &socket_addrs {
+        let req = build_stun_binding_request();
+        let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
+            stun_failure = Some("Failed to bind local UDP socket".to_string());
+            attempt_logs.push("udp_bind 0.0.0.0:0 -> fail".to_string());
+            break;
+        };
+        attempt_logs.push(format!("udp_bind 0.0.0.0:0 -> ok; probing {addr}"));
+        let _ = sock.set_write_timeout(Some(timeout));
+        let _ = sock.set_read_timeout(Some(timeout));
+        if let Err(e) = sock.connect(addr) {
+            attempt_logs.push(format!("udp_connect {addr} -> fail ({e})"));
+            continue;
+        }
+        attempt_logs.push(format!("udp_connect {addr} -> ok"));
+        let start = Instant::now();
+        if let Err(e) = sock.send(&req) {
+            attempt_logs.push(format!("udp_send_binding_request {addr} -> fail ({e})"));
+            continue;
+        }
+        udp_send_ok = true;
+        attempt_logs.push(format!("udp_send_binding_request {addr} -> ok"));
+        let mut buf = [0u8; 1500];
+        match sock.recv(&mut buf) {
+            Ok(n) => {
+                udp_response_ok = true;
+                attempt_logs.push(format!("udp_recv {addr} -> ok bytes={n}"));
+                match parse_stun_binding_response(&buf[..n], &req[8..20]) {
+                    Ok(mapped) => {
+                        stun_binding_ok = true;
+                        reflexive_addr = mapped;
+                        rtt_ms = Some(start.elapsed().as_millis());
+                        attempt_logs.push(format!(
+                            "stun_binding {addr} -> ok mapped={}",
+                            reflexive_addr
+                                .clone()
+                                .unwrap_or_else(|| "<not-provided>".to_string())
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        attempt_logs.push(format!("stun_binding {addr} -> fail ({e})"));
+                        stun_failure = Some(e);
+                    }
+                }
+            }
+            Err(e) => {
+                attempt_logs.push(format!("udp_recv {addr} -> fail ({e})"));
+            }
+        }
+    }
+
+    let ok = stun_binding_ok;
+    let details = if ok {
+        match (&reflexive_addr, rtt_ms) {
+            (Some(addr), Some(ms)) => format!(
+                "TURN probe passed for {} (stun_binding=true, reflexive_addr={}, rtt_ms={})",
+                turn_url, addr, ms
+            ),
+            _ => format!("TURN probe passed for {} (stun_binding=true)", turn_url),
+        }
+    } else if tcp_reachable || udp_send_ok {
+        format!(
+            "TURN port reachable but STUN binding failed for {} (tcp={}, udp_send={}, udp_response={}, reason={})",
+            turn_url,
+            tcp_reachable,
+            udp_send_ok,
+            udp_response_ok,
+            stun_failure.unwrap_or_else(|| "no_stun_response".to_string())
+        )
+    } else {
+        format!(
+            "TURN probe failed for {} (tcp={}, udp_send={})",
+            turn_url, tcp_reachable, udp_send_ok
+        )
+    };
+    attempt_logs.push(format!("final_ok={ok}"));
+    attempt_logs.push(format!(
+        "final_status tcp_reachable={} udp_send_ok={} udp_response_ok={} stun_binding_ok={} reflexive_addr={} rtt_ms={}",
+        tcp_reachable,
+        udp_send_ok,
+        udp_response_ok,
+        stun_binding_ok,
+        reflexive_addr.clone().unwrap_or_else(|| "<none>".to_string()),
+        rtt_ms
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    for line in &attempt_logs {
+        crate::desktop_log!("[TURN probe] {}", line);
+    }
+
+    Ok(TurnProbeResult {
+        ok,
+        turn_url,
+        host,
+        port,
+        resolved_addrs,
+        tcp_reachable,
+        udp_send_ok,
+        udp_response_ok,
+        stun_binding_ok,
+        reflexive_addr,
+        rtt_ms,
+        details,
+        attempt_logs,
+    })
+}
+
+fn build_stun_binding_request() -> [u8; 20] {
+    // STUN header: type(2)=0x0001 binding request, length(2)=0,
+    // magic cookie(4)=0x2112A442, transaction id(12)=random bytes.
+    let mut out = [0u8; 20];
+    out[0] = 0x00;
+    out[1] = 0x01;
+    out[2] = 0x00;
+    out[3] = 0x00;
+    out[4] = 0x21;
+    out[5] = 0x12;
+    out[6] = 0xA4;
+    out[7] = 0x42;
+    let id = uuid::Uuid::new_v4();
+    out[8..20].copy_from_slice(&id.as_bytes()[..12]);
+    out
+}
+
+fn parse_stun_binding_response(payload: &[u8], tx_id: &[u8]) -> Result<Option<String>, String> {
+    const STUN_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
+    if payload.len() < 20 {
+        return Err("response_too_short".to_string());
+    }
+
+    let msg_type = u16::from_be_bytes([payload[0], payload[1]]);
+    let msg_len = u16::from_be_bytes([payload[2], payload[3]]) as usize;
+    if payload[4..8] != STUN_COOKIE {
+        return Err("missing_stun_cookie".to_string());
+    }
+    if &payload[8..20] != tx_id {
+        return Err("transaction_id_mismatch".to_string());
+    }
+    if payload.len() < 20 + msg_len {
+        return Err("truncated_stun_payload".to_string());
+    }
+
+    if msg_type == 0x0111 {
+        let reason = parse_stun_error_reason(&payload[..20 + msg_len])
+            .unwrap_or_else(|| "error_response".to_string());
+        return Err(format!("stun_error:{reason}"));
+    }
+    if msg_type != 0x0101 {
+        return Err(format!("unexpected_stun_type:0x{msg_type:04x}"));
+    }
+
+    Ok(parse_xor_mapped_address(&payload[..20 + msg_len]))
+}
+
+fn parse_stun_error_reason(payload: &[u8]) -> Option<String> {
+    let mut idx = 20usize;
+    while idx + 4 <= payload.len() {
+        let attr_type = u16::from_be_bytes([payload[idx], payload[idx + 1]]);
+        let attr_len = u16::from_be_bytes([payload[idx + 2], payload[idx + 3]]) as usize;
+        idx += 4;
+        if idx + attr_len > payload.len() {
+            return None;
+        }
+        let value = &payload[idx..idx + attr_len];
+        if attr_type == 0x0009 && attr_len >= 4 {
+            let class = (value[2] & 0x07) as u16;
+            let number = value[3] as u16;
+            let code = class * 100 + number;
+            let reason = if attr_len > 4 {
+                String::from_utf8_lossy(&value[4..]).to_string()
+            } else {
+                "".to_string()
+            };
+            if reason.trim().is_empty() {
+                return Some(code.to_string());
+            }
+            return Some(format!("{code}:{reason}"));
+        }
+        idx += attr_len;
+        let rem = idx % 4;
+        if rem != 0 {
+            idx += 4 - rem;
+        }
+    }
+    None
+}
+
+fn parse_xor_mapped_address(payload: &[u8]) -> Option<String> {
+    const STUN_COOKIE_U16: u16 = 0x2112;
+    const STUN_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
+
+    let mut idx = 20usize;
+    while idx + 4 <= payload.len() {
+        let attr_type = u16::from_be_bytes([payload[idx], payload[idx + 1]]);
+        let attr_len = u16::from_be_bytes([payload[idx + 2], payload[idx + 3]]) as usize;
+        idx += 4;
+        if idx + attr_len > payload.len() {
+            return None;
+        }
+        let value = &payload[idx..idx + attr_len];
+        if attr_type == 0x0020 && attr_len >= 8 {
+            let family = value[1];
+            let x_port = u16::from_be_bytes([value[2], value[3]]);
+            let port = x_port ^ STUN_COOKIE_U16;
+            if family == 0x01 && attr_len >= 8 {
+                let a = value[4] ^ STUN_COOKIE[0];
+                let b = value[5] ^ STUN_COOKIE[1];
+                let c = value[6] ^ STUN_COOKIE[2];
+                let d = value[7] ^ STUN_COOKIE[3];
+                return Some(format!("{a}.{b}.{c}.{d}:{port}"));
+            }
+        }
+        idx += attr_len;
+        let rem = idx % 4;
+        if rem != 0 {
+            idx += 4 - rem;
+        }
+    }
+    None
 }
 
 fn normalize_percent(value: f64) -> f64 {
@@ -1194,6 +1560,7 @@ pub async fn syftbox_submit_otp(
             // Restart the local SyftBox daemon so it picks up fresh auth tokens.
             let restart_runtime = runtime.clone();
             tauri::async_runtime::spawn_blocking(move || {
+                apply_syftbox_fast_mode_defaults();
                 if let Err(e) = syftctl::stop_syftbox(&restart_runtime) {
                     crate::desktop_log!("ℹ️ Failed to stop SyftBox after auth: {}", e);
                 }
@@ -1447,6 +1814,8 @@ fn get_tx_rx_bytes(client_url: &Option<String>) -> (u64, u64) {
 
 #[tauri::command]
 pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
+    apply_syftbox_fast_mode_defaults();
+
     let runtime = load_runtime_config()?;
     ensure_syftbox_config(&runtime)?;
 

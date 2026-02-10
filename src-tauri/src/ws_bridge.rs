@@ -296,6 +296,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("trigger_syftbox_sync", "syftbox", false),
         cmd_async("syftbox_queue_status", "syftbox", true),
         cmd("get_syftbox_diagnostics", "syftbox", true),
+        cmd("test_turn_connection", "syftbox", true),
         cmd_async("syftbox_subscriptions_discovery", "syftbox", true),
         cmd_long("syftbox_upload_action", "syftbox", false),
         cmd_async("syftbox_request_otp", "syftbox", false),
@@ -2733,6 +2734,18 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::get_syftbox_diagnostics().map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "test_turn_connection" => {
+            let server_url: Option<String> = args
+                .get("serverUrl")
+                .cloned()
+                .or_else(|| args.get("server_url").cloned())
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| format!("Failed to parse serverUrl: {}", e))?;
+            let result = crate::commands::syftbox::test_turn_connection(server_url)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "get_database_path" => {
             let result = crate::commands::settings::get_database_path()?;
             Ok(serde_json::to_value(result).unwrap())
@@ -4077,6 +4090,28 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 crate::commands::multiparty::run_flow_step(state.clone(), session_id, step_id)
                     .await
                     .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "force_complete_flow_step" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let step_id: String = serde_json::from_value(
+                args.get("stepId")
+                    .cloned()
+                    .ok_or_else(|| "Missing stepId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse stepId: {}", e))?;
+            let result = crate::commands::multiparty::force_complete_flow_step(
+                state.clone(),
+                session_id,
+                step_id,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "share_step_outputs" => {

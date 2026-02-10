@@ -383,39 +383,7 @@ fetch_syqure() {
 
   mkdir -p "$SYQURE_OUT_DIR"
   rm -f "$SYQURE_OUT_DIR/syqure"
-
-  local local_bin="${SYQURE_LOCAL_BIN:-}"
-  if [[ -z "$local_bin" ]]; then
-    local candidates=(
-      "$ROOT_DIR/syqure/target/release/syqure"
-      "$ROOT_DIR/../syqure/target/release/syqure"
-      "$ROOT_DIR/syqure/target/debug/syqure"
-      "$ROOT_DIR/../syqure/target/debug/syqure"
-    )
-    for candidate in "${candidates[@]}"; do
-      if [[ -x "$candidate" ]]; then
-        local_bin="$candidate"
-        break
-      fi
-    done
-  fi
-
-  if [[ -n "$local_bin" && -x "$local_bin" ]]; then
-    cp "$local_bin" "$SYQURE_OUT_DIR/syqure"
-    chmod +x "$SYQURE_OUT_DIR/syqure"
-    echo "✅ syqure bundled from local binary: $local_bin"
-    return
-  fi
-
-  if [[ -n "${SYQURE_DOWNLOAD_URL:-}" ]]; then
-    echo "⬇️  Fetching syqure from SYQURE_DOWNLOAD_URL"
-    download_with_retry "$SYQURE_DOWNLOAD_URL" "$SYQURE_OUT_DIR/syqure" 3 3
-    chmod +x "$SYQURE_OUT_DIR/syqure"
-    echo "✅ syqure bundled from download URL"
-    return
-  fi
-
-  echo "⚠️  syqure binary not bundled (no local build and SYQURE_DOWNLOAD_URL unset)"
+  echo "⏭️  syqure bundling disabled; stale bundled binary removed (local compiled binary required)"
 }
 
 main() {

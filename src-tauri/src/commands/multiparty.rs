@@ -8,14 +8,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SEQURE_COMMUNICATION_PORT_STRIDE: usize = 1000;
+const SEQURE_DATA_SHARING_PORT_OFFSET: usize = 10_000;
+const SEQURE_PORT_BASE_MIN: usize = 20_000;
 
 fn flow_spec_root(flow_spec: &serde_json::Value) -> &serde_json::Value {
     flow_spec.get("spec").unwrap_or(flow_spec)
@@ -172,7 +175,9 @@ fn ensure_flow_subscriptions(
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst)
         .map_err(|e| format!("Failed to create destination {}: {}", dst.display(), e))?;
-    for entry in fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))? {
+    for entry in
+        fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))?
+    {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
@@ -180,8 +185,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if src_path.is_file() {
             if let Some(parent) = dst_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!("Failed to create directory {}: {}", parent.display(), e)
+                })?;
             }
             fs::copy(&src_path, &dst_path).map_err(|e| {
                 format!(
@@ -237,9 +243,12 @@ fn publish_flow_source_for_session(
                     .and_then(|p| p.as_str())
             });
 
-            let Some(src_module_dir) =
-                resolve_module_directory(flow_name, module_path, module_ref)
-            else {
+            let Some(src_module_dir) = resolve_module_directory(
+                flow_name,
+                module_path,
+                module_ref,
+                source_flow_dir.to_str(),
+            ) else {
                 continue;
             };
 
@@ -248,12 +257,18 @@ fn publish_flow_source_for_session(
                 .and_then(|n| n.to_str())
                 .map(|s| s.to_string())
                 .or_else(|| {
-                    module_path
-                        .and_then(|p| PathBuf::from(p).file_name().map(|n| n.to_string_lossy().to_string()))
+                    module_path.and_then(|p| {
+                        PathBuf::from(p)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                    })
                 })
                 .or_else(|| {
-                    module_ref
-                        .map(|r| r.trim_start_matches("./").trim_start_matches("modules/").replace('_', "-"))
+                    module_ref.map(|r| {
+                        r.trim_start_matches("./")
+                            .trim_start_matches("modules/")
+                            .replace('_', "-")
+                    })
                 })
                 .unwrap_or_else(|| "module".to_string());
 
@@ -473,6 +488,14 @@ fn tcp_port_is_listening(port: u16) -> bool {
     TcpStream::connect_timeout(&addr.into(), Duration::from_millis(120)).is_ok()
 }
 
+fn probe_local_tcp_port(port: usize, timeout: Duration) -> std::result::Result<(), String> {
+    let port_u16 = u16::try_from(port).map_err(|_| format!("invalid-port({})", port))?;
+    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port_u16);
+    TcpStream::connect_timeout(&addr.into(), timeout)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn select_step_log_lines(log_text: &str, step_id: &str, lines: usize) -> String {
     let all_lines: Vec<String> = log_text.lines().map(|s| s.to_string()).collect();
     if all_lines.is_empty() {
@@ -586,7 +609,10 @@ fn collect_step_readiness_blockers(flow_state: &MultipartyFlowState, step_id: &s
 
     for dep_id in &step.depends_on {
         let Some(dep_step) = flow_state.steps.iter().find(|s| s.id == *dep_id) else {
-            lines.push(format!("dependency '{}' missing from session state", dep_id));
+            lines.push(format!(
+                "dependency '{}' missing from session state",
+                dep_id
+            ));
             continue;
         };
 
@@ -757,12 +783,24 @@ fn collect_mpc_tcp_marker_status(mpc_dir: &Path) -> Vec<String> {
                 Some(false) => "down",
                 None => "unknown",
             };
+            let icon = if channel.marker && channel.accept && channel.listener_up == Some(true) {
+                "✅"
+            } else if channel.marker && channel.accept {
+                "⚠️"
+            } else {
+                "❌"
+            };
+            let from = channel.from_email.as_deref().unwrap_or("?");
+            let to = channel.to_email.as_deref().unwrap_or("?");
             format!(
-                "{} marker={} accept={} port={} listener={} requests={} responses={}",
+                "{} proxy {} ({} -> {}) pair_port={} marker={} accept={} listener={} requests={} responses={}",
+                icon,
                 channel.channel_id,
+                from,
+                to,
+                port_text,
                 if channel.marker { "yes" } else { "no" },
                 if channel.accept { "yes" } else { "no" },
-                port_text,
                 listener,
                 channel.requests,
                 channel.responses
@@ -835,6 +873,7 @@ fn resolve_module_directory(
     flow_name: &str,
     module_path: Option<&str>,
     module_ref: Option<&str>,
+    source_flow_path: Option<&str>,
 ) -> Option<PathBuf> {
     let biovault_home = biovault::config::get_biovault_home().ok()?;
     let default_flow_root = biovault_home.join("flows").join(flow_name);
@@ -851,6 +890,15 @@ fn resolve_module_directory(
         .unwrap_or(default_flow_root);
     let modules_root = biovault_home.join("modules");
 
+    // Collect all candidate roots: the biovault home flows dir + the original import path.
+    let mut roots = vec![flow_root];
+    if let Some(sfp) = source_flow_path {
+        let p = PathBuf::from(sfp);
+        if p.is_dir() && !roots.contains(&p) {
+            roots.push(p);
+        }
+    }
+
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(path_str) = module_path.map(str::trim).filter(|s| !s.is_empty()) {
@@ -859,7 +907,13 @@ fn resolve_module_directory(
             candidates.push(raw);
         } else {
             let trimmed = path_str.trim_start_matches("./");
-            candidates.push(flow_root.join(trimmed));
+            for root in &roots {
+                candidates.push(root.join(trimmed));
+                candidates.push(
+                    root.join("modules")
+                        .join(trimmed.trim_start_matches("modules/")),
+                );
+            }
             candidates.push(modules_root.join(trimmed.trim_start_matches("modules/")));
         }
     }
@@ -870,19 +924,16 @@ fn resolve_module_directory(
             candidates.push(raw);
         } else {
             let trimmed = module_ref.trim_start_matches("./");
-            // Handle path-like refs such as "./modules/gen-variants".
-            candidates.push(flow_root.join(trimmed));
-            candidates.push(modules_root.join(trimmed.trim_start_matches("modules/")));
-            // If ref already includes "modules/", avoid duplicating.
-            if let Some(stripped) = trimmed.strip_prefix("modules/") {
-                candidates.push(flow_root.join("modules").join(stripped));
-                candidates.push(modules_root.join(stripped));
-            } else {
-                candidates.push(flow_root.join("modules").join(trimmed));
-                candidates.push(modules_root.join(trimmed));
+            for root in &roots {
+                candidates.push(root.join(trimmed));
+                if let Some(stripped) = trimmed.strip_prefix("modules/") {
+                    candidates.push(root.join("modules").join(stripped));
+                } else {
+                    candidates.push(root.join("modules").join(trimmed));
+                }
+                candidates.push(root.join("modules").join(module_ref.replace('_', "-")));
             }
-            // Handle short refs such as "gen_variants".
-            candidates.push(flow_root.join("modules").join(module_ref.replace('_', "-")));
+            candidates.push(modules_root.join(trimmed.trim_start_matches("modules/")));
             candidates.push(modules_root.join(module_ref.replace('_', "-")));
         }
     }
@@ -908,7 +959,11 @@ fn resolve_module_directory(
         if let Some(name) = base.file_name().and_then(|n| n.to_str()) {
             lookup_names.push(name.to_string());
         }
-        lookup_names.push(module_ref.trim_start_matches("./modules/").replace('_', "-"));
+        lookup_names.push(
+            module_ref
+                .trim_start_matches("./modules/")
+                .replace('_', "-"),
+        );
     }
     lookup_names.sort();
     lookup_names.dedup();
@@ -1046,7 +1101,10 @@ fn validate_module_assets_exist(module_dir: &Path) -> Result<(), String> {
     }
 }
 
-fn preflight_validate_flow_modules(flow_name: &str, flow_spec: &serde_json::Value) -> Result<(), String> {
+fn preflight_validate_flow_modules(
+    flow_name: &str,
+    flow_spec: &serde_json::Value,
+) -> Result<(), String> {
     let spec_root = flow_spec_root(flow_spec);
     let steps = spec_root
         .get("steps")
@@ -1076,8 +1134,7 @@ fn preflight_validate_flow_modules(flow_name: &str, flow_spec: &serde_json::Valu
                 .and_then(|p| p.as_str())
         });
 
-        let Some(module_dir) =
-            resolve_module_directory(flow_name, module_path, module_ref)
+        let Some(module_dir) = resolve_module_directory(flow_name, module_path, module_ref, None)
         else {
             issues.push(format!(
                 "step '{}' references module '{}' but it could not be resolved",
@@ -1126,13 +1183,592 @@ fn mpc_comm_port_with_base(
     base + offset_major + offset_minor
 }
 
-fn stable_syqure_port_base_for_run(run_id: &str, party_count: usize) -> Result<usize, String> {
-    run_dynamic::prepare_syqure_port_base_for_run(run_id, party_count, None).map_err(|e| {
+fn max_syqure_base_port(party_count: usize) -> usize {
+    let parties = party_count.max(2);
+    let max_party_base_delta = (parties - 1) * SEQURE_COMMUNICATION_PORT_STRIDE;
+    let max_pair_offset = parties * (parties - 1) / 2;
+    let reserve =
+        max_party_base_delta + max_pair_offset + SEQURE_DATA_SHARING_PORT_OFFSET + parties;
+    (u16::MAX as usize).saturating_sub(reserve)
+}
+
+fn deterministic_syqure_port_base_for_session(
+    run_id: &str,
+    party_count: usize,
+) -> Result<usize, String> {
+    let max_base = max_syqure_base_port(party_count);
+    if max_base <= SEQURE_PORT_BASE_MIN {
+        return Err(format!(
+            "invalid Syqure base-port range for {} parties",
+            party_count
+        ));
+    }
+    let span = max_base - SEQURE_PORT_BASE_MIN + 1;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    run_id.hash(&mut hasher);
+    party_count.hash(&mut hasher);
+    Ok(SEQURE_PORT_BASE_MIN + (hasher.finish() as usize % span))
+}
+
+fn required_syqure_ports_for_party(
+    global_base: usize,
+    party_id: usize,
+    party_count: usize,
+) -> Result<Vec<u16>, String> {
+    let parties = party_count.max(2);
+    if party_id >= parties {
+        return Err(format!(
+            "party_id {} is out of bounds for party_count {}",
+            party_id, parties
+        ));
+    }
+    let local_base = global_base + party_id * SEQURE_COMMUNICATION_PORT_STRIDE;
+    let mut ports: BTreeSet<u16> = BTreeSet::new();
+    for remote_pid in 0..parties {
+        if remote_pid == party_id {
+            continue;
+        }
+        let port = mpc_comm_port_with_base(local_base, party_id, remote_pid, parties);
+        let port_u16 =
+            u16::try_from(port).map_err(|_| format!("invalid local proxy port {}", port))?;
+        ports.insert(port_u16);
+    }
+    let data_port = local_base + SEQURE_DATA_SHARING_PORT_OFFSET;
+    let data_port_u16 = u16::try_from(data_port)
+        .map_err(|_| format!("invalid local data-sharing port {}", data_port))?;
+    ports.insert(data_port_u16);
+    Ok(ports.into_iter().collect())
+}
+
+fn ensure_local_proxy_ports_available(
+    run_id: &str,
+    global_base: usize,
+    party_id: usize,
+    party_count: usize,
+) -> Result<(), String> {
+    let required = required_syqure_ports_for_party(global_base, party_id, party_count)?;
+    let mut busy = Vec::new();
+    for port in required {
+        if TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_err() {
+            busy.push(port);
+        }
+    }
+    if busy.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "PORT CONFLICT [{}]: local Syqure proxy ports already in use for run {} (party_id={}): {}",
+        "E_PORT_CONFLICT_LOCAL_BUSY",
+        run_id,
+        party_id,
+        busy.iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+#[derive(Debug, Default)]
+struct SecureAggregatePortAudit {
+    lines: Vec<String>,
+    conflicts: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct StreamTcpMarkerView {
+    port: Option<usize>,
+    global_base: Option<usize>,
+    party_count: Option<usize>,
+    local_party_id: Option<usize>,
+    remote_party_id: Option<usize>,
+    ports: HashMap<String, usize>,
+}
+
+fn parse_stream_tcp_marker(path: &Path) -> Result<StreamTcpMarkerView, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+    let json: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    let mut ports = HashMap::new();
+    if let Some(map) = json.get("ports").and_then(|v| v.as_object()) {
+        for (k, v) in map {
+            if let Some(port) = v.as_u64().and_then(|n| usize::try_from(n).ok()) {
+                ports.insert(k.clone(), port);
+            }
+        }
+    }
+
+    Ok(StreamTcpMarkerView {
+        port: json
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok()),
+        global_base: json
+            .get("global_base")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok()),
+        party_count: json
+            .get("party_count")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok()),
+        local_party_id: json
+            .get("local_party_id")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok()),
+        remote_party_id: json
+            .get("remote_party_id")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok()),
+        ports,
+    })
+}
+
+fn canonical_syqure_party_order_from_participants(participants: &[FlowParticipant]) -> Vec<String> {
+    participants
+        .iter()
+        .filter(|p| p.role.eq_ignore_ascii_case("aggregator"))
+        .chain(
+            participants
+                .iter()
+                .filter(|p| !p.role.eq_ignore_ascii_case("aggregator")),
+        )
+        .map(|p| p.email.clone())
+        .collect()
+}
+
+fn audit_secure_aggregate_port_configuration(
+    work_dir: &Path,
+    flow_name: &str,
+    session_id: &str,
+    participants: &[FlowParticipant],
+    my_email: &str,
+    input_overrides: &HashMap<String, String>,
+    flow_spec: Option<&serde_json::Value>,
+    syqure_port_base: Option<usize>,
+) -> Result<SecureAggregatePortAudit, String> {
+    let (party_emails, order_source) = if let Some(spec) = flow_spec {
+        choose_syqure_party_order(participants, my_email, input_overrides, spec)
+    } else {
+        (
+            canonical_syqure_party_order_from_participants(participants),
+            "participants role order (aggregator first, flow_spec unavailable)".to_string(),
+        )
+    };
+    let Some(base) = syqure_port_base else {
+        return Err(
+            "PORT CONFLICT [E_PORT_CONFLICT_MISSING_BASE]: syqure_port_base missing".to_string(),
+        );
+    };
+
+    let local_party_id = party_emails
+        .iter()
+        .position(|email| email.eq_ignore_ascii_case(my_email))
+        .ok_or_else(|| {
+            format!(
+                "PORT CONFLICT [E_PORT_CONFLICT_LOCAL_ID]: '{}' missing from party order",
+                my_email
+            )
+        })?;
+
+    let deterministic_base =
+        deterministic_syqure_port_base_for_session(session_id, party_emails.len())?;
+    let mut audit = SecureAggregatePortAudit::default();
+    audit.lines.push(format!(
+        "🔎 secure_aggregate port plan: run={} order_source={} order={} local_party_id={} configured_base={} deterministic_base={}",
+        session_id,
+        order_source,
+        party_emails.join(","),
+        local_party_id,
+        base,
+        deterministic_base
+    ));
+    if base != deterministic_base {
+        audit.lines.push(format!(
+            "⚠️ base drift (non-fatal): configured_base={} deterministic_base={} (ports at seed were likely busy)",
+            base, deterministic_base
+        ));
+    }
+
+    let party_count = party_emails.len().max(2);
+    let mpc_root = work_dir.join("_mpc");
+    for (peer_id, peer_email) in party_emails.iter().enumerate() {
+        if peer_id == local_party_id {
+            continue;
+        }
+        let channel_id = format!("{}_to_{}", local_party_id, peer_id);
+        let channel_dir = mpc_root.join(&channel_id);
+        let marker_path = channel_dir.join("stream.tcp");
+        let accept_path = channel_dir.join("stream.accept");
+
+        let pair_port = mpc_comm_port_with_base(base, local_party_id, peer_id, party_count);
+        let local_base = base + local_party_id * SEQURE_COMMUNICATION_PORT_STRIDE;
+        let peer_base = base + peer_id * SEQURE_COMMUNICATION_PORT_STRIDE;
+        let local_listener_port =
+            mpc_comm_port_with_base(local_base, local_party_id, peer_id, party_count);
+        let peer_listener_port =
+            mpc_comm_port_with_base(peer_base, peer_id, local_party_id, party_count);
+
+        let accept_ok = accept_path.exists()
+            && fs::read_to_string(&accept_path)
+                .ok()
+                .map(|v| v.trim() == "1")
+                .unwrap_or(false);
+
+        let listener_ok = u16::try_from(local_listener_port)
+            .ok()
+            .map(tcp_port_is_listening)
+            .unwrap_or(false);
+
+        let mut marker_summary = "marker=missing".to_string();
+        if marker_path.exists() {
+            match parse_stream_tcp_marker(&marker_path) {
+                Ok(marker) => {
+                    marker_summary = format!(
+                        "marker_port={:?} marker_base={:?} marker_parties={:?}",
+                        marker.port, marker.global_base, marker.party_count
+                    );
+                    if marker.port != Some(pair_port) {
+                        audit.conflicts.push(format!(
+                            "PORT CONFLICT [E_PORT_CONFLICT_MARKER_PORT]: {} expected_pair_port={} marker_port={:?}",
+                            channel_id, pair_port, marker.port
+                        ));
+                    }
+                    if let Some(mb) = marker.global_base {
+                        if mb != base {
+                            audit.conflicts.push(format!(
+                                "PORT CONFLICT [E_PORT_CONFLICT_MARKER_BASE]: {} expected_base={} marker_base={}",
+                                channel_id, base, mb
+                            ));
+                        }
+                    }
+                    if let Some(mp) = marker.party_count {
+                        if mp != party_count {
+                            audit.conflicts.push(format!(
+                                "PORT CONFLICT [E_PORT_CONFLICT_MARKER_PARTY_COUNT]: {} expected_party_count={} marker_party_count={}",
+                                channel_id, party_count, mp
+                            ));
+                        }
+                    }
+                    if let Some(mid) = marker.local_party_id {
+                        if mid != local_party_id {
+                            audit.conflicts.push(format!(
+                                "PORT CONFLICT [E_PORT_CONFLICT_MARKER_LOCAL_ID]: {} expected_local_party_id={} marker_local_party_id={}",
+                                channel_id, local_party_id, mid
+                            ));
+                        }
+                    }
+                    if let Some(mid) = marker.remote_party_id {
+                        if mid != peer_id {
+                            audit.conflicts.push(format!(
+                                "PORT CONFLICT [E_PORT_CONFLICT_MARKER_REMOTE_ID]: {} expected_remote_party_id={} marker_remote_party_id={}",
+                                channel_id, peer_id, mid
+                            ));
+                        }
+                    }
+                    let local_marker_port = marker.ports.get(my_email).copied();
+                    if local_marker_port != Some(local_listener_port) {
+                        audit.conflicts.push(format!(
+                            "PORT CONFLICT [E_PORT_CONFLICT_MARKER_LOCAL_LISTENER]: {} expected_local_listener_port={} marker_local_listener_port={:?}",
+                            channel_id, local_listener_port, local_marker_port
+                        ));
+                    }
+                    let peer_marker_port = marker.ports.get(peer_email).copied();
+                    if peer_marker_port != Some(peer_listener_port) {
+                        audit.conflicts.push(format!(
+                            "PORT CONFLICT [E_PORT_CONFLICT_MARKER_PEER_LISTENER]: {} expected_peer_listener_port={} marker_peer_listener_port={:?}",
+                            channel_id, peer_listener_port, peer_marker_port
+                        ));
+                    }
+                }
+                Err(err) => {
+                    audit.conflicts.push(format!(
+                        "PORT CONFLICT [E_PORT_CONFLICT_MARKER_PARSE]: {} {}",
+                        channel_id, err
+                    ));
+                }
+            }
+        } else {
+            audit.conflicts.push(format!(
+                "PORT CONFLICT [E_PORT_CONFLICT_MARKER_MISSING]: {} missing {}",
+                channel_id,
+                marker_path.display()
+            ));
+        }
+
+        let status_icon = if accept_ok && listener_ok {
+            "✅"
+        } else {
+            "⚠️"
+        };
+        audit.lines.push(format!(
+            "{} proxy {} ({} -> {}) pair_port={} local_listener_port={} peer_listener_port={} accept={} listener={} {}",
+            status_icon,
+            channel_id,
+            my_email,
+            peer_email,
+            pair_port,
+            local_listener_port,
+            peer_listener_port,
+            if accept_ok { "yes" } else { "no" },
+            if listener_ok { "up" } else { "down" },
+            marker_summary
+        ));
+    }
+
+    let biovault_home = biovault::config::get_biovault_home()
+        .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
+    for participant in participants {
+        let mut observed_base: Option<usize> = None;
+        let mut observed_from = String::new();
+        for base_dir in participant_flow_dirs_for_viewer(
+            &biovault_home,
+            my_email,
+            &participant.email,
+            flow_name,
+            session_id,
+        ) {
+            let state_path = base_dir.join("multiparty.state.json");
+            if !state_path.exists() {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(&state_path) else {
+                continue;
+            };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            observed_base = json
+                .get("syqure_port_base")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| usize::try_from(v).ok());
+            observed_from = state_path.display().to_string();
+            if observed_base.is_some() {
+                break;
+            }
+        }
+
+        match observed_base {
+            Some(observed) => {
+                if observed == base {
+                    audit.lines.push(format!(
+                        "✅ observed participant base {} => {} (from {})",
+                        participant.email, observed, observed_from
+                    ));
+                } else {
+                    audit.conflicts.push(format!(
+                        "PORT CONFLICT [E_PORT_CONFLICT_PARTICIPANT_BASE]: participant={} observed_base={} expected_base={} source={}",
+                        participant.email, observed, base, observed_from
+                    ));
+                }
+            }
+            None => audit.lines.push(format!(
+                "⚠️ observed participant base {} => unavailable (no synced multiparty.state.json yet)",
+                participant.email
+            )),
+        }
+    }
+
+    Ok(audit)
+}
+
+fn precheck_secure_aggregate_peer_listeners(
+    participants: &[FlowParticipant],
+    my_email: &str,
+    input_overrides: &HashMap<String, String>,
+    flow_spec: Option<&serde_json::Value>,
+    syqure_port_base: Option<usize>,
+) -> Result<String, String> {
+    let (party_emails, order_source) = if let Some(spec) = flow_spec {
+        choose_syqure_party_order(participants, my_email, input_overrides, spec)
+    } else {
+        (
+            participants
+                .iter()
+                .map(|p| p.email.clone())
+                .collect::<Vec<_>>(),
+            "participants order (flow_spec unavailable)".to_string(),
+        )
+    };
+
+    let local_party_id = party_emails
+        .iter()
+        .position(|email| email.eq_ignore_ascii_case(my_email))
+        .ok_or_else(|| {
+            format!(
+                "current participant '{}' is missing from party order",
+                my_email
+            )
+        })?;
+
+    let Some(base_port) = syqure_port_base else {
+        return Ok(format!(
+            "peer_listener_precheck skipped: syqure_port_base missing order_source={} order={}",
+            order_source,
+            party_emails.join(",")
+        ));
+    };
+
+    let party_count = party_emails.len();
+    if party_count <= 1 {
+        return Ok(format!(
+            "peer_listener_precheck skipped: party_count={} order_source={}",
+            party_count, order_source
+        ));
+    }
+
+    let wait_s = env::var("BV_SYQURE_PRELAUNCH_WAIT_S")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(45);
+    let poll_ms = env::var("BV_SYQURE_PRELAUNCH_POLL_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(250);
+
+    let start = std::time::Instant::now();
+    let deadline = start + Duration::from_secs(wait_s);
+    let connect_timeout = Duration::from_millis(200);
+    let mut poll_count: u64 = 0;
+    let mut last_matrix = String::new();
+
+    loop {
+        poll_count += 1;
+        let mut cp_matrix: Vec<String> = Vec::new();
+        let mut failures: Vec<String> = Vec::new();
+
+        for (peer_id, _) in party_emails.iter().enumerate() {
+            if peer_id == local_party_id {
+                continue;
+            }
+            // Validate the peer's actual listener port for this local<->peer channel.
+            // Each party listens from its own per-party base:
+            //   peer_base = global_base + peer_id * stride
+            // so probing only the global pair-port can hit party-0 local ports by accident.
+            let peer_base = base_port + peer_id * SEQURE_COMMUNICATION_PORT_STRIDE;
+            let peer_listener_port =
+                mpc_comm_port_with_base(peer_base, peer_id, local_party_id, party_count);
+            match probe_local_tcp_port(peer_listener_port, connect_timeout) {
+                Ok(()) => cp_matrix.push(format!(
+                    "CP{}<->CP{} peer_listener_port={}:OK",
+                    local_party_id, peer_id, peer_listener_port
+                )),
+                Err(err) => {
+                    cp_matrix.push(format!(
+                        "CP{}<->CP{} peer_listener_port={}:FAIL({})",
+                        local_party_id, peer_id, peer_listener_port, err
+                    ));
+                    failures.push(format!(
+                        "CP{}<->CP{} peer_listener_port={} err={}",
+                        local_party_id, peer_id, peer_listener_port, err
+                    ));
+                }
+            }
+        }
+
+        let matrix = cp_matrix.join(" ");
+        if failures.is_empty() {
+            return Ok(format!(
+                "peer_listener_precheck passed order_source={} local_party_id={} wait_s={} elapsed_s={:.1} polls={} matrix={}",
+                order_source,
+                local_party_id,
+                wait_s,
+                start.elapsed().as_secs_f64(),
+                poll_count,
+                matrix
+            ));
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "peer_listener_precheck failed order_source={} local_party_id={} wait_s={} elapsed_s={:.1} polls={} matrix={} failing_links={}",
+                order_source,
+                local_party_id,
+                wait_s,
+                start.elapsed().as_secs_f64(),
+                poll_count,
+                matrix,
+                failures.join("; ")
+            ));
+        }
+
+        if matrix != last_matrix {
+            last_matrix = matrix;
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
+}
+
+fn derive_non_terminal_flow_status(flow_state: &MultipartyFlowState) -> FlowSessionStatus {
+    if flow_state
+        .steps
+        .iter()
+        .any(|s| matches!(s.status, StepStatus::Running | StepStatus::Sharing))
+    {
+        FlowSessionStatus::Running
+    } else {
+        FlowSessionStatus::Accepted
+    }
+}
+
+fn flow_session_status_name(status: &FlowSessionStatus) -> &'static str {
+    match status {
+        FlowSessionStatus::Invited => "Invited",
+        FlowSessionStatus::Accepted => "Accepted",
+        FlowSessionStatus::Running => "Running",
+        FlowSessionStatus::Completed => "Completed",
+        FlowSessionStatus::Failed => "Failed",
+        FlowSessionStatus::Cancelled => "Cancelled",
+    }
+}
+
+fn stable_syqure_port_base_for_run(
+    run_id: &str,
+    party_count: usize,
+    local_party_id: usize,
+) -> Result<usize, String> {
+    let deterministic_base = deterministic_syqure_port_base_for_session(run_id, party_count)?;
+    if let Ok(raw) = env::var("BV_SYQURE_PORT_BASE") {
+        if let Ok(existing_base) = raw.trim().parse::<usize>() {
+            if existing_base != deterministic_base {
+                // Important: desktop runs share one long-lived parent process.
+                // BV_SYQURE_PORT_BASE can be stale from a previous session, so do
+                // not hard-fail on join-time ambient env drift. We always pin the
+                // child execution to the deterministic per-session base below.
+                eprintln!(
+                    "[Multiparty] overriding stale BV_SYQURE_PORT_BASE={} with deterministic session base={} for run {}",
+                    existing_base,
+                    deterministic_base,
+                    run_id
+                );
+            }
+        }
+    }
+
+    // Force one canonical base for this run across all participants.
+    // This avoids per-session port clobbering via ambient process-global env.
+    let selected_base = run_dynamic::prepare_syqure_port_base_for_run(
+        run_id,
+        party_count,
+        Some(deterministic_base),
+    )
+    .map_err(|e| {
         format!(
-            "Failed to allocate Syqure TCP proxy base port for run '{}': {}",
+            "Failed to allocate deterministic Syqure TCP proxy base port for run '{}': {}",
             run_id, e
         )
-    })
+    })?;
+
+    if selected_base != deterministic_base {
+        return Err(format!(
+            "PORT CONFLICT [E_PORT_CONFLICT_SELECTED_BASE]: deterministic_base={} selected_base={} run={}",
+            deterministic_base, selected_base, run_id
+        ));
+    }
+
+    ensure_local_proxy_ports_available(run_id, selected_base, local_party_id, party_count)?;
+    Ok(selected_base)
 }
 
 fn setup_mpc_channel_permissions(
@@ -1197,6 +1833,10 @@ fn setup_mpc_channel_permissions(
                 "from": owner_email,
                 "to": remote_email,
                 "port": port,
+                "global_base": global_base,
+                "party_count": parties,
+                "local_party_id": local_party_id,
+                "remote_party_id": remote_id,
                 "ports": {
                     owner_email: from_port,
                     remote_email: to_port,
@@ -1240,7 +1880,11 @@ fn maybe_setup_mpc_channels(
         .unwrap_or(true);
 
     let syqure_port_base = if tcp_proxy_enabled {
-        Some(stable_syqure_port_base_for_run(session_id, party_count)?)
+        Some(stable_syqure_port_base_for_run(
+            session_id,
+            party_count,
+            local_party_id,
+        )?)
     } else {
         None
     };
@@ -1412,6 +2056,107 @@ fn resolve_with_bindings(
     }
 
     Ok(step_args)
+}
+
+fn precheck_step_binding_files_ready(
+    with_bindings: &HashMap<String, serde_json::Value>,
+    input_overrides: &HashMap<String, String>,
+    flow_spec: &serde_json::Value,
+    flow_name: &str,
+    session_id: &str,
+    my_email: &str,
+    biovault_home: &Path,
+    step_numbers_by_id: &HashMap<String, usize>,
+    all_steps: &[StepState],
+    work_dir: &Path,
+    participants: &[FlowParticipant],
+) -> Result<(), String> {
+    let (groups, _) = build_group_map_from_participants(participants, flow_spec);
+    let mut binding_entries: Vec<(&String, &serde_json::Value)> = with_bindings.iter().collect();
+    binding_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut issues: Vec<String> = Vec::new();
+
+    for (input_name, binding_value) in binding_entries {
+        let (ref_str, only_group, without_group) = parse_binding_value(binding_value);
+        let ref_str = match ref_str {
+            Some(r) => r,
+            None => continue,
+        };
+
+        if let Some(group) = only_group {
+            if !is_email_in_group(my_email, &group, &groups) {
+                continue;
+            }
+        }
+        if let Some(group) = without_group {
+            if is_email_in_group(my_email, &group, &groups) {
+                continue;
+            }
+        }
+
+        let is_url_list = ref_str.ends_with(".url_list");
+        let base_ref = if is_url_list {
+            ref_str.trim_end_matches(".url_list")
+        } else {
+            &ref_str
+        };
+
+        if !base_ref.starts_with("step.") {
+            continue;
+        }
+
+        let resolved = resolve_single_binding(
+            base_ref,
+            is_url_list,
+            input_overrides,
+            flow_spec,
+            flow_name,
+            session_id,
+            my_email,
+            biovault_home,
+            step_numbers_by_id,
+            all_steps,
+            work_dir,
+            input_name,
+        )?;
+
+        let Some(path_text) = resolved else {
+            issues.push(format!("--{} unresolved from '{}'", input_name, ref_str));
+            continue;
+        };
+
+        let path = Path::new(&path_text);
+        if !path.exists() {
+            issues.push(format!(
+                "--{} missing '{}' (from '{}')",
+                input_name, path_text, ref_str
+            ));
+            continue;
+        }
+
+        if is_url_list {
+            let manifest_has_entries = fs::read_to_string(path)
+                .ok()
+                .map(|raw| raw.lines().any(|line| !line.trim().is_empty()))
+                .unwrap_or(false);
+            if !manifest_has_entries {
+                issues.push(format!(
+                    "--{} manifest '{}' has no entries yet",
+                    input_name, path_text
+                ));
+            }
+        }
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "binding_file_precheck failed [{}]",
+            issues.join("; ")
+        ))
+    }
 }
 
 fn parse_binding_value(
@@ -1603,10 +2348,16 @@ fn resolve_single_binding(
         .find(|s| s.id == source_step_id)
         .and_then(|s| s.module_path.as_deref());
 
+    let source_flow_path = flow_spec.get("flow_path").and_then(|v| v.as_str());
+
     let file_name = match ref_type {
         "outputs" => {
-            let module_dir =
-                resolve_module_directory(flow_name, source_module_path, source_module_ref);
+            let module_dir = resolve_module_directory(
+                flow_name,
+                source_module_path,
+                source_module_ref,
+                source_flow_path,
+            );
             module_dir
                 .and_then(|dir| read_module_output_path(&dir, ref_name))
                 .unwrap_or_else(|| format!("{}.json", ref_name))
@@ -1614,8 +2365,12 @@ fn resolve_single_binding(
         "share" => {
             let output_name = resolve_share_source_output(flow_spec, source_step_id, ref_name)
                 .unwrap_or_else(|| ref_name.to_string());
-            let module_dir =
-                resolve_module_directory(flow_name, source_module_path, source_module_ref);
+            let module_dir = resolve_module_directory(
+                flow_name,
+                source_module_path,
+                source_module_ref,
+                source_flow_path,
+            );
             module_dir
                 .and_then(|dir| read_module_output_path(&dir, &output_name))
                 .unwrap_or_else(|| format!("{}.txt", ref_name))
@@ -2198,12 +2953,8 @@ fn refresh_step_statuses(flow_state: &mut MultipartyFlowState) {
             continue;
         }
 
-        let (status, waiting_on, reason) = check_step_input_readiness(
-            flow_state,
-            step,
-            &step_numbers_by_id,
-            &all_steps_snapshot,
-        );
+        let (status, waiting_on, reason) =
+            check_step_input_readiness(flow_state, step, &step_numbers_by_id, &all_steps_snapshot);
         updates.push((step.id.clone(), status, waiting_on, reason));
     }
 
@@ -2357,10 +3108,40 @@ fn update_barrier_steps(flow_state: &mut MultipartyFlowState) {
         }
     }
 
-    // Second pass: mark completed barriers
-    for step in &mut flow_state.steps {
-        if barriers_to_complete.contains(&step.id) {
+    // Second pass: mark completed barriers and persist barrier completion status
+    let session_id = flow_state.session_id.clone();
+    let my_role = flow_state.my_role.clone();
+    let work_dir = flow_state.work_dir.clone();
+    for barrier_id in barriers_to_complete {
+        if let Some(step) = flow_state.steps.iter_mut().find(|s| s.id == barrier_id) {
+            if step.status == StepStatus::Completed {
+                continue;
+            }
             step.status = StepStatus::Completed;
+            append_private_step_log(&session_id, &step.id, "barrier_completed");
+
+            if let Some(ref work_dir) = work_dir {
+                let progress_dir = get_progress_path(work_dir);
+                let _ = fs::create_dir_all(&progress_dir);
+                let shared_status = SharedStepStatus {
+                    step_id: step.id.clone(),
+                    role: my_role.clone(),
+                    status: "Completed".to_string(),
+                    timestamp: Utc::now().timestamp(),
+                };
+                let status_file = progress_dir.join(format!("{}_{}.json", my_role, step.id));
+                if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
+                    let _ = fs::write(&status_file, json);
+                }
+                append_progress_log(&progress_dir, "barrier_completed", Some(&step.id), &my_role);
+                write_progress_state(
+                    &progress_dir,
+                    &my_role,
+                    "barrier_completed",
+                    Some(&step.id),
+                    "Completed",
+                );
+            }
         }
     }
 
@@ -2661,6 +3442,7 @@ pub async fn send_flow_invitation(
     // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participant_roles.iter().map(|p| p.email.clone()).collect();
+    let canonical_party_emails = canonical_syqure_party_order_from_participants(&participant_roles);
     if let Err(err) = ensure_flow_subscriptions(&flow_name, &session_id, &all_participant_emails) {
         eprintln!(
             "[Multiparty] Warning: failed to add flow subscriptions: {}",
@@ -2670,15 +3452,13 @@ pub async fn send_flow_invitation(
     let _ = create_syft_pub_yaml(&progress_dir, &my_email, &all_participant_emails);
     write_progress_state(&progress_dir, &my_role, "joined", None, "Accepted");
 
-    if let Ok(Some(flow_source_dir)) =
-        publish_flow_source_for_session(
-            &flow_name,
-            &work_dir,
-            &my_email,
-            &all_participant_emails,
-            &flow_spec,
-        )
-    {
+    if let Ok(Some(flow_source_dir)) = publish_flow_source_for_session(
+        &flow_name,
+        &work_dir,
+        &my_email,
+        &all_participant_emails,
+        &flow_spec,
+    ) {
         crate::desktop_log!(
             "📦 Published flow source for invitation: {}",
             flow_source_dir.display()
@@ -2689,9 +3469,11 @@ pub async fn send_flow_invitation(
         &flow_spec,
         &work_dir,
         &my_email,
-        &all_participant_emails,
+        &canonical_party_emails,
         &session_id,
     )?;
+
+    let input_overrides = build_input_overrides_from_participants(&participant_roles, &flow_spec);
 
     let flow_state = MultipartyFlowState {
         session_id: session_id.clone(),
@@ -2704,7 +3486,7 @@ pub async fn send_flow_invitation(
         thread_id: thread_id.clone(),
         work_dir: Some(work_dir),
         run_id: None,
-        input_overrides: HashMap::new(),
+        input_overrides,
         flow_spec: Some(flow_spec.clone()),
         syqure_port_base,
     };
@@ -2739,12 +3521,16 @@ pub async fn accept_flow_invitation(
     // Check if already accepted with a persisted run.
     // Sessions created by invitation sender may exist in memory without run_id;
     // those must still execute the full accept path so the run card exists.
+    let existing_port_base;
     {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         if let Some(existing) = sessions.get(&session_id) {
             if existing.run_id.is_some() {
                 return Ok(existing.clone());
             }
+            existing_port_base = existing.syqure_port_base;
+        } else {
+            existing_port_base = None;
         }
     }
 
@@ -2780,6 +3566,7 @@ pub async fn accept_flow_invitation(
     // Only coordination/progress data is globally shared.
     let all_participant_emails: Vec<String> =
         participants.iter().map(|p| p.email.clone()).collect();
+    let canonical_party_emails = canonical_syqure_party_order_from_participants(&participants);
     if let Err(err) = ensure_flow_subscriptions(&flow_name, &session_id, &all_participant_emails) {
         eprintln!(
             "[Multiparty] Warning: failed to add flow subscriptions: {}",
@@ -2810,7 +3597,20 @@ pub async fn accept_flow_invitation(
         flow_id = Some(imported.id);
     }
 
-    let input_overrides = input_overrides.unwrap_or_default();
+    let input_overrides = {
+        let provided = input_overrides.unwrap_or_default();
+        if provided.is_empty() || !provided.contains_key("inputs.datasites") {
+            // Build canonical overrides from role assignments so all participants
+            // use the same datasite→email mapping set by the proposer.
+            let mut built = build_input_overrides_from_participants(&participants, &flow_spec);
+            for (k, v) in provided {
+                built.insert(k, v);
+            }
+            built
+        } else {
+            provided
+        }
+    };
 
     // Create run entry in database
     let run_id = if let Some(fid) = flow_id {
@@ -2835,13 +3635,20 @@ pub async fn accept_flow_invitation(
         return Err(format!("Flow '{}' is not available locally", flow_name));
     };
 
-    let syqure_port_base = maybe_setup_mpc_channels(
-        &flow_spec,
-        &work_dir,
-        &my_email,
-        &all_participant_emails,
-        &session_id,
-    )?;
+    // Reuse port base from send_flow_invitation if the proposer already bound
+    // MPC channels. Re-calling maybe_setup_mpc_channels would fail with
+    // E_PORT_CONFLICT_LOCAL_BUSY since the ports are already held.
+    let syqure_port_base = if existing_port_base.is_some() {
+        existing_port_base
+    } else {
+        maybe_setup_mpc_channels(
+            &flow_spec,
+            &work_dir,
+            &my_email,
+            &canonical_party_emails,
+            &session_id,
+        )?
+    };
 
     let flow_state = MultipartyFlowState {
         session_id: session_id.clone(),
@@ -3827,6 +4634,121 @@ pub async fn set_step_auto_run(
 }
 
 #[tauri::command]
+pub async fn force_complete_flow_step(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    step_id: String,
+) -> Result<StepState, String> {
+    let (forced_step, terminal_update) = {
+        let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
+        let flow_state = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "Flow session not found".to_string())?;
+
+        let forced_status_label = {
+            let step = flow_state
+                .steps
+                .iter_mut()
+                .find(|s| s.id == step_id)
+                .ok_or_else(|| "Step not found".to_string())?;
+
+            if !step.my_action {
+                return Err("This step is not your action".to_string());
+            }
+
+            if step.status == StepStatus::Running {
+                return Err("Cannot force-complete a running step".to_string());
+            }
+
+            if step.status == StepStatus::Completed || step.status == StepStatus::Shared {
+                return Ok(step.clone());
+            }
+
+            let label = if step.shares_output {
+                step.status = StepStatus::Shared;
+                step.outputs_shared = true;
+                "Shared"
+            } else {
+                step.status = StepStatus::Completed;
+                "Completed"
+            };
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!("step_forced status={}", label),
+            );
+            label.to_string()
+        };
+
+        if flow_state.status == FlowSessionStatus::Failed
+            && !flow_state
+                .steps
+                .iter()
+                .any(|s| s.status == StepStatus::Failed)
+        {
+            let previous_status = flow_state.status.clone();
+            let repaired_status = derive_non_terminal_flow_status(flow_state);
+            flow_state.status = repaired_status.clone();
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!(
+                    "force_state_repair: flow_status {} -> {}",
+                    flow_session_status_name(&previous_status),
+                    flow_session_status_name(&repaired_status)
+                ),
+            );
+        }
+
+        if let Some(ref work_dir) = flow_state.work_dir {
+            let progress_dir = get_progress_path(work_dir);
+            let _ = fs::create_dir_all(&progress_dir);
+            let shared_status = SharedStepStatus {
+                step_id: step_id.clone(),
+                role: flow_state.my_role.clone(),
+                status: forced_status_label.clone(),
+                timestamp: Utc::now().timestamp(),
+            };
+            let status_file = progress_dir.join(format!("{}_{}.json", flow_state.my_role, step_id));
+            if let Ok(json) = serde_json::to_string_pretty(&shared_status) {
+                let _ = fs::write(&status_file, json);
+            }
+            append_progress_log(
+                &progress_dir,
+                "step_forced",
+                Some(&step_id),
+                &flow_state.my_role,
+            );
+            write_progress_state(
+                &progress_dir,
+                &flow_state.my_role,
+                "step_forced",
+                Some(&step_id),
+                &forced_status_label,
+            );
+        }
+
+        update_dependent_steps(flow_state, &step_id);
+        refresh_step_statuses(flow_state);
+        update_barrier_steps(flow_state);
+
+        let forced_step = flow_state
+            .steps
+            .iter()
+            .find(|s| s.id == step_id)
+            .cloned()
+            .ok_or_else(|| "Step not found".to_string())?;
+        let terminal_update = collect_terminal_run_update(flow_state);
+        let _ = persist_multiparty_state(flow_state);
+
+        (forced_step, terminal_update)
+    };
+
+    apply_terminal_run_update(state.inner(), terminal_update);
+    Ok(forced_step)
+}
+
+#[tauri::command]
 pub async fn run_flow_step(
     state: tauri::State<'_, AppState>,
     session_id: String,
@@ -3882,20 +4804,126 @@ pub async fn run_flow_step(
                 s.status = StepStatus::Ready;
                 append_private_step_log(&session_id, &step_id, "step_retry");
             }
+            if flow_state.status == FlowSessionStatus::Failed
+                && !flow_state
+                    .steps
+                    .iter()
+                    .any(|s| s.status == StepStatus::Failed)
+            {
+                let previous_status = flow_state.status.clone();
+                let repaired_status = derive_non_terminal_flow_status(flow_state);
+                flow_state.status = repaired_status.clone();
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!(
+                        "retry_state_repair: flow_status {} -> {}",
+                        flow_session_status_name(&previous_status),
+                        flow_session_status_name(&repaired_status)
+                    ),
+                );
+            }
+            let _ = persist_multiparty_state(flow_state);
         } else if step_status != StepStatus::Ready && step_status != StepStatus::Pending {
+            let allow_waiting_inputs_secure =
+                step_id == "secure_aggregate" && step_status == StepStatus::WaitingForInputs;
+            if allow_waiting_inputs_secure {
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    "status_override: proceeding with secure_aggregate from WaitingForInputs",
+                );
+            } else {
+                return Err(format!(
+                    "Step is not ready to run (status: {:?})",
+                    step_status
+                ));
+            }
+        }
+
+        // Validate dependencies before running, including cross-participant deps.
+        let mut unmet_deps: Vec<String> = Vec::new();
+        for dep_id in &step_deps {
+            if !is_dependency_complete(flow_state, dep_id) {
+                unmet_deps.push(dep_id.clone());
+            }
+        }
+        if !unmet_deps.is_empty() {
             return Err(format!(
-                "Step is not ready to run (status: {:?})",
-                step_status
+                "Cannot run step '{}': dependencies not satisfied yet [{}]",
+                step_id,
+                unmet_deps.join(", ")
             ));
         }
 
-        // Always validate dependencies before running (including cross-participant deps).
-        for dep_id in &step_deps {
-            if !is_dependency_complete(flow_state, dep_id) {
+        if step_id == "secure_aggregate" {
+            if let Some(work_dir) = flow_state.work_dir.as_ref() {
+                match audit_secure_aggregate_port_configuration(
+                    work_dir,
+                    &flow_state.flow_name,
+                    &flow_state.session_id,
+                    &flow_state.participants,
+                    &flow_state.my_email,
+                    &flow_state.input_overrides,
+                    flow_state.flow_spec.as_ref(),
+                    flow_state.syqure_port_base,
+                ) {
+                    Ok(audit) => {
+                        for line in audit.lines {
+                            append_private_step_log(&session_id, &step_id, &line);
+                        }
+                        if !audit.conflicts.is_empty() {
+                            let conflict_summary = audit.conflicts.join(" | ");
+                            append_private_step_log(
+                                &session_id,
+                                &step_id,
+                                &format!("prelaunch_gate failed: {}", conflict_summary),
+                            );
+                            return Err(format!(
+                                "Cannot run step '{}': {}",
+                                step_id, conflict_summary
+                            ));
+                        }
+                    }
+                    Err(audit_err) => {
+                        append_private_step_log(
+                            &session_id,
+                            &step_id,
+                            &format!("prelaunch_gate failed: {}", audit_err),
+                        );
+                        return Err(format!("Cannot run step '{}': {}", step_id, audit_err));
+                    }
+                }
+            } else {
                 return Err(format!(
-                    "Cannot run step '{}': dependency '{}' is not satisfied yet",
-                    step_id, dep_id
+                    "Cannot run step '{}': missing work directory for port audit",
+                    step_id
                 ));
+            }
+
+            match precheck_secure_aggregate_peer_listeners(
+                &flow_state.participants,
+                &flow_state.my_email,
+                &flow_state.input_overrides,
+                flow_state.flow_spec.as_ref(),
+                flow_state.syqure_port_base,
+            ) {
+                Ok(summary) => append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!("prelaunch_gate passed: {}", summary),
+                ),
+                Err(precheck_err) => {
+                    append_private_step_log(
+                        &session_id,
+                        &step_id,
+                        &format!("prelaunch_gate failed: {}", precheck_err),
+                    );
+                    return Err(format!(
+                        "Cannot run step '{}': peer not ready ({})",
+                        step_id, precheck_err
+                    ));
+                }
             }
         }
 
@@ -3953,6 +4981,7 @@ pub async fn run_flow_step(
             .ok_or_else(|| "Step not found".to_string())?;
 
         step.status = StepStatus::Running;
+        flow_state.status = FlowSessionStatus::Running;
         step.input_waiting_on.clear();
         step.input_waiting_reason = None;
         append_private_step_log(&session_id, &step_id, "step_started");
@@ -4110,14 +5139,18 @@ pub async fn run_flow_step(
         let output_dir = step_output_dir
             .as_ref()
             .ok_or_else(|| "No output directory".to_string())?;
+        let source_flow_path = flow_spec
+            .as_ref()
+            .and_then(|fs| fs.get("flow_path"))
+            .and_then(|v| v.as_str());
         let module_dir =
-            resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref())
+            resolve_module_directory(&flow_name, module_path.as_deref(), module_ref.as_deref(), source_flow_path)
                 .ok_or_else(|| {
-                    format!("Failed to resolve module directory for step '{}'", step_id)
+                    format!("Failed to resolve module directory for step '{}'. Searched flow_name='{}', module_path={:?}, module_ref={:?}, source_flow_path={:?}",
+                        step_id, flow_name, module_path, module_ref, source_flow_path)
                 })?;
-        validate_module_assets_exist(&module_dir).map_err(|e| {
-            format!("Step '{}' failed preflight: {}", step_id, e)
-        })?;
+        validate_module_assets_exist(&module_dir)
+            .map_err(|e| format!("Step '{}' failed preflight: {}", step_id, e))?;
 
         let biovault_home = biovault::config::get_biovault_home()
             .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
@@ -4150,7 +5183,8 @@ pub async fn run_flow_step(
             ),
         );
 
-        let party_emails: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
+        let (party_emails, party_order_source) =
+            choose_syqure_party_order(&participants, &my_email, &input_overrides, flow_spec_ref);
 
         let dynamic_ctx = run_dynamic::DynamicExecutionContext {
             current_datasite: Some(my_email.clone()),
@@ -4182,6 +5216,56 @@ pub async fn run_flow_step(
                 party_id_idx,
             ),
         );
+        let participant_map = participants
+            .iter()
+            .enumerate()
+            .map(|(idx, p)| format!("{}:{}({})", idx, p.email, p.role))
+            .collect::<Vec<_>>()
+            .join(", ");
+        append_private_step_log(
+            &session_id,
+            &step_id,
+            &format!("syqure_participant_map: {}", participant_map),
+        );
+        append_private_step_log(
+            &session_id,
+            &step_id,
+            &format!(
+                "syqure_party_order: source={} order={}",
+                party_order_source,
+                party_emails.join(",")
+            ),
+        );
+        append_private_step_log(
+            &session_id,
+            &step_id,
+            &format!(
+                "syqure_runtime_env: BV_SYFTBOX_BACKEND={} BV_SYQURE_TRANSPORT={} BV_SYQURE_TCP_PROXY={} BV_SYFTBOX_HOTLINK={} BV_SYFTBOX_HOTLINK_TCP_PROXY={} SYFTBOX_HOTLINK={} SYFTBOX_HOTLINK_TCP_PROXY={}",
+                env::var("BV_SYFTBOX_BACKEND").unwrap_or_else(|_| "unset".to_string()),
+                env::var("BV_SYQURE_TRANSPORT").unwrap_or_else(|_| "unset".to_string()),
+                env::var("BV_SYQURE_TCP_PROXY").unwrap_or_else(|_| "unset".to_string()),
+                env::var("BV_SYFTBOX_HOTLINK").unwrap_or_else(|_| "unset".to_string()),
+                env::var("BV_SYFTBOX_HOTLINK_TCP_PROXY").unwrap_or_else(|_| "unset".to_string()),
+                env::var("SYFTBOX_HOTLINK").unwrap_or_else(|_| "unset".to_string()),
+                env::var("SYFTBOX_HOTLINK_TCP_PROXY").unwrap_or_else(|_| "unset".to_string()),
+            ),
+        );
+        if step_id == "secure_aggregate" {
+            let current_role = participants
+                .iter()
+                .find(|p| p.email == my_email)
+                .map(|p| p.role.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            append_private_step_log(
+                &session_id,
+                &step_id,
+                &format!(
+                    "secure_aggregate_role_debug: current_role={} party_index={} expected_aggregator_index=0 expected_client_indexes=1,2",
+                    current_role,
+                    party_id_idx
+                ),
+            );
+        }
 
         eprintln!("[tauri-trace] run_flow_step calling execute_dynamic step={} party={}/{} pid={} thread={:?}",
             step_id, party_id_idx, party_emails.len(), std::process::id(), std::thread::current().id());
@@ -4210,6 +5294,41 @@ pub async fn run_flow_step(
 
         if let Err(err) = run_result {
             append_private_step_log(&session_id, &step_id, &format!("step_failed: {}", err));
+            let safe_session_id: String = session_id
+                .chars()
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                        ch
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let diag_path = PathBuf::from(format!(
+                "/tmp/biovault-syqure-diag-{}-p{}.log",
+                safe_session_id, party_id_idx
+            ));
+            if diag_path.exists() {
+                if let Ok(diag_tail) = read_tail_lines(&diag_path, 120) {
+                    if !diag_tail.trim().is_empty() {
+                        append_private_step_log(
+                            &session_id,
+                            &step_id,
+                            &format!(
+                                "syqure_diag_tail: path={}\n{}",
+                                diag_path.display(),
+                                diag_tail
+                            ),
+                        );
+                    }
+                }
+            } else {
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!("syqure_diag_tail: missing {}", diag_path.display()),
+                );
+            }
 
             let mut sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
             let mut terminal_update = None;
@@ -4562,6 +5681,12 @@ fn build_group_map_from_participants(
     participants: &[FlowParticipant],
     flow_spec: &serde_json::Value,
 ) -> (HashMap<String, Vec<String>>, HashMap<String, String>) {
+    fn normalize_role_base(raw: &str) -> String {
+        raw.trim_end_matches(|c: char| c.is_ascii_digit())
+            .trim_end_matches('s')
+            .to_ascii_lowercase()
+    }
+
     let spec_root = flow_spec_root(flow_spec);
     let mut groups: HashMap<String, Vec<String>> = HashMap::new();
     let mut default_to_actual: HashMap<String, String> = HashMap::new();
@@ -4609,16 +5734,91 @@ fn build_group_map_from_participants(
                         .collect()
                 })
         })
+        // Fallback: FlowSpec stores datasites as a flat Vec<String>
+        .or_else(|| {
+            spec_root
+                .get("datasites")
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+        })
         .unwrap_or_default();
 
     // Default mapping:
-    // 1) direct literal-email matches
-    // 2) stable index fallback
-    for (i, default_email) in default_datasites.iter().enumerate() {
+    // 1) direct literal-email match
+    // 2) role-based matching (e.g. "aggregator@sandbox" -> participant with role "aggregator")
+    // 3) stable index fallback
+    let mut claimed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for default_email in &default_datasites {
+        // 1) Direct email match
         if let Some(p) = participants.iter().find(|p| p.email == *default_email) {
             default_to_actual.insert(default_email.clone(), p.email.clone());
-        } else if let Some(p) = participants.get(i) {
+            if let Some(idx) = participants.iter().position(|p2| p2.email == p.email) {
+                claimed.insert(idx);
+            }
+            continue;
+        }
+        // 2) Role-based match: extract local part of default email and match to participant roles
+        let local = default_email.split('@').next().unwrap_or("").to_lowercase();
+        let local_base = local.trim_end_matches(|c: char| c.is_ascii_digit());
+        let local_base_norm = normalize_role_base(local_base);
+        let local_num: Option<u32> = local[local_base.len()..].parse().ok();
+
+        let best_match = participants.iter().enumerate().find(|(idx, p)| {
+            if claimed.contains(idx) {
+                return false;
+            }
+            let role = p.role.to_lowercase();
+            let role_base = role.trim_end_matches(|c: char| c.is_ascii_digit());
+            let role_base_norm = normalize_role_base(role_base);
+            let role_num: Option<u32> = role[role_base.len()..].parse().ok();
+
+            // Exact role match (e.g. "aggregator" == "aggregator")
+            if role == local {
+                return true;
+            }
+            // Base match with same number (e.g. "client1" -> "contributor1")
+            let bases_match = role_base_norm == local_base_norm
+                || (local_base_norm == "client" && role_base_norm == "contributor")
+                || (local_base_norm == "contributor" && role_base_norm == "client");
+            if bases_match && local_num.is_some() && local_num == role_num {
+                return true;
+            }
+            // Base match without numbers (e.g. "aggregator" -> "aggregator")
+            if bases_match && local_num.is_none() && role_num.is_none() {
+                return true;
+            }
+            false
+        });
+
+        if let Some((idx, p)) = best_match {
             default_to_actual.insert(default_email.clone(), p.email.clone());
+            claimed.insert(idx);
+            continue;
+        }
+    }
+    // 3) Index fallback for any remaining unmapped defaults
+    for (i, default_email) in default_datasites.iter().enumerate() {
+        if default_to_actual.contains_key(default_email) {
+            continue;
+        }
+        // Prefer stable positional fallback but never reuse already-claimed participants.
+        if let Some((idx, p)) = participants
+            .iter()
+            .enumerate()
+            .find(|(idx, _)| *idx >= i && !claimed.contains(idx))
+            .or_else(|| {
+                participants
+                    .iter()
+                    .enumerate()
+                    .find(|(idx, _)| !claimed.contains(idx))
+            })
+        {
+            default_to_actual.insert(default_email.clone(), p.email.clone());
+            claimed.insert(idx);
         }
     }
 
@@ -4771,6 +5971,167 @@ fn build_group_map_from_participants(
     );
 
     (groups, default_to_actual)
+}
+
+fn format_default_mapping_diagnostics(
+    default_datasites: &[String],
+    participants: &[FlowParticipant],
+    default_to_actual: &HashMap<String, String>,
+) -> String {
+    let participants_fmt = participants
+        .iter()
+        .map(|p| format!("{}({})", p.email, p.role))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let defaults_fmt = if default_datasites.is_empty() {
+        "<none>".to_string()
+    } else {
+        default_datasites.join(", ")
+    };
+    let mut mappings = default_datasites
+        .iter()
+        .map(|d| {
+            let actual = default_to_actual
+                .get(d)
+                .cloned()
+                .unwrap_or_else(|| "<unmapped>".to_string());
+            format!("{} -> {}", d, actual)
+        })
+        .collect::<Vec<_>>();
+    mappings.sort();
+    format!(
+        "participants=[{}]; default_datasites=[{}]; default_to_actual={{ {} }}",
+        participants_fmt,
+        defaults_fmt,
+        mappings.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_mapping_never_reuses_participant_for_multiple_default_slots() {
+        let participants = vec![
+            FlowParticipant {
+                email: "madhava@openmined.org".to_string(),
+                role: "clients".to_string(),
+            },
+            FlowParticipant {
+                email: "me@madhavajay.com".to_string(),
+                role: "clients".to_string(),
+            },
+            FlowParticipant {
+                email: "test@madhavajay.com".to_string(),
+                role: "aggregator".to_string(),
+            },
+        ];
+
+        let flow_spec = json!({
+            "spec": {
+                "datasites": ["aggregator@sandbox.local", "client1@sandbox.local", "client2@sandbox.local"]
+            }
+        });
+
+        let (_groups, default_to_actual) =
+            build_group_map_from_participants(&participants, &flow_spec);
+
+        // Aggregator must resolve to the aggregator participant.
+        assert_eq!(
+            default_to_actual.get("aggregator@sandbox.local"),
+            Some(&"test@madhavajay.com".to_string())
+        );
+
+        // Client placeholders must resolve to two distinct client participants.
+        let c1 = default_to_actual
+            .get("client1@sandbox.local")
+            .cloned()
+            .unwrap_or_default();
+        let c2 = default_to_actual
+            .get("client2@sandbox.local")
+            .cloned()
+            .unwrap_or_default();
+        assert_ne!(c1, c2);
+        assert_ne!(c1, "test@madhavajay.com");
+        assert_ne!(c2, "test@madhavajay.com");
+    }
+
+    #[test]
+    fn parse_flow_steps_reports_duplicate_placeholder_mapping() {
+        let participants = vec![
+            FlowParticipant {
+                email: "me@madhavajay.com".to_string(),
+                role: "client1".to_string(),
+            },
+            // Intentionally duplicated email with different role to simulate a bad assignment.
+            FlowParticipant {
+                email: "me@madhavajay.com".to_string(),
+                role: "client2".to_string(),
+            },
+            FlowParticipant {
+                email: "test@madhavajay.com".to_string(),
+                role: "aggregator".to_string(),
+            },
+        ];
+
+        let flow_spec = json!({
+            "spec": {
+                "datasites": ["aggregator@sandbox.local", "client1@sandbox.local", "client2@sandbox.local"],
+                "steps": [{
+                    "id": "secure_aggregate",
+                    "runs_on": ["aggregator@sandbox.local", "client1@sandbox.local", "client2@sandbox.local"]
+                }]
+            }
+        });
+
+        let err = parse_flow_steps(&flow_spec, "me@madhavajay.com", &participants)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Invalid multiparty participant mapping for step 'secure_aggregate'"));
+        assert!(err.contains("placeholder targets collapsed to duplicate participants"));
+        assert!(err.contains("default_to_actual"));
+    }
+}
+
+/// Build canonical input_overrides from the proposer's role assignments.
+/// Maps each default datasite to the actual participant email using role-based
+/// matching so that step execution resolves the correct participants.
+fn build_input_overrides_from_participants(
+    participants: &[FlowParticipant],
+    flow_spec: &serde_json::Value,
+) -> HashMap<String, String> {
+    let (_, default_to_actual) = build_group_map_from_participants(participants, flow_spec);
+    let spec_root = flow_spec_root(flow_spec);
+
+    let default_datasites: Vec<String> = spec_root
+        .get("inputs")
+        .and_then(|i| i.get("datasites"))
+        .and_then(|d| d.get("default"))
+        .and_then(|arr| arr.as_array())
+        .or_else(|| spec_root.get("datasites").and_then(|d| d.as_array()))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut overrides = HashMap::new();
+    if !default_datasites.is_empty() {
+        let resolved: Vec<String> = default_datasites
+            .iter()
+            .map(|d| {
+                default_to_actual
+                    .get(d)
+                    .cloned()
+                    .unwrap_or_else(|| d.clone())
+            })
+            .collect();
+        overrides.insert("inputs.datasites".to_string(), resolved.join(","));
+    }
+    overrides
 }
 
 /// Extract share recipients from step.share[*].read.
@@ -4989,6 +6350,124 @@ fn extract_with_step_dependencies(
     deps
 }
 
+fn parse_datasites_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect()
+}
+
+fn validate_syqure_party_order(
+    order: &[String],
+    participants: &[FlowParticipant],
+    my_email: &str,
+) -> Result<(), String> {
+    if order.is_empty() {
+        return Err("order is empty".to_string());
+    }
+
+    let unique: HashSet<String> = order.iter().cloned().collect();
+    if unique.len() != order.len() {
+        return Err("order contains duplicate emails".to_string());
+    }
+
+    if order.len() != participants.len() {
+        return Err(format!(
+            "order length {} does not match participant count {}",
+            order.len(),
+            participants.len()
+        ));
+    }
+
+    let participant_set: HashSet<String> = participants.iter().map(|p| p.email.clone()).collect();
+    for email in order {
+        if !participant_set.contains(email) {
+            return Err(format!("order contains unknown participant '{}'", email));
+        }
+    }
+
+    for participant in participants {
+        if !unique.contains(&participant.email) {
+            return Err(format!(
+                "order is missing participant '{}'",
+                participant.email
+            ));
+        }
+    }
+
+    if !order.iter().any(|email| email == my_email) {
+        return Err(format!(
+            "order does not include current participant '{}'",
+            my_email
+        ));
+    }
+
+    Ok(())
+}
+
+fn choose_syqure_party_order(
+    participants: &[FlowParticipant],
+    my_email: &str,
+    input_overrides: &HashMap<String, String>,
+    flow_spec: &serde_json::Value,
+) -> (Vec<String>, String) {
+    let fallback_order: Vec<String> = participants.iter().map(|p| p.email.clone()).collect();
+    let mut attempts: Vec<String> = Vec::new();
+
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    let canonical_role_order: Vec<String> = participants
+        .iter()
+        .filter(|p| p.role.eq_ignore_ascii_case("aggregator"))
+        .chain(
+            participants
+                .iter()
+                .filter(|p| !p.role.eq_ignore_ascii_case("aggregator")),
+        )
+        .map(|p| p.email.clone())
+        .collect();
+    candidates.push((
+        "participants role order (aggregator first)".to_string(),
+        canonical_role_order.join(","),
+    ));
+
+    if let Some(raw) = input_overrides.get("inputs.datasites") {
+        candidates.push(("input_overrides.inputs.datasites".to_string(), raw.clone()));
+    }
+
+    let built_overrides = build_input_overrides_from_participants(participants, flow_spec);
+    if let Some(raw) = built_overrides.get("inputs.datasites") {
+        candidates.push((
+            "build_input_overrides_from_participants".to_string(),
+            raw.clone(),
+        ));
+    }
+
+    for (source, raw) in candidates {
+        let parsed = parse_datasites_csv(&raw);
+        match validate_syqure_party_order(&parsed, participants, my_email) {
+            Ok(()) => {
+                return (parsed, source);
+            }
+            Err(reason) => {
+                attempts.push(format!("{} rejected: {}", source, reason));
+            }
+        }
+    }
+
+    let source = if attempts.is_empty() {
+        "participants order (no canonical datasite override found)".to_string()
+    } else {
+        format!(
+            "participants order (fallback after: {})",
+            attempts.join(" | ")
+        )
+    };
+
+    (fallback_order, source)
+}
+
 fn parse_flow_steps(
     flow_spec: &serde_json::Value,
     my_email: &str,
@@ -5003,6 +6482,18 @@ fn parse_flow_steps(
     // Build groups from participants (not from flow spec, which loses group info)
     // Also get default-to-actual email mapping for resolved targets
     let (groups, default_to_actual) = build_group_map_from_participants(participants, flow_spec);
+    let default_datasites: Vec<String> = spec_root
+        .get("inputs")
+        .and_then(|i| i.get("datasites"))
+        .and_then(|d| d.get("default"))
+        .and_then(|arr| arr.as_array())
+        .or_else(|| spec_root.get("datasites").and_then(|d| d.as_array()))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     println!(
         "[Multiparty] parse_flow_steps: my_email={}, groups={:?}",
         my_email, groups
@@ -5120,8 +6611,7 @@ fn parse_flow_steps(
                 // Check if it's a group name
                 if let Some(group_members) = groups.get(target) {
                     group_members.clone()
-                } else if let Some(actual_email) = mapped_target_email(target, &default_to_actual)
-                {
+                } else if let Some(actual_email) = mapped_target_email(target, &default_to_actual) {
                     // Target is a default datasite email, map to actual participant
                     vec![actual_email.clone()]
                 } else {
@@ -5132,6 +6622,36 @@ fn parse_flow_steps(
             .collect();
         target_emails.sort();
         target_emails.dedup();
+
+        // Fail early with explicit mapping diagnostics if placeholder targets
+        // resolve to fewer unique participants than expected.
+        let placeholder_targets: Vec<String> = targets
+            .iter()
+            .filter(|t| default_to_actual.contains_key(*t))
+            .cloned()
+            .collect();
+        if !placeholder_targets.is_empty() {
+            let resolved_unique: HashSet<String> = placeholder_targets
+                .iter()
+                .filter_map(|t| default_to_actual.get(t).cloned())
+                .collect();
+            if resolved_unique.len() < placeholder_targets.len() {
+                let details = format_default_mapping_diagnostics(
+                    &default_datasites,
+                    participants,
+                    &default_to_actual,
+                );
+                return Err(format!(
+                    "Invalid multiparty participant mapping for step '{}': placeholder targets collapsed to duplicate participants. \
+targets=[{}], unique_resolved={} of {}. {}",
+                    id,
+                    placeholder_targets.join(", "),
+                    resolved_unique.len(),
+                    placeholder_targets.len(),
+                    details
+                ));
+            }
+        }
 
         let module_ref = step
             .get("uses")

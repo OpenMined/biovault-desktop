@@ -32,7 +32,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let existingFilePaths = new Set()
 	let filesToDisplay = [] // Filtered files currently displayed
 	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessorRunning, estimatedTimeRemaining }
-	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
+	let _globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
 	const activeDownloads = new Set()
 	const downloadProgressCache = new Map()
 	const downloadCancelCallbacks = new Map()
@@ -192,7 +192,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		},
 	}
 
-	let currentDownloadAbortController = null
+	let _currentDownloadAbortController = null
 
 	async function handleSampleDataImport(sampleId, buttonEl) {
 		if (!sampleId) return
@@ -727,7 +727,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
-	function renderStatusBadge(status, error = null, fileId = null) {
+	function renderStatusBadge(status, _error = null, _fileId = null) {
 		// Queue disabled - always show as imported for pending status
 		return `<span class="status-badge status-complete" title="Imported">
 			<img src="assets/icons/check-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
@@ -750,7 +750,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 	async function loadFileReference(fileId, selectElement) {
 		try {
-			const [refFileId, refIndexFileId] = await invoke('get_file_reference', { fileId })
+			const [refFileId, _refIndexFileId] = await invoke('get_file_reference', { fileId })
 			if (refFileId && selectElement) {
 				selectElement.value = refFileId.toString()
 			}
@@ -1270,7 +1270,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	// Update queue status indicator with count and time estimate
-	function updateQueueStatusIndicator(globalInfo) {
+	function _updateQueueStatusIndicator(globalInfo) {
 		if (QUEUE_DISABLED) return
 		const _statusIndicator = document.getElementById('queue-status-indicator')
 		const pendingCountEl = document.getElementById('pending-count')

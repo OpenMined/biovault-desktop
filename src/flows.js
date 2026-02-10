@@ -898,7 +898,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					})
 					if (overrides) {
 						const missingRequired = Object.entries(flow.spec.inputs || {})
-							.filter(([name, spec]) => isRequiredInputSpec(spec))
+							.filter(([_name, spec]) => isRequiredInputSpec(spec))
 							.filter(([name]) => {
 								const key = `inputs.${name}`
 								return !String(overrides[key] || '').trim()
@@ -2347,6 +2347,20 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 									</div>
 								</div>
 							</button>
+							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('syqure_smoke_test')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<div style="display: flex; align-items: center; gap: 12px;">
+									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+											<path d="M9 11l3 3L22 4"></path>
+											<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+										</svg>
+									</div>
+									<div style="flex: 1; min-width: 0;">
+										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Syqure Smoke Test</div>
+										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">3-party secure aggregation smoke test</div>
+									</div>
+								</div>
+							</button>
 						</div>
 					</div>
 
@@ -2536,6 +2550,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			multiparty_allele_freq:
 				'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
 			syqure_demo: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
+			syqure_smoke_test:
+				'https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml',
 		}
 
 		const templateNames = {
@@ -2547,6 +2563,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			multiparty: 'Multiparty Demo',
 			multiparty_allele_freq: 'Multiparty Allele Freq',
 			syqure_demo: 'Syqure Demo',
+			syqure_smoke_test: 'Syqure Smoke Test',
 		}
 
 		// Use local path if available, otherwise use GitHub URL
@@ -2916,10 +2933,16 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			}
 		}
 
-		// Convert GitHub blob URLs to raw URLs
-		if (url.includes('github.com') && url.includes('/blob/')) {
-			const rawUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-			console.log('🔄 Converted GitHub blob URL to raw URL:', rawUrl)
+		// Convert GitHub blob/tree URLs to raw URLs
+		if (url.includes('github.com') && (url.includes('/blob/') || url.includes('/tree/'))) {
+			let rawUrl = url
+				.replace('github.com', 'raw.githubusercontent.com')
+				.replace('/blob/', '/')
+				.replace('/tree/', '/')
+			if (!rawUrl.match(/\.(ya?ml|json)$/i)) {
+				rawUrl = rawUrl.replace(/\/+$/, '') + '/flow.yaml'
+			}
+			console.log('🔄 Converted GitHub URL to raw URL:', rawUrl)
 			url = rawUrl
 		}
 
@@ -5661,10 +5684,16 @@ steps:${
 			}
 		}
 
-		// Convert GitHub blob URLs to raw URLs
-		if (url.includes('github.com') && url.includes('/blob/')) {
-			const rawUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-			console.log('🔄 Converted GitHub blob URL to raw URL:', rawUrl)
+		// Convert GitHub blob/tree URLs to raw URLs
+		if (url.includes('github.com') && (url.includes('/blob/') || url.includes('/tree/'))) {
+			let rawUrl = url
+				.replace('github.com', 'raw.githubusercontent.com')
+				.replace('/blob/', '/')
+				.replace('/tree/', '/')
+			if (!rawUrl.match(/\.(ya?ml|json)$/i)) {
+				rawUrl = rawUrl.replace(/\/+$/, '') + '/flow.yaml'
+			}
+			console.log('🔄 Converted GitHub URL to raw URL:', rawUrl)
 			url = rawUrl
 		}
 
