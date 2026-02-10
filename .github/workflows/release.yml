@@ -574,6 +574,30 @@ jobs:
           echo "SYQURE_LLVM_INCLUDE=$LLVM17_PREFIX/include" >> "$GITHUB_ENV"
           echo "$LLVM17_PREFIX/bin" >> "$GITHUB_PATH"
 
+      - name: Install syqure build deps (Linux)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Linux' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg libgmp-dev
+          if ! command -v llvm-config-17 >/dev/null 2>&1; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+              sudo tee /etc/apt/sources.list.d/llvm-17.list >/dev/null
+            sudo apt-get update
+            sudo apt-get install -y llvm-17-dev
+          fi
+          if command -v llvm-config-17 >/dev/null 2>&1; then
+            LLVM17_INCLUDE="$(llvm-config-17 --includedir)"
+          elif [[ -d /usr/lib/llvm-17/include ]]; then
+            LLVM17_INCLUDE="/usr/lib/llvm-17/include"
+          else
+            echo "❌ LLVM 17 headers not found for syqure build" >&2
+            exit 1
+          fi
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_INCLUDE" >> "$GITHUB_ENV"
+
       - name: Build syftbox client (Rust, Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
         shell: pwsh
@@ -618,6 +642,35 @@ jobs:
           } finally {
             Pop-Location
           }
+
+      - name: Create syqure shim (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $syqureDir = Join-Path $repoRoot "src-tauri\\resources\\syqure"
+          $syqureShim = Join-Path $syqureDir "syqure.exe"
+          $syftboxBin = Join-Path $repoRoot "src-tauri\\resources\\syftbox\\syftbox.exe"
+          New-Item -ItemType Directory -Force -Path $syqureDir | Out-Null
+          if (-not (Test-Path $syftboxBin)) {
+            throw "Expected syftbox binary for shim not found at $syftboxBin"
+          }
+          Copy-Item -Force $syftboxBin $syqureShim
+          Set-Content -Path (Join-Path $syqureDir "README.txt") -Value "Syqure runs via Docker container on Windows (shim binary for packaging)." -Encoding UTF8
+
+      - name: Prepare syqure submodules
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e syqure/.git ]]; then
+            echo "❌ syqure git checkout not found" >&2
+            exit 1
+          fi
+          # Ensure syqure prebuilts can resolve stdlib symlinks during bundle copy.
+          git -C syqure submodule sync --recursive
+          git -C syqure submodule update --init --depth 1 codon sequre
 
       - name: Build syqure and bundle codon libs
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
