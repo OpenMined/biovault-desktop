@@ -216,7 +216,9 @@ jobs:
             libsqlite3-dev \
             libxdo-dev \
             build-essential \
-            pkg-config
+            pkg-config \
+            coturn
+          turnserver --version || true
 
       - name: Install syqure build dependencies (Linux)
         if: runner.os == 'Linux' && contains(matrix.scenario, 'syqure')
@@ -562,7 +564,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libsqlite3-dev \
-            libgtk-3-dev
+            libgtk-3-dev \
+            coturn
+          turnserver --version || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -609,6 +613,11 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: '1.1.38'
+
+      - name: Install coturn (macOS)
+        run: |
+          brew install coturn
+          turnserver --version || true
 
       - name: Cache Bun downloads
         uses: actions/cache@v4
@@ -834,6 +843,7 @@ jobs:
         shell: pwsh
     env:
       BV_SKIP_SYQURE: "1"
+      BV_DEVSTACK_NO_TURN: "1"
     steps:
       - uses: actions/checkout@v4
 
