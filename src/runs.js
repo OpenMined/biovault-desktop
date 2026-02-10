@@ -29,9 +29,16 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const multipartyStepTimers = new Map()
 	const multipartyParticipantStatusMemory = new Map()
 	const multipartyDiagnosticsSamples = new Map()
+	const multipartyDiagnosticsCache = new Map()
+	const multipartyDiagnosticsLastFetchedAt = new Map()
 	const multipartyLoadInFlight = new Map()
 	const multipartyRunPending = new Set()
 	let runsRenderKey = ''
+	const MULTIPARTY_POLL_INTERVAL_MS = 8000
+	const MULTIPARTY_SYNC_INTERVAL_MS = 15000
+	const MULTIPARTY_DIAGNOSTICS_INTERVAL_MS = 15000
+	const MULTIPARTY_STEP_LOG_POLL_INTERVAL_MS = 4000
+	const FLOW_LOG_POLL_INTERVAL_MS = 5000
 
 	function getNestedState(map, sessionId) {
 		let nested = map.get(sessionId)
@@ -45,7 +52,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	// Start polling for multiparty state updates
 	function startMultipartyPolling(sessionId, runId) {
 		stopMultipartyPolling(sessionId)
-		// Poll every 3 seconds for state updates from other participants
+		// Poll less aggressively to keep CPU usage under control.
 		const interval = setInterval(async () => {
 			if (multipartyLoadInFlight.get(sessionId)) return
 			multipartyLoadInFlight.set(sessionId, true)
@@ -56,13 +63,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			} finally {
 				multipartyLoadInFlight.set(sessionId, false)
 			}
-		}, 3000)
+		}, MULTIPARTY_POLL_INTERVAL_MS)
 		multipartyPollingIntervals.set(sessionId, interval)
-		const timerInterval = setInterval(() => {
-			refreshStepTimerNodes(sessionId)
-		}, 1000)
-		multipartyStepTimerIntervals.set(sessionId, timerInterval)
-	}
+			const timerInterval = setInterval(() => {
+				refreshStepTimerNodes(sessionId)
+			}, 2000)
+			multipartyStepTimerIntervals.set(sessionId, timerInterval)
+		}
 
 	function stopMultipartyPolling(sessionId) {
 		const interval = multipartyPollingIntervals.get(sessionId)
@@ -82,6 +89,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				multipartyDiagnosticsSamples.delete(key)
 			}
 		}
+		for (const key of multipartyDiagnosticsCache.keys()) {
+			if (key.startsWith(`${sessionId}::`)) {
+				multipartyDiagnosticsCache.delete(key)
+				multipartyDiagnosticsLastFetchedAt.delete(key)
+			}
+		}
 	}
 
 	function _stopAllMultipartyPolling() {
@@ -95,6 +108,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		multipartyStepTimers.clear()
 		multipartyParticipantStatusMemory.clear()
 		multipartyDiagnosticsSamples.clear()
+		multipartyDiagnosticsCache.clear()
+		multipartyDiagnosticsLastFetchedAt.clear()
 		multipartyLoadInFlight.clear()
 	}
 
@@ -110,6 +125,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return String(value || '')
 			.replace(/\\/g, '\\\\')
 			.replace(/"/g, '\\"')
+	}
+
+	function escapeJsSingleQuoted(value) {
+		return String(value || '')
+			.replace(/\\/g, '\\\\')
+			.replace(/'/g, "\\'")
+			.replace(/\r/g, '\\r')
+			.replace(/\n/g, '\\n')
 	}
 
 	function getStepTimerKey(sessionId, stepId) {
@@ -738,13 +761,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const runId = run.id
 		stopFlowLogPolling(runId)
 		refreshFlowRunLogs(run, logEl, progressEl, stepRows)
-		if (run.status === 'running') {
-			const interval = setInterval(() => {
-				refreshFlowRunLogs(run, logEl, progressEl, stepRows)
-			}, 2000)
-			flowLogIntervals.set(runId, interval)
+			if (run.status === 'running') {
+				const interval = setInterval(() => {
+					refreshFlowRunLogs(run, logEl, progressEl, stepRows)
+				}, FLOW_LOG_POLL_INTERVAL_MS)
+				flowLogIntervals.set(runId, interval)
+			}
 		}
-	}
 
 	function stopFlowLogPolling(runId) {
 		const interval = flowLogIntervals.get(runId)
@@ -887,6 +910,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		if (!session_id || !participants) return ''
 		const inputOverrides = runMetadata?.input_overrides || {}
 		const inputEntries = Object.entries(inputOverrides).filter(([key]) => key.startsWith('inputs.'))
+		const escapedSessionIdJs = escapeJsSingleQuoted(session_id)
 
 		const participantsHtml = participants
 			.map((p) => {
@@ -895,6 +919,18 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					<span class="mp-participant-role">${escapeHtml(p.role)}</span>
 					<span class="mp-participant-email">${escapeHtml(p.email)}${isMe ? ' (you)' : ''}</span>
 				</span>`
+			})
+			.join('')
+		const participantFoldersHtml = participants
+			.map((p) => {
+				const email = String(p?.email || '').trim()
+				if (!email) return ''
+				const isMe = p.role === my_role
+				const encodedEmail = encodeURIComponent(email)
+				const participantLabel = isMe ? `${email} (you)` : email
+				return `<button type="button" class="mp-peer-folder-btn ${isMe ? 'is-me' : ''}"
+					onclick="window.runsModule?.openParticipantDatasiteEncoded('${escapedSessionIdJs}', '${encodedEmail}')"
+					title="Open your local copy of ${escapeHtml(email)}'s shared folder">📁 ${escapeHtml(participantLabel)}</button>`
 			})
 			.join('')
 
@@ -925,6 +961,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			<div class="multiparty-details" data-session-id="${escapeHtml(session_id)}">
 				<div class="mp-section">
 					<div class="mp-section-title">👥 Participants</div>
+					<div class="mp-peer-folders">${participantFoldersHtml}</div>
 					<div class="mp-participants">${participantsHtml}</div>
 				</div>
 				${inputsHtml}
@@ -973,7 +1010,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			// Keep shared _progress state fresh across peers without spamming sync requests.
 			const now = Date.now()
 			const lastSync = multipartyLastSyncAt.get(sessionId) || 0
-			if (now - lastSync > 2000) {
+			if (now - lastSync > MULTIPARTY_SYNC_INTERVAL_MS) {
 				multipartyLastSyncAt.set(sessionId, now)
 				await invoke('trigger_syftbox_sync').catch(() => null)
 			}
@@ -1005,10 +1042,29 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			]
 			const diagnosticsByStepId = new Map()
 			if (diagnosticStepIds.length > 0) {
+				for (const stepId of diagnosticStepIds) {
+					const cacheKey = `${sessionId}::${stepId}`
+					const cached = multipartyDiagnosticsCache.get(cacheKey)
+					if (cached) diagnosticsByStepId.set(stepId, cached)
+				}
+
 				const diagnosticResults = await Promise.all(
-					diagnosticStepIds.map((stepId) =>
-						invoke('get_multiparty_step_diagnostics', { sessionId, stepId }).catch(() => null),
-					),
+					diagnosticStepIds.map(async (stepId) => {
+						const cacheKey = `${sessionId}::${stepId}`
+						const lastFetched = multipartyDiagnosticsLastFetchedAt.get(cacheKey) || 0
+						if (now - lastFetched < MULTIPARTY_DIAGNOSTICS_INTERVAL_MS) {
+							return null
+						}
+						multipartyDiagnosticsLastFetchedAt.set(cacheKey, now)
+						const diagnostics = await invoke('get_multiparty_step_diagnostics', {
+							sessionId,
+							stepId,
+						}).catch(() => null)
+						if (diagnostics && diagnostics.step_id) {
+							multipartyDiagnosticsCache.set(cacheKey, diagnostics)
+						}
+						return diagnostics
+					}),
 				)
 				for (const diagnostics of diagnosticResults) {
 					if (diagnostics && diagnostics.step_id) {
@@ -1459,6 +1515,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				</div>
 			`
 
+			const escapedSessionIdJs = escapeJsSingleQuoted(sessionId)
+
 			// Render participant chips showing ALL participants for each step
 			// Shows checkbox status: ☑ = completed/shared, ☐ = not done yet, greyed = not involved
 			const renderParticipantChips = (step, stepId, stepTargetEmails) => {
@@ -1534,9 +1592,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				if (!waitingOn.length) return ''
 				const chips = waitingOn
 					.map(
-						(email) => `<button type="button" class="mp-btn mp-waiting-peer-btn"
-							onclick="window.runsModule?.openParticipantDatasite('${sessionId}', '${escapeHtml(email)}')"
-							title="Open ${escapeHtml(email)} datasite in Finder">📂 ${escapeHtml(email)}</button>`,
+						(email) => {
+							const encodedEmail = encodeURIComponent(email)
+							return `<button type="button" class="mp-btn mp-waiting-peer-btn"
+							onclick="window.runsModule?.openParticipantDatasiteEncoded('${escapedSessionIdJs}', '${encodedEmail}')"
+							title="Open your local copy of ${escapeHtml(email)}'s shared folder">📂 ${escapeHtml(email)}</button>`
+						},
 					)
 					.join('')
 				const reason = step?.input_waiting_reason ? String(step.input_waiting_reason) : ''
@@ -1843,6 +1904,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			? effectiveStatus === 'Ready'
 			: effectiveStatus === 'Ready' || effectiveStatus === 'Pending'
 		const runPending = multipartyRunPending.has(getStepRunKey(sessionId, step.id))
+		const escapedSessionIdJs = escapeJsSingleQuoted(sessionId)
+		const escapedStepIdJs = escapeJsSingleQuoted(step.id)
 		if (canRunForStatus && dependenciesSatisfied) {
 			actions.push(
 				`<button type="button" class="mp-btn mp-run-btn" data-run-session="${escapeHtml(sessionId)}" data-run-step="${escapeHtml(step.id)}" ${runPending ? 'disabled' : ''} onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">${runPending ? 'Starting...' : '▶ Run'}</button>`,
@@ -1890,6 +1953,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		if (effectiveStatus === 'Failed') {
 			actions.push(
 				`<button type="button" class="mp-btn mp-retry-btn" data-run-session="${escapeHtml(sessionId)}" data-run-step="${escapeHtml(step.id)}" ${runPending ? 'disabled' : ''} onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">${runPending ? 'Starting...' : '🔄 Retry'}</button>`,
+			)
+		}
+		if (effectiveStatus === 'Completed' || effectiveStatus === 'Shared') {
+			actions.push(
+				`<button type="button" class="mp-btn mp-force-rerun-btn" data-run-session="${escapeHtml(sessionId)}" data-run-step="${escapeHtml(step.id)}" ${runPending ? 'disabled' : ''} onclick="window.runsModule?.forceRerunStep('${escapedSessionIdJs}', '${escapedStepIdJs}')">${runPending ? 'Starting...' : '⟲ FORCE re-run'}</button>`,
 			)
 		}
 		if (step.status === 'WaitingForInputs') {
@@ -2179,7 +2247,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 
 		refreshLogs()
-		const interval = setInterval(refreshLogs, 2000)
+		const interval = setInterval(refreshLogs, MULTIPARTY_STEP_LOG_POLL_INTERVAL_MS)
 		multipartyStepLogIntervals.set(getStepLogKey(sessionId, stepId), interval)
 	}
 	window.runsModule.copyStepLogs = async function (event, buttonEl, sessionId, stepId) {
@@ -2217,14 +2285,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 		}
 	}
-	window.runsModule.runStep = async function (sessionId, stepId) {
+	window.runsModule.runStep = async function (sessionId, stepId, { force = false } = {}) {
 		const runKey = getStepRunKey(sessionId, stepId)
 		if (multipartyRunPending.has(runKey)) return
 		multipartyRunPending.add(runKey)
 		setRunButtonPendingState(sessionId, stepId, true)
 
 		const executeStep = async () => {
-			await invoke('run_flow_step', { sessionId, stepId })
+			await invoke('run_flow_step', { sessionId, stepId, force })
 			// Refresh the steps display
 			const runCard = document
 				.querySelector(`[data-session-id="${sessionId}"]`)
@@ -2284,11 +2352,29 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				await showDockerWarningModal(executeStepWithPeerWait)
 			}
 		} catch (error) {
-			console.error('Failed to run step:', error)
-			alert(`Failed to run step: ${error}`)
+			const actionText = force ? 'force re-run step' : 'run step'
+			console.error(`Failed to ${actionText}:`, error)
+			alert(`Failed to ${actionText}: ${error}`)
 		} finally {
 			multipartyRunPending.delete(runKey)
 			setRunButtonPendingState(sessionId, stepId, false)
+		}
+	}
+	window.runsModule.forceRerunStep = async function (sessionId, stepId) {
+		try {
+			const confirmed = dialog?.ask
+				? await dialog.ask(
+						`FORCE re-run "${stepId}"? This resets your local status for this step and runs it again, even if it is already completed/shared.`,
+						{ title: 'FORCE Re-run Step', type: 'warning' },
+					)
+				: confirm(
+						`FORCE re-run "${stepId}"? This resets your local status for this step and runs it again, even if it is already completed/shared.`,
+					)
+			if (!confirmed) return
+			await window.runsModule.runStep(sessionId, stepId, { force: true })
+		} catch (error) {
+			console.error('Failed to force re-run step:', error)
+			alert(`Failed to force re-run step: ${error}`)
 		}
 	}
 	window.runsModule.forceCompleteStep = async function (sessionId, stepId) {
@@ -2334,18 +2420,23 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	}
 	window.runsModule.openParticipantDatasite = async function (sessionId, participantEmail) {
 		try {
-			const datasitePath = await invoke('get_multiparty_participant_datasite_path', {
+			const sharedPath = await invoke('get_multiparty_participant_datasite_path', {
 				sessionId,
 				participantEmail,
 			})
-			if (!datasitePath) {
-				throw new Error(`Datasite path unavailable for ${participantEmail}`)
+			if (!sharedPath) {
+				throw new Error(`Shared folder path unavailable for ${participantEmail}`)
 			}
-			await invoke('open_folder', { path: datasitePath })
+			await invoke('open_folder', { path: sharedPath })
 		} catch (error) {
 			console.error('Failed to open participant datasite:', error)
-			alert(`Failed to open datasite for ${participantEmail}: ${error}`)
+			alert(`Failed to open shared folder for ${participantEmail}: ${error}`)
 		}
+	}
+	window.runsModule.openParticipantDatasiteEncoded = function (sessionId, encodedEmail) {
+		const participantEmail = decodeURIComponent(String(encodedEmail || ''))
+		if (!participantEmail) return Promise.resolve()
+		return window.runsModule.openParticipantDatasite(sessionId, participantEmail)
 	}
 	window.runsModule.cancelRunningStep = async function (sessionId, stepId) {
 		try {

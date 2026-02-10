@@ -4086,10 +4086,18 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .ok_or_else(|| "Missing stepId".to_string())?,
             )
             .map_err(|e| format!("Failed to parse stepId: {}", e))?;
-            let result =
-                crate::commands::multiparty::run_flow_step(state.clone(), session_id, step_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let force: Option<bool> = args
+                .get("force")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::multiparty::run_flow_step(
+                state.clone(),
+                session_id,
+                step_id,
+                force,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "force_complete_flow_step" => {

@@ -4050,7 +4050,7 @@ pub async fn get_multiparty_participant_datasite_path(
     session_id: String,
     participant_email: String,
 ) -> Result<String, String> {
-    {
+    let flow_name = {
         let sessions = FLOW_SESSIONS.lock().map_err(|e| e.to_string())?;
         let flow_state = sessions
             .get(&session_id)
@@ -4065,12 +4065,25 @@ pub async fn get_multiparty_participant_datasite_path(
                 participant_email, session_id
             ));
         }
-    }
+        flow_state.flow_name.clone()
+    };
 
     let biovault_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to get BioVault home: {}", e))?;
 
     let direct = biovault_home.join("datasites").join(&participant_email);
+    let direct_shared_flow = direct
+        .join("shared")
+        .join("flows")
+        .join(&flow_name)
+        .join(&session_id);
+    let direct_shared = direct.join("shared");
+    if direct_shared_flow.exists() {
+        return Ok(direct_shared_flow.to_string_lossy().to_string());
+    }
+    if direct_shared.exists() {
+        return Ok(direct_shared.to_string_lossy().to_string());
+    }
     if direct.exists() {
         return Ok(direct.to_string_lossy().to_string());
     }
@@ -4080,12 +4093,24 @@ pub async fn get_multiparty_participant_datasite_path(
             .join(&participant_email)
             .join("datasites")
             .join(&participant_email);
+        let sibling_shared_flow = sibling
+            .join("shared")
+            .join("flows")
+            .join(&flow_name)
+            .join(&session_id);
+        let sibling_shared = sibling.join("shared");
+        if sibling_shared_flow.exists() {
+            return Ok(sibling_shared_flow.to_string_lossy().to_string());
+        }
+        if sibling_shared.exists() {
+            return Ok(sibling_shared.to_string_lossy().to_string());
+        }
         if sibling.exists() {
             return Ok(sibling.to_string_lossy().to_string());
         }
     }
 
-    Ok(direct.to_string_lossy().to_string())
+    Ok(direct_shared_flow.to_string_lossy().to_string())
 }
 
 /// Get progress log entries from all participants (JSONL format)
@@ -4874,7 +4899,9 @@ pub async fn run_flow_step(
     state: tauri::State<'_, AppState>,
     session_id: String,
     step_id: String,
+    force: Option<bool>,
 ) -> Result<StepState, String> {
+    let force_run = force.unwrap_or(false);
     let (
         work_dir,
         step_number,
@@ -4896,7 +4923,7 @@ pub async fn run_flow_step(
             .ok_or_else(|| "Flow session not found".to_string())?;
 
         // Get step info and check if it can run
-        let (step_deps, step_status, is_my_action, module_path, module_ref, with_bindings) = {
+        let (step_deps, initial_step_status, is_my_action, module_path, module_ref, with_bindings) = {
             let step = flow_state
                 .steps
                 .iter()
@@ -4914,6 +4941,52 @@ pub async fn run_flow_step(
 
         if !is_my_action {
             return Err("This step is not your action".to_string());
+        }
+
+        let mut step_status = initial_step_status.clone();
+        if force_run {
+            if matches!(step_status, StepStatus::Running | StepStatus::Sharing) {
+                return Err(format!(
+                    "Step '{}' is currently {:?}; stop it before FORCE re-run",
+                    step_id, step_status
+                ));
+            }
+
+            if let Some(s) = flow_state.steps.iter_mut().find(|s| s.id == step_id) {
+                let previous = s.status.clone();
+                s.status = StepStatus::Ready;
+                s.outputs_shared = false;
+                s.output_dir = None;
+                s.input_waiting_on.clear();
+                s.input_waiting_reason = None;
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!("step_force_rerun: {:?} -> Ready", previous),
+                );
+                step_status = StepStatus::Ready;
+            }
+
+            if flow_state.status == FlowSessionStatus::Failed
+                && !flow_state
+                    .steps
+                    .iter()
+                    .any(|s| s.status == StepStatus::Failed)
+            {
+                let previous_status = flow_state.status.clone();
+                let repaired_status = derive_non_terminal_flow_status(flow_state);
+                flow_state.status = repaired_status.clone();
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!(
+                        "force_rerun_state_repair: flow_status {} -> {}",
+                        flow_session_status_name(&previous_status),
+                        flow_session_status_name(&repaired_status)
+                    ),
+                );
+            }
+            let _ = persist_multiparty_state(flow_state);
         }
 
         if step_status == StepStatus::Failed {
@@ -5148,6 +5221,10 @@ pub async fn run_flow_step(
         .map(|d| canonicalize_step_dir_name(d, step_number, &step_id));
 
     if let Some(ref dir) = step_output_dir {
+        if force_run && dir.exists() {
+            fs::remove_dir_all(dir)
+                .map_err(|e| format!("Failed to clear previous output dir for rerun: {}", e))?;
+        }
         fs::create_dir_all(dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
     }
 

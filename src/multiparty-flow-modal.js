@@ -3,11 +3,21 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 	// eslint-disable-next-line no-unused-vars
 	let currentFlowState = null
 	let pollInterval = null
+	let refreshInFlight = false
+	const MODAL_POLL_INTERVAL_MS = 8000
 
 	function escapeHtml(text) {
 		const div = document.createElement('div')
 		div.textContent = text
 		return div.innerHTML
+	}
+
+	function escapeJsSingleQuoted(value) {
+		return String(value || '')
+			.replace(/\\/g, '\\\\')
+			.replace(/'/g, "\\'")
+			.replace(/\r/g, '\\r')
+			.replace(/\n/g, '\\n')
 	}
 
 	function getStatusIcon(status) {
@@ -89,6 +99,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 	function renderParticipants(modal, participants) {
 		const container = modal.querySelector('.multiparty-participants-list')
 		if (!container) return
+		const escapedSessionId = escapeJsSingleQuoted(currentSessionId)
 
 		container.innerHTML = participants
 			.map(
@@ -97,6 +108,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 				<span class="participant-icon">👤</span>
 				<span class="participant-email">${escapeHtml(p.email)}</span>
 				<span class="participant-role">(${escapeHtml(p.role)})</span>
+				<button class="participant-folder-btn" onclick="window.multipartyFlowModal.openParticipantSharedFolder('${escapedSessionId}', '${encodeURIComponent(String(p.email || ''))}')" title="Open your local copy of this participant's shared folder">📁</button>
 			</div>
 		`,
 			)
@@ -173,6 +185,12 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		if (step.status === 'Shared') {
 			actions.push('<span class="shared-text">📨 Outputs Shared</span>')
 		}
+		if (step.status === 'Completed' || step.status === 'Shared') {
+			const stepIdEscaped = escapeJsSingleQuoted(step.id)
+			actions.push(
+				`<button class="step-btn force-rerun-btn" onclick="window.multipartyFlowModal.forceRerunStep('${stepIdEscaped}')">⟲ FORCE re-run</button>`,
+			)
+		}
 
 		if (step.status === 'WaitingForInputs') {
 			actions.push(
@@ -195,8 +213,10 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 
 	async function refreshFlowState() {
 		if (!currentSessionId) return
+		if (refreshInFlight) return
 
 		try {
+			refreshInFlight = true
 			const state = await invoke('get_multiparty_flow_state', { sessionId: currentSessionId })
 			if (state) {
 				currentFlowState = state
@@ -207,6 +227,8 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			}
 		} catch (error) {
 			console.error('Failed to refresh flow state:', error)
+		} finally {
+			refreshInFlight = false
 		}
 	}
 
@@ -225,21 +247,41 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		}
 	}
 
-	async function runStep(stepId) {
+	async function runStep(stepId, { force = false } = {}) {
 		if (!currentSessionId) return
 
 		try {
 			await invoke('run_flow_step', {
 				sessionId: currentSessionId,
 				stepId,
+				force,
 			})
 			await refreshFlowState()
 		} catch (error) {
-			console.error('Failed to run step:', error)
+			const actionText = force ? 'force re-run step' : 'run step'
+			console.error(`Failed to ${actionText}:`, error)
 			if (dialog?.message) {
-				await dialog.message(`Failed to run step: ${error}`, { title: 'Error', kind: 'error' })
+				await dialog.message(`Failed to ${actionText}: ${error}`, {
+					title: 'Error',
+					kind: 'error',
+				})
 			}
 		}
+	}
+
+	async function forceRerunStep(stepId) {
+		if (!currentSessionId) return
+		const confirmed = await dialog?.ask(
+			`FORCE re-run "${stepId}"? This resets your local status for this step and runs it again, even if it is already completed/shared.`,
+			{
+				title: 'FORCE Re-run Step',
+				kind: 'warning',
+				okLabel: 'Force Re-run',
+				cancelLabel: 'Cancel',
+			},
+		)
+		if (!confirmed) return
+		await runStep(stepId, { force: true })
 	}
 
 	async function forceCompleteStep(stepId) {
@@ -329,6 +371,27 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		}
 	}
 
+	async function openParticipantSharedFolder(sessionId, encodedEmail) {
+		try {
+			const participantEmail = decodeURIComponent(String(encodedEmail || ''))
+			if (!participantEmail) return
+			const sharedPath = await invoke('get_multiparty_participant_datasite_path', {
+				sessionId,
+				participantEmail,
+			})
+			if (!sharedPath) throw new Error(`Shared folder path unavailable for ${participantEmail}`)
+			await invoke('open_folder', { path: sharedPath })
+		} catch (error) {
+			console.error('Failed to open participant shared folder:', error)
+			if (dialog?.message) {
+				await dialog.message(`Failed to open shared folder: ${error}`, {
+					title: 'Error',
+					kind: 'error',
+				})
+			}
+		}
+	}
+
 	async function acceptInvitation(sessionId, flowName, flowSpec, participants, autoRunAll = false) {
 		try {
 			const state = await invoke('accept_flow_invitation', {
@@ -348,7 +411,9 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 
 	function startPolling() {
 		stopPolling()
-		pollInterval = setInterval(refreshFlowState, 2000)
+		pollInterval = setInterval(() => {
+			refreshFlowState().catch(() => {})
+		}, MODAL_POLL_INTERVAL_MS)
 	}
 
 	function stopPolling() {
@@ -356,6 +421,7 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 			clearInterval(pollInterval)
 			pollInterval = null
 		}
+		refreshInFlight = false
 	}
 
 	window.multipartyFlowModal = {
@@ -363,9 +429,11 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		closeModal,
 		toggleAutoRun,
 		runStep,
+		forceRerunStep,
 		forceCompleteStep,
 		previewOutputs,
 		shareOutputs,
+		openParticipantSharedFolder,
 		acceptInvitation,
 		refreshFlowState,
 	}

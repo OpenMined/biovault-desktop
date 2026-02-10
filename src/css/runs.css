@@ -909,6 +909,38 @@
 	margin-bottom: 10px;
 }
 
+.mp-peer-folders {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.mp-peer-folder-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	background: #f8fafc;
+	color: #334155;
+	border: 1px solid #dbe3ef;
+	border-radius: 8px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.mp-peer-folder-btn:hover {
+	background: #eef2f7;
+	border-color: #cbd5e1;
+}
+
+.mp-peer-folder-btn.is-me {
+	background: #eff6ff;
+	border-color: #bfdbfe;
+	color: #1e40af;
+}
+
 .mp-participants {
 	display: flex;
 	flex-wrap: wrap;
@@ -1202,6 +1234,15 @@
 
 .mp-retry-btn:hover:not(:disabled) {
 	background: #d97706;
+}
+
+.mp-force-rerun-btn {
+	background: #dc2626;
+	color: white;
+}
+
+.mp-force-rerun-btn:hover:not(:disabled) {
+	background: #b91c1c;
 }
 
 .mp-share-btn {

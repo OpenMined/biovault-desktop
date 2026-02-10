@@ -2039,6 +2039,24 @@
 	border-radius: 8px;
 }
 
+.participant-folder-btn {
+	margin-left: auto;
+	width: 28px;
+	height: 28px;
+	border: 1px solid #cbd5e1;
+	border-radius: 6px;
+	background: #ffffff;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 14px;
+}
+
+.participant-folder-btn:hover {
+	background: #f1f5f9;
+}
+
 .participant-icon {
 	font-size: 18px;
 }
@@ -2212,6 +2230,15 @@
 
 .step-btn.share-btn:hover {
 	background: #059669;
+}
+
+.step-btn.force-rerun-btn {
+	background: #dc2626;
+	color: #fff;
+}
+
+.step-btn.force-rerun-btn:hover {
+	background: #b91c1c;
 }
 
 .running-indicator {
