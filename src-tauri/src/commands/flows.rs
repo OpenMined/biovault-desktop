@@ -1413,6 +1413,125 @@ pub async fn create_flow(
 
         // Preserve full flow directory contents (including local modules/assets).
         copy_local_flow_dir(source_parent, &managed_flow_dir)?;
+
+        // Register any bundled modules (mirroring import_flow_from_request behaviour)
+        let modules_source = source_parent.join("modules");
+        if modules_source.exists() {
+            let modules_dir = get_modules_dir()?;
+            fs::create_dir_all(&modules_dir)
+                .map_err(|e| format!("Failed to create modules directory: {}", e))?;
+
+            for entry in fs::read_dir(&modules_source)
+                .map_err(|e| format!("Failed to read modules folder: {}", e))?
+            {
+                let entry =
+                    entry.map_err(|e| format!("Failed to read module entry: {}", e))?;
+                let entry_path = entry.path();
+                if !entry_path.is_dir() {
+                    continue;
+                }
+
+                let module_dir_name = entry.file_name().to_string_lossy().to_string();
+                let dest_module_dir = modules_dir.join(&module_dir_name);
+
+                if dest_module_dir.exists() {
+                    if overwrite {
+                        fs::remove_dir_all(&dest_module_dir).map_err(|e| {
+                            format!(
+                                "Failed to remove existing module directory {}: {}",
+                                dest_module_dir.display(),
+                                e
+                            )
+                        })?;
+                    } else {
+                        continue;
+                    }
+                }
+
+                copy_local_flow_dir(&entry_path, &dest_module_dir)?;
+
+                let module_yaml_path = dest_module_dir.join("module.yaml");
+                if !module_yaml_path.exists() {
+                    continue;
+                }
+
+                let yaml_content =
+                    fs::read_to_string(&module_yaml_path).map_err(|e| {
+                        format!(
+                            "Failed to read module.yaml at {}: {}",
+                            module_yaml_path.display(),
+                            e
+                        )
+                    })?;
+                let module = ModuleFile::parse_yaml(&yaml_content).map_err(|e| {
+                    format!(
+                        "Failed to parse module.yaml at {}: {}",
+                        module_yaml_path.display(),
+                        e
+                    )
+                })?;
+                let module_yaml = module.to_module_spec().map_err(|e| {
+                    format!(
+                        "Failed to convert module.yaml at {}: {}",
+                        module_yaml_path.display(),
+                        e
+                    )
+                })?;
+
+                let identifier = format!(
+                    "{}@{}",
+                    module_yaml.name,
+                    module_yaml
+                        .version
+                        .clone()
+                        .unwrap_or_else(|| "0.1.0".to_string())
+                );
+                let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+                if overwrite {
+                    if db
+                        .get_module(&identifier)
+                        .map_err(|e| e.to_string())?
+                        .is_some()
+                    {
+                        db.update_module(
+                            &module_yaml.name,
+                            module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                            &module_yaml.author,
+                            &module_yaml.workflow,
+                            module_yaml.runtime.as_deref().unwrap_or("imported"),
+                            &dest_module_dir,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    } else {
+                        db.register_module(
+                            &module_yaml.name,
+                            module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                            &module_yaml.author,
+                            &module_yaml.workflow,
+                            module_yaml.runtime.as_deref().unwrap_or("imported"),
+                            &dest_module_dir,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                } else if db
+                    .get_module(&identifier)
+                    .map_err(|e| e.to_string())?
+                    .is_none()
+                {
+                    db.register_module(
+                        &module_yaml.name,
+                        module_yaml.version.as_deref().unwrap_or("0.1.0"),
+                        &module_yaml.author,
+                        &module_yaml.workflow,
+                        module_yaml.runtime.as_deref().unwrap_or("imported"),
+                        &dest_module_dir,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
         imported_spec = flow.to_flow_spec().ok();
     } else {
         let flow_yaml_path = flow_dir.join(FLOW_YAML_FILE);

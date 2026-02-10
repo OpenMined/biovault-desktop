@@ -39,6 +39,123 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		lastAutoOpenKey: null,
 	}
 
+	const flowRuntimeDebugEnvKeys = [
+		'SEQURE_NATIVE_BIN',
+		'SYQURE_BINARY',
+		'CODON_PATH',
+		'CODON_PLUGIN_PATH',
+		'BV_SYQURE_TRANSPORT',
+		'BV_SYQURE_TCP_PROXY',
+		'BV_SYQURE_PORT_BASE',
+		'BV_SYQURE_NATIVE_TIMEOUT_S',
+		'SYFTBOX_HOTLINK',
+		'SYFTBOX_HOTLINK_TCP_PROXY',
+		'SYFTBOX_HOTLINK_ICE_SERVERS',
+		'SYFTBOX_HOTLINK_TURN_USER',
+		'SYFTBOX_HOTLINK_TURN_PASS',
+	]
+
+	function formatFlowRuntimeDebugValue(key, value) {
+		if (key === 'SYFTBOX_HOTLINK_TURN_PASS') {
+			return value ? '<set>' : '<unset>'
+		}
+		if (key === 'SYFTBOX_HOTLINK_TURN_USER') {
+			return value ? '<set>' : '<unset>'
+		}
+		if (!value) return '<unset>'
+		return value
+	}
+
+	async function loadFlowRuntimeDebugEntries() {
+		const entries = []
+		const envMap = {}
+
+		for (const key of flowRuntimeDebugEnvKeys) {
+			try {
+				const value = await invoke('get_env_var', { key })
+				envMap[key] = typeof value === 'string' ? value.trim() : ''
+			} catch (_error) {
+				envMap[key] = ''
+			}
+		}
+
+		for (const key of flowRuntimeDebugEnvKeys) {
+			entries.push({
+				key,
+				value: formatFlowRuntimeDebugValue(key, envMap[key] || ''),
+			})
+		}
+
+		if (!envMap.CODON_PATH) {
+			entries.push({
+				key: 'CODON_PATH (effective)',
+				value: '<unset (runtime derives from syqure bundle when possible)>',
+			})
+		}
+
+		try {
+			const syqureDep = await invoke('check_single_dependency', {
+				name: 'syqure',
+				path: null,
+			})
+			entries.push({
+				key: 'syqure dependency path',
+				value: syqureDep?.path || '<not found>',
+			})
+			entries.push({
+				key: 'syqure dependency version',
+				value: syqureDep?.version || '<unknown>',
+			})
+		} catch (_error) {
+			entries.push({
+				key: 'syqure dependency path',
+				value: '<probe failed>',
+			})
+		}
+
+		return entries
+	}
+
+	async function refreshFlowRuntimeDebugInfo() {
+		const panelEl = document.getElementById('flow-runtime-debug')
+		const gridEl = document.getElementById('flow-runtime-debug-grid')
+		if (!panelEl || !gridEl) return
+
+		if (!flowState.currentFlow || !isMultiPartyFlow(flowState.currentFlow)) {
+			panelEl.style.display = 'none'
+			return
+		}
+
+		panelEl.style.display = ''
+		gridEl.innerHTML = `
+			<div class="flow-runtime-debug-row">
+				<div class="flow-runtime-debug-key">status</div>
+				<div class="flow-runtime-debug-value">loading...</div>
+			</div>
+		`
+
+		try {
+			const entries = await loadFlowRuntimeDebugEntries()
+			gridEl.innerHTML = entries
+				.map(
+					(entry) => `
+						<div class="flow-runtime-debug-row">
+							<div class="flow-runtime-debug-key">${escapeHtml(entry.key)}</div>
+							<div class="flow-runtime-debug-value">${escapeHtml(entry.value)}</div>
+						</div>
+					`,
+				)
+				.join('')
+		} catch (error) {
+			gridEl.innerHTML = `
+				<div class="flow-runtime-debug-row">
+					<div class="flow-runtime-debug-key">error</div>
+					<div class="flow-runtime-debug-value">${escapeHtml(error?.message || String(error))}</div>
+				</div>
+			`
+		}
+	}
+
 	// Load flows list
 	async function loadFlows() {
 		try {
@@ -3754,6 +3871,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				collabBtn.style.display = isMultiPartyFlow(flow) ? '' : 'none'
 			}
 
+			await refreshFlowRuntimeDebugInfo()
+
 			// Update metadata badges
 			const stepsCount = flow.spec?.steps?.length || 0
 			const inputsCount = Object.keys(flow.spec?.inputs || {}).length
@@ -4796,6 +4915,8 @@ steps:${
 				return
 			}
 
+			await refreshFlowRuntimeDebugInfo()
+
 			// Run the flow
 			const run = await invoke('run_flow', {
 				flowId: flowId,
@@ -5282,6 +5403,13 @@ steps:${
 				if (flowState.currentFlow) {
 					openFlowYAMLInVSCode()
 				}
+			})
+		}
+
+		const runtimeDebugRefreshBtn = document.getElementById('flow-runtime-debug-refresh')
+		if (runtimeDebugRefreshBtn) {
+			runtimeDebugRefreshBtn.addEventListener('click', async () => {
+				await refreshFlowRuntimeDebugInfo()
 			})
 		}
 	}

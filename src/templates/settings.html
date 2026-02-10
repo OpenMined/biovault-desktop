@@ -355,6 +355,61 @@
 						>
 							TURN test not run yet.
 						</p>
+						<div
+							style="
+								margin-top: 12px;
+								padding-top: 12px;
+								border-top: 1px dashed #e5e7eb;
+								display: flex;
+								flex-direction: column;
+								gap: 8px;
+							"
+						>
+							<div style="font-size: 13px; font-weight: 600; color: #334155">
+								Peer Link Test (No Syqure)
+							</div>
+							<div
+								style="
+									display: grid;
+									grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+									gap: 8px;
+									align-items: center;
+								"
+							>
+								<input
+									id="syftbox-peer-email"
+									class="setting-input"
+									placeholder="Peer email (e.g. me@example.com)"
+								/>
+								<input
+									id="syftbox-peer-rounds"
+									class="setting-input"
+									type="number"
+									min="1"
+									max="100"
+									value="3"
+									placeholder="Rounds"
+								/>
+								<input
+									id="syftbox-peer-payload-kb"
+									class="setting-input"
+									type="number"
+									min="1"
+									max="1024"
+									value="32"
+									placeholder="Payload KB"
+								/>
+								<button id="syftbox-test-peer-btn" class="settings-btn settings-btn-secondary">
+									Test Peer Link
+								</button>
+							</div>
+							<p
+								id="syftbox-peer-test-result"
+								style="margin: 0; color: #6b7280; font-size: 12px; white-space: pre-line"
+							>
+								Peer link test not run yet.
+							</p>
+						</div>
 					</div>
 				</div>
 

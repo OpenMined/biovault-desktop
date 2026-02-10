@@ -594,6 +594,48 @@ pub struct TurnProbeResult {
     pub attempt_logs: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerLinkTestOptions {
+    pub peer_email: String,
+    pub rounds: Option<u32>,
+    pub payload_kb: Option<u32>,
+    pub timeout_s: Option<u64>,
+    pub poll_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerLinkTestResult {
+    pub ok: bool,
+    pub local_email: String,
+    pub peer_email: String,
+    pub run_id: String,
+    pub rounds: u32,
+    pub completed_rounds: u32,
+    pub failed_rounds: u32,
+    pub payload_bytes: usize,
+    pub min_rtt_ms: Option<u128>,
+    pub p50_rtt_ms: Option<u128>,
+    pub p95_rtt_ms: Option<u128>,
+    pub max_rtt_ms: Option<u128>,
+    pub avg_rtt_ms: Option<f64>,
+    pub details: String,
+    pub attempt_logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct PeerLinkFrame {
+    kind: String,
+    request_id: String,
+    run_id: String,
+    from: String,
+    to: String,
+    seq: u32,
+    sent_ms: u128,
+    payload_len: usize,
+}
+
 fn set_default_env_var_if_unset(key: &str, value: &str) {
     if std::env::var_os(key).is_none() {
         std::env::set_var(key, value);
@@ -824,6 +866,311 @@ pub fn test_turn_connection(server_url: Option<String>) -> Result<TurnProbeResul
         stun_binding_ok,
         reflexive_addr,
         rtt_ms,
+        details,
+        attempt_logs,
+    })
+}
+
+fn current_syftbox_email() -> Result<String, String> {
+    let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+    let email = cfg
+        .syftbox_credentials
+        .as_ref()
+        .and_then(|c| c.email.as_ref())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            let v = cfg.email.trim().to_string();
+            if v.is_empty() { None } else { Some(v) }
+        })
+        .ok_or_else(|| {
+            "Cannot run peer link test: no SyftBox email set in config.".to_string()
+        })?;
+    Ok(email)
+}
+
+fn peer_link_rpc_dir(datasites_root: &Path, email: &str) -> std::path::PathBuf {
+    datasites_root
+        .join(email)
+        .join("app_data")
+        .join("biovault")
+        .join("rpc")
+        .join("peer_link")
+}
+
+fn write_json_file(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+    fs::write(
+        path,
+        serde_json::to_string_pretty(value).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn process_peer_link_requests(
+    local_email: &str,
+    local_rpc_dir: &Path,
+    datasites_root: &Path,
+    attempt_logs: &mut Vec<String>,
+) {
+    let entries = match fs::read_dir(local_rpc_dir) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_request = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("request"))
+            .unwrap_or(false);
+        if !is_request {
+            continue;
+        }
+
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(frame) = serde_json::from_str::<PeerLinkFrame>(&raw) else {
+            continue;
+        };
+        if frame.kind != "request" {
+            continue;
+        }
+        if frame.to != local_email {
+            continue;
+        }
+
+        let responder_dir = peer_link_rpc_dir(datasites_root, local_email);
+        let response_path = responder_dir.join(format!("{}.response", frame.request_id));
+        if response_path.exists() {
+            continue;
+        }
+
+        let response = PeerLinkFrame {
+            kind: "response".to_string(),
+            request_id: frame.request_id.clone(),
+            run_id: frame.run_id.clone(),
+            from: local_email.to_string(),
+            to: frame.from.clone(),
+            seq: frame.seq,
+            sent_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            payload_len: frame.payload_len,
+        };
+        let value = serde_json::to_value(&response).unwrap_or_else(|_| json!({}));
+        match write_json_file(&response_path, &value) {
+            Ok(()) => attempt_logs.push(format!(
+                "auto_responded request_id={} from={} to={} seq={} path={}",
+                frame.request_id,
+                frame.from,
+                local_email,
+                frame.seq,
+                response_path.display()
+            )),
+            Err(err) => attempt_logs.push(format!(
+                "auto_response_failed request_id={} err={}",
+                frame.request_id, err
+            )),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn test_peer_link(options: PeerLinkTestOptions) -> Result<PeerLinkTestResult, String> {
+    let local_email = current_syftbox_email()?;
+    let peer_email = options.peer_email.trim().to_string();
+    if peer_email.is_empty() {
+        return Err("Peer email is required.".to_string());
+    }
+    if peer_email == local_email {
+        return Err("Peer email must be different from your current email.".to_string());
+    }
+
+    let rounds = options.rounds.unwrap_or(3).clamp(1, 100);
+    let payload_kb = options.payload_kb.unwrap_or(32).clamp(1, 1024);
+    let payload_bytes = (payload_kb as usize) * 1024;
+    let timeout_s = options.timeout_s.unwrap_or(60).clamp(3, 600);
+    let poll_ms = options.poll_ms.unwrap_or(100).clamp(20, 1000);
+    let poll_sleep = Duration::from_millis(poll_ms);
+
+    let biovault_home = crate::resolve_biovault_home_path();
+    let datasites_root = biovault_home.join("datasites");
+    if !datasites_root.exists() {
+        return Err(format!(
+            "Datasites root not found: {}",
+            datasites_root.display()
+        ));
+    }
+
+    let local_rpc_dir = peer_link_rpc_dir(&datasites_root, &local_email);
+    let peer_rpc_dir = peer_link_rpc_dir(&datasites_root, &peer_email);
+    fs::create_dir_all(&local_rpc_dir)
+        .map_err(|e| format!("Failed to create {}: {}", local_rpc_dir.display(), e))?;
+    fs::create_dir_all(&peer_rpc_dir)
+        .map_err(|e| format!("Failed to create {}: {}", peer_rpc_dir.display(), e))?;
+
+    let run_id = format!("peerlink-{}", uuid::Uuid::new_v4());
+    let mut attempt_logs = vec![
+        format!("local_email={}", local_email),
+        format!("peer_email={}", peer_email),
+        format!("datasites_root={}", datasites_root.display()),
+        format!("local_rpc_dir={}", local_rpc_dir.display()),
+        format!("peer_rpc_dir={}", peer_rpc_dir.display()),
+        format!("run_id={}", run_id),
+        format!("rounds={}", rounds),
+        format!("payload_bytes={}", payload_bytes),
+        format!("timeout_s={}", timeout_s),
+        format!("poll_ms={}", poll_ms),
+        "note=Run the same test from the peer app at the same time for ping-pong.".to_string(),
+    ];
+
+    let payload = "x".repeat(payload_bytes);
+    let mut rtts: Vec<u128> = Vec::new();
+    let mut failed_rounds: u32 = 0;
+
+    for seq in 1..=rounds {
+        process_peer_link_requests(
+            &local_email,
+            &local_rpc_dir,
+            &datasites_root,
+            &mut attempt_logs,
+        );
+
+        let request_id = format!(
+            "{}-{}-to-{}-r{}",
+            run_id,
+            local_email.replace('@', "_"),
+            peer_email.replace('@', "_"),
+            seq
+        );
+        let request_file = peer_rpc_dir.join(format!("{}.request", request_id));
+        let response_file = local_rpc_dir.join(format!("{}.response", request_id));
+        let sent_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let request_frame = PeerLinkFrame {
+            kind: "request".to_string(),
+            request_id: request_id.clone(),
+            run_id: run_id.clone(),
+            from: local_email.clone(),
+            to: peer_email.clone(),
+            seq,
+            sent_ms,
+            payload_len: payload_bytes,
+        };
+        let request_json = json!({
+            "frame": request_frame,
+            "payload": payload,
+        });
+        write_json_file(&request_file, &request_json)?;
+        attempt_logs.push(format!(
+            "round={} request_written path={}",
+            seq,
+            request_file.display()
+        ));
+
+        let started = Instant::now();
+        let mut round_ok = false;
+        loop {
+            process_peer_link_requests(
+                &local_email,
+                &local_rpc_dir,
+                &datasites_root,
+                &mut attempt_logs,
+            );
+
+            if response_file.exists() {
+                let elapsed_ms = started.elapsed().as_millis();
+                rtts.push(elapsed_ms);
+                attempt_logs.push(format!(
+                    "round={} response_received path={} rtt_ms={}",
+                    seq,
+                    response_file.display(),
+                    elapsed_ms
+                ));
+                round_ok = true;
+                break;
+            }
+
+            if started.elapsed() >= Duration::from_secs(timeout_s) {
+                attempt_logs.push(format!(
+                    "round={} timeout waiting_for={} after={}s",
+                    seq,
+                    response_file.display(),
+                    timeout_s
+                ));
+                failed_rounds += 1;
+                break;
+            }
+            std::thread::sleep(poll_sleep);
+        }
+
+        if !round_ok {
+            break;
+        }
+    }
+
+    let completed_rounds = rtts.len() as u32;
+    let ok = failed_rounds == 0 && completed_rounds == rounds;
+    let mut sorted = rtts.clone();
+    sorted.sort_unstable();
+    let min_rtt_ms = sorted.first().copied();
+    let max_rtt_ms = sorted.last().copied();
+    let p50_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted[((sorted.len() - 1) as f64 * 0.50).round() as usize])
+    };
+    let p95_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted[((sorted.len() - 1) as f64 * 0.95).round() as usize])
+    };
+    let avg_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted.iter().sum::<u128>() as f64 / sorted.len() as f64)
+    };
+
+    let details = if ok {
+        format!(
+            "Peer link test passed ({} rounds). RTT p50={}ms p95={}ms.",
+            completed_rounds,
+            p50_rtt_ms.unwrap_or(0),
+            p95_rtt_ms.unwrap_or(0)
+        )
+    } else {
+        format!(
+            "Peer link test incomplete. completed={} failed={} rounds={}.\n\
+Make sure peer '{}' runs Peer Link Test against '{}' at the same time.",
+            completed_rounds, failed_rounds, rounds, peer_email, local_email
+        )
+    };
+
+    Ok(PeerLinkTestResult {
+        ok,
+        local_email,
+        peer_email,
+        run_id,
+        rounds,
+        completed_rounds,
+        failed_rounds,
+        payload_bytes,
+        min_rtt_ms,
+        p50_rtt_ms,
+        p95_rtt_ms,
+        max_rtt_ms,
+        avg_rtt_ms,
         details,
         attempt_logs,
     })

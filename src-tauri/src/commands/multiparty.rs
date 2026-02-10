@@ -5141,10 +5141,78 @@ pub async fn run_flow_step(
         }
 
         if step_id == "secure_aggregate" {
-            if let Some(recovery) = recover_missing_syqure_port_base_for_flow(flow_state)? {
-                append_private_step_log(&session_id, &step_id, &recovery);
-                let _ = persist_multiparty_state(flow_state);
+            if flow_state.syqure_port_base.is_none() {
+                if let Some(recovery) = recover_missing_syqure_port_base_for_flow(flow_state)? {
+                    append_private_step_log(&session_id, &step_id, &recovery);
+                }
             }
+
+            // Hard recovery path for legacy/incomplete sessions:
+            // if base is still missing, allocate a stable per-session base now
+            // and refresh _mpc markers before any secure_aggregate prelaunch checks.
+            if flow_state.syqure_port_base.is_none() {
+                let work_dir = flow_state
+                    .work_dir
+                    .clone()
+                    .ok_or_else(|| "Cannot initialize syqure_port_base: missing work_dir".to_string())?;
+                let (party_emails, order_source) =
+                    if let Some(spec) = flow_state.flow_spec.as_ref() {
+                        choose_syqure_party_order(
+                            &flow_state.participants,
+                            &flow_state.my_email,
+                            &flow_state.input_overrides,
+                            spec,
+                        )
+                    } else {
+                        (
+                            canonical_syqure_party_order_from_participants(&flow_state.participants),
+                            "participants role order (aggregator first, flow_spec unavailable)"
+                                .to_string(),
+                        )
+                    };
+
+                let local_party_id = party_emails
+                    .iter()
+                    .position(|email| email.eq_ignore_ascii_case(&flow_state.my_email))
+                    .ok_or_else(|| {
+                        format!(
+                            "Cannot initialize syqure_port_base: local participant '{}' missing from order [{}]",
+                            flow_state.my_email,
+                            party_emails.join(",")
+                        )
+                    })?;
+
+                let forced_base = stable_syqure_port_base_for_run(
+                    &flow_state.session_id,
+                    party_emails.len(),
+                    local_party_id,
+                )?;
+                setup_mpc_channel_permissions(
+                    &work_dir,
+                    &flow_state.my_email,
+                    &party_emails,
+                    local_party_id,
+                    true,
+                    Some(forced_base),
+                )?;
+                flow_state.syqure_port_base = Some(forced_base);
+                append_private_step_log(
+                    &session_id,
+                    &step_id,
+                    &format!(
+                        "reinitialized missing syqure_port_base={} via stable allocator (order_source={})",
+                        forced_base, order_source
+                    ),
+                );
+            }
+
+            if flow_state.syqure_port_base.is_none() {
+                return Err(format!(
+                    "Cannot run step '{}': failed to initialize syqure_port_base",
+                    step_id
+                ));
+            }
+            let _ = persist_multiparty_state(flow_state);
 
             if let Some(work_dir) = flow_state.work_dir.as_ref() {
                 match audit_secure_aggregate_port_configuration(

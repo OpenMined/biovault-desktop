@@ -143,6 +143,19 @@
 		</header>
 
 		<div class="view-content">
+			<section id="flow-runtime-debug" class="flow-runtime-debug" style="display: none">
+				<div class="flow-runtime-debug-header">
+					<div class="flow-runtime-debug-title">Runtime Debug</div>
+					<button id="flow-runtime-debug-refresh" class="btn-secondary-small" type="button">
+						Refresh
+					</button>
+				</div>
+				<div id="flow-runtime-debug-grid" class="flow-runtime-debug-grid"></div>
+				<p class="flow-runtime-debug-note">
+					Values are read from the current app runtime environment and syqure dependency probe.
+				</p>
+			</section>
+
 			<div class="flow-detail-layout">
 				<!-- Left Sidebar: Flow Information -->
 				<aside class="flow-config-sidebar">

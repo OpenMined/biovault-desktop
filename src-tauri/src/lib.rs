@@ -1760,6 +1760,7 @@ pub fn run() {
             start_syftbox_client,
             stop_syftbox_client,
             test_turn_connection,
+            test_peer_link,
             get_syftbox_diagnostics,
             syftbox_subscriptions_discovery,
             syftbox_queue_status,
