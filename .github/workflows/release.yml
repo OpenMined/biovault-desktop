@@ -668,6 +668,11 @@ jobs:
             echo "❌ syqure git checkout not found" >&2
             exit 1
           fi
+          # Rewrite SSH URLs to HTTPS so CI can clone private submodules with the GH token.
+          git -C syqure config url."https://github.com/".insteadOf "git@github.com:"
+          # Configure HTTPS auth for submodule clones (the checkout action only sets this for the main repo).
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -C syqure config http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH_HEADER"
           # Ensure syqure prebuilts can resolve stdlib symlinks during bundle copy.
           git -C syqure submodule sync --recursive
           git -C syqure submodule update --init --depth 1 codon sequre
@@ -676,6 +681,18 @@ jobs:
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
         shell: bash
         run: |
+          # Determine the syqure prebuilt target ID (must match syqure_bins.sh logic)
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+          case "$OS_NAME" in darwin) OS_LABEL="macos";; linux) OS_LABEL="linux";; *) OS_LABEL="$OS_NAME";; esac
+          case "$ARCH_NAME" in arm64|aarch64) ARCH_LABEL="arm64";; x86_64|amd64|i386|i686) ARCH_LABEL="x86";; *) ARCH_LABEL="$ARCH_NAME";; esac
+          SYQURE_TARGET="${OS_LABEL}-${ARCH_LABEL}"
+          if [[ ! -d "syqure/bin/${SYQURE_TARGET}/codon/lib/codon" ]]; then
+            echo "⚠️  No syqure prebuilts for ${SYQURE_TARGET} — creating placeholder resources"
+            mkdir -p src-tauri/resources/syqure
+            touch src-tauri/resources/syqure/syqure
+            exit 0
+          fi
           chmod +x syqure/syqure_bins.sh
           ./syqure/syqure_bins.sh
           mkdir -p src-tauri/resources/syqure
