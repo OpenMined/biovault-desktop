@@ -1759,6 +1759,7 @@ pub fn run() {
             get_syftbox_state,
             start_syftbox_client,
             stop_syftbox_client,
+            test_turn_connection,
             get_syftbox_diagnostics,
             syftbox_subscriptions_discovery,
             syftbox_queue_status,

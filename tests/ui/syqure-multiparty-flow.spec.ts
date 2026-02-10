@@ -599,7 +599,7 @@ async function waitForRunStatus(
 		const run = (runs || []).find((r: any) => r.id === runId)
 		if (run?.status && run.status !== lastStatus) {
 			lastStatus = run.status
-			console.log(`${label}: run ${runId} status -> ${lastStatus}`)
+			console.log(`${label}: run ${runId} status -> ${formatRunStatusBadge(lastStatus)}`)
 		}
 		if (run && expectedStatuses.includes(run.status)) {
 			return run
@@ -618,6 +618,15 @@ async function waitForRunStatus(
 			(lastPollError ? `\nLast poll error: ${lastPollError}` : '') +
 			(logTail ? `\nLast log tail:\n${logTail}` : ''),
 	)
+}
+
+function formatRunStatusBadge(rawStatus: string | null | undefined): string {
+	const status = String(rawStatus || 'unknown').toLowerCase()
+	if (status === 'success') return '✅ SUCCESS'
+	if (status === 'failed') return '❌ FAILED'
+	if (status === 'error') return '❌ ERROR'
+	if (status === 'running') return '⏳ RUNNING'
+	return status.toUpperCase()
 }
 
 function collectMatchingFiles(rootDir: string, filename: string): string[] {
@@ -1365,8 +1374,17 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 				email3,
 			)
 			console.log(
-				`Final run statuses: client1=${finalRun1.status}, client2=${finalRun2.status}, aggregator=${finalRun3.status}`,
+				`Final run statuses: ${email1}=${formatRunStatusBadge(finalRun1.status)}, ${email2}=${formatRunStatusBadge(finalRun2.status)}, ${email3}=${formatRunStatusBadge(finalRun3.status)}`,
 			)
+			if (
+				finalRun1.status === 'success' &&
+				finalRun2.status === 'success' &&
+				finalRun3.status === 'success'
+			) {
+				console.log(
+					`✅ SUCCESS: multiparty syqure flow completed (${email1}, ${email2}, ${email3})`,
+				)
+			}
 			expect(finalRun1.status).toBe('success')
 			expect(finalRun2.status).toBe('success')
 			expect(finalRun3.status).toBe('success')

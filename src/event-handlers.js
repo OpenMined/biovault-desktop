@@ -330,6 +330,65 @@ export function setupEventHandlers({
 		})
 	}
 
+	// Settings - TURN probe
+	const syftboxTestTurnBtn = document.getElementById('syftbox-test-turn-btn')
+	if (syftboxTestTurnBtn) {
+		syftboxTestTurnBtn.addEventListener('click', async () => {
+			const resultEl = document.getElementById('syftbox-turn-test-result')
+			const serverUrl = document.getElementById('setting-syftbox-server')?.value.trim() || null
+			const originalText = syftboxTestTurnBtn.textContent
+			syftboxTestTurnBtn.disabled = true
+			syftboxTestTurnBtn.textContent = 'Testing...'
+			if (resultEl) {
+				resultEl.style.color = '#6b7280'
+				resultEl.style.whiteSpace = 'normal'
+				resultEl.textContent = 'Testing TURN/STUN connectivity...'
+			}
+
+			try {
+				const probe = await invoke('test_turn_connection', { serverUrl })
+				if (resultEl) {
+					resultEl.style.color = probe.ok ? '#059669' : '#b45309'
+					resultEl.style.whiteSpace = 'pre-line'
+					const addresses = Array.isArray(probe.resolved_addrs) ? probe.resolved_addrs : []
+					const attempts = Array.isArray(probe.attempt_logs) ? probe.attempt_logs : []
+					const lines = []
+					lines.push(`${probe.ok ? 'PASS' : 'CHECK'}: ${probe.turn_url}`)
+					lines.push(
+						`tcp=${probe.tcp_reachable ? 'ok' : 'fail'} | udp_send=${probe.udp_send_ok ? 'ok' : 'fail'} | udp_response=${probe.udp_response_ok ? 'ok' : 'fail'} | stun_binding=${probe.stun_binding_ok ? 'ok' : 'fail'}`,
+					)
+					if (probe.reflexive_addr) {
+						lines.push(`reflexive_addr=${probe.reflexive_addr}`)
+					}
+					if (probe.rtt_ms !== null && probe.rtt_ms !== undefined) {
+						lines.push(`rtt_ms=${probe.rtt_ms}`)
+					}
+					if (addresses.length) {
+						lines.push(`resolved_addrs=${addresses.join(', ')}`)
+					}
+					if (probe.details) {
+						lines.push(`details=${probe.details}`)
+					}
+					if (attempts.length) {
+						lines.push('trace:')
+						lines.push(...attempts.map((line) => `  - ${line}`))
+					}
+					resultEl.textContent = lines.join('\n')
+				}
+			} catch (error) {
+				console.error('TURN probe failed:', error)
+				if (resultEl) {
+					resultEl.style.color = '#dc2626'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = `FAIL: ${error?.message || error || 'TURN probe failed'}`
+				}
+			} finally {
+				syftboxTestTurnBtn.disabled = false
+				syftboxTestTurnBtn.textContent = originalText
+			}
+		})
+	}
+
 	// Settings - Set Dev Server (skip auth)
 	const syftboxSetDevBtn = document.getElementById('syftbox-set-dev-btn')
 	if (syftboxSetDevBtn) {

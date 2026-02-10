@@ -131,6 +131,62 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - client1/client2 both show large bidirectional traffic (high `tx` and `rx`)
     - aggregator shows low traffic volume, consistent with protocol role
 
+## Messaging Noise Fix (2026-02-10)
+- Root cause of noisy logs like:
+  - `Failed to read response file ... Failed to parse response JSON ...`
+- Cause:
+  - RPC ACK scanning attempted to parse every `*.response` under scanned datasites.
+  - After the SYC envelope / multi-recipient rollout, many of these files are encrypted for a different identity and are expected to be unreadable by this instance.
+- Fix implemented:
+  - `syftbox-sdk/src/syftbox/endpoint.rs`:
+    - added `check_responses_for_ids(&HashSet<String>)` to pre-filter by request-id filename before parse/decrypt.
+  - `biovault/cli/src/messages/sync.rs`:
+    - `check_acks()` now builds pending RPC request-id set from local DB and calls `check_responses_for_ids(...)`.
+    - This avoids parsing unrelated encrypted envelopes and removes expected-but-noisy decrypt/parse failures.
+- Validation:
+  - Added SDK unit test:
+    - `check_responses_for_ids_ignores_unrelated_response_files`
+  - Targeted test runs passed:
+    - `cargo test check_responses_for_ids_ignores_unrelated_response_files -- --nocapture` (in `syftbox-sdk`)
+    - `cargo test check_acks -- --nocapture` (in `biovault/cli`)
+
+## Self-Send Replay Guard (2026-02-10)
+- Issue:
+  - Self-addressed messages (`from == to`) create self-addressed encrypted `.response` envelopes and can be retried repeatedly by higher-level message flows.
+- Fix:
+  - `biovault/cli/src/messages/sync.rs` now blocks self-send in `send_message()`:
+    - logs a concise error line
+    - marks the message `sync_status=Failed`
+    - returns an error without creating/sending RPC request files
+- Validation:
+  - Added unit test:
+    - `self_send_is_blocked_and_marked_failed`
+  - Test run passed:
+    - `cargo test self_send_is_blocked_and_marked_failed -- --nocapture` (in `biovault/cli`)
+
+## Multiparty Mapping Fix (2026-02-10)
+- Symptom:
+  - `secure_aggregate` could fail with `Syqure exited due to signal: 9` in 3-party runs.
+  - Logs showed incorrect role mapping, e.g. both `client2@sandbox.local` and `aggregator@sandbox.local` resolving to the same email.
+- Root cause:
+  - In `build_group_map_from_participants`, fallback mapping reused already-claimed participants.
+  - This could drop one real client from effective target mapping and break MPC participant wiring.
+- Fix:
+  - `src-tauri/src/commands/multiparty.rs`:
+    - normalized role-base matching to handle singular/plural forms (e.g. `client` vs `clients`).
+    - fallback now **never** reuses a claimed participant.
+    - added regression test `default_mapping_never_reuses_participant_for_multiple_default_slots`.
+- Validation:
+  - `cargo test default_mapping_never_reuses_participant_for_multiple_default_slots --manifest-path src-tauri/Cargo.toml -- --nocapture` passed.
+  - `cargo test parse_flow_steps_reports_duplicate_placeholder_mapping --manifest-path src-tauri/Cargo.toml -- --nocapture` passed.
+- Error-message improvement:
+  - Added preflight mapping validation in `parse_flow_steps` to fail early with explicit diagnostics when placeholder targets collapse to duplicate participants.
+  - New error includes:
+    - failing step id
+    - placeholder targets list
+    - unique-resolved count
+    - participant/role list and full `default_to_actual` mapping
+
 ## Claude H1-H4 Status
 - H1 (chunk too small): implemented and validated.
   - Default chunk raised to `60 KiB` and made env-tunable via `SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE`.

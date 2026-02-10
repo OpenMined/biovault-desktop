@@ -280,6 +280,15 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const flowName = 'multiparty'
 		const sessionId = `session-${timestamp}`
 
+		// Use DEFAULT datasites that differ from the actual participant emails.
+		// This exercises the role-based mapping in build_group_map_from_participants:
+		//   contributor1@flow.example -> participant with role contributor1 -> email1
+		//   contributor2@flow.example -> participant with role contributor2 -> email2
+		//   aggregator@flow.example   -> participant with role aggregator   -> email3
+		const specDefaultAgg = 'aggregator@flow.example'
+		const specDefaultC1 = 'contributor1@flow.example'
+		const specDefaultC2 = 'contributor2@flow.example'
+
 		const flowSpec = {
 			apiVersion: 'syftbox.openmined.org/v1alpha1',
 			kind: 'Flow',
@@ -298,10 +307,10 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 					share_with: 'all',
 				},
 				datasites: {
-					all: [email3, email1, email2], // aggregator first, then contributors
+					all: [specDefaultAgg, specDefaultC1, specDefaultC2],
 					groups: {
-						aggregator: { include: [email3] },
-						contributors: { include: [email1, email2] },
+						aggregator: { include: [specDefaultAgg] },
+						contributors: { include: [specDefaultC1, specDefaultC2] },
 					},
 				},
 				roles: [

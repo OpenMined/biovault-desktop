@@ -1136,6 +1136,20 @@ pub fn get_local_flow_templates() -> HashMap<String, String> {
                 }
             }
         }
+
+        // Check for biovault flows directory (includes syqure-smoke-test)
+        let biovault_flows = cwd.join("biovault").join("flows");
+        if biovault_flows.exists() {
+            let bv_flow_paths = [
+                ("syqure_smoke_test", "syqure-smoke-test/flow.yaml"),
+            ];
+            for (name, relative_path) in bv_flow_paths {
+                let full_path = biovault_flows.join(relative_path);
+                if full_path.exists() {
+                    templates.insert(name.to_string(), full_path.to_string_lossy().to_string());
+                }
+            }
+        }
     }
 
     templates

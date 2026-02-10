@@ -85,6 +85,9 @@ NO_CLEANUP="${NO_CLEANUP:-0}" # Leave processes/sandbox running on exit for debu
 SYQURE_MULTIPARTY_SECURE_ONLY="${SYQURE_MULTIPARTY_SECURE_ONLY:-0}"
 SYQURE_MULTIPARTY_CLI_PARITY="${SYQURE_MULTIPARTY_CLI_PARITY:-0}"
 SYQURE_DUMP_TRAFFIC="${SYQURE_DUMP_TRAFFIC:-0}"
+USE_EXISTING_DATASITES="${USE_EXISTING_DATASITES:-0}"
+EXISTING_DATASITES_BASE="${EXISTING_DATASITES_BASE:-}"
+SERVER_URL_OVERRIDE="${SERVER_URL_OVERRIDE:-${LIVE_SERVER_URL:-}}"
 
 show_usage() {
 	cat <<EOF
@@ -115,6 +118,10 @@ Scenario Options (pick one):
                        Accepts multiple notebook config files (runs all in sequence)
 
 Other Options:
+  --reuse-existing-datasites PATH
+                       Reuse existing local datasite homes at PATH/<email> (skip devstack reset/start)
+  --live-server-url URL
+                       Server URL to use with --reuse-existing-datasites (or set SYFTBOX_SERVER_URL)
   --interactive, -i    Run with visible browser windows (alias for --headed)
   --syqure-secure-only Run only secure_aggregate in --syqure-multiparty-flow (seeded fixed inputs)
   --syqure-cli-parity  Make --syqure-multiparty-flow runtime match CLI distributed flow defaults
@@ -145,6 +152,17 @@ Environment Variables (ports):
   SYFTBOX_HOTLINK_TCP_DUMP_FULL=1 Log full payload hex (can generate huge logs)
   SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW  Preview bytes when full dump disabled (default: 64)
 
+Environment Variables (existing datasites mode):
+  USE_EXISTING_DATASITES=1          Skip devstack and reuse existing datasite homes
+  EXISTING_DATASITES_BASE=PATH      Base path containing one directory per email
+  SYFTBOX_SERVER_URL=URL            Live server URL (required in existing datasites mode)
+  CLIENT1_EMAIL/CLIENT2_EMAIL/AGG_EMAIL
+                                    Participant emails (defaults are sandbox.local addresses)
+  CLIENT1_HOME/CLIENT2_HOME/AGG_HOME
+                                    Optional explicit home paths (override auto PATH/<email>)
+  CLIENT1_CFG/CLIENT2_CFG/AGG_CFG   Optional explicit config paths (default: <home>/syftbox/config.json)
+  DEVSTACK_SYNC_TIMEOUT             Peer sync wait timeout (defaults to 120s in existing mode)
+
 Examples:
   ./test-scenario.sh                    # Run all scenarios (default, headless)
   ./test-scenario.sh --messaging        # Run just messaging scenario
@@ -161,6 +179,7 @@ Examples:
   ./test-scenario.sh --syqure-multiparty-flow --syqure-cli-parity --interactive  # Align desktop run with CLI runtime defaults
   ./test-scenario.sh --syqure-multiparty-flow --syqure-dump-traffic --interactive  # Enable TCP proxy payload dumps
   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive  # Run Syqure collaborative allele-freq flow UI test
+  ./test-scenario.sh --syqure-multiparty-flow --reuse-existing-datasites /Users/me/biovaults --live-server-url https://20.40.47.91:8443
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
 }
@@ -265,6 +284,17 @@ while [[ $# -gt 0 ]]; do
 			INTERACTIVE_MODE=1
 			shift
 			;;
+		--reuse-existing-datasites)
+			[[ -z "${2:-}" ]] && { echo "Error: --reuse-existing-datasites requires a path"; exit 1; }
+			USE_EXISTING_DATASITES=1
+			EXISTING_DATASITES_BASE="$2"
+			shift 2
+			;;
+		--live-server-url)
+			[[ -z "${2:-}" ]] && { echo "Error: --live-server-url requires a URL"; exit 1; }
+			SERVER_URL_OVERRIDE="$2"
+			shift 2
+			;;
 		--syqure-secure-only)
 			SYQURE_MULTIPARTY_SECURE_ONLY=1
 			shift
@@ -323,6 +353,20 @@ done
 if [[ -z "$SCENARIO" ]]; then
         # Support legacy SCENARIO env var
         SCENARIO="${SCENARIO:-all}"
+fi
+
+if [[ -n "${EXISTING_DATASITES_BASE:-}" ]]; then
+	USE_EXISTING_DATASITES=1
+fi
+
+use_existing_lc="$(printf '%s' "${USE_EXISTING_DATASITES:-0}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$use_existing_lc" == "1" || "$use_existing_lc" == "true" || "$use_existing_lc" == "yes" || "$use_existing_lc" == "on" ]]; then
+	USE_EXISTING_DATASITES=1
+	if [[ -n "${EXISTING_DATASITES_BASE:-}" ]]; then
+		EXISTING_DATASITES_BASE="$(canonicalize_path "$EXISTING_DATASITES_BASE")"
+	fi
+else
+	USE_EXISTING_DATASITES=0
 fi
 
 # Default to embedded SyftBox backend unless explicitly overridden.
@@ -908,7 +952,12 @@ fi
 CLIENT1_EMAIL="${CLIENT1_EMAIL:-client1@sandbox.local}"
 CLIENT2_EMAIL="${CLIENT2_EMAIL:-client2@sandbox.local}"
 AGG_EMAIL="${AGG_EMAIL:-aggregator@sandbox.local}"
+CLIENT1_HOME="${CLIENT1_HOME:-}"
+CLIENT2_HOME="${CLIENT2_HOME:-}"
+CLIENT1_CFG="${CLIENT1_CFG:-}"
+CLIENT2_CFG="${CLIENT2_CFG:-}"
 SANDBOX_ROOT="${SANDBOX_DIR:-$BIOVAULT_DIR/sandbox}"
+SERVER_URL="${SERVER_URL:-}"
 SERVER_PID=""
 TAURI1_PID=""
 TAURI2_PID=""
@@ -996,6 +1045,15 @@ is_enabled_flag() {
 	value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 	[[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
+
+if [[ "$USE_EXISTING_DATASITES" == "1" ]]; then
+	if [[ -z "${DEVSTACK_SYNC_TIMEOUT:-}" ]]; then
+		export DEVSTACK_SYNC_TIMEOUT=120
+	fi
+	if [[ -z "${SYQURE_MULTIPARTY_WATCH+x}" ]]; then
+		export SYQURE_MULTIPARTY_WATCH=0
+	fi
+fi
 
 stop_syqure_watchdog() {
 	if [[ -n "${SYQURE_WATCH_PID:-}" ]]; then
@@ -1179,40 +1237,47 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
-	# Clear stale syftboxd lock holders from prior no-cleanup runs before touching devstack.
-	kill_stale_syftboxd_locks "$SANDBOX_ROOT"
-
-	# Start devstack with two or three clients (reset by default to avoid stale state)
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
-		info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
-		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
+	if [[ "$USE_EXISTING_DATASITES" == "1" ]]; then
+		info "Using existing datasites mode; skipping devstack start/stop."
+		if [[ -n "${EXISTING_DATASITES_BASE:-}" ]]; then
+			info "Existing datasites base: ${EXISTING_DATASITES_BASE}"
+		fi
 	else
-		info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
-		DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+		# Clear stale syftboxd lock holders from prior no-cleanup runs before touching devstack.
+		kill_stale_syftboxd_locks "$SANDBOX_ROOT"
+
+		# Start devstack with two or three clients (reset by default to avoid stale state)
+		if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+			info "Ensuring SyftBox devstack with three clients (reset=${DEVSTACK_RESET})"
+			DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL},${AGG_EMAIL}"
+		else
+			info "Ensuring SyftBox devstack with two clients (reset=${DEVSTACK_RESET})"
+			DEVSTACK_CLIENTS="${CLIENT1_EMAIL},${CLIENT2_EMAIL}"
+		fi
+		# Stop any existing stack for this sandbox to avoid state conflicts
+		# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
+		STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
+		if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+			STOP_ARGS+=(--reset)
+		fi
+		timer_push "Devstack stop"
+		bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
+		timer_pop
+		DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
+		if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+			DEVSTACK_ARGS+=(--reset)
+		fi
+		if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
+			DEVSTACK_ARGS+=(--skip-keys)
+		fi
+		if [[ "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "1" || "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "true" ]]; then
+			DEVSTACK_ARGS+=(--skip-client-daemons)
+		fi
+		timer_push "Devstack start"
+		bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
+		timer_pop
+		DEVSTACK_STARTED=1
 	fi
-	# Stop any existing stack for this sandbox to avoid state conflicts
-	# Pass --reset to stop if we're resetting, so sandbox gets wiped (including Jupyter venvs)
-	STOP_ARGS=(--sandbox "$SANDBOX_ROOT" --stop)
-	if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
-		STOP_ARGS+=(--reset)
-	fi
-	timer_push "Devstack stop"
-	bash "$DEVSTACK_SCRIPT" "${STOP_ARGS[@]}" >/dev/null 2>&1 || true
-	timer_pop
-	DEVSTACK_ARGS=(--clients "$DEVSTACK_CLIENTS" --sandbox "$SANDBOX_ROOT")
-        if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then  
-                DEVSTACK_ARGS+=(--reset)
-        fi
-        if [[ "$DEVSTACK_SKIP_KEYS" == "1" || "$DEVSTACK_SKIP_KEYS" == "true" ]]; then
-                DEVSTACK_ARGS+=(--skip-keys)
-        fi
-        if [[ "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "1" || "${DEVSTACK_SKIP_CLIENT_DAEMONS:-}" == "true" ]]; then
-                DEVSTACK_ARGS+=(--skip-client-daemons)
-        fi
-	timer_push "Devstack start"
-	bash "$DEVSTACK_SCRIPT" "${DEVSTACK_ARGS[@]}" >/dev/null
-	timer_pop
-	DEVSTACK_STARTED=1
 fi
 
 # Read devstack state for client configs (not needed for mock-only scenarios)
@@ -1232,7 +1297,7 @@ find_state_file() {
 
 STATE_FILE="$(find_state_file || true)"
 if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
-	if [[ -z "$STATE_FILE" ]]; then
+	if [[ "$USE_EXISTING_DATASITES" != "1" && -z "$STATE_FILE" ]]; then
 		echo "Devstack state not found in $SANDBOX_ROOT" >&2
 		exit 1
 	fi
@@ -1253,20 +1318,85 @@ PY
 }
 
 if [[ "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
-	CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
-	CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
-	CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
-	CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
-	if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
-		AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
-		AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
-	fi
-	SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
+	if [[ "$USE_EXISTING_DATASITES" == "1" ]]; then
+		# Resolve runtime from existing datasites on disk instead of devstack state.
+		if [[ -z "${CLIENT1_HOME:-}" ]]; then
+			if [[ -z "${EXISTING_DATASITES_BASE:-}" ]]; then
+				echo "Existing datasites mode requires CLIENT1_HOME or EXISTING_DATASITES_BASE" >&2
+				exit 1
+			fi
+			CLIENT1_HOME="$EXISTING_DATASITES_BASE/$CLIENT1_EMAIL"
+		fi
+		if [[ -z "${CLIENT2_HOME:-}" ]]; then
+			if [[ -z "${EXISTING_DATASITES_BASE:-}" ]]; then
+				echo "Existing datasites mode requires CLIENT2_HOME or EXISTING_DATASITES_BASE" >&2
+				exit 1
+			fi
+			CLIENT2_HOME="$EXISTING_DATASITES_BASE/$CLIENT2_EMAIL"
+		fi
+		if [[ -z "${CLIENT1_CFG:-}" ]]; then
+			CLIENT1_CFG="$CLIENT1_HOME/syftbox/config.json"
+		fi
+		if [[ -z "${CLIENT2_CFG:-}" ]]; then
+			CLIENT2_CFG="$CLIENT2_HOME/syftbox/config.json"
+		fi
+		if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+			if [[ -z "${AGG_HOME:-}" ]]; then
+				if [[ -z "${EXISTING_DATASITES_BASE:-}" ]]; then
+					echo "Existing datasites mode requires AGG_HOME or EXISTING_DATASITES_BASE for aggregator" >&2
+					exit 1
+				fi
+				AGG_HOME="$EXISTING_DATASITES_BASE/$AGG_EMAIL"
+			fi
+			if [[ -z "${AGG_CFG:-}" ]]; then
+				AGG_CFG="$AGG_HOME/syftbox/config.json"
+			fi
+		fi
+
+		SERVER_URL="${SERVER_URL_OVERRIDE:-${SYFTBOX_SERVER_URL:-${SERVER_URL:-}}}"
+		if [[ -z "${SERVER_URL:-}" ]]; then
+			echo "Existing datasites mode requires --live-server-url URL or SYFTBOX_SERVER_URL" >&2
+			exit 1
+		fi
+
+		for required_dir in "$CLIENT1_HOME" "$CLIENT2_HOME"; do
+			if [[ ! -d "$required_dir" ]]; then
+				echo "Missing datasite home directory: $required_dir" >&2
+				exit 1
+			fi
+		done
+		for required_cfg in "$CLIENT1_CFG" "$CLIENT2_CFG"; do
+			if [[ ! -f "$required_cfg" ]]; then
+				echo "Missing SyftBox config file: $required_cfg" >&2
+				exit 1
+			fi
+		done
+		if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+			if [[ ! -d "$AGG_HOME" ]]; then
+				echo "Missing aggregator home directory: $AGG_HOME" >&2
+				exit 1
+			fi
+			if [[ ! -f "$AGG_CFG" ]]; then
+				echo "Missing aggregator SyftBox config file: $AGG_CFG" >&2
+				exit 1
+			fi
+		fi
+	else
+		CLIENT1_HOME="$(parse_field "$CLIENT1_EMAIL" home_path)"
+		CLIENT2_HOME="$(parse_field "$CLIENT2_EMAIL" home_path)"
+		CLIENT1_CFG="$(parse_field "$CLIENT1_EMAIL" config)"
+		CLIENT2_CFG="$(parse_field "$CLIENT2_EMAIL" config)"
+		if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+			AGG_HOME="$(parse_field "$AGG_EMAIL" home_path)"
+			AGG_CFG="$(parse_field "$AGG_EMAIL" config)"
+		fi
+		SERVER_URL="$(python3 - "$STATE_FILE" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 print(f"http://127.0.0.1:{state['server']['port']}")
 PY
-	)"
+		)"
+	fi
 
 	info "Client1 home: $CLIENT1_HOME"
 	info "Client2 home: $CLIENT2_HOME"
@@ -2662,6 +2792,13 @@ PY
 		fi
 		;;
 	syqure-multiparty-flow)
+		# Default this scenario to fast secure-only mode unless explicitly overridden.
+		# Set SYQURE_MULTIPARTY_FORCE_FULL=1 to run the full staged flow path.
+		force_full_lc="$(printf '%s' "${SYQURE_MULTIPARTY_FORCE_FULL:-0}" | tr '[:upper:]' '[:lower:]')"
+		if [[ "$force_full_lc" != "1" && "$force_full_lc" != "true" && "$force_full_lc" != "yes" && "$force_full_lc" != "on" ]]; then
+			SYQURE_MULTIPARTY_SECURE_ONLY=1
+		fi
+
 		# Keep Syqure runtime env aligned with the distributed scenario defaults.
 		# Allow callers to override explicitly via environment.
 		export BV_SYFTBOX_HOTLINK="${BV_SYFTBOX_HOTLINK:-1}"
@@ -2709,6 +2846,7 @@ PY
 		info "Three clients will execute biovault/tests/scenarios/syqure-flow/flow.yaml via collaborative run."
 		if [[ "$SYQURE_MULTIPARTY_SECURE_ONLY" == "1" ]]; then
 			info "Secure-only mode: running only secure_aggregate with seeded fixed inputs."
+			info "Set SYQURE_MULTIPARTY_FORCE_FULL=1 to run the full multi-step flow."
 		fi
 		if [[ "$SYQURE_MULTIPARTY_CLI_PARITY" == "1" ]]; then
 			info "CLI-parity mode: backend=${BV_SYFTBOX_BACKEND:-unset} BV_SYQURE_TCP_PROXY=${BV_SYQURE_TCP_PROXY:-unset} BV_SYQURE_PORT_BASE=${BV_SYQURE_PORT_BASE:-auto}."

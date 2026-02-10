@@ -141,8 +141,12 @@ export function createMultipartyFlowModal({ invoke, dialog }) {
 		}
 
 		const actions = []
+		const isSecureAggregate = String(step?.id || '').toLowerCase() === 'secure_aggregate'
+		const canRunFromStatus = isSecureAggregate
+			? step.status === 'Ready'
+			: step.status === 'Ready' || step.status === 'Pending'
 
-		if (step.status === 'Ready' || step.status === 'Pending') {
+		if (canRunFromStatus) {
 			actions.push(
 				`<button class="step-btn run-btn" onclick="window.multipartyFlowModal.runStep('${step.id}')">▶ Run Step</button>`,
 			)
@@ -435,16 +439,20 @@ export function createProposeFlowModal({
 
 		const order = []
 		const counts = {}
+		const seen = {}
 		for (const token of tokens) {
 			const role = normalizeRoleFromTargetToken(token)
 			if (!role) continue
 			if (!order.includes(role)) order.push(role)
-			if (counts[role] == null) counts[role] = 0
+			if (counts[role] == null) { counts[role] = 0; seen[role] = new Set() }
 
 			if (token.includes('@')) {
 				const local = token.split('@')[0].toLowerCase()
 				if (/^(client|contributor)\d+$/.test(local)) {
-					counts[role] += 1
+					if (!seen[role].has(local)) {
+						seen[role].add(local)
+						counts[role] += 1
+					}
 				} else if (counts[role] === 0) {
 					counts[role] = 1
 				}
@@ -551,6 +559,14 @@ export function createProposeFlowModal({
 		flowRoles = []
 		roleAssignments = {}
 		flowRoleDefaults = {}
+
+		// Reset section visibility
+		const rolesSection = document.getElementById('propose-flow-roles-section')
+		const messageSection = document.getElementById('propose-flow-message-section')
+		const sendBtn = document.getElementById('propose-flow-send-btn')
+		if (rolesSection) rolesSection.style.display = 'none'
+		if (messageSection) messageSection.style.display = 'none'
+		if (sendBtn) sendBtn.disabled = true
 
 		// Load multiparty flows
 		await loadMultipartyFlows()

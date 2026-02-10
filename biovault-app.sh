@@ -15,6 +15,7 @@ set -euo pipefail
 APP_BIN="${APP_BIN:-/Applications/BioVault.app/Contents/MacOS/bv-desktop}"
 APP_PIDS=()
 SED_PIDS=()
+_CLEANUP_RAN=0
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,36 +26,51 @@ NC='\033[0m'
 usage() {
   cat <<EOF
 Usage: $0 --emails email1,email2,... <path>
+       $0 --emails email1,email2,... --server-url URL [--base-port PORT] <path>
        $0 --stop
 
 Options:
   --emails CSV    Comma-separated list of emails (one BioVault instance per email)
+  --server-url URL  SyftBox server URL for all launched instances (live/dev server)
+  --base-port N   Fixed base port (uses N, N+1, N+2 per instance with +10 stride)
   --stop          Kill all running bv-desktop instances launched by this script
   -h, --help      Show this help
 
 Environment:
   APP_BIN         Path to bv-desktop binary (default: /Applications/BioVault.app/Contents/MacOS/bv-desktop)
+  SYFTBOX_SERVER_URL  Used if --server-url is not provided
 
 Example:
-  $0 --emails alice@openmined.org,bob@openmined.org,carol@openmined.org ./multiparty-test
+  $0 --emails alice@openmined.org,bob@openmined.org,carol@openmined.org --server-url https://20.40.47.91:8443 --base-port 56000 ./multiparty-test
 EOF
 }
 
 cleanup() {
+  if [[ "${_CLEANUP_RAN:-0}" -eq 1 ]]; then
+    return
+  fi
+  _CLEANUP_RAN=1
+
   echo -e "\n${YELLOW}Shutting down all BioVault instances...${NC}"
   # Kill the actual bv-desktop processes first
-  for pid in "${APP_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
+  if [[ ${#APP_PIDS[@]:-0} -gt 0 ]]; then
+    for pid in "${APP_PIDS[@]}"; do
+      kill "$pid" 2>/dev/null || true
+    done
+  fi
   sleep 2
   # Force kill any that didn't exit gracefully
-  for pid in "${APP_PIDS[@]}"; do
-    kill -9 "$pid" 2>/dev/null || true
-  done
+  if [[ ${#APP_PIDS[@]:-0} -gt 0 ]]; then
+    for pid in "${APP_PIDS[@]}"; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+  fi
   # Clean up sed processes
-  for pid in "${SED_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
+  if [[ ${#SED_PIDS[@]:-0} -gt 0 ]]; then
+    for pid in "${SED_PIDS[@]}"; do
+      kill "$pid" 2>/dev/null || true
+    done
+  fi
   wait 2>/dev/null || true
   echo -e "${GREEN}All instances stopped.${NC}"
   exit 0
@@ -67,6 +83,8 @@ fi
 
 EMAILS=""
 BASE_PATH=""
+SERVER_URL="${SYFTBOX_SERVER_URL:-}"
+BASE_PORT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,14 +93,30 @@ while [[ $# -gt 0 ]]; do
       EMAILS="$2"
       shift 2
       ;;
+    --server-url)
+      [[ -z "${2:-}" ]] && { echo "Error: --server-url requires a value"; exit 1; }
+      SERVER_URL="$2"
+      shift 2
+      ;;
+    --base-port)
+      [[ -z "${2:-}" ]] && { echo "Error: --base-port requires a value"; exit 1; }
+      BASE_PORT="$2"
+      shift 2
+      ;;
     --stop)
-      mapfile -t pids < <(pgrep -f -- "$APP_BIN" || true)
+      pids=()
+      while IFS= read -r pid; do
+        [[ -n "$pid" ]] && pids+=("$pid")
+      done < <(pgrep -f -- "$APP_BIN" || true)
       if [[ ${#pids[@]} -eq 0 ]]; then
         echo "No matching processes found for APP_BIN=$APP_BIN"
       else
         kill "${pids[@]}" 2>/dev/null || true
         sleep 1
-        mapfile -t remaining < <(pgrep -f -- "$APP_BIN" || true)
+        remaining=()
+        while IFS= read -r pid; do
+          [[ -n "$pid" ]] && remaining+=("$pid")
+        done < <(pgrep -f -- "$APP_BIN" || true)
         if [[ ${#remaining[@]} -gt 0 ]]; then
           kill -9 "${remaining[@]}" 2>/dev/null || true
         fi
@@ -136,7 +170,19 @@ mkdir -p "$BASE_PATH"
 
 # Pick a random base port in the ephemeral range to avoid collisions with other services.
 # Each instance uses 3 consecutive ports: syftbox, ws-bridge, http-bridge.
-RAND_BASE=$((49152 + RANDOM % 10000))
+if [[ -n "$BASE_PORT" ]]; then
+  if ! [[ "$BASE_PORT" =~ ^[0-9]+$ ]]; then
+    echo "Error: --base-port must be numeric"
+    exit 1
+  fi
+  if (( BASE_PORT < 1024 || BASE_PORT > 65520 )); then
+    echo "Error: --base-port must be between 1024 and 65520"
+    exit 1
+  fi
+  RAND_BASE="$BASE_PORT"
+else
+  RAND_BASE=$((49152 + RANDOM % 10000))
+fi
 # Align to 10-port boundary per instance for readability
 RAND_BASE=$((RAND_BASE / 10 * 10))
 
@@ -147,6 +193,12 @@ echo -e "${CYAN}  BioVault Multiparty Launcher (${#EMAIL_LIST[@]} instances)${NC
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo -e "${YELLOW}Binary:${NC} $APP_BIN"
 echo -e "${YELLOW}Base path:${NC} $BASE_PATH"
+if [[ -n "$SERVER_URL" ]]; then
+  echo -e "${YELLOW}SyftBox server:${NC} $SERVER_URL"
+else
+  echo -e "${YELLOW}SyftBox server:${NC} (from saved config/default)"
+fi
+echo -e "${YELLOW}Port base:${NC} $RAND_BASE"
 echo ""
 
 for i in "${!EMAIL_LIST[@]}"; do
@@ -198,6 +250,7 @@ for i in "${!EMAIL_LIST[@]}"; do
     SYFTBOX_CLIENT_URL="http://127.0.0.1:$syftbox_port" \
     DEV_WS_BRIDGE_PORT="$ws_bridge_port" \
     DEV_WS_BRIDGE_HTTP_PORT="$http_bridge_port" \
+    ${SERVER_URL:+SYFTBOX_SERVER_URL="$SERVER_URL"} \
     "$APP_BIN" > >(sed "s/^/[$email] /") 2>&1 &
   APP_PIDS+=($!)
 

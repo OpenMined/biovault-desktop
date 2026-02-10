@@ -13,6 +13,7 @@ use walkdir::WalkDir;
 
 // Use CLI library types and functions
 use biovault::cli::commands::flow::run_flow as cli_run_flow;
+use biovault::cli::commands::run_dynamic;
 use biovault::data::BioVaultDb;
 pub use biovault::data::{Flow, Run, RunConfig};
 pub use biovault::flow_spec::FlowSpec;
@@ -1314,31 +1315,6 @@ fn append_flow_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, messa
 pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<Flow>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
-
-    for flow in &flows {
-        match flow.spec.as_ref() {
-            Some(spec) => {
-                let input_types: Vec<String> = spec
-                    .inputs
-                    .iter()
-                    .map(|(name, input)| format!("{}:{}", name, input.raw_type()))
-                    .collect();
-                crate::desktop_log!(
-                    "Flow spec debug: '{}' inputs [{}] steps {}",
-                    flow.name,
-                    input_types.join(", "),
-                    spec.steps.len()
-                );
-            }
-            None => {
-                crate::desktop_log!(
-                    "Flow spec debug: '{}' missing spec (path: {})",
-                    flow.name,
-                    flow.flow_path
-                );
-            }
-        }
-    }
 
     Ok(flows)
 }
@@ -2734,12 +2710,27 @@ pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> 
 
     if let Some(r) = run {
         // Clear multiparty session so the invitation can be re-accepted from messages
+        let mut multiparty_session_id: Option<String> = None;
+        let mut multiparty_party_count: Option<usize> = None;
         if let Some(ref metadata_str) = r.metadata {
             if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
                 if let Some(sid) = metadata.get("session_id").and_then(|v| v.as_str()) {
                     super::multiparty::clear_multiparty_session(sid);
+                    multiparty_session_id = Some(sid.to_string());
+                }
+                if let Some(participants) = metadata.get("participants").and_then(|v| v.as_array()) {
+                    if !participants.is_empty() {
+                        multiparty_party_count = Some(participants.len());
+                    }
                 }
             }
+        }
+
+        // Also clean stale per-run Syqure port-base hint files used for deterministic
+        // multiparty session wiring. This prevents deleted runs from leaving behind
+        // temp hints that can confuse later re-accept/retry flows.
+        if let (Some(sid), Some(party_count)) = (multiparty_session_id, multiparty_party_count) {
+            run_dynamic::cleanup_syqure_port_base_hint_for_run(&sid, party_count);
         }
 
         // Delete work directory if it exists

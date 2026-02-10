@@ -296,6 +296,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("trigger_syftbox_sync", "syftbox", false),
         cmd_async("syftbox_queue_status", "syftbox", true),
         cmd("get_syftbox_diagnostics", "syftbox", true),
+        cmd("test_turn_connection", "syftbox", true),
         cmd_async("syftbox_subscriptions_discovery", "syftbox", true),
         cmd_long("syftbox_upload_action", "syftbox", false),
         cmd_async("syftbox_request_otp", "syftbox", false),
@@ -2731,6 +2732,18 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "get_syftbox_diagnostics" => {
             let result = crate::get_syftbox_diagnostics().map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "test_turn_connection" => {
+            let server_url: Option<String> = args
+                .get("serverUrl")
+                .cloned()
+                .or_else(|| args.get("server_url").cloned())
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| format!("Failed to parse serverUrl: {}", e))?;
+            let result = crate::commands::syftbox::test_turn_connection(server_url)
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_database_path" => {
