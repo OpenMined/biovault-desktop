@@ -668,14 +668,20 @@ jobs:
             echo "❌ syqure git checkout not found" >&2
             exit 1
           fi
-          # Rewrite SSH URLs to HTTPS so CI can clone private submodules with the GH token.
-          git -C syqure config url."https://github.com/".insteadOf "git@github.com:"
-          # Configure HTTPS auth for submodule clones (the checkout action only sets this for the main repo).
+          # Register submodules, then rewrite SSH URLs to HTTPS with auth so CI can clone them.
+          git -C syqure submodule init codon sequre
           AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
           git -C syqure config http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH_HEADER"
-          # Ensure syqure prebuilts can resolve stdlib symlinks during bundle copy.
-          git -C syqure submodule sync --recursive
-          git -C syqure submodule update --init --depth 1 codon sequre
+          # Overwrite SSH submodule URLs with HTTPS (insteadOf is unreliable for submodule clones).
+          for sub in codon sequre; do
+            old_url="$(git -C syqure config submodule."$sub".url)"
+            new_url="$(echo "$old_url" | sed 's|git@github\.com:|https://github.com/|')"
+            if [[ "$old_url" != "$new_url" ]]; then
+              echo "Rewriting $sub URL: $old_url -> $new_url"
+              git -C syqure config submodule."$sub".url "$new_url"
+            fi
+          done
+          git -C syqure submodule update --depth 1 codon sequre
 
       - name: Build syqure and bundle codon libs
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
