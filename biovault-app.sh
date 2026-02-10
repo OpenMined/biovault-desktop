@@ -201,7 +201,10 @@ else
   echo -e "${YELLOW}SyftBox server:${NC} (from saved config/default)"
 fi
 if [[ -n "${SEQURE_NATIVE_BIN:-}" ]]; then
-  echo -e "${YELLOW}Syqure bin:${NC} $SEQURE_NATIVE_BIN"
+  echo -e "${YELLOW}Syqure override:${NC} $SEQURE_NATIVE_BIN"
+fi
+if [[ -n "${SYQURE_SKIP_BUNDLE:-}" ]]; then
+  echo -e "${YELLOW}SYQURE_SKIP_BUNDLE:${NC} $SYQURE_SKIP_BUNDLE"
 fi
 echo -e "${YELLOW}Port base:${NC} $RAND_BASE"
 echo ""
