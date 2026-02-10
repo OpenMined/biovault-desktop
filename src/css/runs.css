@@ -1167,12 +1167,21 @@
 	transition: all 0.2s;
 }
 
+.mp-btn:disabled {
+	cursor: not-allowed;
+	opacity: 0.65;
+}
+
+.mp-btn.is-pending {
+	opacity: 0.8;
+}
+
 .mp-run-btn {
 	background: #3b82f6;
 	color: white;
 }
 
-.mp-run-btn:hover {
+.mp-run-btn:hover:not(:disabled) {
 	background: #2563eb;
 }
 
@@ -1191,7 +1200,7 @@
 	color: white;
 }
 
-.mp-retry-btn:hover {
+.mp-retry-btn:hover:not(:disabled) {
 	background: #d97706;
 }
 

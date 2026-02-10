@@ -30,6 +30,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 	const multipartyParticipantStatusMemory = new Map()
 	const multipartyDiagnosticsSamples = new Map()
 	const multipartyLoadInFlight = new Map()
+	const multipartyRunPending = new Set()
 	let runsRenderKey = ''
 
 	function getNestedState(map, sessionId) {
@@ -101,8 +102,30 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		return `${sessionId}::${stepId}`
 	}
 
+	function getStepRunKey(sessionId, stepId) {
+		return `${sessionId}::${stepId}`
+	}
+
+	function escapeAttrSelector(value) {
+		return String(value || '')
+			.replace(/\\/g, '\\\\')
+			.replace(/"/g, '\\"')
+	}
+
 	function getStepTimerKey(sessionId, stepId) {
 		return `${sessionId}::${stepId}`
+	}
+
+	function setRunButtonPendingState(sessionId, stepId, pending) {
+		const selector = `button[data-run-session="${escapeAttrSelector(sessionId)}"][data-run-step="${escapeAttrSelector(stepId)}"]`
+		const buttons = document.querySelectorAll(selector)
+		buttons.forEach((button) => {
+			const originalLabel = button.dataset.originalLabel || button.textContent || '▶ Run'
+			if (!button.dataset.originalLabel) button.dataset.originalLabel = originalLabel
+			button.disabled = pending
+			button.classList.toggle('is-pending', pending)
+			button.textContent = pending ? 'Starting...' : button.dataset.originalLabel
+		})
 	}
 
 	async function showDockerWarningModal(runAction) {
@@ -1053,12 +1076,15 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const stepParticipants = {}
 			for (const p of allProgress) {
 				for (const s of p.steps || []) {
+					const tsSeconds = Number(s?.timestamp)
+					const tsMs = Number.isFinite(tsSeconds) ? tsSeconds * 1000 : null
 					if (!stepParticipants[s.step_id]) stepParticipants[s.step_id] = {}
 					stepParticipants[s.step_id][normalizeKey(p.email)] = {
 						email: p.email,
 						role: p.role,
 						status: normalizeProgressStatus(s.status),
 						output_dir: s.output_dir || null,
+						timestamp_ms: tsMs,
 					}
 				}
 			}
@@ -1072,11 +1098,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				const existingStatus = existing?.status
 				const inferredStatus =
 					log.event === 'step_shared' || existingStatus === 'Shared' ? 'Shared' : 'Completed'
+				const logTsMs = parseTimestampMs(log.timestamp)
 				stepParticipants[log.step_id][key] = {
 					email: existing?.email || log.participant,
 					role: existing?.role || null,
 					status: normalizeProgressStatus(inferredStatus),
 					output_dir: existing?.output_dir || null,
+					timestamp_ms: logTsMs,
 				}
 			}
 
@@ -1116,6 +1144,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 						role: state.my_role,
 						status: normalizeProgressStatus(step.status),
 						output_dir: step.output_dir || existing.output_dir || null,
+						timestamp_ms: Date.now(),
 					}
 				}
 			}
@@ -1128,19 +1157,38 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const normalizedStatus = normalizeProgressStatus(record?.status)
 					const key = memoryKey(stepId, participantEmail)
 					const cached = statusMemory.get(key)
-					const mergedStatus =
-						cached && progressStatusRank(cached.status) > progressStatusRank(normalizedStatus)
-							? cached.status
-							: normalizedStatus
+					const candidateTs = Number(record?.timestamp_ms || 0)
+					const cachedTs = Number(cached?.timestamp_ms || 0)
+					let mergedStatus = normalizedStatus
+					if (cached?.status) {
+						const cachedStatus = normalizeProgressStatus(cached.status)
+						const cachedRank = progressStatusRank(cachedStatus)
+						const candidateRank = progressStatusRank(normalizedStatus)
+						const candidateTerminal =
+							normalizedStatus === 'Completed' || normalizedStatus === 'Shared'
+						if (cachedStatus === 'Failed' && candidateTerminal) {
+							// Allow retry recovery to override sticky local Failed cache.
+							mergedStatus =
+								cachedTs > 0 && candidateTs > 0 && candidateTs < cachedTs
+									? cachedStatus
+									: normalizedStatus
+						} else if (cachedRank > candidateRank) {
+							mergedStatus = cachedStatus
+						}
+					}
+					const mergedOutputDir = record?.output_dir || cached?.output_dir || null
+					const mergedTimestampMs = Math.max(candidateTs, cachedTs) || null
 					participantsByEmail[emailKey] = {
 						...record,
 						email: participantEmail,
 						status: mergedStatus,
-						output_dir: record?.output_dir || cached?.output_dir || null,
+						output_dir: mergedOutputDir,
+						timestamp_ms: mergedTimestampMs,
 					}
 					statusMemory.set(key, {
 						status: mergedStatus,
-						output_dir: participantsByEmail[emailKey].output_dir || null,
+						output_dir: mergedOutputDir,
+						timestamp_ms: mergedTimestampMs,
 					})
 				}
 			}
@@ -1156,6 +1204,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					role: null,
 					status: cached.status,
 					output_dir: cached.output_dir || null,
+					timestamp_ms: cached.timestamp_ms || null,
 				}
 			}
 
@@ -1398,6 +1447,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					<div class="mp-progress-actions">
 						<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.setAllStepsExpanded('${sessionId}', true)">Open All</button>
 						<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.setAllStepsExpanded('${sessionId}', false)">Close All</button>
+						<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.refreshSessionState('${sessionId}', '${runId}')">Refresh State</button>
 					</div>
 					${
 						myNextStep
@@ -1792,9 +1842,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const canRunForStatus = isSecureAggregate
 			? effectiveStatus === 'Ready'
 			: effectiveStatus === 'Ready' || effectiveStatus === 'Pending'
+		const runPending = multipartyRunPending.has(getStepRunKey(sessionId, step.id))
 		if (canRunForStatus && dependenciesSatisfied) {
 			actions.push(
-				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
+				`<button type="button" class="mp-btn mp-run-btn" data-run-session="${escapeHtml(sessionId)}" data-run-step="${escapeHtml(step.id)}" ${runPending ? 'disabled' : ''} onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">${runPending ? 'Starting...' : '▶ Run'}</button>`,
 			)
 		}
 		if (canRunForStatus && !dependenciesSatisfied) {
@@ -1838,7 +1889,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 		if (effectiveStatus === 'Failed') {
 			actions.push(
-				`<button type="button" class="mp-btn mp-retry-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">🔄 Retry</button>`,
+				`<button type="button" class="mp-btn mp-retry-btn" data-run-session="${escapeHtml(sessionId)}" data-run-step="${escapeHtml(step.id)}" ${runPending ? 'disabled' : ''} onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">${runPending ? 'Starting...' : '🔄 Retry'}</button>`,
 			)
 		}
 		if (step.status === 'WaitingForInputs') {
@@ -1860,6 +1911,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const forceLabel = step.shares_output ? '⏭ Force Share' : '⏭ Force Complete'
 			actions.push(
 				`<button type="button" class="mp-btn mp-force-btn" onclick="window.runsModule?.forceCompleteStep('${sessionId}', '${step.id}')">${forceLabel}</button>`,
+			)
+		}
+		if (effectiveStatus !== 'Running') {
+			actions.push(
+				`<button type="button" class="mp-btn mp-collapse-btn" onclick="window.runsModule?.republishStepState('${sessionId}', '${step.id}')">🔁 Republish State</button>`,
 			)
 		}
 		if (!actions.length) {
@@ -2068,6 +2124,17 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		})
 		loadMultipartySteps(sessionId, runId).catch(() => {})
 	}
+	window.runsModule.refreshSessionState = async function (sessionId, runId) {
+		try {
+			const statusMemory = getNestedState(multipartyParticipantStatusMemory, sessionId)
+			statusMemory.clear()
+			await invoke('trigger_syftbox_sync').catch(() => null)
+			await loadMultipartySteps(sessionId, runId)
+		} catch (error) {
+			console.error('Failed to refresh session state:', error)
+			alert(`Failed to refresh state: ${error}`)
+		}
+	}
 	window.runsModule.rememberCodeToggle = function (sessionId, stepId, isOpen) {
 		const codeState = getNestedState(multipartyCodeExpanded, sessionId)
 		codeState.set(stepId, !!isOpen)
@@ -2151,6 +2218,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		}
 	}
 	window.runsModule.runStep = async function (sessionId, stepId) {
+		const runKey = getStepRunKey(sessionId, stepId)
+		if (multipartyRunPending.has(runKey)) return
+		multipartyRunPending.add(runKey)
+		setRunButtonPendingState(sessionId, stepId, true)
+
 		const executeStep = async () => {
 			await invoke('run_flow_step', { sessionId, stepId })
 			// Refresh the steps display
@@ -2214,6 +2286,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			console.error('Failed to run step:', error)
 			alert(`Failed to run step: ${error}`)
+		} finally {
+			multipartyRunPending.delete(runKey)
+			setRunButtonPendingState(sessionId, stepId, false)
 		}
 	}
 	window.runsModule.forceCompleteStep = async function (sessionId, stepId) {
@@ -2239,6 +2314,22 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			console.error('Failed to force-complete step:', error)
 			alert(`Failed to force-complete step: ${error}`)
+		}
+	}
+	window.runsModule.republishStepState = async function (sessionId, stepId) {
+		try {
+			await invoke('republish_flow_step_state', { sessionId, stepId })
+			await invoke('trigger_syftbox_sync').catch(() => null)
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
+			if (runCard) {
+				const runId = runCard.dataset.runId
+				await loadMultipartySteps(sessionId, runId)
+			}
+		} catch (error) {
+			console.error('Failed to republish step state:', error)
+			alert(`Failed to republish step state: ${error}`)
 		}
 	}
 	window.runsModule.openParticipantDatasite = async function (sessionId, participantEmail) {

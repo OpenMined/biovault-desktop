@@ -2546,6 +2546,32 @@
 	background: #ffffff;
 }
 
+.flow-input-picker-manual-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.flow-input-picker-manual-row .flow-input-picker-text {
+	flex: 1;
+}
+
+.flow-input-picker-browse {
+	padding: 8px 12px;
+	border: 1px solid #cbd5e1;
+	border-radius: 8px;
+	background: #ffffff;
+	color: #334155;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.flow-input-picker-browse:hover {
+	background: #f8fafc;
+}
+
 .flow-input-picker-select {
 	min-height: 38px;
 }

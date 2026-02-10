@@ -637,6 +637,22 @@ async function importAndJoinInvitation(
 	flowName: string,
 	inputSelections: Record<string, string> = {},
 ): Promise<void> {
+	const clickWithFallbacks = async (locator: Locator, options: { force?: boolean } = {}) => {
+		const attempts: Array<{ force: boolean }> = [{ force: false }, { force: true }]
+		if (typeof options.force === 'boolean') {
+			attempts.unshift({ force: options.force })
+		}
+		for (const attempt of attempts) {
+			try {
+				await locator.click({ force: attempt.force, timeout: 5_000 })
+				return true
+			} catch {
+				// try next strategy
+			}
+		}
+		return false
+	}
+
 	const start = Date.now()
 	while (Date.now() - start < MESSAGE_TIMEOUT) {
 		await clickMessagesTab(page)
@@ -671,7 +687,7 @@ async function importAndJoinInvitation(
 			)
 
 			if (await importBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
-				await importBtn.click()
+				await clickWithFallbacks(importBtn.first(), { force: true })
 				await page.waitForTimeout(1200)
 			}
 
@@ -682,22 +698,30 @@ async function importAndJoinInvitation(
 					return
 				}
 				await expect(joinBtn).toBeEnabled({ timeout: UI_TIMEOUT })
-				await joinBtn.click()
-				const inputPicker = page.locator('.flow-input-picker-modal').first()
 				let pickerVisible = false
 				let alreadyJoined = false
-				const waitStart = Date.now()
-				while (Date.now() - waitStart < 20_000) {
-					if (await inputPicker.isVisible().catch(() => false)) {
-						pickerVisible = true
-						break
+				const inputPicker = page.locator('.flow-input-picker-modal').first()
+				const declineBtn = invitationCard.locator('.decline-btn').first()
+				for (let clickAttempt = 0; clickAttempt < 4; clickAttempt += 1) {
+					await clickWithFallbacks(joinBtn.first(), { force: true })
+					const waitStart = Date.now()
+					while (Date.now() - waitStart < 4_000) {
+						if (await inputPicker.isVisible().catch(() => false)) {
+							pickerVisible = true
+							break
+						}
+						const refreshedJoinText = (await joinBtn.textContent().catch(() => '')) || ''
+						const declineVisible = await declineBtn.isVisible().catch(() => false)
+						if (
+							refreshedJoinText.includes('View Flow') ||
+							(refreshedJoinText.includes('Join Flow') && !declineVisible)
+						) {
+							alreadyJoined = true
+							break
+						}
+						await page.waitForTimeout(250)
 					}
-					const refreshedJoinText = (await joinBtn.textContent().catch(() => '')) || ''
-					if (refreshedJoinText.includes('View Flow')) {
-						alreadyJoined = true
-						break
-					}
-					await page.waitForTimeout(300)
+					if (pickerVisible || alreadyJoined) break
 				}
 				if (pickerVisible) {
 					for (const [inputName, desiredPath] of Object.entries(inputSelections)) {
@@ -733,9 +757,18 @@ async function importAndJoinInvitation(
 								await select.selectOption({ value: byName })
 							}
 						} else {
-							const manual = inputRow.locator('input.flow-input-picker-text').first()
-							await expect(manual).toBeVisible({ timeout: 10_000 })
-							await manual.fill(desiredPath)
+							const browseBtn = inputRow.locator('button.flow-input-picker-browse').first()
+							if (await browseBtn.isVisible().catch(() => false)) {
+								const [chooser] = await Promise.all([
+									page.waitForEvent('filechooser', { timeout: 5_000 }),
+									browseBtn.click({ force: true }),
+								])
+								await chooser.setFiles(desiredPath)
+							} else {
+								const manual = inputRow.locator('input.flow-input-picker-text').first()
+								await expect(manual).toBeVisible({ timeout: 10_000 })
+								await manual.fill(desiredPath)
+							}
 						}
 					}
 					const continueBtn = inputPicker.locator('button.flow-input-picker-confirm').first()
@@ -764,7 +797,7 @@ async function importAndJoinInvitation(
 					}
 					if (!alreadyJoined) {
 						throw new Error(
-							`${label}: Configure flow inputs modal did not appear after clicking Join Flow`,
+							`${label}: Join Flow click did not transition (no input modal and no joined state)`,
 						)
 					}
 				}

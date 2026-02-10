@@ -269,6 +269,7 @@ export function createMessagesModule({
 		const path = String(file?.file_path || '').toLowerCase()
 		return (
 			path.endsWith('.txt') ||
+			path.endsWith('.tsv') ||
 			path.endsWith('.vcf') ||
 			path.endsWith('.vcf.gz') ||
 			path.includes('/genotypes/')
@@ -357,12 +358,12 @@ export function createMessagesModule({
 			label.appendChild(hint)
 			row.appendChild(label)
 
-			if (fileLike && sortedFiles.length > 0) {
+			if (fileLike) {
 				const selectedValues = new Set(parseInputList(currentText))
 				let fileSelect = null
 				let fileCheckboxes = []
 				let selectedValuesSet = null
-				if (listLike) {
+				if (listLike && sortedFiles.length > 0) {
 					selectedValuesSet = new Set(selectedValues)
 					if (selectedValuesSet.size === 0 && String(name).toLowerCase().includes('genotype')) {
 						const genotypeFiles = sortedFiles.filter(fileLooksLikeGenotype)
@@ -540,7 +541,7 @@ export function createMessagesModule({
 					})
 
 					renderFileRows()
-				} else {
+				} else if (!listLike && sortedFiles.length > 0) {
 					fileSelect = document.createElement('select')
 					fileSelect.className = 'flow-input-picker-select'
 					fileSelect.multiple = false
@@ -565,6 +566,9 @@ export function createMessagesModule({
 					row.appendChild(fileSelect)
 				}
 
+				const manualRow = document.createElement('div')
+				manualRow.className = 'flow-input-picker-manual-row'
+
 				const manual = document.createElement('input')
 				manual.className = 'flow-input-picker-text'
 				manual.type = 'text'
@@ -572,7 +576,47 @@ export function createMessagesModule({
 				manual.placeholder = listLike
 					? 'Or enter comma-separated paths/values'
 					: 'Or enter a custom path/value'
-				row.appendChild(manual)
+				manualRow.appendChild(manual)
+
+				const browseButton = document.createElement('button')
+				browseButton.type = 'button'
+				browseButton.className = 'flow-input-picker-browse'
+				browseButton.textContent = 'Browse...'
+				browseButton.addEventListener('click', async () => {
+					try {
+						const selection = await dialog.open({
+							directory: false,
+							multiple: listLike,
+						})
+						if (!selection) return
+						const selectedPaths = Array.isArray(selection) ? selection : [selection]
+						const normalized = selectedPaths
+							.map((value) => String(value || '').trim())
+							.filter(Boolean)
+						if (normalized.length === 0) return
+						if (listLike) {
+							if (!selectedValuesSet) selectedValuesSet = new Set(parseInputList(manual.value))
+							normalized.forEach((path) => selectedValuesSet.add(path))
+							manual.value = Array.from(selectedValuesSet).join(',')
+						} else {
+							const [firstPath] = normalized
+							manual.value = firstPath || manual.value
+							if (fileSelect) {
+								let matched = false
+								Array.from(fileSelect.options).forEach((option) => {
+									const shouldSelect = option.value === manual.value
+									option.selected = shouldSelect
+									if (shouldSelect) matched = true
+								})
+								if (!matched) fileSelect.value = ''
+							}
+						}
+					} catch (error) {
+						console.warn('Flow input file picker failed:', error)
+					}
+				})
+				manualRow.appendChild(browseButton)
+				row.appendChild(manualRow)
 
 				fieldRefs.push({
 					name,
