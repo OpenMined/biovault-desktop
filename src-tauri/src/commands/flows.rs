@@ -2718,7 +2718,8 @@ pub async fn delete_flow_run(state: tauri::State<'_, AppState>, run_id: i64) -> 
                     super::multiparty::clear_multiparty_session(sid);
                     multiparty_session_id = Some(sid.to_string());
                 }
-                if let Some(participants) = metadata.get("participants").and_then(|v| v.as_array()) {
+                if let Some(participants) = metadata.get("participants").and_then(|v| v.as_array())
+                {
                     if !participants.is_empty() {
                         multiparty_party_count = Some(participants.len());
                     }

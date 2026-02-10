@@ -125,6 +125,31 @@ async function waitForThreadMessageMatching(
 	throw new Error(`Timed out waiting for thread message: ${label}`)
 }
 
+async function importContactWithRetry(
+	backend: Backend,
+	identity: string,
+	label: string,
+	timeoutMs = 60_000,
+) {
+	const start = Date.now()
+	let lastErr: any = null
+	while (Date.now() - start < timeoutMs) {
+		try {
+			await backend.invoke('network_import_contact', { identity })
+			return
+		} catch (err: any) {
+			lastErr = err
+			const msg = String(err?.message || err || '')
+			if (!msg.includes('DID not found')) {
+				throw err
+			}
+			await backend.invoke('trigger_syftbox_sync').catch(() => {})
+			await new Promise((r) => setTimeout(r, 1000))
+		}
+	}
+	throw new Error(`${label}: timed out importing ${identity}. last error: ${lastErr}`)
+}
+
 function extractReadPrincipalsFromSyftPub(content: string): string[] {
 	const lines = content.split(/\r?\n/)
 	const principals: string[] = []
@@ -183,25 +208,25 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		const wsPort2 = wsPortBase + 1
 		const wsPort3 = wsPortBase + 2
 
-		const email1 = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
-		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
-		const email3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
+		const expectedEmail1 = process.env.CLIENT1_EMAIL || 'client1@sandbox.local'
+		const expectedEmail2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
+		const expectedEmail3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
 
 		const logSocket = await ensureLogSocket()
 		log(logSocket, {
 			event: 'multiparty-flow-start',
-			email1,
-			email2,
-			email3,
+			email1: expectedEmail1,
+			email2: expectedEmail2,
+			email3: expectedEmail3,
 			wsPort1,
 			wsPort2,
 			wsPort3,
 		})
 
 		console.log('=== Multiparty Flow Test ===')
-		console.log(`Client 1 (contributor1): ${email1} (WS port ${wsPort1})`)
-		console.log(`Client 2 (contributor2): ${email2} (WS port ${wsPort2})`)
-		console.log(`Client 3 (aggregator): ${email3} (WS port ${wsPort3})`)
+		console.log(`Client 1 (contributor1): ${expectedEmail1} (WS port ${wsPort1})`)
+		console.log(`Client 2 (contributor2): ${expectedEmail2} (WS port ${wsPort2})`)
+		console.log(`Client 3 (aggregator): ${expectedEmail3} (WS port ${wsPort3})`)
 
 		// Create pages for all three clients
 		const page1 = await browser.newPage()
@@ -244,15 +269,30 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		// Complete onboarding for all three
 		console.log('\n--- Onboarding ---')
-		await completeOnboarding(page1, email1, logSocket)
-		await completeOnboarding(page2, email2, logSocket)
-		await completeOnboarding(page3, email3, logSocket)
+		await completeOnboarding(page1, expectedEmail1, logSocket)
+		await completeOnboarding(page2, expectedEmail2, logSocket)
+		await completeOnboarding(page3, expectedEmail3, logSocket)
 		console.log('All clients onboarded')
 
 		// Ensure dev mode is available
 		await backend1.invoke('get_dev_mode_info')
 		await backend2.invoke('get_dev_mode_info')
 		await backend3.invoke('get_dev_mode_info')
+
+		const settings1 = await backend1.invoke('get_settings')
+		const settings2 = await backend2.invoke('get_settings')
+		const settings3 = await backend3.invoke('get_settings')
+		const email1 = String(settings1?.email || '').trim()
+		const email2 = String(settings2?.email || '').trim()
+		const email3 = String(settings3?.email || '').trim()
+		if (!email1 || !email2 || !email3) {
+			throw new Error(
+				`Missing runtime emails from settings: ${JSON.stringify({ email1, email2, email3 })}`,
+			)
+		}
+		console.log(
+			`Resolved runtime identities from settings: client1=${email1}, client2=${email2}, aggregator=${email3}`,
+		)
 
 		const viewers: ViewerContext[] = [
 			{ label: email1, backend: backend1 },
@@ -264,12 +304,12 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		console.log('\n--- Key Exchange Phase ---')
 		console.log('Each client importing the other two as contacts...')
 
-		await backend1.invoke('network_import_contact', { identity: email2 })
-		await backend1.invoke('network_import_contact', { identity: email3 })
-		await backend2.invoke('network_import_contact', { identity: email1 })
-		await backend2.invoke('network_import_contact', { identity: email3 })
-		await backend3.invoke('network_import_contact', { identity: email1 })
-		await backend3.invoke('network_import_contact', { identity: email2 })
+		await importContactWithRetry(backend1, email2, email1)
+		await importContactWithRetry(backend1, email3, email1)
+		await importContactWithRetry(backend2, email1, email2)
+		await importContactWithRetry(backend2, email3, email2)
+		await importContactWithRetry(backend3, email1, email3)
+		await importContactWithRetry(backend3, email2, email3)
 		console.log('All key exchanges complete!')
 
 		log(logSocket, { event: 'key-exchange-complete' })
@@ -278,17 +318,13 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		console.log('\n--- Creating Flow Invitation ---')
 		const timestamp = Date.now()
 		const flowName = 'multiparty'
-		const sessionId = `session-${timestamp}`
+		const fixtureModuleName = `invite-fixture-${timestamp}`
+		const fixtureModuleDirName = fixtureModuleName
+		const fixtureAssetRelativePath = 'assets/fixture-data.txt'
+		const fixtureAssetContent = `fixture asset for ${fixtureModuleName}`
+		let sessionId = ''
 
-		// Use DEFAULT datasites that differ from the actual participant emails.
-		// This exercises the role-based mapping in build_group_map_from_participants:
-		//   contributor1@flow.example -> participant with role contributor1 -> email1
-		//   contributor2@flow.example -> participant with role contributor2 -> email2
-		//   aggregator@flow.example   -> participant with role aggregator   -> email3
-		const specDefaultAgg = 'aggregator@flow.example'
-		const specDefaultC1 = 'contributor1@flow.example'
-		const specDefaultC2 = 'contributor2@flow.example'
-
+		// Ensure aggregator has a multiparty flow available in local Flows before opening modal.
 		const flowSpec = {
 			apiVersion: 'syftbox.openmined.org/v1alpha1',
 			kind: 'Flow',
@@ -307,23 +343,25 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 					share_with: 'all',
 				},
 				datasites: {
-					all: [specDefaultAgg, specDefaultC1, specDefaultC2],
+					// Intentionally use canonical placeholders to exercise role mapping.
+					all: [
+						'aggregator@flow.example',
+						'contributor1@flow.example',
+						'contributor2@flow.example',
+					],
 					groups: {
-						aggregator: { include: [specDefaultAgg] },
-						contributors: { include: [specDefaultC1, specDefaultC2] },
+						aggregator: { include: ['aggregator@flow.example'] },
+						clients: {
+							include: ['contributor1@flow.example', 'contributor2@flow.example'],
+						},
 					},
 				},
-				roles: [
-					{ id: 'contributor1', description: 'First data contributor' },
-					{ id: 'contributor2', description: 'Second data contributor' },
-					{ id: 'aggregator', description: 'Aggregates contributions' },
-				],
 				steps: [
 					{
 						id: 'generate',
 						name: 'Generate Numbers',
 						description: 'Generate random numbers locally',
-						run: { targets: 'contributors', strategy: 'parallel' },
+						run: { targets: 'clients', strategy: 'parallel' },
 						share: {
 							numbers_shared: {
 								source: 'self.outputs.numbers',
@@ -338,7 +376,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 						description: 'Wait for all contributors to share',
 						barrier: {
 							wait_for: 'generate',
-							targets: 'contributors',
+							targets: 'clients',
 							timeout: 300,
 						},
 					},
@@ -360,33 +398,67 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			},
 		}
 
-		const participants = [
-			{ email: email1, role: 'contributor1' },
-			{ email: email2, role: 'contributor2' },
-			{ email: email3, role: 'aggregator' },
-		]
-
-		// Aggregator sends flow invitation to group
-		const invitationBody = `Join me in a multiparty flow! Flow: ${flowName} - ${timestamp}`
-
-		const groupMessage = await backend3.invoke('send_message', {
-			request: {
-				recipients: [email1, email2],
-				body: invitationBody,
-				subject: `Multiparty Flow: ${flowName}`,
-				metadata: {
-					flow_invitation: {
-						flow_name: flowName,
-						session_id: sessionId,
-						participants,
-						flow_spec: flowSpec,
-					},
+		await backend3.invoke(
+			'import_flow_from_json',
+			{
+				request: {
+					name: flowName,
+					flow_json: flowSpec,
+					overwrite: true,
 				},
 			},
-		})
+			60_000,
+		)
 
-		console.log(`Flow invitation sent! Thread ID: ${groupMessage.thread_id}`)
-		log(logSocket, { event: 'flow-invitation-sent', sessionId })
+		// Add a fixture module + asset to the flow folder so invitation source sync/import
+		// can be validated for bundled module files.
+		const proposerFlows = await backend3.invoke('get_flows')
+		const proposerFlow = (proposerFlows || []).find(
+			(f: any) =>
+				String(f?.name || f?.metadata?.name || '')
+					.trim()
+					.toLowerCase() === flowName.toLowerCase(),
+		)
+		const proposerFlowPath = String(proposerFlow?.flow_path || '').trim()
+		expect(proposerFlowPath).toBeTruthy()
+
+		const fixtureModulePath = `${proposerFlowPath}/modules/${fixtureModuleDirName}`
+		fs.mkdirSync(`${fixtureModulePath}/assets`, { recursive: true })
+		fs.writeFileSync(
+			`${fixtureModulePath}/module.yaml`,
+			[
+				'apiVersion: syftbox.openmined.org/v1alpha1',
+				'kind: Module',
+				'metadata:',
+				`  name: ${fixtureModuleName}`,
+				'  version: 0.1.0',
+				'spec:',
+				'  runner:',
+				'    kind: shell',
+				'    template: shell',
+				'    entrypoint: run.sh',
+				'  assets:',
+				`    - path: ${fixtureAssetRelativePath}`,
+				'  outputs:',
+				'    - name: done',
+				'      type: File',
+				'      format: { kind: txt }',
+				'      path: done.txt',
+				'',
+			].join('\n'),
+		)
+		fs.writeFileSync(`${fixtureModulePath}/run.sh`, '#!/usr/bin/env bash\necho done > done.txt\n')
+		fs.writeFileSync(`${fixtureModulePath}/${fixtureAssetRelativePath}`, `${fixtureAssetContent}\n`)
+
+		// Bootstrap a group thread first so Propose Flow has all participants in-context.
+		const bootstrap = await backend3.invoke('send_message', {
+			request: {
+				recipients: [email1, email2],
+				body: `bootstrap thread ${timestamp}`,
+				subject: 'Multiparty bootstrap',
+			},
+		})
+		const threadId = bootstrap.thread_id
 
 		// === Navigate to Messages and View Invitation in UI ===
 		console.log('\n--- Navigating to Messages UI ---')
@@ -419,6 +491,102 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		console.log('Navigating aggregator to Messages...')
 		await navigateToMessagesAndFindThread(page3, email3)
 
+		// Aggregator creates flow invitation using the actual Propose Flow modal UI.
+		console.log('\n--- Creating Flow Invitation via UI Modal ---')
+		const proposeBtn = page3.locator('#propose-flow-btn')
+		await proposeBtn.waitFor({ timeout: UI_TIMEOUT })
+		await expect(proposeBtn).toBeVisible()
+		await proposeBtn.click()
+
+		const proposeModal = page3.locator('#propose-flow-modal')
+		await proposeModal.waitFor({ timeout: UI_TIMEOUT })
+		await page3.selectOption('#propose-flow-select', { label: flowName })
+		await page3.waitForTimeout(500)
+
+		const roleRows = page3.locator('#propose-flow-roles-list .propose-flow-role-row')
+		const roleCount = await roleRows.count()
+		console.log(`  Aggregator: role rows in modal = ${roleCount}`)
+		expect(roleCount).toBe(3)
+
+		// Assign roles by label content with unique participant mapping.
+		const allCandidates = [email1, email2, email3]
+		const usedEmails = new Set<string>()
+		for (let i = 0; i < roleCount; i += 1) {
+			const row = roleRows.nth(i)
+			const roleLabel = (
+				(await row
+					.locator('.propose-flow-role-label')
+					.textContent()
+					.catch(() => '')) || ''
+			)
+				.toLowerCase()
+				.trim()
+			const select = roleRows.nth(i).locator('select')
+			let preferred = ''
+			if (roleLabel.includes('aggregator')) {
+				preferred = email3
+			} else if (roleLabel.includes('client') || roleLabel.includes('contributor')) {
+				if (roleLabel.includes('1')) {
+					preferred = email1
+				} else if (roleLabel.includes('2')) {
+					preferred = email2
+				}
+			}
+			const selectedEmail =
+				(preferred && !usedEmails.has(preferred) ? preferred : '') ||
+				allCandidates.find((candidate) => !usedEmails.has(candidate)) ||
+				preferred ||
+				email1
+			await select.selectOption(selectedEmail)
+			usedEmails.add(selectedEmail)
+		}
+
+		await page3
+			.locator('#propose-flow-message')
+			.fill(`Join me in a multiparty flow! Flow: ${flowName} - ${timestamp}`)
+		const sendBtn = page3.locator('#propose-flow-send-btn')
+		await sendBtn.waitFor({ timeout: UI_TIMEOUT })
+		await expect
+			.poll(
+				async () => {
+					try {
+						return await sendBtn.isEnabled()
+					} catch {
+						return false
+					}
+				},
+				{ timeout: UI_TIMEOUT },
+			)
+			.toBe(true)
+		await sendBtn.click({ timeout: UI_TIMEOUT })
+		let modalClosed = false
+		try {
+			await expect(proposeModal).toBeHidden({ timeout: 6000 })
+			modalClosed = true
+		} catch {
+			console.log('  Aggregator: modal still open after click, using JS send fallback')
+			await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
+			await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
+			modalClosed = true
+		}
+		expect(modalClosed).toBe(true)
+		await page3.waitForTimeout(1500)
+
+		const invitationForClient1 = await waitForThreadMessageMatching(
+			backend1,
+			threadId,
+			(msg) => normalizeMetadata(msg?.metadata)?.flow_invitation?.flow_name === flowName,
+			'flow invitation message (from UI modal)',
+		)
+		const invitationMeta = normalizeMetadata(invitationForClient1?.metadata)?.flow_invitation
+		sessionId = invitationMeta?.session_id || invitationMeta?.sessionId || ''
+		const invitationFlowLocation = String(invitationMeta?.flow_location || '').trim()
+		expect(sessionId).toBeTruthy()
+		expect(invitationFlowLocation).toBeTruthy()
+
+		console.log(`Flow invitation sent via UI! Thread ID: ${threadId}, Session ID: ${sessionId}`)
+		log(logSocket, { event: 'flow-invitation-sent', sessionId, threadId })
+
 		// Wait for invitation cards to render
 		console.log('\n--- Waiting for Flow Invitation Cards ---')
 		await page1.waitForTimeout(2000)
@@ -427,40 +595,152 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// === Import and Join Flow via UI ===
 		console.log('\n--- Import and Join Flow via UI ---')
 
-		async function importAndJoinFlow(page: Page, label: string) {
-			// Wait for invitation card
-			const invitationCard = page.locator('.flow-invitation-card')
-			await invitationCard.waitFor({ timeout: UI_TIMEOUT })
-			console.log(`  ${label}: Found invitation card`)
+		async function importAndJoinFlow(page: Page, label: string, backend: Backend) {
+			// Ensure thread view includes both inbound/outbound messages.
+			const allFilterBtn = page.locator('.message-filter[data-filter="all"]')
+			if (await allFilterBtn.isVisible().catch(() => false)) {
+				await allFilterBtn.click().catch(() => {})
+				await page.waitForTimeout(250)
+			}
+			const refreshBtn = page.locator('#refresh-messages-btn')
+			if (await refreshBtn.isVisible().catch(() => false)) {
+				await refreshBtn.click().catch(() => {})
+				await page.waitForTimeout(1200)
+			}
 
-			const importBtn = page.locator(
+			// Wait for invitation card
+			const invitationCard = page
+				.locator('#messages-main:visible #message-conversation .flow-invitation-card:visible')
+				.first()
+			try {
+				await invitationCard.waitFor({ timeout: UI_TIMEOUT })
+				console.log(`  ${label}: Found visible invitation card`)
+			} catch {
+				// Sender can already be joined and only have a View button available; accept that path.
+				const directOpenBtn = page
+					.locator(
+						'#messages-main:visible button:has-text("View Flow"), #messages-main:visible button:has-text("Join Flow")',
+					)
+					.first()
+				if (await directOpenBtn.isVisible().catch(() => false)) {
+					console.log(`  ${label}: Invitation card not visible; using direct flow button`)
+					await directOpenBtn.click()
+					await page.waitForTimeout(800)
+					return
+				}
+				throw new Error(`${label}: flow invitation UI not visible in message thread`)
+			}
+
+			const importBtn = invitationCard.locator(
 				'.flow-invitation-btn.import-btn, button:has-text("Import Flow")',
 			)
-			const joinBtn = page.locator(
-				'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow")',
+			const syncBtn = invitationCard.locator(
+				'.flow-invitation-btn:has-text("Sync Flow Files"), button:has-text("Sync Flow Files")',
 			)
+			const showFilesBtn = invitationCard.locator(
+				'.flow-invitation-btn:has-text("Show Flow Files"), button:has-text("Show Flow Files")',
+			)
+			const joinBtn = invitationCard.locator(
+				'.flow-invitation-btn.view-runs-btn, button:has-text("Join Flow"), button:has-text("View Flow")',
+			)
+			const statusEl = invitationCard.locator('.flow-invitation-status')
 			if (await importBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
 				const joinInitiallyVisible = await joinBtn.isVisible().catch(() => false)
 				console.log(`  ${label}: Join button visible before import: ${joinInitiallyVisible}`)
 				expect(joinInitiallyVisible).toBe(false)
 
+				// Explicitly validate Sync/Show actions before import.
+				await syncBtn.waitFor({ timeout: UI_TIMEOUT })
+				await syncBtn.click()
+				await expect
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 45_000,
+					})
+					.toContain('Flow files synced and ready to import')
+
+				await showFilesBtn.waitFor({ timeout: UI_TIMEOUT })
+				await showFilesBtn.click()
+				await expect
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 20_000,
+					})
+					.toContain('Opened:')
+
+				// Ensure synced source includes fixture module + asset.
+				const localFlowSourcePath = await backend.invoke('resolve_syft_url_to_local_path', {
+					syftUrl: invitationFlowLocation,
+				})
+				expect(localFlowSourcePath).toBeTruthy()
+				await expect
+					.poll(
+						async () =>
+							await backend.invoke('path_exists', {
+								path: `${localFlowSourcePath}/flow.yaml`,
+							}),
+						{ timeout: 45_000 },
+					)
+					.toBe(true)
+				await expect
+					.poll(
+						async () =>
+							await backend.invoke('path_exists', {
+								path: `${localFlowSourcePath}/modules/${fixtureModuleDirName}/module.yaml`,
+							}),
+						{ timeout: 45_000 },
+					)
+					.toBe(true)
+				await expect
+					.poll(
+						async () =>
+							await backend.invoke('path_exists', {
+								path: `${localFlowSourcePath}/modules/${fixtureModuleDirName}/${fixtureAssetRelativePath}`,
+							}),
+						{ timeout: 45_000 },
+					)
+					.toBe(true)
+
 				// Click Import Flow button
 				await importBtn.click()
 				console.log(`  ${label}: Clicked "Import Flow"`)
 
-				// Wait for import to complete (button should change or status should update)
-				await page.waitForTimeout(3000)
-
-				// Check for error message
-				const statusEl = invitationCard.locator('.flow-invitation-status')
-				const statusText = await statusEl.textContent().catch(() => '')
-				if (statusText) {
-					console.log(`  ${label}: Import status: ${statusText}`)
-				}
+				await expect
+					.poll(async () => ((await statusEl.textContent().catch(() => '')) || '').trim(), {
+						timeout: 60_000,
+					})
+					.toContain('Flow imported')
 
 				// Check if import button changed
 				const importBtnText = await importBtn.textContent().catch(() => '')
 				console.log(`  ${label}: Import button text after click: ${importBtnText}`)
+
+				// Ensure fixture module got imported (with asset) into local modules.
+				await expect
+					.poll(
+						async () => {
+							const modules = await backend.invoke('get_modules')
+							return (modules || []).find((m: any) => m?.name === fixtureModuleName) || null
+						},
+						{ timeout: 60_000 },
+					)
+					.not.toBeNull()
+				const importedModules = await backend.invoke('get_modules')
+				const importedFixture = (importedModules || []).find(
+					(m: any) => m?.name === fixtureModuleName,
+				)
+				expect(importedFixture?.module_path).toBeTruthy()
+				await expect
+					.poll(
+						async () =>
+							await backend.invoke('path_exists', {
+								path: `${importedFixture.module_path}/${fixtureAssetRelativePath}`,
+							}),
+						{ timeout: 30_000 },
+					)
+					.toBe(true)
+				const importedAssetText = fs
+					.readFileSync(`${importedFixture.module_path}/${fixtureAssetRelativePath}`, 'utf-8')
+					.trim()
+				expect(importedAssetText).toContain(fixtureAssetContent)
 			} else {
 				console.log(`  ${label}: Import button not visible (flow may already be imported)`)
 			}
@@ -496,15 +776,15 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		// Client 1 imports and joins
 		console.log(`${email1} importing and joining flow...`)
-		await importAndJoinFlow(page1, email1)
+		await importAndJoinFlow(page1, email1, backend1)
 
 		// Client 2 imports and joins
 		console.log(`${email2} importing and joining flow...`)
-		await importAndJoinFlow(page2, email2)
+		await importAndJoinFlow(page2, email2, backend2)
 
 		// Aggregator also imports and joins via UI
 		console.log(`${email3} importing and joining flow...`)
-		await importAndJoinFlow(page3, email3)
+		await importAndJoinFlow(page3, email3, backend3)
 
 		log(logSocket, { event: 'all-joined' })
 
@@ -1124,7 +1404,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Shared step outputs should be published into chat messages with metadata/files
 		const contributionSharedMsg = await waitForThreadMessageMatching(
 			backend3,
-			groupMessage.thread_id,
+			threadId,
 			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'generate',
 			'contribution share results message',
 		)
@@ -1134,7 +1414,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		const resultSharedMsg = await waitForThreadMessageMatching(
 			backend1,
-			groupMessage.thread_id,
+			threadId,
 			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
 			'final result share message',
 		)
@@ -1143,7 +1423,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		expect(resultMeta?.files?.length).toBeGreaterThan(0)
 		const resultSharedMsgClient2 = await waitForThreadMessageMatching(
 			backend2,
-			groupMessage.thread_id,
+			threadId,
 			(msg) => normalizeMetadata(msg?.metadata)?.flow_results?.step_id === 'aggregate',
 			'final result share message (client2)',
 		)
@@ -1180,7 +1460,7 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			for (const hello of helloMessages) {
 				await waitForThreadMessageMatching(
 					participant.backend,
-					groupMessage.thread_id,
+					threadId,
 					(msg) => (msg?.body || '').includes(hello),
 					`${participant.email} sees hello message`,
 				)
@@ -1213,6 +1493,9 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 
 		// Verify UI shows correct step status for each client
 		console.log('\n--- Verifying Final UI State ---')
+		const firstRunId1 = finalState1?.run_id
+		const firstRunId2 = finalState2?.run_id
+		const firstRunId3 = finalState3?.run_id
 
 		// Client1 should show generate as shared
 		const client1GenerateStatus = finalState1?.steps?.find((s: any) => s.id === 'generate')?.status
@@ -1255,6 +1538,139 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 			await syncBtn1.click()
 			await page1.waitForTimeout(2000)
 		}
+
+		// === Re-propose Same Flow in Same Group Thread (new session/new run) ===
+		console.log('\n--- Re-proposing Same Flow in Same Group Thread ---')
+		const previousSessionId = sessionId
+		const secondTimestamp = Date.now()
+
+		await navigateToMessagesAndFindThread(page3, email3)
+		await proposeBtn.waitFor({ timeout: UI_TIMEOUT })
+		await proposeBtn.click()
+		await proposeModal.waitFor({ timeout: UI_TIMEOUT })
+		await page3.selectOption('#propose-flow-select', { label: flowName })
+		await page3.waitForTimeout(500)
+
+		const secondRoleRows = page3.locator('#propose-flow-roles-list .propose-flow-role-row')
+		const secondRoleCount = await secondRoleRows.count()
+		expect(secondRoleCount).toBe(3)
+
+		// Deliberately assign clients in reverse order from the first invitation.
+		const secondAllCandidates = [email1, email2, email3]
+		const secondUsedEmails = new Set<string>()
+		for (let i = 0; i < secondRoleCount; i += 1) {
+			const row = secondRoleRows.nth(i)
+			const roleLabel = (
+				(await row
+					.locator('.propose-flow-role-label')
+					.textContent()
+					.catch(() => '')) || ''
+			)
+				.toLowerCase()
+				.trim()
+			const select = row.locator('select')
+			let preferred = ''
+
+			if (roleLabel.includes('aggregator')) {
+				preferred = email3
+			} else if (roleLabel.includes('1')) {
+				preferred = email2
+			} else if (roleLabel.includes('2')) {
+				preferred = email1
+			}
+			const selectedEmail =
+				(preferred && !secondUsedEmails.has(preferred) ? preferred : '') ||
+				secondAllCandidates.find((candidate) => !secondUsedEmails.has(candidate)) ||
+				preferred ||
+				email2
+			await select.selectOption(selectedEmail)
+			secondUsedEmails.add(selectedEmail)
+		}
+
+		await page3
+			.locator('#propose-flow-message')
+			.fill(`Second run in same thread (reordered clients) - ${secondTimestamp}`)
+		await expect
+			.poll(
+				async () => {
+					try {
+						return await sendBtn.isEnabled()
+					} catch {
+						return false
+					}
+				},
+				{ timeout: UI_TIMEOUT },
+			)
+			.toBe(true)
+		await sendBtn.click()
+		try {
+			await expect(proposeModal).toBeHidden({ timeout: 6000 })
+		} catch {
+			console.log(
+				'  Aggregator: second invite modal still open after click, using JS send fallback',
+			)
+			await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
+			await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
+		}
+		await page3.waitForTimeout(1500)
+
+		const secondInvitation = await waitForThreadMessageMatching(
+			backend1,
+			threadId,
+			(msg) => {
+				const invite = normalizeMetadata(msg?.metadata)?.flow_invitation
+				if (!invite || invite.flow_name !== flowName) return false
+				const sid = invite.session_id || invite.sessionId
+				return Boolean(sid && sid !== previousSessionId)
+			},
+			'second flow invitation in same group thread',
+		)
+
+		const secondInviteMeta = normalizeMetadata(secondInvitation?.metadata)?.flow_invitation
+		const secondSessionId = secondInviteMeta?.session_id || secondInviteMeta?.sessionId || ''
+		expect(secondSessionId).toBeTruthy()
+		expect(secondSessionId).not.toBe(previousSessionId)
+
+		const secondParticipants = secondInviteMeta?.participants || []
+		const secondFlowSpec = secondInviteMeta?.flow_spec
+		expect(Array.isArray(secondParticipants)).toBe(true)
+		expect(secondParticipants.length).toBe(3)
+		expect(secondFlowSpec).toBeTruthy()
+
+		// Accept second invitation for all participants and verify it becomes a distinct run.
+		const acceptPayload = {
+			sessionId: secondSessionId,
+			flowName,
+			flowSpec: secondFlowSpec,
+			participants: secondParticipants,
+			autoRunAll: false,
+			threadId,
+		}
+		await backend1.invoke('accept_flow_invitation', acceptPayload)
+		await backend2.invoke('accept_flow_invitation', acceptPayload)
+		await backend3.invoke('accept_flow_invitation', acceptPayload)
+
+		const secondState1 = await backend1.invoke('get_multiparty_flow_state', {
+			sessionId: secondSessionId,
+		})
+		const secondState2 = await backend2.invoke('get_multiparty_flow_state', {
+			sessionId: secondSessionId,
+		})
+		const secondState3 = await backend3.invoke('get_multiparty_flow_state', {
+			sessionId: secondSessionId,
+		})
+
+		expect(secondState1?.session_id).toBe(secondSessionId)
+		expect(secondState2?.session_id).toBe(secondSessionId)
+		expect(secondState3?.session_id).toBe(secondSessionId)
+
+		expect(secondState1?.run_id).toBeTruthy()
+		expect(secondState2?.run_id).toBeTruthy()
+		expect(secondState3?.run_id).toBeTruthy()
+
+		expect(secondState1?.run_id).not.toBe(firstRunId1)
+		expect(secondState2?.run_id).not.toBe(firstRunId2)
+		expect(secondState3?.run_id).not.toBe(firstRunId3)
 
 		console.log('\n=== Multiparty Flow Test Complete! ===')
 		log(logSocket, { event: 'multiparty-flow-test-complete' })

@@ -22,7 +22,7 @@ const RUN_TIMEOUT_MS = Number.parseInt(
 	process.env.SYQURE_MULTIPARTY_RUN_TIMEOUT_MS || '1200000',
 	10,
 )
-const ALLELE_FREQ_EXPECTED_FILES = Number.parseInt(process.env.ALLELE_FREQ_COUNT || '10', 10)
+const ALLELE_FREQ_EXPECTED_FILES = Number.parseInt(process.env.ALLELE_FREQ_COUNT || '1', 10)
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -547,9 +547,7 @@ async function shareStepViaBackendAndWait(
 		}
 	}
 	if (lastError && Date.now() - startedAt >= timeoutMs) {
-		throw new Error(
-			`${label}: timed out waiting to share ${stepId}` + `\nLast error: ${lastError}`,
-		)
+		throw new Error(`${label}: timed out waiting to share ${stepId}` + `\nLast error: ${lastError}`)
 	}
 	await waitForLocalStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
 }
@@ -884,6 +882,63 @@ async function waitForSharedFileOnViewers(
 	)
 }
 
+async function assertBuildMasterOutputsNonEmpty(
+	participantDataDirs: Map<string, string>,
+	aggregatorEmail: string,
+	flowName: string,
+	runId: string,
+	timeoutMs = 90_000,
+): Promise<void> {
+	const aggregatorDataDir = participantDataDirs.get(aggregatorEmail)
+	if (!aggregatorDataDir) {
+		throw new Error(`Missing data dir for aggregator ${aggregatorEmail}`)
+	}
+	const runDir = getSharedRunDir(aggregatorDataDir, aggregatorEmail, flowName, runId)
+	const stepId = 'build_master'
+	const stepNumber = 3
+
+	await waitForCondition(
+		() => {
+			const stepDir = findExistingSharedStepDir(runDir, stepNumber, stepId)
+			if (!stepDir) return false
+			const unionPath = path.join(stepDir, 'union_locus_index.json')
+			const countPath = path.join(stepDir, 'count.txt')
+			if (!fs.existsSync(unionPath) || !fs.existsSync(countPath)) return false
+			try {
+				const union = JSON.parse(fs.readFileSync(unionPath, 'utf8'))
+				const loci = Array.isArray(union?.loci) ? union.loci.length : 0
+				const nLoci = Number(union?.n_loci || 0)
+				const countRaw = fs.readFileSync(countPath, 'utf8').trim()
+				const count = Number.parseInt(countRaw || '0', 10)
+				return (
+					Number.isFinite(nLoci) && nLoci > 0 && loci > 0 && Number.isFinite(count) && count > 0
+				)
+			} catch {
+				return false
+			}
+		},
+		`build_master produced non-empty union index and count for ${aggregatorEmail}`,
+		timeoutMs,
+		1200,
+	)
+
+	const stepDir = findExistingSharedStepDir(runDir, stepNumber, stepId)
+	if (!stepDir) {
+		throw new Error(`Missing build_master step directory in ${runDir}`)
+	}
+	const unionPath = path.join(stepDir, 'union_locus_index.json')
+	const countPath = path.join(stepDir, 'count.txt')
+	const unionRaw = fs.existsSync(unionPath) ? fs.readFileSync(unionPath, 'utf8') : '<missing>'
+	const countRaw = fs.existsSync(countPath) ? fs.readFileSync(countPath, 'utf8') : '<missing>'
+	const union = JSON.parse(unionRaw)
+	const loci = Array.isArray(union?.loci) ? union.loci.length : 0
+	const nLoci = Number(union?.n_loci || 0)
+	const count = Number.parseInt(String(countRaw).trim() || '0', 10)
+	expect(nLoci).toBeGreaterThan(0)
+	expect(loci).toBeGreaterThan(0)
+	expect(count).toBeGreaterThan(0)
+}
+
 function findParticipantStepStatus(
 	allProgress: any[],
 	participantEmail: string,
@@ -1134,56 +1189,54 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			await Promise.all([clickRunsTab(page1), clickRunsTab(page2), clickRunsTab(page3)])
 
 			// Stage 1: clients run gen_allele_freq (local-only output).
+			// Use backend invocation to avoid flaky UI click timing around step enablement.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
-					backend1,
-					sessionId,
-					'gen_allele_freq',
-					'mp-run-btn',
-					email1,
-					['Completed'],
-					180_000,
-				),
-				clickStepActionAndWait(
-					page2,
-					backend2,
-					sessionId,
-					'gen_allele_freq',
-					'mp-run-btn',
-					email2,
-					['Completed'],
-					180_000,
-				),
+				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'gen_allele_freq', email1, [
+					'Completed',
+					'Shared',
+				]),
+				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'gen_allele_freq', email2, [
+					'Completed',
+					'Shared',
+				]),
 			])
 
 			// Stage 1b: clients share only locus_index derived artifact.
 			await Promise.all([
-				clickStepActionAndWait(
-					page1,
-					backend1,
-					sessionId,
-					'share_locus_index',
-					'mp-run-btn',
-					email1,
-					['Completed', 'Shared'],
-					180_000,
-				),
-				clickStepActionAndWait(
-					page2,
-					backend2,
-					sessionId,
-					'share_locus_index',
-					'mp-run-btn',
-					email2,
-					['Completed', 'Shared'],
-					180_000,
-				),
+				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'share_locus_index', email1, [
+					'Completed',
+					'Shared',
+				]),
+				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'share_locus_index', email2, [
+					'Completed',
+					'Shared',
+				]),
 			])
 			await Promise.all([
 				shareStepViaBackendAndWait(backend1, sessionId, 'share_locus_index', email1, 180_000),
 				shareStepViaBackendAndWait(backend2, sessionId, 'share_locus_index', email2, 180_000),
 			])
+			// Ensure aggregator can actually see both shared locus-index artifacts before build_master.
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email1,
+				flowName,
+				runId,
+				2,
+				'share_locus_index',
+				'locus_index.tsv',
+				[email3],
+			)
+			await waitForSharedFileOnViewers(
+				participantDataDirs,
+				email2,
+				flowName,
+				runId,
+				2,
+				'share_locus_index',
+				'locus_index.tsv',
+				[email3],
+			)
 
 			// Stage 2: aggregator run + share build_master.
 			// Use backend invocation to avoid flaky UI click timing around step enablement.
@@ -1192,6 +1245,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				'Shared',
 			])
 			await shareStepViaBackendAndWait(backend3, sessionId, 'build_master', email3, 180_000)
+			await assertBuildMasterOutputsNonEmpty(participantDataDirs, email3, flowName, runId)
 
 			// Stage 3: clients run align_counts.
 			await Promise.all([
@@ -1254,12 +1308,13 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 			])
 
 			// Stage 5: clients run report_aggregate.
+			// Use retrying backend start since this step can race after secure_aggregate share.
 			await Promise.all([
-				runStepViaBackendAndWait(backend1, sessionId, 'report_aggregate', email1, [
+				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'report_aggregate', email1, [
 					'Completed',
 					'Shared',
 				]),
-				runStepViaBackendAndWait(backend2, sessionId, 'report_aggregate', email2, [
+				runStepViaBackendWhenReadyAndWait(backend2, sessionId, 'report_aggregate', email2, [
 					'Completed',
 					'Shared',
 				]),

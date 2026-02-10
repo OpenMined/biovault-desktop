@@ -1,10 +1,12 @@
 # Fast Stable WebRTC Plan (Syqure Hotlink)
 
 ## Goal
+
 - Match or beat prior local direct-connection baseline while keeping WebRTC as the default fast path.
 - Keep websocket fallback for normal daily use, but make benchmark mode strict and fail-fast.
 
 ## Current Observations
+
 - Rust/WebRTC transport is now matching or slightly beating the earlier QUIC baseline on the same workload (`750 x 1,677,722 bytes`), at least in the transport-only 3-party burst scenario.
 - Existing scenario/env wiring could silently miss strict p2p intent unless `P2P_ONLY` and legacy `QUIC_ONLY` are normalized.
 - Rust hotlink previously allowed silent packet drops in p2p-only mode when WebRTC was not ready.
@@ -13,12 +15,16 @@
 ## Changes Implemented
 
 ### 1) Fail fast in Rust p2p-only path
+
 File: `syftbox/rust/src/hotlink_manager.rs`
+
 - Reduced `HOTLINK_ACCEPT_TIMEOUT` from `5s` to `1500ms` to reduce per-session stall time.
 - Replaced silent packet drop in p2p-only mode with explicit error return including `session/path/seq`.
 
 ### 2) Strict benchmark mode (`SYFTBOX_HOTLINK_BENCH_STRICT=1`)
+
 File: `syftbox/rust/src/hotlink_manager.rs`
+
 - Added strict mode gate:
   - accept timeout now errors immediately (instead of continue/send-anyway).
   - any WebRTC-not-ready path that would have gone to WS fallback now errors immediately.
@@ -30,7 +36,9 @@ File: `syftbox/rust/src/hotlink_manager.rs`
   - `mode = hotlink_p2p_strict` when strict enabled.
 
 ### 3) Normalize p2p-only env propagation in UI harness
+
 File: `test-scenario.sh` (repo root)
+
 - Added normalization and explicit export for:
   - `BV_SYFTBOX_HOTLINK_P2P_ONLY`
   - `SYFTBOX_HOTLINK_P2P_ONLY`
@@ -38,12 +46,16 @@ File: `test-scenario.sh` (repo root)
 - Updated Syqure env logging to include `P2P_ONLY`.
 
 ### 4) Normalize p2p-only env propagation in CLI harness
+
 File: `biovault/test-scenario.sh`
+
 - In hotlink mode non-explicit branch:
   - `BV_SYFTBOX_HOTLINK_QUIC_ONLY` now defaults from `BV_SYFTBOX_HOTLINK_P2P_ONLY`.
 
 ### 5) Add fast failure/assertions in distributed scenario
+
 File: `biovault/tests/scenarios/syqure-distributed.yaml`
+
 - Setup command now passes:
   - `SYFTBOX_HOTLINK_P2P_ONLY` plus normalized `QUIC_ONLY`.
 - Reduced parallel timeout from `900` to `420`.
@@ -52,6 +64,7 @@ File: `biovault/tests/scenarios/syqure-distributed.yaml`
   - fails if no active p2p dataplane (`tx_p2p_packets == 0` or `webrtc_connected == 0`)
 
 ## Why this should help
+
 - Removes ambiguous "passed but actually fell back" behavior in benchmarks.
 - Converts latent hangs/silent stalls into explicit errors close to the cause.
 - Ensures scenario intent (`P2P_ONLY`) is actually seen by runtime daemons.
@@ -92,6 +105,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
 ```
 
 ## Validation Status
+
 - Shell syntax checks passed for modified scripts.
 - Rust crate compile check passed:
   - `cargo check -p syftbox-rs` in `syftbox/rust`
@@ -104,6 +118,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - `SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS`
 
 ## Latest Run Notes (2026-02-10)
+
 - Failure case reproduced on distributed Syqure scenario with oversized chunk:
   - `SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE=262144` caused repeated `outbound packet larger than maximum message size`.
   - In strict mode this correctly surfaced as hard failure (no silent fallback/drop).
@@ -132,6 +147,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - aggregator shows low traffic volume, consistent with protocol role
 
 ## Messaging Noise Fix (2026-02-10)
+
 - Root cause of noisy logs like:
   - `Failed to read response file ... Failed to parse response JSON ...`
 - Cause:
@@ -151,6 +167,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - `cargo test check_acks -- --nocapture` (in `biovault/cli`)
 
 ## Self-Send Replay Guard (2026-02-10)
+
 - Issue:
   - Self-addressed messages (`from == to`) create self-addressed encrypted `.response` envelopes and can be retried repeatedly by higher-level message flows.
 - Fix:
@@ -165,6 +182,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - `cargo test self_send_is_blocked_and_marked_failed -- --nocapture` (in `biovault/cli`)
 
 ## Multiparty Mapping Fix (2026-02-10)
+
 - Symptom:
   - `secure_aggregate` could fail with `Syqure exited due to signal: 9` in 3-party runs.
   - Logs showed incorrect role mapping, e.g. both `client2@sandbox.local` and `aggregator@sandbox.local` resolving to the same email.
@@ -188,6 +206,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
     - participant/role list and full `default_to_actual` mapping
 
 ## Claude H1-H4 Status
+
 - H1 (chunk too small): implemented and validated.
   - Default chunk raised to `60 KiB` and made env-tunable via `SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE`.
   - Added adaptive split-on-oversize retry in TCP proxy send path.
@@ -199,12 +218,16 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
   - Data-channel mode/tuning still pending dedicated experiment.
 
 ## Next Engineering Steps
+
 1. Add stage-level timing in the Syqure flow runner (share generation, exchange, aggregate) to localize the ~120s cost.
 2. Extend the quick 3-party burst scenario with simultaneous bidirectional bursts to stress contention (H3 signal).
 3. Add handshake timing fields to telemetry:
+
 - `offer_to_dc_open_ms`
 - `open_to_first_payload_ms`
 - `first_payload_to_steady_state_ms`
+
 4. Re-run full `syqure-distributed.yaml` with timing instrumentation and compare against the transport-only burst profile.
 5. Run controlled H4 experiments:
+
 - compare current ordered reliable channel vs alternative data-channel config in a dedicated scenario.

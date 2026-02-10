@@ -364,7 +364,10 @@ function createMutatedAlleleFreqFixture(
 	fs.writeFileSync(outputPath, `${outRows.join('\n')}\n`, 'utf8')
 }
 
-function createAlleleAggInputFixtures(sessionId: string): { client1Path: string; client2Path: string } {
+function createAlleleAggInputFixtures(sessionId: string): {
+	client1Path: string
+	client2Path: string
+} {
 	const fixtureDir = path.join(process.cwd(), 'artifacts', 'syqure-allele-agg', sessionId)
 	const client1Path = path.join(fixtureDir, 'client1_allele_freq.tsv')
 	const client2Path = path.join(fixtureDir, 'client2_allele_freq.tsv')
@@ -622,9 +625,7 @@ async function shareStepViaBackendAndWait(
 		}
 	}
 	if (lastError && Date.now() - startedAt >= timeoutMs) {
-		throw new Error(
-			`${label}: timed out waiting to share ${stepId}` + `\nLast error: ${lastError}`,
-		)
+		throw new Error(`${label}: timed out waiting to share ${stepId}` + `\nLast error: ${lastError}`)
 	}
 	await waitForLocalStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
 }

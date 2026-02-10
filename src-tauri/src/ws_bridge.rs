@@ -3881,6 +3881,41 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
 
         // Multiparty flow commands
+        "send_flow_invitation" => {
+            let thread_id: String = serde_json::from_value(
+                args.get("threadId")
+                    .cloned()
+                    .ok_or_else(|| "Missing threadId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse threadId: {}", e))?;
+            let flow_name: String = serde_json::from_value(
+                args.get("flowName")
+                    .cloned()
+                    .ok_or_else(|| "Missing flowName".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowName: {}", e))?;
+            let flow_spec: serde_json::Value = args
+                .get("flowSpec")
+                .cloned()
+                .ok_or_else(|| "Missing flowSpec".to_string())?;
+            let participant_roles: Vec<biovault::messages::models::FlowParticipant> =
+                serde_json::from_value(
+                    args.get("participantRoles")
+                        .cloned()
+                        .ok_or_else(|| "Missing participantRoles".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse participantRoles: {}", e))?;
+            let result = crate::commands::multiparty::send_flow_invitation(
+                state.clone(),
+                thread_id,
+                flow_name,
+                flow_spec,
+                participant_roles,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "accept_flow_invitation" => {
             let session_id: String = serde_json::from_value(
                 args.get("sessionId")

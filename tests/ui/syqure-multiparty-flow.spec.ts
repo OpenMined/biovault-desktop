@@ -1074,14 +1074,13 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 			expect(syqureFlowAgg).toBeTruthy()
 			expect(syqureFlowAgg?.spec).toBeTruthy()
 
-			const sessionId = `session-${Date.now()}`
-			// Keep runId aligned with multiparty session_id so the shared _progress and step paths
-			// are observed consistently by collaborative UI/state readers.
-			const runId = sessionId
+			const invitationSeed = Date.now()
 			const datasites = [email3, email1, email2]
 			const secureStepNumber = SECURE_ONLY_MODE ? 1 : 5
 
-			const secureOnlyFixtures = SECURE_ONLY_MODE ? prepareSecureOnlyFixtures(sessionId) : null
+			const secureOnlyFixtures = SECURE_ONLY_MODE
+				? prepareSecureOnlyFixtures(`seed-${invitationSeed}`)
+				: null
 			const resolvedSpec = SECURE_ONLY_MODE
 				? buildSecureOnlyFlowSpec(
 						[email3, email1, email2],
@@ -1112,28 +1111,119 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-f
 					`cli-parity mode enabled: module paths resolved from ${path.dirname(sourceFlowPath)}`,
 				)
 			}
-
-			const participants = [
-				{ email: email3, role: 'aggregator' },
-				{ email: email1, role: 'client1' },
-				{ email: email2, role: 'client2' },
-			]
-
-			await backend3.invoke('send_message', {
+			// Bootstrap a group thread so the Propose Flow UI has all participants in context.
+			const bootstrap = await backend3.invoke('send_message', {
 				request: {
 					recipients: [email1, email2],
-					body: `Join collaborative Syqure flow run ${runId}`,
-					subject: `Multiparty Flow: ${flowName}`,
-					metadata: {
-						flow_invitation: {
-							flow_name: flowName,
-							session_id: sessionId,
-							participants,
-							flow_spec: flowSpec,
-						},
-					},
+					body: `syqure bootstrap ${invitationSeed}`,
+					subject: 'Syqure multiparty bootstrap',
 				},
 			})
+			const threadId = bootstrap?.thread_id
+			expect(typeof threadId).toBe('string')
+
+			async function navigateToMessagesAndFindThread(page: Page, label: string) {
+				await clickMessagesTab(page)
+				await page.waitForTimeout(400)
+				await backend1.invoke('trigger_syftbox_sync').catch(() => {})
+				await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+				await backend3.invoke('trigger_syftbox_sync').catch(() => {})
+
+				const refreshBtn = page.locator('#refresh-messages-btn').first()
+				if (await refreshBtn.isVisible().catch(() => false)) {
+					await refreshBtn.click().catch(() => {})
+					await page.waitForTimeout(800)
+				}
+
+				const threadBySubject = page
+					.locator('.message-thread-item:has-text("Syqure multiparty bootstrap")')
+					.first()
+				if (await threadBySubject.isVisible().catch(() => false)) {
+					await threadBySubject.click()
+				} else {
+					const firstThread = page.locator('.message-thread-item').first()
+					await firstThread.waitFor({ timeout: UI_TIMEOUT })
+					await firstThread.click()
+				}
+				console.log(`${label}: thread selected for UI invitation send`)
+			}
+
+			await navigateToMessagesAndFindThread(page1, email1)
+			await navigateToMessagesAndFindThread(page2, email2)
+			await navigateToMessagesAndFindThread(page3, email3)
+
+			const proposeBtn = page3.locator('#propose-flow-btn')
+			await proposeBtn.waitFor({ timeout: UI_TIMEOUT })
+			await proposeBtn.click()
+			const proposeModal = page3.locator('#propose-flow-modal')
+			await proposeModal.waitFor({ timeout: UI_TIMEOUT })
+			await page3.selectOption('#propose-flow-select', { label: flowName })
+			await page3.waitForTimeout(500)
+
+			const roleRows = page3.locator('#propose-flow-roles-list .propose-flow-role-row')
+			const roleCount = await roleRows.count()
+			expect(roleCount).toBeGreaterThanOrEqual(3)
+			const available = [email1, email2, email3]
+			const used = new Set<string>()
+			for (let i = 0; i < roleCount; i += 1) {
+				const row = roleRows.nth(i)
+				const roleLabel = (
+					(await row
+						.locator('.propose-flow-role-label')
+						.textContent()
+						.catch(() => '')) || ''
+				)
+					.toLowerCase()
+					.trim()
+				const select = row.locator('select')
+				let preferred = ''
+				if (roleLabel.includes('aggregator')) preferred = email3
+				else if (roleLabel.includes('1')) preferred = email1
+				else if (roleLabel.includes('2')) preferred = email2
+				const selectedEmail =
+					(preferred && !used.has(preferred) ? preferred : '') ||
+					available.find((candidate) => !used.has(candidate)) ||
+					preferred ||
+					email1
+				await select.selectOption(selectedEmail)
+				used.add(selectedEmail)
+			}
+
+			await page3
+				.locator('#propose-flow-message')
+				.fill(`Join collaborative Syqure flow run ${invitationSeed}`)
+			const sendBtn = page3.locator('#propose-flow-send-btn')
+			await expect
+				.poll(
+					async () => {
+						try {
+							return await sendBtn.isEnabled()
+						} catch {
+							return false
+						}
+					},
+					{ timeout: UI_TIMEOUT },
+				)
+				.toBe(true)
+			await sendBtn.click({ timeout: UI_TIMEOUT })
+			try {
+				await expect(proposeModal).toBeHidden({ timeout: 6000 })
+			} catch {
+				await page3.evaluate(() => window.proposeFlowModal?.sendInvitation?.())
+				await expect(proposeModal).toBeHidden({ timeout: UI_TIMEOUT })
+			}
+
+			const invitationMsg = await waitForThreadMessageMatching(
+				backend1,
+				threadId,
+				(msg) => normalizeMetadata(msg?.metadata)?.flow_invitation?.flow_name === flowName,
+				'syqure flow invitation from UI modal',
+			)
+			const invitationMeta = normalizeMetadata(invitationMsg?.metadata)?.flow_invitation || {}
+			const sessionId = String(invitationMeta?.session_id || invitationMeta?.sessionId || '')
+			expect(sessionId).toBeTruthy()
+			// Keep runId aligned with multiparty session_id so shared _progress/step paths align.
+			const runId = sessionId
 
 			await importAndJoinInvitation(page1, backend1, email1, flowName)
 			await importAndJoinInvitation(page2, backend2, email2, flowName)

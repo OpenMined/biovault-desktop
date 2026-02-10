@@ -1246,6 +1246,30 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				}
 				return step.status
 			}
+			const toTitleWords = (value) =>
+				String(value || '')
+					.replace(/[_-]+/g, ' ')
+					.trim()
+					.split(/\s+/)
+					.filter(Boolean)
+					.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+					.join(' ')
+			const resolveStepDisplayName = (step) => {
+				const id = String(step?.id || '').trim()
+				const name = String(step?.name || '').trim()
+				if (!id && !name) return 'Step'
+				if (name && name.toLowerCase() !== id.toLowerCase()) return name
+
+				const code = String(step?.code_preview || '')
+				const shareKeyMatch = code.match(/share:\s*\n\s+([A-Za-z0-9_-]+)\s*:/m)
+				const shareKey = shareKeyMatch?.[1] || ''
+				const noun = shareKey ? toTitleWords(shareKey.replace(/_shared$/i, '')) : ''
+				const verb = toTitleWords(id)
+				if (verb && noun && !verb.toLowerCase().includes(noun.toLowerCase())) {
+					return `${verb} ${noun}`
+				}
+				return verb || name || id
+			}
 			const stepById = new Map((state.steps || []).map((s) => [s.id, s]))
 			const isSecureAggregateStep = (step) => {
 				const id = String(step?.id || '').toLowerCase()
@@ -1354,8 +1378,8 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				waitingOnMeStep.shares_output &&
 				waitingOnMeStep.status === 'Completed' &&
 				!waitingOnMeStep.outputs_shared
-					? `share ${waitingOnMeStep.name}`
-					: waitingOnMeStep?.name || 'next step'
+					? `share ${resolveStepDisplayName(waitingOnMeStep)}`
+					: resolveStepDisplayName(waitingOnMeStep) || 'next step'
 
 			const waitingBannerHtml = waitingOnMeStep
 				? `<div class="mp-waiting-banner is-you">⚠ Waiting on YOU: ${escapeHtml(waitingOnMeLabel)}${waitingOnOthers.length ? ` | Others waiting: ${waitingOnOthers.map((e) => `<span class="mp-waiting-chip">${escapeHtml(e)}</span>`).join(' ')}` : ''}</div>`
@@ -1378,7 +1402,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					${
 						myNextStep
 							? `<button type="button" class="mp-btn mp-run-next-btn" onclick="window.runsModule?.runStep('${sessionId}', '${myNextStep.id}')">
-						▶ Run Next: ${escapeHtml(myNextStep.name)}
+						▶ Run Next: ${escapeHtml(resolveStepDisplayName(myNextStep))}
 					</button>`
 							: ''
 					}
@@ -1453,7 +1477,27 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				if (!rows) return ''
 				return `<div class="mp-step-contribs">${rows}</div>`
 			}
+			const renderInputWaiting = (step) => {
+				const waitingOn = Array.isArray(step?.input_waiting_on)
+					? [...new Set(step.input_waiting_on.map((e) => String(e || '').trim()).filter(Boolean))]
+					: []
+				if (!waitingOn.length) return ''
+				const chips = waitingOn
+					.map(
+						(email) => `<button type="button" class="mp-btn mp-waiting-peer-btn"
+							onclick="window.runsModule?.openParticipantDatasite('${sessionId}', '${escapeHtml(email)}')"
+							title="Open ${escapeHtml(email)} datasite in Finder">📂 ${escapeHtml(email)}</button>`,
+					)
+					.join('')
+				const reason = step?.input_waiting_reason ? String(step.input_waiting_reason) : ''
+				return `<div class="mp-input-waiting">
+					<div class="mp-input-waiting-label">⏳ Waiting for required shared inputs from:</div>
+					<div class="mp-input-waiting-peers">${chips}</div>
+					${reason ? `<div class="mp-input-waiting-reason">${escapeHtml(reason)}</div>` : ''}
+				</div>`
+			}
 
+			const stepExpandedState = getNestedState(multipartyStepExpanded, sessionId)
 			const stepsHtml = state.steps
 				.map((step) => {
 					const completion = getStepCompletion(step)
@@ -1472,7 +1516,6 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					) {
 						statusIcon = '📤'
 					}
-					const stepExpandedState = getNestedState(multipartyStepExpanded, sessionId)
 					const codeExpandedState = getNestedState(multipartyCodeExpanded, sessionId)
 					const logExpandedState = getNestedState(multipartyLogExpanded, sessionId)
 					const defaultExpanded = true
@@ -1494,7 +1537,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 							<button type="button" class="mp-step-header mp-step-toggle" onclick="window.runsModule?.toggleStepExpanded('${sessionId}', '${escapeHtml(step.id)}')">
 								<span class="mp-step-chevron">${isExpanded ? '▾' : '▸'}</span>
 								<span class="mp-step-status">${statusIcon}</span>
-								<span class="mp-step-name">${escapeHtml(step.name)}</span>
+								<span class="mp-step-name">${escapeHtml(resolveStepDisplayName(step))}</span>
 								<span class="mp-step-timer" data-session-id="${escapeHtml(sessionId)}" data-step-id="${escapeHtml(step.id)}">${stepTimerLabel ? `⏱ ${escapeHtml(stepTimerLabel)}` : ''}</span>
 								${isMyAction ? '<span class="mp-step-badge">Your step</span>' : ''}
 								${isNextStep ? '<span class="mp-step-badge mp-next-badge">Next</span>' : ''}
@@ -1503,6 +1546,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 									${renderParticipantChips(step, step.id, step.target_emails || [])}
 									${renderStepConnectivity(step, sessionId, diagnosticsByStepId.get(step.id))}
 									<div class="mp-step-desc">${escapeHtml(step.description)}</div>
+									${renderInputWaiting(step)}
 								${
 									step.code_preview
 										? `<details class="mp-step-code" ${codeExpandedState.get(step.id) ? 'open' : ''} ontoggle="window.runsModule?.rememberCodeToggle('${sessionId}','${escapeHtml(step.id)}', this.open)">
@@ -1562,6 +1606,9 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const nextHtml = progressHtml + tabsHtml
 			const renderSnapshot = {
 				activeTab,
+				expandedOverrides: Array.from(stepExpandedState.entries()).sort((a, b) =>
+					String(a[0]).localeCompare(String(b[0])),
+				),
 				progressPercent,
 				completedSteps,
 				totalSteps,
@@ -1745,22 +1792,19 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const canRunForStatus = isSecureAggregate
 			? effectiveStatus === 'Ready'
 			: effectiveStatus === 'Ready' || effectiveStatus === 'Pending'
-		if (
-			canRunForStatus &&
-			dependenciesSatisfied
-		) {
+		if (canRunForStatus && dependenciesSatisfied) {
 			actions.push(
 				`<button type="button" class="mp-btn mp-run-btn" onclick="window.runsModule?.runStep('${sessionId}', '${step.id}')">▶ Run</button>`,
 			)
 		}
-		if (
-			canRunForStatus &&
-			!dependenciesSatisfied
-		) {
+		if (canRunForStatus && !dependenciesSatisfied) {
 			actions.push('<span class="mp-pending">⏳ Waiting for dependencies</span>')
 		}
 		if (effectiveStatus === 'Running') {
 			actions.push('<span class="mp-running">Running...</span>')
+			actions.push(
+				`<button type="button" class="mp-btn mp-cancel-btn" onclick="window.runsModule?.cancelRunningStep('${sessionId}', '${step.id}')">⏹ Cancel</button>`,
+			)
 		}
 		if (effectiveStatus === 'Completed' && step.shares_output && !step.outputs_shared) {
 			actions.push(
@@ -1798,7 +1842,14 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			)
 		}
 		if (step.status === 'WaitingForInputs') {
-			actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
+			const waitingOn = Array.isArray(step?.input_waiting_on) ? step.input_waiting_on : []
+			if (waitingOn.length > 0) {
+				actions.push(
+					`<span class="mp-waiting">⏳ Waiting on: ${waitingOn.map((e) => escapeHtml(String(e))).join(', ')}</span>`,
+				)
+			} else {
+				actions.push('<span class="mp-waiting">Waiting for inputs...</span>')
+			}
 		}
 		const canForceComplete =
 			effectiveStatus === 'Pending' ||
@@ -2171,10 +2222,10 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 				? await dialog.ask(
 						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
 						{ title: 'Force Step Status', type: 'warning' },
-				  )
+					)
 				: confirm(
 						'Force this step as complete/shared for your participant? This bypasses normal readiness checks and is intended for debugging recovery.',
-				  )
+					)
 			if (!confirmed) return
 
 			await invoke('force_complete_flow_step', { sessionId, stepId })
@@ -2188,6 +2239,47 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		} catch (error) {
 			console.error('Failed to force-complete step:', error)
 			alert(`Failed to force-complete step: ${error}`)
+		}
+	}
+	window.runsModule.openParticipantDatasite = async function (sessionId, participantEmail) {
+		try {
+			const datasitePath = await invoke('get_multiparty_participant_datasite_path', {
+				sessionId,
+				participantEmail,
+			})
+			if (!datasitePath) {
+				throw new Error(`Datasite path unavailable for ${participantEmail}`)
+			}
+			await invoke('open_folder', { path: datasitePath })
+		} catch (error) {
+			console.error('Failed to open participant datasite:', error)
+			alert(`Failed to open datasite for ${participantEmail}: ${error}`)
+		}
+	}
+	window.runsModule.cancelRunningStep = async function (sessionId, stepId) {
+		try {
+			const confirmed = await confirmWithDialog(
+				`Cancel currently running step "${stepId}"? This pauses the active flow run so it can be retried.`,
+				{ title: 'Cancel Running Step', type: 'warning' },
+			)
+			if (!confirmed) return
+
+			const state = await invoke('get_multiparty_flow_state', { sessionId })
+			const runId = Number(state?.run_id || 0)
+			if (!runId) {
+				throw new Error('No run ID found for this multiparty session')
+			}
+
+			await invoke('pause_flow_run', { runId })
+			const runCard = document
+				.querySelector(`[data-session-id="${sessionId}"]`)
+				?.closest('.flow-run-card')
+			if (runCard) {
+				await loadMultipartySteps(sessionId, runId)
+			}
+		} catch (error) {
+			console.error('Failed to cancel running step:', error)
+			alert(`Failed to cancel running step: ${error}`)
 		}
 	}
 	window.runsModule.previewStepOutputs = async function (sessionId, stepId) {
