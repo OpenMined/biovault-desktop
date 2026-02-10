@@ -11,32 +11,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # lint:
-  #   name: Lint
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Setup workspace
-  #       if: runner.os != 'Windows'
-  #       run: |
-  #         chmod +x scripts/setup-workspace.sh
-  #         ./scripts/setup-workspace.sh
-  #     - name: Setup workspace (Windows)
-  #       if: runner.os == 'Windows'
-  #       shell: pwsh
-  #       run: .\win.ps1 ./scripts/setup-workspace.sh
-  #
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '20'
-  #
-  #     - name: Install dependencies
-  #       run: npm ci
-  #
-  #     - name: Run lint checks
-  #       run: ./lint.sh --check
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup workspace
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
+      - name: Setup workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\win.ps1 ./scripts/setup-workspace.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint checks
+        run: ./lint.sh --check
 
   scenario-tests:
     name: ${{ matrix.scenario }} (${{ matrix.platform }})${{ matrix.client_mode == 'go' && ' -go' || '' }}
@@ -516,7 +516,6 @@ jobs:
             artifacts/
 
   profiles-e2e:
-    if: false
     name: profiles-e2e (linux-x86_64)
     runs-on: namespace-profile-linux-medium
     env:
@@ -684,7 +683,6 @@ jobs:
             artifacts/
 
   profiles-e2e-macos:
-    if: false
     name: profiles-e2e (macos-arm64)
     runs-on: namespace-profile-mac-medium
     env:
@@ -829,7 +827,6 @@ jobs:
             artifacts/
 
   profiles-e2e-windows:
-    if: false
     name: profiles-e2e (windows-x86_64)
     runs-on: namespace-profile-windows-medium
     defaults:
