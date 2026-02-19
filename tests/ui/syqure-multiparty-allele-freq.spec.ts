@@ -1485,6 +1485,12 @@ test.describe('Syqure flow via multiparty invitation system @syqure-multiparty-a
 				runId,
 			})
 		} finally {
+			if (process.env.WAIT_MODE === '1') {
+				const waitSec = 60
+				console.log(`\n--- Wait mode: keeping apps open for ${waitSec}s before closing ---`)
+				await new Promise((r) => setTimeout(r, waitSec * 1000))
+			}
+
 			if (page1) await page1.close().catch(() => {})
 			if (page2) await page2.close().catch(() => {})
 			if (page3) await page3.close().catch(() => {})

@@ -902,20 +902,20 @@ async function importAndJoinInvitation(
 						)
 					}
 				} else {
-					if (Object.keys(inputSelections).length > 0) {
+					if (!alreadyJoined) {
 						const accepted = await acceptViaBackendFallback()
 						if (!accepted) {
+							if (Object.keys(inputSelections).length > 0) {
+								throw new Error(
+									`${label}: Configure flow inputs modal did not appear for required input selection`,
+								)
+							}
 							throw new Error(
-								`${label}: Configure flow inputs modal did not appear for required input selection`,
+								`${label}: Join Flow click did not transition (no input modal and no joined state)`,
 							)
 						}
 						console.log(`${label}: proceeded without input modal (backend acceptance fallback)`)
 						return
-					}
-					if (!alreadyJoined) {
-						throw new Error(
-							`${label}: Join Flow click did not transition (no input modal and no joined state)`,
-						)
 					}
 				}
 				console.log(`${label}: joined invitation flow`)
@@ -1138,12 +1138,14 @@ test.describe('Syqure flow via multiparty invitation system @syqure-allele-agg',
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const email3 = process.env.AGG_EMAIL || 'aggregator@sandbox.local'
 
-		const flowName = 'syqure-allele-agg'
+		const flowDir = process.env.SYQURE_ALLELE_AGG_FLOW_DIR || 'syqure-allele-agg'
+		const flowName = flowDir
+		const isSmpc = flowDir === 'syqure-allele-agg-smpc'
 		const sourceFlowPath = path.join(
 			process.cwd(),
 			'biovault',
 			'flows',
-			'syqure-allele-agg',
+			flowDir,
 			'flow.yaml',
 		)
 		expect(fs.existsSync(sourceFlowPath)).toBe(true)
@@ -1376,7 +1378,16 @@ test.describe('Syqure flow via multiparty invitation system @syqure-allele-agg',
 				]),
 			])
 
-			// Stage 3b: run explicit barrier after align_counts so downstream deps converge.
+			// Stage 3b: share align_counts outputs (an_bounds) so secure_aggregate can resolve inputs.
+			// SMPC flow does not need an_bounds (no Chebyshev interval), so skip sharing.
+			if (!isSmpc) {
+				await Promise.all([
+					shareStepViaBackendAndWait(backend1, sessionId, 'align_counts', email1, 180_000),
+					shareStepViaBackendAndWait(backend2, sessionId, 'align_counts', email2, 180_000),
+				])
+			}
+
+			// Stage 3c: run explicit barrier after align_counts so downstream deps converge.
 			await Promise.all([
 				runStepViaBackendWhenReadyAndWait(backend1, sessionId, 'mpc_barrier', email1, [
 					'Completed',
@@ -1417,11 +1428,10 @@ test.describe('Syqure flow via multiparty invitation system @syqure-allele-agg',
 				),
 			])
 
-			// Stage 4b: all parties share secure_aggregate outputs via backend commands.
+			// Stage 4b: clients share secure_aggregate outputs (aggregator/dealer has no output).
 			await Promise.all([
 				shareStepViaBackendAndWait(backend1, sessionId, 'secure_aggregate', email1, RUN_TIMEOUT_MS),
 				shareStepViaBackendAndWait(backend2, sessionId, 'secure_aggregate', email2, RUN_TIMEOUT_MS),
-				shareStepViaBackendAndWait(backend3, sessionId, 'secure_aggregate', email3, RUN_TIMEOUT_MS),
 			])
 
 			// Stage 5: clients run report_aggregate.
