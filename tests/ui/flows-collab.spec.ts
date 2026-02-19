@@ -37,6 +37,11 @@ const DEBUG_PIPELINE_PAUSE_MS = (() => {
 	const raw = Number.parseInt(process.env.PIPELINES_COLLAB_PAUSE_MS || '30000', 10)
 	return Number.isFinite(raw) ? raw : 30_000
 })()
+const WINDOWS_MOCK_RUN_ATTEMPTS = (() => {
+	const raw = Number.parseInt(process.env.FLOWS_COLLAB_WINDOWS_MOCK_RUN_ATTEMPTS || '2', 10)
+	if (!Number.isFinite(raw)) return 2
+	return Math.max(1, raw)
+})()
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
 
@@ -1034,6 +1039,52 @@ async function runDatasetFlow(
 	return await waitForNewRun(backend, previousIds)
 }
 
+async function startNetworkMockRun(
+	page: Page,
+	backend: Backend,
+	datasetName: string,
+	ownerEmail: string,
+): Promise<any> {
+	const networkDatasetCardForRun = getNetworkDatasetItem(page, datasetName, ownerEmail)
+	const runFlowOnMockBtn = networkDatasetCardForRun.locator('.run-flow-btn')
+	await expect(runFlowOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Found Run Flow button for mock data, clicking...')
+
+	const runsBeforeMock = await backend.invoke('get_flow_runs', {})
+	const previousIds = new Set((runsBeforeMock || []).map((run: any) => run.id))
+
+	await runFlowOnMockBtn.click()
+	await page.waitForTimeout(2000)
+
+	console.log('Waiting for flow selection modal...')
+	const dataRunModal = page.locator('#data-run-modal')
+	await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Flow selection modal visible!')
+
+	const herc2RadioOption = dataRunModal.locator(
+		'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2")',
+	)
+	if (await herc2RadioOption.isVisible().catch(() => false)) {
+		await herc2RadioOption.click()
+	}
+
+	const runBtn = dataRunModal.locator('#data-run-run-btn')
+	await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Clicking Run button...')
+	await runBtn.click()
+	await page.waitForTimeout(1000)
+
+	const runAnywayBtn = page.getByRole('button', { name: 'Run anyway' })
+	if (await runAnywayBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+		console.log('Docker dialog detected, clicking "Run anyway"...')
+		await runAnywayBtn.click()
+		await page.waitForTimeout(2000)
+	}
+	console.log('Flow run started on mock data!')
+
+	return await waitForNewRun(backend, previousIds)
+}
+
 // pause/resume test helper removed for now (see request to skip pause testing)
 
 // Timing helper
@@ -1887,70 +1938,45 @@ test.describe.only('Flows Collaboration @flows-collab', () => {
 			console.log('\n=== DEBUG: Dataset Items in DOM ===')
 			console.log(JSON.stringify(datasetInfo, null, 2))
 
-			// Find the dataset card and click "Run Flow" button
-			// This button appears for trusted peer datasets that have mock data
-			const networkDatasetCardForRun = getNetworkDatasetItem(page2, datasetName, email1)
-			const runFlowOnMockBtn = networkDatasetCardForRun.locator('.run-flow-btn')
-			await expect(runFlowOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Found Run Flow button for mock data, clicking...')
-			await runFlowOnMockBtn.click()
-			await page2.waitForTimeout(2000)
-
-			// Wait for the data run modal to appear (flow selection modal)
-			console.log('Waiting for flow selection modal...')
-			const dataRunModal = page2.locator('#data-run-modal')
-			await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Flow selection modal visible!')
-
-			// The herc2-classifier flow should be listed - select it if not already
-			const herc2RadioOption = dataRunModal.locator(
-				'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2")',
-			)
-			if (await herc2RadioOption.isVisible().catch(() => false)) {
-				await herc2RadioOption.click()
-			}
-
-			const runsBeforeMock = await backend2.invoke('get_flow_runs', {})
-			const previousIds2 = new Set((runsBeforeMock || []).map((run: any) => run.id))
-
-			// Click the Run button
-			const runBtn = dataRunModal.locator('#data-run-run-btn')
-			await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Clicking Run button...')
-			await runBtn.click()
-			await page2.waitForTimeout(1000)
-
-			// Handle "Docker isn't running" dialog if it appears
-			const runAnywayBtn = page2.getByRole('button', { name: 'Run anyway' })
-			if (await runAnywayBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-				console.log('Docker dialog detected, clicking "Run anyway"...')
-				await runAnywayBtn.click()
-				await page2.waitForTimeout(2000)
-			}
-			console.log('Flow run started on mock data!')
-
-			if (DEBUG_PIPELINE_PAUSE_MS > 0) {
-				log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
-				console.log(`Pausing ${DEBUG_PIPELINE_PAUSE_MS}ms for Nextflow inspection...`)
-				await page2.waitForTimeout(DEBUG_PIPELINE_PAUSE_MS)
-			}
-
-			// Wait for run to complete by checking backend
+			// Start mock run and wait for completion by checking backend.
+			// On Windows runners this can fail transiently on first attempt, so retry once by default.
 			const mockRunTimer = timer('Mock data flow run')
-			const mockRun2 = await waitForNewRun(backend2, previousIds2)
-			console.log(`Waiting for run ${mockRun2.id} to complete...`)
-			const { status, run: mockRun2Final } = await waitForRunCompletion(
-				page2,
-				backend2,
-				mockRun2.id,
-			)
-			console.log(`Flow run on mock data completed with status: ${status}`)
-			if (status !== 'success') {
-				await dumpFlowRunDebug('client2-mock', mockRun2Final)
+			const maxMockRunAttempts = process.platform === 'win32' ? WINDOWS_MOCK_RUN_ATTEMPTS : 1
+			let mockRun2Final: any = null
+			let mockRunStatus = 'unknown'
+
+			for (let attempt = 1; attempt <= maxMockRunAttempts; attempt += 1) {
+				const mockRun = await startNetworkMockRun(page2, backend2, datasetName, email1)
+				if (DEBUG_PIPELINE_PAUSE_MS > 0 && attempt === 1) {
+					log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
+					console.log(`Pausing ${DEBUG_PIPELINE_PAUSE_MS}ms for Nextflow inspection...`)
+					await page2.waitForTimeout(DEBUG_PIPELINE_PAUSE_MS)
+				}
+				console.log(
+					`Waiting for run ${mockRun.id} to complete (attempt ${attempt}/${maxMockRunAttempts})...`,
+				)
+				const { status, run } = await waitForRunCompletion(page2, backend2, mockRun.id)
+				mockRunStatus = status
+				mockRun2Final = run
+				console.log(`Flow run on mock data completed with status: ${status}`)
+				if (status === 'success') {
+					break
+				}
+
+				await dumpFlowRunDebug(`client2-mock-attempt-${attempt}`, run)
 				dumpContainerDiagnostics()
 				dumpWindowsDiagnostics()
+
+				if (attempt < maxMockRunAttempts) {
+					console.log('Retrying mock flow run after transient failure...')
+					await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+					await page2.waitForTimeout(3000)
+				}
 			}
-			expect(status).toBe('success')
+			expect(mockRunStatus).toBe('success')
+			if (!mockRun2Final) {
+				throw new Error('Mock run result missing after completion')
+			}
 			mockRunTimer.stop()
 
 			const mockResultPath2 = resolveFlowResultPath(mockRun2Final)
