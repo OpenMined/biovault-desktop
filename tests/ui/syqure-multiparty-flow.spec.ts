@@ -22,6 +22,10 @@ const RUN_TIMEOUT_MS = Number.parseInt(
 	process.env.SYQURE_MULTIPARTY_RUN_TIMEOUT_MS || '1200000',
 	10,
 )
+const STEP_UI_ACTION_TIMEOUT_MS = Number.parseInt(
+	process.env.SYQURE_MULTIPARTY_STEP_UI_ACTION_TIMEOUT_MS || '90000',
+	10,
+)
 const SECURE_ONLY_MODE = ['1', 'true', 'yes'].includes(
 	String(process.env.SYQURE_MULTIPARTY_SECURE_ONLY || '').toLowerCase(),
 )
@@ -500,8 +504,85 @@ async function clickStepActionAndWait(
 	expectedStatuses: string[],
 	timeoutMs = RUN_TIMEOUT_MS,
 ): Promise<void> {
-	await clickStepActionButton(page, stepId, buttonClass, label, timeoutMs)
+	const uiTimeoutMs = Math.max(5_000, Math.min(timeoutMs, STEP_UI_ACTION_TIMEOUT_MS))
+	try {
+		await clickStepActionButton(page, stepId, buttonClass, label, uiTimeoutMs)
+		await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
+		return
+	} catch (error) {
+		console.warn(
+			`${label}: UI ${buttonClass} for ${stepId} unavailable within ${uiTimeoutMs}ms, falling back to backend (${String(error)})`,
+		)
+	}
+
+	if (buttonClass.includes('mp-share-btn')) {
+		await shareStepViaBackendAndWait(backend, sessionId, stepId, label, timeoutMs)
+		return
+	}
+	await runStepViaBackendAndWait(backend, sessionId, stepId, label, expectedStatuses, timeoutMs)
+}
+
+async function runStepViaBackendAndWait(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	label: string,
+	expectedStatuses: string[],
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
+	try {
+		await backend.invoke('run_flow_step', { sessionId, stepId }, rpcTimeoutMs)
+		console.log(`${label}: backend started ${stepId}`)
+	} catch (error) {
+		const message = String(error || '')
+		if (
+			/WS invoke timeout: run_flow_step/i.test(message) ||
+			/step is not ready to run \(status:\s*(completed|shared|running)\)/i.test(message)
+		) {
+			console.log(`${label}: backend run_flow_step transient for ${stepId}: ${message}`)
+		} else {
+			throw error
+		}
+	}
 	await waitForLocalStepStatus(backend, sessionId, stepId, expectedStatuses, label, timeoutMs)
+}
+
+async function shareStepViaBackendAndWait(
+	backend: Backend,
+	sessionId: string,
+	stepId: string,
+	label: string,
+	timeoutMs = RUN_TIMEOUT_MS,
+): Promise<void> {
+	const startedAt = Date.now()
+	const rpcTimeoutMs = Math.max(120_000, Math.min(timeoutMs, 600_000))
+	let lastError = ''
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			await backend.invoke('share_step_outputs', { sessionId, stepId }, rpcTimeoutMs)
+			console.log(`${label}: backend shared ${stepId}`)
+			break
+		} catch (error) {
+			lastError = String(error || '')
+			const transient =
+				/WS invoke timeout: share_step_outputs/i.test(lastError) ||
+				/Step must be completed before sharing/i.test(lastError) ||
+				/step is not ready to share/i.test(lastError) ||
+				/step is not ready to run \(status:\s*running\)/i.test(lastError)
+			if (!transient) {
+				throw error
+			}
+			console.log(`${label}: backend share_step_outputs transient for ${stepId}: ${lastError}`)
+			await backend.invoke('trigger_syftbox_sync').catch(() => {})
+			await new Promise((r) => setTimeout(r, 1500))
+			continue
+		}
+	}
+	if (lastError && Date.now() - startedAt >= timeoutMs) {
+		throw new Error(`${label}: timed out waiting to share ${stepId}` + `\nLast error: ${lastError}`)
+	}
+	await waitForLocalStepStatus(backend, sessionId, stepId, ['Shared'], label, timeoutMs)
 }
 
 async function importAndJoinInvitation(

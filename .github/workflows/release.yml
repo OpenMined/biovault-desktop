@@ -1149,19 +1149,48 @@ jobs:
             ./artifacts/*.AppImage
             ./artifacts/*.AppImage.sig
 
-      - name: Create release (Windows)
+      - name: Create or update release (Windows)
         if: ${{ inputs.dry_run != true && runner.os == 'Windows' }}
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ needs.prepare-version.outputs.tag }}
-          name: ${{ needs.prepare-version.outputs.tag }}
-          draft: false
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          makeLatest: true
-          artifacts: |
-            ./artifacts/*.exe
-            ./artifacts/*.exe.sig
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $artifacts = @(
+            Get-ChildItem -Path artifacts -Filter "*.exe" -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path artifacts -Filter "*.exe.sig" -File -ErrorAction SilentlyContinue
+          )
+
+          if ($artifacts.Count -eq 0) {
+            throw "No Windows artifacts found under ./artifacts"
+          }
+
+          $artifactPaths = $artifacts | ForEach-Object { $_.FullName }
+
+          # If release already exists (e.g. created by macOS/Linux job), just upload.
+          gh release view "$env:RELEASE_TAG" --repo "$env:RELEASE_REPO" *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+
+          if ($exists) {
+            gh release upload "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --clobber
+            exit 0
+          }
+
+          # Try to create release with assets. If another job wins the race, fall back to upload.
+          gh release create "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --title "$env:RELEASE_TAG" --latest
+          if ($LASTEXITCODE -eq 0) {
+            exit 0
+          }
+
+          gh release view "$env:RELEASE_TAG" --repo "$env:RELEASE_REPO" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create or find release $env:RELEASE_TAG"
+          }
+
+          gh release upload "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --clobber
 
       - name: Clean up all user keychains
         if: always() && runner.os == 'macOS'
