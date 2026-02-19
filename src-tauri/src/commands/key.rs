@@ -41,6 +41,7 @@ pub struct KeyStatus {
     vault_path: String,
     bundle_path: String,
     export_path: String,
+    key_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     vault_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,6 +50,10 @@ pub struct KeyStatus {
     export_matches: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bundle: Option<Value>,
+    key_file_exists: bool,
+    private_key_readable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    private_key_error: Option<String>,
     exists: bool,
 }
 
@@ -68,6 +73,9 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
     let config = load_config(email.as_deref())?;
     let email = resolve_email(email.as_deref(), &config)?;
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
+    let key_path = vault_path
+        .join("keys")
+        .join(format!("{}.key", syftbox_sdk::sanitize_identity(&email)));
     let bundle_path = vault_path
         .join("bundles")
         .join(format!("{}.json", syftbox_sdk::sanitize_identity(&email)));
@@ -81,13 +89,22 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
     );
 
     let existing = load_existing_bundle(&vault_path, &email)?;
-    println!("🔑 key_get_status: exists={}", existing.is_some());
+    let (key_file_exists, private_key_readable, private_key_error) =
+        check_private_key_readability(&key_path);
+    let exists = existing.is_some() && private_key_readable;
+    println!(
+        "🔑 key_get_status: bundle_exists={} key_file_exists={} private_key_readable={} exists={}",
+        existing.is_some(),
+        key_file_exists,
+        private_key_readable,
+        exists
+    );
 
     let mut export_fp = None;
     let mut export_matches = None;
     if let Some(info) = existing.as_ref() {
         if export_path.exists() {
-            if let Ok(einfo) = biovault::syftbox::syc::parse_public_bundle_file(&export_path) {
+            if let Ok(einfo) = biovault::syftbox::sbc::parse_public_bundle_file(&export_path) {
                 export_matches = Some(einfo.fingerprint == info.fingerprint);
                 export_fp = Some(einfo.fingerprint);
             }
@@ -99,17 +116,21 @@ pub fn key_get_status(email: Option<String>) -> Result<KeyStatus, String> {
         vault_path: vault_path.to_string_lossy().to_string(),
         bundle_path: bundle_path.to_string_lossy().to_string(),
         export_path: export_path.to_string_lossy().to_string(),
+        key_path: key_path.to_string_lossy().to_string(),
         vault_fingerprint: existing.as_ref().map(|i| i.fingerprint.clone()),
         export_fingerprint: export_fp,
         export_matches,
         bundle: existing.as_ref().map(|i| i.value.clone()),
-        exists: existing.is_some(),
+        key_file_exists,
+        private_key_readable,
+        private_key_error,
+        exists,
     })
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct VaultDebugInfo {
-    pub syc_vault_env: Option<String>,
+    pub sbc_vault_env: Option<String>,
     pub vault_path: String,
     pub vault_exists: bool,
     pub keys_dir_exists: bool,
@@ -120,7 +141,7 @@ pub struct VaultDebugInfo {
 
 #[tauri::command]
 pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
-    let syc_vault_env = std::env::var("SYC_VAULT").ok();
+    let sbc_vault_env = std::env::var("SBC_VAULT").ok();
     let vault_path = resolve_vault_default(None)?;
     let vault_exists = vault_path.exists();
     let keys_dir = vault_path.join("keys");
@@ -153,7 +174,7 @@ pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
 
     println!(
         "🔍 VAULT DEBUG: env={:?} path={} exists={} keys={:?} bundles={:?}",
-        syc_vault_env,
+        sbc_vault_env,
         vault_path.display(),
         vault_exists,
         key_files,
@@ -161,7 +182,7 @@ pub fn key_check_vault_debug() -> Result<VaultDebugInfo, String> {
     );
 
     Ok(VaultDebugInfo {
-        syc_vault_env,
+        sbc_vault_env,
         vault_path: vault_path.to_string_lossy().to_string(),
         vault_exists,
         keys_dir_exists,
@@ -190,15 +211,15 @@ pub async fn key_generate(
     );
     if key_debug_enabled() {
         println!(
-            "🔑 key_generate: data_root={} export_root={} SYC_VAULT={:?} BIOVAULT_HOME={:?}",
+            "🔑 key_generate: data_root={} export_root={} SBC_VAULT={:?} BIOVAULT_HOME={:?}",
             data_root.display(),
-            syftbox_sdk::syftbox::syc::resolve_encrypted_root(&data_root).display(),
-            env::var("SYC_VAULT").ok(),
+            syftbox_sdk::syftbox::sbc::resolve_encrypted_root(&data_root).display(),
+            env::var("SBC_VAULT").ok(),
             env::var("BIOVAULT_HOME").ok()
         );
     }
 
-    let outcome = biovault::syftbox::syc::provision_local_identity_with_options(
+    let outcome = biovault::syftbox::sbc::provision_local_identity_with_options(
         &email,
         &data_root,
         Some(&vault_path),
@@ -212,7 +233,7 @@ pub async fn key_generate(
         outcome.recovery_mnemonic.is_some()
     );
 
-    let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
+    let bundle = biovault::syftbox::sbc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
     if key_debug_enabled() {
         println!(
@@ -240,14 +261,24 @@ pub async fn key_restore(
 ) -> Result<KeyOperationResult, String> {
     let config = load_config(Some(email.as_str()))?;
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
-    let outcome = biovault::syftbox::syc::restore_identity_from_mnemonic(
+    let outcome = biovault::syftbox::sbc::restore_identity_from_mnemonic(
         &email,
         &mnemonic,
         &data_root,
         Some(&vault_path),
     )
     .map_err(|e| format!("failed to restore identity: {e}"))?;
-    let bundle = biovault::syftbox::syc::parse_public_bundle_file(&outcome.public_bundle_path)
+
+    // Always refresh the published DID from the vault bundle after restore.
+    // This keeps datasites/<identity>/public/crypto/did.json aligned with the newly imported key.
+    if let Some(parent) = outcome.public_bundle_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create export directory: {e}"))?;
+    }
+    std::fs::copy(&outcome.bundle_path, &outcome.public_bundle_path)
+        .map_err(|e| format!("failed to republish DID after restore: {e}"))?;
+
+    let bundle = biovault::syftbox::sbc::parse_public_bundle_file(&outcome.public_bundle_path)
         .map_err(|e| format!("failed to parse bundle: {e}"))?;
     Ok(KeyOperationResult {
         identity: bundle.identity.clone(),
@@ -293,7 +324,7 @@ fn resolve_paths(
             })
         })
     };
-    let encrypted_root = syftbox_sdk::syftbox::syc::resolve_encrypted_root(&data_root);
+    let encrypted_root = syftbox_sdk::syftbox::sbc::resolve_encrypted_root(&data_root);
     let vault_path = resolve_vault_default(vault_override)?;
     Ok((encrypted_root, vault_path))
 }
@@ -319,12 +350,12 @@ fn resolve_vault_default(vault_override: Option<&Path>) -> Result<PathBuf, Strin
         println!("🔑 resolve_vault: using override: {}", v.display());
         return Ok(v.to_path_buf());
     }
-    if let Some(env_vault) = std::env::var_os("SYC_VAULT") {
-        println!("🔑 resolve_vault: using SYC_VAULT env: {:?}", env_vault);
+    if let Some(env_vault) = std::env::var_os("SBC_VAULT") {
+        println!("🔑 resolve_vault: using SBC_VAULT env: {:?}", env_vault);
         return Ok(PathBuf::from(env_vault));
     }
 
-    biovault::config::resolve_syc_vault_path().map_err(|e| format!("SYC_VAULT is required: {e}"))
+    biovault::config::resolve_sbc_vault_path().map_err(|e| format!("SBC_VAULT is required: {e}"))
 }
 
 fn load_existing_bundle(
@@ -336,9 +367,19 @@ fn load_existing_bundle(
     if !bundle_path.exists() {
         return Ok(None);
     }
-    let info = biovault::syftbox::syc::parse_public_bundle_file(&bundle_path)
+    let info = biovault::syftbox::sbc::parse_public_bundle_file(&bundle_path)
         .map_err(|e| format!("failed to read existing bundle: {e}"))?;
     Ok(Some(info))
+}
+
+fn check_private_key_readability(key_path: &Path) -> (bool, bool, Option<String>) {
+    if !key_path.exists() {
+        return (false, false, None);
+    }
+    match biovault::syftbox::sbc::validate_private_key_file(key_path) {
+        Ok(_) => (true, true, None),
+        Err(err) => (true, false, Some(err.to_string())),
+    }
 }
 
 fn load_config(email: Option<&str>) -> Result<Config, String> {
@@ -394,7 +435,7 @@ pub fn key_list_contacts(current_email: Option<String>) -> Result<Vec<ContactInf
                 }
             }
 
-            if let Ok(info) = biovault::syftbox::syc::parse_public_bundle_file(&path) {
+            if let Ok(info) = biovault::syftbox::sbc::parse_public_bundle_file(&path) {
                 contacts.push(ContactInfo {
                     identity: info.identity,
                     fingerprint: info.fingerprint,
@@ -430,7 +471,7 @@ pub fn key_check_contact(email: String) -> Result<ContactCheckResult, String> {
 
     let has_key = bundle_path.exists();
     let fingerprint = if has_key {
-        biovault::syftbox::syc::parse_public_bundle_file(&bundle_path)
+        biovault::syftbox::sbc::parse_public_bundle_file(&bundle_path)
             .ok()
             .map(|info| info.fingerprint)
     } else {
@@ -525,14 +566,14 @@ pub async fn key_refresh_contacts(
         }
 
         // Parse the remote did.json
-        match biovault::syftbox::syc::parse_public_bundle_file(&did_path) {
+        match biovault::syftbox::sbc::parse_public_bundle_file(&did_path) {
             Ok(remote_info) => {
                 let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
                 let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
 
                 if local_bundle_path.exists() {
                     // Check if fingerprints differ
-                    match biovault::syftbox::syc::parse_public_bundle_file(&local_bundle_path) {
+                    match biovault::syftbox::sbc::parse_public_bundle_file(&local_bundle_path) {
                         Ok(local_info) => {
                             if local_info.fingerprint != remote_info.fingerprint {
                                 // Update local bundle
@@ -642,7 +683,7 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
                 continue;
             }
 
-            if let Ok(remote_info) = biovault::syftbox::syc::parse_public_bundle_file(&did_path) {
+            if let Ok(remote_info) = biovault::syftbox::sbc::parse_public_bundle_file(&did_path) {
                 let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
 
                 // Skip current identity entirely
@@ -669,7 +710,7 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
                 let is_imported = local_bundle_path.exists();
 
                 let (has_changed, local_fingerprint) = if is_imported {
-                    match biovault::syftbox::syc::parse_public_bundle_file(&local_bundle_path) {
+                    match biovault::syftbox::sbc::parse_public_bundle_file(&local_bundle_path) {
                         Ok(local_info) => {
                             let changed = local_info.fingerprint != remote_info.fingerprint;
                             (changed, Some(local_info.fingerprint))
@@ -774,7 +815,7 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
         bundles_dir.display()
     );
 
-    let remote_info = biovault::syftbox::syc::parse_public_bundle_file(&did_path)
+    let remote_info = biovault::syftbox::sbc::parse_public_bundle_file(&did_path)
         .map_err(|e| format!("failed to parse DID: {e}"))?;
 
     let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
@@ -787,7 +828,7 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
         );
         if local_bundle_path.exists() {
             if let Ok(local_info) =
-                biovault::syftbox::syc::parse_public_bundle_file(&local_bundle_path)
+                biovault::syftbox::sbc::parse_public_bundle_file(&local_bundle_path)
             {
                 println!(
                     "🌐 network_import_contact: existing local fingerprint={}",
@@ -864,7 +905,7 @@ pub fn key_republish(email: Option<String>) -> Result<RepublishResult, String> {
     }
 
     // Read the vault bundle
-    let vault_info = biovault::syftbox::syc::parse_public_bundle_file(&bundle_path)
+    let vault_info = biovault::syftbox::sbc::parse_public_bundle_file(&bundle_path)
         .map_err(|e| format!("failed to read vault bundle: {e}"))?;
 
     // Ensure parent directory exists
@@ -878,7 +919,7 @@ pub fn key_republish(email: Option<String>) -> Result<RepublishResult, String> {
         .map_err(|e| format!("failed to publish bundle: {e}"))?;
 
     // Verify the copy
-    let export_info = biovault::syftbox::syc::parse_public_bundle_file(&export_path)
+    let export_info = biovault::syftbox::sbc::parse_public_bundle_file(&export_path)
         .map_err(|e| format!("failed to verify exported bundle: {e}"))?;
 
     Ok(RepublishResult {

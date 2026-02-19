@@ -11,7 +11,7 @@
 #   ├── biovault-desktop/  (this repo)
 #   ├── biovault/
 #   ├── syftbox-sdk/
-#   ├── syft-crypto-core/
+#   ├── syftbox-crypto/
 #   ├── syftbox/
 #   ├── biovault-beaver/
 #   ├── sbenv/
@@ -63,7 +63,7 @@ function Clone-IfMissing {
 # Clone all dependencies
 Clone-IfMissing -Name "biovault" -Url "https://github.com/OpenMined/biovault.git"
 Clone-IfMissing -Name "syftbox-sdk" -Url "https://github.com/OpenMined/syftbox-sdk.git"
-Clone-IfMissing -Name "syft-crypto-core" -Url "https://github.com/OpenMined/syft-crypto-core.git"
+Clone-IfMissing -Name "syftbox-crypto" -Url "https://github.com/OpenMined/syftbox-crypto.git"
 Clone-IfMissing -Name "syftbox" -Url "https://github.com/OpenMined/syftbox.git" -Branch "madhava/biovault"
 Clone-IfMissing -Name "biovault-beaver" -Url "https://github.com/OpenMined/biovault-beaver.git"
 Clone-IfMissing -Name "sbenv" -Url "https://github.com/OpenMined/sbenv.git"
@@ -113,7 +113,7 @@ function Create-Junction {
 
 Create-Junction "biovault"
 Create-Junction "syftbox-sdk"
-Create-Junction "syft-crypto-core"
+Create-Junction "syftbox-crypto"
 Create-Junction "syftbox"
 Create-Junction "biovault-beaver"
 Create-Junction "sbenv"
@@ -124,7 +124,7 @@ Write-Host "Workspace setup complete!"
 Write-Host "Dependencies are at:"
 Write-Host "  $ParentDir\biovault"
 Write-Host "  $ParentDir\syftbox-sdk"
-Write-Host "  $ParentDir\syft-crypto-core"
+Write-Host "  $ParentDir\syftbox-crypto"
 Write-Host "  $ParentDir\syftbox"
 Write-Host "  $ParentDir\biovault-beaver"
 Write-Host "  $ParentDir\sbenv"

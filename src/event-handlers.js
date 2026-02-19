@@ -646,7 +646,7 @@ export function setupEventHandlers({
 			}
 
 			const wipeKeys = await dialog.confirm(
-				'Do you also want to delete your identity keys (.syc)?\n\nIf you delete keys you will need to onboard/sign in again, and any encrypted session registry files may no longer be readable.\n\nChoose YES to fully reset everything.\nChoose NO to reset data but keep your keys.',
+				'Do you also want to delete your identity keys (.sbc)?\n\nIf you delete keys you will need to onboard/sign in again, and any encrypted session registry files may no longer be readable.\n\nChoose YES to fully reset everything.\nChoose NO to reset data but keep your keys.',
 				{ title: 'Reset Everything?', type: 'warning' },
 			)
 

@@ -1039,7 +1039,7 @@ pub fn run() {
                 std::env::set_var("SYFTBOX_DATA_DIR", home);
             }
         }
-        let _ = biovault::config::require_syc_vault_env();
+        let _ = biovault::config::require_sbc_vault_env();
     }
 
     let desktop_log_path_buf = logging::desktop_log_path();

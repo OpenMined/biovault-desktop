@@ -2702,12 +2702,19 @@ export function initOnboarding({
 		document.getElementById('onboarding-key-identity').textContent = status?.identity || 'Unknown'
 		document.getElementById('onboarding-key-fp').textContent =
 			status?.vault_fingerprint || 'No key found'
-		document.getElementById('onboarding-key-status').textContent = status?.exists
-			? `Vault bundle at ${status.bundle_path}`
-			: 'No key found; generate or restore to continue.'
-		document.getElementById('onboarding-key-warning').textContent = status?.exists
-			? ''
-			: 'No key detected for this email. Generate or restore before continuing.'
+		if (status?.key_file_exists && status?.private_key_readable === false) {
+			document.getElementById('onboarding-key-status').textContent =
+				'Existing key file could not be read. Restore your recovery code (BIP-39) to continue.'
+			document.getElementById('onboarding-key-warning').textContent =
+				'Detected legacy or unreadable encryption key material. Restore your key from recovery code.'
+		} else {
+			document.getElementById('onboarding-key-status').textContent = status?.exists
+				? `Vault bundle at ${status.bundle_path}`
+				: 'No key found; generate or restore to continue.'
+			document.getElementById('onboarding-key-warning').textContent = status?.exists
+				? ''
+				: 'No key detected for this email. Generate or restore before continuing.'
+		}
 		const avatar = document.getElementById('onboarding-key-avatar')
 		if (avatar) {
 			avatar.innerHTML = buildIdenticon(status?.vault_fingerprint || status?.identity || 'seed')
@@ -2745,6 +2752,15 @@ export function initOnboarding({
 			console.log('🔑 key_get_status result:', JSON.stringify(status, null, 2))
 			onboardingKeyStatus = status
 			renderKeyCard(status)
+			if (status?.key_file_exists && status?.private_key_readable === false) {
+				console.warn(
+					'🔑 Existing key file is unreadable; requiring recovery restore before onboarding can continue',
+				)
+				document.getElementById('onboarding-recovery-block').style.display = 'none'
+				document.getElementById('onboarding-restore-block').style.display = 'block'
+				document.getElementById('onboarding-next-3-key').disabled = true
+				return
+			}
 			if (status.exists) {
 				console.log('🔑 Key already exists - user can continue (no recovery phrase available)')
 				// Key exists - user can continue, no recovery to show

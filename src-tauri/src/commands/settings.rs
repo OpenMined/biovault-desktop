@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::env;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
@@ -168,10 +168,10 @@ fn reset_all_data_impl(state: &AppState, preserve_keys: bool) -> Result<(), Stri
     }
 
     if biovault_path.exists() {
-        let syc_path = biovault_path.join(".syc");
-        let mut syc_backup: Option<PathBuf> = None;
+        let sbc_path = biovault_path.join(".sbc");
+        let mut sbc_backup: Option<PathBuf> = None;
 
-        if preserve_keys && syc_path.exists() {
+        if preserve_keys && sbc_path.exists() {
             let ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -179,31 +179,31 @@ fn reset_all_data_impl(state: &AppState, preserve_keys: bool) -> Result<(), Stri
             let backup_path = biovault_path
                 .parent()
                 .unwrap_or(&biovault_path)
-                .join(format!(".syc-backup-{}", ts));
+                .join(format!(".sbc-backup-{}", ts));
 
-            fs::rename(&syc_path, &backup_path).map_err(|e| {
+            fs::rename(&sbc_path, &backup_path).map_err(|e| {
                 format!(
-                    "Failed to move .syc out of BIOVAULT_HOME ({} -> {}): {}",
-                    syc_path.display(),
+                    "Failed to move .sbc out of BIOVAULT_HOME ({} -> {}): {}",
+                    sbc_path.display(),
                     backup_path.display(),
                     e
                 )
             })?;
-            syc_backup = Some(backup_path);
+            sbc_backup = Some(backup_path);
         }
 
         let delete_result = remove_dir_all_with_retry(&biovault_path, Duration::from_secs(15))
             .map_err(|e| format!("Failed to delete {}: {}", biovault_path.display(), e));
 
         // Attempt to restore keys even if deletion failed.
-        if let Some(backup_path) = &syc_backup {
+        if let Some(backup_path) = &sbc_backup {
             if !biovault_path.exists() {
                 let _ = fs::create_dir_all(&biovault_path);
             }
-            let restore_target = biovault_path.join(".syc");
+            let restore_target = biovault_path.join(".sbc");
             if let Err(err) = fs::rename(backup_path, &restore_target) {
                 crate::desktop_log!(
-                    "⚠️ RESET: Failed to restore .syc ({} -> {}): {}",
+                    "⚠️ RESET: Failed to restore .sbc ({} -> {}): {}",
                     backup_path.display(),
                     restore_target.display(),
                     err
@@ -302,11 +302,31 @@ pub fn check_is_onboarded() -> Result<bool, String> {
     match biovault::config::Config::load() {
         Ok(config) => {
             let email = config.email.trim();
-            let onboarded = !email.is_empty() && email != PLACEHOLDER_EMAIL;
+            let email_valid = !email.is_empty() && email != PLACEHOLDER_EMAIL;
+            if !email_valid {
+                crate::desktop_log!(
+                    "🔍 Checking onboarding: config_path={:?}, email='{}', onboarded=false (email invalid)",
+                    config_path,
+                    email
+                );
+                return Ok(false);
+            }
+
+            let key_readable = private_key_is_readable_for_home_and_email(&biovault_home, email)
+                .unwrap_or_else(|err| {
+                    crate::desktop_log!(
+                        "🔍 Checking onboarding: email='{}', private key check failed: {}",
+                        email,
+                        err
+                    );
+                    false
+                });
+            let onboarded = email_valid && key_readable;
             crate::desktop_log!(
-                "🔍 Checking onboarding: config_path={:?}, email='{}', onboarded={}",
+                "🔍 Checking onboarding: config_path={:?}, email='{}', private_key_readable={}, onboarded={}",
                 config_path,
                 email,
+                key_readable,
                 onboarded
             );
             Ok(onboarded)
@@ -315,6 +335,56 @@ pub fn check_is_onboarded() -> Result<bool, String> {
             crate::desktop_log!(
                 "🔍 Checking onboarding: config_path={:?}, failed to load config: {}",
                 config_path,
+                err
+            );
+            Ok(false)
+        }
+    }
+}
+
+pub(crate) fn private_key_is_readable_for_home_and_email(
+    home: &Path,
+    email: &str,
+) -> Result<bool, String> {
+    let identity = email.trim();
+    if identity.is_empty() || identity == PLACEHOLDER_EMAIL {
+        return Ok(false);
+    }
+
+    let slug = syftbox_sdk::sanitize_identity(identity);
+    let home_vault = syftbox_sdk::syftbox::sbc::vault_path_for_home(home);
+    let vault_path = match biovault::config::resolve_sbc_vault_path() {
+        Ok(env_vault) => {
+            let same = match (env_vault.canonicalize(), home_vault.canonicalize()) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => env_vault == home_vault,
+            };
+            if same {
+                env_vault
+            } else {
+                home_vault
+            }
+        }
+        Err(_) => home_vault,
+    };
+    let key_path = vault_path.join("keys").join(format!("{slug}.key"));
+
+    if !key_path.exists() {
+        crate::desktop_log!(
+            "🔍 Onboarding key check: missing private key for {} at {}",
+            identity,
+            key_path.display()
+        );
+        return Ok(false);
+    }
+
+    match biovault::syftbox::sbc::validate_private_key_file(&key_path) {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            crate::desktop_log!(
+                "🔍 Onboarding key check: unreadable private key for {} at {}: {}",
+                identity,
+                key_path.display(),
                 err
             );
             Ok(false)
@@ -336,8 +406,8 @@ pub fn reset_everything(state: tauri::State<AppState>) -> Result<(), String> {
 pub async fn complete_onboarding(email: String) -> Result<(), String> {
     println!("🏁 [complete_onboarding] called with email: {}", email);
     println!(
-        "🏁 [complete_onboarding] SYC_VAULT env: {:?}",
-        env::var("SYC_VAULT")
+        "🏁 [complete_onboarding] SBC_VAULT env: {:?}",
+        env::var("SBC_VAULT")
     );
 
     let biovault_path = biovault::config::get_biovault_home()
@@ -357,17 +427,17 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
     }
 
     // Check vault state BEFORE init
-    let syc_path = biovault_path.join(".syc");
+    let sbc_path = biovault_path.join(".sbc");
     println!(
-        "🏁 [complete_onboarding] .syc path: {}, exists: {}",
-        syc_path.display(),
-        syc_path.exists()
+        "🏁 [complete_onboarding] .sbc path: {}, exists: {}",
+        sbc_path.display(),
+        sbc_path.exists()
     );
-    if syc_path.exists() {
-        let keys_path = syc_path.join("keys");
-        let bundles_path = syc_path.join("bundles");
+    if sbc_path.exists() {
+        let keys_path = sbc_path.join("keys");
+        let bundles_path = sbc_path.join("bundles");
         println!(
-            "🏁 [complete_onboarding] .syc/keys exists: {}, .syc/bundles exists: {}",
+            "🏁 [complete_onboarding] .sbc/keys exists: {}, .sbc/bundles exists: {}",
             keys_path.exists(),
             bundles_path.exists()
         );
@@ -484,6 +554,22 @@ pub async fn complete_onboarding(email: String) -> Result<(), String> {
                 err
             );
         }
+    }
+
+    // Ensure DID export reflects the current vault bundle after onboarding side effects.
+    // This is especially important after key restore/migration flows.
+    match crate::commands::key::key_republish(Some(email.clone())) {
+        Ok(result) => crate::desktop_log!(
+            "✅ Onboarding DID republished for {} (fp={}) -> {}",
+            result.identity,
+            result.fingerprint,
+            result.export_path
+        ),
+        Err(err) => crate::desktop_log!(
+            "⚠️ Onboarding DID republish skipped/failed for {}: {}",
+            email,
+            err
+        ),
     }
 
     Ok(())
@@ -1055,5 +1141,47 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
         autostart
             .disable()
             .map_err(|e| format!("Failed to disable autostart: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::private_key_is_readable_for_home_and_email;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn private_key_readability_detects_invalid_and_valid_key_files() {
+        let home = TempDir::new().expect("temp dir");
+        let email = "alice@example.com";
+        let slug = syftbox_sdk::sanitize_identity(email);
+        let key_path = home
+            .path()
+            .join(".sbc")
+            .join("keys")
+            .join(format!("{slug}.key"));
+        fs::create_dir_all(
+            key_path
+                .parent()
+                .expect("key path should always have a parent"),
+        )
+        .expect("create keys dir");
+
+        fs::write(&key_path, b"{ not valid json").expect("write invalid key file");
+        let invalid = private_key_is_readable_for_home_and_email(home.path(), email)
+            .expect("invalid check should not error");
+        assert!(!invalid);
+
+        let vault_path = home.path().join(".sbc");
+        biovault::syftbox::sbc::provision_local_identity_with_options(
+            email,
+            home.path(),
+            Some(&vault_path),
+            true,
+        )
+        .expect("provision valid key material");
+        let valid = private_key_is_readable_for_home_and_email(home.path(), email)
+            .expect("valid check should not error");
+        assert!(valid);
     }
 }

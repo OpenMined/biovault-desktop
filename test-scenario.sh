@@ -1970,10 +1970,10 @@ launch_instance() {
                 if [[ "$DEVSTACK_CLIENT_MODE" == "embedded" ]]; then
                         export BV_SYFTBOX_BACKEND=embedded
                 fi
-		# Profiles tests manage SYC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
+		# Profiles tests manage SBC_VAULT based on the selected BIOVAULT_HOME (per-profile vault).
 		# Other scenarios keep a fixed vault path per client for simplicity.
 		if [[ "$SCENARIO" != "profiles" ]]; then
-			export SYC_VAULT="$home/.syc"
+			export SBC_VAULT="$home/.sbc"
 		fi
 		# Keep the profiles store isolated under the sandbox HOME by default.
 		if [[ -z "${BIOVAULT_PROFILES_PATH:-}" && -z "${BIOVAULT_PROFILES_DIR:-}" ]]; then

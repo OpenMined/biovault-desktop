@@ -152,7 +152,7 @@ rg -n "burst-c1->c2\\s+PASS|Scenario completed successfully|Syqure step duration
   - `Failed to read response file ... Failed to parse response JSON ...`
 - Cause:
   - RPC ACK scanning attempted to parse every `*.response` under scanned datasites.
-  - After the SYC envelope / multi-recipient rollout, many of these files are encrypted for a different identity and are expected to be unreadable by this instance.
+  - After the SBC envelope / multi-recipient rollout, many of these files are encrypted for a different identity and are expected to be unreadable by this instance.
 - Fix implemented:
   - `syftbox-sdk/src/syftbox/endpoint.rs`:
     - added `check_responses_for_ids(&HashSet<String>)` to pre-filter by request-id filename before parse/decrypt.

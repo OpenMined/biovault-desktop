@@ -2259,7 +2259,7 @@ test.describe.only('Flows Collaboration @flows-collab', () => {
 
 			const importedBytes = fs.readFileSync(importedResultPath)
 			const header = importedBytes.slice(0, 4).toString('utf8')
-			expect(header).not.toBe('SYC1')
+			expect(header).not.toBe('SBC1')
 
 			const importedContent = importedBytes.toString('utf8')
 			expect(importedContent.trim()).toBe(client1PrivateResult.trim())

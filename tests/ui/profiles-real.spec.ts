@@ -598,8 +598,8 @@ test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => 
 		await page.waitForLoadState('load')
 		await waitForWsBridge(wsPort, 60_000)
 		await waitForConfigHome(wsPort, homeB, 60_000)
-		const sycVaultCurrent = await wsInvoke(wsPort, 'get_env_var', { key: 'SYC_VAULT' }, 5_000)
-		expect(String(sycVaultCurrent || '')).toContain('.syc')
+		const sbcVaultCurrent = await wsInvoke(wsPort, 'get_env_var', { key: 'SBC_VAULT' }, 5_000)
+		expect(String(sbcVaultCurrent || '')).toContain('.sbc')
 
 		// Re-open picker to switch to profile A.
 		// Debug: check backend state before opening picker
@@ -638,8 +638,8 @@ test.describe('Profiles flow (real backend, linux) @profiles-real-linux', () => 
 		await page.waitForLoadState('load')
 		await waitForWsBridge(wsPort, 60_000)
 		await waitForConfigHome(wsPort, homeA, 60_000)
-		const sycVaultAfterSwitch = await wsInvoke(wsPort, 'get_env_var', { key: 'SYC_VAULT' }, 5_000)
-		expect(String(sycVaultAfterSwitch || '')).toContain('.syc')
+		const sbcVaultAfterSwitch = await wsInvoke(wsPort, 'get_env_var', { key: 'SBC_VAULT' }, 5_000)
+		expect(String(sbcVaultAfterSwitch || '')).toContain('.sbc')
 
 		// Profile A should be un-onboarded; complete onboarding.
 		const needsHomeACompletion = await onboardingGoToHomeStep(page)

@@ -59,7 +59,7 @@ link_if_needed ../syftbox biovault/syftbox
 
 echo ""
 echo "=== syftbox-sdk submodules ==="
-link_if_needed ../syft-crypto-core syftbox-sdk/syft-crypto-core
+link_if_needed ../syftbox-crypto syftbox-sdk/syftbox-crypto
 link_if_needed ../syftbox syftbox-sdk/syftbox
 
 echo ""
@@ -68,11 +68,19 @@ link_if_needed ../syftbox-sdk biovault-beaver/syftbox-sdk
 link_if_needed ../syftbox biovault-beaver/syftbox
 
 echo ""
-echo "=== syft-crypto-core submodules ==="
-# libsignal is vendored inside syft-crypto-core, should already exist
-if [[ ! -d "syft-crypto-core/vendor/libsignal-protocol-syft" ]]; then
-    echo "  NOTE: libsignal-protocol-syft not found in vendor/"
-    echo "        Run: cd syft-crypto-core && git submodule update --init"
+echo "=== syftbox-crypto submodules ==="
+if [[ -d "syftbox-crypto" ]]; then
+    if [[ -f "syftbox-crypto/.gitmodules" ]]; then
+        git -C "syftbox-crypto" submodule sync --recursive >/dev/null 2>&1 || true
+        if ! git -C "syftbox-crypto" submodule update --init --recursive; then
+            echo "  NOTE: syftbox-crypto submodule update failed"
+            echo "        Run: cd syftbox-crypto && git submodule update --init --recursive"
+        fi
+    else
+        echo "  (no syftbox-crypto submodules)"
+    fi
+else
+    echo "  SKIP: syftbox-crypto not found"
 fi
 
 echo ""
@@ -97,7 +105,7 @@ check_cargo_path "src-tauri/Cargo.toml" "../biovault/cli" "biovault" || ((errors
 check_cargo_path "src-tauri/Cargo.toml" "../syftbox-sdk" "syftbox-sdk" || ((errors++))
 # Note: biovault/cli uses ../../syftbox-sdk (direct path to avoid symlink collision)
 check_cargo_path "biovault/cli/Cargo.toml" "../../syftbox-sdk" "syftbox-sdk (from biovault)" || ((errors++))
-check_cargo_path "syftbox-sdk/Cargo.toml" "./syft-crypto-core/protocol" "syft-crypto-protocol" || ((errors++))
+check_cargo_path "syftbox-sdk/Cargo.toml" "./syftbox-crypto/protocol" "syft-crypto-protocol" || ((errors++))
 
 echo ""
 if [[ $errors -eq 0 ]]; then

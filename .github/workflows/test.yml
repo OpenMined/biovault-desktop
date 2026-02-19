@@ -46,6 +46,46 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # flows-collab smoke test (linux)
+          - scenario: flows-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+
+          # flows-collab smoke test (windows)
+          - scenario: flows-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
+          # jupyter-collab smoke test (linux)
+          - scenario: jupyter-collab
+            platform: linux-x86_64
+            runner: namespace-profile-linux-large
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: "xvfb-run -a"
+
+          # jupyter-collab smoke test (macOS)
+          - scenario: jupyter-collab
+            platform: macos-arm64
+            runner: namespace-profile-mac-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
+          # jupyter-collab smoke test (windows)
+          - scenario: jupyter-collab
+            platform: windows-x86_64
+            runner: namespace-profile-windows-medium
+            client_mode: rust
+            tauri_binary: src-tauri/target/release/bv-desktop
+            run_prefix: ""
+
           # pipelines-multiparty-flow smoke test (linux)
           - scenario: pipelines-multiparty-flow
             platform: linux-x86_64
@@ -105,7 +145,7 @@ jobs:
           path: |
             ${{ github.workspace }}/../biovault
             ${{ github.workspace }}/../syftbox-sdk
-            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox-crypto
             ${{ github.workspace }}/../syftbox
             ${{ github.workspace }}/../biovault-beaver
             ${{ github.workspace }}/../sbenv
@@ -116,12 +156,20 @@ jobs:
             workspace-deps-${{ runner.os }}-
 
       - name: Setup workspace
+        if: runner.os != 'Windows'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BV_SKIP_SYQURE: ${{ contains(matrix.scenario, 'syqure') && '0' || '1' }}
         run: |
           chmod +x scripts/setup-workspace.sh
           ./scripts/setup-workspace.sh
+      - name: Setup workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BV_SKIP_SYQURE: ${{ contains(matrix.scenario, 'syqure') && '0' || '1' }}
+        run: .\win.ps1 ./scripts/setup-workspace.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -442,7 +490,7 @@ jobs:
         run: ${{ matrix.run_prefix }} ./test-scenario.sh --flows-pause-resume
 
       - name: Run flows collab scenario
-        if: matrix.scenario == 'flows-collab'
+        if: runner.os != 'Windows' && matrix.scenario == 'flows-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
@@ -452,9 +500,16 @@ jobs:
           else
             ./test-scenario.sh --flows-collab
           fi
+      - name: Run flows collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'flows-collab'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: .\win.ps1 ./test-scenario.sh --flows-collab
 
       - name: Run jupyter collab scenario
-        if: matrix.scenario == 'jupyter-collab'
+        if: runner.os != 'Windows' && matrix.scenario == 'jupyter-collab'
         env:
           SKIP_PLAYWRIGHT_INSTALL: "1"
           AUTO_REBUILD_TAURI: "0"
@@ -464,6 +519,13 @@ jobs:
           else
             ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
           fi
+      - name: Run jupyter collab scenario (Windows)
+        if: runner.os == 'Windows' && matrix.scenario == 'jupyter-collab'
+        shell: pwsh
+        env:
+          SKIP_PLAYWRIGHT_INSTALL: "1"
+          AUTO_REBUILD_TAURI: "0"
+        run: .\win.ps1 ./test-scenario.sh --jupyter-collab biovault-beaver/notebooks/02-advanced-features.json
 
       - name: Run pipelines multiparty flow scenario
         if: matrix.scenario == 'pipelines-multiparty-flow'
@@ -531,7 +593,7 @@ jobs:
           path: |
             ${{ github.workspace }}/../biovault
             ${{ github.workspace }}/../syftbox-sdk
-            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox-crypto
             ${{ github.workspace }}/../syftbox
             ${{ github.workspace }}/../biovault-beaver
             ${{ github.workspace }}/../sbenv
@@ -705,7 +767,7 @@ jobs:
           path: |
             ${{ github.workspace }}/../biovault
             ${{ github.workspace }}/../syftbox-sdk
-            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox-crypto
             ${{ github.workspace }}/../syftbox
             ${{ github.workspace }}/../biovault-beaver
             ${{ github.workspace }}/../sbenv
@@ -853,7 +915,7 @@ jobs:
           path: |
             ${{ github.workspace }}/../biovault
             ${{ github.workspace }}/../syftbox-sdk
-            ${{ github.workspace }}/../syft-crypto-core
+            ${{ github.workspace }}/../syftbox-crypto
             ${{ github.workspace }}/../syftbox
             ${{ github.workspace }}/../biovault-beaver
             ${{ github.workspace }}/../sbenv
