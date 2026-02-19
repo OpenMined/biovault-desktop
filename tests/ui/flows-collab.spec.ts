@@ -258,7 +258,8 @@ async function waitForSyncedFlowFolder(
 				return folderPath
 			}
 			const missingPaths = Array.isArray(status?.missingPaths) ? status.missingPaths : []
-			lastReason = status?.reason || (missingPaths.length ? `missing: ${missingPaths.join(', ')}` : '')
+			lastReason =
+				status?.reason || (missingPaths.length ? `missing: ${missingPaths.join(', ')}` : '')
 		} catch {
 			// Fallback for older backends or transient bridge errors.
 			lastReason = ''
