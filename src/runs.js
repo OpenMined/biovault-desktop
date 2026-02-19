@@ -65,11 +65,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			}
 		}, MULTIPARTY_POLL_INTERVAL_MS)
 		multipartyPollingIntervals.set(sessionId, interval)
-			const timerInterval = setInterval(() => {
-				refreshStepTimerNodes(sessionId)
-			}, 2000)
-			multipartyStepTimerIntervals.set(sessionId, timerInterval)
-		}
+		const timerInterval = setInterval(() => {
+			refreshStepTimerNodes(sessionId)
+		}, 2000)
+		multipartyStepTimerIntervals.set(sessionId, timerInterval)
+	}
 
 	function stopMultipartyPolling(sessionId) {
 		const interval = multipartyPollingIntervals.get(sessionId)
@@ -761,13 +761,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const runId = run.id
 		stopFlowLogPolling(runId)
 		refreshFlowRunLogs(run, logEl, progressEl, stepRows)
-			if (run.status === 'running') {
-				const interval = setInterval(() => {
-					refreshFlowRunLogs(run, logEl, progressEl, stepRows)
-				}, FLOW_LOG_POLL_INTERVAL_MS)
-				flowLogIntervals.set(runId, interval)
-			}
+		if (run.status === 'running') {
+			const interval = setInterval(() => {
+				refreshFlowRunLogs(run, logEl, progressEl, stepRows)
+			}, FLOW_LOG_POLL_INTERVAL_MS)
+			flowLogIntervals.set(runId, interval)
 		}
+	}
 
 	function stopFlowLogPolling(runId) {
 		const interval = flowLogIntervals.get(runId)
@@ -1591,14 +1591,12 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					: []
 				if (!waitingOn.length) return ''
 				const chips = waitingOn
-					.map(
-						(email) => {
-							const encodedEmail = encodeURIComponent(email)
-							return `<button type="button" class="mp-btn mp-waiting-peer-btn"
+					.map((email) => {
+						const encodedEmail = encodeURIComponent(email)
+						return `<button type="button" class="mp-btn mp-waiting-peer-btn"
 							onclick="window.runsModule?.openParticipantDatasiteEncoded('${escapedSessionIdJs}', '${encodedEmail}')"
 							title="Open your local copy of ${escapeHtml(email)}'s shared folder">📂 ${escapeHtml(email)}</button>`
-						},
-					)
+					})
 					.join('')
 				const reason = step?.input_waiting_reason ? String(step.input_waiting_reason) : ''
 				return `<div class="mp-input-waiting">

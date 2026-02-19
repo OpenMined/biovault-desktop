@@ -1,0 +1,23 @@
+name: PR Linux Release Build (Temporary)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-linux-release-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  linux-release-dry-run:
+    name: Linux release build (dry-run)
+    uses: ./.github/workflows/release.yml
+    with:
+      dry_run: true
+      build_macos_arm64: false
+      build_macos_x64: false
+      build_windows_x64: false
+      build_linux_x64: true
+      build_linux_arm64: true
+    secrets: inherit

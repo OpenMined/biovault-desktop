@@ -718,6 +718,19 @@ jobs:
             mkdir -p src-tauri/resources/syqure/lib/codon
             cp -RL syqure/target/dist/syqure/lib/codon/. src-tauri/resources/syqure/lib/codon/
           fi
+          # Fix Linux RUNPATH for Sequre plugin so linuxdeploy can resolve libcodonrt/libcodonc.
+          if [[ "$(uname -s)" == "Linux" ]]; then
+            SEQURE_SO="src-tauri/resources/syqure/lib/codon/plugins/sequre/build/libsequre.so"
+            if [[ -f "$SEQURE_SO" ]]; then
+              # linuxdeploy can be strict about search paths for plugin .so dependencies.
+              # Force DT_RPATH so libcodonrt/libcodonc in ../../../ are discoverable.
+              patchelf --force-rpath --set-rpath '$ORIGIN:$ORIGIN/../../..' "$SEQURE_SO"
+              echo "libsequre.so RPATH/RUNPATH: $(patchelf --print-rpath "$SEQURE_SO")"
+              if command -v readelf >/dev/null 2>&1; then
+                readelf -d "$SEQURE_SO" | grep -E 'RPATH|RUNPATH|NEEDED' || true
+              fi
+            fi
+          fi
           # Fix dylib paths on macOS: bundle transitive homebrew deps and rewrite absolute paths
           if [[ "$(uname -s)" == "Darwin" ]]; then
             CODON_LIB="src-tauri/resources/syqure/lib/codon"
@@ -1036,6 +1049,8 @@ jobs:
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           set -o pipefail
+          export LD_LIBRARY_PATH="$PWD/src-tauri/resources/syqure/lib/codon:$PWD/src-tauri/resources/syqure/lib/codon/plugins/sequre/build:${LD_LIBRARY_PATH:-}"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
           tauri build --target ${{ matrix.args }} --verbose 2>&1 | tee tauri-linux.log
 
           mkdir -p artifacts

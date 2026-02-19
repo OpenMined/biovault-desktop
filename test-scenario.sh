@@ -86,6 +86,7 @@ SYQURE_MULTIPARTY_SECURE_ONLY="${SYQURE_MULTIPARTY_SECURE_ONLY:-0}"
 SYQURE_MULTIPARTY_CLI_PARITY="${SYQURE_MULTIPARTY_CLI_PARITY:-0}"
 SYQURE_DUMP_TRAFFIC="${SYQURE_DUMP_TRAFFIC:-0}"
 SYQURE_ALLELE_AGG_MODE="${SYQURE_ALLELE_AGG_MODE:-0}"
+TRUSTED_ALLELE_AGG_MODE="${TRUSTED_ALLELE_AGG_MODE:-0}"
 USE_EXISTING_DATASITES="${USE_EXISTING_DATASITES:-0}"
 EXISTING_DATASITES_BASE="${EXISTING_DATASITES_BASE:-}"
 SERVER_URL_OVERRIDE="${SERVER_URL_OVERRIDE:-${LIVE_SERVER_URL:-}}"
@@ -113,6 +114,7 @@ Scenario Options (pick one):
   --syqure-multiparty-flow  Run three-client Syqure collaborative flow (real flow.yaml)
   --syqure-multiparty-allele-freq  Run three-client Syqure collaborative allele-freq flow UI test
   --syqure-allele-agg  Run three-client Syqure allele-agg flow UI test (picker-selected allele_freq.tsv)
+  --syqure-allele-agg-smpc  Run three-client Syqure allele-agg SMPC flow (additive secret sharing + secure division)
   --file-transfer      Run two-client file sharing via SyftBox (pause/resume sync)
   --jupyter            Run onboarding + Jupyter session test (single client)
   --jupyter-collab [config1.json config2.json ...]
@@ -182,6 +184,7 @@ Examples:
   ./test-scenario.sh --syqure-multiparty-flow --syqure-dump-traffic --interactive  # Enable TCP proxy payload dumps
   ./test-scenario.sh --syqure-multiparty-allele-freq --interactive  # Run Syqure collaborative allele-freq flow UI test
   ./test-scenario.sh --syqure-allele-agg --interactive  # Run Syqure allele-agg flow with picker-selected TSV inputs
+  ./test-scenario.sh --syqure-allele-agg-smpc --interactive  # Run Syqure allele-agg SMPC flow
   ./test-scenario.sh --syqure-multiparty-flow --reuse-existing-datasites /Users/me/biovaults --live-server-url https://20.40.47.91:8443
   FORCE_REGEN_SYNTHETIC=1 ./test-scenario.sh --flows-solo  # Force regenerate data
 EOF
@@ -262,6 +265,19 @@ while [[ $# -gt 0 ]]; do
 			# but run the dedicated @syqure-allele-agg Playwright spec.
 			SCENARIO="syqure-multiparty-allele-freq"
 			SYQURE_ALLELE_AGG_MODE=1
+			shift
+			;;
+		--syqure-allele-agg-smpc)
+			# Same as --syqure-allele-agg but uses the SMPC-only flow (additive secret sharing + secure division).
+			SCENARIO="syqure-multiparty-allele-freq"
+			SYQURE_ALLELE_AGG_MODE=1
+			SYQURE_ALLELE_AGG_SMPC_MODE=1
+			shift
+			;;
+		--trusted-allele-agg)
+			# Reuses 3-client infra but runs the trusted (plaintext) allele-agg Playwright spec.
+			SCENARIO="syqure-multiparty-allele-freq"
+			TRUSTED_ALLELE_AGG_MODE=1
 			shift
 			;;
 		--file-transfer)
@@ -449,7 +465,7 @@ fi
 
 # Preserve Syqure multiparty artifacts by default so failures/passes can be debugged from disk.
 # Override with SYQURE_MULTIPARTY_AUTO_PRESERVE=0 or explicit --no-cleanup/NO_CLEANUP.
-if [[ ( "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ) && "$NO_CLEANUP_SET" != "1" ]]; then
+if [[ ( "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" || "$SCENARIO" == "syqure-allele-agg" || "${SYQURE_ALLELE_AGG_SMPC_MODE:-}" == "1" ) && "$NO_CLEANUP_SET" != "1" ]]; then
 	auto_preserve="${SYQURE_MULTIPARTY_AUTO_PRESERVE:-1}"
 	if [[ "$auto_preserve" == "1" || "$auto_preserve" == "true" || "$auto_preserve" == "yes" ]]; then
 		NO_CLEANUP=1
@@ -1141,43 +1157,49 @@ cleanup() {
 	stop_syqure_watchdog
 	pause_for_interactive_exit
 
-	# Always kill processes — NO_CLEANUP only preserves sandbox files, never processes.
-	# Stale bv-desktop / syftboxd / syqure processes cause port conflicts and
-	# non-deterministic failures on subsequent runs.
+	# Kill processes unless KEEP_ALIVE is set.
+	# NO_CLEANUP only preserves sandbox files, never processes.
+	# KEEP_ALIVE preserves all processes (static server, Tauri, logger) for manual interaction.
+	if [[ "${KEEP_ALIVE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "true" ]]; then
+		# Stale bv-desktop / syftboxd / syqure processes cause port conflicts and
+		# non-deterministic failures on subsequent runs.
 
-	if [[ -n "${SERVER_PID:-}" ]]; then
-		info "Stopping static server"
-		kill "$SERVER_PID" 2>/dev/null || true
+		if [[ -n "${SERVER_PID:-}" ]]; then
+			info "Stopping static server"
+			kill "$SERVER_PID" 2>/dev/null || true
+		fi
+		if [[ -n "${TAURI1_PID:-}" || -n "${TAURI2_PID:-}" || -n "${TAURI3_PID:-}" ]]; then
+			info "Stopping Tauri instances"
+			[[ -n "${TAURI1_PID:-}" ]] && kill "$TAURI1_PID" 2>/dev/null || true
+			[[ -n "${TAURI2_PID:-}" ]] && kill "$TAURI2_PID" 2>/dev/null || true
+			[[ -n "${TAURI3_PID:-}" ]] && kill "$TAURI3_PID" 2>/dev/null || true
+		fi
+		# Profiles switching can restart the Tauri process (new PID). Ensure we kill any lingering
+		# WS-bridge listeners for the selected ports (ports were chosen to be free for this run).
+		if command -v lsof >/dev/null 2>&1; then
+			for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" \
+				"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))" \
+				"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 2 ))"; do
+				if [[ -z "${port:-}" || "$port" -le 0 ]]; then
+					continue
+				fi
+				local pids
+				pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)"
+				if [[ -n "${pids:-}" ]]; then
+					info "Killing lingering WS listeners on :$port (pids: $pids)"
+					kill $pids 2>/dev/null || true
+				fi
+			done
+		fi
+		if [[ -n "${LOGGER_PID:-}" ]]; then
+			info "Stopping unified logger"
+			kill "$LOGGER_PID" 2>/dev/null || true
+		fi
+		# Clean up any Jupyter processes spawned during this run
+		kill_workspace_jupyter
+	else
+		info "KEEP_ALIVE: preserving all processes (static server, Tauri, logger)"
 	fi
-	if [[ -n "${TAURI1_PID:-}" || -n "${TAURI2_PID:-}" || -n "${TAURI3_PID:-}" ]]; then
-		info "Stopping Tauri instances"
-		[[ -n "${TAURI1_PID:-}" ]] && kill "$TAURI1_PID" 2>/dev/null || true
-		[[ -n "${TAURI2_PID:-}" ]] && kill "$TAURI2_PID" 2>/dev/null || true
-		[[ -n "${TAURI3_PID:-}" ]] && kill "$TAURI3_PID" 2>/dev/null || true
-	fi
-	# Profiles switching can restart the Tauri process (new PID). Ensure we kill any lingering
-	# WS-bridge listeners for the selected ports (ports were chosen to be free for this run).
-	if command -v lsof >/dev/null 2>&1; then
-		for port in "${DEV_WS_BRIDGE_PORT_BASE:-}" \
-			"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 1 ))" \
-			"$(( ${DEV_WS_BRIDGE_PORT_BASE:-0} + 2 ))"; do
-			if [[ -z "${port:-}" || "$port" -le 0 ]]; then
-				continue
-			fi
-			local pids
-			pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)"
-			if [[ -n "${pids:-}" ]]; then
-				info "Killing lingering WS listeners on :$port (pids: $pids)"
-				kill $pids 2>/dev/null || true
-			fi
-		done
-	fi
-	if [[ -n "${LOGGER_PID:-}" ]]; then
-		info "Stopping unified logger"
-		kill "$LOGGER_PID" 2>/dev/null || true
-	fi
-	# Clean up any Jupyter processes spawned during this run
-	kill_workspace_jupyter
 
 	if [[ "${KEEP_ALIVE:-0}" != "1" && "${KEEP_ALIVE:-0}" != "true" && "${WAIT_MODE:-0}" != "1" && "${WAIT_MODE:-0}" != "true" ]]; then
 		if [[ "$DEVSTACK_STARTED" == "1" && "$SCENARIO" != "profiles-mock" && "$SCENARIO" != "files-cli" ]]; then
@@ -1186,14 +1208,16 @@ cleanup() {
 			local c2="${CLIENT2_EMAIL:-client2@sandbox.local}"
 			local agg="${AGG_EMAIL:-aggregator@sandbox.local}"
 			local sandbox_root="${SANDBOX_ROOT:-$BIOVAULT_DIR/sandbox}"
-			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" ]]; then
+			if [[ "$SCENARIO" == "syqure-flow" || "$SCENARIO" == "pipelines-multiparty" || "$SCENARIO" == "pipelines-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-flow" || "$SCENARIO" == "syqure-multiparty-allele-freq" || "$SCENARIO" == "syqure-allele-agg" || "${SYQURE_ALLELE_AGG_SMPC_MODE:-}" == "1" ]]; then
 				DEVSTACK_CLIENTS="${c1},${c2},${agg}"
 			else
 				DEVSTACK_CLIENTS="${c1},${c2}"
 			fi
 			local stop_args=(--clients "$DEVSTACK_CLIENTS" --sandbox "$sandbox_root" --stop)
-			if [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
+			if [[ "${NO_CLEANUP:-0}" != "1" ]] && [[ "$DEVSTACK_RESET" == "1" || "$DEVSTACK_RESET" == "true" ]]; then
 				stop_args+=(--reset)
+			elif [[ "${NO_CLEANUP:-0}" == "1" ]]; then
+				info "NO_CLEANUP: preserving sandbox files (skipping --reset)"
 			fi
 			bash "$DEVSTACK_SCRIPT" "${stop_args[@]}" >/dev/null 2>&1 || true
 		fi
@@ -1699,6 +1723,38 @@ syqure_repo_root_from_bin() {
 	echo ""
 }
 
+ensure_syqure_loader_layout() {
+	local bin_path="${1:-}"
+	if [[ -z "$bin_path" || ! -x "$bin_path" ]]; then
+		return 0
+	fi
+	case "$bin_path" in
+		*/target/release/syqure|*/target/debug/syqure)
+			;;
+		*)
+			# App-bundled binaries already carry a complete runtime layout.
+			return 0
+			;;
+	esac
+
+	local syq_root platform codon_lib_dir bin_dir link_path
+	syq_root="$(syqure_repo_root_from_bin "$bin_path")"
+	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
+		return 0
+	fi
+	platform="$(syqure_platform_id)"
+	codon_lib_dir="$syq_root/bin/${platform}/codon/lib/codon"
+	if [[ ! -d "$codon_lib_dir" ]]; then
+		return 0
+	fi
+
+	bin_dir="$(cd "$(dirname "$bin_path")" && pwd -P)"
+	mkdir -p "$bin_dir/lib"
+	link_path="$bin_dir/lib/codon"
+	ln -sfn "$codon_lib_dir" "$link_path"
+	info "[DEBUG] Syqure loader path ready: $link_path -> $codon_lib_dir"
+}
+
 syqure_plugin_lib_name() {
 	case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
 		darwin) echo "libsequre.dylib" ;;
@@ -1718,6 +1774,7 @@ configure_syqure_runtime_env() {
 	if [[ -z "$syq_root" || ! -d "$syq_root" ]]; then
 		return 0
 	fi
+	ensure_syqure_loader_layout "$SEQURE_NATIVE_BIN"
 
 	platform="$(syqure_platform_id)"
 	codon_candidate="$syq_root/bin/${platform}/codon"
@@ -2926,7 +2983,9 @@ PY
 
 		MODE="${BV_SYQURE_AGG_MODE:-smpc}"
 		TRANSPORT="${BV_SYQURE_TRANSPORT:-hotlink}"
-		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+		if [[ "${SYQURE_ALLELE_AGG_SMPC_MODE:-}" == "1" ]]; then
+			MODULE_YAML="$ROOT_DIR/biovault/flows/syqure-allele-agg-smpc/modules/secure-aggregate/module.yaml"
+		elif [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
 			MODULE_YAML="$ROOT_DIR/biovault/flows/syqure-allele-agg/modules/secure-aggregate/module.yaml"
 		else
 			MODULE_YAML="$ROOT_DIR/biovault/flows/multiparty-allele-freq/modules/secure-aggregate/module.yaml"
@@ -2945,7 +3004,10 @@ PY
 		python3 -c "import pathlib,re; path = pathlib.Path(r'${MODULE_YAML}'); text = path.read_text(); text = re.sub(r'entrypoint: [A-Za-z0-9_]+\\.codon', f'entrypoint: ${ENTRY}', text); text = re.sub(r'transport: .*', f'transport: ${TRANSPORT}', text); path.write_text(text)"
 		info "Syqure aggregation mode: ${MODE} (entrypoint: ${ENTRY}) transport: ${TRANSPORT}"
 
-		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+		if [[ "${SYQURE_ALLELE_AGG_SMPC_MODE:-}" == "1" ]]; then
+			info "=== Syqure Allele-Agg SMPC Flow Test ==="
+			info "Three clients will execute biovault/flows/syqure-allele-agg-smpc/flow.yaml via collaborative run."
+		elif [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
 			info "=== Syqure Allele-Agg Flow Test ==="
 			info "Three clients will execute biovault/flows/syqure-allele-agg/flow.yaml via collaborative run."
 		else
@@ -2960,14 +3022,22 @@ PY
 		info ""
 		info "Emails: ${CLIENT1_EMAIL}, ${CLIENT2_EMAIL}, ${AGG_EMAIL}"
 
-		if [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+		if [[ "${KEEP_ALIVE:-0}" == "1" || "${KEEP_ALIVE:-0}" == "true" ]]; then
+			info "KEEP_ALIVE: skipping Playwright tests. Servers are running — drive manually."
+		elif [[ "$TRUSTED_ALLELE_AGG_MODE" == "1" ]]; then
+			timer_push "Playwright: @trusted-allele-agg"
+			run_ui_grep "@trusted-allele-agg" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "TRUSTED_ALLELE_AGG_SOURCE_TSV=${TRUSTED_ALLELE_AGG_SOURCE_TSV:-$ROOT_DIR/data/allele_freq.tsv}" "TRUSTED_ALLELE_AGG_TRIM_LINES=${TRUSTED_ALLELE_AGG_TRIM_LINES:-1000}" "TRUSTED_ALLELE_AGG_CLIENT1_TSV=${TRUSTED_ALLELE_AGG_CLIENT1_TSV:-}" "TRUSTED_ALLELE_AGG_CLIENT2_TSV=${TRUSTED_ALLELE_AGG_CLIENT2_TSV:-}" "TRUSTED_ALLELE_AGG_SKIP_FLOW_IMPORT=${TRUSTED_ALLELE_AGG_SKIP_FLOW_IMPORT:-}"
+			timer_pop
+		elif [[ "$SYQURE_ALLELE_AGG_MODE" == "1" ]]; then
+			ALLELE_AGG_FLOW_DIR="syqure-allele-agg"
+			[[ "${SYQURE_ALLELE_AGG_SMPC_MODE:-}" == "1" ]] && ALLELE_AGG_FLOW_DIR="syqure-allele-agg-smpc"
 			timer_push "Playwright: @syqure-allele-agg"
-			start_syqure_watchdog "syqure-allele-agg"
-			run_ui_grep "@syqure-allele-agg" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "SYQURE_ALLELE_AGG_SOURCE_TSV=${SYQURE_ALLELE_AGG_SOURCE_TSV:-$ROOT_DIR/data/allele_freq.tsv}" "SYQURE_ALLELE_AGG_TRIM_LINES=${SYQURE_ALLELE_AGG_TRIM_LINES:-1000}"
+			start_syqure_watchdog "${ALLELE_AGG_FLOW_DIR}"
+			run_ui_grep "@syqure-allele-agg" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "SYQURE_ALLELE_AGG_FLOW_DIR=${ALLELE_AGG_FLOW_DIR}" "SYQURE_ALLELE_AGG_SOURCE_TSV=${SYQURE_ALLELE_AGG_SOURCE_TSV:-$ROOT_DIR/data/allele_freq.tsv}" "SYQURE_ALLELE_AGG_TRIM_LINES=${SYQURE_ALLELE_AGG_TRIM_LINES:-1000}" "SYQURE_ALLELE_AGG_CLIENT1_TSV=${SYQURE_ALLELE_AGG_CLIENT1_TSV:-}" "SYQURE_ALLELE_AGG_CLIENT2_TSV=${SYQURE_ALLELE_AGG_CLIENT2_TSV:-}"
 		else
 			timer_push "Playwright: @syqure-multiparty-allele-freq"
 			start_syqure_watchdog "multiparty-allele-freq"
-			run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE"
+			run_ui_grep "@syqure-multiparty-allele-freq" "INTERACTIVE_MODE=$INTERACTIVE_MODE" "WAIT_MODE=$WAIT_MODE"
 		fi
 		stop_syqure_watchdog
 		timer_pop
@@ -3223,8 +3293,14 @@ PY
 esac
 
 if [[ "${KEEP_ALIVE:-0}" == "1" || "${KEEP_ALIVE:-0}" == "true" ]]; then
-	info "KEEP_ALIVE enabled; leaving servers running (Ctrl+C to stop)"
-	while true; do
-		sleep 1
-	done
+	# Disable cleanup trap FIRST so processes survive exit
+	trap - EXIT INT TERM HUP
+	info "KEEP_ALIVE enabled; detaching processes and exiting."
+	info "Processes left running:"
+	[[ -n "${SERVER_PID:-}" ]] && info "  Static server:    PID $SERVER_PID" && disown "$SERVER_PID" 2>/dev/null || true
+	[[ -n "${TAURI1_PID:-}" ]] && info "  Tauri client1:    PID $TAURI1_PID" && disown "$TAURI1_PID" 2>/dev/null || true
+	[[ -n "${TAURI2_PID:-}" ]] && info "  Tauri client2:    PID $TAURI2_PID" && disown "$TAURI2_PID" 2>/dev/null || true
+	[[ -n "${TAURI3_PID:-}" ]] && info "  Tauri aggregator: PID $TAURI3_PID" && disown "$TAURI3_PID" 2>/dev/null || true
+	[[ -n "${LOGGER_PID:-}" ]] && info "  Logger:           PID $LOGGER_PID" && disown "$LOGGER_PID" 2>/dev/null || true
+	exit 0
 fi

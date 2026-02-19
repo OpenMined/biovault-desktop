@@ -297,6 +297,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("syftbox_queue_status", "syftbox", true),
         cmd("get_syftbox_diagnostics", "syftbox", true),
         cmd("test_turn_connection", "syftbox", true),
+        cmd("test_peer_link", "syftbox", false),
         cmd_async("syftbox_subscriptions_discovery", "syftbox", true),
         cmd_long("syftbox_upload_action", "syftbox", false),
         cmd_async("syftbox_request_otp", "syftbox", false),
@@ -2744,6 +2745,46 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .map_err(|e| format!("Failed to parse serverUrl: {}", e))?;
             let result = crate::commands::syftbox::test_turn_connection(server_url)
                 .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "test_peer_link" => {
+            let options = if let Some(value) = args
+                .get("options")
+                .cloned()
+                .or_else(|| args.get("peerLinkOptions").cloned())
+            {
+                serde_json::from_value(value)
+                    .map_err(|e| format!("Failed to parse options: {}", e))?
+            } else {
+                crate::commands::syftbox::PeerLinkTestOptions {
+                    peer_email: args
+                        .get("peerEmail")
+                        .or_else(|| args.get("peer_email"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    rounds: args
+                        .get("rounds")
+                        .or_else(|| args.get("roundsCount"))
+                        .and_then(|v| v.as_u64())
+                        .and_then(|v| u32::try_from(v).ok()),
+                    payload_kb: args
+                        .get("payloadKb")
+                        .or_else(|| args.get("payload_kb"))
+                        .and_then(|v| v.as_u64())
+                        .and_then(|v| u32::try_from(v).ok()),
+                    timeout_s: args
+                        .get("timeoutS")
+                        .or_else(|| args.get("timeout_s"))
+                        .and_then(|v| v.as_u64()),
+                    poll_ms: args
+                        .get("pollMs")
+                        .or_else(|| args.get("poll_ms"))
+                        .and_then(|v| v.as_u64()),
+                }
+            };
+            let result =
+                crate::commands::syftbox::test_peer_link(options).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_database_path" => {

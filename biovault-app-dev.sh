@@ -1,15 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
-# Thin wrapper around biovault-app.sh that uses the local debug binary.
+# Thin wrapper around biovault-app.sh that uses a local tauri binary.
+# Default profile is release for production-like performance while testing local changes.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEBUG_BIN="${APP_BIN:-$SCRIPT_DIR/src-tauri/target/debug/bv-desktop}"
+PROFILE="${BIOVAULT_DEV_PROFILE:-release}"
 DEV_SYQURE_BIN="${SEQURE_NATIVE_BIN:-$SCRIPT_DIR/syqure/target/release/syqure}"
 FORCE_REBUILD="${BIOVAULT_DEV_REBUILD:-0}"
 
 ARGS=()
 for arg in "$@"; do
   case "$arg" in
+    --release)
+      PROFILE="release"
+      ;;
+    --debug)
+      PROFILE="debug"
+      ;;
     --rebuild)
       FORCE_REBUILD=1
       ;;
@@ -19,19 +26,27 @@ for arg in "$@"; do
   esac
 done
 
-if [[ "$FORCE_REBUILD" == "1" || ! -x "$DEBUG_BIN" ]]; then
-  if [[ "$FORCE_REBUILD" == "1" ]]; then
-    echo "Forcing debug rebuild (cargo build)..."
-  else
-    echo "Debug binary not found at $DEBUG_BIN"
-    echo "Building debug binary (cargo build)..."
-  fi
-  (cd "$SCRIPT_DIR/src-tauri" && cargo build)
+if [[ "$PROFILE" == "release" ]]; then
+  DEV_BIN="${APP_BIN:-$SCRIPT_DIR/src-tauri/target/release/bv-desktop}"
+  BUILD_CMD=(cargo build --release)
+else
+  DEV_BIN="${APP_BIN:-$SCRIPT_DIR/src-tauri/target/debug/bv-desktop}"
+  BUILD_CMD=(cargo build)
 fi
 
-if [[ ! -x "$DEBUG_BIN" ]]; then
-  echo "Debug binary not found at $DEBUG_BIN"
-  echo "Debug binary still missing at $DEBUG_BIN"
+if [[ "$FORCE_REBUILD" == "1" || ! -x "$DEV_BIN" ]]; then
+  if [[ "$FORCE_REBUILD" == "1" ]]; then
+    echo "Forcing $PROFILE rebuild (${BUILD_CMD[*]})..."
+  else
+    echo "$PROFILE binary not found at $DEV_BIN"
+    echo "Building $PROFILE binary (${BUILD_CMD[*]})..."
+  fi
+  (cd "$SCRIPT_DIR/src-tauri" && "${BUILD_CMD[@]}")
+fi
+
+if [[ ! -x "$DEV_BIN" ]]; then
+  echo "$PROFILE binary not found at $DEV_BIN"
+  echo "$PROFILE binary still missing at $DEV_BIN"
   exit 1
 fi
 
@@ -41,7 +56,9 @@ if [[ ! -x "$DEV_SYQURE_BIN" ]]; then
   exit 1
 fi
 
-APP_BIN="$DEBUG_BIN" \
+echo "Launching with profile=$PROFILE APP_BIN=$DEV_BIN"
+
+APP_BIN="$DEV_BIN" \
 SEQURE_NATIVE_BIN="$DEV_SYQURE_BIN" \
 SYQURE_SKIP_BUNDLE=1 \
 exec "$SCRIPT_DIR/biovault-app.sh" "${ARGS[@]}"

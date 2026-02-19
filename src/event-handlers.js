@@ -389,6 +389,82 @@ export function setupEventHandlers({
 		})
 	}
 
+	// Settings - Peer link test (no Syqure)
+	const syftboxPeerTestBtn = document.getElementById('syftbox-test-peer-btn')
+	if (syftboxPeerTestBtn) {
+		syftboxPeerTestBtn.addEventListener('click', async () => {
+			const resultEl = document.getElementById('syftbox-peer-test-result')
+			const peerEmail = document.getElementById('syftbox-peer-email')?.value?.trim() || ''
+			const roundsRaw = document.getElementById('syftbox-peer-rounds')?.value
+			const payloadRaw = document.getElementById('syftbox-peer-payload-kb')?.value
+			const rounds = Math.max(1, Math.min(100, Number.parseInt(roundsRaw || '3', 10) || 3))
+			const payloadKb = Math.max(1, Math.min(1024, Number.parseInt(payloadRaw || '32', 10) || 32))
+			const originalText = syftboxPeerTestBtn.textContent
+
+			if (!peerEmail) {
+				if (resultEl) {
+					resultEl.style.color = '#b45309'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = 'Peer email is required.'
+				}
+				return
+			}
+
+			syftboxPeerTestBtn.disabled = true
+			syftboxPeerTestBtn.textContent = 'Testing...'
+			if (resultEl) {
+				resultEl.style.color = '#6b7280'
+				resultEl.style.whiteSpace = 'normal'
+				resultEl.textContent = `Testing peer link with ${peerEmail} (${rounds} round${rounds === 1 ? '' : 's'}, ${payloadKb}KB payload)...`
+			}
+
+			try {
+				const result = await invoke('test_peer_link', {
+					options: {
+						peerEmail,
+						rounds,
+						payloadKb,
+						timeoutS: 60,
+						pollMs: 100,
+					},
+				})
+				if (resultEl) {
+					resultEl.style.color = result.ok ? '#059669' : '#b45309'
+					resultEl.style.whiteSpace = 'pre-line'
+					const attempts = Array.isArray(result.attempt_logs) ? result.attempt_logs : []
+					const lines = []
+					lines.push(
+						`${result.ok ? 'PASS' : 'CHECK'} peer link ${result.local_email} -> ${result.peer_email}`,
+					)
+					lines.push(
+						`completed=${result.completed_rounds}/${result.rounds} failed=${result.failed_rounds} payload_bytes=${result.payload_bytes}`,
+					)
+					lines.push(
+						`rtt_ms min=${result.min_rtt_ms ?? '-'} p50=${result.p50_rtt_ms ?? '-'} p95=${result.p95_rtt_ms ?? '-'} max=${result.max_rtt_ms ?? '-'} avg=${result.avg_rtt_ms ?? '-'}`,
+					)
+					if (result.details) {
+						lines.push(`details=${result.details}`)
+					}
+					if (attempts.length) {
+						lines.push('trace:')
+						lines.push(...attempts.map((line) => `  - ${line}`))
+					}
+					resultEl.textContent = lines.join('\n')
+				}
+			} catch (error) {
+				console.error('Peer link test failed:', error)
+				if (resultEl) {
+					resultEl.style.color = '#dc2626'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = `FAIL: ${error?.message || error || 'Peer link test failed'}`
+				}
+			} finally {
+				syftboxPeerTestBtn.disabled = false
+				syftboxPeerTestBtn.textContent = originalText
+			}
+		})
+	}
+
 	// Settings - Set Dev Server (skip auth)
 	const syftboxSetDevBtn = document.getElementById('syftbox-set-dev-btn')
 	if (syftboxSetDevBtn) {
