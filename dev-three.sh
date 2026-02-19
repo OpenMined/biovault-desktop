@@ -416,7 +416,7 @@ launch_desktop_instance() {
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
   export SYFTBOX_DATA_DIR="$data_dir"
-  export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
+  export SBC_VAULT="$SYFTBOX_DATA_DIR/.sbc"
   export DEV_WS_BRIDGE=1
   export DEV_WS_BRIDGE_PORT="$ws_port"
 
@@ -453,7 +453,7 @@ launch_desktop_instance() {
   echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
   echo -e "${YELLOW}  SYFTBOX_DATA_DIR:  $SYFTBOX_DATA_DIR${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
-  echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
+  echo -e "${YELLOW}  SBC_VAULT:         $SBC_VAULT${NC}"
   echo -e "${YELLOW}  SyftBox backend:   $BV_SYFTBOX_BACKEND${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
   echo -e "${YELLOW}  WS Bridge Port:    $DEV_WS_BRIDGE_PORT${NC}"
@@ -540,7 +540,7 @@ preseed_onboarding_for_bootstrap() {
       SYFTBOX_SERVER_URL="$server" \
       SYFTBOX_CONFIG_PATH="$config" \
       SYFTBOX_DATA_DIR="$data_dir" \
-      SYC_VAULT="$data_dir/.syc" \
+      SBC_VAULT="$data_dir/.sbc" \
       "$BV_CLI_BIN" init --quiet "$email" >/dev/null
   done
 

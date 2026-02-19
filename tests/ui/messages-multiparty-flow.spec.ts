@@ -1394,12 +1394,46 @@ test.describe('Multiparty flow between three clients @pipelines-multiparty-flow'
 		// Aggregate output may be directly resolvable (no per-contribution finder button needed).
 		await verifyContributionButtons(page1, 'aggregate', 0, email1)
 		await verifyContributionButtons(page2, 'aggregate', 0, email2)
-		const waitingBannerClient1 =
-			(await runCard1
-				.locator('.mp-waiting-banner')
-				.innerText()
-				.catch(() => '')) || ''
-		expect(waitingBannerClient1.toLowerCase()).not.toContain(email2.toLowerCase())
+
+		// Wait for client1 to converge after client2 share:
+		// 1) backend state no longer waits on client2
+		// 2) run-card waiting banner no longer lists client2 (after explicit UI refresh)
+		await expect
+			.poll(
+				async () => {
+					await backend1.invoke('trigger_syftbox_sync').catch(() => {})
+					const state1 = await backend1
+						.invoke('get_multiparty_flow_state', { sessionId })
+						.catch(() => null)
+					const aggregateStep = state1?.steps?.find((s: any) => s.id === 'aggregate')
+					const waitingOnBackend = Array.isArray(aggregateStep?.input_waiting_on)
+						? aggregateStep.input_waiting_on.map((v: any) => String(v || '').toLowerCase())
+						: []
+
+					await ensureStepsTabActive(page1)
+					const refreshStateBtn = runCard1
+						.locator(
+							'.mp-controls button:has-text("Refresh State"), button:has-text("Refresh State")',
+						)
+						.first()
+					if (await refreshStateBtn.isVisible({ timeout: 300 }).catch(() => false)) {
+						await refreshStateBtn.click().catch(() => {})
+					}
+					await page1.waitForTimeout(150)
+
+					const waitingBannerClient1 =
+						(await runCard1
+							.locator('.mp-waiting-banner')
+							.innerText()
+							.catch(() => '')) || ''
+					const waitingText = waitingBannerClient1.toLowerCase()
+					const email2Lower = email2.toLowerCase()
+
+					return !waitingOnBackend.includes(email2Lower) && !waitingText.includes(email2Lower)
+				},
+				{ timeout: 45_000, intervals: [250, 500, 1000, 2000] },
+			)
+			.toBe(true)
 
 		// Shared step outputs should be published into chat messages with metadata/files
 		const contributionSharedMsg = await waitForThreadMessageMatching(

@@ -13,7 +13,7 @@ set -euo pipefail
 #   ├── biovault-desktop/  (this repo)
 #   ├── biovault/
 #   ├── syftbox-sdk/
-#   ├── syft-crypto-core/
+#   ├── syftbox-crypto/
 #   ├── syftbox/
 #   ├── biovault-beaver/
 #   ├── sbenv/
@@ -110,7 +110,7 @@ CLONE_PIDS=()
 # Clone all dependencies
 clone_if_missing_async "biovault" "https://github.com/OpenMined/biovault.git"
 clone_if_missing_async "syftbox-sdk" "https://github.com/OpenMined/syftbox-sdk.git"
-clone_if_missing_async "syft-crypto-core" "https://github.com/OpenMined/syft-crypto-core.git"
+clone_if_missing_async "syftbox-crypto" "https://github.com/OpenMined/syftbox-crypto.git"
 clone_if_missing_async "syftbox" "https://github.com/OpenMined/syftbox.git" "madhava/biovault"
 clone_if_missing_async "biovault-beaver" "https://github.com/OpenMined/biovault-beaver.git"
 clone_if_missing_async "sbenv" "https://github.com/OpenMined/sbenv.git"
@@ -151,7 +151,7 @@ create_symlink() {
 
 create_symlink "biovault"
 create_symlink "syftbox-sdk"
-create_symlink "syft-crypto-core"
+create_symlink "syftbox-crypto"
 create_symlink "syftbox"
 create_symlink "biovault-beaver"
 create_symlink "sbenv"
@@ -165,7 +165,7 @@ echo "Workspace setup complete!"
 echo "Dependencies are at:"
 echo "  $PARENT_DIR/biovault"
 echo "  $PARENT_DIR/syftbox-sdk"
-echo "  $PARENT_DIR/syft-crypto-core"
+echo "  $PARENT_DIR/syftbox-crypto"
 echo "  $PARENT_DIR/syftbox"
 echo "  $PARENT_DIR/biovault-beaver"
 echo "  $PARENT_DIR/sbenv"

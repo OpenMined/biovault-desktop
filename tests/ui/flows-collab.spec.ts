@@ -249,13 +249,30 @@ async function waitForSyncedFlowFolder(
 		syftUrl: flowLocation,
 	})
 	const flowYaml = path.join(folderPath, 'flow.yaml')
-	const modulesDir = path.join(folderPath, 'modules')
+	let lastReason = ''
 
 	while (Date.now() - start < timeoutMs) {
-		const flowYamlExists = fs.existsSync(flowYaml)
-		const modulesReady = fs.existsSync(modulesDir) && (fs.readdirSync(modulesDir).length || 0) > 0
-		if (flowYamlExists && modulesReady) {
-			return folderPath
+		try {
+			const status = await backend.invoke('flow_request_sync_status', { flowLocation })
+			if (status?.ready) {
+				return folderPath
+			}
+			const missingPaths = Array.isArray(status?.missingPaths) ? status.missingPaths : []
+			lastReason =
+				status?.reason || (missingPaths.length ? `missing: ${missingPaths.join(', ')}` : '')
+		} catch {
+			// Fallback for older backends or transient bridge errors.
+			lastReason = ''
+		}
+
+		// Fallback filesystem check: flow.yaml is sufficient when no extra module dirs are required.
+		if (fs.existsSync(flowYaml)) {
+			const modulesDir = path.join(folderPath, 'modules')
+			const modulesReady =
+				!fs.existsSync(modulesDir) || (fs.readdirSync(modulesDir).length || 0) > 0
+			if (modulesReady) {
+				return folderPath
+			}
 		}
 		try {
 			await backend.invoke('trigger_syftbox_sync')
@@ -265,7 +282,8 @@ async function waitForSyncedFlowFolder(
 		await new Promise((r) => setTimeout(r, 1000))
 	}
 
-	throw new Error(`Timed out waiting for flow sync at ${flowYaml}`)
+	const reasonSuffix = lastReason ? ` (last status: ${lastReason})` : ''
+	throw new Error(`Timed out waiting for flow sync at ${flowYaml}${reasonSuffix}`)
 }
 
 // Helper to wait for flow run to complete
@@ -2241,7 +2259,7 @@ test.describe.only('Flows Collaboration @flows-collab', () => {
 
 			const importedBytes = fs.readFileSync(importedResultPath)
 			const header = importedBytes.slice(0, 4).toString('utf8')
-			expect(header).not.toBe('SYC1')
+			expect(header).not.toBe('SBC1')
 
 			const importedContent = importedBytes.toString('utf8')
 			expect(importedContent.trim()).toBe(client1PrivateResult.trim())

@@ -153,8 +153,8 @@ test.describe('Onboarding flow', () => {
 						case 'key_get_status':
 							return {
 								identity: 'tester@example.com',
-								vault_path: '/tmp/.syc',
-								bundle_path: '/tmp/.syc/bundles/tester_example_com.json',
+								vault_path: '/tmp/.sbc',
+								bundle_path: '/tmp/.sbc/bundles/tester_example_com.json',
 								export_path: '/tmp/datasites/tester@example.com/public/crypto/did.json',
 								vault_fingerprint: 'abc123def456',
 								exists: true,
@@ -163,8 +163,8 @@ test.describe('Onboarding flow', () => {
 							return {
 								identity: 'tester@example.com',
 								fingerprint: 'abc123def456',
-								vault_path: '/tmp/.syc',
-								bundle_path: '/tmp/.syc/bundles/tester_example_com.json',
+								vault_path: '/tmp/.sbc',
+								bundle_path: '/tmp/.sbc/bundles/tester_example_com.json',
 								export_path: '/tmp/datasites/tester@example.com/public/crypto/did.json',
 								mnemonic:
 									'test word one two three four five six seven eight nine ten eleven twelve',

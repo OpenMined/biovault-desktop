@@ -27,9 +27,9 @@ Notes:
       config.yaml
       syftbox/config.json
       .data/syft.sub.yaml (if present)
-      .syc/keys/<email>.key (required)
-      .syc/config/datasite.json (if present; paths rewritten)
-      .syc/bundles/<participant>.json (if present)
+      .sbc/keys/<email>.key (required)
+      .sbc/config/datasite.json (if present; paths rewritten)
+      .sbc/bundles/<participant>.json (if present)
   - Rewrites data_dir/server_url/email for target location.
   - If --presynced-datasites is set, copies datasites snapshot into
     target <email>/datasites (best effort).
@@ -119,10 +119,10 @@ for raw_email in "${EMAILS[@]}"; do
   dst_cfg_yaml="$dst_dir/config.yaml"
   dst_syft_cfg="$dst_dir/syftbox/config.json"
   dst_sub_yaml="$dst_dir/.data/syft.sub.yaml"
-  src_syc_key="$src_dir/.syc/keys/$email.key"
-  src_syc_datasite="$src_dir/.syc/config/datasite.json"
-  dst_syc_key="$dst_dir/.syc/keys/$email.key"
-  dst_syc_datasite="$dst_dir/.syc/config/datasite.json"
+  src_sbc_key="$src_dir/.sbc/keys/$email.key"
+  src_sbc_datasite="$src_dir/.sbc/config/datasite.json"
+  dst_sbc_key="$dst_dir/.sbc/keys/$email.key"
+  dst_sbc_datasite="$dst_dir/.sbc/config/datasite.json"
   presync_datasite_a="$PRESYNC_DATASITES_BASE/$email/datasites"
   presync_datasite_b="$PRESYNC_DATASITES_BASE/datasites/$email"
 
@@ -135,28 +135,28 @@ for raw_email in "${EMAILS[@]}"; do
     exit 1
   fi
 
-  mkdir -p "$dst_dir/syftbox" "$dst_dir/.data" "$dst_dir/.syc/keys" "$dst_dir/.syc/config" "$dst_dir/.syc/bundles"
+  mkdir -p "$dst_dir/syftbox" "$dst_dir/.data" "$dst_dir/.sbc/keys" "$dst_dir/.sbc/config" "$dst_dir/.sbc/bundles"
 
   cp "$src_cfg_yaml" "$dst_cfg_yaml"
   cp "$src_syft_cfg" "$dst_syft_cfg"
   if [[ -f "$src_sub_yaml" ]]; then
     cp "$src_sub_yaml" "$dst_sub_yaml"
   fi
-  if [[ ! -f "$src_syc_key" ]]; then
-    echo "Missing required source key: $src_syc_key" >&2
+  if [[ ! -f "$src_sbc_key" ]]; then
+    echo "Missing required source key: $src_sbc_key" >&2
     exit 1
   fi
-  cp "$src_syc_key" "$dst_syc_key"
-  if [[ -f "$src_syc_datasite" ]]; then
-    cp "$src_syc_datasite" "$dst_syc_datasite"
+  cp "$src_sbc_key" "$dst_sbc_key"
+  if [[ -f "$src_sbc_datasite" ]]; then
+    cp "$src_sbc_datasite" "$dst_sbc_datasite"
   fi
 
   # Copy participant bundles (best-effort)
   for peer_raw in "${EMAILS[@]}"; do
     peer_email="$(printf '%s' "$peer_raw" | xargs)"
     [[ -z "$peer_email" ]] && continue
-    src_bundle="$src_dir/.syc/bundles/$peer_email.json"
-    dst_bundle="$dst_dir/.syc/bundles/$peer_email.json"
+    src_bundle="$src_dir/.sbc/bundles/$peer_email.json"
+    dst_bundle="$dst_dir/.sbc/bundles/$peer_email.json"
     if [[ -f "$src_bundle" ]]; then
       cp "$src_bundle" "$dst_bundle"
     fi
@@ -212,8 +212,8 @@ for raw_email in "${EMAILS[@]}"; do
     fs.writeFileSync(p, JSON.stringify(cfg));
   ' "$dst_syft_cfg" "$email" "$SERVER_URL" "$dst_dir"
 
-  # .syc/config/datasite.json rewrite
-  if [[ -f "$dst_syc_datasite" ]]; then
+  # .sbc/config/datasite.json rewrite
+  if [[ -f "$dst_sbc_datasite" ]]; then
     node -e '
       const fs = require("fs");
       const p = process.argv[1];
@@ -222,11 +222,11 @@ for raw_email in "${EMAILS[@]}"; do
       cfg.encrypted_root = `${base}/datasites`;
       cfg.shadow_root = `${base}/unencrypted`;
       fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
-    ' "$dst_syc_datasite" "$dst_dir"
+    ' "$dst_sbc_datasite" "$dst_dir"
   fi
 
-  src_sha="$(shasum -a 256 "$src_syc_key" | awk '{print $1}')"
-  dst_sha="$(shasum -a 256 "$dst_syc_key" | awk '{print $1}')"
+  src_sha="$(shasum -a 256 "$src_sbc_key" | awk '{print $1}')"
+  dst_sha="$(shasum -a 256 "$dst_sbc_key" | awk '{print $1}')"
   if [[ "$src_sha" != "$dst_sha" ]]; then
     echo "Key copy verification failed for $email (sha mismatch)" >&2
     exit 1

@@ -76,7 +76,7 @@ test.describe('Profiles flow', () => {
 							id: p.id,
 							email: p.email,
 							biovault_home: p.biovault_home,
-							vault_path: `${p.biovault_home}/.syc`,
+							vault_path: `${p.biovault_home}/.sbc`,
 							fingerprint: p.fingerprint,
 							onboarded: !!state.onboardedByHome[p.biovault_home],
 							running: p.running,
@@ -114,8 +114,8 @@ test.describe('Profiles flow', () => {
 					case 'key_get_status': {
 						return {
 							identity: args?.email ?? 'tester@example.com',
-							vault_path: `${state.currentHome}/.syc`,
-							bundle_path: `${state.currentHome}/.syc/bundles/tester_example_com.json`,
+							vault_path: `${state.currentHome}/.sbc`,
+							bundle_path: `${state.currentHome}/.sbc/bundles/tester_example_com.json`,
 							export_path: `${state.currentHome}/datasites/tester@example.com/public/crypto/did.json`,
 							vault_fingerprint: 'abc123def456',
 							exists: true,
@@ -410,7 +410,7 @@ test.describe('Profiles flow', () => {
 							id: p.id,
 							email: p.email,
 							biovault_home: p.biovault_home,
-							vault_path: `${p.biovault_home}/.syc`,
+							vault_path: `${p.biovault_home}/.sbc`,
 							fingerprint: p.fingerprint,
 							onboarded: !!state.onboardedByHome[p.biovault_home],
 							running: p.running,
@@ -448,8 +448,8 @@ test.describe('Profiles flow', () => {
 					case 'key_get_status': {
 						return {
 							identity: args?.email ?? 'tester@example.com',
-							vault_path: `${state.currentHome}/.syc`,
-							bundle_path: `${state.currentHome}/.syc/bundles/tester_example_com.json`,
+							vault_path: `${state.currentHome}/.sbc`,
+							bundle_path: `${state.currentHome}/.sbc/bundles/tester_example_com.json`,
 							export_path: `${state.currentHome}/datasites/tester@example.com/public/crypto/did.json`,
 							vault_fingerprint: 'abc123def456',
 							exists: true,

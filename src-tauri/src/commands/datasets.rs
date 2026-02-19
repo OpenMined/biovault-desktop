@@ -790,9 +790,9 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
 
     let datasites_dir = data_dir.join("datasites");
 
-    // Resolve vault path (strict: SYC_VAULT or SYFTBOX_DATA_DIR/.syc).
-    let vault_path = biovault::config::resolve_syc_vault_path()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
+    // Resolve vault path (strict: SBC_VAULT or SYFTBOX_DATA_DIR/.sbc).
+    let vault_path = biovault::config::resolve_sbc_vault_path()
+        .map_err(|e| format!("Failed to resolve SBC_VAULT: {e}"))?;
     let bundles_dir = vault_path.join("bundles");
 
     let mut datasets = Vec::new();

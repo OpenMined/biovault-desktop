@@ -206,7 +206,7 @@ import_bundle() {
   SYFTBOX_EMAIL="$dst_email" \
   SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
   SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
-  "$BV_CLI_BIN" syc import "$src_bundle" --expected-identity "$src_email" || true
+  "$BV_CLI_BIN" sbc import "$src_bundle" --expected-identity "$src_email" || true
 }
 
 ensure_bundle_under_datasites() {
@@ -286,7 +286,7 @@ launch_instance() {
       "SYFTBOX_AUTH_ENABLED=$SYFTBOX_AUTH_ENABLED"
       "SYFTBOX_CONFIG_PATH=$env_config"
       "SYFTBOX_DATA_DIR=$env_data"
-      "SYC_VAULT=$SYFTBOX_DATA_DIR/.syc"
+      "SBC_VAULT=$SYFTBOX_DATA_DIR/.sbc"
       "BIOVAULT_DEBUG_BANNER=1"
     )
     if [[ "$backend" == "process" ]]; then

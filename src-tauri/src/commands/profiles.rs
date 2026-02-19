@@ -189,7 +189,12 @@ fn is_onboarded_home(home: &Path) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .trim();
-    !email.is_empty() && email != "setup@pending"
+    if email.is_empty() || email == "setup@pending" {
+        return false;
+    }
+
+    crate::commands::settings::private_key_is_readable_for_home_and_email(home, email)
+        .unwrap_or(false)
 }
 
 fn read_home_email(home: &Path) -> Option<String> {
@@ -292,7 +297,7 @@ fn try_acquire_profile_lock(home: &Path, create_home: bool) -> Result<ProfileLoc
 }
 
 fn resolve_vault_path_for_home(home: &Path) -> String {
-    let colocated = syftbox_sdk::syftbox::syc::vault_path_for_home(home);
+    let colocated = syftbox_sdk::syftbox::sbc::vault_path_for_home(home);
     colocated.to_string_lossy().to_string()
 }
 
@@ -991,13 +996,13 @@ pub fn profiles_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", &entry.biovault_home);
     env::set_var("BIOVAULT_PROFILE_ID", &entry.id);
-    // Ensure SYFTBOX env matches the new profile before resolving SYC_VAULT.
+    // Ensure SYFTBOX env matches the new profile before resolving SBC_VAULT.
     env::set_var("SYFTBOX_DATA_DIR", &entry.biovault_home);
-    env::remove_var("SYC_VAULT");
+    env::remove_var("SBC_VAULT");
 
-    // Ensure SYC_VAULT matches the single explicit vault location.
-    biovault::config::require_syc_vault_env()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
+    // Ensure SBC_VAULT matches the single explicit vault location.
+    biovault::config::require_sbc_vault_env()
+        .map_err(|e| format!("Failed to resolve SBC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1100,13 +1105,13 @@ pub fn profiles_create_and_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", home.to_string_lossy().to_string());
     env::set_var("BIOVAULT_PROFILE_ID", &profile_id);
-    // Ensure SYFTBOX env matches the new profile before resolving SYC_VAULT.
+    // Ensure SYFTBOX env matches the new profile before resolving SBC_VAULT.
     env::set_var("SYFTBOX_DATA_DIR", home.to_string_lossy().to_string());
-    env::remove_var("SYC_VAULT");
+    env::remove_var("SBC_VAULT");
 
-    // Ensure SYC_VAULT matches the single explicit vault location.
-    biovault::config::require_syc_vault_env()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
+    // Ensure SBC_VAULT matches the single explicit vault location.
+    biovault::config::require_sbc_vault_env()
+        .map_err(|e| format!("Failed to resolve SBC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1429,12 +1434,12 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
 
     let cached_fingerprint = (|| {
         let slug = syftbox_sdk::sanitize_identity(email.trim());
-        let vault = biovault::config::resolve_syc_vault_path().ok()?;
+        let vault = biovault::config::resolve_sbc_vault_path().ok()?;
         let bundle_path = vault.join("bundles").join(format!("{slug}.json"));
         if !bundle_path.exists() {
             return None;
         }
-        let info = biovault::syftbox::syc::parse_public_bundle_file(&bundle_path).ok()?;
+        let info = biovault::syftbox::sbc::parse_public_bundle_file(&bundle_path).ok()?;
         Some(info.fingerprint)
     })();
 

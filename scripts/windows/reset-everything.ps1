@@ -69,20 +69,20 @@ Write-Host "Deleting data..." -ForegroundColor Yellow
 
 $homePath = (Resolve-Path -LiteralPath $BioVaultHome -ErrorAction SilentlyContinue).Path
 if ($homePath -and (Test-Path -LiteralPath $homePath)) {
-    $sycPath = Join-Path $homePath ".syc"
-    $sycBackup = $null
+    $sbcPath = Join-Path $homePath ".sbc"
+    $sbcBackup = $null
 
-    if (-not $WipeKeys -and (Test-Path -LiteralPath $sycPath)) {
-        $sycBackup = Join-Path $env:TEMP (".syc-backup-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))
-        Move-Item -LiteralPath $sycPath -Destination $sycBackup -Force
+    if (-not $WipeKeys -and (Test-Path -LiteralPath $sbcPath)) {
+        $sbcBackup = Join-Path $env:TEMP (".sbc-backup-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))
+        Move-Item -LiteralPath $sbcPath -Destination $sbcBackup -Force
     }
 
     try {
         Remove-ItemWithRetry -Path $homePath
     } finally {
-        if ($sycBackup -and (Test-Path -LiteralPath $sycBackup)) {
+        if ($sbcBackup -and (Test-Path -LiteralPath $sbcBackup)) {
             New-Item -ItemType Directory -Force -Path $homePath | Out-Null
-            Move-Item -LiteralPath $sycBackup -Destination (Join-Path $homePath ".syc") -Force
+            Move-Item -LiteralPath $sbcBackup -Destination (Join-Path $homePath ".sbc") -Force
         }
     }
 }

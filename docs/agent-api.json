@@ -2280,7 +2280,7 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Stops daemons", "Deletes BIOVAULT_HOME (preserves .syc)"],
+			"sideEffects": ["Stops daemons", "Deletes BIOVAULT_HOME (preserves .sbc)"],
 			"dangerous": true
 		},
 		"reset_everything": {
@@ -2292,7 +2292,7 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Deletes all data including .syc", "Recreates empty database"],
+			"sideEffects": ["Deletes all data including .sbc", "Recreates empty database"],
 			"dangerous": true
 		},
 		"get_files": {
