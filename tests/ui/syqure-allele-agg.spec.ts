@@ -1141,13 +1141,7 @@ test.describe('Syqure flow via multiparty invitation system @syqure-allele-agg',
 		const flowDir = process.env.SYQURE_ALLELE_AGG_FLOW_DIR || 'syqure-allele-agg'
 		const flowName = flowDir
 		const isSmpc = flowDir === 'syqure-allele-agg-smpc'
-		const sourceFlowPath = path.join(
-			process.cwd(),
-			'biovault',
-			'flows',
-			flowDir,
-			'flow.yaml',
-		)
+		const sourceFlowPath = path.join(process.cwd(), 'biovault', 'flows', flowDir, 'flow.yaml')
 		expect(fs.existsSync(sourceFlowPath)).toBe(true)
 
 		let logSocket: WebSocket | null = null

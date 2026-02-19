@@ -2783,8 +2783,8 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                         .and_then(|v| v.as_u64()),
                 }
             };
-            let result = crate::commands::syftbox::test_peer_link(options)
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::commands::syftbox::test_peer_link(options).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_database_path" => {

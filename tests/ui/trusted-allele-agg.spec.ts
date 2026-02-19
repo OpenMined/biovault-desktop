@@ -370,9 +370,7 @@ function createInputFixtures(sessionId: string): {
 		if (!fs.existsSync(client2Path)) {
 			throw new Error(`Missing client2 allele_freq TSV: ${client2Path}`)
 		}
-		console.log(
-			`Using caller-provided TSVs: client1=${client1Path} client2=${client2Path}`,
-		)
+		console.log(`Using caller-provided TSVs: client1=${client1Path} client2=${client2Path}`)
 		return { client1Path, client2Path }
 	}
 
@@ -996,13 +994,33 @@ test.describe('Trusted allele aggregation via multiparty invitation @trusted-all
 			// Verify clients received shared results
 			const clientDataDir1 = await getSyftboxDataDir(backend1)
 			const clientDataDir2 = await getSyftboxDataDir(backend2)
-			const sharedResultsBase1 = path.join(clientDataDir1, 'datasites', email3, 'shared', 'flows', flowName, sessionId)
-			const sharedResultsBase2 = path.join(clientDataDir2, 'datasites', email3, 'shared', 'flows', flowName, sessionId)
+			const sharedResultsBase1 = path.join(
+				clientDataDir1,
+				'datasites',
+				email3,
+				'shared',
+				'flows',
+				flowName,
+				sessionId,
+			)
+			const sharedResultsBase2 = path.join(
+				clientDataDir2,
+				'datasites',
+				email3,
+				'shared',
+				'flows',
+				flowName,
+				sessionId,
+			)
 			console.log(`Checking client1 shared results at: ${sharedResultsBase1}`)
 			console.log(`Checking client2 shared results at: ${sharedResultsBase2}`)
-			const client1HasResults = collectMatchingFiles(sharedResultsBase1, 'aggregated_allele_freq.tsv').length > 0
-			const client2HasResults = collectMatchingFiles(sharedResultsBase2, 'aggregated_allele_freq.tsv').length > 0
-			console.log(`Client1 received results: ${client1HasResults}, Client2 received results: ${client2HasResults}`)
+			const client1HasResults =
+				collectMatchingFiles(sharedResultsBase1, 'aggregated_allele_freq.tsv').length > 0
+			const client2HasResults =
+				collectMatchingFiles(sharedResultsBase2, 'aggregated_allele_freq.tsv').length > 0
+			console.log(
+				`Client1 received results: ${client1HasResults}, Client2 received results: ${client2HasResults}`,
+			)
 
 			log(logSocket, { event: 'trusted-allele-agg-complete', runId })
 

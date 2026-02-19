@@ -415,8 +415,7 @@ export function setupEventHandlers({
 			if (resultEl) {
 				resultEl.style.color = '#6b7280'
 				resultEl.style.whiteSpace = 'normal'
-				resultEl.textContent =
-					`Testing peer link with ${peerEmail} (${rounds} round${rounds === 1 ? '' : 's'}, ${payloadKb}KB payload)...`
+				resultEl.textContent = `Testing peer link with ${peerEmail} (${rounds} round${rounds === 1 ? '' : 's'}, ${payloadKb}KB payload)...`
 			}
 
 			try {
@@ -434,7 +433,9 @@ export function setupEventHandlers({
 					resultEl.style.whiteSpace = 'pre-line'
 					const attempts = Array.isArray(result.attempt_logs) ? result.attempt_logs : []
 					const lines = []
-					lines.push(`${result.ok ? 'PASS' : 'CHECK'} peer link ${result.local_email} -> ${result.peer_email}`)
+					lines.push(
+						`${result.ok ? 'PASS' : 'CHECK'} peer link ${result.local_email} -> ${result.peer_email}`,
+					)
 					lines.push(
 						`completed=${result.completed_rounds}/${result.rounds} failed=${result.failed_rounds} payload_bytes=${result.payload_bytes}`,
 					)

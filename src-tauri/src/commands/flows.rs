@@ -1424,8 +1424,7 @@ pub async fn create_flow(
             for entry in fs::read_dir(&modules_source)
                 .map_err(|e| format!("Failed to read modules folder: {}", e))?
             {
-                let entry =
-                    entry.map_err(|e| format!("Failed to read module entry: {}", e))?;
+                let entry = entry.map_err(|e| format!("Failed to read module entry: {}", e))?;
                 let entry_path = entry.path();
                 if !entry_path.is_dir() {
                     continue;
@@ -1455,14 +1454,13 @@ pub async fn create_flow(
                     continue;
                 }
 
-                let yaml_content =
-                    fs::read_to_string(&module_yaml_path).map_err(|e| {
-                        format!(
-                            "Failed to read module.yaml at {}: {}",
-                            module_yaml_path.display(),
-                            e
-                        )
-                    })?;
+                let yaml_content = fs::read_to_string(&module_yaml_path).map_err(|e| {
+                    format!(
+                        "Failed to read module.yaml at {}: {}",
+                        module_yaml_path.display(),
+                        e
+                    )
+                })?;
                 let module = ModuleFile::parse_yaml(&yaml_content).map_err(|e| {
                     format!(
                         "Failed to parse module.yaml at {}: {}",

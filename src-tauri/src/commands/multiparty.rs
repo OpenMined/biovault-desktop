@@ -5151,25 +5151,24 @@ pub async fn run_flow_step(
             // if base is still missing, allocate a stable per-session base now
             // and refresh _mpc markers before any secure_aggregate prelaunch checks.
             if flow_state.syqure_port_base.is_none() {
-                let work_dir = flow_state
-                    .work_dir
-                    .clone()
-                    .ok_or_else(|| "Cannot initialize syqure_port_base: missing work_dir".to_string())?;
-                let (party_emails, order_source) =
-                    if let Some(spec) = flow_state.flow_spec.as_ref() {
-                        choose_syqure_party_order(
-                            &flow_state.participants,
-                            &flow_state.my_email,
-                            &flow_state.input_overrides,
-                            spec,
-                        )
-                    } else {
-                        (
-                            canonical_syqure_party_order_from_participants(&flow_state.participants),
-                            "participants role order (aggregator first, flow_spec unavailable)"
-                                .to_string(),
-                        )
-                    };
+                let work_dir = flow_state.work_dir.clone().ok_or_else(|| {
+                    "Cannot initialize syqure_port_base: missing work_dir".to_string()
+                })?;
+                let (party_emails, order_source) = if let Some(spec) = flow_state.flow_spec.as_ref()
+                {
+                    choose_syqure_party_order(
+                        &flow_state.participants,
+                        &flow_state.my_email,
+                        &flow_state.input_overrides,
+                        spec,
+                    )
+                } else {
+                    (
+                        canonical_syqure_party_order_from_participants(&flow_state.participants),
+                        "participants role order (aggregator first, flow_spec unavailable)"
+                            .to_string(),
+                    )
+                };
 
                 let local_party_id = party_emails
                     .iter()

@@ -881,11 +881,13 @@ fn current_syftbox_email() -> Result<String, String> {
         .filter(|v| !v.is_empty())
         .or_else(|| {
             let v = cfg.email.trim().to_string();
-            if v.is_empty() { None } else { Some(v) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         })
-        .ok_or_else(|| {
-            "Cannot run peer link test: no SyftBox email set in config.".to_string()
-        })?;
+        .ok_or_else(|| "Cannot run peer link test: no SyftBox email set in config.".to_string())?;
     Ok(email)
 }
 
