@@ -11,10 +11,10 @@
 	import UserIcon from '@lucide/svelte/icons/user'
 	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
 
-	interface Pipeline {
+	interface Flow {
 		id: number
 		name: string
-		pipeline_path: string
+		flow_path: string
 	}
 
 	interface Props {
@@ -28,17 +28,17 @@
 	let { open = $bindable(false), onOpenChange, datasetName, mockUrls, onRunStarted }: Props =
 		$props()
 
-	let pipelines: Pipeline[] = $state([])
+	let flows: Flow[] = $state([])
 	let loading = $state(true)
 	let running = $state(false)
 	let error = $state<string | null>(null)
-	let selectedPipeline: Pipeline | null = $state(null)
+	let selectedFlow: Flow | null = $state(null)
 
-	async function loadPipelines() {
+	async function loadFlows() {
 		try {
 			loading = true
 			error = null
-			pipelines = await invoke<Pipeline[]>('get_pipelines')
+			flows = await invoke<Flow[]>('get_flows')
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -50,20 +50,20 @@
 		open = newOpen
 		onOpenChange?.(newOpen)
 		if (newOpen) {
-			selectedPipeline = null
+			selectedFlow = null
 			error = null
-			loadPipelines()
+			loadFlows()
 		}
 	}
 
 	async function runVerifiedFlow() {
-		if (!selectedPipeline) return
+		if (!selectedFlow) return
 		running = true
 		error = null
 
 		try {
-			await invoke('run_pipeline', {
-				pipelineId: selectedPipeline.id,
+			await invoke('run_flow', {
+				flowId: selectedFlow.id,
 				inputOverrides: {},
 				resultsDir: null,
 				selection: {
@@ -92,7 +92,7 @@
 
 	$effect(() => {
 		if (open) {
-			loadPipelines()
+			loadFlows()
 		}
 	})
 </script>
@@ -102,7 +102,7 @@
 		<Dialog.Header>
 			<Dialog.Title>Verify {datasetName} on Mock</Dialog.Title>
 			<Dialog.Description>
-				Select a pipeline to run against the mock data of this dataset.
+				Select a flow to run against the mock data of this dataset.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -111,21 +111,21 @@
 				<div class="flex items-center justify-center py-8">
 					<LoaderIcon class="size-6 animate-spin text-muted-foreground" />
 				</div>
-			{:else if pipelines.length === 0}
+			{:else if flows.length === 0}
 				<div class="text-center py-8 text-muted-foreground">
 					<WorkflowIcon class="size-12 mx-auto mb-3 opacity-20" />
-					<p>No pipelines installed.</p>
-					<p class="text-xs">Install a pipeline from the Explore tab first.</p>
+					<p>No flows installed.</p>
+					<p class="text-xs">Install a flow from the Explore tab first.</p>
 				</div>
 			{:else}
 				<div class="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-					{#each pipelines as pipeline (pipeline.id)}
-						{@const Icon = getFlowIcon(pipeline.name)}
+					{#each flows as flow (flow.id)}
+						{@const Icon = getFlowIcon(flow.name)}
 						<button
 							type="button"
-							onclick={() => (selectedPipeline = pipeline)}
-							class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {selectedPipeline?.id ===
-							pipeline.id
+							onclick={() => (selectedFlow = flow)}
+							class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {selectedFlow?.id ===
+							flow.id
 								? 'border-primary bg-primary/5'
 								: ''}"
 						>
@@ -135,12 +135,12 @@
 								<Icon class="size-5" />
 							</div>
 							<div class="flex-1 min-w-0">
-								<div class="font-medium text-sm">{pipeline.name}</div>
+								<div class="font-medium text-sm">{flow.name}</div>
 								<div class="text-muted-foreground text-xs truncate">
-									{pipeline.pipeline_path.split('/').pop()}
+									{flow.flow_path.split('/').pop()}
 								</div>
 							</div>
-							{#if selectedPipeline?.id === pipeline.id}
+							{#if selectedFlow?.id === flow.id}
 								<div class="flex size-6 items-center justify-center rounded-full bg-primary text-white">
 									<CheckIcon class="size-4" />
 								</div>
@@ -162,7 +162,7 @@
 
 		<Dialog.Footer>
 			<Dialog.Close class={buttonVariants({ variant: 'outline' })}>Cancel</Dialog.Close>
-			<Button onclick={runVerifiedFlow} disabled={running || !selectedPipeline || loading}>
+			<Button onclick={runVerifiedFlow} disabled={running || !selectedFlow || loading}>
 				{#if running}
 					<LoaderIcon class="size-4 animate-spin mr-2" />
 					Starting...

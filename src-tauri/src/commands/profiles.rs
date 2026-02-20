@@ -775,7 +775,9 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
                     };
                     store.profiles.push(entry);
                     store.current_profile_id = Some(id.clone());
-                    let _ = save_store(&store);
+                    if let Err(e) = save_store(&store) {
+                        crate::desktop_log!("⚠️ Failed to save auto-registered profile: {}", e);
+                    }
                     current = Some(id);
                     crate::desktop_log!(
                         "✅ Auto-registered current BIOVAULT_HOME as profile: {}",

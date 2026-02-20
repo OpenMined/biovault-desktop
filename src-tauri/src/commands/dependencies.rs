@@ -34,67 +34,24 @@ pub(crate) fn dependency_names() -> Vec<&'static str> {
 
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
 pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckResult, String> {
-    eprintln!("DEBUG: save_dependency_states() CALLED");
-    eprintln!("DEBUG: biovault_path = {:?}", biovault_path);
-
-    // Check current dependency states
-    eprintln!("DEBUG: About to call check_dependencies_result()");
-    let check_result = match biovault::cli::commands::check::check_dependencies_result() {
-        Ok(result) => {
-            eprintln!(
-                "DEBUG: check_dependencies_result() returned OK with {} deps",
-                result.dependencies.len()
-            );
-            result
-        }
-        Err(e) => {
-            eprintln!("DEBUG: check_dependencies_result() FAILED: {}", e);
-            return Err(format!("Failed to check dependencies: {}", e));
-        }
-    };
-
-    eprintln!(
-        "DEBUG: Processing {} dependencies",
-        check_result.dependencies.len()
-    );
+    let check_result = biovault::cli::commands::check::check_dependencies_result()
+        .map_err(|e| format!("Failed to check dependencies: {}", e))?;
 
     // Save binary paths to config.yaml for any found dependencies
-    for (idx, dep) in check_result.dependencies.iter().enumerate() {
-        eprintln!(
-            "DEBUG: [{}/{}] Processing {}: found={}, path={:?}",
-            idx + 1,
-            check_result.dependencies.len(),
-            dep.name,
-            dep.found,
-            dep.path
-        );
-
+    for dep in &check_result.dependencies {
         if dep.found && dep.path.is_some() {
             let raw_path = dep.path.clone().unwrap();
             let path = std::fs::canonicalize(&raw_path)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or(raw_path);
-            eprintln!("DEBUG:   Calling save_binary_path({}, {})", dep.name, path);
 
-            match biovault::config::Config::save_binary_path(&dep.name, Some(path.clone())) {
-                Ok(_) => {
-                    eprintln!("DEBUG:   ✅ SAVED {} = {}", dep.name, path);
-                }
-                Err(e) => {
-                    eprintln!("DEBUG:   ❌ FAILED to save {}: {}", dep.name, e);
-                }
+            if let Err(e) =
+                biovault::config::Config::save_binary_path(&dep.name, Some(path.clone()))
+            {
+                crate::desktop_log!("⚠️ Failed to save binary path for {}: {}", dep.name, e);
             }
-        } else {
-            eprintln!(
-                "DEBUG:   SKIPPING {} (found={}, has_path={})",
-                dep.name,
-                dep.found,
-                dep.path.is_some()
-            );
         }
     }
-
-    eprintln!("DEBUG: Finished processing all dependencies");
 
     // Save as JSON for easy retrieval
     let states_path = biovault_path.join("dependency_states.json");
@@ -104,33 +61,6 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
     fs::write(&states_path, json)
         .map_err(|e| format!("Failed to write dependency states: {}", e))?;
 
-    eprintln!(
-        "DEBUG: Saved dependency_states.json to: {}",
-        states_path.display()
-    );
-
-    // Verify config was updated by reading it back
-    eprintln!("DEBUG: Verifying config.yaml contents...");
-    match biovault::config::Config::load() {
-        Ok(config) => {
-            eprintln!("DEBUG: Config loaded successfully, checking binary_paths:");
-            for binary in dependency_names() {
-                match config.get_binary_path(binary) {
-                    Some(path) => {
-                        eprintln!("DEBUG:   ✅ {} = {}", binary, path);
-                    }
-                    None => {
-                        eprintln!("DEBUG:   ❌ {} = <NOT SET>", binary);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("DEBUG: ⚠️ FAILED to load config for verification: {}", e);
-        }
-    }
-
-    eprintln!("DEBUG: save_dependency_states() COMPLETE");
     Ok(check_result)
 }
 

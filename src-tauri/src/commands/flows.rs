@@ -2091,7 +2091,7 @@ pub async fn run_flow_impl(
         // Skip for network datasets which don't exist in local DB
         if let Some(dataset_name) = dataset_name.clone() {
             if is_network_dataset {
-                eprintln!(
+                crate::desktop_log!(
                     "[flow] Skipping local DB lookup for network dataset '{}', using URLs instead",
                     dataset_name
                 );
@@ -2130,7 +2130,7 @@ pub async fn run_flow_impl(
 
                 // List-shaped datasets need URL selection, fall through to URL/file_id paths
                 if let ShapeExpr::List(inner_type) = &shape_expr {
-                    eprintln!(
+                    crate::desktop_log!(
                     "[flow] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
                     dataset_name, inner_type
                 );

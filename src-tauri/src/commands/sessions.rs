@@ -620,10 +620,9 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
                 &request_file,
                 serde_json::to_string_pretty(&invitation).unwrap(),
             ) {
-                eprintln!("Warning: Failed to write session invitation: {}", e);
+                crate::desktop_log!("⚠️ Failed to write session invitation: {}", e);
             } else {
-                println!("📨 Session invitation sent to {}", peer_email);
-                println!("   Path: {:?}", request_file);
+                crate::desktop_log!("📨 Session invitation sent to {}", peer_email);
             }
         }
 
@@ -692,10 +691,9 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
                 &request_file,
                 serde_json::to_string_pretty(&invitation).unwrap(),
             ) {
-                eprintln!("Warning: Failed to write session invitation: {}", e);
+                crate::desktop_log!("⚠️ Failed to write session invitation: {}", e);
             } else {
-                println!("📨 Session invitation sent to {}", peer_email);
-                println!("   Path: {:?}", request_file);
+                crate::desktop_log!("📨 Session invitation sent to {}", peer_email);
             }
         }
 

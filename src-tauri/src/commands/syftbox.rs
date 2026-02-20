@@ -1716,7 +1716,7 @@ fn probe_control_plane_ready(max_attempts: usize, delay_ms: u64) -> Result<(), S
                 path.trim_start_matches('/')
             );
             match client.get(&url).bearer_auth(&cfg.client_token).send() {
-                Ok(resp) if resp.status().is_success() || resp.status() == reqwest::StatusCode::UNAUTHORIZED => {
+                Ok(resp) if resp.status().is_success() => {
                     record_control_plane_event("GET", &url, Some(resp.status().as_u16()), None);
                 }
                 Ok(resp) => {
@@ -1840,9 +1840,10 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         crate::desktop_log!("ℹ️ SYFTBOX_SERVER_URL env: {}", env_server);
     }
 
-    let skip_auth = std::env::var("SYFTBOX_AUTH_ENABLED")
-        .map(|v| v == "0" || v.to_lowercase() == "false")
-        .unwrap_or(false);
+    let skip_auth = cfg!(debug_assertions)
+        && std::env::var("SYFTBOX_AUTH_ENABLED")
+            .map(|v| v == "0" || v.to_lowercase() == "false")
+            .unwrap_or(false);
 
     if skip_auth {
         crate::desktop_log!("🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend OTP request for {}", email);
@@ -1873,9 +1874,10 @@ pub async fn syftbox_submit_otp(
 ) -> Result<(), String> {
     crate::desktop_log!("🔐 syftbox_submit_otp called (server: {:?})", server_url);
 
-    let skip_auth = std::env::var("SYFTBOX_AUTH_ENABLED")
-        .map(|v| v == "0" || v.to_lowercase() == "false")
-        .unwrap_or(false);
+    let skip_auth = cfg!(debug_assertions)
+        && std::env::var("SYFTBOX_AUTH_ENABLED")
+            .map(|v| v == "0" || v.to_lowercase() == "false")
+            .unwrap_or(false);
 
     if !skip_auth {
         match biovault::cli::commands::syftbox::submit_otp(
