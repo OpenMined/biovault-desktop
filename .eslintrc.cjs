@@ -26,6 +26,6 @@ module.exports = {
 		'src-tauri/target/',
 		'tests/**/*.ts',
 		'examples/**/*.ts',
-		'bv-desktop-new/',
+		'src/',
 	],
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Launch a single BioVault Desktop instance with the NEW UI (bv-desktop-new)
+# Launch a single BioVault Desktop instance with the NEW UI (src)
 #
 # Usage:
 #   ./dev-new-ui.sh [--client EMAIL] [--reset] [--path DIR]
@@ -83,7 +83,7 @@ provision_client() {
 start_vite() {
   echo "[new-ui] Starting Vite dev server..."
   (
-    cd "$ROOT_DIR/bv-desktop-new"
+    cd "$ROOT_DIR/src"
     npm run dev -- --port 1420 2>&1 | while read -r line; do
       echo "[VITE] $line"
     done
@@ -126,7 +126,7 @@ launch_tauri_instance() {
     export BIOVAULT_DEBUG_BANNER=1
     export BIOVAULT_DISABLE_PROFILES=1
     
-    bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../bv-desktop-new/build"}}' 2>&1 | while read -r line; do
+    bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../src/build"}}' 2>&1 | while read -r line; do
       echo "[TAURI] $line"
     done
   )

@@ -191,11 +191,11 @@
 				</p>
 			</div>
 			<div class="flex gap-2">
-				<Button variant="outline" size="sm" onclick={openInFolder}>
+				<Button variant="outline" size="sm" data-testid="flow-open-folder" onclick={openInFolder}>
 					<FolderOpenIcon class="size-4" />
 					Open Folder
 				</Button>
-				<Button size="sm" onclick={() => (runDialogOpen = true)}>
+				<Button size="sm" data-testid="flow-run" onclick={() => (runDialogOpen = true)}>
 					<PlayIcon class="size-4" />
 					Run Flow
 				</Button>

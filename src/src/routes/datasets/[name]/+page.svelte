@@ -310,7 +310,11 @@
 		}
 
 		if (pathsToCheck.length > 0) {
-			const existsResults = await invoke<boolean[]>('check_files_exist', { paths: pathsToCheck })
+			const existsResults = await Promise.all(
+				pathsToCheck.map((path) =>
+					invoke<boolean>('path_exists', { path }).catch(() => true),
+				),
+			)
 			let resultIdx = 0
 			loadedAssets.forEach((asset) => {
 				if (asset.path) {
@@ -886,7 +890,12 @@
 
 					<div class="flex items-center gap-2">
 						{#if canRequestRun}
-							<Button variant="outline" size="sm" onclick={() => (requestRunDialogOpen = true)}>
+							<Button
+								variant="outline"
+								size="sm"
+								data-testid="dataset-request-run"
+								onclick={() => (requestRunDialogOpen = true)}
+							>
 								<SendIcon class="size-4 mr-2" />
 								Request Run
 							</Button>
@@ -1074,11 +1083,11 @@
 										</p>
 									</div>
 									<div class="flex gap-2 mt-2">
-										<Button variant="outline" onclick={addFiles}>
+										<Button variant="outline" data-testid="dataset-add-files" onclick={addFiles}>
 											<FileIcon class="size-4" />
 											Add Files
 										</Button>
-										<Button onclick={addFolder}>
+										<Button data-testid="dataset-add-folder" onclick={addFolder}>
 											<FolderIcon class="size-4" />
 											Add Folder
 										</Button>
@@ -1108,11 +1117,11 @@
 									{/if}
 								</div>
 								<div class="flex gap-2">
-									<Button variant="outline" onclick={addFiles}>
+									<Button variant="outline" data-testid="dataset-add-files" onclick={addFiles}>
 										<FileIcon class="size-4" />
 										Add Files
 									</Button>
-									<Button onclick={addFolder}>
+									<Button data-testid="dataset-add-folder" onclick={addFolder}>
 										<FolderIcon class="size-4" />
 										Add Folder
 									</Button>

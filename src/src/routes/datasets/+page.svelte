@@ -72,7 +72,7 @@
 
 <div class="flex h-full flex-col">
 	<PageHeader title="Datasets" description="Manage your datasets and data sources">
-		<Button size="sm" onclick={() => (createDialogOpen = true)}>
+		<Button size="sm" data-testid="datasets-new" onclick={() => (createDialogOpen = true)}>
 			<PlusIcon class="size-4" />
 			New Dataset
 		</Button>
@@ -102,7 +102,7 @@
 					</Empty.Header>
 					<Empty.Content>
 						<div class="flex gap-2">
-							<Button onclick={() => (createDialogOpen = true)}>
+							<Button data-testid="datasets-create" onclick={() => (createDialogOpen = true)}>
 								<PlusIcon class="size-4" />
 								Create Dataset
 							</Button>
@@ -120,6 +120,7 @@
 					<button
 						type="button"
 						onclick={() => goto(`/datasets/${item.dataset.name}`)}
+						data-testid={`dataset-card-${item.dataset.name}`}
 						class="group rounded-xl border bg-card p-5 transition-all hover:shadow-md hover:border-primary/20 text-left cursor-pointer"
 					>
 						<div class="flex items-start gap-4">

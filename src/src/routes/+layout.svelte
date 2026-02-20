@@ -91,10 +91,11 @@
 </script>
 
 <Sidebar.Provider class="!min-h-0">
-	<div class="flex h-screen w-screen flex-col">
+	<div class="flex h-screen w-screen flex-col" data-testid="app-shell">
 		<!-- Full-width header/titlebar at top -->
 		<header
 			data-tauri-drag-region
+			data-testid="app-header"
 			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-10 shrink-0 items-center justify-between border-b border-primary/80 px-4"
 		>
 			<div class="ps-20 flex items-center gap-2">

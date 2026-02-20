@@ -130,6 +130,7 @@
 							<button
 								type="button"
 								onclick={() => (selectedPipeline = pipeline)}
+								data-testid={`request-run-flow-${pipeline.name}`}
 								class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {selectedPipeline?.id ===
 								pipeline.id
 									? 'border-primary bg-primary/5'
@@ -179,7 +180,11 @@
 
 		<Dialog.Footer>
 			<Dialog.Close class={buttonVariants({ variant: 'outline' })}>Cancel</Dialog.Close>
-			<Button onclick={sendRequest} disabled={sending || !selectedPipeline || loading}>
+			<Button
+				data-testid="request-run-submit"
+				onclick={sendRequest}
+				disabled={sending || !selectedPipeline || loading}
+			>
 				{#if sending}
 					<LoaderIcon class="size-4 animate-spin mr-2" />
 					Sending...

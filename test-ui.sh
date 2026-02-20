@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="${UI_PORT:-8082}"
+PORT="${UI_PORT:-5173}"
 MAX_PORT=8092
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-ui.log}"
 LOG_PORT="${UNIFIED_LOG_PORT:-9753}"
@@ -70,22 +70,15 @@ UNIFIED_LOG_STDOUT=${UNIFIED_LOG_STDOUT:-0}
 node "$ROOT_DIR/tests/unified-logger.js" "$LOG_FILE" "$LOG_PORT" >/dev/null 2>&1 &
 LOGGER_PID=$!
 
-info "Starting static server on port ${PORT}"
+info "Starting Vite dev server on port ${PORT}"
 pushd "$ROOT_DIR/src" >/dev/null
-python3 -m http.server --bind 127.0.0.1 "$PORT" >>"$LOG_FILE" 2>&1 &
-SERVER_PID=$!
+npm run dev -- --host 127.0.0.1 --port "${PORT}" >>"$LOG_FILE" 2>&1 &
+VITE_PID=$!
 popd >/dev/null
 
-# Verify the server process is still alive after brief startup
-sleep 0.5
-if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "Static server failed to start (process exited)" >&2
-    exit 1
-fi
-
 cleanup() {
-    info "Stopping static server"
-    kill "$SERVER_PID" 2>/dev/null || true
+    info "Stopping Vite dev server"
+    kill "$VITE_PID" 2>/dev/null || true
     if [[ -n "${LOGGER_PID:-}" ]]; then
         info "Stopping unified logger"
         kill "$LOGGER_PID" 2>/dev/null || true
@@ -108,7 +101,7 @@ if [[ -n "${UI_TEST_GREP_INVERT_EXTRA:-}" ]]; then
 	EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|${UI_TEST_GREP_INVERT_EXTRA}"
 fi
 if ((${#FORWARD_ARGS[@]} == 0)); then
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://127.0.0.1:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" | tee -a "$LOG_FILE"
 else
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://127.0.0.1:${PORT}" npm run test:ui -- --grep-invert "$EXCLUDE_PATTERN" "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
 fi

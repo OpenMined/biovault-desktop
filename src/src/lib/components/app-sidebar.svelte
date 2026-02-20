@@ -34,11 +34,11 @@
 
 	// Navigation items
 	const navItems = [
-		{ title: 'Explore', url: '/explore', icon: CompassIcon },
-		{ title: 'Flows', url: '/flows', icon: WorkflowIcon },
-		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon },
-		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon },
-		{ title: 'Results', url: '/runs', icon: PlayCircleIcon },
+		{ title: 'Explore', url: '/explore', icon: CompassIcon, testId: 'nav-explore' },
+		{ title: 'Flows', url: '/flows', icon: WorkflowIcon, testId: 'nav-flows' },
+		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon, testId: 'nav-datasets' },
+		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon, testId: 'nav-collaborate' },
+		{ title: 'Results', url: '/runs', icon: PlayCircleIcon, testId: 'nav-results' },
 	]
 
 	// User identity from BioVault settings
@@ -117,7 +117,7 @@
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={$page.url.pathname.startsWith(item.url)}>
 								{#snippet child({ props })}
-									<a href={item.url} {...props}>
+									<a href={item.url} data-testid={item.testId} {...props}>
 										<item.icon />
 										<span>{item.title}</span>
 									</a>

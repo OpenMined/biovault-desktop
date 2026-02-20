@@ -1,7 +1,8 @@
 import { test, expect } from '../playwright-fixtures'
 
-// Base URL for the new SvelteKit UI (runs on different port)
-const NEW_UI_BASE_URL = process.env.NEW_UI_URL ?? 'http://localhost:5173'
+// Base URL for the new SvelteKit UI
+const NEW_UI_BASE_URL =
+	process.env.NEW_UI_URL ?? process.env.UI_BASE_URL ?? 'http://localhost:5173'
 
 /**
  * Mock responses for Tauri invoke commands.

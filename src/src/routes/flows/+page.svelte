@@ -78,7 +78,7 @@
 
 <div class="flex h-full flex-col">
 	<PageHeader title="Flows" description="Create and manage your analysis workflows">
-		<Button size="sm" onclick={() => (createDialogOpen = true)}>
+		<Button size="sm" data-testid="flows-new" onclick={() => (createDialogOpen = true)}>
 			<PlusIcon class="size-4" />
 			New Flow
 		</Button>
@@ -108,7 +108,7 @@
 					</Empty.Header>
 					<Empty.Content>
 						<div class="flex gap-2">
-							<Button onclick={() => (createDialogOpen = true)}>
+							<Button data-testid="flows-create" onclick={() => (createDialogOpen = true)}>
 								<PlusIcon class="size-4" />
 								Create Flow
 							</Button>
@@ -124,6 +124,7 @@
 					<button
 						type="button"
 						onclick={() => goto(`/flows/${flow.name}`)}
+						data-testid={`flow-card-${flow.name}`}
 						class="group rounded-xl border bg-card p-5 transition-all hover:shadow-md hover:border-primary/20 text-left cursor-pointer"
 					>
 						<div class="flex items-start gap-4">
