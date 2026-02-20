@@ -83,7 +83,7 @@ provision_client() {
 start_vite() {
   echo "[new-ui] Starting Vite dev server..."
   (
-    cd "$ROOT_DIR/src"
+    cd "$ROOT_DIR/ui"
     npm run dev -- --port 1420 2>&1 | while read -r line; do
       echo "[VITE] $line"
     done
@@ -126,7 +126,7 @@ launch_tauri_instance() {
     export BIOVAULT_DEBUG_BANNER=1
     export BIOVAULT_DISABLE_PROFILES=1
     
-    bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../src/build"}}' 2>&1 | while read -r line; do
+    bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}' 2>&1 | while read -r line; do
       echo "[TAURI] $line"
     done
   )

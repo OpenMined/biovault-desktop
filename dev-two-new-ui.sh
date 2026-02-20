@@ -6,7 +6,7 @@ set -euo pipefail
 # =============================================================================
 #
 # This is a variant of dev-two.sh that launches the new Svelte-based UI
-# (src) instead of the legacy one.
+# (ui) instead of the legacy one.
 #
 # Usage:
 #   ./dev-two-new-ui.sh --reset               # fresh stack + two desktops
@@ -126,7 +126,7 @@ SERVER_URL="http://127.0.0.1:$SERVER_PORT"
 # Start Vite
 log_header "Starting Vite dev server (New UI)"
 (
-  cd "$SCRIPT_DIR/src"
+  cd "$SCRIPT_DIR/ui"
   npm run dev -- --port 1420 2>&1 | sed "s/^/[VITE] /"
 ) &
 VITE_PID=$!
@@ -195,9 +195,9 @@ launch_instance() {
     cd "$SCRIPT_DIR/src-tauri"
     # bunx is used in dev-new-ui.sh, so we'll use it here too if available, otherwise npm
     if command -v bun >/dev/null 2>&1; then
-      bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../src/build"}}' 2>&1 | sed "s/^/[client$idx] /"
+      bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}' 2>&1 | sed "s/^/[client$idx] /"
     else
-      npm run tauri -- dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../src/build"}}' 2>&1 | sed "s/^/[client$idx] /"
+      npm run tauri -- dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}' 2>&1 | sed "s/^/[client$idx] /"
     fi
   ) &
   

@@ -4,7 +4,7 @@
 	"version": "0.1.39",
 	"identifier": "org.openmined.biovault-desktop",
 	"build": {
-		"frontendDist": "../src"
+		"frontendDist": "../ui"
 	},
 	"app": {
 		"withGlobalTauri": true,

@@ -81,7 +81,7 @@ export DEV_WS_BRIDGE=1
 export DEV_WS_BRIDGE_PORT="${DEV_WS_BRIDGE_PORT:-3333}"
 
 info "Starting Vite dev server on port ${PORT}"
-pushd "$ROOT_DIR/src" >/dev/null
+pushd "$ROOT_DIR/ui" >/dev/null
 npm run dev -- --host 127.0.0.1 --port "${PORT}" >>"$LOG_FILE" 2>&1 &
 VITE_PID=$!
 popd >/dev/null
@@ -89,7 +89,7 @@ popd >/dev/null
 info "Starting Tauri dev server with WebSocket bridge"
 info "Tauri logs: $TAURI_LOG"
 ./scripts/ensure-bundled-deps.sh >/dev/null 2>&1
-npm run tauri -- dev --config "{\"build\": {\"devUrl\": \"http://localhost:${PORT}\", \"frontendDist\": \"../src/build\"}}" > "$TAURI_LOG" 2>&1 &
+npm run tauri -- dev --config "{\"build\": {\"devUrl\": \"http://localhost:${PORT}\", \"frontendDist\": \"../ui/build\"}}" > "$TAURI_LOG" 2>&1 &
 TAURI_PID=$!
 
 # Wait for WebSocket server to be ready
