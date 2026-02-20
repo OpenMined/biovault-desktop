@@ -1053,7 +1053,6 @@ pub fn run() {
     // Initialize OpenTelemetry if OTEL_EXPORTER_OTLP_ENDPOINT is set
     telemetry::init();
 
-
     // Get the actual biovault_home_dir that was used (for window title / DB paths).
     let (biovault_home_dir, home_display) = if profile_picker_mode {
         (PathBuf::from(""), "profile picker".to_string())

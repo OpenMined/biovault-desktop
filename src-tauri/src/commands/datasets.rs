@@ -1054,4 +1054,3 @@ pub fn network_scan_datasets() -> Result<NetworkDatasetScanResult, String> {
         current_identity: current_email,
     })
 }
-

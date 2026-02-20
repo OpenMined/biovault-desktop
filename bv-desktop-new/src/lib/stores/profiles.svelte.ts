@@ -32,7 +32,7 @@ let state = $state<ProfilesState>({
 	enabled: false,
 	loading: true,
 	profiles: [],
-	currentProfileId: null
+	currentProfileId: null,
 })
 
 export const profilesStore = {
@@ -88,5 +88,5 @@ export const profilesStore = {
 
 	async getDefaultHome(): Promise<string> {
 		return await invoke<string>('profiles_get_default_home')
-	}
+	},
 }

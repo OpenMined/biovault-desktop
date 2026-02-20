@@ -7,10 +7,9 @@ use biovault::flow_spec::FlowFile;
 use biovault::flow_spec::FlowModuleDef;
 use biovault::flow_spec::FlowSpec;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
-use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::syftbox::sbc;
+use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
 use biovault::types::SyftPermissions;
-use syftbox_sdk;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -19,6 +18,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use syftbox_sdk;
 use walkdir::WalkDir;
 
 fn msg_debug_enabled() -> bool {
@@ -170,7 +170,7 @@ fn ensure_recipient_bundle_cached(
     }
 
     // Try to import from recipient's datasite if visible locally
-    let datasites_root = if data_dir.file_name().map_or(false, |n| n == "datasites") {
+    let datasites_root = if data_dir.file_name().is_some_and(|n| n == "datasites") {
         data_dir
     } else {
         data_dir.join("datasites")

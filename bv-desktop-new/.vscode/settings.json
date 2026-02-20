@@ -1,6 +1,6 @@
 {
-  "svelte.enable-ts-plugin": true,
-  "files.associations": {
-    "*.css": "tailwindcss"
-  }
+	"svelte.enable-ts-plugin": true,
+	"files.associations": {
+		"*.css": "tailwindcss"
+	}
 }

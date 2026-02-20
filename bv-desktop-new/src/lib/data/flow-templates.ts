@@ -16,8 +16,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Allele frequency analysis',
 		icon: 'dna',
 		color: 'blue',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
 	},
 	{
 		id: 'clinvar-vcf',
@@ -25,8 +24,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Clinical variant classification',
 		icon: 'dna',
 		color: 'purple',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/clinvar-vcf/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/clinvar-vcf/flow.yaml',
 	},
 	{
 		id: 'eye-color',
@@ -34,8 +32,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Pigmentation analysis',
 		icon: 'scan-eye',
 		color: 'green',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/eye-color/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/eye-color/flow.yaml',
 	},
 	{
 		id: 'gra-mpileup',
@@ -43,8 +40,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Genomic read alignment pileup',
 		icon: 'dna',
 		color: 'blue',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/gra-mpileup/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/gra-mpileup/flow.yaml',
 	},
 	{
 		id: 'haplo-y',
@@ -52,8 +48,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Y-chromosome haplogroup analysis',
 		icon: 'user',
 		color: 'purple',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/haplo-y/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/haplo-y/flow.yaml',
 	},
 	{
 		id: 'multiparty-allele-freq',
@@ -70,8 +65,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Multiparty computation demo',
 		icon: 'user',
 		color: 'blue',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
 	},
 	{
 		id: 'red-hair',
@@ -79,8 +73,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Hair pigmentation variants',
 		icon: 'scan-eye',
 		color: 'red',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/red-hair/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/red-hair/flow.yaml',
 	},
 	{
 		id: 'syqure-allele-agg-smpc',
@@ -97,8 +90,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'SyQure allele aggregation',
 		icon: 'dna',
 		color: 'blue',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/syqure-allele-agg/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-allele-agg/flow.yaml',
 	},
 	{
 		id: 'syqure-demo',
@@ -106,8 +98,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'SyQure demonstration flow',
 		icon: 'user',
 		color: 'green',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
 	},
 	{
 		id: 'syqure-smoke-test',
@@ -115,8 +106,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'SyQure smoke test flow',
 		icon: 'dna',
 		color: 'red',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml',
 	},
 	{
 		id: 'trusted-allele-agg',
@@ -124,8 +114,7 @@ export const flowTemplates: FlowTemplate[] = [
 		description: 'Trusted allele aggregation',
 		icon: 'dna',
 		color: 'purple',
-		sourceUrl:
-			'https://github.com/OpenMined/biovault/blob/main/flows/trusted-allele-agg/flow.yaml',
+		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/trusted-allele-agg/flow.yaml',
 	},
 ]
 

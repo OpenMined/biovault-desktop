@@ -642,7 +642,6 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");
 
-
     // Find datasites directory
     let datasites_dir = if data_root
         .file_name()

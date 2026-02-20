@@ -29,7 +29,7 @@ let state = $state<SyftBoxAuthState>({
 	email: '',
 	isOnline: false,
 	isTogglingOnline: false,
-	isAuthEnabled: true
+	isAuthEnabled: true,
 })
 
 // Cooldown to prevent rapid toggling (1 second)
@@ -68,7 +68,7 @@ export const syftboxAuthStore = {
 	async checkAuthEnabled() {
 		try {
 			const authEnabledVar = await invoke<string | null>('get_env_var', {
-				key: 'SYFTBOX_AUTH_ENABLED'
+				key: 'SYFTBOX_AUTH_ENABLED',
 			})
 			if (authEnabledVar === '0' || authEnabledVar === 'false') {
 				state.isAuthEnabled = false
@@ -104,7 +104,7 @@ export const syftboxAuthStore = {
 			if (state.isAuthenticated) {
 				// Get the email and preferences from settings
 				const settings = await invoke<{ email?: string; syftbox_prefer_online?: boolean }>(
-					'get_settings'
+					'get_settings',
 				)
 				state.email = settings?.email || ''
 				const preferOnline = settings?.syftbox_prefer_online ?? false
@@ -143,7 +143,7 @@ export const syftboxAuthStore = {
 
 		await invoke('syftbox_request_otp', {
 			email,
-			server_url: serverUrl || null
+			server_url: serverUrl || null,
 		})
 	},
 
@@ -155,7 +155,7 @@ export const syftboxAuthStore = {
 			await invoke('syftbox_submit_otp', {
 				code: otp,
 				email,
-				server_url: serverUrl || null
+				server_url: serverUrl || null,
 			})
 		} catch (e) {
 			console.error('Backend syftbox_submit_otp failed:', e)
@@ -174,7 +174,7 @@ export const syftboxAuthStore = {
 			const currentSettings = await invoke<{ email?: string }>('get_settings')
 			if (currentSettings.email !== email) {
 				await invoke('save_settings', {
-					settings: { ...currentSettings, email }
+					settings: { ...currentSettings, email },
 				})
 			}
 		} catch (e) {
@@ -187,7 +187,7 @@ export const syftboxAuthStore = {
 		await this.goOnline(false)
 		// Show success toast
 		toast.success('Connected to SyftBox', {
-			description: `Signed in as ${email}`
+			description: `Signed in as ${email}`,
 		})
 	},
 
@@ -228,7 +228,7 @@ export const syftboxAuthStore = {
 			await invoke('set_syftbox_prefer_online', { enabled: true })
 			if (showToast && result.running) {
 				toast.success('Connected to SyftBox network', {
-					description: 'You are now online and syncing'
+					description: 'You are now online and syncing',
 				})
 			}
 		} catch (e) {
@@ -237,7 +237,7 @@ export const syftboxAuthStore = {
 			console.error('Failed to go online:', e)
 			if (showToast) {
 				toast.error('Failed to connect', {
-					description: String(e)
+					description: String(e),
 				})
 			}
 			throw e
@@ -259,7 +259,7 @@ export const syftboxAuthStore = {
 			await invoke('set_syftbox_prefer_online', { enabled: false })
 			if (showToast && !result.running) {
 				toast.info('Disconnected from SyftBox network', {
-					description: 'You are now offline'
+					description: 'You are now offline',
 				})
 			}
 		} catch (e) {
@@ -268,7 +268,7 @@ export const syftboxAuthStore = {
 			console.error('Failed to go offline:', e)
 			if (showToast) {
 				toast.error('Failed to disconnect', {
-					description: String(e)
+					description: String(e),
 				})
 			}
 			throw e
@@ -285,5 +285,5 @@ export const syftboxAuthStore = {
 		} else {
 			await this.goOnline()
 		}
-	}
+	},
 }

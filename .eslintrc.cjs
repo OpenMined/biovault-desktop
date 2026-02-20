@@ -20,5 +20,12 @@ module.exports = {
 			},
 		],
 	},
-	ignorePatterns: ['node_modules/', 'biovault/', 'src-tauri/target/', 'tests/**/*.ts', 'examples/**/*.ts'],
+	ignorePatterns: [
+		'node_modules/',
+		'biovault/',
+		'src-tauri/target/',
+		'tests/**/*.ts',
+		'examples/**/*.ts',
+		'bv-desktop-new/',
+	],
 }

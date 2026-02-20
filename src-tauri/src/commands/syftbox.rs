@@ -1846,7 +1846,10 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
             .unwrap_or(false);
 
     if skip_auth {
-        crate::desktop_log!("🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend OTP request for {}", email);
+        crate::desktop_log!(
+            "🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend OTP request for {}",
+            email
+        );
         return Ok(());
     }
 
@@ -1900,8 +1903,11 @@ pub async fn syftbox_submit_otp(
             }
         }
     } else {
-        crate::desktop_log!("🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend verification for {}", email);
-        
+        crate::desktop_log!(
+            "🛡️ SYFTBOX_AUTH_ENABLED=0, skipping backend verification for {}",
+            email
+        );
+
         // When skipping auth, we still need to ensure the BioVault config has the email
         // and a dummy set of credentials so that check_syftbox_auth sees us as authenticated.
         let config_result = (|| -> Result<(), String> {
@@ -1923,21 +1929,22 @@ pub async fn syftbox_submit_otp(
             });
 
             cfg.email = email.clone();
-            
+
             let mut creds = cfg.syftbox_credentials.clone().unwrap_or_default();
             creds.email = Some(email.clone());
             creds.access_token = Some("bypass-token".to_string());
             creds.refresh_token = Some("bypass-token".to_string());
             cfg.syftbox_credentials = Some(creds);
 
-            let config_path = biovault::config::Config::get_config_path().map_err(|e| e.to_string())?;
+            let config_path =
+                biovault::config::Config::get_config_path().map_err(|e| e.to_string())?;
             cfg.save(config_path).map_err(|e| e.to_string())?;
             Ok(())
         })();
 
         if let Err(e) = config_result {
             crate::desktop_log!("⚠️ Failed to save bypass config: {}", e);
-            // We still return Ok because the UI expects success to proceed, 
+            // We still return Ok because the UI expects success to proceed,
             // but the state might be inconsistent.
         }
     }
@@ -1966,7 +1973,8 @@ pub async fn syftbox_submit_otp(
             // Restart daemon ONLY if auth was NOT skipped AND we're NOT in a dev environment.
             // In devstacks, the shell script manages the daemon, and app-side restarts
             // often trigger lock errors because of race conditions.
-            let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
+            let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some()
+                || env::var_os("SYFTBOX_DATA_DIR").is_some();
 
             if !skip_auth && !is_devstack {
                 // Restart the local SyftBox daemon so it picks up fresh auth tokens.
@@ -2266,8 +2274,9 @@ pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
     // In devstack/embedded environments, we should not attempt to manage the daemon's lifecycle
     // because it's usually handled by external scripts (like dev-two.sh) or managed more delicately.
     // Forcefully killing it here often leads to lock conflicts when the script tries to restart it.
-    let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
-    
+    let is_devstack =
+        env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
+
     if !is_devstack {
         // Forcefully kill any existing syftbox processes for this home directory
         // This ensures exactly one syftbox process per biovault home
