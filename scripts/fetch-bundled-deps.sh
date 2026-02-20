@@ -14,6 +14,7 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_ROOT="${OUT_ROOT:-"$ROOT_DIR/src-tauri/resources/bundled"}"
+SYQURE_OUT_DIR="${SYQURE_OUT_DIR:-"$ROOT_DIR/src-tauri/resources/syqure"}"
 CONFIG_FILE="${BUNDLED_CONFIG:-"$ROOT_DIR/scripts/bundled-deps.json"}"
 
 # Parse command line arguments
@@ -373,6 +374,18 @@ fetch_uv() {
   rm -rf "$tmpdir"
 }
 
+fetch_syqure() {
+  local os="$1"
+  if [[ "$os" == "windows" ]]; then
+    echo "⚠️  Skipping syqure fetch for Windows"
+    return
+  fi
+
+  mkdir -p "$SYQURE_OUT_DIR"
+  rm -f "$SYQURE_OUT_DIR/syqure"
+  echo "⏭️  syqure bundling disabled; stale bundled binary removed (local compiled binary required)"
+}
+
 main() {
   local os arch
   read -r os arch <<<"$(detect_platform)"
@@ -386,7 +399,7 @@ main() {
   # Clean existing bundled dependencies if requested
   if [[ "$CLEAN_FIRST" == true ]]; then
     echo "🧹 Cleaning existing bundled dependencies..."
-    rm -rf "$OUT_ROOT/java" "$OUT_ROOT/nextflow" "$OUT_ROOT/uv"
+    rm -rf "$OUT_ROOT/java" "$OUT_ROOT/nextflow" "$OUT_ROOT/uv" "$SYQURE_OUT_DIR"
     echo "✅ Cleaned bundled directories"
   fi
 
@@ -397,6 +410,7 @@ main() {
   extract_java "$os" "$arch"
   fetch_nextflow "$os" "$arch"
   fetch_uv "$os" "$arch"
+  fetch_syqure "$os"
 
   echo "🔧 Fixing file permissions and removing quarantine attributes..."
 

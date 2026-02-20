@@ -198,8 +198,8 @@ jobs:
 
           if is_enabled('BUILD_MACOS_ARM64'):
               entries.append({
-                  # GitHub-hosted "macos-latest" is Apple Silicon; keep this on latest for arm64.
-                  'runs-on': 'macos-latest',
+                  # Use namespace runner for macOS arm64 builds.
+                  'runs-on': 'namespace-profile-mac-medium',
                   'args': 'aarch64-apple-darwin',
                   'build_kind': 'tauri',
                   'target': 'macos-arm64',
@@ -216,7 +216,8 @@ jobs:
 
           if is_enabled('BUILD_WINDOWS_X64'):
               entries.append({
-                  'runs-on': 'windows-latest',
+                  # Use namespace runner for Windows builds.
+                  'runs-on': 'namespace-profile-windows-medium',
                   'args': 'x86_64-pc-windows-msvc',
                   'build_kind': 'tauri',
                   'target': 'windows-x64',
@@ -224,7 +225,7 @@ jobs:
 
           if is_enabled('BUILD_LINUX_X64'):
               entries.append({
-                  'runs-on': 'ubuntu-22.04',
+                  'runs-on': 'namespace-profile-linux-medium',
                   'args': 'x86_64-unknown-linux-gnu',
                   'build_kind': 'tauri',
                   'target': 'linux-x64',
@@ -238,7 +239,8 @@ jobs:
                   'target': 'linux-arm64',
               })
 
-          syftbox_impls = ['rust', 'go']
+          # NOTE: temporarily restrict to rust builds only
+          syftbox_impls = ['rust']
           matrix_entries = []
           for entry in entries:
               for impl in syftbox_impls:
@@ -261,6 +263,7 @@ jobs:
       - configure-build-matrix
     if: ${{ needs.configure-build-matrix.outputs.has-targets == 'true' }}
     strategy:
+      fail-fast: false
       matrix: ${{ fromJSON(needs.configure-build-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.runs-on }}
     env:
@@ -273,6 +276,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare-version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: 1
+      NO_CLEANUP: 1
       TAURI_CLI_LOG_LEVEL: trace
       LINUXDEPLOY: /tmp/linuxdeploy-extracted/usr/bin/linuxdeploy
       LINUXDEPLOY_PLUGIN_APPIMAGE: /tmp/plugin-extracted/usr/bin/linuxdeploy-plugin-appimage
@@ -509,6 +513,7 @@ jobs:
         run: |
           for root in \
             src-tauri/resources/syftbox \
+            src-tauri/resources/syqure \
             src-tauri/resources/bundled/uv \
             src-tauri/resources/bundled/java \
             src-tauri/resources/bundled/nextflow; do
@@ -524,12 +529,14 @@ jobs:
         run: |
           # Create placeholder directories and files for resources that tauri.conf.json expects
           mkdir -p src-tauri/resources/syftbox
+          mkdir -p src-tauri/resources/syqure
           mkdir -p src-tauri/resources/bundled/java
           mkdir -p src-tauri/resources/bundled/nextflow
           mkdir -p src-tauri/resources/bundled/uv
 
           # Create placeholder files
           touch src-tauri/resources/syftbox/syftbox
+          touch src-tauri/resources/syqure/syqure
           echo "Placeholder - bundled deps not included in arm64 build" > src-tauri/resources/bundled/README.txt
           touch src-tauri/resources/bundled/java/.placeholder
           touch src-tauri/resources/bundled/nextflow/.placeholder
@@ -551,6 +558,47 @@ jobs:
         run: |
           chmod +x scripts/build-syftbox-prod.sh
           ./scripts/build-syftbox-prod.sh
+
+      - name: Install syqure build deps (macOS)
+        if: matrix.build_kind == 'tauri' && runner.os == 'macOS' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew update
+          brew install zstd llvm@17 gmp
+          LLVM17_PREFIX="$(brew --prefix llvm@17)"
+          REQUIRED_LLVM_HEADER="llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
+          if [[ ! -f "$LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" ]]; then
+            echo "❌ Missing required LLVM 17 header at $LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" >&2
+            exit 1
+          fi
+          echo "LLVM_PREFIX=$LLVM17_PREFIX" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_PREFIX/include" >> "$GITHUB_ENV"
+          echo "$LLVM17_PREFIX/bin" >> "$GITHUB_PATH"
+
+      - name: Install syqure build deps (Linux)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Linux' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg libgmp-dev
+          if ! command -v llvm-config-17 >/dev/null 2>&1; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+              sudo tee /etc/apt/sources.list.d/llvm-17.list >/dev/null
+            sudo apt-get update
+            sudo apt-get install -y llvm-17-dev
+          fi
+          if command -v llvm-config-17 >/dev/null 2>&1; then
+            LLVM17_INCLUDE="$(llvm-config-17 --includedir)"
+          elif [[ -d /usr/lib/llvm-17/include ]]; then
+            LLVM17_INCLUDE="/usr/lib/llvm-17/include"
+          else
+            echo "❌ LLVM 17 headers not found for syqure build" >&2
+            exit 1
+          fi
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_INCLUDE" >> "$GITHUB_ENV"
 
       - name: Build syftbox client (Rust, Windows)
         if: matrix.build_kind == 'tauri' && runner.os == 'Windows' && matrix.syftbox_impl == 'rust'
@@ -596,6 +644,133 @@ jobs:
           } finally {
             Pop-Location
           }
+
+      - name: Create syqure shim (Windows)
+        if: matrix.build_kind == 'tauri' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repoRoot = (Resolve-Path ".").Path
+          $syqureDir = Join-Path $repoRoot "src-tauri\\resources\\syqure"
+          $syqureShim = Join-Path $syqureDir "syqure.exe"
+          $syftboxBin = Join-Path $repoRoot "src-tauri\\resources\\syftbox\\syftbox.exe"
+          New-Item -ItemType Directory -Force -Path $syqureDir | Out-Null
+          if (-not (Test-Path $syftboxBin)) {
+            throw "Expected syftbox binary for shim not found at $syftboxBin"
+          }
+          Copy-Item -Force $syftboxBin $syqureShim
+          Set-Content -Path (Join-Path $syqureDir "README.txt") -Value "Syqure runs via Docker container on Windows (shim binary for packaging)." -Encoding UTF8
+
+      - name: Prepare syqure submodules
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e syqure/.git ]]; then
+            echo "❌ syqure git checkout not found" >&2
+            exit 1
+          fi
+          # Register submodules, then rewrite SSH URLs to HTTPS with auth so CI can clone them.
+          git -C syqure submodule init codon sequre
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -C syqure config http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH_HEADER"
+          # Overwrite SSH submodule URLs with HTTPS (insteadOf is unreliable for submodule clones).
+          for sub in codon sequre; do
+            old_url="$(git -C syqure config submodule."$sub".url)"
+            new_url="$(echo "$old_url" | sed 's|git@github\.com:|https://github.com/|')"
+            if [[ "$old_url" != "$new_url" ]]; then
+              echo "Rewriting $sub URL: $old_url -> $new_url"
+              git -C syqure config submodule."$sub".url "$new_url"
+            fi
+          done
+          git -C syqure submodule update --depth 1 codon sequre
+
+      - name: Build syqure and bundle codon libs
+        if: matrix.build_kind == 'tauri' && runner.os != 'Windows' && matrix.target != 'linux-arm64'
+        shell: bash
+        run: |
+          # Determine the syqure prebuilt target ID (must match syqure_bins.sh logic)
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+          case "$OS_NAME" in darwin) OS_LABEL="macos";; linux) OS_LABEL="linux";; *) OS_LABEL="$OS_NAME";; esac
+          case "$ARCH_NAME" in arm64|aarch64) ARCH_LABEL="arm64";; x86_64|amd64|i386|i686) ARCH_LABEL="x86";; *) ARCH_LABEL="$ARCH_NAME";; esac
+          SYQURE_TARGET="${OS_LABEL}-${ARCH_LABEL}"
+          if [[ ! -d "syqure/bin/${SYQURE_TARGET}/codon/lib/codon" ]]; then
+            echo "⚠️  No syqure prebuilts for ${SYQURE_TARGET} — creating placeholder resources"
+            mkdir -p src-tauri/resources/syqure
+            touch src-tauri/resources/syqure/syqure
+            exit 0
+          fi
+          chmod +x syqure/syqure_bins.sh
+          ./syqure/syqure_bins.sh
+          mkdir -p src-tauri/resources/syqure
+          if [[ -f syqure/target/debug/syqure ]]; then
+            cp syqure/target/debug/syqure src-tauri/resources/syqure/syqure
+            chmod +x src-tauri/resources/syqure/syqure
+          else
+            echo "❌ syqure binary not found at syqure/target/debug/syqure" >&2
+            exit 1
+          fi
+          # Bundle codon/sequre libs alongside syqure so dyld/$ORIGIN finds them
+          if [[ -d syqure/target/dist/syqure/lib/codon ]]; then
+            echo "Copying codon/sequre libs to resources/syqure/lib/codon..."
+            rm -rf src-tauri/resources/syqure/lib/codon
+            mkdir -p src-tauri/resources/syqure/lib/codon
+            cp -RL syqure/target/dist/syqure/lib/codon/. src-tauri/resources/syqure/lib/codon/
+          fi
+          # Fix Linux RUNPATH for Sequre plugin so linuxdeploy can resolve libcodonrt/libcodonc.
+          if [[ "$(uname -s)" == "Linux" ]]; then
+            SEQURE_SO="src-tauri/resources/syqure/lib/codon/plugins/sequre/build/libsequre.so"
+            if [[ -f "$SEQURE_SO" ]]; then
+              # linuxdeploy can be strict about search paths for plugin .so dependencies.
+              # Force DT_RPATH so libcodonrt/libcodonc in ../../../ are discoverable.
+              patchelf --force-rpath --set-rpath '$ORIGIN:$ORIGIN/../../..' "$SEQURE_SO"
+              echo "libsequre.so RPATH/RUNPATH: $(patchelf --print-rpath "$SEQURE_SO")"
+              if command -v readelf >/dev/null 2>&1; then
+                readelf -d "$SEQURE_SO" | grep -E 'RPATH|RUNPATH|NEEDED' || true
+              fi
+            fi
+          fi
+          # Fix dylib paths on macOS: bundle transitive homebrew deps and rewrite absolute paths
+          if [[ "$(uname -s)" == "Darwin" ]]; then
+            CODON_LIB="src-tauri/resources/syqure/lib/codon"
+            # Bundle libzstd (transitive dep of libcodonrt/libcodonc)
+            ZSTD_LIB=""
+            if command -v brew >/dev/null 2>&1; then
+              ZSTD_PREFIX="$(brew --prefix zstd 2>/dev/null || true)"
+              if [[ -n "$ZSTD_PREFIX" && -f "$ZSTD_PREFIX/lib/libzstd.1.dylib" ]]; then
+                ZSTD_LIB="$ZSTD_PREFIX/lib/libzstd.1.dylib"
+              fi
+            fi
+            for candidate in /opt/homebrew/opt/zstd/lib/libzstd.1.dylib /usr/local/opt/zstd/lib/libzstd.1.dylib; do
+              if [[ -z "$ZSTD_LIB" && -f "$candidate" ]]; then
+                ZSTD_LIB="$candidate"
+              fi
+            done
+            if [[ -n "$ZSTD_LIB" ]]; then
+              echo "Bundling libzstd from $ZSTD_LIB"
+              cp -L "$ZSTD_LIB" "$CODON_LIB/libzstd.1.dylib"
+              chmod u+w "$CODON_LIB/libzstd.1.dylib"
+            else
+              echo "Warning: libzstd not found; codon dylibs may fail to load" >&2
+            fi
+            # Rewrite absolute homebrew paths to @loader_path in all dylibs
+            echo "Rewriting dylib paths to @loader_path..."
+            for dylib in "$CODON_LIB"/*.dylib; do
+              [[ -f "$dylib" ]] || continue
+              otool -L "$dylib" 2>/dev/null | awk '{print $1}' | { grep -E '/(opt|usr/local)/' || true; } | while read -r abs_path; do
+                lib_name="$(basename "$abs_path")"
+                echo "  $(basename "$dylib"): $abs_path -> @loader_path/$lib_name"
+                install_name_tool -change "$abs_path" "@loader_path/$lib_name" "$dylib"
+              done
+              current_id="$(otool -D "$dylib" 2>/dev/null | tail -1)"
+              if [[ "$current_id" == /opt/* || "$current_id" == /usr/local/opt/* ]]; then
+                lib_name="$(basename "$current_id")"
+                echo "  Fixing install name: $(basename "$dylib") -> @loader_path/$lib_name"
+                install_name_tool -id "@loader_path/$lib_name" "$dylib"
+              fi
+            done
+          fi
 
       - name: Verify syftbox binary architecture + smoke run
         if: matrix.build_kind == 'tauri' && runner.os != 'Windows'
@@ -739,6 +914,21 @@ jobs:
             codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$SYFTBOX_BIN"
           fi
 
+          # Sign syqure binary
+          SYQURE_BIN="src-tauri/resources/syqure/syqure"
+          if [[ -f "$SYQURE_BIN" ]]; then
+            echo "Signing syqure binary..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SYQURE_BIN"
+          fi
+
+          # Sign codon/sequre libs bundled with syqure
+          if [[ -d "src-tauri/resources/syqure/lib/codon" ]]; then
+            find src-tauri/resources/syqure/lib/codon -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) | while read -r bin; do
+              echo "Signing syqure codon lib: $bin"
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin" || true
+            done
+          fi
+
           # Sign all uv binaries
           if [[ -d "src-tauri/resources/bundled/uv" ]]; then
             find src-tauri/resources/bundled/uv -type f -perm +111 | while read -r bin; do
@@ -773,7 +963,8 @@ jobs:
 
           echo "Verifying bundled binaries (codesign only)..."
           # Per-file spctl is intentionally skipped; nested tools are validated by final app notarization.
-          for f in "$SYFTBOX_BIN" \
+          for f in "$SYFTBOX_BIN" "$SYQURE_BIN" \
+            $(find src-tauri/resources/syqure/lib/codon -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) 2>/dev/null) \
             $(find src-tauri/resources/bundled/uv -type f -perm +111 2>/dev/null) \
             $(find src-tauri/resources/bundled/nextflow -type f -perm +111 2>/dev/null) \
             $(find src-tauri/resources/bundled/java/macos-aarch64 -type f \( -perm +111 -o -name \"*.dylib\" \) 2>/dev/null); do
@@ -858,6 +1049,8 @@ jobs:
         if: runner.os == 'Linux' && matrix.build_kind == 'tauri'
         run: |
           set -o pipefail
+          export LD_LIBRARY_PATH="$PWD/src-tauri/resources/syqure/lib/codon:$PWD/src-tauri/resources/syqure/lib/codon/plugins/sequre/build:${LD_LIBRARY_PATH:-}"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
           tauri build --target ${{ matrix.args }} --verbose 2>&1 | tee tauri-linux.log
 
           mkdir -p artifacts
@@ -956,19 +1149,48 @@ jobs:
             ./artifacts/*.AppImage
             ./artifacts/*.AppImage.sig
 
-      - name: Create release (Windows)
+      - name: Create or update release (Windows)
         if: ${{ inputs.dry_run != true && runner.os == 'Windows' }}
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ needs.prepare-version.outputs.tag }}
-          name: ${{ needs.prepare-version.outputs.tag }}
-          draft: false
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          makeLatest: true
-          artifacts: |
-            ./artifacts/*.exe
-            ./artifacts/*.exe.sig
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-version.outputs.tag }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $artifacts = @(
+            Get-ChildItem -Path artifacts -Filter "*.exe" -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path artifacts -Filter "*.exe.sig" -File -ErrorAction SilentlyContinue
+          )
+
+          if ($artifacts.Count -eq 0) {
+            throw "No Windows artifacts found under ./artifacts"
+          }
+
+          $artifactPaths = $artifacts | ForEach-Object { $_.FullName }
+
+          # If release already exists (e.g. created by macOS/Linux job), just upload.
+          gh release view "$env:RELEASE_TAG" --repo "$env:RELEASE_REPO" *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+
+          if ($exists) {
+            gh release upload "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --clobber
+            exit 0
+          }
+
+          # Try to create release with assets. If another job wins the race, fall back to upload.
+          gh release create "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --title "$env:RELEASE_TAG" --latest
+          if ($LASTEXITCODE -eq 0) {
+            exit 0
+          }
+
+          gh release view "$env:RELEASE_TAG" --repo "$env:RELEASE_REPO" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create or find release $env:RELEASE_TAG"
+          }
+
+          gh release upload "$env:RELEASE_TAG" @artifactPaths --repo "$env:RELEASE_REPO" --clobber
 
       - name: Clean up all user keychains
         if: always() && runner.os == 'macOS'

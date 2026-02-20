@@ -2,7 +2,7 @@
  * Network module - Manages contacts, network discovery, and published datasets
  */
 
-export function createNetworkModule({ invoke, shellApi }) {
+export function createNetworkModule({ invoke, shellApi, dialog }) {
 	let _currentScanResult = null
 	let _currentDatasets = []
 	let _currentView = 'peers'
@@ -67,10 +67,14 @@ export function createNetworkModule({ invoke, shellApi }) {
 
 		const peersView = document.getElementById('peers-view')
 		const datasetsView = document.getElementById('datasets-view')
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
 
 		if (peersView && datasetsView) {
 			peersView.style.display = mode === 'peers' ? 'block' : 'none'
 			datasetsView.style.display = mode === 'datasets' ? 'block' : 'none'
+		}
+		if (trustAllBtn) {
+			trustAllBtn.style.display = mode === 'peers' ? 'inline-flex' : 'none'
 		}
 
 		const toggleButtons = document.querySelectorAll('#network-view-toggle .pill-button')
@@ -89,6 +93,20 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		applySearchFilter()
+	}
+
+	function updateTrustAllButtonState() {
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		if (!trustAllBtn) return
+
+		const discoveredContacts = Array.isArray(_currentScanResult?.discovered)
+			? _currentScanResult.discovered.filter((c) => c?.identity)
+			: []
+		trustAllBtn.disabled = discoveredContacts.length === 0
+		trustAllBtn.title =
+			discoveredContacts.length === 0
+				? 'No new keys to add'
+				: `Add ${discoveredContacts.length} new key${discoveredContacts.length === 1 ? '' : 's'}`
 	}
 
 	function applySearchFilter() {
@@ -114,6 +132,13 @@ export function createNetworkModule({ invoke, shellApi }) {
 				item.style.display = matches ? 'block' : 'none'
 			})
 		}
+	}
+
+	async function confirmWithDialog(message, options = {}) {
+		if (dialog?.confirm) {
+			return await dialog.confirm(message, options)
+		}
+		return window.confirm(message)
 	}
 
 	function createContactCard(contact, isContact) {
@@ -364,11 +389,12 @@ export function createNetworkModule({ invoke, shellApi }) {
 
 		// Action buttons
 		const newSessionBtn = row.querySelector('.new-session-btn')
-		const runPipelineBtn = row.querySelector('.run-pipeline-btn')
+		const runFlowBtn = row.querySelector('.run-flow-btn')
 		const requestRunBtn = row.querySelector('.request-run-btn')
 		const addPeerBtn = row.querySelector('.add-peer-btn')
 		const messagePeerBtn = row.querySelector('.message-peer-btn')
 		const openDatasetBtn = row.querySelector('.open-dataset-btn')
+		const subscribeBtn = row.querySelector('.dataset-subscribe-btn')
 		const statusContainer = row.querySelector('.dataset-row-status')
 
 		// Availability badge (Available vs Downloading)
@@ -393,36 +419,52 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 
 		// For own datasets: hide new session, add peer, and message buttons
-		// Show run pipeline for datasets with mock data (own or peer)
+		// Show run flow for datasets with mock data (own or peer)
 		// Show request run for peer datasets (to request run on private data)
 		if (dataset.is_own) {
 			if (newSessionBtn) newSessionBtn.style.display = 'none'
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
-			// Own dataset: can run pipeline on mock data locally
-			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'none'
+			// Own dataset: can run flow on mock data locally
+			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			if (requestRunBtn) requestRunBtn.style.display = 'none'
 		} else if (dataset.is_trusted) {
 			if (addPeerBtn) addPeerBtn.style.display = 'none'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'inline-flex'
-			// Peer dataset with mock data: can run pipeline locally on mock data
-			if (runPipelineBtn && hasMock) runPipelineBtn.style.display = 'inline-flex'
+			// Peer dataset with mock data: can run flow locally on mock data
+			if (runFlowBtn && hasMock) runFlowBtn.style.display = 'inline-flex'
 			// Also show request run for running on their private data
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		} else {
 			if (addPeerBtn) addPeerBtn.style.display = 'inline-flex'
 			if (messagePeerBtn) messagePeerBtn.style.display = 'none'
 			// Untrusted peer: show request run but it will prompt to trust first
-			if (runPipelineBtn) runPipelineBtn.style.display = 'none'
+			if (runFlowBtn) runFlowBtn.style.display = 'none'
 			if (requestRunBtn) requestRunBtn.style.display = 'inline-flex'
+			if (subscribeBtn) subscribeBtn.style.display = 'inline-flex'
 		}
+
+		function updateSubscribeButton() {
+			if (!subscribeBtn) return
+			const subscribed = Boolean(dataset.is_subscribed)
+			subscribeBtn.textContent = subscribed ? 'Unsubscribe' : 'Subscribe'
+			subscribeBtn.title = subscribed
+				? 'Unsubscribe and remove dataset data'
+				: 'Subscribe to dataset data'
+			subscribeBtn.classList.toggle('btn-primary', subscribed)
+			subscribeBtn.classList.toggle('btn-secondary', !subscribed)
+		}
+
+		updateSubscribeButton()
 
 		// Event handlers
 		if (!dataset.is_own && newSessionBtn) {
 			newSessionBtn.addEventListener('click', () => handleNewSession(dataset))
 		}
-		if (runPipelineBtn) {
-			runPipelineBtn.addEventListener('click', () => handleRunPipeline(dataset))
+		if (runFlowBtn) {
+			runFlowBtn.addEventListener('click', () => handleRunFlow(dataset))
 		}
 		if (requestRunBtn) {
 			requestRunBtn.addEventListener('click', () => handleRequestRun(dataset))
@@ -432,6 +474,37 @@ export function createNetworkModule({ invoke, shellApi }) {
 		}
 		if (messagePeerBtn) {
 			messagePeerBtn.addEventListener('click', () => handleMessageContact(dataset.owner))
+		}
+		if (subscribeBtn && !dataset.is_own) {
+			subscribeBtn.addEventListener('click', async () => {
+				if (subscribeBtn.disabled) return
+				subscribeBtn.disabled = true
+				const originalText = subscribeBtn.textContent
+				subscribeBtn.textContent = dataset.is_subscribed ? 'Unsubscribing…' : 'Subscribing…'
+				try {
+					if (dataset.is_subscribed) {
+						await invoke('unsubscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = false
+					} else {
+						await invoke('subscribe_dataset', {
+							owner: dataset.owner,
+							name: dataset.name,
+						})
+						dataset.is_subscribed = true
+					}
+					await invoke('trigger_syftbox_sync').catch(() => {})
+				} catch (error) {
+					console.error('Failed to update dataset subscription:', error)
+					alert(`Failed to update subscription: ${error}`)
+				} finally {
+					subscribeBtn.disabled = false
+					subscribeBtn.textContent = originalText
+					updateSubscribeButton()
+				}
+			})
 		}
 		if (openDatasetBtn) {
 			openDatasetBtn.addEventListener('click', () => handleOpenDatasetFolder(dataset.dataset_path))
@@ -551,6 +624,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		if (deduped.length === 0) {
 			if (emptyEl) emptyEl.style.display = 'block'
 			if (countEl) countEl.textContent = '0'
+			updateTrustAllButtonState()
 			return
 		}
 
@@ -563,6 +637,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 				listEl.appendChild(card)
 			}
 		})
+		updateTrustAllButtonState()
 	}
 
 	function renderDiscovered(discovered) {
@@ -652,6 +727,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 
 			renderContacts(peerResult.contacts)
 			renderDiscovered(peerResult.discovered)
+			updateTrustAllButtonState()
 
 			console.log('Peer scan complete:', {
 				contacts: peerResult.contacts?.length || 0,
@@ -709,7 +785,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	}
 
 	async function handleTrustChangedKey(identity) {
-		const confirmed = confirm(
+		const confirmed = await confirmWithDialog(
 			`The key for ${identity} has changed.\n\nThis could mean they regenerated their key, or it could indicate a security issue.\n\nDo you want to trust the new key?`,
 		)
 		if (!confirmed) return
@@ -721,6 +797,54 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		} catch (error) {
 			console.error('Failed to trust key:', error)
 			alert(`Failed to trust key: ${error}`)
+		}
+	}
+
+	async function handleTrustAllChangedKeys() {
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		const discoveredContacts = Array.isArray(_currentScanResult?.discovered)
+			? _currentScanResult.discovered.filter((c) => c?.identity)
+			: []
+
+		if (discoveredContacts.length === 0) {
+			alert('No new keys to add.')
+			return
+		}
+
+		const confirmed = await confirmWithDialog(
+			`Add ${discoveredContacts.length} new key${
+				discoveredContacts.length === 1 ? '' : 's'
+			}?\n\nThis imports keys for newly discovered peers.`,
+		)
+		if (!confirmed) return
+
+		if (trustAllBtn) {
+			trustAllBtn.disabled = true
+			trustAllBtn.dataset.originalLabel = trustAllBtn.innerHTML
+			trustAllBtn.textContent = 'Trusting...'
+		}
+
+		const errors = []
+		for (const contact of discoveredContacts) {
+			try {
+				await invoke('network_import_contact', { identity: contact.identity })
+			} catch (error) {
+				errors.push(contact.identity)
+				console.error('Failed to add key:', contact.identity, error)
+			}
+		}
+
+		await scanNetwork()
+
+		if (errors.length > 0) {
+			alert(`Failed to add keys for: ${errors.join(', ')}`)
+		}
+
+		if (trustAllBtn) {
+			if (trustAllBtn.dataset.originalLabel) {
+				trustAllBtn.innerHTML = trustAllBtn.dataset.originalLabel
+				delete trustAllBtn.dataset.originalLabel
+			}
 		}
 	}
 
@@ -757,8 +881,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	async function handleOpenDatasetFolder(datasetPath) {
 		if (!datasetPath) return
 		try {
-			const folderPath = datasetPath.substring(0, datasetPath.lastIndexOf('/'))
-			await invoke('open_folder', { path: folderPath })
+			let targetPath = datasetPath
+			if (datasetPath.startsWith('syft://')) {
+				targetPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: datasetPath })
+			}
+			await invoke('open_folder', { path: targetPath })
 		} catch (error) {
 			console.error('Failed to open dataset folder:', error)
 		}
@@ -767,8 +894,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 	async function handleOpenAssetFolder(assetPath) {
 		if (!assetPath) return
 		try {
-			const folderPath = assetPath.substring(0, assetPath.lastIndexOf('/'))
-			await invoke('open_folder', { path: folderPath })
+			let targetPath = assetPath
+			if (assetPath.startsWith('syft://')) {
+				targetPath = await invoke('resolve_syft_url_to_local_path', { syftUrl: assetPath })
+			}
+			await invoke('open_folder', { path: targetPath })
 		} catch (error) {
 			console.error('Failed to open asset folder:', error)
 		}
@@ -807,11 +937,11 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		}, 200)
 	}
 
-	// Run a pipeline on mock data for own datasets
-	async function handleRunPipeline(dataset) {
-		console.log('Running pipeline on dataset:', dataset.name)
+	// Run a flow on mock data for own datasets
+	async function handleRunFlow(dataset) {
+		console.log('Running flow on dataset:', dataset.name)
 
-		// Pre-seed selection so the pipeline run modal has data even if navigation races.
+		// Pre-seed selection so the flow run modal has data even if navigation races.
 		try {
 			const urls = []
 			const participantIds = []
@@ -844,18 +974,18 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 				sessionStorage.setItem('preselectedDataSource', 'network_dataset')
 			}
 		} catch (err) {
-			console.warn('Failed to pre-seed pipeline data selection:', err)
+			console.warn('Failed to pre-seed flow data selection:', err)
 		}
 
-		// Navigate to pipelines tab and trigger run modal with mock data
+		// Navigate to flows tab and trigger run modal with mock data
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('run')
 		}
 
 		// Wait for navigation, then open run modal with dataset
 		setTimeout(() => {
-			if (window.__pipelinesModule?.openRunPipelineWithDataset) {
-				window.__pipelinesModule.openRunPipelineWithDataset({
+			if (window.__flowsModule?.openRunFlowWithDataset) {
+				window.__flowsModule.openRunFlowWithDataset({
 					name: dataset.name,
 					dataType: 'mock',
 					entry: dataset,
@@ -864,36 +994,34 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		}, 200)
 	}
 
-	// Request a pipeline run on peer's private data
+	// Request a flow run on peer's private data
 	async function handleRequestRun(dataset) {
-		console.log('Requesting pipeline run on dataset:', dataset.name, 'from', dataset.owner)
+		console.log('Requesting flow run on dataset:', dataset.name, 'from', dataset.owner)
 
-		// Navigate to pipelines tab to select which pipeline to request
+		// Navigate to flows tab to select which flow to request
 		if (typeof window.navigateTo === 'function') {
 			window.navigateTo('run')
 		}
 
-		// Wait for navigation, then open pipeline selection for request
+		// Wait for navigation, then open flow selection for request
 		setTimeout(() => {
-			if (window.__pipelinesModule?.openRequestPipelineRun) {
-				window.__pipelinesModule.openRequestPipelineRun({
+			if (window.__flowsModule?.openRequestFlowRun) {
+				window.__flowsModule.openRequestFlowRun({
 					datasetName: dataset.name,
 					datasetOwner: dataset.owner,
 					dataset: dataset,
 				})
 			} else {
-				// Fallback: store in sessionStorage for pipelines to pick up
+				// Fallback: store in sessionStorage for flows to pick up
 				sessionStorage.setItem(
-					'pendingPipelineRequest',
+					'pendingFlowRequest',
 					JSON.stringify({
 						datasetName: dataset.name,
 						datasetOwner: dataset.owner,
 						dataset: dataset,
 					}),
 				)
-				alert(
-					`Pipeline request flow coming soon!\n\nDataset: ${dataset.name}\nOwner: ${dataset.owner}`,
-				)
+				alert(`Flow request flow coming soon!\n\nDataset: ${dataset.name}\nOwner: ${dataset.owner}`)
 			}
 		}, 200)
 	}
@@ -903,6 +1031,10 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 		const refreshBtn = document.getElementById('network-refresh-btn')
 		if (refreshBtn) {
 			refreshBtn.addEventListener('click', scanNetwork)
+		}
+		const trustAllBtn = document.getElementById('network-trust-all-keys-btn')
+		if (trustAllBtn) {
+			trustAllBtn.addEventListener('click', handleTrustAllChangedKeys)
 		}
 
 		// Set up view toggle
@@ -942,6 +1074,7 @@ dataset = bv.datasets["${dataset.owner}"]["${dataset.name}"]`
 			})
 			observer.observe(networkView, { attributes: true })
 		}
+		updateTrustAllButtonState()
 	}
 
 	function setupInfoBoxDismiss(buttonId, storageKey) {

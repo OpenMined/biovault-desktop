@@ -1213,10 +1213,17 @@ export function initOnboarding({
 			)
 		}
 
+		const shouldHideDependencyForOnboarding = (dep) => {
+			if (isSettings) return false
+			const name = (dep?.name || '').toLowerCase()
+			return name === 'syqure'
+		}
+
 		const depEntries = result.dependencies
 			.map((dep, index) => ({ dep, index }))
 			.filter(({ dep }) => (isSettings ? true : !isBundledDep(dep)))
 			.filter(({ dep }) => !shouldHideDependencyForPlatform(dep))
+			.filter(({ dep }) => !shouldHideDependencyForOnboarding(dep))
 		const depsForStatus = depEntries.map(({ dep }) => dep)
 
 		let html = ''
@@ -1639,21 +1646,14 @@ export function initOnboarding({
 				}
 
 				try {
-					const ciFlag =
-						window?.process?.env?.CI === '1' ||
-						window?.process?.env?.CI === 'true' ||
-						window?.process?.env?.GITHUB_ACTIONS === 'true' ||
-						window?.__IS_CI__ === true
-					const wsTimeoutMs = ciFlag ? 15000 : 5000
+					// Dependency checks use longRunning timeout (180s) in tauri-shim.js
+					// subprocess calls for java/docker/nextflow are slow on Windows
 					const start = Date.now()
 					console.log(
-						`[onboarding] update_saved_dependency_states start (timeout=${wsTimeoutMs}ms)`,
+						'[onboarding] update_saved_dependency_states start (using longRunning timeout)',
 					)
-					console.log(
-						`[onboarding] env CI=${window?.process?.env?.CI || ''} GITHUB_ACTIONS=${window?.process?.env?.GITHUB_ACTIONS || ''}`,
-					)
-					// Do not block the UI on potentially slow dependency checks in CI.
-					void invoke('update_saved_dependency_states', { __wsTimeoutMs: wsTimeoutMs })
+					// Do not block the UI on potentially slow dependency checks.
+					void invoke('update_saved_dependency_states')
 						.then((result) => {
 							console.log(
 								`[onboarding] update_saved_dependency_states ok (${Date.now() - start}ms)`,
@@ -1757,6 +1757,19 @@ export function initOnboarding({
 		return s.slice(0, lastSlash)
 	}
 
+	function normalizeWindowsPath(p) {
+		if (!p || typeof p !== 'string') return p
+		let s = p
+		if (s.startsWith('\\\\?\\UNC\\')) {
+			s = '\\\\' + s.slice('\\\\?\\UNC\\'.length)
+		} else if (s.startsWith('\\\\?\\')) {
+			s = s.slice('\\\\?\\'.length)
+		} else if (s.startsWith('//?/')) {
+			s = s.slice('//?/'.length)
+		}
+		return s
+	}
+
 	async function initHomePickerDefaults() {
 		if (!homeInput) return
 
@@ -1764,7 +1777,7 @@ export function initOnboarding({
 		try {
 			const pendingHome = window.localStorage.getItem(LOCAL_ONBOARD_HOME_KEY)
 			if (pendingHome && pendingHome.trim()) {
-				homeInput.value = pendingHome.trim()
+				homeInput.value = normalizeWindowsPath(pendingHome.trim())
 				return
 			}
 		} catch (_err) {
@@ -1775,7 +1788,7 @@ export function initOnboarding({
 		try {
 			const defaultHome = await invoke('profiles_get_default_home')
 			if (defaultHome && String(defaultHome).trim()) {
-				homeInput.value = String(defaultHome).trim()
+				homeInput.value = normalizeWindowsPath(String(defaultHome).trim())
 			}
 		} catch (_err) {
 			// ignore
@@ -1785,7 +1798,7 @@ export function initOnboarding({
 		try {
 			const configPath = await invoke('get_config_path')
 			const home = dirnameFromPath(configPath)
-			if (home) homeInput.value = home
+			if (home) homeInput.value = normalizeWindowsPath(home)
 		} catch (_err) {
 			// ignore
 		}
@@ -1825,9 +1838,9 @@ export function initOnboarding({
 				if (!selection) return
 				const chosen = Array.isArray(selection) ? selection[0] : selection
 				if (!chosen) return
-				homeInput.value = chosen
+				homeInput.value = normalizeWindowsPath(chosen)
 				try {
-					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, chosen)
+					window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, normalizeWindowsPath(chosen))
 				} catch (_err) {
 					// ignore
 				}
@@ -1930,10 +1943,18 @@ export function initOnboarding({
 			const emailInput = document.getElementById('onboarding-email')
 			const prefillNotice = document.getElementById('email-prefill-notice')
 			try {
-				const check = await invoke('profiles_check_home_for_existing_email', {
-					homePath: desiredHome,
-				})
-				if (check?.has_existing_config && check?.existing_email) {
+				const checkTimeoutMs = 5000
+				const check = await Promise.race([
+					invoke('profiles_check_home_for_existing_email', {
+						homePath: desiredHome,
+					}),
+					new Promise((resolve) => setTimeout(() => resolve(null), checkTimeoutMs)),
+				])
+				if (!check) {
+					if (prefillNotice) {
+						prefillNotice.style.display = 'none'
+					}
+				} else if (check?.has_existing_config && check?.existing_email) {
 					// Pre-fill email from existing config
 					if (emailInput) {
 						emailInput.value = check.existing_email
@@ -1979,11 +2000,21 @@ export function initOnboarding({
 
 		const desiredHome = (homeInput?.value || '').trim()
 
+		const normalizeHomePath = (value) => {
+			const raw = String(value || '').trim()
+			if (!raw) return ''
+			const normalized = raw.replace(/\\+/g, '/').replace(/\/+$/, '')
+			const isWindowsPath = /\\/.test(raw) || /^[a-zA-Z]:/.test(raw)
+			return isWindowsPath ? normalized.toLowerCase() : normalized
+		}
+
 		// If user picked a different BioVault home, create/switch profiles before continuing.
 		if (desiredHome) {
 			try {
 				const currentHome = await resolveCurrentHomeBestEffort()
-				if (!currentHome || desiredHome !== currentHome) {
+				const normalizedDesired = normalizeHomePath(desiredHome)
+				const normalizedCurrent = normalizeHomePath(currentHome)
+				if (normalizedCurrent && normalizedDesired && normalizedDesired !== normalizedCurrent) {
 					try {
 						window.localStorage.setItem(LOCAL_ONBOARD_EMAIL_KEY, email)
 						window.localStorage.setItem(LOCAL_ONBOARD_HOME_KEY, desiredHome)
@@ -2671,12 +2702,19 @@ export function initOnboarding({
 		document.getElementById('onboarding-key-identity').textContent = status?.identity || 'Unknown'
 		document.getElementById('onboarding-key-fp').textContent =
 			status?.vault_fingerprint || 'No key found'
-		document.getElementById('onboarding-key-status').textContent = status?.exists
-			? `Vault bundle at ${status.bundle_path}`
-			: 'No key found; generate or restore to continue.'
-		document.getElementById('onboarding-key-warning').textContent = status?.exists
-			? ''
-			: 'No key detected for this email. Generate or restore before continuing.'
+		if (status?.key_file_exists && status?.private_key_readable === false) {
+			document.getElementById('onboarding-key-status').textContent =
+				'Existing key file could not be read. Restore your recovery code (BIP-39) to continue.'
+			document.getElementById('onboarding-key-warning').textContent =
+				'Detected legacy or unreadable encryption key material. Restore your key from recovery code.'
+		} else {
+			document.getElementById('onboarding-key-status').textContent = status?.exists
+				? `Vault bundle at ${status.bundle_path}`
+				: 'No key found; generate or restore to continue.'
+			document.getElementById('onboarding-key-warning').textContent = status?.exists
+				? ''
+				: 'No key detected for this email. Generate or restore before continuing.'
+		}
 		const avatar = document.getElementById('onboarding-key-avatar')
 		if (avatar) {
 			avatar.innerHTML = buildIdenticon(status?.vault_fingerprint || status?.identity || 'seed')
@@ -2714,6 +2752,15 @@ export function initOnboarding({
 			console.log('🔑 key_get_status result:', JSON.stringify(status, null, 2))
 			onboardingKeyStatus = status
 			renderKeyCard(status)
+			if (status?.key_file_exists && status?.private_key_readable === false) {
+				console.warn(
+					'🔑 Existing key file is unreadable; requiring recovery restore before onboarding can continue',
+				)
+				document.getElementById('onboarding-recovery-block').style.display = 'none'
+				document.getElementById('onboarding-restore-block').style.display = 'block'
+				document.getElementById('onboarding-next-3-key').disabled = true
+				return
+			}
 			if (status.exists) {
 				console.log('🔑 Key already exists - user can continue (no recovery phrase available)')
 				// Key exists - user can continue, no recovery to show

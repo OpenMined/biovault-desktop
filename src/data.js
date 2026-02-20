@@ -1,3 +1,5 @@
+const QUEUE_DISABLED = true
+
 function getPathBasename(filePath) {
 	if (!filePath) return ''
 	const normalized = filePath.replace(/\\/g, '/')
@@ -12,6 +14,7 @@ function buildDatasetAssetSyftUrl(ownerEmail, datasetName, filePath) {
 
 export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
+	const FILE_TYPE_FILTER_KEYS = ['genotype', 'vcf', 'raw', 'other']
 	let viewMode = 'participants'
 	let currentUserEmail = ''
 
@@ -20,7 +23,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let allFiles = []
 	let datasets = []
 	let selectedFileIds = [] // File IDs selected for workflows/operations
-	let currentDataTypeFilter = 'All'
+	let activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
 	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
@@ -29,7 +32,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let existingFilePaths = new Set()
 	let filesToDisplay = [] // Filtered files currently displayed
 	let queueInfoCache = new Map() // Cache queue info by file ID: { position, totalPending, isProcessorRunning, estimatedTimeRemaining }
-	let globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
+	let _globalQueueInfo = null // Global queue info: { totalPending, processingCount, isProcessorRunning, currentlyProcessing, estimatedTimeRemaining }
+	const activeDownloads = new Set()
+	const downloadProgressCache = new Map()
+	const downloadCancelCallbacks = new Map()
+	let downloadModalHandle = null
+	let downloadProgressListener = null
+	let lastClickedFileId = null
+	let isRangeSelecting = false
+	let selectedReferenceIds = [] // Reference file IDs selected for deletion
 	let currentEditingAssets = new Map()
 	let currentEditingOriginalName = null
 	let currentEditingWasPublished = false
@@ -66,6 +77,318 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			clearTimeout(datasetProgressTimers.get(name))
 			datasetProgressTimers.delete(name)
 		}
+	}
+
+	function toggleSampleDataPanel(forceOpen = null) {
+		const panel = document.getElementById('sample-data-panel')
+		if (!panel) return
+		if (forceOpen === true) {
+			panel.removeAttribute('hidden')
+			return
+		}
+		if (forceOpen === false) {
+			panel.setAttribute('hidden', '')
+			return
+		}
+		if (panel.hasAttribute('hidden')) {
+			panel.removeAttribute('hidden')
+		} else {
+			panel.setAttribute('hidden', '')
+		}
+	}
+
+	const SAMPLE_DATA_CONFIG = {
+		'na06985-full': {
+			title: 'Downloading NA06985 (Full CRAM)',
+			body: 'This download is large (~20GB). Closing this window will not stop the download.',
+			links: [
+				{
+					label: 'Reference (GRCh38 full)',
+					href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
+				},
+				{
+					label: 'Reference index (.fai)',
+					href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
+				},
+				{
+					label: 'Aligned CRAM (NA06985)',
+					href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram',
+				},
+				{
+					label: 'Aligned index (.crai)',
+					href: 'https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram.crai',
+				},
+			],
+		},
+		'na06985-chry': {
+			title: 'Downloading NA06985 chrY (CRAM)',
+			body: 'Downloading chromosome Y aligned CRAM + GRCh38 chrY reference.',
+			links: [
+				{
+					label: 'Reference (GRCh38 chrY)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/reference/GRCh38_chrY.fa',
+				},
+				{
+					label: 'Reference index (.fai)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/reference/GRCh38_chrY.fa.fai',
+				},
+				{
+					label: 'Aligned CRAM (chrY)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/cram/NA06985/NA06985.final.chrY.cram.tar.gz.aa',
+				},
+				{
+					label: 'Aligned index (.crai)',
+					href: 'https://raw.githubusercontent.com/OpenMined/biovault-data/refs/heads/main/cram/NA06985/NA06985.final.chrY.cram.crai',
+				},
+			],
+		},
+		'23andme': {
+			title: 'Downloading 23andMe Genotype',
+			body: 'Downloading 23andMe v4 Full genotype file.',
+			links: [
+				{
+					label: '23andMe Genotype (v4 Full)',
+					href: 'https://github.com/OpenMined/biovault-data/raw/main/snp/23andme_genome_v4_Full.zip',
+				},
+			],
+		},
+		'dynamic-dna': {
+			title: 'Downloading Dynamic DNA Genotype',
+			body: 'Downloading Dynamic DNA genotype file.',
+			links: [
+				{
+					label: 'Dynamic DNA Genotype',
+					href: 'https://raw.githubusercontent.com/OpenMined/biovault-data/main/snp/genotype_files/build_38/100001/100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt',
+				},
+			],
+		},
+		'clinvar-grch38': {
+			title: 'Downloading ClinVar (GRCh38)',
+			body: 'Downloading ClinVar variant annotation database. This may take a few minutes.',
+			links: [
+				{
+					label: 'ClinVar VCF (GRCh38)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz',
+				},
+				{
+					label: 'ClinVar Index (.tbi)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.tbi',
+				},
+			],
+		},
+		'clinvar-grch37': {
+			title: 'Downloading ClinVar (GRCh37)',
+			body: 'Downloading ClinVar variant annotation database. This may take a few minutes.',
+			links: [
+				{
+					label: 'ClinVar VCF (GRCh37)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz',
+				},
+				{
+					label: 'ClinVar Index (.tbi)',
+					href: 'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz.tbi',
+				},
+			],
+		},
+	}
+
+	let _currentDownloadAbortController = null
+
+	async function handleSampleDataImport(sampleId, buttonEl) {
+		if (!sampleId) return
+		const downloadKey = `sample_${sampleId}`
+		const originalText = buttonEl?.textContent
+		const progressEl = document.querySelector(
+			`.sample-data-progress[data-progress-id="${sampleId}"]`,
+		)
+		let cancelRequested = false
+		let modalHandle = null
+
+		if (activeDownloads.has(downloadKey)) {
+			const config = SAMPLE_DATA_CONFIG[sampleId]
+			if (config) {
+				openDownloadModal({
+					downloadId: downloadKey,
+					title: config.title,
+					body: 'Download in progress. Closing this window will not stop the download.',
+					links: config.links,
+					onCancel: downloadCancelCallbacks.get(downloadKey) || null,
+				})
+			}
+			return
+		}
+
+		try {
+			const existingSampleDir = await invoke('check_sample_downloaded', { sampleId })
+			if (existingSampleDir) {
+				if (typeof window.openImportModalWithFolder === 'function') {
+					await window.openImportModalWithFolder(existingSampleDir)
+				}
+				toggleSampleDataPanel(false)
+				return
+			}
+
+			const cancelFn = async () => {
+				cancelRequested = true
+				try {
+					await invoke('cancel_sample_download')
+				} catch (e) {
+					console.warn('Cancel request failed:', e)
+				}
+			}
+			downloadCancelCallbacks.set(downloadKey, cancelFn)
+
+			const config = SAMPLE_DATA_CONFIG[sampleId]
+			if (config) {
+				modalHandle = openDownloadModal({
+					downloadId: downloadKey,
+					title: config.title,
+					body: config.body,
+					links: config.links,
+					onCancel: cancelFn,
+				})
+			}
+			if (buttonEl) {
+				buttonEl.textContent = 'Downloading...'
+				buttonEl.disabled = true
+			}
+			if (progressEl) progressEl.removeAttribute('hidden')
+			activeDownloads.add(downloadKey)
+			const result = await invoke('fetch_sample_data_with_progress', { samples: [sampleId] })
+			const sampleDir = result?.sample_dir || result?.sampleDir || result
+			if (!cancelRequested && sampleDir && typeof window.openImportModalWithFolder === 'function') {
+				await window.openImportModalWithFolder(sampleDir)
+			}
+			if (!cancelRequested) {
+				toggleSampleDataPanel(false)
+			}
+		} catch (error) {
+			if (cancelRequested) {
+				console.log('Download cancelled')
+			} else {
+				console.error('Sample data download failed:', error)
+				await dialog.message(`Failed to download sample data: ${error}`, {
+					title: 'Sample Data Error',
+					type: 'error',
+				})
+			}
+		} finally {
+			activeDownloads.delete(downloadKey)
+			downloadCancelCallbacks.delete(downloadKey)
+			if (buttonEl) {
+				if (originalText != null) buttonEl.textContent = originalText
+				buttonEl.disabled = false
+			}
+			if (progressEl) progressEl.setAttribute('hidden', '')
+			if (modalHandle) modalHandle.close()
+		}
+	}
+
+	function openDownloadModal({ downloadId, title, body, onCancel, links }) {
+		const existing = document.getElementById('large-download-modal')
+		if (existing) existing.remove()
+
+		const overlay = document.createElement('div')
+		overlay.id = 'large-download-modal'
+		overlay.className = 'download-modal-overlay'
+
+		const modal = document.createElement('div')
+		modal.className = 'download-modal-card'
+		const linksHtml = Array.isArray(links)
+			? `
+				<div class="download-modal-links">
+					<div class="download-modal-links-title">Direct download links</div>
+					${links
+						.map(
+							(link) => `
+								<a href="${link.href}" class="download-modal-link" target="_blank" rel="noreferrer">
+									${link.label}
+								</a>
+							`,
+						)
+						.join('')}
+				</div>
+			`
+			: ''
+
+		modal.innerHTML = `
+			<div class="download-modal-header">
+				<h3>${title || 'Downloading...'}</h3>
+				<button class="download-modal-close" data-role="close" title="Close">&times;</button>
+			</div>
+			<p class="download-modal-body">${body || ''}</p>
+			${linksHtml}
+			<div class="sample-data-progress">
+				<div class="sample-data-progress-bar" data-role="progress-bar"></div>
+			</div>
+			<div class="sample-data-progress-text" data-role="progress-text">Preparing download…</div>
+			<div data-role="cache-path" style="margin-top: 12px; padding: 8px 12px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px; font-family: 'SF Mono', Monaco, monospace; color: #64748b; word-break: break-all; display: none;">
+				<span style="font-weight: 600; color: #475569;">Cache:</span> <span data-role="cache-path-text"></span>
+			</div>
+			<div class="download-modal-actions">
+				<button class="btn-secondary" data-role="cancel">Cancel Download</button>
+			</div>
+		`
+
+		const close = () => {
+			overlay.remove()
+			if (downloadModalHandle?.downloadId === downloadId) {
+				downloadModalHandle = null
+			}
+		}
+		modal.querySelector('[data-role="close"]')?.addEventListener('click', close)
+		modal.querySelector('[data-role="cancel"]')?.addEventListener('click', () => {
+			if (typeof onCancel === 'function') onCancel()
+			close()
+		})
+		overlay.addEventListener('click', (e) => {
+			if (e.target === overlay) close()
+		})
+
+		overlay.appendChild(modal)
+		document.body.appendChild(overlay)
+		const progressBar = modal.querySelector('[data-role="progress-bar"]')
+		const progressText = modal.querySelector('[data-role="progress-text"]')
+		const setProgress = (downloaded, total, fileLabel) => {
+			if (!progressBar || !progressText) return
+			const hasTotal = typeof total === 'number' && total > 0
+			if (hasTotal) {
+				const percent = Math.max(0, Math.min(100, (downloaded / total) * 100))
+				progressBar.classList.add('is-determinate')
+				progressBar.style.width = `${percent}%`
+				progressText.textContent = fileLabel
+					? `Downloading ${fileLabel}… ${Math.round(percent)}%`
+					: `Downloading… ${Math.round(percent)}%`
+			} else {
+				progressBar.classList.remove('is-determinate')
+				progressBar.style.width = '100%'
+				progressText.textContent = fileLabel ? `Downloading ${fileLabel}…` : 'Downloading…'
+			}
+		}
+		const handle = { close, setProgress, downloadId }
+		downloadModalHandle = handle
+
+		const cached =
+			downloadProgressCache.get(downloadId) ||
+			(downloadId.startsWith('sample_') ? downloadProgressCache.get('sample_data') : null)
+		if (cached) {
+			setProgress(cached.downloaded, cached.total, cached.file)
+		}
+
+		const cachePathEl = modal.querySelector('[data-role="cache-path"]')
+		const cachePathText = modal.querySelector('[data-role="cache-path-text"]')
+		if (cachePathEl && cachePathText) {
+			invoke('get_env_var', { key: 'BIOVAULT_HOME' })
+				.catch(() => null)
+				.then((bvHome) => {
+					const home = bvHome || '~/Desktop/BioVault'
+					cachePathText.textContent = `${home}/data/sample/`
+					cachePathEl.style.display = 'block'
+				})
+				.catch(() => {})
+		}
+
+		return handle
 	}
 
 	async function monitorDatasetSync(name) {
@@ -123,14 +446,18 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// ============================================================================
 
 	function setViewMode(mode) {
-		if (!mode || (mode !== 'participants' && mode !== 'datasets')) return
+		if (!mode || (mode !== 'participants' && mode !== 'datasets' && mode !== 'references')) return
 		viewMode = mode
 		const participantSection = document.getElementById('participant-data-section')
 		const datasetSection = document.getElementById('dataset-data-section')
+		const referenceSection = document.getElementById('reference-data-section')
 		const datasetEditorSection = document.getElementById('dataset-editor-section')
 		if (participantSection && datasetSection) {
 			participantSection.style.display = mode === 'participants' ? 'flex' : 'none'
 			datasetSection.style.display = mode === 'datasets' ? 'flex' : 'none'
+			if (referenceSection) {
+				referenceSection.style.display = mode === 'references' ? 'flex' : 'none'
+			}
 			// Hide editor when switching views
 			if (datasetEditorSection) {
 				datasetEditorSection.style.display = 'none'
@@ -152,15 +479,22 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			if (mode === 'datasets') {
 				pageSubtitle.textContent =
 					'Package files as datasets and publish to share with collaborators'
+			} else if (mode === 'references') {
+				pageSubtitle.textContent = 'Shared genome references and indexes'
 			} else {
-				pageSubtitle.textContent = 'Imported genotype files and analysis results'
+				pageSubtitle.textContent = 'Imported files and analysis results'
 			}
 		}
 
 		// Update search placeholder based on view
 		const searchInput = document.getElementById('file-search')
 		if (searchInput) {
-			searchInput.placeholder = mode === 'datasets' ? 'Search datasets...' : 'Search files...'
+			searchInput.placeholder =
+				mode === 'datasets'
+					? 'Search datasets...'
+					: mode === 'references'
+						? 'Search references...'
+						: 'Search files...'
 		}
 
 		const globalEmptyState = document.getElementById('data-empty-state')
@@ -170,6 +504,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		if (mode === 'datasets') {
 			void loadDatasets()
+		} else if (mode === 'references') {
+			renderReferencesPanel()
 		} else {
 			renderFilesPanel()
 		}
@@ -283,9 +619,89 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		return false
 	}
 
-	function matchesDataTypeFilter(file) {
-		if (currentDataTypeFilter === 'All') return true
-		return file.data_type === currentDataTypeFilter
+	function matchesFileTypeFilter(file) {
+		return activeFileTypeFilters.has(getFileTypeCategory(file))
+	}
+
+	function normalizeDataType(value) {
+		return (value || '').toString().trim().toLowerCase()
+	}
+
+	function isReferenceDataType(value) {
+		const dt = normalizeDataType(value)
+		return dt === 'reference' || dt === 'referenceindex'
+	}
+
+	function isIndexDataType(value) {
+		const dt = normalizeDataType(value)
+		return dt === 'alignedindex' || dt === 'referenceindex'
+	}
+
+	function getFilteredNonReferenceFiles() {
+		return allFiles.filter((file) => {
+			const dt = file?.data_type || ''
+			if (isReferenceDataType(dt)) return false
+			if (isIndexDataType(dt)) return false
+			return true
+		})
+	}
+
+	function getFileTypeCategory(file) {
+		const dataType = normalizeDataType(file?.data_type)
+		const fileName = getPathBasename(file?.file_path || '').toLowerCase()
+
+		if (dataType === 'genotype' || dataType === 'snp') return 'genotype'
+		if (
+			dataType === 'variants' ||
+			dataType.includes('variant') ||
+			dataType.includes('vcf') ||
+			/\.(g?vcf|bcf)(\.(gz|bgz))?$/.test(fileName)
+		) {
+			return 'vcf'
+		}
+		if (
+			dataType === 'aligned' ||
+			dataType.includes('raw') ||
+			dataType.includes('sequencing') ||
+			/\.(bam|cram|sam)(\.(gz|bgz))?$/.test(fileName) ||
+			/\.(fastq|fq)(\.(gz|bgz))?$/.test(fileName)
+		) {
+			return 'raw'
+		}
+
+		return 'other'
+	}
+
+	function isAllFileTypeFiltersEnabled() {
+		return FILE_TYPE_FILTER_KEYS.every((key) => activeFileTypeFilters.has(key))
+	}
+
+	function updateFileTypeFilterUI(baseFiles) {
+		const counts = { genotype: 0, vcf: 0, raw: 0, other: 0 }
+
+		baseFiles.forEach((file) => {
+			const category = getFileTypeCategory(file)
+			if (Object.prototype.hasOwnProperty.call(counts, category)) {
+				counts[category] += 1
+			}
+		})
+
+		document.querySelectorAll('[data-file-type-count]').forEach((countNode) => {
+			const key = countNode.dataset.fileTypeCount
+			if (key === 'all') {
+				countNode.textContent = String(baseFiles.length)
+				return
+			}
+			countNode.textContent = String(counts[key] || 0)
+		})
+
+		document.querySelectorAll('.file-type-filter-chip').forEach((chip) => {
+			const key = chip.dataset.fileTypeFilter
+			const isActive =
+				key === 'all' ? isAllFileTypeFiltersEnabled() : activeFileTypeFilters.has(key)
+			chip.classList.toggle('active', isActive)
+			chip.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+		})
 	}
 
 	// ============================================================================
@@ -311,68 +727,62 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
-	function renderStatusBadge(status, error = null, fileId = null) {
-		if (status === 'pending' && fileId) {
-			const queueInfo = queueInfoCache.get(fileId)
-			if (queueInfo) {
-				const {
-					position,
-					totalPending,
-					isProcessorRunning,
-					estimatedTimeRemaining: _estimatedTimeRemaining,
-				} = queueInfo
-				if (position !== undefined && totalPending !== undefined) {
-					const queueText =
-						position > 0
-							? `Queue: #${position} of ${totalPending}`
-							: `Queue: ${totalPending} file${totalPending === 1 ? '' : 's'} waiting`
-					const processorStatus = isProcessorRunning ? 'Processor running' : 'Processor paused'
-					const title = `${queueText} • ${processorStatus}`
-					return `<span class="status-badge status-pending" title="${title}">
-						<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-						PENDING #${position}/${totalPending}
-					</span>`
-				}
-			}
-			// Fallback if no queue info yet
-			const totalPending = globalQueueInfo?.totalPending || '?'
-			return `<span class="status-badge status-pending" title="Pending in queue">
-				<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-				PENDING (${totalPending} in queue)
-			</span>`
-		}
-
-		const badges = {
-			pending: `<span class="status-badge status-pending" title="Pending">
-				<img src="assets/icons/clock.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-				PENDING
-			</span>`,
-			processing: `<span class="status-badge status-processing" title="Processing">
-				<img src="assets/icons/loader.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle; animation: spin 1s linear infinite;" />
-				PROCESSING
-			</span>`,
-			error: `<span class="status-badge status-error" title="${error || 'Error'}">
-				<img src="assets/icons/x-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-				ERROR
-			</span>`,
-			complete: `<span class="status-badge status-complete" title="Complete">
-				<img src="assets/icons/check-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-				COMPLETE
-			</span>`,
-			mixed: `<span class="status-badge status-mixed" title="Mixed status">
-				<img src="assets/icons/alert-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
-				MIXED
-			</span>`,
-			unknown: `<span class="status-badge status-unknown" title="Unknown">
-				?
-			</span>`,
-		}
-		return badges[status] || badges.unknown
+	function renderStatusBadge(status, _error = null, _fileId = null) {
+		// Queue disabled - always show as imported for pending status
+		return `<span class="status-badge status-complete" title="Imported">
+			<img src="assets/icons/check-circle.svg" width="12" height="12" alt="" style="margin-right: 4px; vertical-align: middle;" />
+			IMPORTED
+		</span>`
 	}
 
 	// ============================================================================
 	// RENDERING - FILES TABLE
 	// ============================================================================
+
+	function isAlignedDataType(value) {
+		const dt = normalizeDataType(value)
+		return dt === 'aligned'
+	}
+
+	function getAvailableReferences() {
+		return allFiles.filter((f) => normalizeDataType(f?.data_type) === 'reference')
+	}
+
+	async function loadFileReference(fileId, selectElement) {
+		try {
+			const [refFileId, _refIndexFileId] = await invoke('get_file_reference', { fileId })
+			if (refFileId && selectElement) {
+				selectElement.value = refFileId.toString()
+			}
+		} catch (error) {
+			console.error('Failed to load file reference:', error)
+		}
+	}
+
+	function renderReferenceCell(file) {
+		if (!isAlignedDataType(file?.data_type)) {
+			return '<td class="col-reference">-</td>'
+		}
+
+		const references = getAvailableReferences()
+		if (references.length === 0) {
+			return '<td class="col-reference"><span style="color: #9ca3af; font-size: 12px;">No refs</span></td>'
+		}
+
+		const options = references
+			.map((ref) => {
+				const name = ref.file_path.split('/').pop()
+				return `<option value="${ref.id}">${name}</option>`
+			})
+			.join('')
+
+		return `<td class="col-reference">
+			<select class="reference-select" data-file-id="${file.id}" style="font-size: 12px; padding: 2px 4px; max-width: 120px;">
+				<option value="">Select...</option>
+				${options}
+			</select>
+		</td>`
+	}
 
 	function renderFileRow(file) {
 		const row = document.createElement('tr')
@@ -387,6 +797,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const participantDisplay = participantId
 			? `<span class="participant-link" data-participant-id="${participantId}" title="Click to filter by ${participantId}">${participantId}</span>`
 			: '<span style="color: #9ca3af; font-style: italic;">Unassigned</span>'
+
+		const referenceCell = renderReferenceCell(file)
 
 		row.innerHTML = `
 			<td class="checkbox-cell">
@@ -410,6 +822,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					${file.data_type && file.data_type !== 'Unknown' ? file.data_type : '-'}
 				</span>
 			</td>
+			${referenceCell}
 			<td>${file.source || '-'}</td>
 			<td>${file.grch_version || '-'}</td>
 			<td>${file.row_count ? file.row_count.toLocaleString() : '-'}</td>
@@ -432,6 +845,48 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				</button>
 			</td>
 		`
+
+		// Reference select handler
+		const refSelect = row.querySelector('.reference-select')
+		if (refSelect) {
+			// Load current reference value
+			loadFileReference(file.id, refSelect)
+
+			refSelect.addEventListener('change', async (e) => {
+				e.stopPropagation()
+				const fileId = parseInt(e.target.dataset.fileId)
+				const refFileId = e.target.value ? parseInt(e.target.value) : null
+
+				// Find matching index file
+				let refIndexFileId = null
+				if (refFileId) {
+					const refFile = allFiles.find((f) => f.id === refFileId)
+					if (refFile) {
+						const refPath = refFile.file_path
+						const expectedIndexPath = refPath + '.fai'
+						const indexFile = allFiles.find(
+							(f) =>
+								f.file_path === expectedIndexPath ||
+								f.file_path === refPath.replace(/\.(fa|fasta)$/, '.fa.fai'),
+						)
+						if (indexFile) {
+							refIndexFileId = indexFile.id
+						}
+					}
+				}
+
+				try {
+					await invoke('update_file_reference', {
+						fileId,
+						referenceFileId: refFileId,
+						referenceIndexFileId: refIndexFileId,
+					})
+				} catch (error) {
+					console.error('Failed to update file reference:', error)
+					alert(`Failed to update reference: ${error}`)
+				}
+			})
+		}
 
 		// Open finder button
 		row.querySelector('.open-finder-btn').addEventListener('click', async (e) => {
@@ -461,19 +916,57 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Checkbox handler
+		// Checkbox handler with shift-click support
 		const checkbox = row.querySelector('.file-checkbox')
-		checkbox.addEventListener('change', (e) => {
-			const fileId = parseInt(e.target.dataset.id)
-			if (e.target.checked) {
-				if (!selectedFileIds.includes(fileId)) {
-					selectedFileIds.push(fileId)
+		const setFileSelected = (targetId, selected) => {
+			if (selected) {
+				if (!selectedFileIds.includes(targetId)) {
+					selectedFileIds.push(targetId)
 				}
-				row.classList.add('selected')
 			} else {
-				selectedFileIds = selectedFileIds.filter((id) => id !== fileId)
-				row.classList.remove('selected')
+				selectedFileIds = selectedFileIds.filter((id) => id !== targetId)
 			}
+
+			const targetRow = document.querySelector(`tr[data-file-id="${targetId}"]`)
+			if (targetRow) {
+				targetRow.classList.toggle('selected', selected)
+				const cb = targetRow.querySelector('.file-checkbox')
+				if (cb) cb.checked = selected
+			}
+		}
+
+		checkbox.addEventListener('click', (e) => {
+			const fileId = parseInt(e.target.dataset.id)
+			if (e.shiftKey && lastClickedFileId !== null) {
+				isRangeSelecting = true
+				const ids = filesToDisplay.map((f) => f.id)
+				const start = ids.indexOf(lastClickedFileId)
+				const end = ids.indexOf(fileId)
+				const targetChecked = checkbox.checked
+
+				if (start !== -1 && end !== -1) {
+					const from = Math.min(start, end)
+					const to = Math.max(start, end)
+					for (let i = from; i <= to; i++) {
+						setFileSelected(ids[i], targetChecked)
+					}
+				} else {
+					setFileSelected(fileId, targetChecked)
+				}
+
+				updateDeleteButton()
+				updateSelectAllCheckbox()
+				updateActionButtons()
+				syncSelectionToSessionStorage()
+				isRangeSelecting = false
+			}
+			lastClickedFileId = fileId
+		})
+
+		checkbox.addEventListener('change', (e) => {
+			if (isRangeSelecting) return
+			const fileId = parseInt(e.target.dataset.id)
+			setFileSelected(fileId, e.target.checked)
 			updateDeleteButton()
 			updateSelectAllCheckbox()
 			updateActionButtons()
@@ -491,8 +984,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			) {
 				return
 			}
-			checkbox.checked = !checkbox.checked
-			checkbox.dispatchEvent(new Event('change'))
+			const fileId = parseInt(row.dataset.fileId)
+			const newChecked = !selectedFileIds.includes(fileId)
+			checkbox.checked = newChecked
+			setFileSelected(fileId, newChecked)
+			updateDeleteButton()
+			updateSelectAllCheckbox()
+			updateActionButtons()
+			syncSelectionToSessionStorage()
+			lastClickedFileId = fileId
 		})
 
 		row.style.cursor = 'pointer'
@@ -509,8 +1009,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		tbody.innerHTML = ''
 
+		const searchableFiles = getFilteredNonReferenceFiles().filter(matchesFileSearch)
+		updateFileTypeFilterUI(searchableFiles)
+
 		// Get files to display - apply all filters and store at module level
-		filesToDisplay = allFiles.filter(matchesDataTypeFilter).filter(matchesFileSearch)
+		filesToDisplay = searchableFiles.filter(matchesFileTypeFilter)
 
 		// Update page title (keep it simple, file count is in badge)
 		const dataView = document.getElementById('data-view')
@@ -548,6 +1051,127 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		updateSelectAllCheckbox()
 		updateDeleteButton()
 		updateActionButtons()
+	}
+
+	function renderReferencesPanel() {
+		const tbody = document.getElementById('references-table-body')
+		const emptyState = document.getElementById('references-empty-state')
+		const tableWrapper = document.querySelector('#reference-data-section .files-table-wrapper')
+		if (!tbody) return
+		tbody.innerHTML = ''
+
+		const referenceFiles = allFiles
+			.filter((file) => isReferenceDataType(file?.data_type))
+			.filter(matchesFileSearch)
+
+		// Clean up reference selections (remove files that don't exist anymore)
+		selectedReferenceIds = selectedReferenceIds.filter((id) =>
+			referenceFiles.some((f) => f.id === id),
+		)
+
+		if (referenceFiles.length === 0) {
+			if (emptyState) emptyState.style.display = 'flex'
+			if (tableWrapper) tableWrapper.style.display = 'none'
+			updateReferenceSelectionUI()
+			return
+		}
+		if (emptyState) emptyState.style.display = 'none'
+		if (tableWrapper) tableWrapper.style.display = 'block'
+
+		referenceFiles.forEach((file) => {
+			const row = document.createElement('tr')
+			row.className = 'file-row'
+			row.dataset.fileId = file.id
+			const isSelected = selectedReferenceIds.includes(file.id)
+			if (isSelected) row.classList.add('selected')
+
+			const fileName = file.file_path.split('/').pop()
+			row.innerHTML = `
+				<td class="checkbox-cell">
+					<input type="checkbox" class="ref-checkbox" data-id="${file.id}" ${isSelected ? 'checked' : ''} />
+				</td>
+				<td class="col-file" title="${file.file_path}">
+					<span style="color: #94a3b8; font-size: 12px;">${file.file_path.split('/').slice(-2, -1)[0] || ''}${
+						file.file_path.split('/').slice(-2, -1)[0] ? '/' : ''
+					}</span>
+					<span style="font-weight: 500; color: #1e293b;">${fileName}</span>
+				</td>
+				<td class="col-type">${file.data_type || '-'}</td>
+				<td class="col-grch">${file.grch_version || '-'}</td>
+				<td class="col-actions">
+					<button class="show-in-folder-btn" title="Show in Finder">
+						<img src="assets/icons/folder-open.svg" width="16" height="16" alt="" />
+					</button>
+				</td>
+			`
+
+			// Checkbox handler
+			const checkbox = row.querySelector('.ref-checkbox')
+			checkbox.addEventListener('change', (e) => {
+				const fileId = parseInt(e.target.dataset.id)
+				if (e.target.checked) {
+					if (!selectedReferenceIds.includes(fileId)) {
+						selectedReferenceIds.push(fileId)
+					}
+					row.classList.add('selected')
+				} else {
+					selectedReferenceIds = selectedReferenceIds.filter((id) => id !== fileId)
+					row.classList.remove('selected')
+				}
+				updateReferenceSelectionUI()
+			})
+
+			// Make row clickable
+			row.addEventListener('click', (e) => {
+				if (
+					e.target.tagName === 'INPUT' ||
+					e.target.tagName === 'BUTTON' ||
+					e.target.closest('.actions-cell') ||
+					e.target.closest('.checkbox-cell')
+				) {
+					return
+				}
+				checkbox.checked = !checkbox.checked
+				checkbox.dispatchEvent(new Event('change'))
+			})
+			row.style.cursor = 'pointer'
+
+			row.querySelector('.show-in-folder-btn')?.addEventListener('click', async (e) => {
+				e.stopPropagation()
+				try {
+					await invoke('show_in_folder', { filePath: file.file_path })
+				} catch (error) {
+					console.error('Failed to show file in folder:', error)
+				}
+			})
+			tbody.appendChild(row)
+		})
+
+		updateReferenceSelectionUI()
+	}
+
+	function updateReferenceSelectionUI() {
+		const toolbar = document.getElementById('reference-selection-toolbar')
+		const countSpan = document.getElementById('reference-selection-count')
+		const selectAllCheckbox = document.getElementById('select-all-references')
+
+		if (toolbar) {
+			toolbar.style.display = selectedReferenceIds.length > 0 ? 'flex' : 'none'
+		}
+		if (countSpan) {
+			countSpan.textContent = selectedReferenceIds.length.toString()
+		}
+
+		// Update select-all checkbox state
+		if (selectAllCheckbox) {
+			const referenceFiles = allFiles.filter((file) => isReferenceDataType(file?.data_type))
+			const allSelected =
+				referenceFiles.length > 0 &&
+				referenceFiles.every((f) => selectedReferenceIds.includes(f.id))
+			const someSelected = referenceFiles.some((f) => selectedReferenceIds.includes(f.id))
+			selectAllCheckbox.checked = allSelected
+			selectAllCheckbox.indeterminate = someSelected && !allSelected
+		}
 	}
 
 	// Virtual scrolling removed; table now renders all rows so scroll height matches dataset size.
@@ -590,7 +1214,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const fileCount = selectedFileIds.length
 
 		if (fileCount > 0 && viewMode === 'participants') {
-			if (runText) runText.textContent = `Run Pipeline`
+			if (runText) runText.textContent = `Run Flow`
 
 			if (selectionActionsGroup) {
 				const countText = document.getElementById('selection-count-text')
@@ -600,7 +1224,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				selectionActionsGroup.style.display = 'flex'
 			}
 		} else {
-			if (runText) runText.textContent = 'Run Pipeline'
+			if (runText) runText.textContent = 'Run Flow'
 			if (selectionActionsGroup) {
 				selectionActionsGroup.style.display = 'none'
 			}
@@ -626,6 +1250,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// Clear all file selections
 	function clearAllSelections() {
 		selectedFileIds = []
+		lastClickedFileId = null
 
 		// Remove selected class from all rows
 		document.querySelectorAll('.file-row.selected').forEach((row) => {
@@ -645,7 +1270,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	// Update queue status indicator with count and time estimate
-	function updateQueueStatusIndicator(globalInfo) {
+	function _updateQueueStatusIndicator(globalInfo) {
+		if (QUEUE_DISABLED) return
 		const _statusIndicator = document.getElementById('queue-status-indicator')
 		const pendingCountEl = document.getElementById('pending-count')
 		const timeEstimateEl = document.getElementById('queue-time-estimate-display')
@@ -681,7 +1307,15 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	}
 
 	async function updateQueueButton() {
-		try {
+		// Queue disabled - hide UI elements and return early
+		const queueCard = document.getElementById('queue-card-container')
+		const clearQueueBtn = document.getElementById('clear-queue-btn')
+		const processQueueBtn = document.getElementById('process-queue-btn')
+		if (queueCard) queueCard.style.display = 'none'
+		if (clearQueueBtn) clearQueueBtn.style.display = 'none'
+		if (processQueueBtn) processQueueBtn.style.display = 'none'
+		return
+		/* try {
 			// Always fetch fresh queue info to ensure UI is in sync with backend
 			const globalInfo = await invoke('get_queue_info', { fileId: null })
 			globalQueueInfo = globalInfo
@@ -739,7 +1373,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 		} catch (error) {
 			console.error('Error getting queue status:', error)
-		}
+		} */
 	}
 
 	// ============================================================================
@@ -747,7 +1381,8 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	// ============================================================================
 
 	async function fetchQueueInfo() {
-		try {
+		return
+		/* try {
 			// Get global queue info
 			const globalInfo = await invoke('get_queue_info', { fileId: null })
 			globalQueueInfo = globalInfo
@@ -799,7 +1434,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 		} catch (error) {
 			console.error('Error fetching queue info:', error)
-		}
+		} */
 	}
 
 	// ============================================================================
@@ -1400,58 +2035,58 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		updateEditorPreview()
 	}
 
-	// Run Pipeline Modal state
-	let runPipelineDatasetName = null
-	let runPipelineDatasetEntry = null
+	// Run Flow Modal state
+	let runFlowDatasetName = null
+	let runFlowDatasetEntry = null
 
-	function openRunPipelineModal(datasetName, datasetEntry) {
-		runPipelineDatasetName = datasetName
-		runPipelineDatasetEntry = datasetEntry
+	function openRunFlowModal(datasetName, datasetEntry) {
+		runFlowDatasetName = datasetName
+		runFlowDatasetEntry = datasetEntry
 
-		const modal = document.getElementById('run-pipeline-modal')
+		const modal = document.getElementById('run-flow-modal')
 		if (modal) modal.classList.remove('hidden')
 
 		// Reset to mock selection
-		const mockRadio = document.querySelector('input[name="pipeline-data-type"][value="mock"]')
+		const mockRadio = document.querySelector('input[name="flow-data-type"][value="mock"]')
 		if (mockRadio) mockRadio.checked = true
 	}
 
-	function closeRunPipelineModal() {
-		const modal = document.getElementById('run-pipeline-modal')
+	function closeRunFlowModal() {
+		const modal = document.getElementById('run-flow-modal')
 		if (modal) modal.classList.add('hidden')
-		runPipelineDatasetName = null
-		runPipelineDatasetEntry = null
+		runFlowDatasetName = null
+		runFlowDatasetEntry = null
 	}
 
-	async function confirmRunPipeline() {
-		const selectedType = document.querySelector('input[name="pipeline-data-type"]:checked')?.value
-		if (!selectedType || !runPipelineDatasetName) {
-			closeRunPipelineModal()
+	async function confirmRunFlow() {
+		const selectedType = document.querySelector('input[name="flow-data-type"]:checked')?.value
+		if (!selectedType || !runFlowDatasetName) {
+			closeRunFlowModal()
 			return
 		}
 
-		const datasetName = runPipelineDatasetName
-		const entry = runPipelineDatasetEntry
-		closeRunPipelineModal()
+		const datasetName = runFlowDatasetName
+		const entry = runFlowDatasetEntry
+		closeRunFlowModal()
 
-		// Navigate to pipelines and pre-select this dataset
-		if (window.__pipelinesModule?.openRunPipelineWithDataset) {
-			// openRunPipelineWithDataset handles navigation internally
-			window.__pipelinesModule.openRunPipelineWithDataset({
+		// Navigate to flows and pre-select this dataset
+		if (window.__flowsModule?.openRunFlowWithDataset) {
+			// openRunFlowWithDataset handles navigation internally
+			window.__flowsModule.openRunFlowWithDataset({
 				name: datasetName,
 				dataType: selectedType,
 				entry,
 			})
 		} else if (window.navigateTo) {
-			// Fallback: store in sessionStorage for pipelines to pick up
+			// Fallback: store in sessionStorage for flows to pick up
 			sessionStorage.setItem(
-				'pendingPipelineRun',
+				'pendingFlowRun',
 				JSON.stringify({
 					datasetName,
 					dataType: selectedType,
 				}),
 			)
-			window.navigateTo('pipelines')
+			window.navigateTo('flows')
 		}
 	}
 
@@ -2233,7 +2868,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						f.file_path?.startsWith('syft://')
 					const entry = {
 						id: entryId,
-						// Full URL for pipeline runs (resolves to local path)
+						// Full URL for flow runs (resolves to local path)
 						url: isUrl
 							? f.file_path
 							: buildDatasetAssetSyftUrl(currentUserEmail, name, f.file_path),
@@ -2256,7 +2891,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						: `priv-${idx}-${i}-${Date.now()}`
 					const entry = {
 						id: entryId,
-						// Local file path for pipeline runs
+						// Local file path for flow runs
 						file_path: f.file_path,
 					}
 					if (f.participant_id) {
@@ -2266,7 +2901,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				})
 
 				// twin_list schema:
-				// - url: points to the mock CSV file (for pipeline sample sheets)
+				// - url: points to the mock CSV file (for flow sample sheets)
 				// - private: { url, type } - declares type so consumers know structure
 				// - mock: { url, type, entries } - public entries with URLs
 				// - mappings.private.entries: stores private entries for backend
@@ -2470,9 +3105,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 								<polygon points="5 3 19 12 5 21 5 3"></polygon>
 							</svg>
 						</button>
-						<button class="dataset-action-btn btn-run-pipeline" data-name="${
+						<button class="dataset-action-btn btn-run-flow" data-name="${
 							dataset.name
-						}" title="Run pipeline with this dataset">
+						}" title="Run flow with this dataset">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
 							</svg>
@@ -2530,10 +3165,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 
-			// Run Pipeline button
-			card.querySelector('.btn-run-pipeline')?.addEventListener('click', (e) => {
+			// Run Flow button
+			card.querySelector('.btn-run-flow')?.addEventListener('click', (e) => {
 				e.stopPropagation()
-				openRunPipelineModal(dataset.name, entry)
+				openRunFlowModal(dataset.name, entry)
 			})
 
 			// Publish/Unpublish button
@@ -2807,6 +3442,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			}
 
 			renderFilesPanel()
+			renderReferencesPanel()
 			updateActionButtons()
 
 			// Fetch queue information for pending files
@@ -2848,6 +3484,149 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	function initializeDataTab() {
 		void refreshCurrentUserEmail()
 		setViewMode(viewMode)
+		void ensureDownloadProgressListener()
+		if (queueIntervalId) {
+			clearInterval(queueIntervalId)
+			queueIntervalId = null
+		}
+		const sampleDataBtn = document.getElementById('sample-data-btn')
+		if (sampleDataBtn) {
+			sampleDataBtn.addEventListener('click', () => toggleSampleDataPanel())
+		}
+		const sampleDataClose = document.getElementById('sample-data-close')
+		if (sampleDataClose) {
+			sampleDataClose.addEventListener('click', () => toggleSampleDataPanel(false))
+		}
+		const sampleDataPanel = document.getElementById('sample-data-panel')
+		if (sampleDataPanel) {
+			sampleDataPanel.addEventListener('click', (e) => {
+				const btn = e.target.closest('[data-sample-id]')
+				if (!btn) return
+				const sampleId = btn.getAttribute('data-sample-id')
+				void handleSampleDataImport(sampleId, btn)
+			})
+		}
+		const downloadGrchBtn = document.getElementById('download-grch38-btn')
+		if (downloadGrchBtn) {
+			downloadGrchBtn.addEventListener('click', async () => {
+				const progress = document.getElementById('grch38-download-progress')
+				const progressBar = progress?.querySelector('.sample-data-progress-bar')
+				const progressText = progress?.querySelector('.sample-data-progress-text')
+				try {
+					if (activeDownloads.has('grch38')) {
+						openDownloadModal({
+							downloadId: 'grch38',
+							title: 'Downloading GRCh38 Reference',
+							body: 'Download in progress. Closing this window will not stop the download.',
+							links: [
+								{
+									label: 'GRCh38 reference (.fa)',
+									href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
+								},
+								{
+									label: 'GRCh38 index (.fai)',
+									href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
+								},
+							],
+						})
+						return
+					}
+					const modalHandle = openDownloadModal({
+						downloadId: 'grch38',
+						title: 'Downloading GRCh38 Reference',
+						body: 'This download can be large. Closing this window will not stop the download.',
+						links: [
+							{
+								label: 'GRCh38 reference (.fa)',
+								href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
+							},
+							{
+								label: 'GRCh38 index (.fai)',
+								href: 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai',
+							},
+						],
+					})
+					if (progress) progress.removeAttribute('hidden')
+					if (progressBar) {
+						progressBar.classList.remove('is-determinate')
+						progressBar.style.width = '100%'
+					}
+					if (progressText) progressText.textContent = 'Downloading GRCh38…'
+					activeDownloads.add('grch38')
+					const result = await invoke('fetch_reference_data_with_progress')
+					const referenceDir = result?.reference_dir || result?.referenceDir
+					if (referenceDir) {
+						const fileMetadata = {}
+						const refPath = `${referenceDir}/GRCh38_full_analysis_set_plus_decoy_hla.fa`
+						const refIndexPath = `${referenceDir}/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai`
+						fileMetadata[refPath] = {
+							participant_id: null,
+							data_type: 'Reference',
+							source: '1000 Genomes',
+							grch_version: 'GRCh38',
+						}
+						fileMetadata[refIndexPath] = {
+							participant_id: null,
+							data_type: 'ReferenceIndex',
+							source: '1000 Genomes',
+							grch_version: 'GRCh38',
+						}
+						await invoke('import_files_pending', { fileMetadata })
+						await loadData()
+						renderReferencesPanel()
+					}
+					if (modalHandle) modalHandle.close()
+				} catch (error) {
+					console.error('Failed to download GRCh38 reference:', error)
+					await dialog.message(`Failed to download GRCh38: ${error}`, {
+						title: 'Reference Download Error',
+						type: 'error',
+					})
+				} finally {
+					activeDownloads.delete('grch38')
+					if (progress) progress.setAttribute('hidden', '')
+				}
+			})
+		}
+		// Reference selection handlers
+		const selectAllRefsCheckbox = document.getElementById('select-all-references')
+		if (selectAllRefsCheckbox) {
+			selectAllRefsCheckbox.addEventListener('change', (e) => {
+				const referenceFiles = allFiles.filter((file) => isReferenceDataType(file?.data_type))
+				if (e.target.checked) {
+					selectedReferenceIds = referenceFiles.map((f) => f.id)
+				} else {
+					selectedReferenceIds = []
+				}
+				renderReferencesPanel()
+			})
+		}
+
+		const deleteRefsBtn = document.getElementById('delete-selected-refs-btn')
+		if (deleteRefsBtn) {
+			deleteRefsBtn.addEventListener('click', async () => {
+				if (selectedReferenceIds.length === 0) return
+				const confirmed = await dialog.confirm(
+					`Are you sure you want to delete ${selectedReferenceIds.length} reference file${selectedReferenceIds.length === 1 ? '' : 's'}? This cannot be undone.`,
+					{ title: 'Delete References', type: 'warning' },
+				)
+				if (confirmed) {
+					try {
+						await invoke('delete_files_bulk', { fileIds: selectedReferenceIds })
+						selectedReferenceIds = []
+						await loadData()
+						renderReferencesPanel()
+					} catch (error) {
+						console.error('Failed to delete references:', error)
+						await dialog.message(`Failed to delete references: ${error}`, {
+							title: 'Delete Error',
+							type: 'error',
+						})
+					}
+				}
+			})
+		}
+
 		// View toggle (Participants vs Datasets)
 		const toggleButtons = document.querySelectorAll('#data-view-toggle .pill-button')
 		toggleButtons.forEach((btn) => {
@@ -2960,20 +3739,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Run Pipeline modal event handlers
-		const runPipelineClose = document.getElementById('run-pipeline-modal-close')
-		if (runPipelineClose) {
-			runPipelineClose.addEventListener('click', closeRunPipelineModal)
+		// Run Flow modal event handlers
+		const runFlowClose = document.getElementById('run-flow-modal-close')
+		if (runFlowClose) {
+			runFlowClose.addEventListener('click', closeRunFlowModal)
 		}
 
-		const runPipelineCancel = document.getElementById('run-pipeline-cancel')
-		if (runPipelineCancel) {
-			runPipelineCancel.addEventListener('click', closeRunPipelineModal)
+		const runFlowCancel = document.getElementById('run-flow-cancel')
+		if (runFlowCancel) {
+			runFlowCancel.addEventListener('click', closeRunFlowModal)
 		}
 
-		const runPipelineConfirm = document.getElementById('run-pipeline-confirm')
-		if (runPipelineConfirm) {
-			runPipelineConfirm.addEventListener('click', confirmRunPipeline)
+		const runFlowConfirm = document.getElementById('run-flow-confirm')
+		if (runFlowConfirm) {
+			runFlowConfirm.addEventListener('click', confirmRunFlow)
 		}
 
 		// Per-asset mode toggles are wired up in renderDatasetAssets()
@@ -3036,8 +3815,29 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Data type filter removed - showing all types
-		currentDataTypeFilter = 'All'
+		document.querySelectorAll('.file-type-filter-chip').forEach((chip) => {
+			chip.addEventListener('click', () => {
+				const filterKey = chip.dataset.fileTypeFilter
+				if (!filterKey) return
+
+				if (filterKey === 'all') {
+					if (isAllFileTypeFiltersEnabled()) {
+						activeFileTypeFilters = new Set()
+					} else {
+						activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
+					}
+					renderFilesPanel()
+					return
+				}
+
+				if (activeFileTypeFilters.has(filterKey)) {
+					activeFileTypeFilters.delete(filterKey)
+				} else {
+					activeFileTypeFilters.add(filterKey)
+				}
+				renderFilesPanel()
+			})
+		})
 
 		// Sortable headers
 		document.querySelectorAll('.sortable-header').forEach((header) => {
@@ -3153,12 +3953,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					sessionStorage.removeItem('preselectedDatasetOwner')
 					sessionStorage.removeItem('preselectedAssetKeys')
 
-					// Trigger pipeline run modal via global pipeline module
-					if (
-						window.pipelineModule &&
-						typeof window.pipelineModule.showDataRunModal === 'function'
-					) {
-						await window.pipelineModule.showDataRunModal()
+					// Trigger flow run modal via global flow module
+					if (window.flowModule && typeof window.flowModule.showDataRunModal === 'function') {
+						await window.flowModule.showDataRunModal()
 					} else {
 						// Fallback: navigate if module not available
 						const navigateTo =
@@ -3169,115 +3966,62 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			})
 		}
 
-		// Queue processor button
-		const processQueueBtn = document.getElementById('process-queue-btn')
-		if (processQueueBtn) {
-			processQueueBtn.addEventListener('click', async () => {
-				try {
-					const isRunning = await invoke('get_queue_processor_status')
-
-					if (isRunning) {
-						await invoke('pause_queue_processor')
-					} else {
-						await invoke('resume_queue_processor')
-					}
-
-					// Immediately refresh queue info to get accurate state
-					await fetchQueueInfo()
-					await updateQueueButton()
-					await loadData()
-				} catch (error) {
-					alert(`Error toggling queue processor: ${error}`)
-				}
-			})
-		}
-
-		// Clear queue button
+		// Queue processor disabled - hide UI elements
+		const queueCard = document.getElementById('queue-card-container')
 		const clearQueueBtn = document.getElementById('clear-queue-btn')
-		if (clearQueueBtn) {
-			clearQueueBtn.addEventListener('click', async () => {
-				// Get queue info to include both pending and processing files
-				const queueInfo = await invoke('get_queue_info', { fileId: null })
-				const totalQueueCount = queueInfo.total_pending + queueInfo.processing_count
+		const processQueueBtn = document.getElementById('process-queue-btn')
+		if (queueCard) queueCard.style.display = 'none'
+		if (clearQueueBtn) clearQueueBtn.style.display = 'none'
+		if (processQueueBtn) processQueueBtn.style.display = 'none'
+	}
 
-				if (totalQueueCount === 0) {
-					return
-				}
-
-				const processingText =
-					queueInfo.processing_count > 0
-						? ` (including ${queueInfo.processing_count} currently being processed)`
-						: ''
-
-				const confirmed = await dialog.confirm(
-					`Are you sure you want to clear the queue? This will remove ${totalQueueCount} file${
-						totalQueueCount === 1 ? '' : 's'
-					}${processingText} from the queue. This will stop any ongoing imports. This action cannot be undone.`,
-					{ title: 'Clear Queue', type: 'warning' },
-				)
-
-				if (confirmed) {
-					try {
-						const deleted = await invoke('clear_pending_queue')
-						await dialog.message(
-							`Cleared ${deleted} file${deleted === 1 ? '' : 's'} from the queue.`,
-							{ title: 'Queue Cleared', type: 'info' },
-						)
-						await loadData()
-					} catch (error) {
-						await dialog.message(`Error clearing queue: ${error}`, {
-							title: 'Error',
-							type: 'error',
-						})
-					}
-				}
+	async function ensureDownloadProgressListener() {
+		if (downloadProgressListener || !window.__TAURI__?.event?.listen) return
+		downloadProgressListener = await window.__TAURI__.event.listen('download-progress', (event) => {
+			const payload = event?.payload || {}
+			const id = payload.id
+			if (!id) return
+			downloadProgressCache.set(id, {
+				downloaded: payload.downloaded,
+				total: payload.total,
+				file: payload.file,
 			})
-		}
-
-		// Queue processor interval
-		if (!queueIntervalId) {
-			queueIntervalId = setInterval(async () => {
-				const isDataTabActive = document.getElementById('data-view')?.classList.contains('active')
-				if (!isDataTabActive) return
-
-				// Always fetch fresh queue info from backend
-				await fetchQueueInfo()
-
-				// Update button and UI based on fresh state
-				await updateQueueButton()
-
-				// Get fresh state from backend
-				const pendingCount = globalQueueInfo?.total_pending || 0
-				const processingCount = globalQueueInfo?.processing_count || 0
-				const hasQueueItems = pendingCount > 0 || processingCount > 0
-				const isRunning = globalQueueInfo?.is_processor_running || false
-
-				if (hasQueueItems) {
-					// Update file list to reflect status changes
-					renderFilesPanel()
-
-					// Only do full data reload if processor is running (to catch completions)
-					// When paused, we still update UI but don't need aggressive reloads
-					if (isRunning) {
-						await loadData()
-					}
-				} else {
-					// No queue items - hide queue card and refresh data
-					await loadData()
+			if (downloadModalHandle) {
+				const modalId = downloadModalHandle.downloadId
+				if (modalId === id || (id === 'sample_data' && modalId.startsWith('sample_'))) {
+					downloadModalHandle.setProgress(payload.downloaded, payload.total, payload.file)
 				}
-			}, 2000) // Update every 2 seconds when data tab is active
-		}
-
-		void updateQueueButton()
+			}
+		})
 	}
 
 	function refreshExistingFilePaths() {
 		existingFilePaths = new Set(allFiles.map((f) => f.file_path))
 	}
 
+	function inferShapeFromFiles(files) {
+		if (!files || files.length === 0) return null
+		const types = [...new Set(files.map((f) => f.data_type).filter(Boolean))]
+		// If mixed types or unknown, return null (will default to GenotypeRecord)
+		if (types.length !== 1) return null
+		const dataType = types[0]
+		switch (dataType) {
+			case 'Aligned':
+			case 'AlignedIndex':
+				return 'List[Record{participant_id: String, aligned_file: File, aligned_index: File, reference_file: File, reference_index: File, ref_version: String?}]'
+			case 'Variants':
+				return 'List[Record{participant_id: String, vcf_file: File, vcf_index: File?, reference_file: File?, ref_version: String?}]'
+			case 'Genotype':
+				return 'List[GenotypeRecord]'
+			default:
+				return null
+		}
+	}
+
 	function syncSelectionToSessionStorage() {
 		if (selectedFileIds.length > 0) {
-			// Get unique participant IDs from selected files
+			// Get selected files and unique participant IDs
+			const selectedFiles = allFiles.filter((f) => selectedFileIds.includes(f.id))
 			const participantIds = [
 				...new Set(
 					selectedFileIds
@@ -3293,13 +4037,20 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				),
 			]
 
-			// Sync to sessionStorage so pipelines view can detect it
+			// Infer shape from selected file types
+			const inferredShape = inferShapeFromFiles(selectedFiles)
+
+			// Sync to sessionStorage so flows view can detect it
 			sessionStorage.setItem('preselectedFileIds', JSON.stringify(selectedFileIds))
 			sessionStorage.setItem('preselectedParticipants', JSON.stringify(participantIds))
 			sessionStorage.setItem('preselectedDataType', 'real')
 			sessionStorage.setItem('preselectedDataSource', 'file_selection')
 			sessionStorage.removeItem('preselectedDatasetName')
-			sessionStorage.removeItem('preselectedDatasetShape')
+			if (inferredShape) {
+				sessionStorage.setItem('preselectedDatasetShape', inferredShape)
+			} else {
+				sessionStorage.removeItem('preselectedDatasetShape')
+			}
 			sessionStorage.removeItem('preselectedDatasetDataType')
 			sessionStorage.removeItem('preselectedDatasetOwner')
 			sessionStorage.removeItem('preselectedAssetKeys')

@@ -189,7 +189,12 @@ fn is_onboarded_home(home: &Path) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .trim();
-    !email.is_empty() && email != "setup@pending"
+    if email.is_empty() || email == "setup@pending" {
+        return false;
+    }
+
+    crate::commands::settings::private_key_is_readable_for_home_and_email(home, email)
+        .unwrap_or(false)
 }
 
 fn read_home_email(home: &Path) -> Option<String> {
@@ -292,7 +297,7 @@ fn try_acquire_profile_lock(home: &Path, create_home: bool) -> Result<ProfileLoc
 }
 
 fn resolve_vault_path_for_home(home: &Path) -> String {
-    let colocated = syftbox_sdk::syftbox::syc::vault_path_for_home(home);
+    let colocated = syftbox_sdk::syftbox::sbc::vault_path_for_home(home);
     colocated.to_string_lossy().to_string()
 }
 
@@ -606,7 +611,7 @@ pub fn acquire_selected_profile_lock(args: &[String]) -> Result<Option<ProfileLo
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     // Try direct canonicalization first
     if let Ok(canon) = fs::canonicalize(path) {
-        return canon;
+        return strip_windows_unc_prefix(canon);
     }
 
     // If path doesn't exist, canonicalize the longest existing ancestor and append the rest.
@@ -631,9 +636,26 @@ fn canonicalize_best_effort(path: &Path) -> PathBuf {
     }
 
     match fs::canonicalize(&current) {
-        Ok(canon_parent) => canon_parent.join(suffix),
+        Ok(canon_parent) => strip_windows_unc_prefix(canon_parent).join(suffix),
         Err(_) => path.to_path_buf(),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn strip_windows_unc_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    if let Some(stripped) = s.strip_prefix(r"//?/") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn strip_windows_unc_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn resolve_or_create_profile_for_home(
@@ -771,12 +793,21 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
     let picker_mode = env::var_os("BIOVAULT_PROFILE_PICKER").is_some()
         || env_flag_true("BIOVAULT_FORCE_PROFILE_PICKER");
     let should_show = picker_mode || store.force_picker_once;
+    let in_picker_ui = should_show;
 
     let mut profiles: Vec<ProfileSummary> = store
         .profiles
         .iter()
         .map(|p| summarize_profile(p, current.as_deref()))
         .collect();
+    if in_picker_ui {
+        for p in &mut profiles {
+            if p.is_current {
+                // In picker mode, allow "Open/Continue" on the current profile.
+                p.running = false;
+            }
+        }
+    }
     profiles.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
 
     let startup_message = if env::var_os("BIOVAULT_PROFILE_LOCK_CONFLICT").is_some() {
@@ -817,6 +848,7 @@ fn spawn_with_profile(
 ) -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| format!("Failed to locate current exe: {}", e))?;
     let mut cmd = Command::new(exe);
+    super::hide_console_window(&mut cmd);
     cmd.arg("--profile-id").arg(profile_id);
     if wait_for_lock {
         cmd.arg("--wait-for-profile-lock");
@@ -855,6 +887,7 @@ fn spawn_with_profile(
 fn spawn_picker_instance() -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| format!("Failed to locate current exe: {}", e))?;
     let mut cmd = Command::new(exe);
+    super::hide_console_window(&mut cmd);
     cmd.env_remove("BIOVAULT_HOME");
     cmd.env_remove("BIOVAULT_PROFILE_PICKER");
     cmd.env_remove("BIOVAULT_PROFILE_LOCK_CONFLICT");
@@ -988,10 +1021,13 @@ pub fn profiles_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", &entry.biovault_home);
     env::set_var("BIOVAULT_PROFILE_ID", &entry.id);
+    // Ensure SYFTBOX env matches the new profile before resolving SBC_VAULT.
+    env::set_var("SYFTBOX_DATA_DIR", &entry.biovault_home);
+    env::remove_var("SBC_VAULT");
 
-    // Ensure SYC_VAULT matches the single explicit vault location.
-    biovault::config::require_syc_vault_env()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
+    // Ensure SBC_VAULT matches the single explicit vault location.
+    biovault::config::require_sbc_vault_env()
+        .map_err(|e| format!("Failed to resolve SBC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1094,10 +1130,13 @@ pub fn profiles_create_and_switch_in_place(
     // Update environment variables
     env::set_var("BIOVAULT_HOME", home.to_string_lossy().to_string());
     env::set_var("BIOVAULT_PROFILE_ID", &profile_id);
+    // Ensure SYFTBOX env matches the new profile before resolving SBC_VAULT.
+    env::set_var("SYFTBOX_DATA_DIR", home.to_string_lossy().to_string());
+    env::remove_var("SBC_VAULT");
 
-    // Ensure SYC_VAULT matches the single explicit vault location.
-    biovault::config::require_syc_vault_env()
-        .map_err(|e| format!("Failed to resolve SYC_VAULT: {e}"))?;
+    // Ensure SBC_VAULT matches the single explicit vault location.
+    biovault::config::require_sbc_vault_env()
+        .map_err(|e| format!("Failed to resolve SBC_VAULT: {e}"))?;
 
     // Ensure home directory exists
     fs::create_dir_all(&home).map_err(|e| format!("Failed to create profile home: {}", e))?;
@@ -1420,12 +1459,12 @@ pub fn register_current_profile_email(email: &str) -> Result<(), String> {
 
     let cached_fingerprint = (|| {
         let slug = syftbox_sdk::sanitize_identity(email.trim());
-        let vault = biovault::config::resolve_syc_vault_path().ok()?;
+        let vault = biovault::config::resolve_sbc_vault_path().ok()?;
         let bundle_path = vault.join("bundles").join(format!("{slug}.json"));
         if !bundle_path.exists() {
             return None;
         }
-        let info = biovault::syftbox::syc::parse_public_bundle_file(&bundle_path).ok()?;
+        let info = biovault::syftbox::sbc::parse_public_bundle_file(&bundle_path).ok()?;
         Some(info.fingerprint)
     })();
 

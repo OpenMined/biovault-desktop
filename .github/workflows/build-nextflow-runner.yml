@@ -1,6 +1,20 @@
 name: Build and push nextflow-runner image
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/windows/Dockerfile.nextflow-runner'
+      - 'docker/nextflow-runner-arm64/**'
+      - 'docker/test-nextflow-runner.sh'
+      - '.github/workflows/build-nextflow-runner.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker/windows/Dockerfile.nextflow-runner'
+      - 'docker/nextflow-runner-arm64/**'
+      - 'docker/test-nextflow-runner.sh'
+      - '.github/workflows/build-nextflow-runner.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -11,38 +25,188 @@ on:
         description: "Also publish :latest"
         required: true
         default: "true"
-      nextflow_base_image:
-        description: "Base Nextflow image"
-        required: true
-        default: "nextflow/nextflow:25.10.2"
       docker_cli_version:
         description: "Docker CLI version to install"
         required: true
         default: "28.0.1"
+      podman_version:
+        description: "Podman CLI version to install"
+        required: true
+        default: "5.3.1"
       push:
         description: "Push image to GHCR"
         required: true
         default: "true"
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: openmined/nextflow-runner
+  DEFAULT_TAG: "25.10.2"
+  DEFAULT_DOCKER_CLI_VERSION: "28.0.1"
+  DEFAULT_PODMAN_VERSION: "5.3.1"
+
 jobs:
-  build-nextflow-runner:
-    name: Build and push nextflow-runner image
+  build-amd64:
+    name: Build amd64 image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/nextflow-runner
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+          echo "docker_cli_version=${{ inputs.docker_cli_version || env.DEFAULT_DOCKER_CLI_VERSION }}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build amd64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/windows
+          file: docker/windows/Dockerfile.nextflow-runner
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+          outputs: type=docker,dest=/tmp/nextflow-runner-amd64.tar
+          build-args: |
+            NEXTFLOW_BASE_IMAGE=nextflow/nextflow:${{ steps.vars.outputs.tag }}
+            DOCKER_CLI_VERSION=${{ steps.vars.outputs.docker_cli_version }}
+
+      - name: Upload amd64 image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextflow-runner-amd64
+          path: /tmp/nextflow-runner-amd64.tar
+          retention-days: 1
+
+  build-arm64:
+    name: Build arm64 image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+          echo "docker_cli_version=${{ inputs.docker_cli_version || env.DEFAULT_DOCKER_CLI_VERSION }}" >> $GITHUB_OUTPUT
+          echo "podman_version=${{ inputs.podman_version || env.DEFAULT_PODMAN_VERSION }}" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build arm64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/nextflow-runner-arm64
+          file: docker/nextflow-runner-arm64/Dockerfile.nextflow-runner
+          platforms: linux/arm64
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+          outputs: type=docker,dest=/tmp/nextflow-runner-arm64.tar
+          build-args: |
+            DOCKER_CLI_VERSION=${{ steps.vars.outputs.docker_cli_version }}
+            PODMAN_VERSION=${{ steps.vars.outputs.podman_version }}
+            NEXTFLOW_VERSION=${{ steps.vars.outputs.tag }}
+
+      - name: Upload arm64 image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp/nextflow-runner-arm64.tar
+          retention-days: 1
+
+  # Test amd64 image using local artifact
+  test-amd64:
+    name: Test amd64 image
+    needs: build-amd64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
+      - name: Download amd64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-amd64
+          path: /tmp
+
+      - name: Load and test amd64 image
+        run: |
+          docker load -i /tmp/nextflow-runner-amd64.tar
+          export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64"
+          export PLATFORM="linux/amd64"
+          export EXPECTED_ARCH="amd64"
+          chmod +x docker/test-nextflow-runner.sh
+          docker/test-nextflow-runner.sh
+
+  # Push amd64 image after tests pass
+  push-amd64:
+    name: Push amd64 image
+    needs: test-amd64
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
+      - name: Download amd64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-amd64
+          path: /tmp
+
+      - name: Load amd64 image
+        run: docker load -i /tmp/nextflow-runner-amd64.tar
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -51,26 +215,129 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ inputs.tag }}
-            type=raw,value=latest,enable=${{ inputs.publish_latest == 'true' }}
+      - name: Push amd64 image
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-amd64
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+  # Test arm64 image using local artifact
+  test-arm64:
+    name: Test arm64 image
+    needs: build-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
         with:
-          context: docker/windows
-          file: docker/windows/Dockerfile.nextflow-runner
-          platforms: linux/amd64
-          push: ${{ inputs.push == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            NEXTFLOW_BASE_IMAGE=${{ inputs.nextflow_base_image }}
-            DOCKER_CLI_VERSION=${{ inputs.docker_cli_version }}
+          platforms: arm64
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
+      - name: Download arm64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp
+
+      - name: Load and test arm64 image
+        run: |
+          docker load -i /tmp/nextflow-runner-arm64.tar
+          export IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64"
+          export PLATFORM="linux/arm64"
+          export EXPECTED_ARCH="arm64"
+          chmod +x docker/test-nextflow-runner.sh
+          docker/test-nextflow-runner.sh
+
+  # Push arm64 image after tests pass
+  push-arm64:
+    name: Push arm64 image
+    needs: test-arm64
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
+      - name: Download arm64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextflow-runner-arm64
+          path: /tmp
+
+      - name: Load arm64 image
+        run: docker load -i /tmp/nextflow-runner-arm64.tar
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push arm64 image
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}-arm64
+
+  # Create multi-arch manifest after both architectures are pushed
+  create-manifest:
+    name: Create multi-arch manifest
+    needs: [push-amd64, push-arm64]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          echo "tag=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+          echo "publish_latest=${{ inputs.publish_latest || 'true' }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          # Create manifest for versioned tag
+          docker buildx imagetools create -t ${IMAGE}:${TAG} \
+            ${IMAGE}:${TAG}-amd64 \
+            ${IMAGE}:${TAG}-arm64
+
+          echo "Created manifest: ${IMAGE}:${TAG}"
+
+          # Create :latest manifest if requested
+          if [ "${{ steps.vars.outputs.publish_latest }}" = "true" ]; then
+            docker buildx imagetools create -t ${IMAGE}:latest \
+              ${IMAGE}:${TAG}-amd64 \
+              ${IMAGE}:${TAG}-arm64
+            echo "Created manifest: ${IMAGE}:latest"
+          fi
+
+      - name: Inspect manifests
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          echo "=== ${IMAGE}:${TAG} ==="
+          docker buildx imagetools inspect ${IMAGE}:${TAG}
+
+          if [ "${{ steps.vars.outputs.publish_latest }}" = "true" ]; then
+            echo "=== ${IMAGE}:latest ==="
+            docker buildx imagetools inspect ${IMAGE}:latest
+          fi

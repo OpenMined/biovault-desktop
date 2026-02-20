@@ -18,6 +18,7 @@ MANIFEST_BRANCH="${MANIFEST_BRANCH:-}"
 REPO_BIN_DIR="${REPO_BIN_DIR:-$ROOT_DIR/.repo-bin}"
 REPO_BIN="${REPO_BIN:-$REPO_BIN_DIR/repo}"
 MANIFEST_REPO_DIR="${MANIFEST_REPO_DIR:-$ROOT_DIR/.repo-manifest}"
+REPO_DEPTH="${REPO_DEPTH:-1}"
 MANIFEST_BRANCH_DEFAULT=""
 
 cd "$ROOT_DIR"
@@ -363,6 +364,30 @@ run_repo() {
   PAGER=cat GIT_PAGER=cat LESS=FRX "${REPO_CMD[@]}" "$@"
 }
 
+repo_depth_arg() {
+  local depth="${REPO_DEPTH:-}"
+  if [[ "$depth" =~ ^[0-9]+$ ]] && [[ "$depth" -gt 0 ]]; then
+    printf '%s' "$depth"
+  fi
+}
+
+ensure_syqure_manifest_override() {
+  if run_repo manifest -r 2>/dev/null | grep -q 'path="syqure"'; then
+    return 0
+  fi
+
+  local local_manifest_dir="$ROOT_DIR/.repo/local_manifests"
+  local local_manifest_file="$local_manifest_dir/syqure.xml"
+  mkdir -p "$local_manifest_dir"
+  cat > "$local_manifest_file" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <project name="madhavajay/syqure" path="syqure" revision="main" />
+</manifest>
+EOF
+  echo -e "${CYAN}→ added local manifest override for syqure${NC}"
+}
+
 repo_init() {
   local init_mode="${1:-}"
   if [[ -n "$init_mode" && "$init_mode" != "--https" ]]; then
@@ -378,15 +403,27 @@ repo_init() {
   local url
   url="$(resolve_manifest_url)"
   local branch="${MANIFEST_BRANCH:-$MANIFEST_BRANCH_DEFAULT}"
+  local depth
+  depth="$(repo_depth_arg)"
 
   if [[ -n "$branch" ]]; then
-    run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
+    if [[ -n "$depth" ]]; then
+      run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch" --depth="$depth"
+    else
+      run_repo init -u "$url" -m "$MANIFEST_FILE" -b "$branch"
+    fi
   else
-    run_repo init -u "$url" -m "$MANIFEST_FILE"
+    if [[ -n "$depth" ]]; then
+      run_repo init -u "$url" -m "$MANIFEST_FILE" --depth="$depth"
+    else
+      run_repo init -u "$url" -m "$MANIFEST_FILE"
+    fi
   fi
 
+  ensure_syqure_manifest_override
   ensure_origin_remotes
-  ensure_syft_crypto_submodule
+  ensure_syftbox_crypto_submodule
+  ensure_syqure_submodules
 }
 
 repo_init_with_https() {
@@ -483,15 +520,24 @@ PY
   git -C "$tmpdir" add "$MANIFEST_FILE" >/dev/null 2>&1
   git -C "$tmpdir" commit -m "Manifest for HTTPS" >/dev/null 2>&1 || true
 
-  run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
+  local depth
+  depth="$(repo_depth_arg)"
+  if [[ -n "$depth" ]]; then
+    run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main --depth="$depth"
+  else
+    run_repo init -u "file://$tmpdir" -m "$MANIFEST_FILE" -b main
+  fi
+  ensure_syqure_manifest_override
   ensure_origin_remotes "$tmpdir/$MANIFEST_FILE"
+  ensure_syftbox_crypto_submodule
+  ensure_syqure_submodules
   if [[ -n "$tmpdir" ]]; then
     rm -rf "$tmpdir"
   fi
 }
 
-ensure_syft_crypto_submodule() {
-  local repo="syft-crypto-core"
+ensure_syftbox_crypto_submodule() {
+  local repo="syftbox-crypto"
   if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
     return 0
   fi
@@ -505,6 +551,27 @@ ensure_syft_crypto_submodule() {
   if ! git -C "$repo" submodule update --init --recursive; then
     echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
     return 1
+  fi
+}
+
+ensure_syqure_submodules() {
+  local repo="syqure"
+  if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$repo/.gitmodules" ]]; then
+    return 0
+  fi
+
+  echo -e "${CYAN}→ ${repo} submodules${NC}"
+  git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
+  if ! git -C "$repo" submodule update --init --recursive --depth 1; then
+    echo -e "${YELLOW}WARN: ${repo} shallow submodule update failed; retrying full depth${NC}"
+    if ! git -C "$repo" submodule update --init --recursive; then
+      echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
+      return 1
+    fi
   fi
 }
 
@@ -527,12 +594,15 @@ repo_sync() {
     exit 1
   fi
 
+  ensure_syqure_manifest_override
+
   if [[ "$mode" == "branch" && "$force" == "--force" ]]; then
     echo -e "${YELLOW}→ Force syncing (discarding local commits/changes)${NC}"
     run_repo forall -c 'git rebase --abort >/dev/null 2>&1 || true; git reset --hard; git clean -fd'
     run_repo sync -d --force-sync
     checkout_manifest_branches
-    ensure_syft_crypto_submodule
+    ensure_syftbox_crypto_submodule
+    ensure_syqure_submodules
     return
   fi
 
@@ -540,7 +610,8 @@ repo_sync() {
   if [[ "$mode" == "branch" || "$mode" == "--branch" ]]; then
     sync_manifest_branches
   fi
-  ensure_syft_crypto_submodule
+  ensure_syftbox_crypto_submodule
+  ensure_syqure_submodules
 }
 
 sync_manifest_branches() {
@@ -2064,7 +2135,7 @@ do_lint() {
     if [[ "$repo" == "." ]]; then
       script="./lint.sh"
       label="biovault-desktop"
-    elif [[ "$repo" == "syft-crypto-core" ]]; then
+    elif [[ "$repo" == "syftbox-crypto" ]]; then
       use_just=1
     else
       script="$repo/lint.sh"
@@ -2145,7 +2216,7 @@ do_lint() {
 
 fast_tests_available() {
   case "$1" in
-    syft-crypto-core)
+    syftbox-crypto)
       if [[ -d "$1/vendor/libsignal-protocol-syft/crates" ]]; then
         return 0
       fi
@@ -2183,7 +2254,7 @@ run_fast_tests() {
     sbenv)
       (cd "$repo/cli" && cargo test)
       ;;
-    syft-crypto-core)
+    syftbox-crypto)
       (cd "$repo" && just test)
       ;;
     syftbox)
@@ -2357,23 +2428,23 @@ do_check() {
   tmpdir=$(mktemp -d)
   trap "rm -rf $tmpdir" EXIT
 
-  local syft_crypto_requested=0
+  local syftbox_crypto_requested=0
   local other_targets=()
   local target
   for target in "${targets[@]}"; do
     local resolved=""
-    local is_syft_crypto=0
-    if [[ "$target" == "syft-crypto-core" ]]; then
-      is_syft_crypto=1
+    local is_syftbox_crypto=0
+    if [[ "$target" == "syftbox-crypto" ]]; then
+      is_syftbox_crypto=1
     else
       resolved=$(resolve_checkout_targets "$target" 2>/dev/null | head -1 || true)
-      if [[ "$resolved" == "syft-crypto-core" ]]; then
-        is_syft_crypto=1
+      if [[ "$resolved" == "syftbox-crypto" ]]; then
+        is_syftbox_crypto=1
       fi
     fi
 
-    if [[ "$is_syft_crypto" -eq 1 ]]; then
-      syft_crypto_requested=1
+    if [[ "$is_syftbox_crypto" -eq 1 ]]; then
+      syftbox_crypto_requested=1
     else
       other_targets+=("$target")
     fi
@@ -2390,12 +2461,12 @@ do_check() {
 
     local lint_cmd="(none)"
     local test_cmd="(none)"
-    local is_syft_crypto=0
-    if [[ "$repo_path" == "syft-crypto-core" || "$target" == "syft-crypto-core" ]]; then
-      is_syft_crypto=1
+    local is_syftbox_crypto=0
+    if [[ "$repo_path" == "syftbox-crypto" || "$target" == "syftbox-crypto" ]]; then
+      is_syftbox_crypto=1
     fi
 
-    if [[ "$is_syft_crypto" -eq 1 ]]; then
+    if [[ "$is_syftbox_crypto" -eq 1 ]]; then
       lint_cmd="just lint-fix"
       test_cmd="just check-all"
     else
@@ -2432,7 +2503,7 @@ do_check() {
 
   local lint_pid=""
   local test_pid=""
-  local syft_crypto_pid=""
+  local syftbox_crypto_pid=""
 
   if [[ ${#other_targets[@]} -gt 0 ]]; then
     (
@@ -2449,24 +2520,24 @@ do_check() {
   else
     echo "0" > "$tmpdir/lint.status"
     echo "0" > "$tmpdir/test.status"
-    echo "Skipped (no non-syft-crypto-core targets)" > "$tmpdir/lint.out"
-    echo "Skipped (no non-syft-crypto-core targets)" > "$tmpdir/test.out"
+    echo "Skipped (no non-syftbox-crypto targets)" > "$tmpdir/lint.out"
+    echo "Skipped (no non-syftbox-crypto targets)" > "$tmpdir/test.out"
   fi
 
-  if [[ "$syft_crypto_requested" -eq 1 ]]; then
+  if [[ "$syftbox_crypto_requested" -eq 1 ]]; then
     (
-      (cd "syft-crypto-core" && just check-all) > "$tmpdir/syft-crypto-core-check.out" 2>&1
-      echo $? > "$tmpdir/syft-crypto-core-check.status"
+      (cd "syftbox-crypto" && just check-all) > "$tmpdir/syftbox-crypto-check.out" 2>&1
+      echo $? > "$tmpdir/syftbox-crypto-check.status"
     ) &
-    syft_crypto_pid=$!
+    syftbox_crypto_pid=$!
   fi
 
-  if [[ ${#other_targets[@]} -gt 0 && "$syft_crypto_requested" -eq 1 ]]; then
-    echo -e "${YELLOW}Running lint/test + syft-crypto-core check-all in parallel...${NC}"
+  if [[ ${#other_targets[@]} -gt 0 && "$syftbox_crypto_requested" -eq 1 ]]; then
+    echo -e "${YELLOW}Running lint/test + syftbox-crypto check-all in parallel...${NC}"
   elif [[ ${#other_targets[@]} -gt 0 ]]; then
     echo -e "${YELLOW}Running lint and test in parallel...${NC}"
-  elif [[ "$syft_crypto_requested" -eq 1 ]]; then
-    echo -e "${YELLOW}Running syft-crypto-core check-all...${NC}"
+  elif [[ "$syftbox_crypto_requested" -eq 1 ]]; then
+    echo -e "${YELLOW}Running syftbox-crypto check-all...${NC}"
   fi
   echo ""
 
@@ -2477,21 +2548,21 @@ do_check() {
   if [[ -n "$test_pid" ]]; then
     wait "$test_pid" || true
   fi
-  if [[ -n "$syft_crypto_pid" ]]; then
-    wait "$syft_crypto_pid" || true
+  if [[ -n "$syftbox_crypto_pid" ]]; then
+    wait "$syftbox_crypto_pid" || true
   fi
 
   local lint_status=0
   local test_status=0
-  local syft_crypto_status=0
+  local syftbox_crypto_status=0
   [[ -f "$tmpdir/lint.status" ]] && lint_status=$(cat "$tmpdir/lint.status")
   [[ -f "$tmpdir/test.status" ]] && test_status=$(cat "$tmpdir/test.status")
-  [[ -f "$tmpdir/syft-crypto-core-check.status" ]] && syft_crypto_status=$(cat "$tmpdir/syft-crypto-core-check.status")
+  [[ -f "$tmpdir/syftbox-crypto-check.status" ]] && syftbox_crypto_status=$(cat "$tmpdir/syftbox-crypto-check.status")
 
   # Report results
   echo -e "${CYAN}=== Lint Results ===${NC}"
   if [[ ${#other_targets[@]} -eq 0 ]]; then
-    echo -e "${GREEN}✓ Lint skipped (no non-syft-crypto-core targets)${NC}"
+    echo -e "${GREEN}✓ Lint skipped (no non-syftbox-crypto targets)${NC}"
   elif [[ "$lint_status" -eq 0 ]]; then
     echo -e "${GREEN}✓ Lint passed${NC}"
   else
@@ -2502,7 +2573,7 @@ do_check() {
   echo ""
   echo -e "${CYAN}=== Test Results ===${NC}"
   if [[ ${#other_targets[@]} -eq 0 ]]; then
-    echo -e "${GREEN}✓ Tests skipped (no non-syft-crypto-core targets)${NC}"
+    echo -e "${GREEN}✓ Tests skipped (no non-syftbox-crypto targets)${NC}"
   elif [[ "$test_status" -eq 0 ]]; then
     echo -e "${GREEN}✓ Tests passed${NC}"
   else
@@ -2510,20 +2581,20 @@ do_check() {
     cat "$tmpdir/test.out"
   fi
 
-  if [[ "$syft_crypto_requested" -eq 1 ]]; then
+  if [[ "$syftbox_crypto_requested" -eq 1 ]]; then
     echo ""
-    echo -e "${CYAN}=== Syft Crypto Core Check-All Results ===${NC}"
-    if [[ "$syft_crypto_status" -eq 0 ]]; then
-      echo -e "${GREEN}✓ syft-crypto-core check-all passed${NC}"
+    echo -e "${CYAN}=== Syftbox Crypto Check-All Results ===${NC}"
+    if [[ "$syftbox_crypto_status" -eq 0 ]]; then
+      echo -e "${GREEN}✓ syftbox-crypto check-all passed${NC}"
     else
-      echo -e "${RED}✗ syft-crypto-core check-all failed${NC}"
-      cat "$tmpdir/syft-crypto-core-check.out"
+      echo -e "${RED}✗ syftbox-crypto check-all failed${NC}"
+      cat "$tmpdir/syftbox-crypto-check.out"
     fi
   fi
 
   local total_time=$((SECONDS - start_time))
   echo ""
-  if [[ "$lint_status" -eq 0 && "$test_status" -eq 0 && "$syft_crypto_status" -eq 0 ]]; then
+  if [[ "$lint_status" -eq 0 && "$test_status" -eq 0 && "$syftbox_crypto_status" -eq 0 ]]; then
     echo -e "${GREEN}✅ All checks passed in ${total_time}s${NC}"
   else
     echo -e "${RED}❌ Some checks failed in ${total_time}s${NC}"

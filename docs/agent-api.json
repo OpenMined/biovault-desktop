@@ -193,7 +193,7 @@
 		},
 		"ui": {
 			"description": "UI control (local window)",
-			"commands": ["ui_navigate", "ui_pipeline_import_options", "ui_pipeline_import_from_path"]
+			"commands": ["ui_navigate", "ui_flow_import_options", "ui_flow_import_from_path"]
 		},
 		"dependencies": {
 			"description": "Dependency management",
@@ -270,53 +270,53 @@
 				"delete_failed_message"
 			]
 		},
-		"projects": {
-			"description": "Project management",
+		"modules": {
+			"description": "Module management",
 			"commands": [
-				"get_projects",
-				"get_available_project_examples",
-				"get_default_project_path",
-				"create_project",
-				"import_project",
-				"import_project_from_folder",
-				"delete_project",
-				"delete_project_folder",
-				"load_project_editor",
-				"save_project_editor",
-				"preview_project_spec",
-				"get_project_spec_digest",
+				"get_modules",
+				"get_available_module_examples",
+				"get_default_module_path",
+				"create_module",
+				"import_module",
+				"import_module_from_folder",
+				"delete_module",
+				"delete_module_folder",
+				"load_module_editor",
+				"save_module_editor",
+				"preview_module_spec",
+				"get_module_spec_digest",
 				"get_supported_input_types",
 				"get_supported_output_types",
 				"get_supported_parameter_types",
 				"get_common_formats"
 			]
 		},
-		"pipelines": {
-			"description": "Pipeline management and execution",
+		"flows": {
+			"description": "Flow management and execution",
 			"commands": [
-				"get_pipelines",
-				"create_pipeline",
-				"import_pipeline",
-				"import_pipeline_from_message",
-				"import_pipeline_from_request",
-				"import_pipeline_with_deps",
-				"run_pipeline",
-				"get_pipeline_runs",
+				"get_flows",
+				"create_flow",
+				"import_flow",
+				"import_flow_from_message",
+				"import_flow_from_request",
+				"import_flow_with_deps",
+				"run_flow",
+				"get_flow_runs",
 				"get_runs_base_dir",
-				"load_pipeline_editor",
-				"save_pipeline_editor",
-				"delete_pipeline",
-				"validate_pipeline",
-				"delete_pipeline_run",
-				"preview_pipeline_spec",
+				"load_flow_editor",
+				"save_flow_editor",
+				"delete_flow",
+				"validate_flow",
+				"delete_flow_run",
+				"preview_flow_spec",
 				"save_run_config",
 				"list_run_configs",
 				"get_run_config",
 				"delete_run_config",
-				"send_pipeline_request",
-				"send_pipeline_request_results",
-				"send_pipeline_results",
-				"import_pipeline_results",
+				"send_flow_request",
+				"send_flow_request_results",
+				"send_flow_results",
+				"import_flow_results",
 				"list_results_tree"
 			]
 		},
@@ -365,7 +365,7 @@
 			"commands": ["get_participants", "delete_participant", "delete_participants_bulk"]
 		},
 		"runs": {
-			"description": "Pipeline run management",
+			"description": "Flow run management",
 			"commands": [
 				"get_runs",
 				"delete_run",
@@ -410,7 +410,7 @@
 			]
 		},
 		"jupyter": {
-			"description": "Project Jupyter notebook management",
+			"description": "Module Jupyter notebook management",
 			"commands": ["get_jupyter_status", "launch_jupyter", "stop_jupyter", "reset_jupyter"]
 		},
 		"logs": {
@@ -1518,9 +1518,9 @@
 			"async": false,
 			"sideEffects": ["Removes all messages in thread"]
 		},
-		"get_projects": {
-			"description": "List all projects",
-			"category": "projects",
+		"get_modules": {
+			"description": "List all modules",
+			"category": "modules",
 			"args": {},
 			"returns": {
 				"type": "array"
@@ -1528,9 +1528,9 @@
 			"readOnly": true,
 			"async": false
 		},
-		"create_project": {
-			"description": "Create a new project",
-			"category": "projects",
+		"create_module": {
+			"description": "Create a new module",
+			"category": "modules",
 			"args": {
 				"name": {
 					"type": "string",
@@ -1539,7 +1539,7 @@
 				"example": {
 					"type": "string",
 					"required": false,
-					"description": "Example project to copy from"
+					"description": "Example module to copy from"
 				},
 				"directory": {
 					"type": "string",
@@ -1560,20 +1560,20 @@
 			"readOnly": false,
 			"async": false,
 			"sideEffects": [
-				"Creates project directory",
-				"Writes project.yaml",
+				"Creates module directory",
+				"Writes module.yaml",
 				"Optionally creates Python script"
 			]
 		},
-		"load_project_editor": {
-			"description": "Load project data for editing",
-			"category": "projects",
+		"load_module_editor": {
+			"description": "Load module data for editing",
+			"category": "modules",
 			"args": {
-				"projectId": {
+				"moduleId": {
 					"type": "integer",
 					"required": false
 				},
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": false
 				}
@@ -1584,15 +1584,15 @@
 			"readOnly": true,
 			"async": false
 		},
-		"save_project_editor": {
-			"description": "Save project editor changes",
-			"category": "projects",
+		"save_module_editor": {
+			"description": "Save module editor changes",
+			"category": "modules",
 			"args": {
-				"projectId": {
+				"moduleId": {
 					"type": "integer",
 					"required": false
 				},
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": true
 				},
@@ -1606,11 +1606,11 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Writes project.yaml", "Updates database"]
+			"sideEffects": ["Writes module.yaml", "Updates database"]
 		},
-		"get_pipelines": {
-			"description": "List all pipelines",
-			"category": "pipelines",
+		"get_flows": {
+			"description": "List all flows",
+			"category": "flows",
 			"args": {},
 			"returns": {
 				"type": "array"
@@ -1618,9 +1618,9 @@
 			"readOnly": true,
 			"async": true
 		},
-		"create_pipeline": {
-			"description": "Create a new pipeline",
-			"category": "pipelines",
+		"create_flow": {
+			"description": "Create a new flow",
+			"category": "flows",
 			"args": {
 				"request": {
 					"type": "object",
@@ -1628,7 +1628,7 @@
 					"properties": {
 						"name": { "type": "string" },
 						"directory": { "type": "string" },
-						"pipelineFile": { "type": "string" },
+						"flowFile": { "type": "string" },
 						"overwrite": { "type": "boolean" }
 					}
 				}
@@ -1638,11 +1638,11 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": ["Creates pipeline directory", "Writes pipeline.yaml", "Registers in database"]
+			"sideEffects": ["Creates flow directory", "Writes flow.yaml", "Registers in database"]
 		},
-		"import_pipeline_with_deps": {
-			"description": "Import a pipeline with its dependencies",
-			"category": "pipelines",
+		"import_flow_with_deps": {
+			"description": "Import a flow with its dependencies",
+			"category": "flows",
 			"args": {
 				"url": {
 					"type": "string",
@@ -1663,14 +1663,14 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": ["Downloads pipeline", "Resolves dependencies"],
+			"sideEffects": ["Downloads flow", "Resolves dependencies"],
 			"longRunning": true
 		},
-		"run_pipeline": {
-			"description": "Execute a pipeline",
-			"category": "pipelines",
+		"run_flow": {
+			"description": "Execute a flow",
+			"category": "flows",
 			"args": {
-				"pipelineId": {
+				"flowId": {
 					"type": "integer",
 					"required": true
 				},
@@ -1693,16 +1693,12 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": [
-				"Creates run directory",
-				"Generates samplesheets",
-				"Spawns pipeline execution"
-			],
+			"sideEffects": ["Creates run directory", "Generates samplesheets", "Spawns flow execution"],
 			"longRunning": true
 		},
-		"get_pipeline_runs": {
-			"description": "List pipeline runs",
-			"category": "pipelines",
+		"get_flow_runs": {
+			"description": "List flow runs",
+			"category": "flows",
 			"args": {},
 			"returns": {
 				"type": "array"
@@ -2048,10 +2044,10 @@
 			"sideEffects": ["Unlinks dataset from session"]
 		},
 		"launch_jupyter": {
-			"description": "Launch Jupyter for a project",
+			"description": "Launch Jupyter for a module",
 			"category": "jupyter",
 			"args": {
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": true
 				},
@@ -2074,10 +2070,10 @@
 			"longRunning": true
 		},
 		"stop_jupyter": {
-			"description": "Stop Jupyter for a project",
+			"description": "Stop Jupyter for a module",
 			"category": "jupyter",
 			"args": {
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": true
 				}
@@ -2090,10 +2086,10 @@
 			"sideEffects": ["Terminates Jupyter process"]
 		},
 		"get_jupyter_status": {
-			"description": "Get Jupyter status for a project",
+			"description": "Get Jupyter status for a module",
 			"category": "jupyter",
 			"args": {
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": true
 				}
@@ -2105,10 +2101,10 @@
 			"async": false
 		},
 		"reset_jupyter": {
-			"description": "Reset Jupyter environment for a project",
+			"description": "Reset Jupyter environment for a module",
 			"category": "jupyter",
 			"args": {
-				"projectPath": {
+				"modulePath": {
 					"type": "string",
 					"required": true
 				},
@@ -2284,7 +2280,7 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Stops daemons", "Deletes BIOVAULT_HOME (preserves .syc)"],
+			"sideEffects": ["Stops daemons", "Deletes BIOVAULT_HOME (preserves .sbc)"],
 			"dangerous": true
 		},
 		"reset_everything": {
@@ -2296,7 +2292,7 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Deletes all data including .syc", "Recreates empty database"],
+			"sideEffects": ["Deletes all data including .sbc", "Recreates empty database"],
 			"dangerous": true
 		},
 		"get_files": {
@@ -2481,9 +2477,9 @@
 			"async": false,
 			"sideEffects": ["Opens system file explorer"]
 		},
-		"get_available_project_examples": {
-			"description": "List available project examples/templates",
-			"category": "projects",
+		"get_available_module_examples": {
+			"description": "List available module examples/templates",
+			"category": "modules",
 			"args": {},
 			"returns": {
 				"type": "array",
@@ -2498,14 +2494,14 @@
 			"readOnly": true,
 			"async": false
 		},
-		"get_default_project_path": {
-			"description": "Get the default path for a new project",
-			"category": "projects",
+		"get_default_module_path": {
+			"description": "Get the default path for a new module",
+			"category": "modules",
 			"args": {
 				"name": {
 					"type": "string",
 					"required": false,
-					"description": "Optional project name"
+					"description": "Optional module name"
 				}
 			},
 			"returns": {
@@ -2515,8 +2511,8 @@
 			"async": false
 		},
 		"get_runs_base_dir": {
-			"description": "Get the base directory for pipeline runs",
-			"category": "pipelines",
+			"description": "Get the base directory for flow runs",
+			"category": "flows",
 			"args": {},
 			"returns": {
 				"type": "string"
@@ -2524,14 +2520,14 @@
 			"readOnly": true,
 			"async": true
 		},
-		"import_pipeline": {
-			"description": "Import a pipeline from a spec",
-			"category": "pipelines",
+		"import_flow": {
+			"description": "Import a flow from a spec",
+			"category": "flows",
 			"args": {
 				"request": {
 					"type": "object",
 					"required": true,
-					"description": "Pipeline import request"
+					"description": "Flow import request"
 				}
 			},
 			"returns": {
@@ -2539,11 +2535,11 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": ["Creates pipeline in database"]
+			"sideEffects": ["Creates flow in database"]
 		},
-		"import_pipeline_from_message": {
-			"description": "Import a pipeline from a message",
-			"category": "pipelines",
+		"import_flow_from_message": {
+			"description": "Import a flow from a message",
+			"category": "flows",
 			"args": {
 				"name": {
 					"type": "string",
@@ -2563,20 +2559,20 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": ["Creates pipeline in database"]
+			"sideEffects": ["Creates flow in database"]
 		},
-		"import_pipeline_from_request": {
-			"description": "Import a pipeline from a request location",
-			"category": "pipelines",
+		"import_flow_from_request": {
+			"description": "Import a flow from a request location",
+			"category": "flows",
 			"args": {
 				"name": {
 					"type": "string",
 					"required": true
 				},
-				"pipelineLocation": {
+				"flowLocation": {
 					"type": "string",
 					"required": true,
-					"description": "Path or URL to pipeline"
+					"description": "Path or URL to flow"
 				},
 				"overwrite": {
 					"type": "boolean",
@@ -2589,11 +2585,11 @@
 			},
 			"readOnly": false,
 			"async": true,
-			"sideEffects": ["Creates pipeline in database"]
+			"sideEffects": ["Creates flow in database"]
 		},
-		"import_pipeline_results": {
-			"description": "Import pipeline results from a location",
-			"category": "pipelines",
+		"import_flow_results": {
+			"description": "Import flow results from a location",
+			"category": "flows",
 			"args": {
 				"resultsLocation": {
 					"type": "string",
@@ -2607,7 +2603,7 @@
 					"type": "string",
 					"required": false
 				},
-				"pipelineName": {
+				"flowName": {
 					"type": "string",
 					"required": false
 				}
@@ -2619,15 +2615,15 @@
 			"async": false,
 			"sideEffects": ["Imports results to database"]
 		},
-		"send_pipeline_request": {
-			"description": "Send a pipeline execution request to a peer",
-			"category": "pipelines",
+		"send_flow_request": {
+			"description": "Send a flow execution request to a peer",
+			"category": "flows",
 			"args": {
-				"pipelineName": {
+				"flowName": {
 					"type": "string",
 					"required": true
 				},
-				"pipelineVersion": {
+				"flowVersion": {
 					"type": "string",
 					"required": true
 				},
@@ -2652,9 +2648,9 @@
 			"async": false,
 			"sideEffects": ["Sends message to recipient"]
 		},
-		"send_pipeline_request_results": {
-			"description": "Send pipeline results back to requester",
-			"category": "pipelines",
+		"send_flow_request_results": {
+			"description": "Send flow results back to requester",
+			"category": "flows",
 			"args": {
 				"requestId": {
 					"type": "string",
@@ -2681,15 +2677,15 @@
 			"async": false,
 			"sideEffects": ["Sends results message"]
 		},
-		"send_pipeline_results": {
-			"description": "Send pipeline results to a recipient",
-			"category": "pipelines",
+		"send_flow_results": {
+			"description": "Send flow results to a recipient",
+			"category": "flows",
 			"args": {
 				"recipient": {
 					"type": "string",
 					"required": true
 				},
-				"pipelineName": {
+				"flowName": {
 					"type": "string",
 					"required": true
 				},
@@ -2715,7 +2711,7 @@
 		},
 		"list_results_tree": {
 			"description": "List results directory tree",
-			"category": "pipelines",
+			"category": "flows",
 			"args": {
 				"root": {
 					"type": "string",
@@ -2997,8 +2993,8 @@
 			"async": false,
 			"sideEffects": ["Updates active UI tab"]
 		},
-		"ui_pipeline_import_options": {
-			"description": "Open the pipeline import options modal in the Pipelines view",
+		"ui_flow_import_options": {
+			"description": "Open the flow import options modal in the Flows view",
 			"category": "ui",
 			"args": {},
 			"returns": {
@@ -3006,16 +3002,16 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Navigates to Pipelines view", "Opens pipeline import modal"]
+			"sideEffects": ["Navigates to Flows view", "Opens flow import modal"]
 		},
-		"ui_pipeline_import_from_path": {
-			"description": "Import a pipeline from a local path via the UI",
+		"ui_flow_import_from_path": {
+			"description": "Import a flow from a local path via the UI",
 			"category": "ui",
 			"args": {
 				"path": {
 					"type": "string",
 					"required": true,
-					"description": "Path to pipeline.yaml or a pipeline folder"
+					"description": "Path to flow.yaml or a flow folder"
 				},
 				"overwrite": {
 					"type": "boolean",
@@ -3028,7 +3024,7 @@
 			},
 			"readOnly": false,
 			"async": false,
-			"sideEffects": ["Navigates to Pipelines view", "Imports pipeline via create_pipeline"]
+			"sideEffects": ["Navigates to Flows view", "Imports flow via create_flow"]
 		},
 		"update_saved_dependency_states": {
 			"description": "Update cached dependency states",

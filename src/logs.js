@@ -295,6 +295,33 @@ export function createLogsModule({ invoke }) {
 	let lastLoadedAt = 0
 	let autoRefreshTimer = null
 	const AUTO_REFRESH_INTERVAL_MS = 1000
+	let hideVerbose = true
+
+	const VERBOSE_PATTERNS = [
+		'Found contact:',
+		'Peer scan complete:',
+		'[Network Dataset Debug]',
+		'Dataset scan complete:',
+		'sync actions:',
+		'scan_remote: server returned',
+		'sync reconcile start:',
+		'SyftBox queue poll',
+		'SyftBoxStorage initialized:',
+		'read_with_shadow:',
+		'bundle resolution error:',
+		'bundle not cached:',
+		'updateThreadActivity:',
+		'GET http://127.0.0.1:7938/v1/sync/status',
+		'files, ignored=',
+	]
+
+	function filterVerboseLines(text) {
+		if (!hideVerbose) return text
+		return text
+			.split('\n')
+			.filter((line) => !VERBOSE_PATTERNS.some((pat) => line.includes(pat)))
+			.join('\n')
+	}
 
 	async function refreshLogs({ force = false } = {}) {
 		const now = Date.now()
@@ -329,14 +356,27 @@ export function createLogsModule({ invoke }) {
 	function displayLogs() {
 		const logsContent = document.getElementById('logs-content')
 		if (!logsContent) return
-		if (!desktopLogText || desktopLogText.trim().length === 0) {
-			logsContent.textContent = 'No logs captured yet.'
+		const filtered = filterVerboseLines(desktopLogText)
+		if (!filtered || filtered.trim().length === 0) {
+			logsContent.textContent = hideVerbose
+				? 'No logs captured yet (verbose logs hidden).'
+				: 'No logs captured yet.'
 			logsContent.scrollTop = 0
 			return
 		}
 
-		logsContent.innerHTML = ansiToHtml(desktopLogText)
+		logsContent.innerHTML = ansiToHtml(filtered)
 		logsContent.scrollTop = logsContent.scrollHeight
+	}
+
+	function toggleVerbose() {
+		hideVerbose = !hideVerbose
+		const btn = document.getElementById('toggle-verbose-btn')
+		if (btn) {
+			btn.textContent = hideVerbose ? 'Hide Verbose' : 'Show All'
+			btn.classList.toggle('active', hideVerbose)
+		}
+		displayLogs()
 	}
 
 	async function clearLogs() {
@@ -379,6 +419,7 @@ export function createLogsModule({ invoke }) {
 		setLogsAutoRefreshEnabled,
 		clearLogs,
 		copyLogs,
+		toggleVerbose,
 		openLogsFolder: async () => {
 			try {
 				const dir =

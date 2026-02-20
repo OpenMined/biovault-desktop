@@ -33,6 +33,13 @@ export function createSettingsModule({
 	let agentFilters = { allowed: '', blocked: '' }
 	let agentBridgeUiReady = false
 	let agentBridgeSaveTimer = null
+	let didMismatchPromptedFor = null
+
+	// Expose a test-friendly hook to open the profiles picker without relying on UI clicks.
+	if (typeof window !== 'undefined') {
+		window.__OPEN_PROFILES_PICKER__ = async () =>
+			showProfilesPickerInApp({ invoke, templateLoader })
+	}
 
 	function hasShownSyftboxUnavailable() {
 		if (syftboxUnavailableShown) return true
@@ -787,7 +794,10 @@ export function createSettingsModule({
 		if (identityEl) identityEl.textContent = status?.identity || 'Not set'
 		if (fpEl) fpEl.textContent = status?.vault_fingerprint || 'No key found'
 		if (statusLine) {
-			if (!status?.exists) {
+			if (status?.key_file_exists && status?.private_key_readable === false) {
+				statusLine.textContent =
+					'Existing private key cannot be read. Restore using your BIP-39 recovery code.'
+			} else if (!status?.exists) {
 				statusLine.textContent = 'No key found in vault; generate or restore to continue.'
 			} else if (status?.export_fingerprint) {
 				const matches =
@@ -803,9 +813,18 @@ export function createSettingsModule({
 		}
 
 		if (warningEl) {
-			warningEl.textContent = status?.exists
-				? ''
-				: 'No key material detected for this email. Generate or restore before sharing data.'
+			if (status?.key_file_exists && status?.private_key_readable === false) {
+				warningEl.textContent =
+					'Detected unreadable/legacy key material. Restore your key from recovery code, then re-publish DID.'
+			} else if (!status?.exists) {
+				warningEl.textContent =
+					'No key material detected for this email. Generate or restore before sharing data.'
+			} else if (status?.export_matches === false) {
+				warningEl.textContent =
+					'Published DID does not match your vault key. Re-publish to share your current key.'
+			} else {
+				warningEl.textContent = ''
+			}
 		}
 
 		if (copyFpBtn) copyFpBtn.disabled = !status?.vault_fingerprint
@@ -839,6 +858,26 @@ export function createSettingsModule({
 			keyStatus = status
 			vaultPath = status?.vault_path || ''
 			renderKeyStatus(status)
+			const mismatchKey =
+				status?.export_matches === false && status?.vault_fingerprint && status?.export_fingerprint
+					? `${status.vault_fingerprint}|${status.export_fingerprint}`
+					: null
+			if (mismatchKey && didMismatchPromptedFor !== mismatchKey && isSettingsViewVisible()) {
+				didMismatchPromptedFor = mismatchKey
+				const message = [
+					'Your published DID does not match your vault key.',
+					`Vault fingerprint: ${status.vault_fingerprint}`,
+					`Published fingerprint: ${status.export_fingerprint}`,
+					'Re-publish your DID now?',
+				].join('\n')
+				const republish = await dialog.confirm(message, {
+					title: 'DID mismatch detected',
+					type: 'warning',
+				})
+				if (republish) {
+					await handleRepublishDID()
+				}
+			}
 		} catch (error) {
 			console.error('⚙️ [SETTINGS] Failed to load key status:', error)
 			renderKeyStatus({
@@ -1413,7 +1452,7 @@ export function createSettingsModule({
 	async function checkSyftBoxStatus() {
 		const statusBadge = document.getElementById('syftbox-status-badge')
 		const authBtn = document.getElementById('syftbox-auth-btn')
-		const serverLabel =
+		const _serverLabel =
 			(currentSettings?.syftbox_server_url && currentSettings.syftbox_server_url.trim()) ||
 			defaultSyftboxServerUrl
 

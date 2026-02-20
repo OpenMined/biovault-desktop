@@ -4,17 +4,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use syftbox_sdk::syftbox::control as syftctl;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 static SYFTBOX_RUNNING: AtomicBool = AtomicBool::new(false);
+static SUBSCRIPTION_DISCOVERY_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+static LAST_SUBSCRIPTION_404_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_QUEUE_POLL_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_CONTROL_PLANE_OK_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_KNOWN_WS_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -345,6 +350,27 @@ pub struct SyftBoxSyncStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SyftBoxDiscoveryFile {
+    pub path: String,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub last_modified: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub action: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyftBoxDiscoveryResponse {
+    #[serde(default)]
+    files: Vec<SyftBoxDiscoveryFile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyftBoxUploadInfo {
     pub id: String,
     pub key: String,
@@ -379,7 +405,24 @@ pub struct SyftBoxQueueStatus {
     pub sync: Option<SyftBoxSyncStatus>,
     pub uploads: Option<Vec<SyftBoxUploadInfo>>,
     pub status: Option<SyftBoxStatus>,
+    pub latency: Option<SyftBoxLatencyStats>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SyftBoxLatencyStats {
+    #[serde(default, rename = "serverUrl")]
+    pub server_url: Option<String>,
+    #[serde(default)]
+    pub samples: Vec<u64>,
+    #[serde(default, rename = "avgMs")]
+    pub avg_ms: u64,
+    #[serde(default, rename = "minMs")]
+    pub min_ms: u64,
+    #[serde(default, rename = "maxMs")]
+    pub max_ms: u64,
+    #[serde(default, rename = "lastPingMs")]
+    pub last_ping_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -534,6 +577,721 @@ pub struct SyftBoxDiagnostics {
     pub control_plane_requests: Vec<ControlPlaneLogEntry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TurnProbeResult {
+    pub ok: bool,
+    pub turn_url: String,
+    pub host: String,
+    pub port: u16,
+    pub resolved_addrs: Vec<String>,
+    pub tcp_reachable: bool,
+    pub udp_send_ok: bool,
+    pub udp_response_ok: bool,
+    pub stun_binding_ok: bool,
+    pub reflexive_addr: Option<String>,
+    pub rtt_ms: Option<u128>,
+    pub details: String,
+    pub attempt_logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerLinkTestOptions {
+    pub peer_email: String,
+    pub rounds: Option<u32>,
+    pub payload_kb: Option<u32>,
+    pub timeout_s: Option<u64>,
+    pub poll_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerLinkTestResult {
+    pub ok: bool,
+    pub local_email: String,
+    pub peer_email: String,
+    pub run_id: String,
+    pub rounds: u32,
+    pub completed_rounds: u32,
+    pub failed_rounds: u32,
+    pub payload_bytes: usize,
+    pub min_rtt_ms: Option<u128>,
+    pub p50_rtt_ms: Option<u128>,
+    pub p95_rtt_ms: Option<u128>,
+    pub max_rtt_ms: Option<u128>,
+    pub avg_rtt_ms: Option<f64>,
+    pub details: String,
+    pub attempt_logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct PeerLinkFrame {
+    kind: String,
+    request_id: String,
+    run_id: String,
+    from: String,
+    to: String,
+    seq: u32,
+    sent_ms: u128,
+    payload_len: usize,
+}
+
+fn set_default_env_var_if_unset(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        std::env::set_var(key, value);
+    }
+}
+
+fn apply_syftbox_fast_mode_defaults() {
+    // Keep this fallback-capable (no strict/p2p-only) for normal desktop usage.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_SOCKET_ONLY", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_TCP_PROXY", "1");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_QUIC", "1");
+
+    // Explicitly pin known-good fast tuning defaults.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE", "61440");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH", "1048576");
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS", "1500");
+
+    // Keep packet-level hotlink logs off by default to avoid overwhelming
+    // desktop log windows. Set SYFTBOX_HOTLINK_DEBUG=1 when deep transport
+    // debugging is needed.
+    set_default_env_var_if_unset("SYFTBOX_HOTLINK_DEBUG", "0");
+}
+
+fn resolve_turn_target(server_url: &str) -> Result<(String, u16, String), String> {
+    let trimmed = server_url.trim();
+    if trimmed.is_empty() {
+        return Err("Server URL is empty".to_string());
+    }
+
+    if let Ok(ice_servers) = std::env::var("SYFTBOX_HOTLINK_ICE_SERVERS") {
+        if !ice_servers.trim().is_empty() {
+            if let Some(raw_turn) = ice_servers
+                .split(',')
+                .map(|v| v.trim())
+                .find(|v| v.starts_with("turn:") || v.starts_with("turns:"))
+            {
+                let no_proto = raw_turn
+                    .trim_start_matches("turn:")
+                    .trim_start_matches("turns:");
+                let host_port = no_proto.split('?').next().unwrap_or(no_proto);
+                if let Some((host, port_str)) = host_port.rsplit_once(':') {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        return Ok((host.to_string(), port, raw_turn.to_string()));
+                    }
+                }
+                return Ok((host_port.to_string(), 3478, raw_turn.to_string()));
+            }
+        }
+    }
+
+    let parsed = reqwest::Url::parse(trimmed).map_err(|e| format!("Invalid server URL: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Server URL has no host".to_string())?
+        .to_string();
+    let turn_url = format!("turn:{host}:3478?transport=udp");
+    Ok((host, 3478, turn_url))
+}
+
+#[tauri::command]
+pub fn test_turn_connection(server_url: Option<String>) -> Result<TurnProbeResult, String> {
+    let resolved_server_url = if let Some(v) = server_url {
+        v
+    } else {
+        let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+        cfg.syftbox_credentials
+            .as_ref()
+            .and_then(|c| c.server_url.clone())
+            .unwrap_or_else(|| "https://syftbox.net".to_string())
+    };
+
+    let (host, port, turn_url) = resolve_turn_target(&resolved_server_url)?;
+    let socket_addrs: Vec<_> = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve {host}:{port}: {e}"))?
+        .collect();
+    let mut attempt_logs: Vec<String> = Vec::new();
+    attempt_logs.push(format!("server_url={}", resolved_server_url.trim()));
+    attempt_logs.push(format!("resolved_turn_url={turn_url}"));
+    if let Ok(ice_servers) = std::env::var("SYFTBOX_HOTLINK_ICE_SERVERS") {
+        if !ice_servers.trim().is_empty() {
+            attempt_logs.push(format!("env_ice_servers={ice_servers}"));
+        }
+    }
+    let turn_user_set = std::env::var("SYFTBOX_HOTLINK_TURN_USER")
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let turn_pass_set = std::env::var("SYFTBOX_HOTLINK_TURN_PASS")
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    attempt_logs.push(format!(
+        "env_turn_user_set={turn_user_set} env_turn_pass_set={turn_pass_set}"
+    ));
+
+    if socket_addrs.is_empty() {
+        return Err(format!("No addresses resolved for {host}:{port}"));
+    }
+
+    let resolved_addrs: Vec<String> = socket_addrs.iter().map(|a| a.to_string()).collect();
+    attempt_logs.push(format!("resolved_addrs={}", resolved_addrs.join(",")));
+
+    let timeout = Duration::from_secs(2);
+    let mut tcp_reachable = false;
+    for addr in &socket_addrs {
+        match TcpStream::connect_timeout(addr, timeout) {
+            Ok(_) => {
+                tcp_reachable = true;
+                attempt_logs.push(format!("tcp_connect {addr} -> ok"));
+                break;
+            }
+            Err(e) => {
+                attempt_logs.push(format!("tcp_connect {addr} -> fail ({e})"));
+            }
+        }
+    }
+
+    let mut udp_send_ok = false;
+    let mut udp_response_ok = false;
+    let mut stun_binding_ok = false;
+    let mut reflexive_addr: Option<String> = None;
+    let mut rtt_ms: Option<u128> = None;
+    let mut stun_failure: Option<String> = None;
+
+    for addr in &socket_addrs {
+        let req = build_stun_binding_request();
+        let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
+            stun_failure = Some("Failed to bind local UDP socket".to_string());
+            attempt_logs.push("udp_bind 0.0.0.0:0 -> fail".to_string());
+            break;
+        };
+        attempt_logs.push(format!("udp_bind 0.0.0.0:0 -> ok; probing {addr}"));
+        let _ = sock.set_write_timeout(Some(timeout));
+        let _ = sock.set_read_timeout(Some(timeout));
+        if let Err(e) = sock.connect(addr) {
+            attempt_logs.push(format!("udp_connect {addr} -> fail ({e})"));
+            continue;
+        }
+        attempt_logs.push(format!("udp_connect {addr} -> ok"));
+        let start = Instant::now();
+        if let Err(e) = sock.send(&req) {
+            attempt_logs.push(format!("udp_send_binding_request {addr} -> fail ({e})"));
+            continue;
+        }
+        udp_send_ok = true;
+        attempt_logs.push(format!("udp_send_binding_request {addr} -> ok"));
+        let mut buf = [0u8; 1500];
+        match sock.recv(&mut buf) {
+            Ok(n) => {
+                udp_response_ok = true;
+                attempt_logs.push(format!("udp_recv {addr} -> ok bytes={n}"));
+                match parse_stun_binding_response(&buf[..n], &req[8..20]) {
+                    Ok(mapped) => {
+                        stun_binding_ok = true;
+                        reflexive_addr = mapped;
+                        rtt_ms = Some(start.elapsed().as_millis());
+                        attempt_logs.push(format!(
+                            "stun_binding {addr} -> ok mapped={}",
+                            reflexive_addr
+                                .clone()
+                                .unwrap_or_else(|| "<not-provided>".to_string())
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        attempt_logs.push(format!("stun_binding {addr} -> fail ({e})"));
+                        stun_failure = Some(e);
+                    }
+                }
+            }
+            Err(e) => {
+                attempt_logs.push(format!("udp_recv {addr} -> fail ({e})"));
+            }
+        }
+    }
+
+    let ok = stun_binding_ok;
+    let details = if ok {
+        match (&reflexive_addr, rtt_ms) {
+            (Some(addr), Some(ms)) => format!(
+                "TURN probe passed for {} (stun_binding=true, reflexive_addr={}, rtt_ms={})",
+                turn_url, addr, ms
+            ),
+            _ => format!("TURN probe passed for {} (stun_binding=true)", turn_url),
+        }
+    } else if tcp_reachable || udp_send_ok {
+        format!(
+            "TURN port reachable but STUN binding failed for {} (tcp={}, udp_send={}, udp_response={}, reason={})",
+            turn_url,
+            tcp_reachable,
+            udp_send_ok,
+            udp_response_ok,
+            stun_failure.unwrap_or_else(|| "no_stun_response".to_string())
+        )
+    } else {
+        format!(
+            "TURN probe failed for {} (tcp={}, udp_send={})",
+            turn_url, tcp_reachable, udp_send_ok
+        )
+    };
+    attempt_logs.push(format!("final_ok={ok}"));
+    attempt_logs.push(format!(
+        "final_status tcp_reachable={} udp_send_ok={} udp_response_ok={} stun_binding_ok={} reflexive_addr={} rtt_ms={}",
+        tcp_reachable,
+        udp_send_ok,
+        udp_response_ok,
+        stun_binding_ok,
+        reflexive_addr.clone().unwrap_or_else(|| "<none>".to_string()),
+        rtt_ms
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    for line in &attempt_logs {
+        crate::desktop_log!("[TURN probe] {}", line);
+    }
+
+    Ok(TurnProbeResult {
+        ok,
+        turn_url,
+        host,
+        port,
+        resolved_addrs,
+        tcp_reachable,
+        udp_send_ok,
+        udp_response_ok,
+        stun_binding_ok,
+        reflexive_addr,
+        rtt_ms,
+        details,
+        attempt_logs,
+    })
+}
+
+fn current_syftbox_email() -> Result<String, String> {
+    let cfg = biovault::config::Config::load().map_err(|e| e.to_string())?;
+    let email = cfg
+        .syftbox_credentials
+        .as_ref()
+        .and_then(|c| c.email.as_ref())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            let v = cfg.email.trim().to_string();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        })
+        .ok_or_else(|| "Cannot run peer link test: no SyftBox email set in config.".to_string())?;
+    Ok(email)
+}
+
+fn peer_link_rpc_dir(datasites_root: &Path, email: &str) -> std::path::PathBuf {
+    datasites_root
+        .join(email)
+        .join("app_data")
+        .join("biovault")
+        .join("rpc")
+        .join("peer_link")
+}
+
+fn write_json_file(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+    fs::write(
+        path,
+        serde_json::to_string_pretty(value).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn process_peer_link_requests(
+    local_email: &str,
+    local_rpc_dir: &Path,
+    datasites_root: &Path,
+    attempt_logs: &mut Vec<String>,
+) {
+    let entries = match fs::read_dir(local_rpc_dir) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_request = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("request"))
+            .unwrap_or(false);
+        if !is_request {
+            continue;
+        }
+
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(frame) = serde_json::from_str::<PeerLinkFrame>(&raw) else {
+            continue;
+        };
+        if frame.kind != "request" {
+            continue;
+        }
+        if frame.to != local_email {
+            continue;
+        }
+
+        let responder_dir = peer_link_rpc_dir(datasites_root, local_email);
+        let response_path = responder_dir.join(format!("{}.response", frame.request_id));
+        if response_path.exists() {
+            continue;
+        }
+
+        let response = PeerLinkFrame {
+            kind: "response".to_string(),
+            request_id: frame.request_id.clone(),
+            run_id: frame.run_id.clone(),
+            from: local_email.to_string(),
+            to: frame.from.clone(),
+            seq: frame.seq,
+            sent_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            payload_len: frame.payload_len,
+        };
+        let value = serde_json::to_value(&response).unwrap_or_else(|_| json!({}));
+        match write_json_file(&response_path, &value) {
+            Ok(()) => attempt_logs.push(format!(
+                "auto_responded request_id={} from={} to={} seq={} path={}",
+                frame.request_id,
+                frame.from,
+                local_email,
+                frame.seq,
+                response_path.display()
+            )),
+            Err(err) => attempt_logs.push(format!(
+                "auto_response_failed request_id={} err={}",
+                frame.request_id, err
+            )),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn test_peer_link(options: PeerLinkTestOptions) -> Result<PeerLinkTestResult, String> {
+    let local_email = current_syftbox_email()?;
+    let peer_email = options.peer_email.trim().to_string();
+    if peer_email.is_empty() {
+        return Err("Peer email is required.".to_string());
+    }
+    if peer_email == local_email {
+        return Err("Peer email must be different from your current email.".to_string());
+    }
+
+    let rounds = options.rounds.unwrap_or(3).clamp(1, 100);
+    let payload_kb = options.payload_kb.unwrap_or(32).clamp(1, 1024);
+    let payload_bytes = (payload_kb as usize) * 1024;
+    let timeout_s = options.timeout_s.unwrap_or(60).clamp(3, 600);
+    let poll_ms = options.poll_ms.unwrap_or(100).clamp(20, 1000);
+    let poll_sleep = Duration::from_millis(poll_ms);
+
+    let biovault_home = crate::resolve_biovault_home_path();
+    let datasites_root = biovault_home.join("datasites");
+    if !datasites_root.exists() {
+        return Err(format!(
+            "Datasites root not found: {}",
+            datasites_root.display()
+        ));
+    }
+
+    let local_rpc_dir = peer_link_rpc_dir(&datasites_root, &local_email);
+    let peer_rpc_dir = peer_link_rpc_dir(&datasites_root, &peer_email);
+    fs::create_dir_all(&local_rpc_dir)
+        .map_err(|e| format!("Failed to create {}: {}", local_rpc_dir.display(), e))?;
+    fs::create_dir_all(&peer_rpc_dir)
+        .map_err(|e| format!("Failed to create {}: {}", peer_rpc_dir.display(), e))?;
+
+    let run_id = format!("peerlink-{}", uuid::Uuid::new_v4());
+    let mut attempt_logs = vec![
+        format!("local_email={}", local_email),
+        format!("peer_email={}", peer_email),
+        format!("datasites_root={}", datasites_root.display()),
+        format!("local_rpc_dir={}", local_rpc_dir.display()),
+        format!("peer_rpc_dir={}", peer_rpc_dir.display()),
+        format!("run_id={}", run_id),
+        format!("rounds={}", rounds),
+        format!("payload_bytes={}", payload_bytes),
+        format!("timeout_s={}", timeout_s),
+        format!("poll_ms={}", poll_ms),
+        "note=Run the same test from the peer app at the same time for ping-pong.".to_string(),
+    ];
+
+    let payload = "x".repeat(payload_bytes);
+    let mut rtts: Vec<u128> = Vec::new();
+    let mut failed_rounds: u32 = 0;
+
+    for seq in 1..=rounds {
+        process_peer_link_requests(
+            &local_email,
+            &local_rpc_dir,
+            &datasites_root,
+            &mut attempt_logs,
+        );
+
+        let request_id = format!(
+            "{}-{}-to-{}-r{}",
+            run_id,
+            local_email.replace('@', "_"),
+            peer_email.replace('@', "_"),
+            seq
+        );
+        let request_file = peer_rpc_dir.join(format!("{}.request", request_id));
+        let response_file = local_rpc_dir.join(format!("{}.response", request_id));
+        let sent_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let request_frame = PeerLinkFrame {
+            kind: "request".to_string(),
+            request_id: request_id.clone(),
+            run_id: run_id.clone(),
+            from: local_email.clone(),
+            to: peer_email.clone(),
+            seq,
+            sent_ms,
+            payload_len: payload_bytes,
+        };
+        let request_json = json!({
+            "frame": request_frame,
+            "payload": payload,
+        });
+        write_json_file(&request_file, &request_json)?;
+        attempt_logs.push(format!(
+            "round={} request_written path={}",
+            seq,
+            request_file.display()
+        ));
+
+        let started = Instant::now();
+        let mut round_ok = false;
+        loop {
+            process_peer_link_requests(
+                &local_email,
+                &local_rpc_dir,
+                &datasites_root,
+                &mut attempt_logs,
+            );
+
+            if response_file.exists() {
+                let elapsed_ms = started.elapsed().as_millis();
+                rtts.push(elapsed_ms);
+                attempt_logs.push(format!(
+                    "round={} response_received path={} rtt_ms={}",
+                    seq,
+                    response_file.display(),
+                    elapsed_ms
+                ));
+                round_ok = true;
+                break;
+            }
+
+            if started.elapsed() >= Duration::from_secs(timeout_s) {
+                attempt_logs.push(format!(
+                    "round={} timeout waiting_for={} after={}s",
+                    seq,
+                    response_file.display(),
+                    timeout_s
+                ));
+                failed_rounds += 1;
+                break;
+            }
+            std::thread::sleep(poll_sleep);
+        }
+
+        if !round_ok {
+            break;
+        }
+    }
+
+    let completed_rounds = rtts.len() as u32;
+    let ok = failed_rounds == 0 && completed_rounds == rounds;
+    let mut sorted = rtts.clone();
+    sorted.sort_unstable();
+    let min_rtt_ms = sorted.first().copied();
+    let max_rtt_ms = sorted.last().copied();
+    let p50_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted[((sorted.len() - 1) as f64 * 0.50).round() as usize])
+    };
+    let p95_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted[((sorted.len() - 1) as f64 * 0.95).round() as usize])
+    };
+    let avg_rtt_ms = if sorted.is_empty() {
+        None
+    } else {
+        Some(sorted.iter().sum::<u128>() as f64 / sorted.len() as f64)
+    };
+
+    let details = if ok {
+        format!(
+            "Peer link test passed ({} rounds). RTT p50={}ms p95={}ms.",
+            completed_rounds,
+            p50_rtt_ms.unwrap_or(0),
+            p95_rtt_ms.unwrap_or(0)
+        )
+    } else {
+        format!(
+            "Peer link test incomplete. completed={} failed={} rounds={}.\n\
+Make sure peer '{}' runs Peer Link Test against '{}' at the same time.",
+            completed_rounds, failed_rounds, rounds, peer_email, local_email
+        )
+    };
+
+    Ok(PeerLinkTestResult {
+        ok,
+        local_email,
+        peer_email,
+        run_id,
+        rounds,
+        completed_rounds,
+        failed_rounds,
+        payload_bytes,
+        min_rtt_ms,
+        p50_rtt_ms,
+        p95_rtt_ms,
+        max_rtt_ms,
+        avg_rtt_ms,
+        details,
+        attempt_logs,
+    })
+}
+
+fn build_stun_binding_request() -> [u8; 20] {
+    // STUN header: type(2)=0x0001 binding request, length(2)=0,
+    // magic cookie(4)=0x2112A442, transaction id(12)=random bytes.
+    let mut out = [0u8; 20];
+    out[0] = 0x00;
+    out[1] = 0x01;
+    out[2] = 0x00;
+    out[3] = 0x00;
+    out[4] = 0x21;
+    out[5] = 0x12;
+    out[6] = 0xA4;
+    out[7] = 0x42;
+    let id = uuid::Uuid::new_v4();
+    out[8..20].copy_from_slice(&id.as_bytes()[..12]);
+    out
+}
+
+fn parse_stun_binding_response(payload: &[u8], tx_id: &[u8]) -> Result<Option<String>, String> {
+    const STUN_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
+    if payload.len() < 20 {
+        return Err("response_too_short".to_string());
+    }
+
+    let msg_type = u16::from_be_bytes([payload[0], payload[1]]);
+    let msg_len = u16::from_be_bytes([payload[2], payload[3]]) as usize;
+    if payload[4..8] != STUN_COOKIE {
+        return Err("missing_stun_cookie".to_string());
+    }
+    if &payload[8..20] != tx_id {
+        return Err("transaction_id_mismatch".to_string());
+    }
+    if payload.len() < 20 + msg_len {
+        return Err("truncated_stun_payload".to_string());
+    }
+
+    if msg_type == 0x0111 {
+        let reason = parse_stun_error_reason(&payload[..20 + msg_len])
+            .unwrap_or_else(|| "error_response".to_string());
+        return Err(format!("stun_error:{reason}"));
+    }
+    if msg_type != 0x0101 {
+        return Err(format!("unexpected_stun_type:0x{msg_type:04x}"));
+    }
+
+    Ok(parse_xor_mapped_address(&payload[..20 + msg_len]))
+}
+
+fn parse_stun_error_reason(payload: &[u8]) -> Option<String> {
+    let mut idx = 20usize;
+    while idx + 4 <= payload.len() {
+        let attr_type = u16::from_be_bytes([payload[idx], payload[idx + 1]]);
+        let attr_len = u16::from_be_bytes([payload[idx + 2], payload[idx + 3]]) as usize;
+        idx += 4;
+        if idx + attr_len > payload.len() {
+            return None;
+        }
+        let value = &payload[idx..idx + attr_len];
+        if attr_type == 0x0009 && attr_len >= 4 {
+            let class = (value[2] & 0x07) as u16;
+            let number = value[3] as u16;
+            let code = class * 100 + number;
+            let reason = if attr_len > 4 {
+                String::from_utf8_lossy(&value[4..]).to_string()
+            } else {
+                "".to_string()
+            };
+            if reason.trim().is_empty() {
+                return Some(code.to_string());
+            }
+            return Some(format!("{code}:{reason}"));
+        }
+        idx += attr_len;
+        let rem = idx % 4;
+        if rem != 0 {
+            idx += 4 - rem;
+        }
+    }
+    None
+}
+
+fn parse_xor_mapped_address(payload: &[u8]) -> Option<String> {
+    const STUN_COOKIE_U16: u16 = 0x2112;
+    const STUN_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
+
+    let mut idx = 20usize;
+    while idx + 4 <= payload.len() {
+        let attr_type = u16::from_be_bytes([payload[idx], payload[idx + 1]]);
+        let attr_len = u16::from_be_bytes([payload[idx + 2], payload[idx + 3]]) as usize;
+        idx += 4;
+        if idx + attr_len > payload.len() {
+            return None;
+        }
+        let value = &payload[idx..idx + attr_len];
+        if attr_type == 0x0020 && attr_len >= 8 {
+            let family = value[1];
+            let x_port = u16::from_be_bytes([value[2], value[3]]);
+            let port = x_port ^ STUN_COOKIE_U16;
+            if family == 0x01 && attr_len >= 8 {
+                let a = value[4] ^ STUN_COOKIE[0];
+                let b = value[5] ^ STUN_COOKIE[1];
+                let c = value[6] ^ STUN_COOKIE[2];
+                let d = value[7] ^ STUN_COOKIE[3];
+                return Some(format!("{a}.{b}.{c}.{d}:{port}"));
+            }
+        }
+        idx += attr_len;
+        let rem = idx % 4;
+        if rem != 0 {
+            idx += 4 - rem;
+        }
+    }
+    None
+}
+
 fn normalize_percent(value: f64) -> f64 {
     if value <= 1.0 {
         (value * 100.0).min(100.0)
@@ -562,6 +1320,37 @@ fn normalize_uploads(list: &mut [SyftBoxUploadInfo]) {
     }
 }
 
+fn should_log_queue_poll(is_connected: bool) -> bool {
+    let interval_secs = if is_connected { 60 } else { 10 };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_QUEUE_POLL_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= interval_secs {
+        LAST_QUEUE_POLL_LOG.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+fn should_log_control_plane_ok() -> bool {
+    let is_connected = LAST_KNOWN_WS_CONNECTED.load(Ordering::Relaxed);
+    let interval_secs = if is_connected { 60 } else { 10 };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_CONTROL_PLANE_OK_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= interval_secs {
+        LAST_CONTROL_PLANE_OK_LOG.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
 fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, error: Option<String>) {
     let entry = ControlPlaneLogEntry {
         timestamp: Utc::now().to_rfc3339(),
@@ -580,6 +1369,9 @@ fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, erro
     match error {
         Some(err) => crate::desktop_log!("🛰️ {} {} -> error: {}", method, url, err),
         None => {
+            if !should_log_control_plane_ok() {
+                return;
+            }
             let s = status
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "unknown".into());
@@ -1169,14 +1961,15 @@ pub async fn syftbox_submit_otp(
             }
 
             // Restart daemon ONLY if auth was NOT skipped AND we're NOT in a dev environment.
-            // In devstacks, the shell script manages the daemon, and app-side restarts 
+            // In devstacks, the shell script manages the daemon, and app-side restarts
             // often trigger lock errors because of race conditions.
             let is_devstack = env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
-            
+
             if !skip_auth && !is_devstack {
                 // Restart the local SyftBox daemon so it picks up fresh auth tokens.
                 let restart_runtime = runtime.clone();
                 tauri::async_runtime::spawn_blocking(move || {
+                    apply_syftbox_fast_mode_defaults();
                     if let Err(e) = syftctl::stop_syftbox(&restart_runtime) {
                         crate::desktop_log!("ℹ️ Failed to stop SyftBox: {}", e);
                     }
@@ -1249,6 +2042,8 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
     let mut data_dir: Option<String> = None;
     let mut data_dir_error: Option<String> = None;
     let mut log_path: Option<String> = None;
+    let mut email: Option<String> = None;
+    let mut server_url: Option<String> = None;
 
     if let Some(cfg) = config.as_ref() {
         match cfg.get_syftbox_data_dir() {
@@ -1257,6 +2052,21 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
         }
         if let Ok(runtime) = cfg.to_syftbox_runtime_config() {
             log_path = resolve_syftbox_log_path(&runtime);
+        }
+        if !cfg.email.trim().is_empty() {
+            email = Some(cfg.email.clone());
+        }
+        if let Some(creds) = cfg.syftbox_credentials.as_ref() {
+            if let Some(creds_email) = creds.email.as_ref() {
+                if !creds_email.trim().is_empty() {
+                    email = Some(creds_email.clone());
+                }
+            }
+            if let Some(url) = creds.server_url.as_ref() {
+                if !url.trim().is_empty() {
+                    server_url = Some(url.clone());
+                }
+            }
         }
     } else if let Ok(env_dir) = std::env::var("SYFTBOX_DATA_DIR") {
         data_dir = Some(env_dir);
@@ -1299,12 +2109,31 @@ pub fn get_syftbox_config_info() -> Result<SyftBoxConfigInfo, String> {
     if log_path.is_none() {
         log_path = fallback_log_path();
     }
+    if server_url.is_none() {
+        if let Ok(raw) = std::fs::read_to_string(&config_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(url) = val.get("server_url").and_then(|v| v.as_str()) {
+                    if !url.trim().is_empty() {
+                        server_url = Some(url.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ref addr) = server_url {
+        crate::desktop_log!("  Server URL: {}", addr);
+    }
+    if let Some(ref email_val) = email {
+        crate::desktop_log!("  Email: {}", email_val);
+    }
 
     Ok(SyftBoxConfigInfo {
         is_authenticated,
         config_path,
         has_access_token,
         has_refresh_token,
+        email,
+        server_url,
         data_dir,
         data_dir_error,
         log_path,
@@ -1419,6 +2248,8 @@ fn get_tx_rx_bytes(client_url: &Option<String>) -> (u64, u64) {
 
 #[tauri::command]
 pub fn start_syftbox_client() -> Result<SyftBoxState, String> {
+    apply_syftbox_fast_mode_defaults();
+
     let runtime = load_runtime_config()?;
     ensure_syftbox_config(&runtime)?;
 
@@ -1672,7 +2503,20 @@ pub fn get_syftbox_diagnostics() -> Result<SyftBoxDiagnostics, String> {
 
 #[tauri::command]
 pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
-    let cfg = load_syftbox_client_config()?;
+    let cfg = match load_syftbox_client_config() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return Ok(SyftBoxQueueStatus {
+                control_plane_url: None,
+                data_dir: None,
+                sync: None,
+                uploads: None,
+                status: None,
+                latency: None,
+                error: Some(err),
+            });
+        }
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -1681,6 +2525,7 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
     let mut sync: Option<SyftBoxSyncStatus> = None;
     let mut uploads: Option<Vec<SyftBoxUploadInfo>> = None;
     let mut status: Option<SyftBoxStatus> = None;
+    let mut latency: Option<SyftBoxLatencyStats> = None;
     let mut errors: Vec<String> = Vec::new();
 
     match cp_get::<SyftBoxSyncStatus>(
@@ -1724,6 +2569,23 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
         }
     }
 
+    match cp_get::<SyftBoxLatencyStats>(
+        &client,
+        &cfg.client_url,
+        "/v1/stats/latency",
+        &cfg.client_token,
+    )
+    .await
+    {
+        Ok(s) => {
+            latency = Some(s);
+        }
+        Err(e) => {
+            crate::desktop_log!("⚠️ syftbox_queue_status latency: {}", e);
+            errors.push(e);
+        }
+    }
+
     let sync_count = sync.as_ref().map(|s| s.files.len()).unwrap_or(0);
     let upload_count = uploads.as_ref().map(|u| u.len()).unwrap_or(0);
     let err_msg = if errors.is_empty() {
@@ -1750,14 +2612,23 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
                 .collect()
         })
         .unwrap_or_default();
-    crate::desktop_log!(
-        "📡 SyftBox queue poll → sync: {} upload: {} errors: {} | sample sync: [{}] uploads: [{}]",
-        sync_count,
-        upload_count,
-        err_msg,
-        sample_sync.join(" | "),
-        sample_uploads.join(" | ")
-    );
+    let is_connected = status
+        .as_ref()
+        .and_then(|s| s.runtime.as_ref())
+        .and_then(|r| r.websocket.as_ref())
+        .and_then(|w| w.connected)
+        .unwrap_or(false);
+    LAST_KNOWN_WS_CONNECTED.store(is_connected, Ordering::Relaxed);
+    if should_log_queue_poll(is_connected) {
+        crate::desktop_log!(
+            "📡 SyftBox queue poll → sync: {} upload: {} errors: {} | sample sync: [{}] uploads: [{}]",
+            sync_count,
+            upload_count,
+            err_msg,
+            sample_sync.join(" | "),
+            sample_uploads.join(" | ")
+        );
+    }
 
     Ok(SyftBoxQueueStatus {
         control_plane_url: Some(cfg.client_url),
@@ -1765,12 +2636,56 @@ pub async fn syftbox_queue_status() -> Result<SyftBoxQueueStatus, String> {
         sync,
         uploads,
         status,
+        latency,
         error: if errors.is_empty() {
             None
         } else {
             Some(errors.join("; "))
         },
     })
+}
+
+#[tauri::command]
+pub async fn syftbox_subscriptions_discovery() -> Result<Vec<SyftBoxDiscoveryFile>, String> {
+    if SUBSCRIPTION_DISCOVERY_UNAVAILABLE.load(Ordering::Relaxed) {
+        return Ok(Vec::new());
+    }
+    let cfg = load_syftbox_client_config()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let resp: SyftBoxDiscoveryResponse = match cp_get(
+        &client,
+        &cfg.client_url,
+        "/v1/subscriptions/discovery/files",
+        &cfg.client_token,
+    )
+    .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            if e.contains("HTTP 404") {
+                SUBSCRIPTION_DISCOVERY_UNAVAILABLE.store(true, Ordering::Relaxed);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let last = LAST_SUBSCRIPTION_404_LOG.load(Ordering::Relaxed);
+                if now.saturating_sub(last) > 60 {
+                    LAST_SUBSCRIPTION_404_LOG.store(now, Ordering::Relaxed);
+                    crate::desktop_log!(
+                        "⚠️ syftbox_subscriptions_discovery unsupported (404). Disabling further checks."
+                    );
+                }
+                return Ok(Vec::new());
+            }
+            return Err(e);
+        }
+    };
+
+    Ok(resp.files)
 }
 
 #[tauri::command]

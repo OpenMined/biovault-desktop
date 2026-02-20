@@ -12,6 +12,7 @@
 			<!-- Data view toggle -->
 			<div class="pill-toggle pill-toggle-lg" id="data-view-toggle">
 				<button class="pill-button active" data-view="participants">Files</button>
+				<button class="pill-button" data-view="references">References</button>
 				<button class="pill-button" data-view="datasets">Datasets</button>
 			</div>
 
@@ -33,6 +34,21 @@
 
 			<!-- Primary Actions -->
 			<div class="page-header-actions">
+				<button id="sample-data-btn" class="btn-secondary">
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M3 7h18"></path>
+						<path d="M3 12h18"></path>
+						<path d="M3 17h18"></path>
+					</svg>
+					<span>Sample Data</span>
+				</button>
 				<button id="open-import-modal-btn" class="btn-primary">
 					<svg
 						width="14"
@@ -51,6 +67,91 @@
 			</div>
 		</div>
 	</header>
+
+	<section id="sample-data-panel" class="sample-data-panel" hidden>
+		<div class="sample-data-header">
+			<div>
+				<h3>Sample Data</h3>
+				<p>Download curated files and import them in one click.</p>
+			</div>
+			<button id="sample-data-close" class="sample-data-close-btn">
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<line x1="18" y1="6" x2="6" y2="18"></line>
+					<line x1="6" y1="6" x2="18" y2="18"></line>
+				</svg>
+				Close
+			</button>
+		</div>
+		<div class="sample-data-grid">
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>Dynamic DNA Genotype (Build 38)</h4>
+					<p>100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt</p>
+					<span class="sample-data-tag">Genotype</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="dynamic-dna">Download &amp; Import</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>23andMe Genotype (v4 Full)</h4>
+					<p>genome_Zeeshan_Usamani_v4_Full.txt</p>
+					<span class="sample-data-tag">Genotype</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="23andme">Download &amp; Import</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>NA06985 chrY (CRAM + Reference)</h4>
+					<p>Chromosome Y aligned CRAM + GRCh38 chrY reference</p>
+					<span class="sample-data-tag">Raw + Reference</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="na06985-chry">Download &amp; Import</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>NA06985 (Full CRAM + Reference)</h4>
+					<p>High coverage CRAM + GRCh38 full reference (~20GB)</p>
+					<span class="sample-data-tag">Large Download</span>
+				</div>
+				<div class="sample-data-progress" data-progress-id="na06985-full" hidden>
+					<div class="sample-data-progress-bar"></div>
+					<span class="sample-data-progress-text">Downloading...</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="na06985-full">Download &amp; Import</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>ClinVar Database (GRCh38)</h4>
+					<p>NCBI ClinVar variant annotations for clinical significance</p>
+					<span class="sample-data-tag">Variant Database</span>
+				</div>
+				<div class="sample-data-progress" data-progress-id="clinvar-grch38" hidden>
+					<div class="sample-data-progress-bar"></div>
+					<span class="sample-data-progress-text">Downloading...</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="clinvar-grch38">Download</button>
+			</div>
+			<div class="sample-data-card">
+				<div class="sample-data-meta">
+					<h4>ClinVar Database (GRCh37)</h4>
+					<p>NCBI ClinVar variant annotations for clinical significance</p>
+					<span class="sample-data-tag">Variant Database</span>
+				</div>
+				<div class="sample-data-progress" data-progress-id="clinvar-grch37" hidden>
+					<div class="sample-data-progress-bar"></div>
+					<span class="sample-data-progress-text">Downloading...</span>
+				</div>
+				<button class="btn-secondary" data-sample-id="clinvar-grch37">Download</button>
+			</div>
+		</div>
+	</section>
 
 	<!-- Selection Toolbar - Appears when files are selected -->
 	<div class="data-selection-toolbar" id="selection-actions-group" style="display: none">
@@ -96,7 +197,7 @@
 			<button
 				id="run-analysis-btn"
 				class="toolbar-btn toolbar-btn-primary"
-				title="Run analysis pipeline"
+				title="Run analysis flow"
 			>
 				<svg
 					width="14"
@@ -108,7 +209,7 @@
 				>
 					<polygon points="5 3 19 12 5 21 5 3"></polygon>
 				</svg>
-				<span id="run-analysis-text">Run Pipeline</span>
+				<span id="run-analysis-text">Run Flow</span>
 			</button>
 			<button
 				id="delete-selected-btn"
@@ -187,6 +288,57 @@
 			<!-- Participants-focused table (existing) -->
 			<div class="data-main-layout" id="participant-data-section">
 				<div class="files-panel">
+					<div class="files-type-filter-bar" id="files-type-filter-bar">
+						<span class="files-type-filter-label">Filter types</span>
+						<div class="files-type-filter-chips" role="group" aria-label="File type filters">
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="all"
+								aria-pressed="true"
+							>
+								<span>All</span>
+								<span class="file-type-filter-count" data-file-type-count="all">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="genotype"
+								aria-pressed="true"
+							>
+								<span>Genotype</span>
+								<span class="file-type-filter-count" data-file-type-count="genotype">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="vcf"
+								aria-pressed="true"
+							>
+								<span>VCF</span>
+								<span class="file-type-filter-count" data-file-type-count="vcf">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="raw"
+								aria-pressed="true"
+							>
+								<span>Raw</span>
+								<span class="file-type-filter-count" data-file-type-count="raw">0</span>
+							</button>
+							<button
+								type="button"
+								class="file-type-filter-chip active"
+								data-file-type-filter="other"
+								aria-pressed="true"
+							>
+								<span>Other</span>
+								<span class="file-type-filter-count" data-file-type-count="other">0</span>
+							</button>
+						</div>
+					</div>
+
 					<div class="files-table-wrapper">
 						<table class="files-table">
 							<thead>
@@ -214,6 +366,7 @@
 										Type
 										<span class="sort-indicator"></span>
 									</th>
+									<th class="col-reference">Reference</th>
 									<th class="col-source sortable-header" data-sort-field="source">
 										Source
 										<span class="sort-indicator"></span>
@@ -367,6 +520,107 @@
 							<strong>Tip:</strong> Select files in the Files tab and use "Create Dataset" to
 							quickly package them
 						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- References panel -->
+			<div class="data-main-layout" id="reference-data-section" style="display: none">
+				<div class="files-panel references-panel">
+					<div class="references-header">
+						<div>
+							<h3 class="datasets-title">Reference Files</h3>
+							<p class="datasets-subtitle">Manage shared genome references and their indexes.</p>
+						</div>
+						<div class="references-header-actions">
+							<button id="download-grch38-btn" class="btn-secondary-sm">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+									<polyline points="17 8 12 3 7 8"></polyline>
+									<line x1="12" y1="3" x2="12" y2="15"></line>
+								</svg>
+								<span>Download GRCh38</span>
+							</button>
+						</div>
+					</div>
+					<!-- Reference selection toolbar -->
+					<div id="reference-selection-toolbar" class="selection-toolbar" style="display: none">
+						<div class="selection-toolbar-content">
+							<span class="selection-count">
+								<span id="reference-selection-count">0</span> selected
+							</span>
+							<button
+								id="delete-selected-refs-btn"
+								class="btn-danger-small"
+								title="Delete selected references"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+								>
+									<polyline points="3 6 5 6 21 6"></polyline>
+									<path
+										d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+									></path>
+								</svg>
+								Delete
+							</button>
+						</div>
+					</div>
+					<div class="sample-data-progress" id="grch38-download-progress" hidden>
+						<div class="sample-data-progress-bar"></div>
+						<span class="sample-data-progress-text">Downloading...</span>
+					</div>
+					<div class="references-links">
+						<a
+							href="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+							target="_blank"
+							rel="noreferrer"
+						>
+							GRCh38 reference (.fa)
+						</a>
+						<a
+							href="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai"
+							target="_blank"
+							rel="noreferrer"
+						>
+							GRCh38 index (.fai)
+						</a>
+					</div>
+					<div class="files-table-wrapper">
+						<table class="files-table">
+							<thead>
+								<tr>
+									<th class="col-checkbox">
+										<input
+											type="checkbox"
+											id="select-all-references"
+											title="Select all references"
+										/>
+									</th>
+									<th class="col-file">File</th>
+									<th class="col-type">Type</th>
+									<th class="col-grch">GRCh</th>
+									<th class="col-actions">Actions</th>
+								</tr>
+							</thead>
+							<tbody id="references-table-body"></tbody>
+						</table>
+					</div>
+					<div id="references-empty-state" class="files-empty-state" style="display: none">
+						<h3>No references found</h3>
+						<p>Download GRCh38 or import your own reference files.</p>
 					</div>
 				</div>
 			</div>
@@ -768,22 +1022,20 @@
 			</div>
 		</div>
 
-		<!-- Run Pipeline Modal -->
-		<div id="run-pipeline-modal" class="modal hidden">
+		<!-- Run Flow Modal -->
+		<div id="run-flow-modal" class="modal hidden">
 			<div class="modal-content" style="max-width: 400px">
 				<div class="modal-header">
-					<h3>Run Pipeline</h3>
-					<button id="run-pipeline-modal-close" class="modal-close" aria-label="Close">
-						&times;
-					</button>
+					<h3>Run Flow</h3>
+					<button id="run-flow-modal-close" class="modal-close" aria-label="Close">&times;</button>
 				</div>
 				<div class="modal-body">
 					<p style="margin-bottom: 16px; color: var(--text-secondary)">
-						Which data do you want to run the pipeline on?
+						Which data do you want to run the flow on?
 					</p>
-					<div class="pipeline-options" style="display: flex; flex-direction: column; gap: 12px">
+					<div class="flow-options" style="display: flex; flex-direction: column; gap: 12px">
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -794,7 +1046,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="mock" checked />
+							<input type="radio" name="flow-data-type" value="mock" checked />
 							<div>
 								<div style="font-weight: 500">Mock Data</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -803,7 +1055,7 @@
 							</div>
 						</label>
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -814,7 +1066,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="real" />
+							<input type="radio" name="flow-data-type" value="real" />
 							<div>
 								<div style="font-weight: 500">Real Data</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -823,7 +1075,7 @@
 							</div>
 						</label>
 						<label
-							class="pipeline-option"
+							class="flow-option"
 							style="
 								display: flex;
 								align-items: center;
@@ -834,7 +1086,7 @@
 								cursor: pointer;
 							"
 						>
-							<input type="radio" name="pipeline-data-type" value="both" />
+							<input type="radio" name="flow-data-type" value="both" />
 							<div>
 								<div style="font-weight: 500">Both</div>
 								<div style="font-size: 12px; color: var(--text-secondary)">
@@ -845,8 +1097,8 @@
 					</div>
 				</div>
 				<div class="modal-footer">
-					<button id="run-pipeline-cancel" class="btn-secondary" type="button">Cancel</button>
-					<button id="run-pipeline-confirm" class="btn-primary" type="button">
+					<button id="run-flow-cancel" class="btn-secondary" type="button">Cancel</button>
+					<button id="run-flow-confirm" class="btn-primary" type="button">
 						<svg
 							width="14"
 							height="14"
@@ -857,7 +1109,7 @@
 						>
 							<polygon points="5 3 19 12 5 21 5 3"></polygon>
 						</svg>
-						Run Pipeline
+						Run Flow
 					</button>
 				</div>
 			</div>

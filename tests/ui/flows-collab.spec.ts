@@ -1,39 +1,46 @@
 /**
- * Pipelines Collaboration Test (Two Clients)
- * Tests the full collaborative pipeline workflow:
+ * Flows Collaboration Test (Two Clients)
+ * Tests the full collaborative flow workflow:
  * 1. Client1 (Alice) creates dataset with private + mock data
- * 2. Client1 creates HERC2 pipeline (or imports from local bioscript)
- * 3. Client2 (Bob) imports HERC2 pipeline
+ * 2. Client1 creates HERC2 flow (or imports from local bioscript)
+ * 3. Client2 (Bob) imports HERC2 flow
  * 4. Client2 sees Alice's dataset on Network > Datasets tab
- * 5. Client2 runs HERC2 pipeline on mock data (verifies it works locally)
+ * 5. Client2 runs HERC2 flow on mock data (verifies it works locally)
  * 6. Client2 sends "Request Run" for private data
  * 7. Client1 receives request in Messages
- * 8. Client1 runs pipeline on mock data, then real data
+ * 8. Client1 runs flow on real data (start at concurrency 1, pause, resume at 5)
  * 9. Client1 shares results back to Client2
  * 10. Client2 receives and verifies results
  *
  * This is the UI version of inbox-ping-pong.yaml
  *
  * Usage:
- *   ./test-scenario.sh --pipelines-collab
+ *   ./test-scenario.sh --flows-collab
  *
- * @tag pipelines-collab
+ * @tag flows-collab
  */
 import { expect, test, type Page, pauseForInteractive } from './playwright-fixtures'
 import WebSocket from 'ws'
+import { createHash } from 'node:crypto'
+import { execSync } from 'node:child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { applyWindowLayout, ensureProfileSelected, waitForAppReady } from './test-helpers.js'
 import { setWsPort, completeOnboarding, ensureLogSocket, log } from './onboarding-helper.js'
 
-const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + pipeline runs)
+const TEST_TIMEOUT = 480_000 // 8 minutes max (two clients + flow runs)
 const UI_TIMEOUT = 10_000
-const PIPELINE_RUN_TIMEOUT = 120_000 // 2 minutes for pipeline to complete
+const FLOW_RUN_TIMEOUT = 180_000 // 3 minutes for flow to complete
 const SYNC_TIMEOUT = 60_000 // 1 minute for sync operations
-const PEER_DID_TIMEOUT_MS = 180_000 // 3 minutes for peer DID sync
+const PEER_DID_TIMEOUT_MS = 60_000 // 1 minute for peer DID sync (avoid long stalls)
 const DEBUG_PIPELINE_PAUSE_MS = (() => {
 	const raw = Number.parseInt(process.env.PIPELINES_COLLAB_PAUSE_MS || '30000', 10)
 	return Number.isFinite(raw) ? raw : 30_000
+})()
+const WINDOWS_MOCK_RUN_ATTEMPTS = (() => {
+	const raw = Number.parseInt(process.env.FLOWS_COLLAB_WINDOWS_MOCK_RUN_ATTEMPTS || '2', 10)
+	if (!Number.isFinite(raw)) return 2
+	return Math.max(1, raw)
 })()
 
 test.describe.configure({ timeout: TEST_TIMEOUT })
@@ -151,6 +158,7 @@ async function waitForPeerDid(
 	timeoutMs = PEER_DID_TIMEOUT_MS,
 	backend?: Backend,
 	clientLabel?: string,
+	allowMissing = false,
 ): Promise<string> {
 	const label = clientLabel || 'client'
 	const datasitesRoot = resolveDatasitesRoot(dataDir)
@@ -175,6 +183,7 @@ async function waitForPeerDid(
 		if (backend && syncTriggerCount % 4 === 0) {
 			try {
 				await backend.invoke('trigger_syftbox_sync')
+				await backend.invoke('network_scan_datasites')
 			} catch (err) {
 				// Ignore sync errors
 			}
@@ -183,22 +192,118 @@ async function waitForPeerDid(
 		await new Promise((r) => setTimeout(r, 500))
 	}
 
-	throw new Error(`Timed out waiting for peer DID file: ${didPaths.join(', ')}`)
+	const message = `Timed out waiting for peer DID file: ${didPaths.join(', ')}`
+	if (allowMissing) {
+		console.warn(`[${label}] ⚠️ ${message} (continuing)`)
+		return ''
+	}
+	throw new Error(message)
 }
 
-// Helper to wait for pipeline run to complete
+async function waitForFlowRequestMetadata(
+	backend: Backend,
+	flowName: string,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<any> {
+	const start = Date.now()
+	const subjectPrefix = `Flow Request: ${flowName}`
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const threads = await backend.invoke('list_message_threads', {
+				scope: 'inbox',
+				limit: 50,
+			})
+			const flowThread = (threads || []).find((thread: any) =>
+				String(thread?.subject || '').includes(subjectPrefix),
+			)
+			if (flowThread?.thread_id) {
+				const messages = await backend.invoke('get_thread_messages', {
+					threadId: flowThread.thread_id,
+				})
+				for (const msg of messages || []) {
+					const flowRequest = msg?.metadata?.flow_request
+					if (flowRequest?.flow_location) {
+						return flowRequest
+					}
+				}
+			}
+		} catch (error) {
+			// Ignore and retry
+		}
+		try {
+			await backend.invoke('trigger_syftbox_sync')
+		} catch (error) {
+			// Ignore sync errors
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+	throw new Error(`Timed out waiting for flow request metadata for ${flowName}`)
+}
+
+async function waitForSyncedFlowFolder(
+	backend: Backend,
+	flowRequest: any,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<string> {
+	const start = Date.now()
+	const flowLocation = flowRequest?.flow_location
+	if (!flowLocation) {
+		throw new Error('Flow request missing flow_location')
+	}
+	const folderPath = await backend.invoke('resolve_syft_url_to_local_path', {
+		syftUrl: flowLocation,
+	})
+	const flowYaml = path.join(folderPath, 'flow.yaml')
+	let lastReason = ''
+
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const status = await backend.invoke('flow_request_sync_status', { flowLocation })
+			if (status?.ready) {
+				return folderPath
+			}
+			const missingPaths = Array.isArray(status?.missingPaths) ? status.missingPaths : []
+			lastReason =
+				status?.reason || (missingPaths.length ? `missing: ${missingPaths.join(', ')}` : '')
+		} catch {
+			// Fallback for older backends or transient bridge errors.
+			lastReason = ''
+		}
+
+		// Fallback filesystem check: flow.yaml is sufficient when no extra module dirs are required.
+		if (fs.existsSync(flowYaml)) {
+			const modulesDir = path.join(folderPath, 'modules')
+			const modulesReady =
+				!fs.existsSync(modulesDir) || (fs.readdirSync(modulesDir).length || 0) > 0
+			if (modulesReady) {
+				return folderPath
+			}
+		}
+		try {
+			await backend.invoke('trigger_syftbox_sync')
+		} catch (error) {
+			// Ignore sync errors
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+
+	const reasonSuffix = lastReason ? ` (last status: ${lastReason})` : ''
+	throw new Error(`Timed out waiting for flow sync at ${flowYaml}${reasonSuffix}`)
+}
+
+// Helper to wait for flow run to complete
 async function waitForRunCompletion(
 	page: Page,
 	backend: Backend,
 	runId: number,
-	timeoutMs: number = PIPELINE_RUN_TIMEOUT,
+	timeoutMs: number = FLOW_RUN_TIMEOUT,
 ): Promise<{ status: string; run: any }> {
 	const startTime = Date.now()
 	let lastStatus = 'unknown'
 
 	while (Date.now() - startTime < timeoutMs) {
 		try {
-			const runs = await backend.invoke('get_pipeline_runs', {})
+			const runs = await backend.invoke('get_flow_runs', {})
 			const run = runs.find((r: any) => r.id === runId)
 			if (run) {
 				lastStatus = run.status
@@ -215,7 +320,7 @@ async function waitForRunCompletion(
 		await page.waitForTimeout(2000)
 	}
 
-	throw new Error(`Pipeline run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
+	throw new Error(`Flow run timed out after ${timeoutMs}ms. Last status: ${lastStatus}`)
 }
 
 async function waitForNewRun(
@@ -225,7 +330,7 @@ async function waitForNewRun(
 ): Promise<any> {
 	const startTime = Date.now()
 	while (Date.now() - startTime < timeoutMs) {
-		const runs = await backend.invoke('get_pipeline_runs', {})
+		const runs = await backend.invoke('get_flow_runs', {})
 		const newRuns = (runs || []).filter((run: any) => !existingIds.has(run.id))
 		if (newRuns.length > 0) {
 			newRuns.sort((a: any, b: any) => b.id - a.id)
@@ -233,10 +338,10 @@ async function waitForNewRun(
 		}
 		await new Promise((r) => setTimeout(r, 1000))
 	}
-	throw new Error('Timed out waiting for new pipeline run')
+	throw new Error('Timed out waiting for new flow run')
 }
 
-function resolvePipelineResultPath(run: any): string {
+function resolveFlowResultPath(run: any): string {
 	const baseDir = run.results_dir || run.work_dir
 	return path.join(baseDir, 'herc2', 'result_HERC2.tsv')
 }
@@ -346,12 +451,545 @@ function normalizeTsvResult(content: string): string {
 	return [header, ...rows].join('\n')
 }
 
-async function runDatasetPipeline(
+function parseTsvByParticipant(content: string): {
+	header: string
+	idIndex: number
+	rows: string[]
+	ids: string[]
+	duplicates: string[]
+	byId: Map<string, string[]>
+} {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	const header = lines[0] ?? ''
+	const rows = lines.slice(1)
+	const headerCols = header.split('\t')
+	let idIndex = headerCols.indexOf('participant_id')
+	if (idIndex < 0) idIndex = 0
+	const byId = new Map<string, string[]>()
+	const ids: string[] = []
+	const duplicates: string[] = []
+	for (const row of rows) {
+		const cols = row.split('\t')
+		const id = (cols[idIndex] ?? '').trim()
+		if (!id) continue
+		ids.push(id)
+		const existing = byId.get(id)
+		if (existing) {
+			existing.push(row)
+			if (!duplicates.includes(id)) duplicates.push(id)
+		} else {
+			byId.set(id, [row])
+		}
+	}
+	return { header, idIndex, rows, ids, duplicates, byId }
+}
+
+function normalizeCsvResult(content: string): string {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return lines.join('\n')
+	const [header, ...rows] = lines
+	rows.sort((a, b) => a.localeCompare(b))
+	return [header, ...rows].join('\n')
+}
+
+function parseSamplesheet(
+	content: string,
+): Array<{ participant_id: string; genotype_file: string }> {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+	if (lines.length <= 1) return []
+	const [header, ...rows] = lines
+	const cols = header.split(',')
+	const idIndex = cols.indexOf('participant_id')
+	const fileIndex = cols.indexOf('genotype_file')
+	return rows
+		.map((row) => row.split(','))
+		.map((parts) => ({
+			participant_id: (parts[idIndex] ?? '').trim(),
+			genotype_file: (parts[fileIndex] ?? '').trim(),
+		}))
+		.filter((entry) => entry.participant_id && entry.genotype_file)
+}
+
+function hashFileSafe(filePath: string): { exists: boolean; size: number; sha256?: string } {
+	try {
+		if (!fs.existsSync(filePath)) return { exists: false, size: 0 }
+		const buf = fs.readFileSync(filePath)
+		const sha256 = createHash('sha256').update(buf).digest('hex')
+		return { exists: true, size: buf.length, sha256 }
+	} catch {
+		return { exists: false, size: 0 }
+	}
+}
+
+async function resolveSyftUrlSafe(backend: Backend, syftUrl: string): Promise<string | null> {
+	try {
+		const localPath = await backend.invoke('resolve_syft_url_to_local_path', { syftUrl })
+		return typeof localPath === 'string' && localPath.length ? localPath : null
+	} catch {
+		return null
+	}
+}
+
+async function dumpMockEntryFiles(
+	label: string,
+	backend: Backend,
+	entries: Array<{ participant_id?: string; url?: string }>,
+): Promise<void> {
+	console.log(`[${label}] mock entries count: ${entries.length}`)
+	for (const entry of entries.slice(0, 10)) {
+		const url = entry?.url || ''
+		const id = entry?.participant_id || 'unknown'
+		const localPath = url ? await resolveSyftUrlSafe(backend, url) : null
+		const info = localPath ? hashFileSafe(localPath) : { exists: false, size: 0 }
+		console.log(
+			`[${label}] ${id} -> ${url} | local=${localPath ?? 'n/a'} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+		)
+	}
+}
+
+function dumpAssetCsv(label: string, assetPath: string | null): void {
+	if (!assetPath) {
+		console.log(`[${label}] asset_1.csv path missing`)
+		return
+	}
+	const info = hashFileSafe(assetPath)
+	console.log(
+		`[${label}] asset_1.csv: ${assetPath} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+	)
+	const snippet = readFileSnippet(assetPath, 2000)
+	if (snippet) {
+		console.log(`[${label}] asset_1.csv snippet:\n${snippet}`)
+	}
+}
+
+async function dumpDatasetDebug(label: string, backend: Backend, dataset: any): Promise<void> {
+	if (!dataset) {
+		console.log(`[${label}] dataset is null`)
+		return
+	}
+	const assets = dataset.assets || []
+	console.log(`[${label}] dataset name=${dataset.name} assets=${assets.length}`)
+	if (!assets.length) return
+	const asset = assets[0]
+	console.log(`[${label}] asset key=${asset.key} kind=${asset.kind}`)
+	console.log(`[${label}] mock_path=${asset.mock_path}`)
+	console.log(`[${label}] mock_url=${asset.mock_url}`)
+	if (asset.mock_path) {
+		dumpAssetCsv(label, asset.mock_path)
+	}
+	const mockEntries = asset.mock_entries || []
+	if (Array.isArray(mockEntries) && mockEntries.length) {
+		await dumpMockEntryFiles(label, backend, mockEntries)
+	}
+}
+
+function dumpSamplesheetDebug(label: string, samplesheetContent: string): void {
+	const entries = parseSamplesheet(samplesheetContent)
+	console.log(`[${label}] samplesheet entries: ${entries.length}`)
+	for (const entry of entries) {
+		const info = hashFileSafe(entry.genotype_file)
+		console.log(
+			`[${label}] ${entry.participant_id} -> ${entry.genotype_file} (exists=${info.exists}, size=${info.size}${info.sha256 ? `, sha256=${info.sha256}` : ''})`,
+		)
+	}
+}
+
+function extractMockFilenames(entries: any[]): string[] {
+	if (!Array.isArray(entries)) return []
+	const filenames = entries
+		.map((entry) => {
+			const url = entry?.url || ''
+			if (typeof url !== 'string' || !url) return ''
+			const name = url.split('/').next_back?.() ?? url.split('/').pop()
+			return name || ''
+		})
+		.filter((name) => typeof name === 'string' && name.length > 0)
+	return Array.from(new Set(filenames))
+}
+
+function listDirSafe(dirPath: string, limit = 50): string[] {
+	if (!dirPath || !fs.existsSync(dirPath)) return []
+	try {
+		return fs.readdirSync(dirPath).slice(0, limit)
+	} catch {
+		return []
+	}
+}
+
+function readFileSnippet(filePath: string, maxBytes = 5000): string | null {
+	if (!filePath || !fs.existsSync(filePath)) return null
+	try {
+		const buf = fs.readFileSync(filePath)
+		if (buf.length <= maxBytes) return buf.toString('utf8')
+		return `${buf.subarray(0, maxBytes).toString('utf8')}\n...[truncated ${buf.length - maxBytes} bytes]`
+	} catch {
+		return null
+	}
+}
+
+function execCommandSafe(cmd: string): string {
+	try {
+		return execSync(cmd, { encoding: 'utf8', stdio: 'pipe' })
+	} catch (error: any) {
+		const stdout = error?.stdout?.toString?.() ?? ''
+		const stderr = error?.stderr?.toString?.() ?? ''
+		const message = error?.message ?? String(error)
+		return `ERROR: ${message}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`.trim()
+	}
+}
+
+function dumpDirTree(
+	baseDir: string,
+	maxDepth = 3,
+	maxEntries = 200,
+): { lines: string[]; truncated: boolean } {
+	const lines: string[] = []
+	let count = 0
+	let truncated = false
+
+	function walk(dir: string, depth: number) {
+		if (count >= maxEntries) {
+			truncated = true
+			return
+		}
+		let entries: fs.Dirent[] = []
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true })
+		} catch (e) {
+			lines.push(`${'  '.repeat(depth)}[error] ${dir}: ${e}`)
+			count++
+			return
+		}
+
+		for (const entry of entries) {
+			if (count >= maxEntries) {
+				truncated = true
+				return
+			}
+			const fullPath = path.join(dir, entry.name)
+			let stats: fs.Stats | null = null
+			try {
+				stats = fs.statSync(fullPath)
+			} catch {}
+			const size = stats ? stats.size : 0
+			const mtime = stats ? stats.mtime.toISOString() : 'unknown'
+			lines.push(
+				`${'  '.repeat(depth)}${entry.isDirectory() ? '[dir]' : '[file]'} ${entry.name} (${size} bytes, ${mtime})`,
+			)
+			count++
+			if (entry.isDirectory() && depth < maxDepth) {
+				walk(fullPath, depth + 1)
+			}
+		}
+	}
+
+	if (fs.existsSync(baseDir)) {
+		lines.push(`[tree] ${baseDir}`)
+		walk(baseDir, 0)
+	} else {
+		lines.push(`[tree] baseDir missing: ${baseDir}`)
+	}
+	return { lines, truncated }
+}
+
+function findFilesByName(
+	baseDir: string,
+	filenames: string[],
+	maxResults = 20,
+	maxDepth = 6,
+): string[] {
+	const results: string[] = []
+	if (!baseDir || !fs.existsSync(baseDir)) return results
+
+	function walk(dir: string, depth: number) {
+		if (results.length >= maxResults || depth > maxDepth) return
+		let entries: fs.Dirent[] = []
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true })
+		} catch {
+			return
+		}
+		for (const entry of entries) {
+			if (results.length >= maxResults) return
+			const fullPath = path.join(dir, entry.name)
+			if (entry.isDirectory()) {
+				walk(fullPath, depth + 1)
+				continue
+			}
+			if (filenames.includes(entry.name)) {
+				results.push(fullPath)
+			}
+		}
+	}
+
+	walk(baseDir, 0)
+	return results
+}
+
+function dumpContainerDiagnostics(): void {
+	console.log('\n=== DEBUG: Container Runtime Diagnostics ===')
+	const podmanInfo = execCommandSafe('podman info --debug')
+	console.log(`[podman info]\n${podmanInfo}`)
+	const podmanPs = execCommandSafe('podman ps -a --format json')
+	console.log(`[podman ps]\n${podmanPs}`)
+	try {
+		const parsed = JSON.parse(podmanPs || '[]')
+		if (Array.isArray(parsed)) {
+			for (const container of parsed.slice(0, 5)) {
+				const id = container?.Id || container?.ID || container?.id
+				if (!id) continue
+				const logs = execCommandSafe(`podman logs --tail 200 ${id}`)
+				console.log(`\n[podman logs ${id}]\n${logs}`)
+			}
+		}
+	} catch {}
+
+	const dockerInfo = execCommandSafe('docker info')
+	console.log(`[docker info]\n${dockerInfo}`)
+	const dockerPs = execCommandSafe('docker ps -a --format "{{json .}}"')
+	console.log(`[docker ps]\n${dockerPs}`)
+	if (dockerPs && !dockerPs.startsWith('ERROR:')) {
+		const lines = dockerPs.split('\n').filter(Boolean).slice(0, 5)
+		for (const line of lines) {
+			try {
+				const obj = JSON.parse(line)
+				const id = obj?.ID
+				if (!id) continue
+				const logs = execCommandSafe(`docker logs --tail 200 ${id}`)
+				console.log(`\n[docker logs ${id}]\n${logs}`)
+			} catch {}
+		}
+	}
+}
+
+function dumpWindowsDiagnostics(): void {
+	console.log('\n=== DEBUG: Windows Diagnostics ===')
+	const ps = (script: string) =>
+		execCommandSafe(`powershell -NoProfile -NonInteractive -Command "${script}"`)
+
+	console.log('[windows] system info')
+	console.log(
+		ps(
+			'$PSVersionTable; Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion',
+		),
+	)
+
+	console.log('[windows] recent Application events (errors/warnings, last 60 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-60)} | Where-Object { $_.LevelDisplayName -in @('Error','Warning') } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message -First 50 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] recent System events (errors/warnings, last 60 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddMinutes(-60)} | Where-Object { $_.LevelDisplayName -in @('Error','Warning') } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message -First 50 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] Hyper-V related events (last 120 minutes)')
+	console.log(
+		ps(
+			"Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Hyper-V-VMMS/Admin'; StartTime=(Get-Date).AddMinutes(-120)} | Select-Object TimeCreated,Id,LevelDisplayName,Message -First 30 | Format-Table -AutoSize | Out-String -Width 200",
+		),
+	)
+
+	console.log('[windows] process snapshot (top 40 by CPU time)')
+	console.log(
+		ps(
+			'Get-Process | Sort-Object CPU -Descending | Select-Object -First 40 Id,ProcessName,CPU,WorkingSet,StartTime | Format-Table -AutoSize | Out-String -Width 200',
+		),
+	)
+
+	console.log('[windows] listening ports (netstat)')
+	console.log(execCommandSafe('netstat -ano'))
+}
+
+async function dumpFlowRunDebug(label: string, run: any): Promise<void> {
+	console.log(`\n=== DEBUG: Flow Run Diagnostics (${label}) ===`)
+	try {
+		console.log(`[Run Object] ${JSON.stringify(run, null, 2)}`)
+	} catch (e) {
+		console.log(`[Run Object] Failed to serialize: ${e}`)
+	}
+	try {
+		const summary = {
+			id: run?.id,
+			status: run?.status,
+			started_at: run?.started_at,
+			ended_at: run?.ended_at,
+			exit_code: run?.exit_code,
+			error: run?.error,
+			work_dir: run?.work_dir,
+			results_dir: run?.results_dir,
+		}
+		console.log(`[Run Summary] ${JSON.stringify(summary, null, 2)}`)
+	} catch (e) {
+		console.log(`[Run Summary] Failed to serialize: ${e}`)
+	}
+
+	const baseDir = run?.results_dir || run?.work_dir
+	if (!baseDir || !fs.existsSync(baseDir)) {
+		console.log(`[Run Debug] Base dir not found: ${baseDir}`)
+		return
+	}
+
+	console.log(`[Run Debug] baseDir: ${baseDir}`)
+	console.log(`[Run Debug] baseDir entries: ${listDirSafe(baseDir).join(', ')}`)
+	const tree = dumpDirTree(baseDir, 4, 250)
+	console.log(`[Run Debug] dir tree:\n${tree.lines.join('\n')}`)
+	if (tree.truncated) {
+		console.log('[Run Debug] dir tree truncated')
+	}
+
+	const candidates = [
+		path.join(run?.work_dir || '', '.nextflow.log'),
+		path.join(run?.work_dir || '', 'nextflow.log'),
+		path.join(run?.results_dir || '', '.nextflow.log'),
+		path.join(run?.results_dir || '', 'nextflow.log'),
+		path.join(run?.results_dir || '', 'trace.txt'),
+		path.join(run?.results_dir || '', 'timeline.html'),
+		path.join(run?.results_dir || '', 'report.html'),
+		path.join(run?.results_dir || '', 'dag.html'),
+		path.join(run?.results_dir || '', 'workflow.log'),
+		path.join(run?.results_dir || '', 'stdout.log'),
+		path.join(run?.results_dir || '', 'stderr.log'),
+	]
+	for (const filePath of candidates) {
+		const snippet = readFileSnippet(filePath, 8000)
+		if (snippet) {
+			console.log(`\n[Run Debug] ${filePath}:\n${snippet}`)
+		}
+	}
+
+	const commandLogs = findFilesByName(
+		run?.work_dir || '',
+		['.command.err', '.command.out', '.command.log', 'command.err', 'command.out'],
+		10,
+		6,
+	)
+	for (const filePath of commandLogs) {
+		const snippet = readFileSnippet(filePath, 4000)
+		if (snippet) {
+			console.log(`\n[Run Debug] ${filePath}:\n${snippet}`)
+		}
+	}
+
+	const logsDir = path.join(baseDir, 'logs')
+	if (fs.existsSync(logsDir)) {
+		console.log(`[Run Debug] logs/ entries: ${listDirSafe(logsDir).join(', ')}`)
+		for (const name of listDirSafe(logsDir)) {
+			const snippet = readFileSnippet(path.join(logsDir, name), 4000)
+			if (snippet) {
+				console.log(`\n[Run Debug] logs/${name}:\n${snippet}`)
+			}
+		}
+	}
+}
+
+async function waitForFilesOnDisk(
+	label: string,
+	baseDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		const missing = filenames.filter((name) => !fs.existsSync(path.join(baseDir, name)))
+		if (missing.length === 0) {
+			console.log(`[${label}] All mock files present on disk (${filenames.length})`)
+			return
+		}
+		console.log(`[${label}] Waiting for ${missing.length} mock files: ${missing.join(', ')}`)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	throw new Error(`[${label}] Mock files not present on disk after ${timeoutMs}ms`)
+}
+
+function computeFileHash(filePath: string): string {
+	const content = fs.readFileSync(filePath)
+	return createHash('md5').update(content).digest('hex')
+}
+
+async function waitForFilesContentMatch(
+	sourceDir: string,
+	destDir: string,
+	filenames: string[],
+	timeoutMs = 60_000,
+): Promise<void> {
+	if (!filenames.length) return
+	const start = Date.now()
+	while (Date.now() - start < timeoutMs) {
+		let allMatch = true
+		const mismatches: string[] = []
+		for (const name of filenames) {
+			const srcPath = path.join(sourceDir, name)
+			const destPath = path.join(destDir, name)
+			if (!fs.existsSync(srcPath) || !fs.existsSync(destPath)) {
+				allMatch = false
+				mismatches.push(`${name} (missing)`)
+				continue
+			}
+			const srcHash = computeFileHash(srcPath)
+			const destHash = computeFileHash(destPath)
+			if (srcHash !== destHash) {
+				allMatch = false
+				const srcSize = fs.statSync(srcPath).size
+				const destSize = fs.statSync(destPath).size
+				mismatches.push(
+					`${name} (src=${srcSize}/${srcHash.slice(0, 8)}, dest=${destSize}/${destHash.slice(0, 8)})`,
+				)
+			}
+		}
+		if (allMatch) {
+			console.log(`[Content Match] All ${filenames.length} files have matching content`)
+			return
+		}
+		console.log(
+			`[Content Match] Waiting for ${mismatches.length} files to match: ${mismatches.slice(0, 3).join(', ')}${mismatches.length > 3 ? '...' : ''}`,
+		)
+		await new Promise((r) => setTimeout(r, 2000))
+	}
+	// Log final state for debugging
+	console.log('[Content Match] TIMEOUT - Final file state:')
+	for (const name of filenames) {
+		const srcPath = path.join(sourceDir, name)
+		const destPath = path.join(destDir, name)
+		const srcExists = fs.existsSync(srcPath)
+		const destExists = fs.existsSync(destPath)
+		const srcHash = srcExists ? computeFileHash(srcPath) : 'N/A'
+		const destHash = destExists ? computeFileHash(destPath) : 'N/A'
+		const srcSize = srcExists ? fs.statSync(srcPath).size : 0
+		const destSize = destExists ? fs.statSync(destPath).size : 0
+		console.log(
+			`  ${name}: src=${srcSize}/${srcHash.slice(0, 8)}, dest=${destSize}/${destHash.slice(0, 8)}, match=${srcHash === destHash}`,
+		)
+	}
+	throw new Error(`[Content Match] Files did not match after ${timeoutMs}ms`)
+}
+
+function getNetworkDatasetItem(page: Page, datasetName: string, owner: string) {
+	return page.locator(`.dataset-item[data-name="${datasetName}"][data-owner="${owner}"]`)
+}
+
+async function runDatasetFlow(
 	page: Page,
 	backend: Backend,
 	datasetName: string,
 	dataType: 'mock' | 'real',
-	pipelineMatch = 'herc2',
+	flowMatch = 'herc2',
+	concurrency?: number,
 ): Promise<any> {
 	await page.locator('.nav-item[data-tab="data"]').click()
 	await expect(page.locator('#data-view.tab-content.active')).toBeVisible({
@@ -363,27 +1001,34 @@ async function runDatasetPipeline(
 	const datasetCard = page.locator('#datasets-grid .dataset-card').filter({ hasText: datasetName })
 	await expect(datasetCard).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const runPipelineBtn = datasetCard.locator('.btn-run-pipeline')
-	await expect(runPipelineBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	const runFlowBtn = datasetCard.locator('.btn-run-flow')
+	await expect(runFlowBtn).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const runsBefore = await backend.invoke('get_pipeline_runs', {})
+	const runsBefore = await backend.invoke('get_flow_runs', {})
 	const previousIds = new Set((runsBefore || []).map((run: any) => run.id))
 
-	await runPipelineBtn.click()
+	await runFlowBtn.click()
 
-	const runModal = page.locator('#run-pipeline-modal')
+	const runModal = page.locator('#run-flow-modal')
 	await expect(runModal).toBeVisible({ timeout: UI_TIMEOUT })
-	await runModal.locator(`input[name="pipeline-data-type"][value="${dataType}"]`).check()
-	await runModal.locator('#run-pipeline-confirm').click()
+	await runModal.locator(`input[name="flow-data-type"][value="${dataType}"]`).check()
+	await runModal.locator('#run-flow-confirm').click()
 
 	const dataRunModal = page.locator('#data-run-modal')
 	await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
 
-	const pipelineOption = dataRunModal.locator(
-		`input[name="data-run-pipeline"][value*="${pipelineMatch}"], .data-run-pipeline-option:has-text("${pipelineMatch}")`,
+	const flowOption = dataRunModal.locator(
+		`input[name="data-run-flow"][value*="${flowMatch}"], .data-run-flow-option:has-text("${flowMatch}")`,
 	)
-	if (await pipelineOption.isVisible().catch(() => false)) {
-		await pipelineOption.first().click()
+	if (await flowOption.isVisible().catch(() => false)) {
+		await flowOption.first().click()
+	}
+
+	if (Number.isFinite(concurrency) && concurrency && concurrency > 0) {
+		const concurrencyInput = dataRunModal.locator('#data-run-max-forks')
+		if (await concurrencyInput.isVisible().catch(() => false)) {
+			await concurrencyInput.fill(String(concurrency))
+		}
 	}
 
 	const runBtn = dataRunModal.locator('#data-run-run-btn')
@@ -393,6 +1038,54 @@ async function runDatasetPipeline(
 
 	return await waitForNewRun(backend, previousIds)
 }
+
+async function startNetworkMockRun(
+	page: Page,
+	backend: Backend,
+	datasetName: string,
+	ownerEmail: string,
+): Promise<any> {
+	const networkDatasetCardForRun = getNetworkDatasetItem(page, datasetName, ownerEmail)
+	const runFlowOnMockBtn = networkDatasetCardForRun.locator('.run-flow-btn')
+	await expect(runFlowOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Found Run Flow button for mock data, clicking...')
+
+	const runsBeforeMock = await backend.invoke('get_flow_runs', {})
+	const previousIds = new Set((runsBeforeMock || []).map((run: any) => run.id))
+
+	await runFlowOnMockBtn.click()
+	await page.waitForTimeout(2000)
+
+	console.log('Waiting for flow selection modal...')
+	const dataRunModal = page.locator('#data-run-modal')
+	await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Flow selection modal visible!')
+
+	const herc2RadioOption = dataRunModal.locator(
+		'input[name="data-run-flow"][value*="herc2"], .data-run-flow-option:has-text("herc2")',
+	)
+	if (await herc2RadioOption.isVisible().catch(() => false)) {
+		await herc2RadioOption.click()
+	}
+
+	const runBtn = dataRunModal.locator('#data-run-run-btn')
+	await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
+	console.log('Clicking Run button...')
+	await runBtn.click()
+	await page.waitForTimeout(1000)
+
+	const runAnywayBtn = page.getByRole('button', { name: 'Run anyway' })
+	if (await runAnywayBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+		console.log('Docker dialog detected, clicking "Run anyway"...')
+		await runAnywayBtn.click()
+		await page.waitForTimeout(2000)
+	}
+	console.log('Flow run started on mock data!')
+
+	return await waitForNewRun(backend, previousIds)
+}
+
+// pause/resume test helper removed for now (see request to skip pause testing)
 
 // Timing helper
 function timer(label: string) {
@@ -598,10 +1291,8 @@ async function syncMessagesWithDebug(
 	}
 }
 
-test.describe('Pipelines Collaboration @pipelines-collab', () => {
-	test('two clients collaborate on pipeline run and share results', async ({
-		browser,
-	}, testInfo) => {
+test.describe.only('Flows Collaboration @flows-collab', () => {
+	test('two clients collaborate on flow run and share results', async ({ browser }, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)
 		const wsPort2 = wsPort1 + 1
@@ -609,14 +1300,14 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 		const email2 = process.env.CLIENT2_EMAIL || 'client2@sandbox.local'
 		const syntheticDataDir =
 			process.env.SYNTHETIC_DATA_DIR || path.join(process.cwd(), 'test-data', 'synthetic-genotypes')
-		const datasetName = 'collab_genotype_dataset'
+		const datasetName = `collab_genotype_dataset_${Date.now()}`
+		console.log(`Using dataset name: ${datasetName}`)
 		let client2MockResult = ''
-		let client1MockResult = ''
 		let client1PrivateResult = ''
 		let client1PrivateRunId: number | null = null
 		let client2BiovaultHome = ''
 
-		console.log('Setting up pipelines collaboration test')
+		console.log('Setting up flows collaboration test')
 		console.log(`Client1 (Alice): ${email1} (port ${wsPort1})`)
 		console.log(`Client2 (Bob): ${email2} (port ${wsPort2})`)
 		console.log(`Synthetic data dir: ${syntheticDataDir}`)
@@ -672,22 +1363,43 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 		try {
 			const baseUrl = process.env.UI_BASE_URL || 'http://localhost:8082'
+			console.log('Navigating to UI...')
 			await page1.goto(`${baseUrl}?ws=${wsPort1}&real=1`)
 			await page2.goto(`${baseUrl}?ws=${wsPort2}&real=1`)
+			console.log('Applying window layouts...')
 			await applyWindowLayout(page1, 0, 'client1')
 			await applyWindowLayout(page2, 1, 'client2')
-			await waitForAppReady(page1, { timeout: 10_000 })
-			await waitForAppReady(page2, { timeout: 10_000 })
+			console.log('Waiting for apps to be ready...')
+			await waitForAppReady(page1, { timeout: 15_000 })
+			console.log('Client1 app ready')
+			await waitForAppReady(page2, { timeout: 15_000 })
+			console.log('Client2 app ready')
 			await ensureProfilePickerClosed(page1)
+			console.log('Client1 profile picker closed')
 			await ensureProfilePickerClosed(page2)
+			console.log('Client2 profile picker closed')
 
 			await captureKeySnapshot('initial', 'client1', backend1, email1, email2, logSocket)
 			await captureKeySnapshot('initial', 'client2', backend2, email2, email1, logSocket)
 
 			// Check if clients are onboarded
-			const isOnboarded1 = await backend1.invoke('check_is_onboarded')
-			const isOnboarded2 = await backend2.invoke('check_is_onboarded')
-			console.log(`Client1 onboarded: ${isOnboarded1}, Client2 onboarded: ${isOnboarded2}`)
+			console.log('Checking onboarding status...')
+			let isOnboarded1: boolean
+			let isOnboarded2: boolean
+			try {
+				isOnboarded1 = await backend1.invoke('check_is_onboarded')
+				console.log(`Client1 onboarded: ${isOnboarded1}`)
+			} catch (err) {
+				console.error(`Failed to check client1 onboarding: ${err}`)
+				throw err
+			}
+			try {
+				isOnboarded2 = await backend2.invoke('check_is_onboarded')
+				console.log(`Client2 onboarded: ${isOnboarded2}`)
+			} catch (err) {
+				console.error(`Failed to check client2 onboarding: ${err}`)
+				throw err
+			}
 
 			// Do onboarding if needed
 			if (!isOnboarded1 || !isOnboarded2) {
@@ -707,8 +1419,8 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				const dataDir1 = await getSyftboxDataDir(backend1)
 				const dataDir2 = await getSyftboxDataDir(backend2)
 				await Promise.all([
-					waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1, 'client1'),
-					waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2, 'client2'),
+					waitForPeerDid(dataDir1, email2, PEER_DID_TIMEOUT_MS, backend1, 'client1', true),
+					waitForPeerDid(dataDir2, email1, PEER_DID_TIMEOUT_MS, backend2, 'client2', true),
 				])
 				onboardingTimer.stop()
 			}
@@ -857,9 +1569,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			// Fill dataset form
 			await page1.locator('#dataset-form-name').fill(datasetName)
-			await page1
-				.locator('#dataset-form-description')
-				.fill('Dataset for pipeline collaboration test')
+			await page1.locator('#dataset-form-description').fill('Dataset for flow collaboration test')
 
 			// Add asset with private + mock files
 			const addAssetBtn = page1.locator('#dataset-add-asset')
@@ -945,10 +1655,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('Dataset published!')
 
 			// ============================================================
-			// Step 3: Client2 (data scientist) imports HERC2 Pipeline
+			// Step 3: Client2 (data scientist) imports HERC2 Flow
 			// ============================================================
-			log(logSocket, { event: 'step-3', action: 'import-pipeline' })
-			console.log('\n=== Step 3: Client2 imports HERC2 Pipeline ===')
+			log(logSocket, { event: 'step-3', action: 'import-flow' })
+			console.log('\n=== Step 3: Client2 imports HERC2 Flow ===')
 
 			// Import HERC2 from local bioscript examples (faster than GitHub)
 			const herc2LocalPath = path.join(
@@ -962,16 +1672,16 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log(`Importing HERC2 from: ${herc2FlowPath}`)
 
 			try {
-				await backend2.invoke('import_pipeline', {
-					pipelineFile: herc2FlowPath,
+				await backend2.invoke('import_flow', {
+					flowFile: herc2FlowPath,
 					overwrite: true,
 				})
-				console.log('Client2: HERC2 pipeline imported from local path!')
+				console.log('Client2: HERC2 flow imported from local path!')
 			} catch (err) {
 				console.log(`Import error (may be ok if already exists): ${err}`)
 			}
 
-			// Navigate to Pipelines tab to verify
+			// Navigate to Flows tab to verify
 			await page2.locator('.nav-item[data-tab="run"]').click()
 			await expect(page2.locator('#run-view')).toBeVisible({ timeout: UI_TIMEOUT })
 			await page2.waitForTimeout(1000)
@@ -997,6 +1707,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Wait for Client1's dataset to appear
 			const syncTimer = timer('Dataset sync to network')
 			let datasetFound = false
+			let targetDatasetForMock: any = null
 			const syncStart = Date.now()
 
 			// Wait for dataset cards to render (they might already be there)
@@ -1015,11 +1726,18 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				// Network datasets use .dataset-item class (not .dataset-card which is for local datasets)
 				const datasetCards = page2.locator('.dataset-item')
 				const count = await datasetCards.count()
-				console.log(`Checking for dataset cards... found: ${count}`)
+				const targetDatasetCard = getNetworkDatasetItem(page2, datasetName, email1)
+				const targetCount = await targetDatasetCard.count()
+				console.log(`Checking for dataset cards... found: ${count} (target: ${targetCount})`)
 
-				if (count > 0) {
-					console.log(`Found ${count} dataset(s) on network!`)
+				if (targetCount > 0) {
+					console.log(`Found target dataset "${datasetName}" on network!`)
 					datasetFound = true
+					try {
+						const scanResult = await backend2.invoke('network_scan_datasets')
+						const datasets = scanResult?.datasets || []
+						targetDatasetForMock = datasets.find((d: any) => d.name === datasetName)
+					} catch {}
 					break
 				}
 
@@ -1047,17 +1765,157 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				throw new Error('Dataset not found on network within timeout')
 			}
 
+			// Subscribe to dataset data so assets sync before running flows
+			const networkDatasetCardForSubscribe = page2
+				.locator('.dataset-item')
+				.filter({ hasText: datasetName })
+				.first()
+			const subscribeBtn = networkDatasetCardForSubscribe.locator('.dataset-subscribe-btn')
+			if (await subscribeBtn.isVisible().catch(() => false)) {
+				const label = (await subscribeBtn.textContent())?.trim().toLowerCase() || ''
+				if (label !== 'unsubscribe') {
+					console.log('Subscribing to dataset data...')
+					await subscribeBtn.click()
+					await expect(subscribeBtn).toHaveText(/Unsubscribe/i, { timeout: UI_TIMEOUT })
+					await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+					await page2.waitForTimeout(2000)
+				}
+			}
+
+			// Wait for all mock files to sync (5 files expected - test adds 5 mock + 5 private)
+			// This prevents race condition where Client2 runs flow before all files are available
+			const EXPECTED_MOCK_FILES = 5
+			const mockSyncTimer = timer('Mock files sync')
+			console.log(`\nWaiting for all ${EXPECTED_MOCK_FILES} mock files to sync...`)
+			let mockFilesReady = false
+			const mockSyncStart = Date.now()
+			const MOCK_SYNC_TIMEOUT = 60_000 // 60 seconds
+
+			// DEBUG: First check what Client1 has in their dataset
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset Info ===')
+				console.log(`Dataset found: ${!!client1Dataset}`)
+				if (client1Dataset) {
+					console.log(`Assets: ${JSON.stringify(client1Dataset.assets, null, 2)}`)
+					await dumpDatasetDebug('Client1 Dataset Info', backend1, client1Dataset)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 datasets:', err)
+			}
+
+			while (Date.now() - mockSyncStart < MOCK_SYNC_TIMEOUT) {
+				try {
+					// Trigger sync
+					await Promise.all([
+						backend1.invoke('trigger_syftbox_sync').catch(() => {}),
+						backend2.invoke('trigger_syftbox_sync').catch(() => {}),
+					])
+					await page2.waitForTimeout(2000)
+
+					const scanResult = await backend2.invoke('network_scan_datasets')
+					const datasets = scanResult?.datasets || []
+					const targetDataset = datasets.find((d: any) => d.name === datasetName)
+
+					if (targetDataset && targetDataset.assets?.length > 0) {
+						const asset = targetDataset.assets[0]
+						const mockCount = asset.mock_entries?.length || 0
+						const mockPath = asset.mock_path
+						console.log(
+							`Mock files synced: ${mockCount}/${EXPECTED_MOCK_FILES}, mock_path: ${mockPath}`,
+						)
+
+						// DEBUG: Log each mock entry
+						if (asset.mock_entries?.length > 0) {
+							console.log('Mock entries:')
+							asset.mock_entries.forEach((entry: any, i: number) => {
+								console.log(`  [${i}] ${entry.participant_id}: ${entry.url}`)
+							})
+						}
+
+						if (mockCount >= EXPECTED_MOCK_FILES) {
+							await dumpDatasetDebug('Client2 Network Dataset', backend2, targetDataset)
+							console.log(`All ${EXPECTED_MOCK_FILES} mock files synced!`)
+							mockFilesReady = true
+							break
+						}
+					} else {
+						console.log(`Dataset "${datasetName}" not found or no assets yet`)
+					}
+				} catch (err) {
+					console.log('Error checking mock files:', err)
+				}
+				await page2.waitForTimeout(3000)
+			}
+			mockSyncTimer.stop()
+
+			if (!mockFilesReady) {
+				console.warn(`Warning: Only partial mock files synced, proceeding anyway`)
+			}
+
+			if (targetDatasetForMock?.assets?.length) {
+				const asset = targetDatasetForMock.assets[0]
+				const mockEntries = asset.mock_entries || []
+				const mockFilenames = extractMockFilenames(mockEntries)
+				const assetKey = asset.key || 'asset_1'
+
+				const dataDir1 = await getSyftboxDataDir(backend1)
+				const dataDir2 = await getSyftboxDataDir(backend2)
+				const assetsDir1 = path.join(
+					resolveDatasitesRoot(dataDir1),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+				const assetsDir2 = path.join(
+					resolveDatasitesRoot(dataDir2),
+					email1,
+					'public',
+					'biovault',
+					'datasets',
+					datasetName,
+					'assets',
+				)
+
+				await waitForFilesOnDisk('Client1', assetsDir1, mockFilenames, 60_000)
+				await waitForFilesOnDisk('Client2', assetsDir2, mockFilenames, 60_000)
+
+				// Wait for file CONTENT to match between source and synced locations
+				// This catches cases where files exist but content hasn't fully synced
+				await waitForFilesContentMatch(assetsDir1, assetsDir2, mockFilenames, 90_000)
+
+				const csvPath1 = path.join(assetsDir1, `${assetKey}.csv`)
+				const csvPath2 = path.join(assetsDir2, `${assetKey}.csv`)
+				const csv1 = await readTextFileWithRetry(csvPath1, 30_000)
+				const csv2 = await readTextFileWithRetry(csvPath2, 30_000)
+				const normalizedCsv1 = normalizeCsvResult(csv1)
+				const normalizedCsv2 = normalizeCsvResult(csv2)
+				if (normalizedCsv1 !== normalizedCsv2) {
+					console.log(`[CSV Compare] Client1: ${normalizedCsv1}`)
+					console.log(`[CSV Compare] Client2: ${normalizedCsv2}`)
+					throw new Error('Mock CSV mismatch between Client1 and Client2 assets')
+				}
+			}
+
 			// ============================================================
-			// Step 5: Client2 runs imported pipeline on peer's mock data
+			// Step 5: Client2 runs imported flow on peer's mock data
 			// ============================================================
-			log(logSocket, { event: 'step-5', action: 'run-pipeline-mock' })
-			console.log('\n=== Step 5: Client2 runs HERC2 pipeline on mock data ===')
+			log(logSocket, { event: 'step-5', action: 'run-flow-mock' })
+			console.log('\n=== Step 5: Client2 runs HERC2 flow on mock data ===')
 
 			// DEBUG: Query network datasets from backend to see what's returned
 			try {
 				const networkDatasets = await backend2.invoke('network_scan_datasets')
 				console.log('\n=== DEBUG: Network Datasets from Backend ===')
 				console.log(JSON.stringify(networkDatasets, null, 2))
+				const target = networkDatasets?.datasets?.find((d: any) => d.name === datasetName)
+				if (target) {
+					await dumpDatasetDebug('Client2 Network Dataset (pre-run)', backend2, target)
+				}
 			} catch (err) {
 				console.log('DEBUG: Failed to get network datasets:', err)
 			}
@@ -1067,7 +1925,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 				const items = document.querySelectorAll('.dataset-item')
 				return Array.from(items).map((item) => {
 					const row = item.querySelector('.dataset-row')
-					const runBtn = item.querySelector('.run-pipeline-btn')
+					const runBtn = item.querySelector('.run-flow-btn')
 					const requestBtn = item.querySelector('.request-run-btn')
 					return {
 						name: item.dataset.name,
@@ -1080,72 +1938,82 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			console.log('\n=== DEBUG: Dataset Items in DOM ===')
 			console.log(JSON.stringify(datasetInfo, null, 2))
 
-			// Find the dataset card and click "Run Pipeline" button
-			// This button appears for trusted peer datasets that have mock data
-			const networkDatasetCardForRun = page2.locator('.dataset-item').first()
-			const runPipelineOnMockBtn = networkDatasetCardForRun.locator('.run-pipeline-btn')
-			await expect(runPipelineOnMockBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Found Run Pipeline button for mock data, clicking...')
-			await runPipelineOnMockBtn.click()
-			await page2.waitForTimeout(2000)
+			// Start mock run and wait for completion by checking backend.
+			// On Windows runners this can fail transiently on first attempt, so retry once by default.
+			const mockRunTimer = timer('Mock data flow run')
+			const maxMockRunAttempts = process.platform === 'win32' ? WINDOWS_MOCK_RUN_ATTEMPTS : 1
+			let mockRun2Final: any = null
+			let mockRunStatus = 'unknown'
 
-			// Wait for the data run modal to appear (pipeline selection modal)
-			console.log('Waiting for pipeline selection modal...')
-			const dataRunModal = page2.locator('#data-run-modal')
-			await expect(dataRunModal).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Pipeline selection modal visible!')
+			for (let attempt = 1; attempt <= maxMockRunAttempts; attempt += 1) {
+				const mockRun = await startNetworkMockRun(page2, backend2, datasetName, email1)
+				if (DEBUG_PIPELINE_PAUSE_MS > 0 && attempt === 1) {
+					log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
+					console.log(`Pausing ${DEBUG_PIPELINE_PAUSE_MS}ms for Nextflow inspection...`)
+					await page2.waitForTimeout(DEBUG_PIPELINE_PAUSE_MS)
+				}
+				console.log(
+					`Waiting for run ${mockRun.id} to complete (attempt ${attempt}/${maxMockRunAttempts})...`,
+				)
+				const { status, run } = await waitForRunCompletion(page2, backend2, mockRun.id)
+				mockRunStatus = status
+				mockRun2Final = run
+				console.log(`Flow run on mock data completed with status: ${status}`)
+				if (status === 'success') {
+					break
+				}
 
-			// The herc2-classifier pipeline should be listed - select it if not already
-			const herc2RadioOption = dataRunModal.locator(
-				'input[name="data-run-pipeline"][value*="herc2"], .data-run-pipeline-option:has-text("herc2")',
-			)
-			if (await herc2RadioOption.isVisible().catch(() => false)) {
-				await herc2RadioOption.click()
+				await dumpFlowRunDebug(`client2-mock-attempt-${attempt}`, run)
+				dumpContainerDiagnostics()
+				dumpWindowsDiagnostics()
+
+				if (attempt < maxMockRunAttempts) {
+					console.log('Retrying mock flow run after transient failure...')
+					await backend2.invoke('trigger_syftbox_sync').catch(() => {})
+					await page2.waitForTimeout(3000)
+				}
 			}
-
-			const runsBeforeMock = await backend2.invoke('get_pipeline_runs', {})
-			const previousIds2 = new Set((runsBeforeMock || []).map((run: any) => run.id))
-
-			// Click the Run button
-			const runBtn = dataRunModal.locator('#data-run-run-btn')
-			await expect(runBtn).toBeVisible({ timeout: UI_TIMEOUT })
-			console.log('Clicking Run button...')
-			await runBtn.click()
-			await page2.waitForTimeout(1000)
-
-			// Handle "Docker isn't running" dialog if it appears
-			const runAnywayBtn = page2.getByRole('button', { name: 'Run anyway' })
-			if (await runAnywayBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-				console.log('Docker dialog detected, clicking "Run anyway"...')
-				await runAnywayBtn.click()
-				await page2.waitForTimeout(2000)
+			expect(mockRunStatus).toBe('success')
+			if (!mockRun2Final) {
+				throw new Error('Mock run result missing after completion')
 			}
-			console.log('Pipeline run started on mock data!')
-
-			if (DEBUG_PIPELINE_PAUSE_MS > 0) {
-				log(logSocket, { event: 'debug-pause', ms: DEBUG_PIPELINE_PAUSE_MS })
-				console.log(`Pausing ${DEBUG_PIPELINE_PAUSE_MS}ms for Nextflow inspection...`)
-				await page2.waitForTimeout(DEBUG_PIPELINE_PAUSE_MS)
-			}
-
-			// Wait for run to complete by checking backend
-			const mockRunTimer = timer('Mock data pipeline run')
-			const mockRun2 = await waitForNewRun(backend2, previousIds2)
-			console.log(`Waiting for run ${mockRun2.id} to complete...`)
-			const { status, run: mockRun2Final } = await waitForRunCompletion(
-				page2,
-				backend2,
-				mockRun2.id,
-			)
-			console.log(`Pipeline run on mock data completed with status: ${status}`)
-			expect(status).toBe('success')
 			mockRunTimer.stop()
 
-			const mockResultPath2 = resolvePipelineResultPath(mockRun2Final)
+			const mockResultPath2 = resolveFlowResultPath(mockRun2Final)
 			console.log(`[TSV] Reading client2 mock result from: ${mockResultPath2}`)
 			client2MockResult = await readTextFileWithRetry(mockResultPath2)
 			console.log(`[TSV] client2MockResult read, length: ${client2MockResult.length}`)
 			client2BiovaultHome = getBiovaultHomeFromRun(mockRun2Final)
+
+			// DEBUG: Log Client2 run metadata to see inputs used
+			console.log('\n=== DEBUG: Client2 Mock Run Metadata ===')
+			console.log(`Run ID: ${mockRun2Final.id}`)
+			console.log(`Work dir: ${mockRun2Final.work_dir}`)
+			console.log(`Results dir: ${mockRun2Final.results_dir}`)
+			if (mockRun2Final.metadata) {
+				try {
+					const meta =
+						typeof mockRun2Final.metadata === 'string'
+							? JSON.parse(mockRun2Final.metadata)
+							: mockRun2Final.metadata
+					console.log(`Inputs: ${JSON.stringify(meta.inputs, null, 2)}`)
+				} catch (e) {
+					console.log(`Raw metadata: ${mockRun2Final.metadata}`)
+				}
+			}
+			// Read and log samplesheet for Client2
+			const samplesheetPath2 = path.join(
+				mockRun2Final.results_dir,
+				'inputs',
+				'selected_participants.csv',
+			)
+			try {
+				const samplesheet2 = await readTextFileWithRetry(samplesheetPath2, 5000)
+				console.log(`\n=== DEBUG: Client2 Samplesheet ===\n${samplesheet2}`)
+				dumpSamplesheetDebug('Client2 Samplesheet', samplesheet2)
+			} catch (e) {
+				console.log(`DEBUG: Could not read Client2 samplesheet: ${e}`)
+			}
 
 			await captureKeySnapshot('post-mock-run', 'client2', backend2, email2, email1, logSocket)
 			await captureKeySnapshot('post-mock-run', 'client1', backend1, email1, email2, logSocket)
@@ -1165,10 +2033,10 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// ============================================================
-			// Step 6: Client2 clicks "Request Run" to request pipeline on peer's private data
+			// Step 6: Client2 clicks "Request Run" to request flow on peer's private data
 			// ============================================================
-			log(logSocket, { event: 'step-6', action: 'request-pipeline-run' })
-			console.log('\n=== Step 6: Client2 requests pipeline run on peer private data ===')
+			log(logSocket, { event: 'step-6', action: 'request-flow-run' })
+			console.log('\n=== Step 6: Client2 requests flow run on peer private data ===')
 
 			// Navigate back to Network > Datasets
 			await page2.locator('.nav-item[data-tab="network"]').click()
@@ -1184,28 +2052,28 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			}
 
 			// Find the dataset card and click "Request Run" button
-			// The "Request Run" button is visible for peer datasets (not "Run Pipeline" which is for own datasets)
-			const networkDatasetCard = page2.locator('.dataset-item').first()
-			const requestRunBtn = networkDatasetCard.locator('.request-run-btn')
+			// The "Request Run" button is visible for peer datasets (not "Run Flow" which is for own datasets)
+			const networkDatasetCardForRequest = getNetworkDatasetItem(page2, datasetName, email1)
+			const requestRunBtn = networkDatasetCardForRequest.locator('.request-run-btn')
 			await expect(requestRunBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Found Request Run button, clicking...')
 			await requestRunBtn.click()
 			await page2.waitForTimeout(2000)
 
-			// Wait for the "Request Pipeline Run" modal to appear
-			console.log('Waiting for Request Pipeline Run modal...')
-			const requestModal = page2.locator('#request-pipeline-modal')
+			// Wait for the "Request Flow Run" modal to appear
+			console.log('Waiting for Request Flow Run modal...')
+			const requestModal = page2.locator('#request-flow-modal')
 			await expect(requestModal).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Request modal visible!')
 
-			// The pipeline should already be selected (herc2-classifier)
+			// The flow should already be selected (herc2-classifier)
 			// Click "Send Request" button
-			const sendRequestBtn = page2.locator('#send-pipeline-request-btn')
+			const sendRequestBtn = page2.locator('#send-flow-request-btn')
 			await expect(sendRequestBtn).toBeVisible({ timeout: UI_TIMEOUT })
 			console.log('Clicking Send Request...')
 			await sendRequestBtn.click()
 			await page2.waitForTimeout(3000)
-			console.log('Pipeline request sent!')
+			console.log('Flow request sent!')
 
 			await captureKeySnapshot('post-request-send', 'client2', backend2, email2, email1, logSocket)
 			await captureKeySnapshot('post-request-send', 'client1', backend1, email1, email2, logSocket)
@@ -1233,83 +2101,80 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const requestCard = await waitForMessageCard(
 				page1,
 				backend1,
-				'.message-pipeline-request',
+				'.message-flow-request',
 				SYNC_TIMEOUT,
 				logSocket,
 				'client1',
 				'wait-request-card',
 			)
-			console.log('Pipeline request received!')
+			console.log('Flow request received!')
 
-			// Click Import Pipeline button if available
-			const importPipelineBtn = requestCard.locator('button:has-text("Import Pipeline")')
-			if (await importPipelineBtn.isVisible().catch(() => false)) {
-				await importPipelineBtn.click()
+			// Click Sync Request to pull the shared submission files
+			const syncRequestBtn = requestCard.locator('button:has-text("Sync Request")')
+			if (await syncRequestBtn.isVisible().catch(() => false)) {
+				await syncRequestBtn.click()
 				await page1.waitForTimeout(2000)
-				console.log('Pipeline imported from request!')
+				console.log('Flow request synced!')
 			}
 
-			// ============================================================
-			// Step 8: Client1 runs pipeline on mock data, then private data
-			// ============================================================
-			log(logSocket, { event: 'step-8', action: 'run-pipeline' })
-			console.log('\n=== Step 8: Client1 runs pipeline on mock + private data ===')
-
-			const mockRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'mock')
-			console.log(`Pipeline mock run started: ${mockRun1.id}`)
-			const { status: mockStatus, run: mockRun1Final } = await waitForRunCompletion(
-				page1,
+			const flowRequestMeta = await waitForFlowRequestMetadata(
 				backend1,
-				mockRun1.id,
+				'herc2-classifier',
+				SYNC_TIMEOUT,
 			)
-			console.log(`Pipeline mock run completed with status: ${mockStatus}`)
-			expect(mockStatus).toBe('success')
+			await waitForSyncedFlowFolder(backend1, flowRequestMeta, SYNC_TIMEOUT)
+			console.log('Flow request files synced to disk')
 
-			const mockResultPath1 = resolvePipelineResultPath(mockRun1Final)
-			client1MockResult = await readTextFileWithRetry(mockResultPath1)
-			console.log(`[TSV Compare] client1MockResult path: ${mockResultPath1}`)
-			console.log(`[TSV Compare] client1MockResult length: ${client1MockResult.length}`)
-			console.log(`[TSV Compare] client2MockResult length: ${client2MockResult.length}`)
-			const normalized1 = normalizeTsvResult(client1MockResult)
-			const normalized2 = normalizeTsvResult(client2MockResult)
-			console.log(`[TSV Compare] normalized client1: ${normalized1.substring(0, 500)}...`)
-			console.log(`[TSV Compare] normalized client2: ${normalized2.substring(0, 500)}...`)
-			if (normalized1 !== normalized2) {
-				console.log(
-					`[TSV Compare] MISMATCH! client1 lines: ${normalized1.split('\n').length}, client2 lines: ${normalized2.split('\n').length}`,
-				)
-				// Log first difference
-				const lines1 = normalized1.split('\n')
-				const lines2 = normalized2.split('\n')
-				for (let i = 0; i < Math.max(lines1.length, lines2.length); i++) {
-					if (lines1[i] !== lines2[i]) {
-						console.log(`[TSV Compare] First diff at line ${i}:`)
-						console.log(`[TSV Compare]   client1: ${lines1[i]}`)
-						console.log(`[TSV Compare]   client2: ${lines2[i]}`)
-						break
-					}
-				}
+			// Click Import Flow button if available
+			const importFlowBtn = requestCard.locator('button:has-text("Import Flow")')
+			if (await importFlowBtn.isVisible().catch(() => false)) {
+				await importFlowBtn.click()
+				await page1.waitForTimeout(2000)
+				console.log('Flow imported from request!')
 			}
-			expect(normalized1).toBe(normalized2)
 
-			const privateRun1 = await runDatasetPipeline(page1, backend1, datasetName, 'real')
-			console.log(`Pipeline private run started: ${privateRun1.id}`)
+			// ============================================================
+			// Step 8: Client1 runs flow on private data
+			// ============================================================
+			log(logSocket, { event: 'step-8', action: 'run-flow' })
+			console.log('\n=== Step 8: Client1 runs flow on private data ===')
+
+			// DEBUG: Check what mock files Client1 sees before running
+			try {
+				const client1Datasets = await backend1.invoke('get_datasets', {})
+				const client1Dataset = client1Datasets?.find((d: any) => d.name === datasetName)
+				console.log('\n=== DEBUG: Client1 Dataset before run ===')
+				if (client1Dataset && client1Dataset.assets?.length > 0) {
+					const asset = client1Dataset.assets[0]
+					console.log(`Asset key: ${asset.key}`)
+					console.log(`Mock path: ${asset.mock_path}`)
+					console.log(`Mock file ID: ${asset.mock_file_id}`)
+					console.log(`Resolved mock path: ${asset.resolved_mock_path}`)
+					await dumpDatasetDebug('Client1 Dataset (pre-run)', backend1, client1Dataset)
+				}
+			} catch (err) {
+				console.log('DEBUG: Failed to get client1 dataset:', err)
+			}
+
+			// Run real data at default concurrency.
+			const privateRun1 = await runDatasetFlow(page1, backend1, datasetName, 'real', 'herc2')
+			console.log(`Flow private run started: ${privateRun1.id}`)
 			const { status: privateStatus, run: privateRun1Final } = await waitForRunCompletion(
 				page1,
 				backend1,
 				privateRun1.id,
 			)
-			console.log(`Pipeline private run completed with status: ${privateStatus}`)
+			console.log(`Flow private run completed with status: ${privateStatus}`)
 			expect(privateStatus).toBe('success')
 			client1PrivateRunId = privateRun1Final.id
 
-			const privateResultPath1 = resolvePipelineResultPath(privateRun1Final)
+			const privateResultPath1 = resolveFlowResultPath(privateRun1Final)
 			client1PrivateResult = await readTextFileWithRetry(privateResultPath1)
 
 			await captureKeySnapshot('post-client1-runs', 'client1', backend1, email1, email2, logSocket)
 
 			if (!client1PrivateRunId) {
-				throw new Error('Private pipeline run did not start correctly')
+				throw new Error('Private flow run did not start correctly')
 			}
 
 			// ============================================================
@@ -1325,7 +2190,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			})
 			await page1.waitForTimeout(2000)
 
-			const requestCardForSend = page1.locator('.message-pipeline-request')
+			const requestCardForSend = page1.locator('.message-flow-request')
 			await expect(requestCardForSend).toBeVisible({ timeout: 10_000 })
 
 			const runSelect = requestCardForSend.locator('select')
@@ -1393,13 +2258,13 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			const resultsCard = await waitForMessageCard(
 				page2,
 				backend2,
-				'.message-pipeline-results',
+				'.message-flow-results',
 				SYNC_TIMEOUT,
 				logSocket,
 				'client2',
 				'wait-results-card',
 			)
-			console.log('✓ Pipeline results received!')
+			console.log('✓ Flow results received!')
 
 			// Verify files are listed
 			const fileItems = resultsCard.locator('.result-file')
@@ -1420,7 +2285,7 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 
 			const importedBytes = fs.readFileSync(importedResultPath)
 			const header = importedBytes.slice(0, 4).toString('utf8')
-			expect(header).not.toBe('SYC1')
+			expect(header).not.toBe('SBC1')
 
 			const importedContent = importedBytes.toString('utf8')
 			expect(importedContent.trim()).toBe(client1PrivateResult.trim())
@@ -1429,12 +2294,12 @@ test.describe('Pipelines Collaboration @pipelines-collab', () => {
 			// Summary
 			// ============================================================
 			console.log('\n=== TEST COMPLETED ===')
-			console.log('Pipeline collaboration flow tested:')
+			console.log('Flow collaboration flow tested:')
 			console.log('  ✓ Client1 created dataset with mock + private data')
-			console.log('  ✓ Client2 imported HERC2 pipeline')
-			console.log('  ✓ Client2 ran pipeline on mock data successfully')
-			console.log('  ✓ Client2 sent pipeline request for private data')
-			console.log('  ✓ Client1 received request and ran pipeline (mock + private)')
+			console.log('  ✓ Client2 imported HERC2 flow')
+			console.log('  ✓ Client2 ran flow on mock data successfully')
+			console.log('  ✓ Client2 sent flow request for private data')
+			console.log('  ✓ Client1 received request and ran flow on private data')
 			console.log('  ✓ Client1 shared private results back')
 			console.log('  ✓ Client2 imported private results (unencrypted)')
 

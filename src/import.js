@@ -28,6 +28,13 @@ export function createImportModule({
 	let showOnlyIncompleteReview = false // Filter to show only files with incomplete configurations
 	let filesIncompleteReview = [] // Track which files have incomplete configurations
 	let autoParticipantIds = {} // Auto-extracted IDs for the current pattern
+	let fileDetectedDataTypes = {}
+	let fileDetectedGrch = {}
+	let fileTypeOverrides = {}
+	// eslint-disable-next-line no-unused-vars
+	let fileSharedOverride = {}
+	let referenceOptions = []
+	let referenceIndexOptions = []
 	let patternInputDebounce = null
 
 	const GENOTYPE_SOURCE_OPTIONS = [
@@ -97,6 +104,36 @@ export function createImportModule({
 		} else {
 			console.error('❌ Import modal element not found in DOM')
 		}
+	}
+
+	async function setSelectedFolder(folderPath) {
+		if (!folderPath) return
+		selectedFiles.clear()
+		updateSelectedFileCount()
+		await refreshExistingFilePaths()
+		selectedFolder = folderPath
+		// Update folder display
+		const folderDisplay = document.getElementById('folder-display')
+		const dropzone = document.getElementById('folder-dropzone')
+		const clearBtn = document.getElementById('dropzone-clear-btn')
+		if (folderDisplay) {
+			const folderName = folderPath.split('/').pop() || folderPath
+			folderDisplay.textContent = folderName
+			folderDisplay.title = folderPath
+		}
+		if (dropzone) {
+			dropzone.classList.add('has-folder')
+		}
+		if (clearBtn) {
+			clearBtn.style.display = 'flex'
+		}
+		await updateFileTypeDropdown()
+		updateVisibleSections()
+	}
+
+	async function openImportModalWithFolder(folderPath) {
+		openImportModal()
+		await setSelectedFolder(folderPath)
 	}
 	function closeImportModal() {
 		const modal = document.getElementById('import-modal')
@@ -348,6 +385,159 @@ export function createImportModule({
 		const filename = lastDotIndex > 0 ? fullFilename.substring(0, lastDotIndex) : fullFilename
 		const extension = lastDotIndex > 0 ? fullFilename.substring(lastDotIndex) : ''
 		return { dir, filename, extension, fullFilename }
+	}
+	function normalizeDataType(value) {
+		return (value || '').toString().trim().toLowerCase()
+	}
+	function normalizeExtension(filePath) {
+		if (!filePath) return ''
+		const lower = filePath.toLowerCase()
+		if (lower.endsWith('.vcf.gz')) return '.vcf.gz'
+		const meta = getFileMetadata(filePath)
+		return meta.extension ? meta.extension.toLowerCase() : ''
+	}
+	function inferDataTypeFromPath(filePath) {
+		const ext = normalizeExtension(filePath)
+		switch (ext) {
+			case '.fa':
+			case '.fasta':
+				return 'Reference'
+			case '.fai':
+				return 'ReferenceIndex'
+			case '.cram':
+			case '.bam':
+				return 'Aligned'
+			case '.crai':
+			case '.bai':
+				return 'AlignedIndex'
+			case '.vcf':
+			case '.vcf.gz':
+				return 'Variants'
+			default:
+				return null
+		}
+	}
+	function inferGrchFromPath(filePath) {
+		if (!filePath) return null
+		const lower = filePath.toLowerCase()
+		if (lower.includes('grch38') || lower.includes('grch_38') || lower.includes('grch-38'))
+			return 'GRCh38'
+		if (lower.includes('grch37') || lower.includes('grch_37') || lower.includes('grch-37'))
+			return 'GRCh37'
+		if (lower.includes('grch36') || lower.includes('grch_36') || lower.includes('grch-36'))
+			return 'GRCh36'
+		return null
+	}
+	function isReferenceType(dataType) {
+		return dataType === 'Reference' || dataType === 'ReferenceIndex'
+	}
+	function isIndexType(dataType) {
+		return dataType === 'ReferenceIndex' || dataType === 'AlignedIndex'
+	}
+	function requiresParticipantId(dataType) {
+		if (isReferenceType(dataType) || isIndexType(dataType)) return false
+		return true
+	}
+	function resolveDataTypeForPath(filePath) {
+		const override = fileTypeOverrides[filePath]
+		if (override) return override
+		return fileDetectedDataTypes[filePath] || inferDataTypeFromPath(filePath) || null
+	}
+	function participantIdRequiredForPath(filePath) {
+		const detected = resolveDataTypeForPath(filePath)
+		if (detected) fileDetectedDataTypes[filePath] = detected
+		return requiresParticipantId(detected)
+	}
+	function addReferenceBadge(pathWrapper, labelText) {
+		const badge = document.createElement('span')
+		badge.className = 'import-meta-badge'
+		badge.textContent = labelText || 'Shared reference'
+		pathWrapper.appendChild(badge)
+	}
+	function addIndexBadge(pathWrapper, labelText) {
+		const badge = document.createElement('span')
+		badge.className = 'import-index-badge'
+		badge.textContent = labelText || 'Index'
+		pathWrapper.appendChild(badge)
+	}
+	function updateTypeBadges(pathWrapper, dataType) {
+		if (!pathWrapper) return
+		const existingRef = pathWrapper.querySelector('.import-meta-badge')
+		const existingIndex = pathWrapper.querySelector('.import-index-badge')
+		if (isReferenceType(dataType)) {
+			if (!existingRef) addReferenceBadge(pathWrapper, 'Shared reference')
+		} else if (existingRef) {
+			existingRef.remove()
+		}
+		if (isIndexType(dataType)) {
+			if (!existingIndex) addIndexBadge(pathWrapper, 'Index')
+		} else if (existingIndex) {
+			existingIndex.remove()
+		}
+	}
+
+	async function loadReferenceOptions() {
+		try {
+			const files = await invoke('get_files')
+			const refs = (Array.isArray(files) ? files : []).filter(
+				(f) => normalizeDataType(f?.data_type) === 'reference',
+			)
+			const indexes = (Array.isArray(files) ? files : []).filter(
+				(f) => normalizeDataType(f?.data_type) === 'referenceindex',
+			)
+			referenceOptions = refs.map((f) => ({
+				path: f.file_path,
+				grch: f.grch_version || null,
+			}))
+			referenceIndexOptions = indexes.map((f) => f.file_path)
+		} catch (err) {
+			console.warn('Failed to load reference options:', err)
+			referenceOptions = []
+			referenceIndexOptions = []
+		}
+	}
+
+	function inferReferenceIndexPath(refPath) {
+		if (!refPath) return null
+		if (referenceIndexOptions.includes(`${refPath}.fai`)) {
+			return `${refPath}.fai`
+		}
+		if (refPath.endsWith('.fa') && referenceIndexOptions.includes(`${refPath}.fai`)) {
+			return `${refPath}.fai`
+		}
+		if (refPath.endsWith('.fasta') && referenceIndexOptions.includes(`${refPath}.fai`)) {
+			return `${refPath}.fai`
+		}
+		const base = refPath.replace(/\\.(fa|fasta)$/i, '')
+		const candidate = `${base}.fa.fai`
+		if (referenceIndexOptions.includes(candidate)) return candidate
+		return null
+	}
+
+	function populateReferenceSelect(select, selectedValue, includePlaceholder = false) {
+		if (!select) return
+		select.innerHTML = ''
+		if (includePlaceholder) {
+			const option = document.createElement('option')
+			option.value = ''
+			option.textContent = 'Set all...'
+			select.appendChild(option)
+		} else {
+			const option = document.createElement('option')
+			option.value = ''
+			option.textContent = 'No reference'
+			select.appendChild(option)
+		}
+		referenceOptions.forEach((ref) => {
+			const opt = document.createElement('option')
+			opt.value = ref.path
+			const label = ref.path.split('/').pop()
+			opt.textContent = label || ref.path
+			if (selectedValue && selectedValue === ref.path) {
+				opt.selected = true
+			}
+			select.appendChild(opt)
+		})
 	}
 	function sortFiles(files) {
 		const sorted = [...files]
@@ -636,8 +826,7 @@ export function createImportModule({
 		if (alreadyImported) {
 			row.classList.add('already-imported')
 		}
-		if (missingId && !alreadyImported) {
-			row.classList.add('missing-id')
+		if (missingId && !alreadyImported && participantIdRequiredForPath(file)) {
 			row.dataset.filePath = file // Store file path for scrolling
 		}
 
@@ -675,10 +864,11 @@ export function createImportModule({
 		checkboxCell.style.padding = '4px'
 		const checkbox = document.createElement('input')
 		checkbox.type = 'checkbox'
-		checkbox.checked = selectedFiles.has(file)
+		checkbox.checked = !alreadyImported && selectedFiles.has(file)
+		checkbox.disabled = alreadyImported
 		checkbox.dataset.filePath = file // Store file path for easier lookup
 		// Add selected class to row if checked
-		if (checkbox.checked) {
+		if (checkbox.checked && !alreadyImported) {
 			row.classList.add('selected')
 		}
 		checkbox.addEventListener('change', (e) => {
@@ -730,6 +920,11 @@ export function createImportModule({
 			badge.textContent = 'Imported'
 			pathWrapper.appendChild(badge)
 		}
+		const detectedType = resolveDataTypeForPath(file)
+		if (detectedType) {
+			fileDetectedDataTypes[file] = detectedType
+		}
+		updateTypeBadges(pathWrapper, detectedType)
 
 		pathCell.appendChild(pathWrapper)
 		pathCell.title = file // Full path on hover
@@ -737,11 +932,23 @@ export function createImportModule({
 		// Participant ID cell
 		const participantCell = document.createElement('td')
 		participantCell.style.padding = '4px'
+		participantCell.style.display = 'flex'
+		participantCell.style.flexDirection = 'column'
+		participantCell.style.gap = '6px'
+		const needsId = requiresParticipantId(detectedType)
 		const input = document.createElement('input')
 		input.type = 'text'
 		input.className = 'participant-id-input'
 		input.placeholder = 'Enter ID'
 		input.style.width = '100%'
+		if (!needsId) {
+			input.value = ''
+			input.style.display = 'none'
+			input.disabled = true
+			input.placeholder = 'Shared'
+			delete fileParticipantIds[file]
+			delete autoParticipantIds[file]
+		}
 		// Extract ID if pattern exists
 		if (manualId) {
 			input.value = manualId
@@ -803,9 +1010,7 @@ export function createImportModule({
 				input.style.boxShadow = ''
 				input.title = ''
 				// Add missing-id class if ID was removed
-				if (!alreadyImported) {
-					row.classList.add('missing-id')
-				}
+				row.classList.remove('missing-id')
 				if (currentPattern) {
 					void applyPattern(currentPattern)
 				}
@@ -1116,10 +1321,12 @@ export function createImportModule({
 		if (patternInput) {
 			patternInput.value = ''
 		}
-		// Select all files by default
+		// Select all files by default (except already-imported files)
 		selectedFiles.clear()
 		currentFiles.forEach((file) => {
-			selectedFiles.add(file)
+			if (!isFileAlreadyImported(file)) {
+				selectedFiles.add(file)
+			}
 		})
 		renderFiles()
 		markActivePattern(currentPattern)
@@ -1133,7 +1340,21 @@ export function createImportModule({
 		const list = document.getElementById('file-type-list')
 		list.innerHTML = ''
 		// Common file types to auto-select
-		const commonTypes = ['.txt', '.csv', '.vcf', '.fasta', '.fastq', '.tsv']
+		const commonTypes = [
+			'.txt',
+			'.csv',
+			'.vcf',
+			'.gz',
+			'.fasta',
+			'.fa',
+			'.fai',
+			'.fastq',
+			'.tsv',
+			'.cram',
+			'.crai',
+			'.bam',
+			'.bai',
+		]
 		extensions.forEach((ext) => {
 			const label = document.createElement('label')
 			label.className = 'file-type-checkbox'
@@ -1179,27 +1400,7 @@ export function createImportModule({
 			}
 		}
 		if (selected) {
-			selectedFiles.clear()
-			updateSelectedFileCount()
-			await refreshExistingFilePaths()
-			selectedFolder = selected
-			// Update folder display
-			const folderDisplay = document.getElementById('folder-display')
-			const dropzone = document.getElementById('folder-dropzone')
-			const clearBtn = document.getElementById('dropzone-clear-btn')
-			if (folderDisplay) {
-				const folderName = selected.split('/').pop() || selected
-				folderDisplay.textContent = folderName
-				folderDisplay.title = selected
-			}
-			if (dropzone) {
-				dropzone.classList.add('has-folder')
-			}
-			if (clearBtn) {
-				clearBtn.style.display = 'flex'
-			}
-			await updateFileTypeDropdown()
-			updateVisibleSections()
+			await setSelectedFolder(selected)
 		}
 	}
 	function updateSelectAllCheckbox() {
@@ -1240,79 +1441,27 @@ export function createImportModule({
 			}
 			return
 		}
-		// Check if all selected files have participant IDs
-		const allSelectedHaveIds = selectedFilesArray.every((file) => {
-			const manual = fileParticipantIds[file]
-			const auto = autoParticipantIds[file]
-			const value = manual || auto
-			return value !== undefined && value !== null && `${value}`.trim() !== ''
-		})
-		const filesMissingIdsList = selectedFilesArray.filter((file) => {
-			const manual = fileParticipantIds[file]
-			const auto = autoParticipantIds[file]
-			const value = manual || auto
-			return !value || `${value}`.trim() === ''
-		})
-		const missingIdCount = filesMissingIdsList.length
-		filesMissingIds = filesMissingIdsList
-
-		// Update filter and jump buttons visibility
-		const filterBtn = document.getElementById('filter-missing-ids-btn')
-		const _jumpBtn = document.getElementById('jump-to-missing-btn')
-		const missingCountEl = document.getElementById('missing-ids-count')
-
+		// Participant IDs are optional; hide validation actions.
+		filesMissingIds = []
 		const validationActions = document.getElementById('file-validation-actions')
-		if (missingIdCount > 0) {
-			if (validationActions) validationActions.style.display = 'flex'
-			if (filterBtn) {
-				filterBtn.classList.toggle('active', showOnlyMissingIds)
-			}
-			if (missingCountEl) missingCountEl.textContent = missingIdCount
-		} else {
-			if (validationActions) validationActions.style.display = 'none'
-			const wasFiltered = showOnlyMissingIds
-			showOnlyMissingIds = false // Reset filter if no missing IDs
-			// Re-render to show all files if filter was on
-			if (wasFiltered) {
-				renderFiles()
-			}
-		}
+		if (validationActions) validationActions.style.display = 'none'
 
-		// Enable only if every selected file has an ID
-		if (allSelectedHaveIds) {
-			if (btn) btn.disabled = false
-			if (statusEl) {
-				statusEl.innerHTML = `Ready to import ${selectedFiles.size} file${
-					selectedFiles.size !== 1 ? 's' : ''
-				}`
-				statusEl.classList.add('ready')
-				statusEl.classList.remove('has-issues')
-				statusEl.style.cursor = 'default'
-				statusEl.onclick = null
-			}
-		} else {
-			if (btn) btn.disabled = true
-			if (statusEl) {
-				const hasPattern = currentPattern && currentPattern.trim() !== ''
-				const suggestion = hasPattern
-					? ' Click "Jump to missing" to find and fix them'
-					: ' Click "Jump to missing" to find them'
-				statusEl.innerHTML = `<span class="status-highlight">${missingIdCount} file${
-					missingIdCount !== 1 ? 's need' : ' needs'
-				} participant ID${suggestion}</span>`
-				statusEl.classList.remove('ready')
-				statusEl.classList.add('has-issues')
-				// Make clickable to jump to first missing ID
-				statusEl.style.cursor = 'pointer'
-				statusEl.onclick = () => jumpToNextMissingId()
-			}
+		if (btn) btn.disabled = false
+		if (statusEl) {
+			statusEl.innerHTML = `Ready to import ${selectedFiles.size} file${
+				selectedFiles.size !== 1 ? 's' : ''
+			}`
+			statusEl.classList.add('ready')
+			statusEl.classList.remove('has-issues')
+			statusEl.style.cursor = 'default'
+			statusEl.onclick = null
 		}
 		if (typeof window !== 'undefined') {
 			window.__IMPORT_DEBUG__ = {
 				selectedFiles: Array.from(selectedFiles),
 				autoParticipantIds: { ...autoParticipantIds },
 				fileParticipantIds: { ...fileParticipantIds },
-				allSelectedHaveIds,
+				allSelectedHaveIds: true,
 			}
 		}
 	}
@@ -1329,6 +1478,9 @@ export function createImportModule({
 		reviewSortField = 'path'
 		reviewSortDirection = 'asc'
 		autoParticipantIds = {}
+		fileDetectedDataTypes = {}
+		fileDetectedGrch = {}
+		fileSharedOverride = {}
 		setLastImportView('import')
 		// Reset step indicator
 		updateStepIndicator(1)
@@ -1459,6 +1611,10 @@ export function createImportModule({
 			if (!fileParticipantIds[file] && autoParticipantIds[file]) {
 				fileParticipantIds[file] = autoParticipantIds[file]
 			}
+			const inferred = resolveDataTypeForPath(file)
+			if (inferred) {
+				fileDetectedDataTypes[file] = inferred
+			}
 		})
 		// Build file-to-ID mapping
 		const filesToImport = Array.from(selectedFiles)
@@ -1466,12 +1622,18 @@ export function createImportModule({
 		reviewFileMetadata = {}
 		selectedReviewFiles = new Set()
 		filesToImport.forEach((file) => {
-			const participantId = fileParticipantIds[file] || null
+			const detectedType = resolveDataTypeForPath(file)
+			const detectedGrch = fileDetectedGrch[file] || inferGrchFromPath(file)
+			if (detectedType) fileDetectedDataTypes[file] = detectedType
+			if (detectedGrch) fileDetectedGrch[file] = detectedGrch
+			const participantId = isReferenceType(detectedType) ? null : fileParticipantIds[file] || null
 			reviewFileMetadata[file] = {
 				participant_id: participantId,
-				data_type: 'Unknown',
+				data_type: detectedType || 'Unknown',
 				source: null,
-				grch_version: null,
+				grch_version: detectedGrch || null,
+				reference_path: null,
+				reference_index_path: null,
 				row_count: null,
 				chromosome_count: null,
 				inferred_sex: null,
@@ -1479,9 +1641,9 @@ export function createImportModule({
 			selectedReviewFiles.add(file) // Select all by default
 		})
 		// Show review view inside modal
-		showReviewViewInModal()
+		void showReviewViewInModal()
 	}
-	function showReviewViewInModal() {
+	async function showReviewViewInModal() {
 		// Show step 2, hide step 1
 		const step1 = document.getElementById('import-selection-view')
 		const step2 = document.getElementById('import-step-2')
@@ -1497,6 +1659,7 @@ export function createImportModule({
 
 		// Update step indicator
 		updateStepIndicator(2)
+		await loadReferenceOptions()
 		// Render review table
 		showReviewView()
 		// Auto-detect file types on entering review step
@@ -1581,8 +1744,26 @@ export function createImportModule({
 		const reviewCountEl = document.getElementById('review-file-count')
 		const tbody = document.getElementById('review-files-table')
 		const bulkSourceSelect = document.getElementById('set-all-source')
+		const bulkReferenceSelect = document.getElementById('set-all-reference')
 		if (bulkSourceSelect) {
 			populateSourceSelect(bulkSourceSelect, null, true)
+		}
+		if (bulkReferenceSelect) {
+			populateReferenceSelect(bulkReferenceSelect, null, true)
+			bulkReferenceSelect.onchange = (e) => {
+				const value = e.target.value
+				selectedReviewFiles.forEach((filePath) => {
+					const meta = reviewFileMetadata[filePath]
+					if (!meta) return
+					meta.reference_path = value || null
+					meta.reference_index_path = value ? inferReferenceIndexPath(value) : null
+					if (!meta.grch_version) {
+						const match = referenceOptions.find((r) => r.path === value)
+						if (match?.grch) meta.grch_version = match.grch
+					}
+					updateRowInPlace(filePath)
+				})
+			}
 		}
 		if (reviewCountEl) {
 			reviewCountEl.textContent = Object.keys(reviewFileMetadata).length
@@ -1685,6 +1866,12 @@ export function createImportModule({
 			filenameSpan.style.color = '#1e293b'
 			filenameSpan.style.fontWeight = '500'
 			pathWrapper.appendChild(filenameSpan)
+			if (isReferenceType(metadata.data_type)) {
+				addReferenceBadge(pathWrapper, 'Shared reference')
+			}
+			if (isIndexType(metadata.data_type)) {
+				addIndexBadge(pathWrapper, 'Index')
+			}
 
 			pathCell.appendChild(pathWrapper)
 			pathCell.title = filePath // Full path on hover
@@ -1697,11 +1884,27 @@ export function createImportModule({
 			dataTypeSelect.innerHTML = `
 				<option value="Unknown" ${metadata.data_type === 'Unknown' ? 'selected' : ''}>Unknown</option>
 				<option value="Genotype" ${metadata.data_type === 'Genotype' ? 'selected' : ''}>Genotype</option>
+				<option value="Variants" ${metadata.data_type === 'Variants' ? 'selected' : ''}>Variants</option>
+				<option value="Aligned" ${metadata.data_type === 'Aligned' ? 'selected' : ''}>Aligned</option>
+				<option value="AlignedIndex" ${metadata.data_type === 'AlignedIndex' ? 'selected' : ''}>AlignedIndex</option>
+				<option value="Reference" ${metadata.data_type === 'Reference' ? 'selected' : ''}>Reference</option>
+				<option value="ReferenceIndex" ${metadata.data_type === 'ReferenceIndex' ? 'selected' : ''}>ReferenceIndex</option>
 				<option value="Phenotype" ${metadata.data_type === 'Phenotype' ? 'selected' : ''}>Phenotype</option>
 			`
 			dataTypeSelect.addEventListener('change', (e) => {
 				e.stopPropagation() // Don't trigger row click
 				reviewFileMetadata[filePath].data_type = e.target.value
+				if (isReferenceType(e.target.value)) {
+					reviewFileMetadata[filePath].participant_id = null
+				}
+				const refSelect = row.querySelector('.reference-select')
+				if (refSelect) {
+					const showRef =
+						e.target.value === 'Aligned' ||
+						e.target.value === 'AlignedIndex' ||
+						e.target.value === 'Variants'
+					refSelect.style.display = showRef ? 'block' : 'none'
+				}
 				updateRowVisibility(row, e.target.value)
 				applyReviewRowState(row, reviewFileMetadata[filePath])
 				updateReviewStatus()
@@ -1742,6 +1945,34 @@ export function createImportModule({
 			})
 			grchCell.appendChild(grchSelect)
 			row.appendChild(grchCell)
+
+			// Reference select
+			const referenceCell = document.createElement('td')
+			const referenceSelect = document.createElement('select')
+			referenceSelect.className = 'review-cell-select reference-select'
+			populateReferenceSelect(referenceSelect, metadata.reference_path, false)
+			const showReference =
+				metadata.data_type === 'Aligned' ||
+				metadata.data_type === 'AlignedIndex' ||
+				metadata.data_type === 'Variants'
+			referenceSelect.style.display = showReference ? 'block' : 'none'
+			referenceSelect.addEventListener('change', (e) => {
+				e.stopPropagation()
+				const value = e.target.value
+				reviewFileMetadata[filePath].reference_path = value || null
+				reviewFileMetadata[filePath].reference_index_path = value
+					? inferReferenceIndexPath(value)
+					: null
+				if (!reviewFileMetadata[filePath].grch_version) {
+					const match = referenceOptions.find((r) => r.path === value)
+					if (match?.grch) {
+						reviewFileMetadata[filePath].grch_version = match.grch
+					}
+				}
+				updateRowInPlace(filePath)
+			})
+			referenceCell.appendChild(referenceSelect)
+			row.appendChild(referenceCell)
 
 			// Actions cell - folder button (match first step styling)
 			const actionsCell = document.createElement('td')
@@ -1863,6 +2094,17 @@ export function createImportModule({
 				metadata.grch_version && metadata.grch_version !== 'Unknown' && metadata.grch_version !== ''
 			return hasSource && hasGrch
 		}
+		if (
+			metadata.data_type === 'Variants' ||
+			metadata.data_type === 'Aligned' ||
+			metadata.data_type === 'AlignedIndex' ||
+			metadata.data_type === 'Reference' ||
+			metadata.data_type === 'ReferenceIndex'
+		) {
+			const hasGrch =
+				metadata.grch_version && metadata.grch_version !== 'Unknown' && metadata.grch_version !== ''
+			return hasGrch
+		}
 
 		// For phenotype files, only data type is required
 		return true
@@ -1937,15 +2179,29 @@ export function createImportModule({
 								grchValue = `GRCh${grchValue}`
 							}
 						}
+						if (!grchValue || grchValue === 'Unknown') {
+							const inferred = inferGrchFromPath(filePath)
+							if (inferred) grchValue = inferred
+						}
 
 						console.log(`Updating metadata for ${filePath}:`, {
 							data_type: detection.data_type,
 							source: detection.source,
 							grch_version: grchValue,
 						})
-						reviewFileMetadata[filePath].data_type = detection.data_type
+						const pathInferredType = resolveDataTypeForPath(filePath)
+						const inferredType =
+							fileTypeOverrides[filePath] || pathInferredType || detection.data_type || 'Unknown'
+						const existingType = reviewFileMetadata[filePath].data_type
+						if (inferredType !== 'Unknown' || !existingType || existingType === 'Unknown') {
+							reviewFileMetadata[filePath].data_type = inferredType
+						}
 						reviewFileMetadata[filePath].source = detection.source
 						reviewFileMetadata[filePath].grch_version = grchValue
+						const effectiveType = reviewFileMetadata[filePath].data_type
+						if (isReferenceType(effectiveType)) {
+							reviewFileMetadata[filePath].participant_id = null
+						}
 						updateRowInPlace(filePath)
 					}
 				})
@@ -1953,6 +2209,8 @@ export function createImportModule({
 			}
 			if (progressText) progressText.textContent = `Complete! Detected ${totalFiles} file types`
 			if (progressBarFill) progressBarFill.style.width = '100%'
+			// Update the status message to reflect the updated metadata
+			updateReviewStatus()
 		} catch (error) {
 			alert(`Error detecting file types: ${error}`)
 			console.error('Detection error:', error)
@@ -1988,6 +2246,21 @@ export function createImportModule({
 			dataTypeSelect.value = metadata.data_type
 			updateRowVisibility(targetRow, metadata.data_type)
 		}
+		const pathWrapper = targetRow.querySelector('td:nth-child(2) > div')
+		if (pathWrapper) {
+			const existingBadge = pathWrapper.querySelector('.import-meta-badge')
+			const existingIndex = pathWrapper.querySelector('.import-index-badge')
+			if (isReferenceType(metadata.data_type)) {
+				if (!existingBadge) addReferenceBadge(pathWrapper, 'Shared reference')
+			} else if (existingBadge) {
+				existingBadge.remove()
+			}
+			if (isIndexType(metadata.data_type)) {
+				if (!existingIndex) addIndexBadge(pathWrapper, 'Index')
+			} else if (existingIndex) {
+				existingIndex.remove()
+			}
+		}
 		// Update source dropdown
 		const sourceSelect = targetRow.querySelector('td:nth-child(4) select')
 		if (sourceSelect) {
@@ -1997,6 +2270,16 @@ export function createImportModule({
 		const grchSelect = targetRow.querySelector('td:nth-child(5) select')
 		if (grchSelect && metadata.grch_version) {
 			grchSelect.value = metadata.grch_version
+		}
+		// Update reference dropdown
+		const referenceSelect = targetRow.querySelector('.reference-select')
+		if (referenceSelect) {
+			referenceSelect.value = metadata.reference_path || ''
+			const showRef =
+				metadata.data_type === 'Aligned' ||
+				metadata.data_type === 'AlignedIndex' ||
+				metadata.data_type === 'Variants'
+			referenceSelect.style.display = showRef ? 'block' : 'none'
 		}
 		applyReviewRowState(targetRow, metadata)
 	}
@@ -2036,38 +2319,40 @@ export function createImportModule({
 					data_type: meta.data_type,
 					source: meta.source,
 					grch_version: meta.grch_version,
+					reference_path: meta.reference_path,
+					reference_index_path: meta.reference_index_path,
 				}
 			})
-			if (progressText) progressText.textContent = `Adding files to queue...`
+			if (progressText) progressText.textContent = `Importing files...`
 			if (progressBarFill) progressBarFill.style.width = '50%'
-			// Fast import - add all files to queue instantly (no hashing)
+			// Fast import - add all files instantly (queue disabled)
 			const result = await invoke('import_files_pending', {
 				fileMetadata: fileMetadata,
 			})
-			if (progressText) progressText.textContent = `Complete! Added ${totalFiles} files to queue`
+			if (progressText) progressText.textContent = `Complete! Imported ${totalFiles} files`
 			if (progressBarFill) progressBarFill.style.width = '100%'
-			// Update results
-			if (result.success) {
-				allResults.imported = totalFiles
-			} else {
+			// Update results - consider successful if no conflicts/errors
+			const hasErrors = result.conflicts?.length > 0 || result.errors?.length > 0
+			if (hasErrors) {
 				allResults.success = false
 				if (result.conflicts) allResults.conflicts.push(...result.conflicts)
 				if (result.errors) allResults.errors.push(...result.errors)
+			} else {
+				allResults.imported = totalFiles
 			}
 			if (allResults.success) {
 				// Metadata was saved during import via CSV
-				await loadParticipantsView()
-				await loadFiles()
-				// Close modal and reset after successful import
-				setTimeout(() => {
-					resetImportState()
-					isImportInProgress = false
-					const progressBar = document.getElementById('detection-progress')
-					const progressBarFill = document.getElementById('progress-bar-fill')
-					if (progressBar) progressBar.classList.add('hidden')
-					if (progressBarFill) progressBarFill.style.width = '0%'
-					closeImportModal()
-				}, 1000)
+				// Load data in background - don't block modal close
+				loadParticipantsView().catch((e) => console.warn('Failed to reload participants:', e))
+				loadFiles().catch((e) => console.warn('Failed to reload files:', e))
+				// Close modal immediately after successful import
+				resetImportState()
+				isImportInProgress = false
+				const progressBar = document.getElementById('detection-progress')
+				const progressBarFill = document.getElementById('progress-bar-fill')
+				if (progressBar) progressBar.classList.add('hidden')
+				if (progressBarFill) progressBarFill.style.width = '0%'
+				closeImportModal()
 			} else {
 				const updateConflicts = confirm(
 					`Some files had conflicts.\nDo you want to update the files with conflicts?`,
@@ -2104,7 +2389,9 @@ export function createImportModule({
 	function handleSelectAllFiles(checked) {
 		if (checked) {
 			currentFiles.forEach((file) => {
-				selectedFiles.add(file)
+				if (!isFileAlreadyImported(file)) {
+					selectedFiles.add(file)
+				}
 			})
 		} else {
 			selectedFiles.clear()
@@ -2503,6 +2790,8 @@ export function createImportModule({
 	}
 	return {
 		openImportModal,
+		openImportModalWithFolder,
+		setSelectedFolder,
 		closeImportModal,
 		backToSelection,
 		pickFolder,

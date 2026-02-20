@@ -127,10 +127,19 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
 
-    // Ensure bundled resources directory exists so glob in tauri.conf.json always matches.
+    // Ensure bundled resources directories exist so glob in tauri.conf.json always matches.
     let bundled_dir = manifest_dir.join("resources").join("bundled");
     ensure_placeholder_dir(&bundled_dir, "placeholder.txt")
         .expect("failed to ensure resources/bundled");
+    ensure_placeholder_dir(&bundled_dir.join("java"), "placeholder.txt")
+        .expect("failed to ensure resources/bundled/java");
+    ensure_placeholder_dir(&bundled_dir.join("nextflow"), "placeholder.txt")
+        .expect("failed to ensure resources/bundled/nextflow");
+    ensure_placeholder_dir(&bundled_dir.join("uv"), "placeholder.txt")
+        .expect("failed to ensure resources/bundled/uv");
+    let syqure_dir = manifest_dir.join("resources").join("syqure");
+    ensure_placeholder_dir(&syqure_dir, "placeholder.txt")
+        .expect("failed to ensure resources/syqure");
 
     // Ensure templates resource path exists as a directory.
     // On Windows with `core.symlinks=false`, the repo's `resources/templates` symlink may be checked out as a plain file.

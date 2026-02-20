@@ -16,6 +16,9 @@ dist-ssr
 target/
 src-tauri/resources/syftbox/syftbox
 src-tauri/resources/syftbox/syftbox.exe
+src-tauri/resources/syqure/syqure
+src-tauri/resources/syqure/syqure.exe
+src-tauri/resources/syqure/lib/
 src-tauri/resources/bundled/
 
 # Editor directories and files
@@ -45,7 +48,7 @@ templates-dev/
 # Sibling repo symlinks (created by setup-workspace.sh)
 /biovault/
 /syftbox-sdk/
-/syft-crypto-core/
+/syftbox-crypto/
 /syftbox/
 /biovault-beaver/
 /sbenv/
@@ -61,7 +64,7 @@ bioscript/
 biovault-beaver/
 syftbox/
 syftbox-sdk/
-syft-crypto-core/
+syftbox-crypto/
 sbenv/
 
 # repo tool workspace metadata
@@ -70,3 +73,6 @@ sbenv/
 .repo-manifest/
 AGENTS.md
 TASK.md
+
+# Windows special device names (can be accidentally created as files)
+nul

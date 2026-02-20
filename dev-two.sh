@@ -384,7 +384,12 @@ launch_desktop_instance() {
 
   export BIOVAULT_HOME="$home"
   export BIOVAULT_DEV_MODE=1
-  export BIOVAULT_DEV_SYFTBOX=1
+  # Only set when explicitly enabled; presence alone triggers debug in syftbox-sdk.
+  if [[ "${BIOVAULT_DEV_SYFTBOX:-0}" == "1" ]]; then
+    export BIOVAULT_DEV_SYFTBOX=1
+  else
+    unset BIOVAULT_DEV_SYFTBOX
+  fi
   export BIOVAULT_DISABLE_PROFILES=1
   export BV_SYFTBOX_BACKEND="${BV_SYFTBOX_BACKEND:-embedded}"
   if [[ "$BV_SYFTBOX_BACKEND" != "process" ]]; then
@@ -393,7 +398,7 @@ launch_desktop_instance() {
   export SYFTBOX_SERVER_URL="$server"
   export SYFTBOX_CONFIG_PATH="$config"
   export SYFTBOX_DATA_DIR="$data_dir"
-  export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
+  export SBC_VAULT="$SYFTBOX_DATA_DIR/.sbc"
   export DEV_WS_BRIDGE=1
   export DEV_WS_BRIDGE_PORT="$ws_port"
 
@@ -406,7 +411,7 @@ launch_desktop_instance() {
   echo -e "${YELLOW}  BIOVAULT_HOME:     $BIOVAULT_HOME${NC}"
   echo -e "${YELLOW}  SYFTBOX_DATA_DIR:  $SYFTBOX_DATA_DIR${NC}"
   echo -e "${YELLOW}  SYFTBOX_CONFIG:    $SYFTBOX_CONFIG_PATH${NC}"
-  echo -e "${YELLOW}  SYC_VAULT:         $SYC_VAULT${NC}"
+  echo -e "${YELLOW}  SBC_VAULT:         $SBC_VAULT${NC}"
   echo -e "${YELLOW}  SyftBox backend:   $BV_SYFTBOX_BACKEND${NC}"
   echo -e "${YELLOW}  Server:            $SYFTBOX_SERVER_URL${NC}"
   echo -e "${YELLOW}  WS Bridge Port:    $DEV_WS_BRIDGE_PORT${NC}"
@@ -509,7 +514,7 @@ ensure_client_identity() {
   syftbox_data="$(parse_data_dir "$config")"
   [[ -z "$syftbox_data" ]] && { log_error "Could not read data_dir from $config"; exit 1; }
 
-  vault_dir="$home/.syc"
+  vault_dir="$home/.sbc"
   mkdir -p "$vault_dir/keys" "$vault_dir/bundles" "$vault_dir/config"
   local has_keys=0
   if [[ -d "$vault_dir/keys" ]]; then
@@ -568,7 +573,7 @@ import_bundle_pair() {
   BIOVAULT_HOME="$(client_field "$dst_email" home)" \
     SYFTBOX_CONFIG_PATH="$(client_field "$dst_email" config)" \
     SYFTBOX_DATA_DIR="$(parse_data_dir "$(client_field "$dst_email" config)")" \
-    "$BV_CLI_BIN" syc import "$bundle" --expected-identity "$src_email" \
+    "$BV_CLI_BIN" sbc import "$bundle" --expected-identity "$src_email" \
     || log_warn "Bundle import $src_email -> $dst_email failed (continuing)"
 }
 

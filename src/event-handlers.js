@@ -40,20 +40,20 @@ export function setupEventHandlers({
 	setSyftboxTarget,
 	getSyftboxStatus,
 	showMessagesInviteOptions,
-	// Projects
-	showCreateProjectModal,
-	hideCreateProjectModal,
-	handleProjectNameInputChange,
-	chooseProjectDirectory,
-	resetProjectDirectory,
-	importProject,
-	importProjectFromFolder,
-	handleSaveProjectEditor,
+	// Modules
+	showCreateModuleModal,
+	hideCreateModuleModal,
+	handleModuleNameInputChange,
+	chooseModuleDirectory,
+	resetModuleDirectory,
+	importModule,
+	importModuleFromFolder,
+	handleSaveModuleEditor,
 	handleLaunchJupyter,
 	handleResetJupyter,
-	handleOpenProjectFolder,
-	handleLeaveProjectEditor,
-	handleReloadProjectSpec,
+	handleOpenModuleFolder,
+	handleLeaveModuleEditor,
+	handleReloadModuleSpec,
 	// Runs
 	runAnalysis,
 	shareCurrentRunLogs,
@@ -62,6 +62,7 @@ export function setupEventHandlers({
 	copyLogs,
 	clearLogs,
 	openLogsFolder,
+	toggleVerbose,
 	// Settings
 	handleSyftBoxAuthentication,
 	saveSettings,
@@ -223,6 +224,16 @@ export function setupEventHandlers({
 		sendMessageBtn.addEventListener('click', sendCurrentMessage)
 	}
 
+	// Messages - Propose Flow (multiparty)
+	const proposeFlowBtn = document.getElementById('propose-flow-btn')
+	if (proposeFlowBtn) {
+		proposeFlowBtn.addEventListener('click', () => {
+			if (window.proposeFlowModal) {
+				window.proposeFlowModal.open()
+			}
+		})
+	}
+
 	// Messages - SyftBox toggle
 	const syftboxToggle = document.getElementById('message-syftbox-toggle')
 	if (syftboxToggle) {
@@ -256,10 +267,10 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Messages - View project
-	const projectBtn = document.getElementById('message-view-project-btn')
-	if (projectBtn) {
-		projectBtn.addEventListener('click', () => navigateTo('run'))
+	// Messages - View module
+	const moduleBtn = document.getElementById('message-view-module-btn')
+	if (moduleBtn) {
+		moduleBtn.addEventListener('click', () => navigateTo('run'))
 	}
 
 	// Messages - Compose keyboard shortcut
@@ -316,6 +327,141 @@ export function setupEventHandlers({
 	if (syftboxAuthBtn) {
 		syftboxAuthBtn.addEventListener('click', async () => {
 			await handleSyftBoxAuthentication()
+		})
+	}
+
+	// Settings - TURN probe
+	const syftboxTestTurnBtn = document.getElementById('syftbox-test-turn-btn')
+	if (syftboxTestTurnBtn) {
+		syftboxTestTurnBtn.addEventListener('click', async () => {
+			const resultEl = document.getElementById('syftbox-turn-test-result')
+			const serverUrl = document.getElementById('setting-syftbox-server')?.value.trim() || null
+			const originalText = syftboxTestTurnBtn.textContent
+			syftboxTestTurnBtn.disabled = true
+			syftboxTestTurnBtn.textContent = 'Testing...'
+			if (resultEl) {
+				resultEl.style.color = '#6b7280'
+				resultEl.style.whiteSpace = 'normal'
+				resultEl.textContent = 'Testing TURN/STUN connectivity...'
+			}
+
+			try {
+				const probe = await invoke('test_turn_connection', { serverUrl })
+				if (resultEl) {
+					resultEl.style.color = probe.ok ? '#059669' : '#b45309'
+					resultEl.style.whiteSpace = 'pre-line'
+					const addresses = Array.isArray(probe.resolved_addrs) ? probe.resolved_addrs : []
+					const attempts = Array.isArray(probe.attempt_logs) ? probe.attempt_logs : []
+					const lines = []
+					lines.push(`${probe.ok ? 'PASS' : 'CHECK'}: ${probe.turn_url}`)
+					lines.push(
+						`tcp=${probe.tcp_reachable ? 'ok' : 'fail'} | udp_send=${probe.udp_send_ok ? 'ok' : 'fail'} | udp_response=${probe.udp_response_ok ? 'ok' : 'fail'} | stun_binding=${probe.stun_binding_ok ? 'ok' : 'fail'}`,
+					)
+					if (probe.reflexive_addr) {
+						lines.push(`reflexive_addr=${probe.reflexive_addr}`)
+					}
+					if (probe.rtt_ms !== null && probe.rtt_ms !== undefined) {
+						lines.push(`rtt_ms=${probe.rtt_ms}`)
+					}
+					if (addresses.length) {
+						lines.push(`resolved_addrs=${addresses.join(', ')}`)
+					}
+					if (probe.details) {
+						lines.push(`details=${probe.details}`)
+					}
+					if (attempts.length) {
+						lines.push('trace:')
+						lines.push(...attempts.map((line) => `  - ${line}`))
+					}
+					resultEl.textContent = lines.join('\n')
+				}
+			} catch (error) {
+				console.error('TURN probe failed:', error)
+				if (resultEl) {
+					resultEl.style.color = '#dc2626'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = `FAIL: ${error?.message || error || 'TURN probe failed'}`
+				}
+			} finally {
+				syftboxTestTurnBtn.disabled = false
+				syftboxTestTurnBtn.textContent = originalText
+			}
+		})
+	}
+
+	// Settings - Peer link test (no Syqure)
+	const syftboxPeerTestBtn = document.getElementById('syftbox-test-peer-btn')
+	if (syftboxPeerTestBtn) {
+		syftboxPeerTestBtn.addEventListener('click', async () => {
+			const resultEl = document.getElementById('syftbox-peer-test-result')
+			const peerEmail = document.getElementById('syftbox-peer-email')?.value?.trim() || ''
+			const roundsRaw = document.getElementById('syftbox-peer-rounds')?.value
+			const payloadRaw = document.getElementById('syftbox-peer-payload-kb')?.value
+			const rounds = Math.max(1, Math.min(100, Number.parseInt(roundsRaw || '3', 10) || 3))
+			const payloadKb = Math.max(1, Math.min(1024, Number.parseInt(payloadRaw || '32', 10) || 32))
+			const originalText = syftboxPeerTestBtn.textContent
+
+			if (!peerEmail) {
+				if (resultEl) {
+					resultEl.style.color = '#b45309'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = 'Peer email is required.'
+				}
+				return
+			}
+
+			syftboxPeerTestBtn.disabled = true
+			syftboxPeerTestBtn.textContent = 'Testing...'
+			if (resultEl) {
+				resultEl.style.color = '#6b7280'
+				resultEl.style.whiteSpace = 'normal'
+				resultEl.textContent = `Testing peer link with ${peerEmail} (${rounds} round${rounds === 1 ? '' : 's'}, ${payloadKb}KB payload)...`
+			}
+
+			try {
+				const result = await invoke('test_peer_link', {
+					options: {
+						peerEmail,
+						rounds,
+						payloadKb,
+						timeoutS: 60,
+						pollMs: 100,
+					},
+				})
+				if (resultEl) {
+					resultEl.style.color = result.ok ? '#059669' : '#b45309'
+					resultEl.style.whiteSpace = 'pre-line'
+					const attempts = Array.isArray(result.attempt_logs) ? result.attempt_logs : []
+					const lines = []
+					lines.push(
+						`${result.ok ? 'PASS' : 'CHECK'} peer link ${result.local_email} -> ${result.peer_email}`,
+					)
+					lines.push(
+						`completed=${result.completed_rounds}/${result.rounds} failed=${result.failed_rounds} payload_bytes=${result.payload_bytes}`,
+					)
+					lines.push(
+						`rtt_ms min=${result.min_rtt_ms ?? '-'} p50=${result.p50_rtt_ms ?? '-'} p95=${result.p95_rtt_ms ?? '-'} max=${result.max_rtt_ms ?? '-'} avg=${result.avg_rtt_ms ?? '-'}`,
+					)
+					if (result.details) {
+						lines.push(`details=${result.details}`)
+					}
+					if (attempts.length) {
+						lines.push('trace:')
+						lines.push(...attempts.map((line) => `  - ${line}`))
+					}
+					resultEl.textContent = lines.join('\n')
+				}
+			} catch (error) {
+				console.error('Peer link test failed:', error)
+				if (resultEl) {
+					resultEl.style.color = '#dc2626'
+					resultEl.style.whiteSpace = 'normal'
+					resultEl.textContent = `FAIL: ${error?.message || error || 'Peer link test failed'}`
+				}
+			} finally {
+				syftboxPeerTestBtn.disabled = false
+				syftboxPeerTestBtn.textContent = originalText
+			}
 		})
 	}
 
@@ -491,7 +637,7 @@ export function setupEventHandlers({
 	if (resetAllBtn) {
 		resetAllBtn.addEventListener('click', async () => {
 			const confirmed = await dialog.confirm(
-				'This will DELETE ALL DATA including participants, files, projects, and runs. It will also stop any running Jupyter sessions and the SyftBox background process.\n\nThis cannot be undone.\n\nAre you sure?',
+				'This will DELETE ALL DATA including participants, files, modules, and runs. It will also stop any running Jupyter sessions and the SyftBox background process.\n\nThis cannot be undone.\n\nAre you sure?',
 				{ title: 'Reset BioVault Data', type: 'warning' },
 			)
 
@@ -500,7 +646,7 @@ export function setupEventHandlers({
 			}
 
 			const wipeKeys = await dialog.confirm(
-				'Do you also want to delete your identity keys (.syc)?\n\nIf you delete keys you will need to onboard/sign in again, and any encrypted session registry files may no longer be readable.\n\nChoose YES to fully reset everything.\nChoose NO to reset data but keep your keys.',
+				'Do you also want to delete your identity keys (.sbc)?\n\nIf you delete keys you will need to onboard/sign in again, and any encrypted session registry files may no longer be readable.\n\nChoose YES to fully reset everything.\nChoose NO to reset data but keep your keys.',
 				{ title: 'Reset Everything?', type: 'warning' },
 			)
 
@@ -553,6 +699,10 @@ export function setupEventHandlers({
 	const openLogsFolderBtn = document.getElementById('open-logs-folder-btn')
 	if (openLogsFolderBtn) {
 		openLogsFolderBtn.addEventListener('click', openLogsFolder)
+	}
+	const toggleVerboseBtn = document.getElementById('toggle-verbose-btn')
+	if (toggleVerboseBtn && typeof toggleVerbose === 'function') {
+		toggleVerboseBtn.addEventListener('click', toggleVerbose)
 	}
 
 	// Data view event handlers are now initialized in data.js via initializeDataTab()
@@ -679,16 +829,16 @@ export function setupEventHandlers({
 		})
 	}
 
-	// Projects - Create project modal (also used for "Create Step")
-	const createProjectBtn = document.getElementById('create-project-btn')
-	if (createProjectBtn) {
-		createProjectBtn.addEventListener('click', () => {
-			showCreateProjectModal()
+	// Modules - Create module modal (also used for "Create Step")
+	const createModuleBtn = document.getElementById('create-module-btn')
+	if (createModuleBtn) {
+		createModuleBtn.addEventListener('click', () => {
+			showCreateModuleModal()
 		})
 	}
 
-	// Note: All create project modal buttons (Cancel, Back, Next, Confirm)
-	// are set up when modal opens (see setupCreateTabHandlers in projects.js)
+	// Note: All create module modal buttons (Cancel, Back, Next, Confirm)
+	// are set up when modal opens (see setupCreateTabHandlers in modules.js)
 
 	// Preview tab switching
 	document.querySelectorAll('.preview-tab').forEach((tab) => {
@@ -707,37 +857,37 @@ export function setupEventHandlers({
 	})
 
 	// Top close button
-	const topCloseBtn = document.getElementById('create-project-cancel-top')
+	const topCloseBtn = document.getElementById('create-module-cancel-top')
 	if (topCloseBtn) {
-		topCloseBtn.addEventListener('click', hideCreateProjectModal)
+		topCloseBtn.addEventListener('click', hideCreateModuleModal)
 	}
 	// Preview expand/collapse controls removed - now using split view
-	const newProjectNameInput = document.getElementById('new-project-name')
-	if (newProjectNameInput) {
-		newProjectNameInput.addEventListener('input', () => {
-			handleProjectNameInputChange()
+	const newModuleNameInput = document.getElementById('new-module-name')
+	if (newModuleNameInput) {
+		newModuleNameInput.addEventListener('input', () => {
+			handleModuleNameInputChange()
 		})
 	}
 
-	const projectPathBrowseBtn = document.getElementById('project-path-browse-btn')
-	if (projectPathBrowseBtn) {
-		projectPathBrowseBtn.addEventListener('click', async () => {
-			await chooseProjectDirectory()
+	const modulePathBrowseBtn = document.getElementById('module-path-browse-btn')
+	if (modulePathBrowseBtn) {
+		modulePathBrowseBtn.addEventListener('click', async () => {
+			await chooseModuleDirectory()
 		})
 	}
 
-	const projectPathResetBtn = document.getElementById('project-path-reset-btn')
-	if (projectPathResetBtn) {
-		projectPathResetBtn.addEventListener('click', async () => {
-			await resetProjectDirectory()
+	const modulePathResetBtn = document.getElementById('module-path-reset-btn')
+	if (modulePathResetBtn) {
+		modulePathResetBtn.addEventListener('click', async () => {
+			await resetModuleDirectory()
 		})
 	}
 
-	const importProjectBtn = document.getElementById('import-project-btn')
-	if (importProjectBtn) {
-		importProjectBtn.addEventListener('click', () => {
-			console.log('Import project button clicked')
-			importProject()
+	const importModuleBtn = document.getElementById('import-module-btn')
+	if (importModuleBtn) {
+		importModuleBtn.addEventListener('click', () => {
+			console.log('Import module button clicked')
+			importModule()
 		})
 	}
 
@@ -745,20 +895,20 @@ export function setupEventHandlers({
 	if (importFolderBtn) {
 		importFolderBtn.addEventListener('click', () => {
 			console.log('Import from folder button clicked')
-			importProjectFromFolder()
+			importModuleFromFolder()
 		})
 	}
 
-	// Wire up import step button to import project
+	// Wire up import step button to import module
 	const importStepBtn = document.getElementById('import-step-btn')
 	if (importStepBtn) {
 		importStepBtn.addEventListener('click', () => {
-			// Copy value from step input to project input
+			// Copy value from step input to module input
 			const stepUrlInput = document.getElementById('step-url-input')
-			const projectUrlInput = document.getElementById('project-url-input')
-			if (stepUrlInput && projectUrlInput) {
-				projectUrlInput.value = stepUrlInput.value
-				importProject()
+			const moduleUrlInput = document.getElementById('module-url-input')
+			if (stepUrlInput && moduleUrlInput) {
+				moduleUrlInput.value = stepUrlInput.value
+				importModule()
 			}
 		})
 	}
@@ -769,46 +919,46 @@ export function setupEventHandlers({
 		runBtn.addEventListener('click', runAnalysis)
 	}
 
-	// Projects - Edit buttons
-	const projectEditSaveBtn = document.getElementById('project-edit-save-btn')
-	if (projectEditSaveBtn) {
-		projectEditSaveBtn.addEventListener('click', handleSaveProjectEditor)
+	// Modules - Edit buttons
+	const moduleEditSaveBtn = document.getElementById('module-edit-save-btn')
+	if (moduleEditSaveBtn) {
+		moduleEditSaveBtn.addEventListener('click', handleSaveModuleEditor)
 	}
 
-	const projectEditCancelBtn = document.getElementById('project-edit-cancel-btn')
-	if (projectEditCancelBtn) {
-		projectEditCancelBtn.addEventListener('click', () => {
-			handleLeaveProjectEditor()
+	const moduleEditCancelBtn = document.getElementById('module-edit-cancel-btn')
+	if (moduleEditCancelBtn) {
+		moduleEditCancelBtn.addEventListener('click', () => {
+			handleLeaveModuleEditor()
 			navigateTo('run')
 		})
 	}
 
-	const projectEditBackBtn = document.getElementById('project-edit-back-btn')
-	if (projectEditBackBtn) {
-		projectEditBackBtn.addEventListener('click', () => {
-			handleLeaveProjectEditor()
+	const moduleEditBackBtn = document.getElementById('module-edit-back-btn')
+	if (moduleEditBackBtn) {
+		moduleEditBackBtn.addEventListener('click', () => {
+			handleLeaveModuleEditor()
 			navigateTo('run')
 		})
 	}
 	// Add event listeners only if elements exist (they won't during onboarding)
-	const openFolderBtn = document.getElementById('project-edit-open-folder-btn')
+	const openFolderBtn = document.getElementById('module-edit-open-folder-btn')
 	if (openFolderBtn) {
-		openFolderBtn.addEventListener('click', handleOpenProjectFolder)
+		openFolderBtn.addEventListener('click', handleOpenModuleFolder)
 	}
 
-	const launchJupyterBtn = document.getElementById('project-edit-launch-jupyter-btn')
+	const launchJupyterBtn = document.getElementById('module-edit-launch-jupyter-btn')
 	if (launchJupyterBtn) {
 		launchJupyterBtn.addEventListener('click', handleLaunchJupyter)
 	}
 
-	const resetJupyterBtn = document.getElementById('project-edit-reset-jupyter-btn')
+	const resetJupyterBtn = document.getElementById('module-edit-reset-jupyter-btn')
 	if (resetJupyterBtn) {
 		resetJupyterBtn.addEventListener('click', handleResetJupyter)
 	}
 
-	const projectSpecReloadBtn = document.getElementById('project-spec-reload-btn')
-	if (projectSpecReloadBtn) {
-		projectSpecReloadBtn.addEventListener('click', handleReloadProjectSpec)
+	const moduleSpecReloadBtn = document.getElementById('module-spec-reload-btn')
+	if (moduleSpecReloadBtn) {
+		moduleSpecReloadBtn.addEventListener('click', handleReloadModuleSpec)
 	}
 
 	// Runs - Select all participants (only exists if run analysis view is loaded)

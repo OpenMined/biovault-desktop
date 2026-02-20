@@ -100,8 +100,24 @@ fn write_log_line(level: LogLevel, message: &str) -> io::Result<()> {
     Ok(())
 }
 
+const NOISY_PATTERNS: &[&str] = &[
+    "sync actions:",
+    "scan_remote: server returned",
+    "sync reconcile start:",
+    "files, ignored=",
+    "SyftBox queue poll",
+    "GET http://127.0.0.1:7938/v1/sync/status",
+];
+
+fn is_noisy_log(message: &str) -> bool {
+    NOISY_PATTERNS.iter().any(|pat| message.contains(pat))
+}
+
 /// Append a timestamped log entry to the desktop log file.
 pub fn log_desktop_event(level: LogLevel, message: &str) {
+    if is_noisy_log(message) {
+        return;
+    }
     let _ = write_log_line(level, message);
 }
 

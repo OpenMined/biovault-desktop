@@ -27,6 +27,7 @@ pub(crate) fn dependency_names() -> Vec<&'static str> {
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
+    deps.push("syqure");
     deps.push("uv");
     deps
 }
@@ -69,7 +70,10 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
         );
 
         if dep.found && dep.path.is_some() {
-            let path = dep.path.clone().unwrap();
+            let raw_path = dep.path.clone().unwrap();
+            let path = std::fs::canonicalize(&raw_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(raw_path);
             eprintln!("DEBUG:   Calling save_binary_path({}, {})", dep.name, path);
 
             match biovault::config::Config::save_binary_path(&dep.name, Some(path.clone())) {
@@ -134,9 +138,13 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
 pub async fn check_dependencies() -> Result<DependencyCheckResult, String> {
     crate::desktop_log!("🔍 check_dependencies called");
 
-    // Call the library function directly
-    biovault::cli::commands::check::check_dependencies_result()
-        .map_err(|e| format!("Failed to check dependencies: {}", e))
+    // Run in blocking thread pool since this calls subprocess checks (java, docker, etc.)
+    tokio::task::spawn_blocking(|| {
+        biovault::cli::commands::check::check_dependencies_result()
+            .map_err(|e| format!("Failed to check dependencies: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -150,9 +158,13 @@ pub async fn check_single_dependency(
         path
     );
 
-    // Call the library function to check just this one dependency
-    biovault::cli::commands::check::check_single_dependency(&name, path)
-        .map_err(|e| format!("Failed to check dependency: {}", e))
+    // Run in blocking thread pool since this calls subprocess checks
+    tokio::task::spawn_blocking(move || {
+        biovault::cli::commands::check::check_single_dependency(&name, path)
+            .map_err(|e| format!("Failed to check dependency: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Returns saved dependency states from disk cache.
@@ -248,24 +260,73 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
 #[tauri::command]
 pub async fn check_docker_running() -> Result<bool, String> {
-    // Prefer configured docker path, fall back to PATH
-    let docker_bin = biovault::config::Config::load()
-        .ok()
-        .and_then(|cfg| cfg.get_binary_path("docker"))
-        .unwrap_or_else(|| "docker".to_string());
+    // Check BIOVAULT_CONTAINER_RUNTIME env var first (e.g., "podman" on Windows).
+    // If unset, try configured docker path, then "docker", then "podman".
+    let mut bins: Vec<String> = Vec::new();
+    let runtime_env = env::var("BIOVAULT_CONTAINER_RUNTIME").ok();
+    if let Ok(runtime) = env::var("BIOVAULT_CONTAINER_RUNTIME") {
+        let trimmed = runtime.trim();
+        if !trimmed.is_empty() {
+            bins.push(trimmed.to_string());
+        }
+    }
+    if bins.is_empty() {
+        if let Ok(cfg) = biovault::config::Config::load() {
+            if let Some(path) = cfg.get_binary_path("docker") {
+                if !path.trim().is_empty() {
+                    bins.push(path);
+                }
+            }
+        }
+        bins.push("docker".to_string());
+        bins.push("podman".to_string());
+    }
 
-    // Run a quick health check
-    let mut cmd = Command::new(&docker_bin);
-    cmd.arg("info");
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    configure_child_process(&mut cmd);
+    bins.dedup();
+    if let Some(runtime) = runtime_env.as_deref() {
+        if !runtime.trim().is_empty() {
+            crate::desktop_log!(
+                "Container runtime override: BIOVAULT_CONTAINER_RUNTIME={}",
+                runtime
+            );
+        }
+    }
+    crate::desktop_log!("Container runtime candidates: {:?}", bins);
 
-    let status = cmd
-        .status()
-        .map_err(|e| format!("Failed to execute '{}': {}", docker_bin, e))?;
+    // Run in spawn_blocking to avoid blocking the Tokio runtime
+    let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        let mut last_err: Option<String> = None;
+        for bin in bins {
+            let mut cmd = Command::new(&bin);
+            cmd.arg("info");
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::null());
+            configure_child_process(&mut cmd);
 
-    Ok(status.success())
+            match cmd.status() {
+                Ok(status) => {
+                    if status.success() {
+                        crate::desktop_log!("Container runtime OK: {}", bin);
+                        return Ok(true);
+                    }
+                    last_err = Some(format!("'{} info' returned {}", bin, status));
+                    crate::desktop_log!("Container runtime not ready: {} (status {})", bin, status);
+                }
+                Err(e) => {
+                    last_err = Some(format!("Failed to execute '{}': {}", bin, e));
+                    crate::desktop_log!("Container runtime exec failed: {} ({})", bin, e);
+                }
+            }
+        }
+        if let Some(err) = last_err {
+            crate::desktop_log!("Container runtime check failed: {}", err);
+        }
+        Ok(false)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    result
 }
 
 #[tauri::command]
@@ -275,7 +336,12 @@ pub async fn save_custom_path(name: String, path: String) -> Result<(), String> 
     let sanitized = if path.trim().is_empty() {
         None
     } else {
-        Some(path.trim().to_string())
+        let trimmed = path.trim().to_string();
+        Some(
+            std::fs::canonicalize(&trimmed)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(trimmed),
+        )
     };
 
     biovault::config::Config::save_binary_path(&name, sanitized.clone())
@@ -400,7 +466,10 @@ pub async fn install_dependency(window: tauri::Window, name: String) -> Result<S
     let install_result = biovault::cli::commands::setup::install_single_dependency(&name)
         .await
         .map(|maybe_path| {
-            if let Some(path) = maybe_path {
+            if let Some(raw_path) = maybe_path {
+                let path = std::fs::canonicalize(&raw_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or(raw_path);
                 crate::desktop_log!("✅ Installed {} at: {}", name, path);
 
                 // Save the binary path to config

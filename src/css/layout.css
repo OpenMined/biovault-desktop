@@ -82,16 +82,17 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	min-width: 24px;
-	height: 24px;
-	padding: 0 8px;
-	background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-	color: #ffffff;
-	border-radius: 12px;
+	min-width: 22px;
+	height: 22px;
+	padding: 0 7px;
+	background: #f1f5f9;
+	color: #64748b;
+	border: 1px solid #e2e8f0;
+	border-radius: 6px;
 	font-family: var(--font-family, 'Rubik', sans-serif);
 	font-size: 12px;
 	font-weight: 600;
-	box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+	white-space: nowrap;
 }
 
 .page-count-badge.muted {
@@ -705,7 +706,7 @@ h3 {
 
 .empty-state,
 .files-empty-state,
-.pipelines-empty-state {
+.flows-empty-state {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -717,14 +718,14 @@ h3 {
 
 .empty-state svg,
 .files-empty-state svg,
-.pipelines-empty-state svg {
+.flows-empty-state svg {
 	margin-bottom: 16px;
 	color: #cbd5e1;
 }
 
 .empty-state h3,
 .files-empty-state h3,
-.pipelines-empty-state h3 {
+.flows-empty-state h3 {
 	font-size: 16px;
 	font-weight: 600;
 	color: #475569;
@@ -733,7 +734,7 @@ h3 {
 
 .empty-state p,
 .files-empty-state p,
-.pipelines-empty-state p {
+.flows-empty-state p {
 	font-size: 14px;
 	color: #94a3b8;
 	margin: 0;

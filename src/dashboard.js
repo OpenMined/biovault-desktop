@@ -4,8 +4,8 @@ export function createDashboardShell({
 	setIsImportInProgress,
 	loadParticipants,
 	_loadFiles,
-	loadProjects,
-	loadPipelines,
+	loadModules,
+	loadFlows,
 	loadRuns,
 	displayLogs,
 	setLogsAutoRefreshEnabled,
@@ -31,8 +31,8 @@ export function createDashboardShell({
 
 		let targetView = requestedView
 
-		// Redirect old 'projects' tab to 'run' (since they're now merged)
-		if (requestedView === 'projects') {
+		// Redirect old 'modules' tab to 'run' (since they're now merged)
+		if (requestedView === 'modules') {
 			targetView = 'run'
 		}
 
@@ -87,9 +87,9 @@ export function createDashboardShell({
 				loadParticipants?.() // loadParticipants is actually loadData now
 				break
 			case 'run':
-				// Load projects and pipelines (which includes both pipelines and projects sections)
-				loadProjects?.()
-				loadPipelines?.()
+				// Load modules and flows (which includes both flows and modules sections)
+				loadModules?.()
+				loadFlows?.()
 				break
 			case 'runs':
 				loadRuns?.()

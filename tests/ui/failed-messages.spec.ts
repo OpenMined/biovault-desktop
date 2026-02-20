@@ -43,7 +43,7 @@ test.describe('Failed Messages', () => {
 							return []
 						case 'get_files':
 							return []
-						case 'get_projects':
+						case 'get_modules':
 							return []
 						case 'get_command_logs':
 							return []
@@ -82,7 +82,7 @@ test.describe('Failed Messages', () => {
 									unread_count: 0,
 									last_message_at: '2025-12-04T08:00:00Z',
 									last_message_preview: 'Hello!',
-									has_project: false,
+									has_module: false,
 								},
 							]
 						case 'sync_messages':

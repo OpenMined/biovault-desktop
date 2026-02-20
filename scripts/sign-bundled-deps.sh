@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUNDLED_DIR="$ROOT_DIR/src-tauri/resources/bundled"
 SYFTBOX_DIR="$ROOT_DIR/src-tauri/resources/syftbox"
+SYQURE_DIR="$ROOT_DIR/src-tauri/resources/syqure"
 
 # Load .env if present
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -27,7 +28,7 @@ echo ""
 
 # Strip extended attributes from all bundled resources
 echo "Stripping extended attributes..."
-for dir in "$SYFTBOX_DIR" "$BUNDLED_DIR/uv" "$BUNDLED_DIR/java" "$BUNDLED_DIR/nextflow"; do
+for dir in "$SYFTBOX_DIR" "$SYQURE_DIR" "$BUNDLED_DIR/uv" "$BUNDLED_DIR/java" "$BUNDLED_DIR/nextflow"; do
   if [[ -d "$dir" ]]; then
     xattr -r -c "$dir" 2>/dev/null || true
     echo "  Cleared xattrs: $dir"
@@ -63,6 +64,22 @@ sign_with_java_entitlements() {
 echo "Signing syftbox..."
 if [[ -f "$SYFTBOX_DIR/syftbox" ]]; then
   sign_with_syftbox_entitlements "$SYFTBOX_DIR/syftbox"
+fi
+echo ""
+
+# Sign syqure (fat binary)
+echo "Signing syqure..."
+if [[ -f "$SYQURE_DIR/syqure" ]]; then
+  sign_binary "$SYQURE_DIR/syqure"
+fi
+echo ""
+
+# Sign codon/sequre libs bundled with syqure
+echo "Signing syqure codon/sequre libs..."
+if [[ -d "$SYQURE_DIR/lib/codon" ]]; then
+  find "$SYQURE_DIR/lib/codon" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) | while read -r bin; do
+    sign_binary "$bin" || true
+  done
 fi
 echo ""
 

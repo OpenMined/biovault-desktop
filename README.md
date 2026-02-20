@@ -16,7 +16,7 @@ This repo is a kind of mono-repo for BioVault but uses Google's repo tool so the
 
 - Preferred layout is sibling repos at the repo root:
   `biovault/`, `biovault-beaver/`, `bioscript/`, `syftbox/`, `syftbox-sdk/`,
-  `syft-crypto-core/`, `sbenv/`
+  `syftbox-crypto/`, `sbenv/`
 - Scripts and Rust code accept overrides via env vars (examples):
   `WORKSPACE_ROOT`, `BIOVAULT_DIR`, `BIOVAULT_BEAVER_DIR`, `SYFTBOX_DIR`,
   `SYFTBOX_SDK_DIR`, `SBENV_DIR`
@@ -26,7 +26,7 @@ This repo is a kind of mono-repo for BioVault but uses Google's repo tool so the
 ### Nested repo (libsignal)
 
 - The libsignal repo is checked out under
-  `syft-crypto-core/vendor/libsignal-protocol-syft`
+  `syftbox-crypto/vendor/libsignal-protocol-syft`
 - It is pinned in `manifest.xml` to avoid submodule workflows.
 
 ### Notes for CI
@@ -39,7 +39,7 @@ This repo is a kind of mono-repo for BioVault but uses Google's repo tool so the
 ### Dependency Graph
 
 ```
-syft-crypto-core (foundational crypto)
+syftbox-crypto (foundational crypto)
     ↓
 syftbox-sdk (depends on syft-crypto-protocol)
     ↓
@@ -54,7 +54,7 @@ biovault-beaver (independent Python, but uses syftbox conventions)
 
 When making changes that span multiple repos, release in this order:
 
-1. **syft-crypto-core** - Foundational crypto library
+1. **syftbox-crypto** - Foundational crypto library
 
    - Contains `syft-crypto-protocol` crate
    - Must be released first if crypto changes
@@ -103,7 +103,7 @@ cd .. && git add -A && git commit -m "feat: integrate X"
 
 When releasing, update versions in this order:
 
-1. `syft-crypto-core/protocol/Cargo.toml` - bump version
+1. `syftbox-crypto/protocol/Cargo.toml` - bump version
 2. `syftbox-sdk/Cargo.toml` - bump version, update `syft-crypto-protocol` dep
 3. `biovault/cli/Cargo.toml` - bump version, update `syftbox-sdk` dep
 4. `src-tauri/Cargo.toml` - bump version (auto-triggers release)
@@ -137,7 +137,7 @@ Each repo has a `lint.sh` script that runs all checks in parallel:
 | biovault-desktop | Rust + JS/TS | `cargo fmt` + `clippy` + `prettier` + `eslint`    |
 | biovault         | Rust         | `cargo fmt` + `clippy`                            |
 | syftbox-sdk      | Rust         | `cargo fmt` + `clippy`                            |
-| syft-crypto-core | Rust         | `cargo fmt` + `clippy`                            |
+| syftbox-crypto   | Rust         | `cargo fmt` + `clippy`                            |
 | biovault-beaver  | Python       | `ruff format` + `ruff check` + `mypy` + `vulture` |
 
 With `--test`: adds `cargo test` (Rust) or `pytest` (Python)

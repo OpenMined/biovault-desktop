@@ -1,0 +1,207 @@
+name: PR Syqure Portability
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'syqure/**'
+      - 'src-tauri/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/pr-syqure-portability.yml'
+
+concurrency:
+  group: pr-syqure-portability-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  syqure-portability:
+    name: Syqure portability (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runs-on: namespace-profile-mac-medium
+            rust_target: aarch64-apple-darwin
+          - target: linux-x64
+            runs-on: namespace-profile-linux-medium
+            rust_target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runs-on }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup workspace
+        shell: bash
+        run: |
+          chmod +x scripts/setup-workspace.sh
+          ./scripts/setup-workspace.sh
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install syqure build deps (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew update
+          brew install zstd llvm@17 gmp
+          LLVM17_PREFIX="$(brew --prefix llvm@17)"
+          REQUIRED_LLVM_HEADER="llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
+          if [[ ! -f "$LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" ]]; then
+            echo "Missing required LLVM 17 header at $LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" >&2
+            exit 1
+          fi
+          echo "LLVM_PREFIX=$LLVM17_PREFIX" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_PREFIX/include" >> "$GITHUB_ENV"
+          echo "$LLVM17_PREFIX/bin" >> "$GITHUB_PATH"
+
+      - name: Install syqure build deps (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg libgmp-dev
+          if ! command -v llvm-config-17 >/dev/null 2>&1; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+              sudo tee /etc/apt/sources.list.d/llvm-17.list >/dev/null
+            sudo apt-get update
+            sudo apt-get install -y llvm-17-dev
+          fi
+          if command -v llvm-config-17 >/dev/null 2>&1; then
+            LLVM17_INCLUDE="$(llvm-config-17 --includedir)"
+          elif [[ -d /usr/lib/llvm-17/include ]]; then
+            LLVM17_INCLUDE="/usr/lib/llvm-17/include"
+          else
+            echo "LLVM 17 headers not found for syqure build" >&2
+            exit 1
+          fi
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_INCLUDE" >> "$GITHUB_ENV"
+
+      - name: Prepare syqure submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C syqure submodule init codon sequre
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -C syqure config http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH_HEADER"
+          for sub in codon sequre; do
+            old_url="$(git -C syqure config submodule."$sub".url)"
+            new_url="$(echo "$old_url" | sed 's|git@github\.com:|https://github.com/|')"
+            if [[ "$old_url" != "$new_url" ]]; then
+              git -C syqure config submodule."$sub".url "$new_url"
+            fi
+          done
+          git -C syqure submodule update --depth 1 codon sequre
+
+      - name: Build syqure + stage resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x syqure/syqure_bins.sh
+          ./syqure/syqure_bins.sh
+
+          TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
+          BUNDLE_OUT="$PWD/syqure/syqure/bundles/${TRIPLE}.tar.zst"
+          if [[ ! -f "$BUNDLE_OUT" ]]; then
+            echo "Expected bundle not found at $BUNDLE_OUT" >&2
+            exit 1
+          fi
+
+          (
+            cd syqure
+            SYQURE_BUNDLE_FILE="$BUNDLE_OUT" cargo build -p syqure --release
+          )
+
+          mkdir -p src-tauri/resources/syqure
+          cp syqure/target/release/syqure src-tauri/resources/syqure/syqure
+          chmod +x src-tauri/resources/syqure/syqure
+
+          if [[ ! -d syqure/target/dist/syqure/lib/codon ]]; then
+            echo "Missing codon libs at syqure/target/dist/syqure/lib/codon" >&2
+            exit 1
+          fi
+          rm -rf src-tauri/resources/syqure/lib/codon
+          mkdir -p src-tauri/resources/syqure/lib/codon
+          cp -RL syqure/target/dist/syqure/lib/codon/. src-tauri/resources/syqure/lib/codon/
+
+      - name: Verify syqure runtime paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="src-tauri/resources/syqure/syqure"
+          if [[ ! -x "$BIN" ]]; then
+            echo "syqure binary missing at $BIN" >&2
+            exit 1
+          fi
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            otool -L "$BIN"
+            RPATHS="$(otool -l "$BIN" | awk '
+              $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
+              in_rpath == 1 && $1 == "path" { print $2; in_rpath = 0 }
+            ')"
+            echo "syqure LC_RPATH entries:"
+            echo "$RPATHS"
+
+            if [[ -z "$RPATHS" ]]; then
+              echo "No LC_RPATH entries found" >&2
+              exit 1
+            fi
+            if echo "$RPATHS" | grep -E '^/'; then
+              echo "Found absolute LC_RPATH entries" >&2
+              exit 1
+            fi
+            if ! echo "$RPATHS" | grep -Fx '@loader_path/lib/codon' >/dev/null; then
+              echo "Missing @loader_path/lib/codon rpath" >&2
+              exit 1
+            fi
+            if ! echo "$RPATHS" | grep -Fx '@loader_path/../lib/codon' >/dev/null; then
+              echo "Missing @loader_path/../lib/codon rpath" >&2
+              exit 1
+            fi
+          else
+            readelf -d "$BIN" | grep -E 'RPATH|RUNPATH|NEEDED' || true
+            RPATHS="$(readelf -d "$BIN" | awk '/RPATH|RUNPATH/ { print $NF }')"
+            if [[ -z "$RPATHS" ]]; then
+              echo "No RPATH/RUNPATH entries found" >&2
+              exit 1
+            fi
+            if echo "$RPATHS" | grep -E '^\[/'; then
+              echo "Found absolute RPATH/RUNPATH entries" >&2
+              exit 1
+            fi
+            if ! echo "$RPATHS" | grep -F '$ORIGIN/lib/codon' >/dev/null && ! echo "$RPATHS" | grep -F '$ORIGIN/../lib/codon' >/dev/null; then
+              echo "Missing expected ORIGIN-based codon rpath" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Smoke test moved syqure binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="src-tauri/resources/syqure/syqure"
+          LIB_SRC="src-tauri/resources/syqure/lib/codon"
+          if [[ ! -d "$LIB_SRC" ]]; then
+            echo "Codon library directory missing at $LIB_SRC" >&2
+            exit 1
+          fi
+
+          TEST_ROOT="$(mktemp -d)"
+          mkdir -p "$TEST_ROOT/lib"
+          cp "$BIN" "$TEST_ROOT/syqure"
+          cp -R "$LIB_SRC" "$TEST_ROOT/lib/"
+          chmod +x "$TEST_ROOT/syqure"
+
+          "$TEST_ROOT/syqure" info | tee "$TEST_ROOT/syqure-info.log"
+          grep -q "^syqure " "$TEST_ROOT/syqure-info.log"
