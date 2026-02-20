@@ -1363,26 +1363,31 @@ pub fn run() {
                 });
             }
 
-            // Create the main window programmatically so we can set data_directory
-            // for per-instance WebView data isolation (localStorage, cookies, etc.).
-            let mut wb = tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::App(Default::default()),
-            )
-            .title(&window_title)
-            .inner_size(1100.0, 700.0)
-            .min_inner_size(900.0, 600.0);
+            // Use the window from tauri.conf.json if it exists, otherwise create programmatically
+            let window = if let Some(existing) = app.get_webview_window("main") {
+                existing
+            } else {
+                // Create the main window programmatically so we can set data_directory
+                // for per-instance WebView data isolation (localStorage, cookies, etc.).
+                let mut wb = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    WebviewUrl::App(Default::default()),
+                )
+                .title(&window_title)
+                .inner_size(1100.0, 700.0)
+                .min_inner_size(900.0, 600.0);
 
-            if let Some(ref data_dir) = webview_data_dir {
-                crate::desktop_log!(
-                    "🔒 WebView data directory: {}",
-                    data_dir.display()
-                );
-                wb = wb.data_directory(data_dir.clone());
-            }
+                if let Some(ref data_dir) = webview_data_dir {
+                    crate::desktop_log!(
+                        "🔒 WebView data directory: {}",
+                        data_dir.display()
+                    );
+                    wb = wb.data_directory(data_dir.clone());
+                }
 
-            let window = wb.build()?;
+                wb.build()?
+            };
 
             {
                 // Handle window close event - minimize to tray instead of quitting
@@ -1546,6 +1551,7 @@ pub fn run() {
             extract_ids_for_files,
             get_extensions,
             is_directory,
+            check_files_exist,
             import_files,
             import_files_with_metadata,
             import_files_pending,
@@ -1693,6 +1699,7 @@ pub fn run() {
             reset_everything,
             get_autostart_enabled,
             set_autostart_enabled,
+            set_syftbox_prefer_online,
             // Profiles
             profiles_get_boot_state,
             profiles_get_default_home,
@@ -1755,6 +1762,7 @@ pub fn run() {
             get_env_var,
             get_default_syftbox_server_url,
             check_syftbox_auth,
+            clear_syftbox_credentials,
             get_syftbox_config_info,
             get_syftbox_state,
             start_syftbox_client,

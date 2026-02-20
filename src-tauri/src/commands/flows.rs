@@ -1414,6 +1414,18 @@ pub async fn create_flow(
         // Preserve full flow directory contents (including local modules/assets).
         copy_local_flow_dir(source_parent, &managed_flow_dir)?;
 
+        // Register modules defined in spec.modules dict (new canonical FlowFile approach).
+        // This complements the legacy modules/ subdirectory scan below.
+        {
+            let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+            biovault::cli::commands::module_management::register_flow_modules_from_dir(
+                &managed_flow_dir,
+                &db,
+                overwrite,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
         // Register any bundled modules (mirroring import_flow_from_request behaviour)
         let modules_source = source_parent.join("modules");
         if modules_source.exists() {
@@ -2091,7 +2103,7 @@ pub async fn run_flow_impl(
         // Skip for network datasets which don't exist in local DB
         if let Some(dataset_name) = dataset_name.clone() {
             if is_network_dataset {
-                eprintln!(
+                crate::desktop_log!(
                     "[flow] Skipping local DB lookup for network dataset '{}', using URLs instead",
                     dataset_name
                 );
@@ -2130,7 +2142,7 @@ pub async fn run_flow_impl(
 
                 // List-shaped datasets need URL selection, fall through to URL/file_id paths
                 if let ShapeExpr::List(inner_type) = &shape_expr {
-                    eprintln!(
+                    crate::desktop_log!(
                     "[flow] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
                     dataset_name, inner_type
                 );

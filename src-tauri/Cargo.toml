@@ -21,7 +21,7 @@ tauri-build = { git = "https://github.com/tauri-apps/tauri", tag = "tauri-v2.9.5
 # BioVault CLI library - shared business logic
 biovault = { path = "../biovault/cli" }
 
-tauri = { version = "2.9.5", features = ["tray-icon", "devtools"] }
+tauri = { version = "2.9.5", features = [ "tray-icon", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"

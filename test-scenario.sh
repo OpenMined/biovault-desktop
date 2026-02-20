@@ -933,7 +933,7 @@ else
 fi
 
 export UI_PORT
-export UI_BASE_URL="http://localhost:${UI_PORT}"
+export UI_BASE_URL="http://127.0.0.1:${UI_PORT}"
 export DISABLE_UPDATER=1
 export DEV_WS_BRIDGE=1
 
@@ -1474,53 +1474,26 @@ preflight_peer_sync() {
 	}
 }
 
-start_static_server_python() {
-	# Try to start Python http.server, return 0 on success, 1 on failure
+start_static_server_vite() {
+	# Start Vite dev server for the new SvelteKit UI
 	local port="$1"
 	local src_dir="$2"
-	local timeout_s="${3:-10}"
+	local timeout_s="${3:-20}"
 
-	info "[DEBUG] Trying Python http.server on port $port"
+	info "[DEBUG] Trying Vite dev server on port $port"
 	pushd "$src_dir" >/dev/null
-	python3 -m http.server --bind 127.0.0.1 "$port" >>"$LOG_FILE" 2>&1 &
+	npm run dev -- --host 127.0.0.1 --port "$port" >>"$LOG_FILE" 2>&1 &
 	SERVER_PID=$!
 	popd >/dev/null
 
 	sleep 0.5
 	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		info "[DEBUG] Python server process died immediately"
+		info "[DEBUG] Vite dev server process died immediately"
 		return 1
 	fi
 
-	if wait_for_listener "$port" "$SERVER_PID" "python http.server" "$timeout_s" 2>/dev/null; then
-		info "[DEBUG] Python http.server is listening"
-		return 0
-	fi
-
-	# Kill the non-listening process
-	kill "$SERVER_PID" 2>/dev/null || true
-	SERVER_PID=""
-	return 1
-}
-
-start_static_server_node() {
-	# Try to start a minimal Node.js static server, return 0 on success, 1 on failure
-	local port="$1"
-	local src_dir="$2"
-	local timeout_s="${3:-10}"
-
-	info "[DEBUG] Trying Node.js static server on port $port"
-	node "$ROOT_DIR/tests/static-server.js" "$src_dir" "$port" "127.0.0.1" >>"$LOG_FILE" 2>&1 &
-	SERVER_PID=$!
-
-	sleep 1
-	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		info "[DEBUG] Node static server process died immediately"
-		return 1
-	fi
-
-	if wait_for_listener "$port" "$SERVER_PID" "node static server" "$timeout_s" 2>/dev/null; then
-		info "[DEBUG] Node static server is listening"
+	if wait_for_listener "$port" "$SERVER_PID" "vite dev server" "$timeout_s" 2>/dev/null; then
+		info "[DEBUG] Vite dev server is listening"
 		return 0
 	fi
 
@@ -1550,30 +1523,19 @@ start_static_server() {
 		info "[DEBUG] Had to try $port_check_count additional ports, settled on $UI_PORT"
 	fi
 	export UI_PORT
-	export UI_BASE_URL="http://localhost:${UI_PORT}"
+export UI_BASE_URL="http://127.0.0.1:${UI_PORT}"
 
-	info "Starting static server on port ${UI_PORT}"
+	info "Starting Vite dev server on port ${UI_PORT}"
 	local src_dir="$ROOT_DIR/src"
 	local timeout_s="${STATIC_SERVER_WAIT_S:-10}"
 
-	# Try Python first (faster, no dependencies)
-	if start_static_server_python "$UI_PORT" "$src_dir" "$timeout_s"; then
+	if start_static_server_vite "$UI_PORT" "$src_dir" "$timeout_s"; then
 		timer_pop
-		info "[DEBUG] Static server (Python) is ready on port $UI_PORT"
+		info "[DEBUG] Vite dev server is ready on port $UI_PORT"
 		return 0
 	fi
 
-	info "[DEBUG] Python http.server failed, trying Node.js fallback..."
-
-	# Try Node.js serve as fallback
-	if start_static_server_node "$UI_PORT" "$src_dir" "$timeout_s"; then
-		timer_pop
-		info "[DEBUG] Static server (Node) is ready on port $UI_PORT"
-		return 0
-	fi
-
-	# Both failed
-	echo "[DEBUG] All static server methods failed on port ${UI_PORT}" >&2
+	echo "[DEBUG] Vite dev server failed on port ${UI_PORT}" >&2
 	echo "[DEBUG] Checking port ${UI_PORT} usage:" >&2
 	lsof -i ":${UI_PORT}" 2>&1 || echo "(lsof unavailable)" >&2
 	if [[ -f "$LOG_FILE" ]]; then

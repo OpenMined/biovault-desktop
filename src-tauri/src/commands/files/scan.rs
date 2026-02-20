@@ -188,6 +188,15 @@ pub fn is_directory(path: String) -> Result<bool, String> {
     Ok(path_buf.is_dir())
 }
 
+/// Check if multiple files exist (batch operation for efficiency)
+#[tauri::command]
+pub fn check_files_exist(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|p| std::path::Path::new(p).exists())
+        .collect()
+}
+
 /// Find the common root directory of multiple paths
 fn find_common_root(paths: &[PathBuf]) -> Option<PathBuf> {
     if paths.is_empty() {

@@ -642,14 +642,6 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
     let bundles_dir = vault_path.join("bundles");
 
-    println!(
-        "🌐 network_scan_datasites: current_email={}, data_root={}, vault_path={}, bundles_dir={}",
-        current_email,
-        data_root.display(),
-        vault_path.display(),
-        bundles_dir.display()
-    );
-
     // Find datasites directory
     let datasites_dir = if data_root
         .file_name()
@@ -688,21 +680,11 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
 
                 // Skip current identity entirely
                 if slug == current_slug {
-                    println!(
-                        "🌐 Skipping current identity {} at {}",
-                        remote_info.identity,
-                        did_path.display()
-                    );
                     continue;
                 }
 
                 // Skip if we've already added this identity (avoid duplicates from copies/alt locations)
                 if seen_identities.contains(&remote_info.identity) {
-                    println!(
-                        "🌐 Skipping duplicate identity {} at {}",
-                        remote_info.identity,
-                        did_path.display()
-                    );
                     continue;
                 }
 
@@ -737,16 +719,6 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
 
                 // Record identity to avoid later duplicates
                 seen_identities.insert(contact.identity.clone());
-
-                println!(
-                    "🌐 Found contact: identity={} fp={} did_path={} local_bundle_path={:?} is_imported={} has_changed={}",
-                    contact.identity,
-                    contact.fingerprint,
-                    contact.did_path,
-                    contact.local_bundle_path,
-                    contact.is_imported,
-                    contact.has_changed
-                );
 
                 if is_imported {
                     contacts.push(contact);

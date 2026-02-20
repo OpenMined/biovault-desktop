@@ -9,14 +9,22 @@ export async function waitForAppReady(page, options) {
 
 	const remaining = () => Math.max(0, timeout - (Date.now() - start))
 
-	// Wait for either the app layout OR onboarding view to exist in the DOM.
+	// Wait for either the legacy app layout, new UI shell, or onboarding view to exist in the DOM.
 	const appLayout = page.locator('.app-layout')
+	const newUiShell = page.locator('[data-testid="app-shell"]')
+	const newUiHeader = page.locator('[data-testid="app-header"]')
 	const onboardingView = page.locator('#onboarding-view')
 
 	await Promise.race([
 		appLayout.waitFor({ state: 'attached', timeout }).catch(() => null),
+		newUiShell.waitFor({ state: 'attached', timeout }).catch(() => null),
+		newUiHeader.waitFor({ state: 'attached', timeout }).catch(() => null),
 		onboardingView.waitFor({ state: 'attached', timeout }).catch(() => null),
 	])
+
+	// Ensure the DOM is actually rendered before readiness checks.
+	await page.waitForLoadState('domcontentloaded', { timeout: remaining() }).catch(() => null)
+	await page.waitForLoadState('networkidle', { timeout: remaining() }).catch(() => null)
 
 	try {
 		await page.waitForFunction(
@@ -29,6 +37,11 @@ export async function waitForAppReady(page, options) {
 					window.getComputedStyle(onboarding).display !== 'none'
 
 				if (onboardingActive) return true
+
+				// New Svelte UI shell is ready when sidebar and header exist.
+				const hasNewSidebar = !!document.querySelector('[data-testid="app-shell"]')
+				const hasNewHeader = !!document.querySelector('[data-testid="app-header"]')
+				if (hasNewSidebar && hasNewHeader) return true
 
 				const onboardingCheckComplete =
 					// Older builds won't define this; treat as "complete" to preserve behavior.
@@ -47,28 +60,32 @@ export async function waitForAppReady(page, options) {
 		const details = await page
 			.evaluate(() => {
 				const onboarding = document.getElementById('onboarding-view')
-				const appLayout = document.querySelector('.app-layout')
-				const onboardingDisplay =
-					onboarding && typeof window.getComputedStyle === 'function'
-						? window.getComputedStyle(onboarding).display
-						: null
-				const appLayoutDisplay =
-					appLayout && typeof window.getComputedStyle === 'function'
-						? window.getComputedStyle(appLayout).display
-						: null
-				return {
-					url: window.location.href,
-					navReady: window.__NAV_HANDLERS_READY__ === true,
-					eventReady: window.__EVENT_HANDLERS_READY__ === true,
-					onboardingCheckComplete:
-						window.__ONBOARDING_CHECK_COMPLETE__ === undefined
-							? null
-							: window.__ONBOARDING_CHECK_COMPLETE__ === true,
-					onboardingActive: onboarding ? onboarding.classList.contains('active') : false,
-					onboardingDisplay,
-					appLayoutDisplay,
-				}
-			})
+			const appLayout = document.querySelector('.app-layout')
+			const newSidebar = document.querySelector('[data-testid="app-shell"]')
+			const header = document.querySelector('[data-testid="app-header"]')
+			const onboardingDisplay =
+				onboarding && typeof window.getComputedStyle === 'function'
+					? window.getComputedStyle(onboarding).display
+					: null
+			const appLayoutDisplay =
+				appLayout && typeof window.getComputedStyle === 'function'
+					? window.getComputedStyle(appLayout).display
+					: null
+			return {
+				url: window.location.href,
+				navReady: window.__NAV_HANDLERS_READY__ === true,
+				eventReady: window.__EVENT_HANDLERS_READY__ === true,
+				onboardingCheckComplete:
+					window.__ONBOARDING_CHECK_COMPLETE__ === undefined
+						? null
+						: window.__ONBOARDING_CHECK_COMPLETE__ === true,
+				onboardingActive: onboarding ? onboarding.classList.contains('active') : false,
+				onboardingDisplay,
+				appLayoutDisplay,
+				newSidebar: !!newSidebar,
+				header: !!header,
+			}
+		})
 			.catch(() => null)
 
 		throw new Error(`App did not become ready within ${timeout}ms: ${JSON.stringify(details)}`)

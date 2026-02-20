@@ -47,6 +47,9 @@ pub struct Settings {
     /// Blocked agent bridge commands
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_bridge_blocklist: Vec<String>,
+    /// User preference for SyftBox online state (auto-start daemon on app launch)
+    #[serde(default)]
+    pub syftbox_prefer_online: bool,
 }
 
 fn default_agent_bridge_enabled() -> bool {
@@ -78,6 +81,7 @@ impl Default for Settings {
             agent_bridge_http_port: default_agent_bridge_http_port(),
             agent_bridge_token: None,
             agent_bridge_blocklist: Vec::new(),
+            syftbox_prefer_online: false,
         }
     }
 }
