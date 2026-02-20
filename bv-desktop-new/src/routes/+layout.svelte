@@ -60,7 +60,7 @@
 			.catch(() => {})
 
 		// Listen for pipeline completion events
-		const unlistenPromise = listen<string>('pipeline-complete', (event) => {
+		const unlistenPromise = listen<string>('flow-complete', (event) => {
 			const status = event.payload
 
 			if (status === 'success') {

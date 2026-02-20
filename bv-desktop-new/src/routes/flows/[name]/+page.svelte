@@ -41,7 +41,7 @@
 	interface Pipeline {
 		id: number
 		name: string
-		pipeline_path: string
+		flow_path: string
 		spec?: PipelineSpec
 		created_at?: string
 	}
@@ -70,7 +70,7 @@
 			error = null
 
 			// Get all pipelines and find the one matching our name
-			const pipelines = await invoke<Pipeline[]>('get_pipelines')
+			const pipelines = await invoke<Pipeline[]>('get_flows')
 			flow = pipelines.find((p) => p.name === flowName) ?? null
 
 			if (!flow) {
@@ -79,7 +79,7 @@
 			}
 
 			// Get runs for this pipeline
-			const allRuns = await invoke<PipelineRun[]>('get_pipeline_runs')
+			const allRuns = await invoke<PipelineRun[]>('get_flow_runs')
 			runs = allRuns
 				.filter((r) => r.pipeline_id === flow?.id)
 				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -114,7 +114,7 @@
 	async function refreshRuns() {
 		if (!flow) return
 		try {
-			const allRuns = await invoke<PipelineRun[]>('get_pipeline_runs')
+			const allRuns = await invoke<PipelineRun[]>('get_flow_runs')
 			runs = allRuns
 				.filter((r) => r.pipeline_id === flow?.id)
 				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -127,7 +127,7 @@
 	async function openInFolder() {
 		if (!flow) return
 		try {
-			await invoke('show_in_folder', { path: flow.pipeline_path })
+			await invoke('show_in_folder', { path: flow.flow_path })
 		} catch (e) {
 			console.error('Failed to open folder:', e)
 		}
@@ -135,7 +135,7 @@
 
 	async function deleteRun(runId: number) {
 		try {
-			await invoke('delete_pipeline_run', { runId })
+			await invoke('delete_flow_run', { runId })
 			runs = runs.filter((r) => r.id !== runId)
 		} catch (e) {
 			console.error('Failed to delete run:', e)
@@ -356,8 +356,8 @@
 								</div>
 								<div class="flex justify-between">
 									<dt class="text-muted-foreground">Path</dt>
-									<dd class="font-mono text-xs truncate max-w-[180px]" title={flow.pipeline_path}>
-										{flow.pipeline_path.split('/').pop()}
+									<dd class="font-mono text-xs truncate max-w-[180px]" title={flow.flow_path}>
+										{flow.flow_path.split('/').pop()}
 									</dd>
 								</div>
 								{#if flow.created_at}

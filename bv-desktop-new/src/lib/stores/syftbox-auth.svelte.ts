@@ -86,6 +86,17 @@ export const syftboxAuthStore = {
 		// Check if auth is disabled via environment variable
 		await this.checkAuthEnabled()
 
+		// When auth is bypassed, ensure BioVault is initialized
+		if (!state.isAuthEnabled) {
+			try {
+				const settings = await invoke<{ email?: string }>('get_settings')
+				const email = settings?.email || 'dev@localhost'
+				await invoke('complete_onboarding', { email })
+			} catch (e) {
+				console.warn('Auto-init during auth bypass failed:', e)
+			}
+		}
+
 		try {
 			const isAuth = await invoke<boolean>('check_syftbox_auth')
 			state.isAuthenticated = isAuth
@@ -149,6 +160,13 @@ export const syftboxAuthStore = {
 		} catch (e) {
 			console.error('Backend syftbox_submit_otp failed:', e)
 			throw e
+		}
+
+		// Initialize BioVault config and directory structure if needed
+		try {
+			await invoke('complete_onboarding', { email })
+		} catch (e) {
+			console.error('Failed to complete onboarding:', e)
 		}
 
 		// Update profile email to match the signed-in account

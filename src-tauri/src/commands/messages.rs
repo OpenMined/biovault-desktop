@@ -8,7 +8,7 @@ use biovault::flow_spec::FlowModuleDef;
 use biovault::flow_spec::FlowSpec;
 use biovault::messages::{Message as VaultMessage, MessageDb, MessageStatus, MessageType};
 use biovault::syftbox::storage::{SyftBoxStorage, WritePolicy};
-use biovault::syftbox::syc;
+use biovault::syftbox::sbc;
 use biovault::types::SyftPermissions;
 use syftbox_sdk;
 use chrono::Utc;
@@ -190,7 +190,7 @@ fn ensure_recipient_bundle_cached(
     }
 
     // Double check the DID is valid before caching
-    syc::parse_public_bundle_file(&did_path)
+    sbc::parse_public_bundle_file(&did_path)
         .map_err(|e| format!("Invalid DID for {}: {}", recipient, e))?;
 
     if !bundles_dir.exists() {

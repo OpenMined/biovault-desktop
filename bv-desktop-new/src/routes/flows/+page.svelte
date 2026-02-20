@@ -21,7 +21,7 @@
 	interface Pipeline {
 		id: number
 		name: string
-		pipeline_path: string
+		flow_path: string
 		spec?: PipelineSpec
 		created_at?: string
 	}
@@ -34,7 +34,7 @@
 	async function loadFlows() {
 		try {
 			loading = true
-			flows = await invoke<Pipeline[]>('get_pipelines')
+			flows = await invoke<Pipeline[]>('get_flows')
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {

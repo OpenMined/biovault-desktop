@@ -94,9 +94,9 @@
 		if (!dataset.public_url) return
 		pinning = dataset.name
 		try {
-			await invoke('import_network_dataset', {
-				source: dataset.public_url,
-				nameOverride: null
+			await invoke('subscribe_dataset', {
+				owner: dataset.owner,
+				name: dataset.name
 			})
 			toast.success(`Starred ${dataset.name}`)
 			await loadLocalDatasetNames()
@@ -143,7 +143,7 @@
 	interface InstalledPipeline {
 		id: number
 		name: string
-		pipeline_path: string
+		flow_path: string
 	}
 	let installedPipelines = $state<InstalledPipeline[]>([])
 	let installingPipeline = $state<string | null>(null)
@@ -169,7 +169,7 @@
 
 	async function loadInstalledPipelines() {
 		try {
-			installedPipelines = await invoke<InstalledPipeline[]>('get_pipelines')
+			installedPipelines = await invoke<InstalledPipeline[]>('get_flows')
 		} catch (e) {
 			console.error('Failed to load pipelines:', e)
 		}
@@ -178,7 +178,7 @@
 	async function installPipeline(template: FlowTemplate) {
 		installingPipeline = template.id
 		try {
-			await invoke('import_pipeline_with_deps', {
+			await invoke('import_flow_with_deps', {
 				url: template.sourceUrl,
 				nameOverride: null,
 				overwrite: true

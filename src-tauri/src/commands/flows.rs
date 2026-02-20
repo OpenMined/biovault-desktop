@@ -1414,6 +1414,18 @@ pub async fn create_flow(
         // Preserve full flow directory contents (including local modules/assets).
         copy_local_flow_dir(source_parent, &managed_flow_dir)?;
 
+        // Register modules defined in spec.modules dict (new canonical FlowFile approach).
+        // This complements the legacy modules/ subdirectory scan below.
+        {
+            let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+            biovault::cli::commands::module_management::register_flow_modules_from_dir(
+                &managed_flow_dir,
+                &db,
+                overwrite,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
         // Register any bundled modules (mirroring import_flow_from_request behaviour)
         let modules_source = source_parent.join("modules");
         if modules_source.exists() {

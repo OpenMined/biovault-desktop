@@ -151,8 +151,8 @@
 		try {
 			if (runWithoutDataset) {
 				// Run without any dataset selection
-				await invoke('run_pipeline', {
-					pipelineId: pipelineId,
+				await invoke('run_flow', {
+					flowId: pipelineId,
 					inputOverrides: {},
 					resultsDir: null,
 					selection: null,
@@ -183,8 +183,8 @@
 				// NOTE: We intentionally DON'T pass datasetName here because that triggers
 				// shape matching which fails for Map-shaped datasets. By only passing URLs,
 				// the backend treats this like file selection from the Files tab.
-				await invoke('run_pipeline', {
-					pipelineId: pipelineId,
+				await invoke('run_flow', {
+					flowId: pipelineId,
 					inputOverrides: {},
 					resultsDir: null,
 					selection: {

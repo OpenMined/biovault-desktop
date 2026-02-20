@@ -1053,13 +1053,6 @@ pub fn run() {
     // Initialize OpenTelemetry if OTEL_EXPORTER_OTLP_ENDPOINT is set
     telemetry::init();
 
-    let biovault_db = if profile_picker_mode {
-        biovault::data::BioVaultDb::new_in_memory().expect("Could not open in-memory BioVault database")
-    } else {
-        // Initialize shared BioVaultDb (handles files/participants)
-        // This automatically creates the directory via get_biovault_home() if needed
-        BioVaultDb::new().expect("Failed to initialize BioVault database")
-    };
 
     // Get the actual biovault_home_dir that was used (for window title / DB paths).
     let (biovault_home_dir, home_display) = if profile_picker_mode {
@@ -1371,26 +1364,31 @@ pub fn run() {
                 });
             }
 
-            // Create the main window programmatically so we can set data_directory
-            // for per-instance WebView data isolation (localStorage, cookies, etc.).
-            let mut wb = tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::App(Default::default()),
-            )
-            .title(&window_title)
-            .inner_size(1100.0, 700.0)
-            .min_inner_size(900.0, 600.0);
+            // Use the window from tauri.conf.json if it exists, otherwise create programmatically
+            let window = if let Some(existing) = app.get_webview_window("main") {
+                existing
+            } else {
+                // Create the main window programmatically so we can set data_directory
+                // for per-instance WebView data isolation (localStorage, cookies, etc.).
+                let mut wb = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    WebviewUrl::App(Default::default()),
+                )
+                .title(&window_title)
+                .inner_size(1100.0, 700.0)
+                .min_inner_size(900.0, 600.0);
 
-            if let Some(ref data_dir) = webview_data_dir {
-                crate::desktop_log!(
-                    "🔒 WebView data directory: {}",
-                    data_dir.display()
-                );
-                wb = wb.data_directory(data_dir.clone());
-            }
+                if let Some(ref data_dir) = webview_data_dir {
+                    crate::desktop_log!(
+                        "🔒 WebView data directory: {}",
+                        data_dir.display()
+                    );
+                    wb = wb.data_directory(data_dir.clone());
+                }
 
-            let window = wb.build()?;
+                wb.build()?
+            };
 
             {
                 // Handle window close event - minimize to tray instead of quitting
@@ -1589,7 +1587,6 @@ pub fn run() {
             resolve_syft_url_to_local_path,
             resolve_syft_urls_batch,
             network_scan_datasets,
-            import_network_dataset,
             subscribe_dataset,
             unsubscribe_dataset,
             // Participants commands

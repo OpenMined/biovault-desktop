@@ -65,7 +65,7 @@
 		error = null
 
 		try {
-			await invoke('import_pipeline_with_deps', {
+			await invoke('import_flow_with_deps', {
 				url: template.sourceUrl,
 				nameOverride: null,
 				overwrite: true,
@@ -90,7 +90,7 @@
 		error = null
 
 		try {
-			await invoke('import_pipeline_with_deps', {
+			await invoke('import_flow_with_deps', {
 				url: githubUrl.trim(),
 				nameOverride: null,
 				overwrite: true,
@@ -119,11 +119,11 @@
 		error = null
 
 		try {
-			await invoke('create_pipeline', {
+			await invoke('create_flow', {
 				request: {
 					name: blankName.trim(),
 					directory: null,
-					pipelineFile: null,
+					flowFile: null,
 					overwrite: false,
 				},
 			})

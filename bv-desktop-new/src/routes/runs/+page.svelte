@@ -37,7 +37,7 @@
 		try {
 			loading = true
 			error = null
-			runs = await invoke<PipelineRun[]>('get_pipeline_runs')
+			runs = await invoke<PipelineRun[]>('get_flow_runs')
 			// Sort by created_at descending (newest first)
 			runs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 		} catch (e) {
@@ -56,7 +56,7 @@
 
 	async function deleteRun(runId: number) {
 		try {
-			await invoke('delete_pipeline_run', { runId })
+			await invoke('delete_flow_run', { runId })
 			runs = runs.filter((r) => r.id !== runId)
 		} catch (e) {
 			console.error('Failed to delete run:', e)

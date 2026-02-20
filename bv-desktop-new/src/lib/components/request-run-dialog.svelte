@@ -17,7 +17,7 @@
 	interface Pipeline {
 		id: number
 		name: string
-		pipeline_path: string
+		flow_path: string
 	}
 
 	interface Props {
@@ -42,7 +42,7 @@
 		try {
 			loading = true
 			error = null
-			pipelines = await invoke<Pipeline[]>('get_pipelines')
+			pipelines = await invoke<Pipeline[]>('get_flows')
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -67,7 +67,7 @@
 		error = null
 
 		try {
-			await invoke('send_pipeline_request', {
+			await invoke('send_flow_request', {
 				pipelineName: selectedPipeline.name,
 				pipelineVersion: "1.0.0", // For now hardcoded, backend handles it
 				datasetName: datasetName,
@@ -143,7 +143,7 @@
 								<div class="flex-1 min-w-0">
 									<div class="font-medium text-sm">{pipeline.name}</div>
 									<div class="text-muted-foreground text-xs truncate">
-										{pipeline.pipeline_path.split('/').pop()}
+										{pipeline.flow_path.split('/').pop()}
 									</div>
 								</div>
 								{#if selectedPipeline?.id === pipeline.id}
