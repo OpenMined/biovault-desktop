@@ -1,12 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation'
 	import { invoke } from '@tauri-apps/api/core'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import { Button, buttonVariants } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
-	import { flowTemplates, templateColors, type FlowTemplate } from '$lib/data/flow-templates'
-	import DnaIcon from '@lucide/svelte/icons/dna'
-	import UserIcon from '@lucide/svelte/icons/user'
-	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
 	import WorkflowIcon from '@lucide/svelte/icons/workflow'
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
 	import GithubIcon from '@lucide/svelte/icons/github'
@@ -26,7 +23,6 @@
 
 	let view: DialogView = $state('picker')
 	let importing = $state(false)
-	let importingTemplate: string | null = $state(null)
 	let error = $state<string | null>(null)
 	let githubUrl = $state('')
 	let blankName = $state('')
@@ -34,7 +30,6 @@
 	function resetState() {
 		view = 'picker'
 		importing = false
-		importingTemplate = null
 		error = null
 		githubUrl = ''
 		blankName = ''
@@ -45,38 +40,6 @@
 		onOpenChange?.(newOpen)
 		if (!newOpen) {
 			resetState()
-		}
-	}
-
-	function getIcon(icon: FlowTemplate['icon']) {
-		switch (icon) {
-			case 'dna':
-				return DnaIcon
-			case 'user':
-				return UserIcon
-			case 'scan-eye':
-				return ScanEyeIcon
-		}
-	}
-
-	async function importTemplate(template: FlowTemplate) {
-		importing = true
-		importingTemplate = template.id
-		error = null
-
-		try {
-			await invoke('import_flow_with_deps', {
-				url: template.sourceUrl,
-				nameOverride: null,
-				overwrite: true,
-			})
-			handleOpenChange(false)
-			onCreated?.()
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e)
-		} finally {
-			importing = false
-			importingTemplate = null
 		}
 	}
 
@@ -146,6 +109,11 @@
 			}
 		}
 	}
+
+	async function goToExplorer() {
+		handleOpenChange(false)
+		await goto('/explore')
+	}
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
@@ -159,55 +127,13 @@
 					<div>
 						<Dialog.Title>New Flow</Dialog.Title>
 						<Dialog.Description>
-							Choose a template to get started or import your own
+							Create a new flow, import one from GitHub, or find existing flows in Explore
 						</Dialog.Description>
 					</div>
 				</div>
 			</Dialog.Header>
 
-			<div class="py-4 space-y-6">
-				<!-- Template Pipelines -->
-				<div>
-					<h3 class="text-sm font-medium mb-3">Template Flows</h3>
-					<div class="grid grid-cols-2 gap-3">
-						{#each flowTemplates as template (template.id)}
-							{@const Icon = getIcon(template.icon)}
-							{@const colors = templateColors[template.color]}
-							<button
-								type="button"
-								onclick={() => importTemplate(template)}
-								disabled={importing}
-								class="group relative flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition-all hover:shadow-md hover:border-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								<div
-									class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br {colors.gradient} text-white"
-								>
-									{#if importingTemplate === template.id}
-										<LoaderIcon class="size-5 animate-spin" />
-									{:else}
-										<Icon class="size-5" />
-									{/if}
-								</div>
-								<div class="flex-1 min-w-0">
-									<div class="font-semibold text-sm">{template.name}</div>
-									<div class="text-muted-foreground text-xs">{template.description}</div>
-								</div>
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<!-- Divider -->
-				<div class="relative">
-					<div class="absolute inset-0 flex items-center">
-						<span class="w-full border-t"></span>
-					</div>
-					<div class="relative flex justify-center text-xs uppercase">
-						<span class="bg-background px-2 text-muted-foreground">Or</span>
-					</div>
-				</div>
-
-				<!-- Other Options -->
+			<div class="py-4 space-y-2">
 				<div class="space-y-2">
 					<button
 						type="button"
@@ -240,6 +166,25 @@
 						<div class="flex-1">
 							<div class="font-medium text-sm">Create Blank Flow</div>
 							<div class="text-muted-foreground text-xs">Start with an empty flow configuration</div>
+						</div>
+					</button>
+
+					<button
+						type="button"
+						onclick={goToExplorer}
+						disabled={importing}
+						class="flex w-full items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all hover:bg-accent disabled:opacity-50"
+					>
+						<div
+							class="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+						>
+							<FolderOpenIcon class="size-4" />
+						</div>
+						<div class="flex-1">
+							<div class="font-medium text-sm">Find in BioVault Explorer</div>
+							<div class="text-muted-foreground text-xs">
+								Browse and install existing flows from Explore
+							</div>
 						</div>
 					</button>
 				</div>
