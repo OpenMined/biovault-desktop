@@ -373,6 +373,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("get_runs_base_dir", "flows", true),
         cmd_async("load_flow_editor", "flows", true),
         cmd_async("save_flow_editor", "flows", false),
+        cmd_async("save_flow_yaml", "flows", false),
         cmd_async("delete_flow", "flows", false),
         cmd_async("validate_flow", "flows", true),
         cmd_async("delete_flow_run", "flows", false),
@@ -3661,6 +3662,31 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| format!("Failed to parse spec: {}", e))?;
             let result =
                 crate::commands::flows::save_flow_editor(state.clone(), flow_id, flow_path, spec)
+                    .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_flow_yaml" => {
+            let flow_id: Option<i64> = args
+                .get("flowId")
+                .or_else(|| args.get("flow_id"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let flow_path: String = serde_json::from_value(
+                args.get("flowPath")
+                    .or_else(|| args.get("flow_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing flowPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowPath: {}", e))?;
+            let raw_yaml: String = serde_json::from_value(
+                args.get("rawYaml")
+                    .or_else(|| args.get("raw_yaml"))
+                    .cloned()
+                    .ok_or_else(|| "Missing rawYaml".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse rawYaml: {}", e))?;
+            let result =
+                crate::commands::flows::save_flow_yaml(state.clone(), flow_id, flow_path, raw_yaml)
                     .await?;
             Ok(serde_json::to_value(result).unwrap())
         }

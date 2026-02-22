@@ -1652,6 +1652,7 @@ pub fn run() {
             import_flow_from_json,
             load_flow_editor,
             save_flow_editor,
+            save_flow_yaml,
             delete_flow,
             validate_flow,
             save_run_config,

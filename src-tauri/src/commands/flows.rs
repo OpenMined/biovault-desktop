@@ -731,6 +731,7 @@ pub struct FlowEditorPayload {
     pub flow_id: Option<i64>,
     pub flow_path: String,
     pub spec: Option<FlowSpec>,
+    pub raw_yaml: Option<String>,
     pub modules: Vec<ModuleInfo>, // Available modules for dropdown
 }
 
@@ -1796,6 +1797,7 @@ pub async fn load_flow_editor(
         flow_id,
         flow_path: path.to_string_lossy().to_string(),
         spec,
+        raw_yaml: fs::read_to_string(&yaml_path).ok(),
         modules,
     })
 }
@@ -1842,6 +1844,45 @@ pub async fn save_flow_editor(
             created_at: chrono::Local::now().to_rfc3339(),
             updated_at: chrono::Local::now().to_rfc3339(),
             spec: Some(spec), // Return the spec that was just saved
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn save_flow_yaml(
+    state: tauri::State<'_, AppState>,
+    flow_id: Option<i64>,
+    flow_path: String,
+    raw_yaml: String,
+) -> Result<Flow, String> {
+    let path = PathBuf::from(&flow_path);
+    let yaml_path = path.join(FLOW_YAML_FILE);
+
+    let parsed = FlowFile::parse_yaml(&raw_yaml)
+        .map_err(|e| format!("Failed to parse flow.yaml content: {}", e))?;
+    fs::write(&yaml_path, raw_yaml).map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
+
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+    if let Some(id) = flow_id {
+        biovault_db.touch_flow(id).map_err(|e| e.to_string())?;
+        biovault_db
+            .get_flow(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Flow not found after update".to_string())
+    } else {
+        let flow_name = parsed.metadata.name.clone();
+        let id = biovault_db
+            .register_flow(&flow_name, &flow_path)
+            .map_err(|e| e.to_string())?;
+        let timestamp = chrono::Local::now().to_rfc3339();
+        Ok(Flow {
+            id,
+            name: flow_name,
+            flow_path: flow_path.clone(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            spec: parsed.to_flow_spec().ok(),
         })
     }
 }

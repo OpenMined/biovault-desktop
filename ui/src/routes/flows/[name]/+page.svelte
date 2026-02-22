@@ -6,43 +6,27 @@
 	import { Button } from '$lib/components/ui/button/index.js'
 	import * as Card from '$lib/components/ui/card/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
+	import { Input } from '$lib/components/ui/input/index.js'
+	import { Textarea } from '$lib/components/ui/textarea/index.js'
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js'
 	import RunFlowDialog from '$lib/components/run-flow-dialog.svelte'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import PlayIcon from '@lucide/svelte/icons/play'
-	import SettingsIcon from '@lucide/svelte/icons/settings'
-	import FileCodeIcon from '@lucide/svelte/icons/file-code'
-	import ClockIcon from '@lucide/svelte/icons/clock'
-	import CheckCircleIcon from '@lucide/svelte/icons/check-circle'
-	import XCircleIcon from '@lucide/svelte/icons/x-circle'
-	import LoaderIcon from '@lucide/svelte/icons/loader'
-	import WorkflowIcon from '@lucide/svelte/icons/workflow'
-	import DnaIcon from '@lucide/svelte/icons/dna'
-	import UserIcon from '@lucide/svelte/icons/user'
-	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
+	import SaveIcon from '@lucide/svelte/icons/save'
+	import CheckCircleIcon from '@lucide/svelte/icons/check-circle'
+	import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
+	import LoaderIcon from '@lucide/svelte/icons/loader'
+	import PlusIcon from '@lucide/svelte/icons/plus'
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
-
-	interface PipelineInput {
-		type?: string
-		default?: string | number | boolean | null
-		description?: string
-	}
-
-	interface PipelineStep {
-		id: string
-		uses?: string
-	}
-
-	interface PipelineSpec {
-		inputs?: Record<string, PipelineInput>
-		steps?: PipelineStep[]
-	}
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
+	import ClockIcon from '@lucide/svelte/icons/clock'
+	import XCircleIcon from '@lucide/svelte/icons/x-circle'
 
 	interface Pipeline {
 		id: number
 		name: string
 		flow_path: string
-		spec?: PipelineSpec
 		created_at?: string
 	}
 
@@ -56,34 +40,367 @@
 		created_at: string
 	}
 
-	let flowName = $derived($page.params.name)
+	type FlowInputSpec = string | { type?: string; default?: string | null }
 
+	interface FlowStepSpec {
+		id: string
+		uses?: string
+		with?: Record<string, unknown>
+		publish?: Record<string, string>
+		share?: Record<string, unknown>
+		barrier?: Record<string, unknown>
+	}
+
+	interface FlowSpec {
+		name: string
+		description?: string | null
+		multiparty?: boolean | null
+		vars?: Record<string, string>
+		inputs: Record<string, FlowInputSpec>
+		steps: FlowStepSpec[]
+		datasites: string[]
+	}
+
+	interface ModuleInfo {
+		id: number
+		name: string
+		path: string
+	}
+
+	interface FlowEditorPayload {
+		flow_id?: number
+		flow_path: string
+		spec?: FlowSpec | null
+		raw_yaml?: string | null
+		modules: ModuleInfo[]
+	}
+
+	interface FlowValidationResult {
+		valid: boolean
+		errors: string[]
+		warnings: string[]
+		diagram: string
+	}
+
+	type EditorMode = 'guided' | 'yaml'
+	type Section = 'overview' | 'inputs' | 'steps' | 'datasites' | 'advanced' | 'runs'
+
+	const sections: Array<{ id: Section; label: string }> = [
+		{ id: 'overview', label: 'Overview' },
+		{ id: 'inputs', label: 'Inputs' },
+		{ id: 'steps', label: 'Steps' },
+		{ id: 'datasites', label: 'Datasites' },
+		{ id: 'advanced', label: 'Advanced' },
+		{ id: 'runs', label: 'Runs' },
+	]
+
+	let flowName = $derived($page.params.name)
 	let loading = $state(true)
 	let error = $state<string | null>(null)
-	let flow = $state<Pipeline | null>(null)
-	let runs = $state<PipelineRun[]>([])
+	let mode = $state<EditorMode>('guided')
+	let section = $state<Section>('overview')
+	let selectedStepIndex = $state(0)
 	let runDialogOpen = $state(false)
 
-	async function loadFlow() {
+	let currentFlow = $state<Pipeline | null>(null)
+	let editorPayload = $state<FlowEditorPayload | null>(null)
+	let editorSpec = $state<FlowSpec | null>(null)
+	let yamlText = $state('')
+	let initialYaml = $state('')
+	let guidedDirty = $state(false)
+	let saving = $state(false)
+	let validating = $state(false)
+	let validation = $state<FlowValidationResult | null>(null)
+
+	let runs = $state<PipelineRun[]>([])
+	let refreshingRuns = $state(false)
+
+	function clone<T>(value: T): T {
+		return JSON.parse(JSON.stringify(value)) as T
+	}
+
+	function defaultSpec(name: string): FlowSpec {
+		return {
+			name,
+			description: '',
+			multiparty: false,
+			vars: {},
+			inputs: {},
+			steps: [],
+			datasites: [],
+		}
+	}
+
+	function normalizeSpec(spec: FlowSpec | null | undefined, name: string): FlowSpec {
+		if (!spec) return defaultSpec(name)
+		return {
+			name: spec.name || name,
+			description: spec.description ?? '',
+			multiparty: spec.multiparty ?? false,
+			vars: spec.vars ?? {},
+			inputs: spec.inputs ?? {},
+			steps: spec.steps ?? [],
+			datasites: spec.datasites ?? [],
+		}
+	}
+
+	function setSpec(mutator: (draft: FlowSpec) => void) {
+		if (!editorSpec) return
+		const next = clone(editorSpec)
+		mutator(next)
+		editorSpec = next
+		guidedDirty = true
+	}
+
+	function parseInputSpec(value: FlowInputSpec): { type: string; defaultValue: string } {
+		if (typeof value === 'string') {
+			return { type: value, defaultValue: '' }
+		}
+		return {
+			type: value.type ?? '',
+			defaultValue: value.default == null ? '' : String(value.default),
+		}
+	}
+
+	function buildInputSpec(type: string, defaultValue: string): FlowInputSpec {
+		const t = type.trim()
+		const d = defaultValue.trim()
+		if (!d) return t
+		return { type: t, default: d }
+	}
+
+	function addInput() {
+		setSpec((draft) => {
+			let idx = 1
+			let candidate = `input_${idx}`
+			while (candidate in draft.inputs) {
+				idx += 1
+				candidate = `input_${idx}`
+			}
+			draft.inputs[candidate] = 'File'
+		})
+	}
+
+	function renameInput(oldName: string, newName: string) {
+		const clean = newName.trim()
+		if (!clean || clean === oldName || !editorSpec) return
+		if (editorSpec.inputs[clean] !== undefined) return
+		setSpec((draft) => {
+			const value = draft.inputs[oldName]
+			delete draft.inputs[oldName]
+			draft.inputs[clean] = value
+		})
+	}
+
+	function removeInput(name: string) {
+		setSpec((draft) => {
+			delete draft.inputs[name]
+		})
+	}
+
+	function updateInput(name: string, key: 'type' | 'default', value: string) {
+		setSpec((draft) => {
+			const parsed = parseInputSpec(draft.inputs[name])
+			if (key === 'type') {
+				parsed.type = value
+			} else {
+				parsed.defaultValue = value
+			}
+			draft.inputs[name] = buildInputSpec(parsed.type, parsed.defaultValue)
+		})
+	}
+
+	function addStep() {
+		setSpec((draft) => {
+			let idx = draft.steps.length + 1
+			let id = `step_${idx}`
+			while (draft.steps.some((step) => step.id === id)) {
+				idx += 1
+				id = `step_${idx}`
+			}
+			draft.steps.push({ id, uses: '', with: {} })
+			selectedStepIndex = draft.steps.length - 1
+		})
+	}
+
+	function removeStep(index: number) {
+		setSpec((draft) => {
+			draft.steps.splice(index, 1)
+			if (selectedStepIndex >= draft.steps.length) {
+				selectedStepIndex = Math.max(0, draft.steps.length - 1)
+			}
+		})
+	}
+
+	function moveStep(index: number, direction: -1 | 1) {
+		setSpec((draft) => {
+			const nextIndex = index + direction
+			if (nextIndex < 0 || nextIndex >= draft.steps.length) return
+			const [current] = draft.steps.splice(index, 1)
+			draft.steps.splice(nextIndex, 0, current)
+			selectedStepIndex = nextIndex
+		})
+	}
+
+	function updateStepField(index: number, key: 'id' | 'uses', value: string) {
+		setSpec((draft) => {
+			if (!draft.steps[index]) return
+			draft.steps[index][key] = value
+		})
+	}
+
+	function getStepBindings(step: FlowStepSpec): Array<{ key: string; value: string }> {
+		const withMap = step.with ?? {}
+		return Object.entries(withMap).map(([key, value]) => ({
+			key,
+			value: typeof value === 'string' ? value : JSON.stringify(value),
+		}))
+	}
+
+	function setStepBindings(index: number, bindings: Array<{ key: string; value: string }>) {
+		setSpec((draft) => {
+			const target = draft.steps[index]
+			if (!target) return
+			const next: Record<string, string> = {}
+			for (const binding of bindings) {
+				if (!binding.key.trim()) continue
+				next[binding.key.trim()] = binding.value.trim()
+			}
+			target.with = next
+		})
+	}
+
+	function addBinding(index: number) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepBindings(step)
+		current.push({ key: '', value: '' })
+		setStepBindings(index, current)
+	}
+
+	function removeBinding(index: number, bindingIndex: number) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepBindings(step)
+		current.splice(bindingIndex, 1)
+		setStepBindings(index, current)
+	}
+
+	function updateBinding(index: number, bindingIndex: number, key: 'key' | 'value', value: string) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepBindings(step)
+		if (!current[bindingIndex]) return
+		current[bindingIndex][key] = value
+		setStepBindings(index, current)
+	}
+
+	function addDatasite() {
+		setSpec((draft) => {
+			let idx = draft.datasites.length + 1
+			let id = `datasite${idx}@sandbox.local`
+			while (draft.datasites.includes(id)) {
+				idx += 1
+				id = `datasite${idx}@sandbox.local`
+			}
+			draft.datasites.push(id)
+		})
+	}
+
+	function updateDatasite(index: number, value: string) {
+		setSpec((draft) => {
+			draft.datasites[index] = value
+		})
+	}
+
+	function removeDatasite(index: number) {
+		setSpec((draft) => {
+			draft.datasites.splice(index, 1)
+		})
+	}
+
+	function addVar() {
+		setSpec((draft) => {
+			draft.vars = draft.vars ?? {}
+			let idx = 1
+			let candidate = `var_${idx}`
+			while (draft.vars[candidate] !== undefined) {
+				idx += 1
+				candidate = `var_${idx}`
+			}
+			draft.vars[candidate] = ''
+		})
+	}
+
+	function renameVar(oldName: string, newName: string) {
+		if (!editorSpec) return
+		const clean = newName.trim()
+		if (!clean || clean === oldName) return
+		if ((editorSpec.vars ?? {})[clean] !== undefined) return
+		setSpec((draft) => {
+			draft.vars = draft.vars ?? {}
+			const value = draft.vars[oldName]
+			delete draft.vars[oldName]
+			draft.vars[clean] = value
+		})
+	}
+
+	function updateVar(name: string, value: string) {
+		setSpec((draft) => {
+			draft.vars = draft.vars ?? {}
+			draft.vars[name] = value
+		})
+	}
+
+	function removeVar(name: string) {
+		setSpec((draft) => {
+			draft.vars = draft.vars ?? {}
+			delete draft.vars[name]
+		})
+	}
+
+	async function loadRuns(flowId: number) {
+		const allRuns = await invoke<PipelineRun[]>('get_flow_runs')
+		runs = allRuns
+			.filter((r) => r.pipeline_id === flowId)
+			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+			.slice(0, 20)
+	}
+
+	async function refreshRuns() {
+		if (!currentFlow) return
+		refreshingRuns = true
 		try {
-			loading = true
-			error = null
+			await loadRuns(currentFlow.id)
+		} finally {
+			refreshingRuns = false
+		}
+	}
 
-			// Get all pipelines and find the one matching our name
-			const pipelines = await invoke<Pipeline[]>('get_flows')
-			flow = pipelines.find((p) => p.name === flowName) ?? null
-
+	async function loadEditor() {
+		loading = true
+		error = null
+		try {
+			const flows = await invoke<Pipeline[]>('get_flows')
+			const flow = flows.find((item) => item.name === flowName)
 			if (!flow) {
 				error = `Flow "${flowName}" not found`
 				return
 			}
+			currentFlow = flow
 
-			// Get runs for this pipeline
-			const allRuns = await invoke<PipelineRun[]>('get_flow_runs')
-			runs = allRuns
-				.filter((r) => r.pipeline_id === flow?.id)
-				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-				.slice(0, 10) // Show last 10 runs
+			const payload = await invoke<FlowEditorPayload>('load_flow_editor', {
+				flowId: flow.id,
+			})
+			editorPayload = payload
+			editorSpec = normalizeSpec(payload.spec ?? null, flow.name)
+			yamlText = payload.raw_yaml ?? ''
+			initialYaml = yamlText
+			guidedDirty = false
+			selectedStepIndex = 0
+			validation = null
+
+			await loadRuns(flow.id)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -91,55 +408,80 @@
 		}
 	}
 
-	onMount(loadFlow)
+	onMount(loadEditor)
 
-	// Map known flow names to icons and colors
-	function getFlowStyle(name: string): { icon: typeof DnaIcon; color: string } {
-		const lowerName = name.toLowerCase()
-		if (lowerName.includes('apol1')) {
-			return { icon: DnaIcon, color: 'bg-blue-500' }
+	async function saveGuided() {
+		if (!editorPayload || !editorSpec) return
+		saving = true
+		error = null
+		try {
+			await invoke('save_flow_editor', {
+				flowId: currentFlow?.id,
+				flowPath: editorPayload.flow_path,
+				spec: editorSpec,
+			})
+			guidedDirty = false
+			await loadEditor()
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			saving = false
 		}
-		if (lowerName.includes('brca')) {
-			return { icon: UserIcon, color: 'bg-violet-500' }
-		}
-		if (lowerName.includes('herc2')) {
-			return { icon: ScanEyeIcon, color: 'bg-emerald-500' }
-		}
-		if (lowerName.includes('thalassemia')) {
-			return { icon: DnaIcon, color: 'bg-red-500' }
-		}
-		return { icon: WorkflowIcon, color: 'bg-primary' }
 	}
 
-	async function refreshRuns() {
-		if (!flow) return
+	async function saveYaml() {
+		if (!editorPayload) return
+		saving = true
+		error = null
 		try {
-			const allRuns = await invoke<PipelineRun[]>('get_flow_runs')
-			runs = allRuns
-				.filter((r) => r.pipeline_id === flow?.id)
-				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-				.slice(0, 10)
+			await invoke('save_flow_yaml', {
+				flowId: currentFlow?.id,
+				flowPath: editorPayload.flow_path,
+				rawYaml: yamlText,
+			})
+			await loadEditor()
 		} catch (e) {
-			console.error('Failed to refresh runs:', e)
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			saving = false
+		}
+	}
+
+	async function validateFlow() {
+		if (!editorPayload) return
+		validating = true
+		error = null
+		try {
+			validation = await invoke<FlowValidationResult>('validate_flow', {
+				flowPath: editorPayload.flow_path,
+			})
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			validating = false
 		}
 	}
 
 	async function openInFolder() {
-		if (!flow) return
+		if (!currentFlow) return
 		try {
-			await invoke('show_in_folder', { path: flow.flow_path })
+			await invoke('show_in_folder', { path: currentFlow.flow_path })
 		} catch (e) {
-			console.error('Failed to open folder:', e)
+			error = e instanceof Error ? e.message : String(e)
 		}
 	}
 
 	async function deleteRun(runId: number) {
 		try {
 			await invoke('delete_flow_run', { runId })
-			runs = runs.filter((r) => r.id !== runId)
+			runs = runs.filter((run) => run.id !== runId)
 		} catch (e) {
-			console.error('Failed to delete run:', e)
+			error = e instanceof Error ? e.message : String(e)
 		}
+	}
+
+	function yamlIsDirty() {
+		return yamlText !== initialYaml
 	}
 
 	function formatDate(dateStr: string): string {
@@ -169,169 +511,465 @@
 </script>
 
 <div class="flex h-full flex-col">
-	<!-- Header -->
-	<div class="flex items-center gap-4 border-b px-6 py-4">
-		<Button variant="ghost" size="icon" onclick={() => goto('/flows')}>
-			<ArrowLeftIcon class="size-5" />
-		</Button>
+	<div class="border-b px-6 py-4">
+		<div class="flex flex-wrap items-center gap-3">
+			<Button variant="ghost" size="icon" onclick={() => goto('/flows')}>
+				<ArrowLeftIcon class="size-5" />
+			</Button>
 
-		{#if flow}
-			{@const style = getFlowStyle(flow.name)}
-			{@const Icon = style.icon}
-			<div class="flex size-10 items-center justify-center rounded-lg {style.color} text-white">
-				<Icon class="size-5" />
+			<div class="min-w-0 flex-1">
+				<h1 class="truncate text-xl font-semibold">{flowName}</h1>
+				<p class="text-muted-foreground text-sm">Flow editor with guided and YAML modes</p>
 			</div>
-			<div class="flex-1">
-				<h1 class="text-xl font-semibold">{flow.name}</h1>
-				<p class="text-muted-foreground text-sm">
-					{flow.spec?.steps?.length ?? 0} steps
-					{#if flow.spec?.inputs}
-						• {Object.keys(flow.spec.inputs).length} inputs
+
+			<div class="flex flex-wrap items-center gap-2">
+				<Button
+					variant={mode === 'guided' ? 'default' : 'outline'}
+					size="sm"
+					onclick={() => (mode = 'guided')}
+				>
+					Guided
+				</Button>
+				<Button
+					variant={mode === 'yaml' ? 'default' : 'outline'}
+					size="sm"
+					onclick={() => (mode = 'yaml')}
+				>
+					YAML
+				</Button>
+
+				<Button variant="outline" size="sm" onclick={validateFlow} disabled={validating || saving || !editorPayload}>
+					{#if validating}
+						<LoaderIcon class="size-4 animate-spin" />
+					{:else}
+						<CheckCircleIcon class="size-4" />
 					{/if}
-				</p>
-			</div>
-			<div class="flex gap-2">
-				<Button variant="outline" size="sm" data-testid="flow-open-folder" onclick={openInFolder}>
+					Validate
+				</Button>
+
+				<Button variant="outline" size="sm" onclick={openInFolder} disabled={!currentFlow}>
 					<FolderOpenIcon class="size-4" />
 					Open Folder
 				</Button>
-				<Button size="sm" data-testid="flow-run" onclick={() => (runDialogOpen = true)}>
+
+				<Button size="sm" onclick={() => (runDialogOpen = true)} disabled={!currentFlow}>
 					<PlayIcon class="size-4" />
-					Run Flow
+					Run
+				</Button>
+
+				<Button
+					size="sm"
+					onclick={mode === 'guided' ? saveGuided : saveYaml}
+					disabled={saving || (mode === 'guided' ? !guidedDirty : !yamlIsDirty())}
+				>
+					{#if saving}
+						<LoaderIcon class="size-4 animate-spin" />
+					{:else}
+						<SaveIcon class="size-4" />
+					{/if}
+					Save
 				</Button>
 			</div>
-		{:else}
-			<div class="flex-1">
-				<h1 class="text-xl font-semibold">{flowName}</h1>
-			</div>
-		{/if}
+		</div>
 	</div>
 
-	<!-- Content -->
-	<div class="flex-1 overflow-auto p-6">
-		{#if loading}
-			<div class="flex h-full items-center justify-center">
-				<p class="text-muted-foreground">Loading flow...</p>
+	{#if loading}
+		<div class="flex flex-1 items-center justify-center">
+			<p class="text-muted-foreground">Loading flow editor...</p>
+		</div>
+	{:else if error}
+		<div class="mx-6 mt-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+			{error}
+		</div>
+	{:else if editorSpec && editorPayload}
+		<div class="flex min-h-0 flex-1">
+			<div class="w-56 shrink-0 border-r p-3">
+				<div class="space-y-1">
+					{#each sections as item}
+						<button
+							type="button"
+							onclick={() => (section = item.id)}
+							class="w-full rounded-md px-3 py-2 text-left text-sm transition-colors {section === item.id
+								? 'bg-primary text-primary-foreground'
+								: 'hover:bg-accent'}"
+						>
+							{item.label}
+						</button>
+					{/each}
+				</div>
+
+				<div class="mt-4 rounded-md border p-3 text-xs text-muted-foreground">
+					<div class="font-medium text-foreground">Mode notes</div>
+					<div class="mt-1">
+						Guided mode edits common fields quickly. YAML mode preserves full file shape for advanced flow features.
+					</div>
+				</div>
 			</div>
-		{:else if error}
-			<div class="flex h-full items-center justify-center">
-				<p class="text-destructive">Error: {error}</p>
-			</div>
-		{:else if flow}
-			<div class="grid gap-6 lg:grid-cols-3">
-				<!-- Flow Info -->
-				<div class="lg:col-span-2 space-y-6">
-					<!-- Inputs -->
-					{#if flow.spec?.inputs && Object.keys(flow.spec.inputs).length > 0}
+
+			<div class="min-h-0 flex-1 overflow-auto p-6">
+				{#if validation}
+					<div class="mb-5 rounded-lg border px-4 py-3">
+						<div class="flex items-center gap-2 text-sm font-medium">
+							{#if validation.valid}
+								<CheckCircleIcon class="size-4 text-emerald-600" />
+								Validation passed
+							{:else}
+								<AlertTriangleIcon class="size-4 text-amber-600" />
+								Validation failed
+							{/if}
+						</div>
+						{#if validation.errors.length > 0}
+							<div class="mt-2 text-sm text-destructive">
+								{#each validation.errors as item}
+									<div>{item}</div>
+								{/each}
+							</div>
+						{/if}
+						{#if validation.warnings.length > 0}
+							<div class="mt-2 text-sm text-amber-600">
+								{#each validation.warnings as item}
+									<div>{item}</div>
+								{/each}
+							</div>
+						{/if}
+						{#if validation.diagram}
+							<details class="mt-3">
+								<summary class="cursor-pointer text-sm font-medium">Execution diagram</summary>
+								<pre class="mt-2 overflow-auto rounded-md bg-muted p-3 text-xs">{validation.diagram}</pre>
+							</details>
+						{/if}
+					</div>
+				{/if}
+
+				{#if mode === 'yaml'}
+					<Card.Root>
+						<Card.Header>
+							<Card.Title>flow.yaml</Card.Title>
+						</Card.Header>
+						<Card.Content>
+							<Textarea
+								bind:value={yamlText}
+								class="min-h-[560px] font-mono text-xs"
+								spellcheck="false"
+							/>
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'overview'}
+					<div class="space-y-4">
 						<Card.Root>
 							<Card.Header>
-								<Card.Title class="flex items-center gap-2 text-base">
-									<SettingsIcon class="size-4" />
-									Inputs
-								</Card.Title>
+								<Card.Title>Metadata</Card.Title>
 							</Card.Header>
 							<Card.Content>
-								<div class="space-y-3">
-									{#each Object.entries(flow.spec.inputs) as [name, input]}
-										<div class="flex items-start justify-between gap-4 rounded-lg border p-3">
-											<div class="flex-1">
-												<div class="font-medium text-sm">{name}</div>
-												{#if input.description}
-													<p class="text-muted-foreground text-xs mt-0.5">{input.description}</p>
-												{/if}
-											</div>
-											<div class="text-right">
-												{#if input.type}
-													<Badge variant="outline" class="text-xs">{input.type}</Badge>
-												{/if}
-												{#if input.default !== undefined && input.default !== null}
-													<p class="text-muted-foreground text-xs mt-1">
-														Default: {String(input.default)}
-													</p>
-												{/if}
-											</div>
-										</div>
-									{/each}
+								<div class="grid gap-3 md:grid-cols-2">
+									<div class="space-y-2">
+										<div class="text-sm font-medium">Flow name</div>
+										<Input
+											value={editorSpec.name}
+											oninput={(event) =>
+												setSpec((draft) => {
+													draft.name = event.currentTarget.value
+												})}
+										/>
+									</div>
+									<div class="space-y-2">
+										<div class="text-sm font-medium">Multiparty</div>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox
+												checked={Boolean(editorSpec.multiparty)}
+												onCheckedChange={(value) =>
+													setSpec((draft) => {
+														draft.multiparty = !!value
+													})}
+											/>
+											Enable multiparty scheduling defaults
+										</label>
+									</div>
+								</div>
+								<div class="mt-3 space-y-2">
+									<div class="text-sm font-medium">Description</div>
+									<Textarea
+										value={editorSpec.description ?? ''}
+										oninput={(event) =>
+											setSpec((draft) => {
+												draft.description = event.currentTarget.value
+											})}
+										class="min-h-24 text-sm"
+									/>
 								</div>
 							</Card.Content>
 						</Card.Root>
-					{/if}
-
-					<!-- Steps -->
-					{#if flow.spec?.steps && flow.spec.steps.length > 0}
+					</div>
+				{:else if section === 'inputs'}
+					<Card.Root>
+						<Card.Header>
+							<div class="flex items-center justify-between">
+								<Card.Title>Inputs</Card.Title>
+								<Button variant="outline" size="sm" onclick={addInput}>
+									<PlusIcon class="size-4" />
+									Add Input
+								</Button>
+							</div>
+						</Card.Header>
+						<Card.Content>
+							<div class="space-y-3">
+								{#each Object.entries(editorSpec.inputs) as [name, specValue]}
+									{@const parsed = parseInputSpec(specValue)}
+									<div class="grid gap-2 rounded-md border p-3 md:grid-cols-[1fr,1fr,1fr,auto]">
+										<Input value={name} onblur={(event) => renameInput(name, event.currentTarget.value)} />
+										<Input
+											placeholder="Type"
+											value={parsed.type}
+											oninput={(event) => updateInput(name, 'type', event.currentTarget.value)}
+										/>
+										<Input
+											placeholder="Default"
+											value={parsed.defaultValue}
+											oninput={(event) => updateInput(name, 'default', event.currentTarget.value)}
+										/>
+										<Button variant="ghost" size="icon" onclick={() => removeInput(name)}>
+											<TrashIcon class="size-4" />
+										</Button>
+									</div>
+								{/each}
+							</div>
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'steps'}
+					<div class="grid gap-4 lg:grid-cols-[320px,1fr]">
 						<Card.Root>
 							<Card.Header>
-								<Card.Title class="flex items-center gap-2 text-base">
-									<WorkflowIcon class="size-4" />
-									Steps
-								</Card.Title>
+								<div class="flex items-center justify-between">
+									<Card.Title>Step Graph</Card.Title>
+									<Button variant="outline" size="sm" onclick={addStep}>
+										<PlusIcon class="size-4" />
+										Add Step
+									</Button>
+								</div>
 							</Card.Header>
 							<Card.Content>
 								<div class="space-y-2">
-									{#each flow.spec.steps as step, index}
-										<div class="flex items-center gap-3 rounded-lg border p-3">
-											<div
-												class="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium"
-											>
-												{index + 1}
+									{#if editorSpec.steps.length === 0}
+										<p class="text-sm text-muted-foreground">No steps yet.</p>
+									{/if}
+									{#each editorSpec.steps as step, index}
+										<button
+											type="button"
+											onclick={() => (selectedStepIndex = index)}
+											class="w-full rounded-lg border p-3 text-left transition-colors {selectedStepIndex ===
+											index
+												? 'border-primary bg-primary/5'
+												: 'hover:bg-accent'}"
+										>
+											<div class="flex items-center justify-between gap-2">
+												<div class="min-w-0">
+													<div class="truncate text-sm font-medium">{step.id}</div>
+													<div class="truncate text-xs text-muted-foreground">uses: {step.uses || '-'}</div>
+												</div>
+												<Badge variant="outline">{index + 1}</Badge>
 											</div>
-											<div class="flex-1 min-w-0">
-												<div class="font-medium text-sm">{step.id}</div>
-												{#if step.uses}
-													<p class="text-muted-foreground text-xs truncate">uses: {step.uses}</p>
-												{/if}
-											</div>
-										</div>
+										</button>
 									{/each}
 								</div>
 							</Card.Content>
 						</Card.Root>
-					{/if}
-				</div>
 
-				<!-- Recent Runs -->
-				<div>
+						<Card.Root>
+							<Card.Header>
+								<Card.Title>Step Inspector</Card.Title>
+							</Card.Header>
+							<Card.Content>
+								{#if editorSpec.steps[selectedStepIndex]}
+									{@const step = editorSpec.steps[selectedStepIndex]}
+									<div class="space-y-4">
+										<div class="grid gap-3 md:grid-cols-2">
+											<div class="space-y-1">
+												<div class="text-sm font-medium">Step ID</div>
+												<Input
+													value={step.id}
+													oninput={(event) =>
+														updateStepField(selectedStepIndex, 'id', event.currentTarget.value)}
+												/>
+											</div>
+											<div class="space-y-1">
+												<div class="text-sm font-medium">Uses</div>
+												<Input
+													value={step.uses ?? ''}
+													list="module-suggestions"
+													oninput={(event) =>
+														updateStepField(selectedStepIndex, 'uses', event.currentTarget.value)}
+												/>
+												<datalist id="module-suggestions">
+													{#each editorPayload.modules as module}
+														<option value={module.name}></option>
+													{/each}
+												</datalist>
+											</div>
+										</div>
+
+										<div class="flex flex-wrap items-center gap-2">
+											<Button
+												variant="outline"
+												size="sm"
+												onclick={() => moveStep(selectedStepIndex, -1)}
+												disabled={selectedStepIndex === 0}
+											>
+												Move Up
+											</Button>
+											<Button
+												variant="outline"
+												size="sm"
+												onclick={() => moveStep(selectedStepIndex, 1)}
+												disabled={selectedStepIndex >= editorSpec.steps.length - 1}
+											>
+												Move Down
+											</Button>
+											<Button variant="ghost" size="sm" onclick={() => removeStep(selectedStepIndex)}>
+												<TrashIcon class="size-4" />
+												Delete Step
+											</Button>
+										</div>
+
+										<div class="space-y-2">
+											<div class="flex items-center justify-between">
+												<div class="text-sm font-medium">Bindings</div>
+												<Button variant="outline" size="sm" onclick={() => addBinding(selectedStepIndex)}>
+													<PlusIcon class="size-4" />
+													Add Binding
+												</Button>
+											</div>
+											{#each getStepBindings(step) as binding, bindingIndex}
+												<div class="grid gap-2 md:grid-cols-[1fr,2fr,auto]">
+													<Input
+														placeholder="input name"
+														value={binding.key}
+														oninput={(event) =>
+															updateBinding(
+																selectedStepIndex,
+																bindingIndex,
+																'key',
+																event.currentTarget.value,
+															)}
+													/>
+													<Input
+														placeholder="inputs.sample or step.other.outputs.x"
+														value={binding.value}
+														oninput={(event) =>
+															updateBinding(
+																selectedStepIndex,
+																bindingIndex,
+																'value',
+																event.currentTarget.value,
+															)}
+													/>
+													<Button
+														variant="ghost"
+														size="icon"
+														onclick={() => removeBinding(selectedStepIndex, bindingIndex)}
+													>
+														<TrashIcon class="size-4" />
+													</Button>
+												</div>
+											{/each}
+										</div>
+									</div>
+								{:else}
+									<p class="text-sm text-muted-foreground">Select a step to edit.</p>
+								{/if}
+							</Card.Content>
+						</Card.Root>
+					</div>
+				{:else if section === 'datasites'}
 					<Card.Root>
 						<Card.Header>
-							<Card.Title class="flex items-center gap-2 text-base">
-								<ClockIcon class="size-4" />
-								Recent Runs
-							</Card.Title>
+							<div class="flex items-center justify-between">
+								<Card.Title>Datasites</Card.Title>
+								<Button variant="outline" size="sm" onclick={addDatasite}>
+									<PlusIcon class="size-4" />
+									Add Datasite
+								</Button>
+							</div>
+						</Card.Header>
+						<Card.Content>
+							<div class="space-y-2">
+								{#each editorSpec.datasites as datasite, index}
+									<div class="grid gap-2 md:grid-cols-[1fr,auto]">
+										<Input value={datasite} oninput={(event) => updateDatasite(index, event.currentTarget.value)} />
+										<Button variant="ghost" size="icon" onclick={() => removeDatasite(index)}>
+											<TrashIcon class="size-4" />
+										</Button>
+									</div>
+								{/each}
+							</div>
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'advanced'}
+					<Card.Root>
+						<Card.Header>
+							<div class="flex items-center justify-between">
+								<Card.Title>Variables</Card.Title>
+								<Button variant="outline" size="sm" onclick={addVar}>
+									<PlusIcon class="size-4" />
+									Add Variable
+								</Button>
+							</div>
+						</Card.Header>
+						<Card.Content>
+							<div class="space-y-3">
+								{#each Object.entries(editorSpec.vars ?? {}) as [name, value]}
+									<div class="grid gap-2 md:grid-cols-[1fr,2fr,auto]">
+										<Input value={name} onblur={(event) => renameVar(name, event.currentTarget.value)} />
+										<Input value={value} oninput={(event) => updateVar(name, event.currentTarget.value)} />
+										<Button variant="ghost" size="icon" onclick={() => removeVar(name)}>
+											<TrashIcon class="size-4" />
+										</Button>
+									</div>
+								{/each}
+							</div>
+							<div class="mt-4 rounded-md border border-amber-300/40 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+								For advanced keys like coordination, MPC, roles, and rich module refs, use YAML mode to keep full
+								parity with CLI flow files.
+							</div>
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'runs'}
+					<Card.Root>
+						<Card.Header>
+							<div class="flex items-center justify-between">
+								<Card.Title>Recent Runs</Card.Title>
+								<Button variant="outline" size="sm" onclick={refreshRuns} disabled={refreshingRuns || !currentFlow}>
+									{#if refreshingRuns}
+										<LoaderIcon class="size-4 animate-spin" />
+									{:else}
+										<RefreshCwIcon class="size-4" />
+									{/if}
+									Refresh
+								</Button>
+							</div>
 						</Card.Header>
 						<Card.Content>
 							{#if runs.length === 0}
-								<p class="text-muted-foreground text-sm text-center py-4">No runs yet</p>
+								<p class="py-4 text-center text-sm text-muted-foreground">No runs yet</p>
 							{:else}
 								<div class="space-y-2">
 									{#each runs as run}
-										{@const statusInfo = getStatusBadge(run.status)}
-										{@const StatusIcon = statusInfo.icon}
+										{@const status = getStatusBadge(run.status)}
+										{@const StatusIcon = status.icon}
 										<div class="flex items-center gap-3 rounded-lg border p-3">
-											<div
-												class="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted"
-											>
-												<StatusIcon
-													class="size-4 {statusInfo.variant === 'destructive'
+											<StatusIcon
+												class="size-4 {status.label === 'Running'
+													? 'animate-spin text-muted-foreground'
+													: status.variant === 'destructive'
 														? 'text-destructive'
-														: statusInfo.label === 'Running'
-															? 'animate-spin'
-															: 'text-muted-foreground'}"
-												/>
+														: 'text-muted-foreground'}"
+											/>
+											<div class="min-w-0 flex-1">
+												<div class="text-sm font-medium">Run #{run.id}</div>
+												<div class="text-xs text-muted-foreground">{formatDate(run.created_at)}</div>
 											</div>
-											<div class="flex-1 min-w-0">
-												<div class="font-medium text-sm">Run #{run.id}</div>
-												<p class="text-muted-foreground text-xs">{formatDate(run.created_at)}</p>
-											</div>
-											<Badge variant={statusInfo.variant} class="text-xs">
-												{statusInfo.label}
-											</Badge>
-											<Button
-												variant="ghost"
-												size="icon"
-												class="size-7"
-												onclick={() => deleteRun(run.id)}
-											>
-												<TrashIcon class="size-3.5" />
+											<Badge variant={status.variant}>{status.label}</Badge>
+											<Button variant="ghost" size="icon" onclick={() => deleteRun(run.id)}>
+												<TrashIcon class="size-4" />
 											</Button>
 										</div>
 									{/each}
@@ -339,47 +977,17 @@
 							{/if}
 						</Card.Content>
 					</Card.Root>
-
-					<!-- Flow Info -->
-					<Card.Root class="mt-4">
-						<Card.Header>
-							<Card.Title class="flex items-center gap-2 text-base">
-								<FileCodeIcon class="size-4" />
-								Flow Details
-							</Card.Title>
-						</Card.Header>
-						<Card.Content>
-							<dl class="space-y-2 text-sm">
-								<div class="flex justify-between">
-									<dt class="text-muted-foreground">ID</dt>
-									<dd class="font-mono">{flow.id}</dd>
-								</div>
-								<div class="flex justify-between">
-									<dt class="text-muted-foreground">Path</dt>
-									<dd class="font-mono text-xs truncate max-w-[180px]" title={flow.flow_path}>
-										{flow.flow_path.split('/').pop()}
-									</dd>
-								</div>
-								{#if flow.created_at}
-									<div class="flex justify-between">
-										<dt class="text-muted-foreground">Created</dt>
-										<dd>{formatDate(flow.created_at)}</dd>
-									</div>
-								{/if}
-							</dl>
-						</Card.Content>
-					</Card.Root>
-				</div>
+				{/if}
 			</div>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </div>
 
-{#if flow}
+{#if currentFlow}
 	<RunFlowDialog
 		bind:open={runDialogOpen}
-		pipelineId={flow.id}
-		pipelineName={flow.name}
+		pipelineId={currentFlow.id}
+		pipelineName={currentFlow.name}
 		onRunStarted={refreshRuns}
 	/>
 {/if}

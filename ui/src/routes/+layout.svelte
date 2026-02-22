@@ -17,7 +17,7 @@
 	import SupportDialog from '$lib/components/support-dialog.svelte'
 	import InviteDialog from '$lib/components/invite-dialog.svelte'
 	import SyftboxPanel from '$lib/components/syftbox-panel.svelte'
-	import AiAssistant from '$lib/components/ai-assistant.svelte'
+	// import AiAssistant from '$lib/components/ai-assistant.svelte'
 	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
 	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
@@ -266,5 +266,5 @@
 <LearnSheet bind:open={learnOpen} />
 <SupportDialog bind:open={supportOpen} />
 <InviteDialog bind:open={inviteOpen} />
-<AiAssistant />
+<!-- <AiAssistant /> -->
 <Toaster />
