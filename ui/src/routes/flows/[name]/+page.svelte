@@ -9,6 +9,13 @@
 	import { Input } from '$lib/components/ui/input/index.js'
 	import { Textarea } from '$lib/components/ui/textarea/index.js'
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js'
+	import {
+		parseFlowType,
+		serializeFlowType,
+		friendlyFlowType,
+		unwrapOptional,
+		type FlowTypeNode,
+	} from '$lib/flows/type-parser'
 	import RunFlowDialog from '$lib/components/run-flow-dialog.svelte'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import PlayIcon from '@lucide/svelte/icons/play'
@@ -41,6 +48,20 @@
 	}
 
 	type FlowInputSpec = string | { type?: string; default?: string | null }
+	interface EditableField {
+		name: string
+		type: string
+		optional: boolean
+	}
+	interface RecordTypeModel {
+		container: 'record' | 'listRecord'
+		outerOptional: boolean
+		fields: EditableField[]
+	}
+	interface ListTypeModel {
+		outerOptional: boolean
+		itemType: string
+	}
 
 	interface FlowStepSpec {
 		id: string
@@ -114,6 +135,17 @@
 
 	let runs = $state<PipelineRun[]>([])
 	let refreshingRuns = $state(false)
+	const commonTypePresets = [
+		'File',
+		'Directory',
+		'String',
+		'Bool',
+		'List[GenotypeRecord]',
+		'List[File]',
+		'List[String]',
+		'Record{participant_id: String, aligned_file: File}',
+		'List[Record{participant_id: String, aligned_file: File}]',
+	]
 
 	function clone<T>(value: T): T {
 		return JSON.parse(JSON.stringify(value)) as T
@@ -210,6 +242,137 @@
 		})
 	}
 
+	function safeParseType(raw: string): FlowTypeNode {
+		const parsed = parseFlowType(raw)
+		if (parsed.node) return parsed.node
+		return { kind: 'named', name: raw.trim() || 'String' }
+	}
+
+	function toEditableField(field: { name: string; type: FlowTypeNode }): EditableField {
+		const unwrapped = unwrapOptional(field.type)
+		return {
+			name: field.name,
+			type: serializeFlowType(unwrapped.node),
+			optional: unwrapped.optional,
+		}
+	}
+
+	function parseRecordTypeModel(typeRaw: string): RecordTypeModel | null {
+		const parsed = parseFlowType(typeRaw)
+		if (!parsed.node) return null
+		const outer = unwrapOptional(parsed.node)
+		if (outer.node.kind === 'record') {
+			return {
+				container: 'record',
+				outerOptional: outer.optional,
+				fields: outer.node.fields.map(toEditableField),
+			}
+		}
+		if (outer.node.kind === 'list') {
+			const inner = unwrapOptional(outer.node.item)
+			if (inner.node.kind === 'record') {
+				return {
+					container: 'listRecord',
+					outerOptional: outer.optional,
+					fields: inner.node.fields.map(toEditableField),
+				}
+			}
+		}
+		return null
+	}
+
+	function serializeRecordTypeModel(model: RecordTypeModel): string {
+		const fields = model.fields
+			.filter((field) => field.name.trim().length > 0)
+			.map((field) => {
+				let node = safeParseType(field.type)
+				if (field.optional) node = { kind: 'optional', inner: node }
+				return { name: field.name.trim(), type: node }
+			})
+		let node: FlowTypeNode = { kind: 'record', fields }
+		if (model.container === 'listRecord') {
+			node = { kind: 'list', item: node }
+		}
+		if (model.outerOptional) {
+			node = { kind: 'optional', inner: node }
+		}
+		return serializeFlowType(node)
+	}
+
+	function parseListTypeModel(typeRaw: string): ListTypeModel | null {
+		const parsed = parseFlowType(typeRaw)
+		if (!parsed.node) return null
+		const outer = unwrapOptional(parsed.node)
+		if (outer.node.kind !== 'list') return null
+		const item = unwrapOptional(outer.node.item)
+		if (item.node.kind === 'record') return null
+		return {
+			outerOptional: outer.optional,
+			itemType: serializeFlowType(item.node),
+		}
+	}
+
+	function serializeListTypeModel(model: ListTypeModel): string {
+		let node: FlowTypeNode = { kind: 'list', item: safeParseType(model.itemType) }
+		if (model.outerOptional) node = { kind: 'optional', inner: node }
+		return serializeFlowType(node)
+	}
+
+	function setRecordModelType(inputName: string, model: RecordTypeModel) {
+		updateInput(inputName, 'type', serializeRecordTypeModel(model))
+	}
+
+	function setListModelType(inputName: string, model: ListTypeModel) {
+		updateInput(inputName, 'type', serializeListTypeModel(model))
+	}
+
+	function addRecordField(inputName: string, model: RecordTypeModel) {
+		const next = clone(model)
+		next.fields.push({ name: `field_${next.fields.length + 1}`, type: 'String', optional: false })
+		setRecordModelType(inputName, next)
+	}
+
+	function removeRecordField(inputName: string, model: RecordTypeModel, index: number) {
+		const next = clone(model)
+		next.fields.splice(index, 1)
+		setRecordModelType(inputName, next)
+	}
+
+	function updateRecordField(
+		inputName: string,
+		model: RecordTypeModel,
+		index: number,
+		key: 'name' | 'type' | 'optional',
+		value: string | boolean,
+	) {
+		const next = clone(model)
+		if (!next.fields[index]) return
+		if (key === 'optional') {
+			next.fields[index].optional = Boolean(value)
+		} else if (key === 'name') {
+			next.fields[index].name = String(value)
+		} else {
+			next.fields[index].type = String(value)
+		}
+		setRecordModelType(inputName, next)
+	}
+
+	function setListItemType(inputName: string, model: ListTypeModel, itemType: string) {
+		const next = clone(model)
+		next.itemType = itemType
+		setListModelType(inputName, next)
+	}
+
+	function setListOptional(inputName: string, model: ListTypeModel, optional: boolean) {
+		const next = clone(model)
+		next.outerOptional = optional
+		setListModelType(inputName, next)
+	}
+
+	function useTypePreset(inputName: string, preset: string) {
+		updateInput(inputName, 'type', preset)
+	}
+
 	function addStep() {
 		setSpec((draft) => {
 			let idx = draft.steps.length + 1
@@ -293,6 +456,54 @@
 		if (!current[bindingIndex]) return
 		current[bindingIndex][key] = value
 		setStepBindings(index, current)
+	}
+
+	function getStepPublishes(step: FlowStepSpec): Array<{ key: string; value: string }> {
+		const publishMap = step.publish ?? {}
+		return Object.entries(publishMap).map(([key, value]) => ({ key, value }))
+	}
+
+	function setStepPublishes(index: number, publishes: Array<{ key: string; value: string }>) {
+		setSpec((draft) => {
+			const target = draft.steps[index]
+			if (!target) return
+			const next: Record<string, string> = {}
+			for (const item of publishes) {
+				if (!item.key.trim()) continue
+				next[item.key.trim()] = item.value.trim()
+			}
+			target.publish = next
+		})
+	}
+
+	function addPublish(index: number) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepPublishes(step)
+		current.push({ key: '', value: '' })
+		setStepPublishes(index, current)
+	}
+
+	function removePublish(index: number, publishIndex: number) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepPublishes(step)
+		current.splice(publishIndex, 1)
+		setStepPublishes(index, current)
+	}
+
+	function updatePublish(
+		index: number,
+		publishIndex: number,
+		key: 'key' | 'value',
+		value: string,
+	) {
+		const step = editorSpec?.steps[index]
+		if (!step) return
+		const current = getStepPublishes(step)
+		if (!current[publishIndex]) return
+		current[publishIndex][key] = value
+		setStepPublishes(index, current)
 	}
 
 	function addDatasite() {
@@ -715,24 +926,143 @@
 							<div class="space-y-3">
 								{#each Object.entries(editorSpec.inputs) as [name, specValue]}
 									{@const parsed = parseInputSpec(specValue)}
-									<div class="grid gap-2 rounded-md border p-3 md:grid-cols-[1fr,1fr,1fr,auto]">
-										<Input value={name} onblur={(event) => renameInput(name, event.currentTarget.value)} />
-										<Input
-											placeholder="Type"
-											value={parsed.type}
-											oninput={(event) => updateInput(name, 'type', event.currentTarget.value)}
-										/>
-										<Input
-											placeholder="Default"
-											value={parsed.defaultValue}
-											oninput={(event) => updateInput(name, 'default', event.currentTarget.value)}
-										/>
-										<Button variant="ghost" size="icon" onclick={() => removeInput(name)}>
-											<TrashIcon class="size-4" />
-										</Button>
+									{@const typeParsed = parseFlowType(parsed.type)}
+									{@const recordModel = parseRecordTypeModel(parsed.type)}
+									{@const listModel = parseListTypeModel(parsed.type)}
+									<div class="space-y-3 rounded-md border p-3">
+										<div class="grid gap-2 md:grid-cols-[1fr,1.4fr,1fr,auto]">
+											<Input value={name} onblur={(event) => renameInput(name, event.currentTarget.value)} />
+											<Input
+												placeholder="Type"
+												value={parsed.type}
+												list="flow-type-presets"
+												oninput={(event) => updateInput(name, 'type', event.currentTarget.value)}
+											/>
+											<Input
+												placeholder="Default"
+												value={parsed.defaultValue}
+												oninput={(event) => updateInput(name, 'default', event.currentTarget.value)}
+											/>
+											<Button variant="ghost" size="icon" onclick={() => removeInput(name)}>
+												<TrashIcon class="size-4" />
+											</Button>
+										</div>
+
+										<div class="flex flex-wrap items-center gap-2">
+											{#if typeParsed.node}
+												<Badge variant="secondary">{friendlyFlowType(typeParsed.node)}</Badge>
+												<Badge variant="outline">{serializeFlowType(typeParsed.node)}</Badge>
+											{:else if typeParsed.error}
+												<Badge variant="destructive">Type parse error</Badge>
+												<span class="text-xs text-destructive">{typeParsed.error}</span>
+											{/if}
+										</div>
+
+										<div class="flex flex-wrap gap-1">
+											{#each commonTypePresets as preset}
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													class="h-7 px-2 text-xs"
+													onclick={() => useTypePreset(name, preset)}
+												>
+													{preset}
+												</Button>
+											{/each}
+										</div>
+
+										{#if recordModel}
+											<div class="rounded-md border bg-muted/30 p-2">
+												<div class="mb-2 flex items-center justify-between text-xs font-medium">
+													<span>Record Fields</span>
+													<Button
+														type="button"
+														variant="outline"
+														size="sm"
+														class="h-7 px-2 text-xs"
+														onclick={() => addRecordField(name, recordModel)}
+													>
+														<PlusIcon class="size-3" />
+														Add Field
+													</Button>
+												</div>
+												<div class="space-y-2">
+													{#each recordModel.fields as field, index}
+														<div class="grid gap-2 md:grid-cols-[1fr,1fr,auto,auto]">
+															<Input
+																value={field.name}
+																placeholder="field name"
+																oninput={(event) =>
+																	updateRecordField(
+																		name,
+																		recordModel,
+																		index,
+																		'name',
+																		event.currentTarget.value,
+																	)}
+															/>
+															<Input
+																value={field.type}
+																list="flow-type-presets"
+																placeholder="field type"
+																oninput={(event) =>
+																	updateRecordField(
+																		name,
+																		recordModel,
+																		index,
+																		'type',
+																		event.currentTarget.value,
+																	)}
+															/>
+															<label class="flex items-center gap-2 rounded-md border px-2 text-xs">
+																<Checkbox
+																	checked={field.optional}
+																	onCheckedChange={(value) =>
+																		updateRecordField(name, recordModel, index, 'optional', !!value)}
+																/>
+																Optional
+															</label>
+															<Button
+																type="button"
+																variant="ghost"
+																size="icon"
+																onclick={() => removeRecordField(name, recordModel, index)}
+															>
+																<TrashIcon class="size-4" />
+															</Button>
+														</div>
+													{/each}
+												</div>
+											</div>
+										{:else if listModel}
+											<div class="rounded-md border bg-muted/30 p-2">
+												<div class="mb-2 text-xs font-medium">List Item Type</div>
+												<div class="grid gap-2 md:grid-cols-[1fr,auto]">
+													<Input
+														value={listModel.itemType}
+														list="flow-type-presets"
+														placeholder="item type"
+														oninput={(event) => setListItemType(name, listModel, event.currentTarget.value)}
+													/>
+													<label class="flex items-center gap-2 rounded-md border px-2 text-xs">
+														<Checkbox
+															checked={listModel.outerOptional}
+															onCheckedChange={(value) => setListOptional(name, listModel, !!value)}
+														/>
+														Optional List
+													</label>
+												</div>
+											</div>
+										{/if}
 									</div>
 								{/each}
 							</div>
+							<datalist id="flow-type-presets">
+								{#each commonTypePresets as preset}
+									<option value={preset}></option>
+								{/each}
+							</datalist>
 						</Card.Content>
 					</Card.Root>
 				{:else if section === 'steps'}
@@ -866,6 +1196,49 @@
 														variant="ghost"
 														size="icon"
 														onclick={() => removeBinding(selectedStepIndex, bindingIndex)}
+													>
+														<TrashIcon class="size-4" />
+													</Button>
+												</div>
+											{/each}
+										</div>
+
+										<div class="space-y-2">
+											<div class="flex items-center justify-between">
+												<div class="text-sm font-medium">Outputs (publish)</div>
+												<Button variant="outline" size="sm" onclick={() => addPublish(selectedStepIndex)}>
+													<PlusIcon class="size-4" />
+													Add Output
+												</Button>
+											</div>
+											{#each getStepPublishes(step) as publishItem, publishIndex}
+												<div class="grid gap-2 md:grid-cols-[1fr,2fr,auto]">
+													<Input
+														placeholder="output key"
+														value={publishItem.key}
+														oninput={(event) =>
+															updatePublish(
+																selectedStepIndex,
+																publishIndex,
+																'key',
+																event.currentTarget.value,
+															)}
+													/>
+													<Input
+														placeholder="File(path) or binding"
+														value={publishItem.value}
+														oninput={(event) =>
+															updatePublish(
+																selectedStepIndex,
+																publishIndex,
+																'value',
+																event.currentTarget.value,
+															)}
+													/>
+													<Button
+														variant="ghost"
+														size="icon"
+														onclick={() => removePublish(selectedStepIndex, publishIndex)}
 													>
 														<TrashIcon class="size-4" />
 													</Button>
